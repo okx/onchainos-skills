@@ -215,80 +215,62 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              - **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。")
         } else {
             format!("\
-             **Step 1 — 查询推荐卖家：**\n\
+             **Step 1 — 查询推荐卖家列表：**\n\
              ```bash\n\
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\
              ```\n\
-             缓存完整推荐列表，记录 currentProviderIndex = 0。\n\
-             输出末尾有「路由」指引，标明当前卖家是 x402 还是 A2A。\n\n\
-             **Step 2 — 顺序遍历推荐列表，按 supportA2MCP 字段路由：**\n\n\
-             ━━━━━━━━━ 分支 A：supportA2MCP=true → x402（无需协商，直接接单）━━━━━━━━━\n\n\
-             🛑 **x402 全自动铁律（以下两条绝对禁止）：**\n\
-             \x20\x201) ❌ **禁止停顿征求用户确认**：x402 路径从 A-Step 1 到 A-Step 3 必须一气呵成自动执行。不要展示卖家信息后等用户说「执行」「确认」再继续——recommend 输出只是 agent 内部决策数据，不是给用户看的确认表单。\n\
-             \x20\x202) ❌ **禁止调 `confirm-accept`**：x402 接单的唯一合法路径是 `set-payment-mode` → 等 `job_payment_mode_changed` → `task-402-pay`。`confirm-accept` 是 escrow 专用命令，x402 调它会导致支付签名缺失、endpoint 重放缺失。\n\n\
-             从 recommend 输出中提取当前 provider 的 services[0]：feeAmount、feeTokenSymbol、endpoint。\n\
-             ⚠️ **feeAmount / feeTokenSymbol 是卖家注册身份时手动填写的，不一定等于链上实际最新价格。** 展示给用户时须注明「注册费用」，以 A-Step 1 `x402-check` 返回的 `amountHuman` 为链上实际费用。\n\
-             从任务详情提取：tokenAmount（任务最高预算）、tokenSymbol（任务代币）。\n\n\
-             **A-Step 1 — 验证 endpoint 是否是合法的 x402 服务：**\n\
+             输出卖家列表（Agent Name / 服务描述 / 信用分 / 支付方式），已自动过滤协商失败的卖家。\n\n\
+             **Step 2 — 展示列表给用户，让用户选择：**\n\
+             调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；再调 `xmtp_prompt_user`：\n\n\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
+             用户选择某个卖家（给出 agentId 或序号）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：选择卖家 agentId=<用户选中的agentId>\") relay 回 sub session；\
+             用户要求翻页 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：翻页\") relay 回 sub session；\
+             用户选择转为公开任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
+             用户选择关闭任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
+             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\n\
+             \x20\x20userContent: [任务 {short_id} 你作为买家] 以下是推荐卖家列表：\n\
+             \x20\x20<将 recommend 输出的卖家列表完整粘贴，每个卖家一段：序号 / Agent Name / AgentID / 服务名称与描述 / 信用分 / 费用 / 支付方式>\n\
+             \x20\x20---\n\
+             \x20\x20请选择：\n\
+             \x20\x20• 选择卖家 — 回复卖家序号或 AgentID\n\
+             \x20\x20• 查看更多 — 回复「下一页」\n\
+             \x20\x20• 转为公开任务 — 回复「公开」\n\
+             \x20\x20• 关闭任务 — 回复「关闭」\n\n\
+             → **结束本轮 turn**，等用户回复 relay 回来。\n\n\
+             **Step 3 — 收到用户 relay 后处理：**\n\n\
+             ▸ 用户选择了某个卖家（agentId=X）→ 调用 `next-action --provider X` 进入指定卖家流程：\n\
              ```bash\n\
-             onchainos agent x402-check --endpoint <endpoint>\n\
+             onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <用户选中的agentId>\n\
              ```\n\
-             - `valid=false` → 跳过该卖家，执行 `recommend --next` 切换下一个。\n\
-             - `valid=true` → 继续 A-Step 2。\n\n\
-             **A-Step 2 — 金额 & 代币校验（三重检查）：**\n\n\
-             从 x402-check 输出提取 `amountHuman`（实际服务金额）、`tokenSymbol`（实际代币）。\n\n\
-             **检查 1 — 402 金额 vs 卖家注册金额：**\n\
-             比较 x402-check 返回的 `amountHuman` 与 recommend 中该卖家 services[0] 的 `feeAmount`（注意单位，两者都是人类可读金额）。\n\
-             - 不一致（差异 > 1%）→ 跳过该卖家，`recommend --next`。\n\n\
-             **检查 2 — 代币一致性：**\n\
-             比较 x402-check 的 `tokenSymbol` 与 services[0] 的 `feeTokenSymbol`。\n\
-             - 不一致 → 跳过该卖家，`recommend --next`。\n\n\
-             **检查 3 — 预算限额：**\n\
-             比较 `amountHuman` 与任务最高预算（tokenAmount）。\n\
-             - 超出预算 → 跳过该卖家，`recommend --next`。\n\n\
-             三项检查全部通过 → 进入 A-Step 3。\n\n\
-             **A-Step 3 — setPaymentMode（x402 阶段 1）：**\n\
+             按输出的剧本执行（内部自动查 service-list 路由 x402 或 A2A）。\n\n\
+             ▸ 用户要求翻页 → 执行：\n\
              ```bash\n\
-             onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <feeTokenSymbol> --token-amount <amountHuman> --endpoint <endpoint>\n\
+             onchainos agent recommend {job_id} --next-page\n\
              ```\n\
-             → **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
-             **A-Step 3b — 支付重放（x402 阶段 2，收到 job_payment_mode_changed 后执行）：**\n\
-             ```bash\n\
-             onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<x402-check 输出的 acceptsJson>' --endpoint <endpoint> --token-symbol <feeTokenSymbol> --token-amount <amountHuman>\n\
-             ```\n\
-             输出：{{ replaySuccess, replayStatus, replayBody, signature, authorization, txHash }}\n\n\
-             **A-Step 4 — 处理重放结果：**\n\
-             - replaySuccess=true → 调用 xmtp_dispatch_user 将交付物发送给用户：\n\
-             \x20\x20content:\n\
-             \x20\x20[x402 交付物预览] 任务 {job_id} endpoint 重放成功，交付物已获取。\n\
-             \x20\x20卖家 AgentID：<providerAgentId>\n\
-             \x20\x20---交付物内容---\n\
-             \x20\x20<replayBody 完整内容，JSON 则格式化输出>\n\
-             \x20\x20---交付物结束---\n\
-             \x20\x20正在等待链上确认，确认后将自动完成任务。\n\n\
-             - replaySuccess=false → 调用 xmtp_dispatch_user 通知用户重放失败，等待用户指示。\n\n\
-             → **结束本轮 turn**，等待 `job_accepted` 系统通知。")
+             如果有结果 → 回到 Step 2 展示新列表给用户。\n\
+             如果为空 → 通知用户无更多卖家，引导选择：指定卖家 agentId / 转为公开任务 / 关闭任务。\n\n\
+             ▸ 用户选择转为公开任务 → `onchainos agent set-public {job_id}`\n\n\
+             ▸ 用户选择关闭任务 → `onchainos agent close {job_id}`")
         };
 
-        let to_agent_id_desc = match &designated_provider {
-            Some(dp_id) => dp_id.clone(),
-            None => "recommend 输出的 providerAgentId".to_string(),
-        };
-
-        let fallback_cmd = if designated_provider.is_some() {
-            format!("onchainos agent recommend {job_id} --agent-id {agent_id}")
-        } else {
-            format!("onchainos agent recommend {job_id} --next")
-        };
-
-        let fallback_lines = if designated_provider.is_some() {
-            format!("执行 `onchainos agent recommend {job_id} --agent-id {agent_id}`（获取新推荐列表，从 index=0 开始）")
-        } else {
-            format!("执行 `onchainos agent recommend {job_id} --next`")
-        };
-        format!(
+        let mut output = format!(
             "【当前状态】job_created（任务已上链，状态 Open）\n\
              【角色】买家（Client）\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 0 — 通知 user session + 在当前 sub session 继续执行：**\n\
+             调用 xmtp_dispatch_user 通知用户任务已上链（纯通知，不触发 LLM 思考）：\n\
+             \x20\x20content: 任务 {job_id} 已上链成功（状态 Open），{notify_text}\n\n\
+             ⚠️ 后续路由 → 协商/接单 全部在**当前 sub session** 中执行，不要转到 user session。\n\n\
+             {routing_section}\n\n"
+        );
+
+        if let Some(ref dp_id) = designated_provider {
+            let to_agent_id_desc = dp_id.as_str();
+            let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent recommend {job_id} --agent-id {agent_id}");
+            let fallback_lines = format!("先执行 `onchainos agent mark-failed {job_id} --provider {dp_id}` 标记失败，再执行 `onchainos agent recommend {job_id} --agent-id {agent_id}` 获取新推荐列表。\n\
+             \x20\x20如果列表非空 → 按 xmtp_prompt_user 模板展示给用户选择（格式同非指定卖家的 Step 2：列出卖家信息 + 选择/翻页/公开/关闭选项）。\n\
+             \x20\x20如果列表为空 → 按下方引导用户选择 A/B/C");
+            output.push_str(&format!("\
              🛑 **硬约束 — 三步握手是让卖家 apply 的唯一合法路径**\n\n\
              你想让卖家进入 apply 阶段（escrow），**必须**完整发完三步握手：\n\
              \x20\x201) `[NEGOTIATE_PROPOSE]`（你 → 卖家，结构化提案）\n\
@@ -300,12 +282,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20• 「最终确认：任务/价格/支付方式 ...」之类的纯文字总结，没带 [NEGOTIATE_PROPOSE] / [NEGOTIATE_CONFIRM] 标记\n\
              \x20\x20• 任何形式的「替代握手」短路——卖家 flow 里把 `[NEGOTIATE_CONFIRM]` 字面量当作 apply 唯一触发器，你发自然语言『请 apply』根本不会被识别，卖家只能继续等 [NEGOTIATE_PROPOSE]\n\n\
              正确做法：协商达成一致后，**严格用** `[NEGOTIATE_PROPOSE]` 模板（见下方 B-Step 2 Step 4），让握手机器解析跑通。**协商再短也要走完三步**——哪怕是「能做、原价 OK、escrow OK」三连答，也要把它变成 [NEGOTIATE_PROPOSE] 发出去，绝不省略。\n\n\
-             【你的下一步动作（严格顺序，不询问用户，全自动执行）】\n\n\
-             **Step 0 — 通知 user session + 在当前 sub session 继续执行：**\n\
-             调用 xmtp_dispatch_user 通知用户任务已上链（纯通知，不触发 LLM 思考）：\n\
-             \x20\x20content: 任务 {job_id} 已上链成功（状态 Open），{notify_text}\n\n\
-             ⚠️ 后续路由 → 协商/接单 全部在**当前 sub session** 中执行，不要转到 user session。\n\n\
-             {routing_section}\n\n\
              ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
              **B-Step 0 — 防重复检查：**\n\
              调 `session_status` 检查当前 job 是否已有 sub session（即是否已建群）。\n\
@@ -419,18 +395,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ⚠️ **绝对不要**在此 turn 内 xmtp_send [NEGOTIATE_CONFIRM]——卖家见 [NEGOTIATE_CONFIRM] 会立刻 apply，但链上 paymentMode 还在 mempool / 没确认，apply 会失败或行为错位。[NEGOTIATE_CONFIRM] 必须等 `job_payment_mode_changed` 事件确认 paymentMode 上链后再发。\n\n\
              **Step 6.3 — 结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
              （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（escrow），链上 paymentMode 已就位。\n\n\
-             ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
-             当前卖家超时未回复（5 分钟）/ COUNTER 轮次超限（≥3 次）/ 收到 `[NEGOTIATE_REJECT]` / 协商失败 → 先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason 填超时/超限/失败原因）给卖家，再切换下一个卖家：\n\
+             ━━━━━━━━━ 协商失败 / 切换卖家 ━━━━━━━━━\n\n\
+             当前卖家超时未回复（5 分钟）/ COUNTER 轮次超限（≥3 次）/ 收到 `[NEGOTIATE_REJECT]` / 协商失败 → 先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason 填超时/超限/失败原因）给卖家，再切换：\n\
              \x20\x20{fallback_lines}\n\
-             切换后重新回到 Step 2 路由判断。\n\
              ⚠️ **切换时必须先发 [NEGOTIATE_REJECT] 再切走**（让卖家有明确终止信号），但**禁止 xmtp_delete_conversation 删群**。切走后再收到该卖家消息一律忽略、不回复。\n\
-             推荐列表全部遍历完（或初始推荐列表为空）→ 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
+             当前页无剩余卖家且翻页也无结果 → 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
              用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
              用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
-             \x20\x20userContent: [任务 {short_id} 你作为买家] 推荐卖家已全部遍历，无合适匹配。请选择下一步：\n\
+             \x20\x20userContent: [任务 {short_id} 你作为买家] 推荐卖家均不合适。请选择下一步：\n\
              \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
              \x20\x20B. 转为公开任务 — 让更多卖家看到任务\n\
              \x20\x20C. 关闭任务 — 取消并退款\n\
@@ -438,7 +413,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              【后续事件】\n\
              - x402 → set-payment-mode → job_payment_mode_changed → task-402-pay（签名 + direct/accept + endpoint 重放）→ job_accepted → complete\n\
              - escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 apply → 卖家 apply 上链 → 卖家 xmtp_send 通知买家 → 买家收到 a2a-agent-chat → confirm-accept → job_accepted\n"
-        )},
+            ));
+        }
+
+        output
+        },
 
         // ─── provider_applied（卖家已 apply）──────────────────
         // 触发来源：buyer.md 路由优先级 #2（卖家 XMTP 消息告知已 apply）调 next-action --jobStatus provider_applied。

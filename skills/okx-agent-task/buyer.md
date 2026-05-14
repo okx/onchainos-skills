@@ -128,21 +128,24 @@
 > ```
 > `--provider` 传入后跳过 recommend，直接生成针对该卖家的协商/x402 剧本（内部查 service-list 路由）。**按输出执行**——剧本会指引你调 `xmtp_start_conversation` 建群、`xmtp_send` 发协商消息。
 
-### 3.2.0 推荐列表遍历机制
+### 3.2.0 推荐列表展示与用户选择
 
-`job_created` 到达后，调 `onchainos agent recommend <jobId>` 获取推荐卖家列表（**只取第一页，不翻页**），**逐个**协商：
+`job_created` 到达后，调 `onchainos agent recommend <jobId>` 获取推荐卖家列表，**展示给用户选择**（不自动遍历）：
 
-1. 按路由类型处理：`⚡ x402` → **全自动**（x402-check → 三重校验 → set-payment-mode → task-402-pay），**禁止停顿征求用户确认，禁止调 confirm-accept**；`💬 A2A` → 建群 → 发询盘 → 协商
-2. **超时规则**：发出消息后 **5 分钟**未收到该卖家回复 → 判定超时
-3. 超时或失败 → `recommend <jobId> --next` 切下一个
-4. 全部遍历完 → 按 CLI 输出引导用户（指定卖家 → §3.2.1）
+1. 展示列表（Agent Name / 服务描述 / 信用分 / 支付方式），已自动过滤协商失败的卖家
+2. 用户选择卖家 → 调 `next-action --provider <agentId>` 进入指定卖家流程（x402 或 A2A，剧本自动路由）
+3. 用户要求翻页 → `recommend <jobId> --next-page`
+4. 当前页全被过滤时自动翻到下一页
+5. 协商失败 → `mark-failed <jobId> --provider <agentId>` 标记 → `recommend <jobId> --current` 查看剩余 → 无剩余则 `--next-page`
+6. 所有页遍历完无合适卖家 → 引导用户：指定卖家 / 转为公开任务 / 关闭任务
 
-> 💡 `recommend <jobId> --current` 可查看当前卖家信息。
-> 💡 用户在推荐结果中选择了某个卖家（如"找810协商"）→ 调 `next-action --jobStatus job_created --provider 810` 拿针对该卖家的剧本。
+> 💡 `recommend <jobId> --current` 查看当前页剩余（过滤已失败的）。
+> 💡 `recommend <jobId> --next-page` 翻到下一页。
+> 💡 用户从列表中选了某个卖家（如"找810协商"）→ 调 `next-action --jobStatus job_created --provider 810` 拿针对该卖家的剧本。
 
 ### 3.2.1 手动指定卖家（已有任务内）
 
-**Trigger**：推荐列表遍历完毕后用户指定 agentId，或用户主动要求换卖家，或用户从推荐列表中选择某个卖家。复用已有 jobId。
+**Trigger**：用户从推荐列表中选择某个卖家，或用户主动指定 agentId，或用户要求换卖家。复用已有 jobId。
 
 调 next-action 拿剧本（`--provider` 指定目标卖家，剧本自动查 service-list 路由 A2A/x402）：
 ```bash
@@ -189,7 +192,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
    - ⚠️ **不要直接 `xmtp_start_conversation`**
 3. **A2A 路径**：映射字段（`description` ← ServiceTitle，`budget` ← Price，`currency` ← symbol），缓存 `designatedProvider = { agentId, serviceType }` → 进入 §3.1 发布任务
 4. `job_created` 到达 → 检测 `designatedProvider` → **跳过 recommend，保持 private** → 直接建群协商
-5. 协商失败 → 自动 `recommend <jobId>` 进入 §3.2.0
+5. 协商失败 → 自动 `recommend <jobId>` 获取推荐列表，展示给用户选择（§3.2.0）
 
 ---
 

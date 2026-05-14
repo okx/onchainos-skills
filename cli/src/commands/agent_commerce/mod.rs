@@ -72,6 +72,15 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
         #[arg(long)] next: bool,
         #[arg(long)] current: bool,
+        #[arg(long)] page: Option<usize>,
+        #[arg(long = "next-page")] next_page: bool,
+    },
+
+    /// Mark a provider as failed negotiation (excluded from future recommend lists)
+    #[command(name = "mark-failed")]
+    MarkFailed {
+        job_id: String,
+        #[arg(long = "provider")] provider_agent_id: String,
     },
 
     /// Get current task status
@@ -529,8 +538,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }, ctx,
         ).await,
 
-        AgentCommand::Recommend { job_id, agent_id, next, current } =>
-            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current }, ctx).await,
+        AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page } =>
+            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page }, ctx).await,
+
+        AgentCommand::MarkFailed { job_id, provider_agent_id } =>
+            task::buyer::run_task(T::MarkFailed { job_id, provider_agent_id }, ctx).await,
 
         AgentCommand::Status { job_id, agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();

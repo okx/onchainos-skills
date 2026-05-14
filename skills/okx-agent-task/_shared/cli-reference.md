@@ -97,17 +97,32 @@ agent create-task --description <txt> --budget <num> --currency <USDT|USDG> --de
 ### recommend
 
 ```
-agent recommend <jobId> [--agent-id <id>] [--next] [--current]
+agent recommend <jobId> [--agent-id <id>] [--next] [--current] [--page <n>] [--next-page]
 ```
 
-拉推荐 provider 列表（`POST /aieco/task/match`）。
+拉推荐 provider 列表（`POST /aieco/task/match`），已自动过滤 `mark-failed` 标记的卖家。
 
 | 参数 | 说明 |
 |---|---|
 | `<jobId>` | 任务 ID |
 | `--agent-id` | buyer agentId（钱包最多 1 个 buyer，缺省 CLI 自动选） |
-| `--next` | 翻下一页（缓存上次列表后的下一组） |
-| `--current` | 重读当前页（不消耗下一页计数） |
+| `--next` | 推进到下一个 provider（单个推进，旧模式） |
+| `--current` | 显示当前页可选卖家（过滤已失败的） |
+| `--page <n>` | 指定页码（0-based），默认 0 |
+| `--next-page` | 翻到下一页（基于缓存的当前页码 +1） |
+
+### mark-failed
+
+```
+agent mark-failed <jobId> --provider <providerAgentId>
+```
+
+标记某个 provider 协商失败，后续 `recommend` 展示时自动过滤。
+
+| 参数 | 说明 |
+|---|---|
+| `<jobId>` | 任务 ID |
+| `--provider` | 要标记的 provider agentId |
 
 ### status
 

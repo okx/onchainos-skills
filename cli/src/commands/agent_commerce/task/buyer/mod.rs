@@ -74,6 +74,18 @@ pub enum TaskCommand {
         /// Show current provider from cached list
         #[arg(long)]
         current: bool,
+        /// Specify page number (0-based)
+        #[arg(long)]
+        page: Option<usize>,
+        /// Advance to next page
+        #[arg(long = "next-page")]
+        next_page: bool,
+    },
+    /// Mark a provider as failed negotiation (excluded from future recommend lists)
+    MarkFailed {
+        job_id: String,
+        #[arg(long = "provider")]
+        provider_agent_id: String,
     },
     /// Get current task status
     /// Set payment mode on-chain (standalone, before confirm-accept)
@@ -199,14 +211,20 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 description, description_summary, budget, max_budget, currency,
                 deadline_open, deadline_submit, title, agent_id, provider,
             }).await,
-        TaskCommand::Recommend { job_id, agent_id, next, current } => {
+        TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page } => {
             if next {
                 recommend::handle_recommend_next(&job_id)
             } else if current {
                 recommend::handle_recommend_current(&job_id)
+            } else if next_page {
+                recommend::handle_recommend_next_page(&mut client, &job_id).await
             } else {
-                recommend::handle_recommend(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await
+                let p = page.unwrap_or(0);
+                recommend::handle_recommend(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), p).await
             }
+        }
+        TaskCommand::MarkFailed { job_id, provider_agent_id } => {
+            negotiate::mark_failed(&job_id, &provider_agent_id)
         }
         TaskCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,

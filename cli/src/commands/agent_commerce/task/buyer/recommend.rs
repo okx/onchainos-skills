@@ -5,6 +5,7 @@
 //! - 默认：调用 /match API 获取推荐列表并缓存到本地（index=0）
 //! - --next：从本地状态推进到下一个 provider 并返回
 //! - --current：返回当前 index 的 provider（不推进）
+//! - --next-page：翻到下一页
 
 use anyhow::Result;
 
@@ -13,8 +14,7 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::signing;
 
 /// 查询推荐卖家（默认模式：调用 API + 缓存）
-pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
-    // --agent-id 未传时，从本地身份列表解析 buyer agentId（不查任务详情）
+pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id: &str, page: usize) -> Result<()> {
     let resolved;
     let agent_id = if agent_id.is_empty() {
         use crate::commands::agent_commerce::task::common::AGENT_ROLE_BUYER;
@@ -28,11 +28,13 @@ pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id
     };
 
     let url = client.endpoint(job_id, "match");
-    let resp = client.post_with_identity(&url, &serde_json::json!({}), agent_id).await?;
+    let body = serde_json::json!({ "pageNo": page + 1 });
+    let resp = client.post_with_identity(&url, &body, agent_id).await?;
     let recs = resp["recommendations"].as_array()
         .cloned().unwrap_or_default();
 
-    // 构造 ProviderInfo 列表并缓存
+    let failed = negotiate::load_failed(job_id);
+
     let providers: Vec<negotiate::ProviderInfo> = recs.iter().map(|r| {
         let services: Vec<negotiate::ServiceInfo> = r["services"].as_array()
             .map(|arr| arr.iter().map(|s| negotiate::ServiceInfo {
@@ -51,6 +53,7 @@ pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id
         negotiate::ProviderInfo {
             provider_address: r["providerAddress"].as_str().unwrap_or("").to_string(),
             provider_agent_id: r["providerAgentId"].as_str().unwrap_or("").to_string(),
+            provider_name: r["providerName"].as_str().unwrap_or("").to_string(),
             match_score: r["matchScore"].as_f64().unwrap_or(0.0),
             credit_score: r["creditScore"].as_i64().unwrap_or(0),
             capability_summary: r["capabilitySummary"].as_str().unwrap_or("").to_string(),
@@ -60,39 +63,47 @@ pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id
         }
     }).collect();
 
-    negotiate::save(job_id, providers.clone())?;
+    negotiate::save(job_id, providers.clone(), page)?;
 
-    if providers.is_empty() {
+    let visible: Vec<_> = providers.iter()
+        .filter(|p| !failed.contains(&p.provider_agent_id))
+        .collect();
+
+    if visible.is_empty() {
+        if !providers.is_empty() {
+            println!("当前页所有卖家均已协商失败，自动翻到下一页...");
+            return Box::pin(handle_recommend(client, job_id, agent_id, page + 1)).await;
+        }
         println!("推荐卖家列表为空，无匹配卖家。");
         print_empty_guidance(job_id);
         return Ok(());
     }
 
-    // 输出列表
-    println!("推荐卖家列表（共 {} 个，已缓存，当前 index=0）：", providers.len());
-    for (i, p) in providers.iter().enumerate() {
+    println!("推荐卖家列表（第 {} 页，共 {} 个可选）：", page + 1, visible.len());
+    for (i, p) in visible.iter().enumerate() {
         print_provider(i, p);
     }
+    println!();
+    println!("请选择一个卖家（输入序号对应的 AgentID），或输入 `onchainos agent recommend {} --next-page` 查看下一页。", job_id);
 
-    // 路由指引：告诉 Agent 当前 provider 走 x402 还是协商
-    if let Some(first) = providers.first() {
-        print_routing_guide(first, job_id);
-    }
     Ok(())
 }
 
-/// --current：返回当前 provider
+/// --current：返回当前 provider（过滤已失败的）
 pub fn handle_recommend_current(job_id: &str) -> Result<()> {
     let state = negotiate::load(job_id)?;
-    match state.providers.get(state.current_index) {
-        Some(p) => {
-            println!("当前协商卖家（index={}，共 {} 个）：", state.current_index, state.providers.len());
-            print_provider(state.current_index, p);
-            print_routing_guide(p, job_id);
-        }
-        None => {
-            println!("推荐列表已全部遍历（{}/{}），无更多卖家", state.current_index, state.providers.len());
-            print_empty_guidance(job_id);
+    let failed = &state.failed_providers;
+    let visible: Vec<_> = state.providers.iter()
+        .filter(|p| !failed.contains(&p.provider_agent_id))
+        .collect();
+
+    if visible.is_empty() {
+        println!("当前页推荐列表已无可选卖家（{} 个已失败）", failed.len());
+        print_empty_guidance(job_id);
+    } else {
+        println!("当前页可选卖家（第 {} 页，共 {} 个）：", state.page + 1, visible.len());
+        for (i, p) in visible.iter().enumerate() {
+            print_provider(i, p);
         }
     }
     Ok(())
@@ -116,11 +127,24 @@ pub fn handle_recommend_next(job_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// --next-page：翻到下一页
+pub async fn handle_recommend_next_page(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
+    let state = negotiate::load(job_id)?;
+    let next_page = state.page + 1;
+    let agent_id = {
+        use crate::commands::agent_commerce::task::common::AGENT_ROLE_BUYER;
+        signing::resolve_agent_id_by_role(AGENT_ROLE_BUYER).await?
+    };
+    if agent_id.is_empty() {
+        anyhow::bail!("本地无 buyer 身份，请先注册或传入 --agent-id");
+    }
+    handle_recommend(client, job_id, &agent_id, next_page).await
+}
+
 /// 输出路由指引：x402 直接 accept vs A2A 走协商
 fn print_routing_guide(p: &negotiate::ProviderInfo, job_id: &str) {
     println!();
     if p.support_a2mcp {
-        // x402 路径：无需协商，直接 confirm-accept
         let svc = p.services.first();
         let endpoint = svc.map(|s| s.endpoint.as_str()).unwrap_or("<endpoint>");
         let fee = svc.map(|s| s.fee_amount).unwrap_or(0.0);
@@ -130,7 +154,6 @@ fn print_routing_guide(p: &negotiate::ProviderInfo, job_id: &str) {
         println!("  ⚡ 路由: x402（无需协商，直接接单）");
         println!("  → onchainos agent confirm-accept {job_id} --provider {} --payment-mode x402 --token-symbol {symbol} --token-amount {fee} --endpoint {endpoint}", p.provider_agent_id);
     } else {
-        // A2A 路径：需要协商
         println!("  💬 路由: A2A（需协商）");
         println!("  → 先调 xmtp_start_conversation 与卖家 {} 建群，再通过 xmtp_send 协商任务详情 / 价格 / 支付方式，等待 provider_applied", p.provider_agent_id);
     }
@@ -138,26 +161,23 @@ fn print_routing_guide(p: &negotiate::ProviderInfo, job_id: &str) {
 }
 
 fn print_provider(index: usize, p: &negotiate::ProviderInfo) {
-    println!("  {}. AgentID: {}  匹配分: {}  信用分: {}  已完成: {}",
-        index + 1, p.provider_agent_id, p.match_score, p.credit_score, p.completed_task_count,
+    let name_display = if p.provider_name.is_empty() { "-" } else { &p.provider_name };
+    println!("  {}. Agent Name: {}  AgentID: {}  信用分: {}",
+        index + 1, name_display, p.provider_agent_id, p.credit_score,
     );
-    println!("     能力: {}", p.capability_summary);
-    println!("     地址: {}", p.provider_address);
+    if !p.services.is_empty() {
+        for svc in &p.services {
+            println!("     服务: {} — {}", svc.service_name, svc.service_description);
+            if svc.fee_amount > 0.0 {
+                let sym = if svc.fee_token_symbol.is_empty() { &svc.fee_token } else { &svc.fee_token_symbol };
+                println!("     费用: {} {}  |  endpoint: {}", svc.fee_amount, sym, svc.endpoint);
+            }
+        }
+    }
     if p.support_a2mcp {
         println!("     支付方式: x402");
     } else {
-        println!("     支付方式: escrow/direct");
-    }
-    if !p.services.is_empty() {
-        println!("     服务 ({}):", p.services.len());
-        for svc in &p.services {
-            println!("       - [{}] {} ({})", svc.service_type, svc.service_name, svc.service_id);
-            if svc.fee_amount > 0.0 {
-                let sym = if svc.fee_token_symbol.is_empty() { &svc.fee_token } else { &svc.fee_token_symbol };
-                println!("         费用: {} {}", svc.fee_amount, sym);
-            }
-            println!("         endpoint: {}", svc.endpoint);
-        }
+        println!("     支付方式: escrow");
     }
 }
 
