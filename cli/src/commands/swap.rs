@@ -1177,6 +1177,33 @@ async fn cmd_execute(
     validate_swap_params(&chain_index, &from_token, &to_token)?;
     let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
 
+    // Routing:
+    //   non-native + no Gas Station params + chain in support list  → batch path
+    //   any condition fails                                         → single-tx path
+    let batch_supported = !is_from_native
+        && !enable_gas_station
+        && gas_token_address.is_none()
+        && relayer_id.is_none()
+        && is_chain_batch_supported(&chain_index).await;
+    if batch_supported {
+        return cmd_execute_batch(
+            client,
+            &from_token,
+            &to_token,
+            amount,
+            &chain_index,
+            wallet_address,
+            slippage,
+            gas_level,
+            swap_mode,
+            tips,
+            max_auto_slippage,
+            mev_protection,
+            force,
+        )
+        .await;
+    }
+
     // Gas Station `enableGasStation=true` must only fire on the FIRST gas-consuming
     // tx of this flow (revoke / approve / swap, whichever runs first). After that,
     // the account is activated — subsequent txs only need gasTokenAddress + relayerId.
@@ -1228,22 +1255,17 @@ async fn cmd_execute(
             .and_then(|t| t["spendable"].as_str())
             .unwrap_or("0");
 
+        let (needs_approve, needs_revoke) =
+            classify_approve_action(&chain_index, &from_token, spendable, amount);
+
         if cfg!(feature = "debug-log") {
             eprintln!(
-                "[DEBUG][cmd_execute] spendable={}, amount={}, needs_approve={}",
-                spendable,
-                amount,
-                is_allowance_insufficient(spendable, amount)
+                "[DEBUG][cmd_execute] spendable={}, amount={}, needs_approve={}, needs_revoke={}",
+                spendable, amount, needs_approve, needs_revoke
             );
         }
 
-        if is_allowance_insufficient(spendable, amount) {
-            // USDT-pattern (zero-before-set) is only enforced by a small set of
-            // tokens — for everything else, sending a new `approve` overwrites
-            // the stale allowance directly. Gate the revoke on the whitelist.
-            let spendable_nonzero = spendable != "0" && !spendable.is_empty();
-            let needs_revoke =
-                spendable_nonzero && token_requires_revoke(&chain_index, &from_token);
+        if needs_approve {
             if needs_revoke {
                 if cfg!(feature = "debug-log") {
                     eprintln!("[swap execute] revoking stale approval (USDT pattern)...");
@@ -1444,7 +1466,272 @@ async fn cmd_execute(
     Ok(())
 }
 
+// ── Batch unsignedInfo + broadcast ───────────────────────────────────
+// Build [revoke?, approve?, swap], one batch unsignedInfo call, sign
+// locally, dispatch via batch broadcast (or single broadcast if backend
+// merged to len=1 — XLayer EIP-5792).
+
+/// Returns `false` on any failure so the caller falls through to single-tx.
+async fn is_chain_batch_supported(chain_index: &str) -> bool {
+    let access_token = match crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await
+    {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let mut client = match crate::wallet_api::WalletApiClient::new() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match client.batch_support_chain_index_list(&access_token).await {
+        // chain_index in list → supports batch
+        // not in list or request error → not supported (fall through to single-tx)
+        Ok(list) => list.iter().any(|c| c == chain_index),
+        Err(_) => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_execute_batch(
+    client: &mut ApiClient,
+    from_token: &str,
+    to_token: &str,
+    amount: &str,
+    chain_index: &str,
+    wallet_address: &str,
+    slippage: Option<&str>,
+    gas_level: &str,
+    swap_mode: &str,
+    tips: Option<&str>,
+    max_auto_slippage: Option<&str>,
+    mev_protection: bool,
+    force: bool,
+) -> Result<()> {
+    use crate::commands::agentic_wallet::transfer::{batch_sign_and_broadcast, BatchTxParams};
+
+    // 1. Approve check (gates revoke / approve / swap construction).
+    let approve_data = fetch_approve(client, chain_index, from_token, amount).await?;
+    let approve_obj = unwrap_api_array(&approve_data);
+    let approve_calldata = approve_obj["data"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("missing 'data' field in approve response"))?;
+    let dex_contract_address = approve_obj["dexContractAddress"]
+        .as_str()
+        .map(|s| s.to_string());
+
+    let approvals = fetch_check_approvals(
+        client,
+        chain_index,
+        wallet_address,
+        from_token,
+        dex_contract_address.as_deref(),
+    )
+    .await?;
+    let spendable = approvals
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|r| r["tokens"].as_array())
+        .and_then(|tokens| tokens.first())
+        .and_then(|t| t["spendable"].as_str())
+        .unwrap_or("0")
+        .to_string();
+
+    let (needs_approve, needs_revoke) =
+        classify_approve_action(chain_index, from_token, &spendable, amount);
+
+    // 2. Fetch swap calldata.
+    let swap_data = fetch_swap(
+        client,
+        chain_index,
+        from_token,
+        to_token,
+        amount,
+        slippage,
+        wallet_address,
+        swap_mode,
+        gas_level,
+        tips,
+        max_auto_slippage,
+    )
+    .await?;
+    let swap_result = unwrap_api_array(&swap_data);
+    if swap_result.is_null() {
+        bail!("swap API returned empty result");
+    }
+    let swap_tx = &swap_result["tx"];
+    let swap_to = swap_tx["to"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing tx.to in swap response"))?
+        .to_string();
+    let swap_input_data = swap_tx["data"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing tx.data in swap response"))?
+        .to_string();
+    let swap_value_wei = swap_tx["value"].as_str().unwrap_or("0").to_string();
+    let swap_gas_limit = swap_tx["gas"].as_str().map(|s| s.to_string());
+
+    // XLayer (196) AA DEX params, mirrored from the single-tx path.
+    let (aa_addr, aa_amount) = if chain_index == "196" {
+        let amt = swap_result["routerResult"]["fromTokenAmount"]
+            .as_str()
+            .unwrap_or(amount)
+            .to_string();
+        (Some(from_token.to_string()), Some(amt))
+    } else {
+        (None, None)
+    };
+
+    // Layer 4 fallback:
+    //   allowance >= amount (no approve, no revoke needed) → single-tx broadcast (skip batch)
+    //   allowance insufficient                             → continue to batch construction
+    if !needs_approve && !needs_revoke {
+        let result = wallet_contract_call(
+            &swap_to,
+            chain_index,
+            &swap_value_wei,
+            Some(&swap_input_data),
+            None, // unsigned_tx (Solana only)
+            swap_gas_limit.as_deref(),
+            aa_addr.as_deref(),
+            aa_amount.as_deref(),
+            mev_protection,
+            None,  // jito_unsigned_tx
+            None,  // gas_token_address (no GS in batch)
+            None,  // relayer_id
+            false, // enable_gas_station
+            force,
+        )
+        .await?;
+        let swap_tx_hash = extract_tx_hash(&result)?;
+        let router_result = &swap_result["routerResult"];
+        let out = json!({
+            "approveTxHash": Value::Null,
+            "swapTxHash": swap_tx_hash,
+            "fromToken": router_result["fromToken"],
+            "toToken": router_result["toToken"],
+            "fromAmount": router_result["fromTokenAmount"],
+            "toAmount": router_result["toTokenAmount"],
+            "priceImpact": router_result["priceImpactPercent"],
+            "gasUsed": router_result["estimateGasFee"],
+        });
+        output::success(out);
+        return Ok(());
+    }
+
+    // Build elements: [revoke?, approve, swap].
+    let mut tx_params: Vec<BatchTxParams> = Vec::new();
+    if needs_revoke {
+        let revoke_data = fetch_approve(client, chain_index, from_token, "0").await?;
+        let revoke_calldata = extract_approve_calldata(&revoke_data)?;
+        tx_params.push(BatchTxParams {
+            to_addr: from_token.to_string(),
+            value: "0".to_string(),
+            contract_addr: Some(from_token.to_string()),
+            input_data: Some(revoke_calldata),
+            ..Default::default()
+        });
+    }
+    tx_params.push(BatchTxParams {
+        to_addr: from_token.to_string(),
+        value: "0".to_string(),
+        contract_addr: Some(from_token.to_string()),
+        input_data: Some(approve_calldata),
+        ..Default::default()
+    });
+    tx_params.push(BatchTxParams {
+        to_addr: swap_to.clone(),
+        value: swap_value_wei,
+        // Swap router must appear in unsignedInfo's contractAddr field
+        // (same as single-tx execute_contract_call).
+        contract_addr: Some(swap_to),
+        input_data: Some(swap_input_data),
+        gas_limit: swap_gas_limit,
+        aa_dex_token_addr: aa_addr,
+        aa_dex_token_amount: aa_amount,
+    });
+
+    let responses = batch_sign_and_broadcast(
+        chain_index,
+        Some(wallet_address),
+        &tx_params,
+        true,        // is_contract_call
+        mev_protection,
+        force,
+        None,        // tx_source — backend coerces with parseInt; omit to match single-tx path
+        Some("dex"), // agent_biz_type
+        Some("okx-dex-swap-batch"),
+    )
+    .await?;
+
+    // Response length contract:
+    //   merging chain (X Layer 196/1952) → response.len ∈ {1, request_len}
+    //   non-merging EVM                  → response.len == request_len
+    //   anything else                    → bail
+    let merging_chain = crate::chains::merges_batch_unsignedinfo(chain_index);
+    let length_ok = if merging_chain {
+        responses.len() == 1 || responses.len() == tx_params.len()
+    } else {
+        responses.len() == tx_params.len()
+    };
+    if !length_ok {
+        bail!(
+            "batch broadcast on chain {chain_index}: response length {} not in expected set \
+             (request length {}, merging chain={merging_chain})",
+            responses.len(),
+            tx_params.len(),
+        );
+    }
+
+    let hashes: Vec<String> = responses.iter().map(|r| r.tx_hash.clone()).collect();
+    let (approve_tx_hash, swap_tx_hash) = extract_batch_hashes(&hashes, needs_approve, needs_revoke);
+    if cfg!(feature = "debug-log") && needs_revoke && responses.len() >= 2 {
+        eprintln!(
+            "[DEBUG][cmd_execute_batch] revoke txHash={} (silent)",
+            responses[0].tx_hash
+        );
+    }
+
+    let router_result = &swap_result["routerResult"];
+    let out = json!({
+        "approveTxHash": approve_tx_hash,
+        "swapTxHash": swap_tx_hash,
+        "fromToken": router_result["fromToken"],
+        "toToken": router_result["toToken"],
+        "fromAmount": router_result["fromTokenAmount"],
+        "toAmount": router_result["toTokenAmount"],
+        "priceImpact": router_result["priceImpactPercent"],
+        "gasUsed": router_result["estimateGasFee"],
+    });
+    output::success(out);
+    Ok(())
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/// Map batch hashes (input order `[revoke?, approve, swap]`) to
+/// `(approveTxHash, swapTxHash)`. `len==1` = X Layer merge (only swap hash
+/// survives). Caller must pre-validate `hashes.len()`.
+pub(crate) fn extract_batch_hashes(
+    hashes: &[String],
+    needs_approve: bool,
+    needs_revoke: bool,
+) -> (Option<String>, String) {
+    debug_assert!(!hashes.is_empty(), "responses must be non-empty");
+    // len == 1 → X Layer merge: approve folded into swap, only swap hash exists.
+    if hashes.len() == 1 {
+        return (None, hashes[0].clone());
+    }
+    // len > 1 → no merge: swap is always last; approve sits at idx 1 (with revoke
+    // at idx 0) or idx 0 (no revoke); surfaced only when needs_approve.
+    let swap = hashes.last().expect("non-empty").clone();
+    let approve = if needs_approve {
+        let idx = if needs_revoke { 1 } else { 0 };
+        Some(hashes[idx].clone())
+    } else {
+        None
+    };
+    (approve, swap)
+}
 
 /// If the API returns an array, extract the first element; otherwise return as-is.
 fn unwrap_api_array(data: &Value) -> Value {
@@ -1553,6 +1840,27 @@ async fn wait_tx_onchain(client: &mut ApiClient, tx_hash: &str, chain_index: &st
 }
 
 /// Compare allowance (spendable) against required amount.
+/// Single source of truth for approve / revoke gating. Used by both single-tx
+/// and batch swap paths to guarantee identical decisions for identical inputs.
+///
+/// Returns `(needs_approve, needs_revoke)`:
+///   spendable >= amount                                      → (false, false)
+///   spendable == 0                                           → (true,  false)
+///   0 < spendable < amount, non-USDT-pattern token           → (true,  false)
+///   0 < spendable < amount, USDT-pattern token (whitelist)   → (true,  true)
+pub(crate) fn classify_approve_action(
+    chain_index: &str,
+    token: &str,
+    spendable: &str,
+    amount: &str,
+) -> (bool, bool) {
+    let needs_approve = is_allowance_insufficient(spendable, amount);
+    let spendable_nonzero = spendable != "0" && !spendable.is_empty();
+    let needs_revoke =
+        needs_approve && spendable_nonzero && token_requires_revoke(chain_index, token);
+    (needs_approve, needs_revoke)
+}
+
 /// Both are decimal strings in minimal units. Returns true if allowance < amount.
 pub(crate) fn is_allowance_insufficient(spendable: &str, amount: &str) -> bool {
     // If spendable is very long (uint256 max approval = 78 digits), treat as sufficient.
@@ -1581,6 +1889,23 @@ mod tests {
         let uint256_max =
             "115792089237316195423570985008687907853269984665640564039457584007913129639935";
         assert!(!is_allowance_insufficient(uint256_max, "1000000"));
+    }
+
+    #[test]
+    fn classify_approve_action_truth_table() {
+        const USDT_ETH: &str = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+        const USDC_ETH: &str = "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48";
+
+        // spendable >= amount → no approve / no revoke (Layer 4 case)
+        assert_eq!(classify_approve_action("1", USDT_ETH, "1000000", "500000"), (false, false));
+        // spendable == 0 → approve only (no revoke even for USDT)
+        assert_eq!(classify_approve_action("1", USDT_ETH, "0", "1000000"), (true, false));
+        // 0 < spendable < amount, USDT-pattern token → revoke + approve
+        assert_eq!(classify_approve_action("1", USDT_ETH, "100", "1000000"), (true, true));
+        // 0 < spendable < amount, non-USDT-pattern token (USDC) → approve only
+        assert_eq!(classify_approve_action("1", USDC_ETH, "100", "1000000"), (true, false));
+        // 0 < spendable < amount, USDT but on chain without entry → approve only
+        assert_eq!(classify_approve_action("56", USDT_ETH, "100", "1000000"), (true, false));
     }
 
     #[test]
@@ -2104,5 +2429,58 @@ mod tests {
     fn extract_tx_hash_and_order_id_errors_when_tx_hash_missing() {
         let data = json!({ "orderId": "ord_123" });
         assert!(extract_tx_hash_and_order_id(&data).is_err());
+    }
+
+    // ── extract_batch_hashes (input order: [revoke?, approve, swap]) ──
+
+    #[test]
+    fn batch_hashes_full_merge_xlayer_5792() {
+        // XLayer / smart-account: backend collapses [approve, swap] into one tx.
+        let hashes = vec!["0xmerged".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, false);
+        assert_eq!(approve, None);
+        assert_eq!(swap, "0xmerged");
+    }
+
+    #[test]
+    fn batch_hashes_full_merge_with_revoke() {
+        // [revoke, approve, swap] collapsed into one tx.
+        let hashes = vec!["0xmerged".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, true);
+        assert_eq!(approve, None);
+        assert_eq!(swap, "0xmerged");
+    }
+
+    #[test]
+    fn batch_hashes_no_merge_approve_swap() {
+        // EOA chain (Optimism etc.): [approve, swap] kept separate.
+        let hashes = vec!["0xapprove".to_string(), "0xswap".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, false);
+        assert_eq!(approve.as_deref(), Some("0xapprove"));
+        assert_eq!(swap, "0xswap");
+    }
+
+    #[test]
+    fn batch_hashes_no_merge_revoke_approve_swap() {
+        let hashes = vec![
+            "0xrevoke".to_string(),
+            "0xapprove".to_string(),
+            "0xswap".to_string(),
+        ];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, true);
+        // revoke (idx 0) is intentionally not surfaced — see fn doc.
+        assert_eq!(approve.as_deref(), Some("0xapprove"));
+        assert_eq!(swap, "0xswap");
+    }
+
+    #[test]
+    fn batch_hashes_no_approve_needed() {
+        // Allowance sufficient case should short-circuit upstream, but if we
+        // ever reach this fn with needs_approve=false, swap-only output is
+        // the safe behavior.
+        let hashes = vec!["0xswap".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, false, false);
+        assert_eq!(approve, None);
+        assert_eq!(swap, "0xswap");
     }
 }
