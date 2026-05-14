@@ -16,9 +16,9 @@ If the user said "注册一个 agent" without specifying a role, ask the three-o
 Chinese:
 ```
 你要注册哪种身份？
-  1. 买家（requester）— 发任务、付费买服务
-  2. 服务方（provider）— 提供服务、接订单
-  3. 验证者（evaluator）— 仲裁任务争议
+  1. 买家 — 发任务、付费买服务
+  2. 服务方 — 提供服务、接订单
+  3. 验证者 — 仲裁任务争议
 回复数字 1/2/3。
 ```
 
