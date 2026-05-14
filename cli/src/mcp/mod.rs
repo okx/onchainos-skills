@@ -1403,7 +1403,7 @@ impl McpServer {
 
     #[tool(
         name = "social_sentiment_ranking",
-        description = "Top coins ranked by social activity (mention count) over a window. time_frame: '1'=24h (default), '2'=72h, '3'=7 Days, '4'=30 Days. sort_by: '1'=Hot (only value supported). limit default '10'."
+        description = "Top coins ranked by social activity (mention count) over a window. time_frame: '1'=1h (default), '2'=4h, '3'=24h. sort_by: '1'=Hot (only value supported). limit range [1, 50], default '10'."
     )]
     async fn social_sentiment_ranking(
         &self,
@@ -1417,7 +1417,7 @@ impl McpServer {
 
     #[tool(
         name = "social_sentiment_symbol",
-        description = "Aggregated social sentiment for one or more coins. token_symbols required (comma-separated). time_frame: '1'=24h (default) / '2'=72h / '3'=7d / '4'=30d. Snapshot mode by default; pass trend_points (>0) to switch to time-bucketed trend mode."
+        description = "Aggregated social sentiment for one or more coins. token_symbols required (comma-separated, max 20). time_frame: '1'=1h (default) / '2'=4h / '3'=24h. Snapshot mode by default; pass trend_points (>0) to switch to time-bucketed trend mode."
     )]
     async fn social_sentiment_symbol(
         &self,

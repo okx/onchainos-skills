@@ -212,35 +212,35 @@ onchainos social sentiment-ranking [options]
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--time-frame` | No | `1` | `1`=24h, `2`=72h, `3`=7d, `4`=30d |
+| `--time-frame` | No | `1` | Statistical period: `1`=1h, `2`=4h, `3`=24h |
 | `--sort-by` | No | `1` | `1`=hot (only value currently supported) |
-| `--limit` | No | `10` | Page size |
+| `--limit` | No | `10` | Page size, range `[1, 50]` |
 
 **Return fields**:
 
 | Field | Type | Description |
 |---|---|---|
-| `timeFrame` | String | Echo of request period (e.g. `"24h"`) |
-| `ts` | Long | Server snapshot timestamp (Unix ms) |
+| `period` | String | Echo of resolved `timeFrame` (e.g. `"1h"`, `"4h"`, `"24h"`) |
+| `ts` | String | Server snapshot timestamp (Unix milliseconds) |
 | `details[]` | Array | Ranked coins (length ≤ `--limit`) |
 | `details[].tokenSymbol` | String | Coin symbol |
-| `details[].mentionCount` | Integer | Total mentions in the window |
-| `details[].xMentionCount` | Integer | X / Twitter mentions |
-| `details[].newsMentionCount` | Integer | News mentions |
-| `details[].sentiment.bullishCnt` | Integer | Bullish mention count |
-| `details[].sentiment.bearishCnt` | Integer | Bearish mention count |
-| `details[].sentiment.neutralCnt` | Integer | Neutral mention count |
-| `details[].sentiment.bullishRatio` | Double | Bullish share, 0.0–1.0 |
-| `details[].sentiment.bearishRatio` | Double | Bearish share, 0.0–1.0 |
-| `details[].sentiment.label` | String | Aggregate label (e.g. `bullish`) |
+| `details[].mentionCount` | String | Total mentions in the window |
+| `details[].xMentionCount` | String | X / Twitter mentions |
+| `details[].newsMentionCount` | String | News mentions |
+| `details[].sentiment.bullishCnt` | String | Bullish mention count |
+| `details[].sentiment.bearishCnt` | String | Bearish mention count |
+| `details[].sentiment.neutralCnt` | String | Neutral mention count |
+| `details[].sentiment.bullishRatio` | String | Bullish share, `0.0`–`1.0` |
+| `details[].sentiment.bearishRatio` | String | Bearish share, `0.0`–`1.0` |
+| `details[].sentiment.label` | String | Aggregate label: `bullish` / `bearish` / `neutral` / `mixed` |
 
 **Examples**:
 
 ```bash
-# Top 10 coins by 24h chatter
+# Top 10 coins by 1h chatter (default window)
 onchainos social sentiment-ranking
 
-# Top 20 over the last 7 days
+# Top 20 over the last 24h
 onchainos social sentiment-ranking --time-frame 3 --limit 20
 ```
 
@@ -256,36 +256,36 @@ onchainos social sentiment-symbol --token-symbols <symbols> [options]
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--token-symbols` | Yes | - | Comma-separated coin symbols |
-| `--time-frame` | No | `1` | `1`=24h, `2`=72h, `3`=7d, `4`=30d |
-| `--trend-points` | No | - | If `> 0`, include the `trend` array with this many buckets per coin |
+| `--token-symbols` | Yes | - | Comma-separated coin symbols (max 20) |
+| `--time-frame` | No | `1` | Statistical period: `1`=1h, `2`=4h, `3`=24h |
+| `--trend-points` | No | - | If `> 0`, include the `trend` array with this many equally-spaced buckets per coin |
 
 **Return fields**:
 
 | Field | Type | Description |
 |---|---|---|
-| `timeFrame` | String | Echo of request period |
-| `ts` | Long | Server snapshot timestamp (Unix ms) |
+| `period` | String | Echo of resolved `timeFrame` (e.g. `"1h"`, `"4h"`, `"24h"`) |
+| `ts` | String | Server snapshot timestamp (Unix milliseconds) |
 | `details[]` | Array | One entry per requested coin |
 | `details[].tokenSymbol` | String | Coin symbol |
-| `details[].mentionCount` | Integer | Total mentions in window |
-| `details[].xMentionCount` | Integer | X / Twitter mentions |
-| `details[].newsMentionCount` | Integer | News mentions |
+| `details[].mentionCount` | String | Total mentions in window |
+| `details[].xMentionCount` | String | X / Twitter mentions |
+| `details[].newsMentionCount` | String | News mentions |
 | `details[].sentiment` | Object | Same shape as `sentiment-ranking` |
 | `details[].trend[]` | Array | Present only when `--trend-points > 0` |
-| `details[].trend[].ts` | Long | Bucket timestamp (Unix ms) |
-| `details[].trend[].mentionCount` | Integer | Mentions in bucket |
-| `details[].trend[].bullishRatio` | Double | Bullish share in bucket |
-| `details[].trend[].bearishRatio` | Double | Bearish share in bucket |
+| `details[].trend[].ts` | String | Bucket timestamp (Unix milliseconds) |
+| `details[].trend[].mentionCount` | String | Mentions in bucket |
+| `details[].trend[].bullishRatio` | String | Bullish share in bucket |
+| `details[].trend[].bearishRatio` | String | Bearish share in bucket |
 
 **Examples**:
 
 ```bash
-# Current sentiment for BTC and ETH
+# Current sentiment for BTC and ETH (1h window, default)
 onchainos social sentiment-symbol --token-symbols BTC,ETH
 
 # 24-bucket hourly trend for BTC over the last 24h
-onchainos social sentiment-symbol --token-symbols BTC --time-frame 1 --trend-points 24
+onchainos social sentiment-symbol --token-symbols BTC --time-frame 3 --trend-points 24
 ```
 
 ---

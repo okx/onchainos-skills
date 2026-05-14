@@ -16,13 +16,26 @@
 | 首发提及 / 首次提到 | first mention, first to tweet | `onchainos social vibe-top-kols` (`firstMention` field) |
 | 重要新闻 / 高重要度 | important / high-importance news | `--importance 1` on news commands |
 | 看涨新闻 / 看跌新闻 | bullish / bearish news | `--sentiment 1` (bullish) / `--sentiment 2` (bearish) on `news-by-symbol` / `news-search` |
-| 24小时 / 三天 / 一周 / 一个月 | 24h / 72h / 7d / 30d | `--time-frame 1` / `2` / `3` / `4` on sentiment + vibe |
+| 一小时 / 四小时 / 24小时 | 1h / 4h / 24h | sentiment endpoints: `--time-frame 1` / `2` / `3` |
+| 24小时 / 三天 / 一周 / 一个月 | 24h / 72h / 7d / 30d | vibe endpoints: `--time-frame 1` / `2` / `3` / `4` |
 
 ## Period Code Reference
 
+The `--time-frame` codes differ between endpoint groups — sentiment is short-window only, vibe is longer-window. The same code number means a different period depending on which command is being called.
+
+### Sentiment endpoints (`sentiment-ranking`, `sentiment-symbol`)
+
 | User phrasing | `--time-frame` |
 |---|---|
-| today, 24h, 24 小时, 1D | `1` |
+| last hour, 1h, 一小时 | `1` (default) |
+| last 4 hours, 4h, 四小时 | `2` |
+| today, 24h, 24 小时, 1D | `3` |
+
+### Vibe endpoints (`vibe-timeline`, `vibe-top-kols`)
+
+| User phrasing | `--time-frame` |
+|---|---|
+| today, 24h, 24 小时, 1D | `1` (default) |
 | 3 days, 三天, 72h, 3D | `2` |
 | this week, 7 days, 一周, 1W | `3` |
 | this month, 30 days, 一个月, 1M | `4` |

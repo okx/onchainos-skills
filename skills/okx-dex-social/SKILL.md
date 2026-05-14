@@ -47,7 +47,7 @@ Some endpoints in this skill may require x402 payment after free quota is exhaus
 | 3 | `onchainos social news-search --keyword <keyword>` | Full-text news search with optional sentiment / importance / coin filters |
 | 4 | `onchainos social news-detail --article-id <id>` | Get the full body of a single article (the only way to retrieve `content` reliably; all list endpoints return summary unless `--detail-level 2`) |
 | 5 | `onchainos social news-platforms` | List available source platforms (use the values as `--platform` filters on the news commands) |
-| 6 | `onchainos social sentiment-ranking` | Top coins ranked by social activity over a window (24h / 72h / 7d / 30d) |
+| 6 | `onchainos social sentiment-ranking` | Top coins ranked by social activity over a window (1h / 4h / 24h) |
 | 7 | `onchainos social sentiment-symbol --token-symbols <symbols>` | Per-coin sentiment metrics (bullish / bearish / neutral counts and ratios), snapshot or time-bucketed `trend` mode |
 | 8 | `onchainos social vibe-timeline --chain <chain> --token-address <address>` | Token "vibe" hotness summary + timeline + sample KOLs per bucket |
 | 9 | `onchainos social vibe-top-kols --chain <chain> --token-address <address>` | Top KOLs discussing a token (capped at upstream TOP50) |
@@ -79,14 +79,14 @@ Some endpoints in this skill may require x402 payment after free quota is exhaus
 - **Pagination**: all news list endpoints (`news-latest`, `news-by-symbol`, `news-search`) support `--limit` (default `10`, max `50`) and `--cursor`. Use the response's `cursor` field for the next page; `cursor: null` means the last page.
 
 **Sentiment:**
-- `--time-frame`: `1` = 24h (default), `2` = 72h, `3` = 7d, `4` = 30d. Map user phrasing: "today / 24小时" → `1`; "3 days / 三天" → `2`; "this week / 7d / 一周" → `3`; "this month / 30d / 一个月" → `4`.
+- `--time-frame`: `1` = 1h (default), `2` = 4h, `3` = 24h. Map user phrasing: "last hour / 一小时" → `1`; "last 4 hours / 四小时" → `2`; "today / last 24h / 24小时 / 一天" → `3`. Anything longer than 24h is not supported here — for week/month ranges, look at vibe instead.
 - `sentiment-ranking` `--sort-by`: only `1` = hot is currently supported.
-- `sentiment-ranking` `--limit` defaults to `10` (max `50`).
-- `sentiment-symbol` requires `--token-symbols` (comma-separated). `--trend-points <N>` is optional — set it (e.g. `24` for hourly buckets across 24h, max `200`) when the user asks for a chart / trendline / 走势; omit otherwise to keep payload small (snapshot mode).
+- `sentiment-ranking` `--limit` range `[1, 50]`, default `10`.
+- `sentiment-symbol` requires `--token-symbols` (comma-separated, max 20). `--trend-points <N>` is optional — set it (e.g. `24` for hourly buckets across 24h) when the user asks for a chart / trendline / 走势; omit otherwise to keep payload small (snapshot mode).
 
 **Vibe:**
 - Both vibe commands require `--chain` (resolved by name, e.g. `ethereum`, `solana`) and `--token-address`. If the user only gave a symbol, resolve via `okx-dex-token` (`onchainos token search`) first — never guess a contract address.
-- `--time-frame`: same `1/2/3/4` mapping as sentiment.
+- `--time-frame` (vibe-only mapping, longer windows): `1` = 24h (default), `2` = 72h, `3` = 7d, `4` = 30d. Distinct from the sentiment endpoints' 1h/4h/24h.
 - `vibe-top-kols` `--sort-by`: `1` = engagement (default), `2` = mentions, `3` = impressions. `--limit` defaults to `20`, capped at upstream `TOP50`.
 
 ### Step 2: Call and Display
@@ -101,7 +101,7 @@ Some endpoints in this skill may require x402 payment after free quota is exhaus
 **Sentiment:**
 - For `sentiment-ranking`, render a ranked table: rank, symbol, total mentions, X mentions, news mentions, bullish/bearish ratios, label. Make ratios `%` — multiply by 100 with one or two decimals.
 - For `sentiment-symbol`, render the same per-coin block; if `trend` is present, summarize it as a small inline trendline (or table) with bucket time + mention count + bullish ratio.
-- The `timeFrame` field in the response is the **echo** (e.g. `"24h"`) — display it verbatim so the user knows the window.
+- The response carries a `period` field (string echo of the resolved `timeFrame`, e.g. `"1h"` / `"24h"`) — display it verbatim so the user knows the window.
 
 **Vibe:**
 - For `vibe-timeline`, lead with `summary` (score, mentions, engagement, impressions) and each value's `*ChangeRate` rendered as `+X%` / `-X%`. Then render the timeline buckets in chronological order with score + mention count + a few sample KOL handles.

@@ -114,21 +114,21 @@ pub struct SocialNewsDetailParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SocialSentimentRankingParams {
-    /// Time window: "1" (24h, default), "2" (72h), "3" (7 Days), "4" (30 Days).
+    /// Statistical period: "1" (1h, default), "2" (4h), "3" (24h).
     pub time_frame: Option<String>,
-    /// Ranking criterion: "1" (Hot — by social activity). Default "1".
+    /// Ranking criterion: "1" (Hot — by mention count). Default "1" (only value currently supported).
     pub sort_by: Option<String>,
-    /// Page size (default "10").
+    /// Number of results, range [1, 50]. Default "10".
     pub limit: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SocialSentimentSymbolParams {
-    /// Comma-separated coin symbols (required), e.g. "BTC,ETH".
+    /// Comma-separated coin symbols (required), e.g. "BTC,ETH". Max 20 symbols.
     pub token_symbols: String,
-    /// Time window: "1" (24h, default), "2" (72h), "3" (7 Days), "4" (30 Days).
+    /// Statistical period: "1" (1h, default), "2" (4h), "3" (24h).
     pub time_frame: Option<String>,
-    /// If > 0, include a `trend` series with this many time buckets per coin.
+    /// If > 0, include a `trend` series with this many equally-spaced time buckets per coin.
     pub trend_points: Option<String>,
 }
 
@@ -261,24 +261,25 @@ pub enum SocialCommand {
     NewsPlatforms,
     /// Top coins ranked by social activity (mention count) over a window.
     SentimentRanking {
-        /// Time window: 1=24h (default), 2=72h, 3=7d, 4=30d.
+        /// Statistical period: 1=1h (default), 2=4h, 3=24h.
         #[arg(long)]
         time_frame: Option<String>,
         /// Sort: 1=Hot (only value supported).
         #[arg(long)]
         sort_by: Option<String>,
+        /// Page size, range [1, 50] (default 10).
         #[arg(long)]
         limit: Option<String>,
     },
     /// Sentiment metrics for one or more coins (snapshot or time-bucketed trend).
     SentimentSymbol {
-        /// Comma-separated coin symbols (required).
+        /// Comma-separated coin symbols (required, max 20).
         #[arg(long)]
         token_symbols: String,
-        /// Time window: 1=24h (default), 2=72h, 3=7d, 4=30d.
+        /// Statistical period: 1=1h (default), 2=4h, 3=24h.
         #[arg(long)]
         time_frame: Option<String>,
-        /// If > 0, switch to trend mode and return N buckets per coin (max 200).
+        /// If > 0, switch to trend mode and return N equally-spaced buckets per coin.
         #[arg(long)]
         trend_points: Option<String>,
     },
