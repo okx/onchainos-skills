@@ -50,12 +50,13 @@ Applies to every role flow. Applies to every service sub-field. No exceptions.
 
 ### Preview ≠ multi-field ask
 
-Showing a **declarative preview** at the start of each phase ("接下来会问你：名称、描述、头像（可选）。" / "Next we'll collect: Name, Description, Picture (optional).") is **allowed and encouraged** — it sets expectations and lets users decide whether to one-shot. Previews are statements, not asks; they are always followed by a single `Q1：` / `Q1:` asking exactly one field.
+Showing a **declarative preview** at the start of each phase ("接下来会问你：名称、描述、头像（可选）。" / "Next we'll collect: Name, Description, Picture (optional).") is **allowed and encouraged** — it sets expectations and lets users decide whether to one-shot. Previews are statements, not asks; they are always followed by a single field question, **asked in natural language — no `Q1：` / `Q1:` prefix** in the user-visible prompt (see `SKILL.md §UX Output Red Lines Red line 3` and `references/ux-lexicon.md` flow-term table).
 
 The distinction is verb mood:
 
 - ❌ Banned (imperative, multi-field): "请提供 1. 名称 2. 描述 3. 头像" / "Please provide: 1. Name 2. Description 3. Picture"
-- ✅ Allowed (declarative preamble + single Q): "接下来会收集：名称、描述、头像（可选）。\n\nQ1：这个 provider 叫什么名字？" / "Next we'll collect: Name, Description, Picture (optional).\n\nQ1: What's the name of this provider?"
+- ❌ Banned (declarative preamble + Q-prefix leak): "接下来会收集：…\n\n**Q1：这个卖家身份叫什么名字？**" — the `Q1：` prefix leaks an internal label into chat output (Red line 3); also note this example uses the localized term `卖家身份`, not the raw English `provider` (Red line 4 + `references/ux-lexicon.md` role table)
+- ✅ Allowed (declarative preamble + single natural-language question): "接下来会收集：名称、描述、头像（可选）。\n\n这个卖家身份叫什么名字？" / "Next we'll collect: Name, Description, Picture (optional).\n\nWhat's the name of this provider?" — Chinese uses the localized role term `卖家身份`; English keeps the ERC-8004 native term `provider` (asymmetric — see `references/ux-lexicon.md` role table rationale)
 
 If in doubt: the preamble describes what will happen; the Q asks for exactly one thing.
 
@@ -63,7 +64,7 @@ If in doubt: the preamble describes what will happen; the Q asks for exactly one
 
 Before entering any role flow triggered by the user's own initiative, run `agent get` **once** to see if they already have an agent of the requested role.
 
-**每个地址下 requester 和 evaluator 只能各有一个**（产品约定，后端兜底拒绝第二次）。Provider 不限——同一个地址可以有多个 provider 身份（便于分别提供不同服务）。Pre-check 结果按 role 分两条支路：
+**每个地址下买家身份 (`requester`) 和验证者身份 (`evaluator`) 只能各有一个**（产品约定，后端兜底拒绝第二次）。卖家身份 (`provider`) 不限——同一个地址可以有多个卖家身份（便于分别提供不同服务）。Pre-check 结果按 role 分两条支路：
 
 > ⚠️ **展示口径 vs 唯一性判定口径不一样（双层 envelope 的产物，必须读完）。**
 >
@@ -78,30 +79,30 @@ Before entering any role flow triggered by the user's own initiative, run `agent
 
 如果已存在同 role 的 agent，**不要**提供"新建"选项，不要进入 create 流程。直接告知并指向 update：
 
-> 中文："**在当前钱包下**你已经有 <role> 身份 #<N>（<name>）。同一个地址只能注册一个 <role>，想改描述 / 头像就说 `更新 #<N>`，或者直接拿这个身份继续用。（如果你想要在另一个地址下再注册一个 <role>，请先用 `okx-agentic-wallet` 切换或新增钱包。）"
+> 中文："**在当前钱包下**你已经有 <role> 身份 #<N>（<name>）。同一个地址只能注册一个 <role>，想改描述 / 头像就跟我说"更新 #<N>"，或者直接拿这个身份继续用。（如果你想在另一个地址下再注册一个 <role>，先切换 / 新增钱包再来 — 跟我说"切换钱包"或"新增钱包"就行。）"
 >
-> English: "**Under this wallet** you already have a <role> identity #<N> (<name>). Each address can only register one <role> — say `update #<N>` if you want to edit description / picture, or just keep using this one. (If you want a separate <role> under a different address, switch or add a wallet via `okx-agentic-wallet` first.)"
+> English: "**Under this wallet** you already have a <role> identity #<N> (<name>). Each address can only register one <role> — say "update #<N>" if you want to edit description / picture, or just keep using this one. (If you want a separate <role> under a different address, switch / add a wallet first — say "switch wallet" or "add wallet" to do that.)"
 
-`<role>` 中文渲染为对应 user-facing label（`买家` / `验证者`），英文渲染为 CLI value (`requester` / `evaluator`)。"在当前钱包下" / "Under this wallet" 是必须保留的限定语 —— 唯一性约束是 per-address 不是 per-email；如果用户名下其他派生钱包有同 role agent，那是另一回事，不应让本提示听起来像跨钱包的全局唯一性。
+`<role>` 中文渲染为对应 user-facing label（`买家` / `验证者`），英文渲染为 CLI value (`requester` / `evaluator`)。"在当前钱包下" / "Under this wallet" 是必须保留的限定语 —— 唯一性约束是 per-address 不是 per-email；如果用户名下其他派生钱包有同 role agent，那是另一回事，不应让本提示听起来像跨钱包的全局唯一性。⛔ **不要把 skill 名 `okx-agentic-wallet` 写进用户可见话术**（Red line 1）—— 用户说"切换钱包" / "新增钱包" / "switch wallet" / "add wallet" 时 AI 内部路由到 wallet skill，用户读不到 skill 名字。
 
 用户如果坚持要另一个，重申产品限制，不要绕开（后端会拒）。
 
 ### provider（可多开）
 
-两条路都允许。用编号选项问（参考 `SKILL.md §Choice prompts`）。**K 仅按"当前选中 XLayer 钱包对应的那一组 wrapper"内的 provider 数计算**（见上面的 ⚠️ callout）—— 其他 wrapper 下的 provider 属于别的派生钱包，不计入 K，也不列入候选。**当前钱包对应 wrapper 内 K ≥ 1 时，列出该 wrapper 内所有现有 provider**（用户需要看到他们到底有哪些，才能判断是新开还是改其中之一）：
+两条路都允许。用编号选项问（参考 `SKILL.md §Choice prompts`）。**K 仅按"当前选中 XLayer 钱包对应的那一组 wrapper"内的卖家身份数计算**（见上面的 ⚠️ callout）—— 其他 wrapper 下的卖家身份属于别的派生钱包，不计入 K，也不列入候选。**当前钱包对应 wrapper 内 K ≥ 1 时，列出该 wrapper 内所有现有卖家身份**（用户需要看到他们到底有哪些，才能判断是新开还是改其中之一）。⛔ **Chinese 用户提示一律用 `卖家身份` / `卖家`，不要把英文 `provider` 写进用户看的话**（Red line 4 + `references/ux-lexicon.md` role table）：
 
 中文（K = 1）：
 ```
-在当前钱包下你已经有 1 个 provider 身份：#<N1>（<name1>）。这次是：
-  1. 再开一个新的 provider（同一个地址可多开）
+在当前钱包下你已经有 1 个卖家身份：#<N1>（<name1>）。这次是：
+  1. 再开一个新的卖家身份（同一个地址可多开）
   2. 修改 #<N1> 的描述 / 头像 / 服务
 回复 1 或 2。
 ```
 
 中文（K ≥ 2，列出所有）：
 ```
-在当前钱包下你已经有 K 个 provider 身份：#<N1>（<name1>）, #<N2>（<name2>）, …, #<NK>（<nameK>）。这次是：
-  1. 再开一个新的 provider（同一个地址可多开）
+在当前钱包下你已经有 K 个卖家身份：#<N1>（<name1>）, #<N2>（<name2>）, …, #<NK>（<nameK>）。这次是：
+  1. 再开一个新的卖家身份（同一个地址可多开）
   2. 修改其中某一个
 回复 1 或 2。
 ```

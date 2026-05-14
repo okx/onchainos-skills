@@ -34,15 +34,15 @@ Walk this ladder in order:
    - If the user has switched wallets since the cached id was first mentioned (any `okx-agentic-wallet wallet switch` / `wallet add` in between), **fall through to ladder 2** unconditionally — wallet switch invalidates the cache for `--creator-id` purposes even if the id technically still exists.
    When falling through, do NOT echo "I had #N cached but it doesn't belong to the current wallet" as the user-visible explanation by default — just run ladder 2 and surface the new candidate list. Surface the wallet-mismatch reason only if the user explicitly asks "why didn't you use #N?" or if ladder 2 yields 0 candidates and you need to explain why creating an agent under the current wallet is the next step.
 2. **Run `onchainos agent get`** (no `--agent-ids`). The response is a **double-layer envelope** (`cli-reference.md §3`): outer `list[*]` is an accountName wrapper (one per derived wallet the JWT caller has visibility into), agent rows live at `list[*].agentList[*]`. Since `--creator-id` must be held by the **same XLayer wallet that will sign this `feedback-submit` tx**, the candidate set is **NOT** all `agentList[*]` across all wrappers — narrow to the single wrapper where `wrapper.ownerAddress == <currently selected XLayer wallet address>`, then count agents in that wrapper's `agentList`:
-   - **0 agents under the current wallet** → STOP. Tell the user: "你当前钱包下还没有注册 agent，先 `agent create` 一个（任意 role）才能给别人打分。" Offer to enter the `create` flow. (Other wrappers may have agents — those belong to other derived wallets under the same email / JWT, and **cannot** sign this tx; do not list them as candidates.)
-   - **1 agent under the current wallet** → silently use its agentId as `--creator-id`; mention the choice in the confirmation: "你的 agent #N <name> 会作为 creator 出现在这条评分上。"
-   - **Multiple agents under the current wallet** → ask the user which to use, using the numbered-options pattern (`SKILL.md §Choice prompts`) in the user's language:
+   - **0 agents under the current wallet** → STOP. Tell the user (in their language; ⛔ no CLI literal, no raw `role` word — Red lines 2 & 4): Chinese: "你当前钱包下还没注册 agent — 得先注册一个（买家 / 卖家 / 验证者都行）才能给别人打分。要现在就注册吗？" / English: "You don't have an agent under the current wallet yet — you'll need to register one first (any role: requester / provider / evaluator) before you can rate others. Want to register one now?" Offer to enter the registration flow. (Other wrappers may have agents — those belong to other derived wallets under the same email / JWT, and **cannot** sign this tx; do not list them as candidates.)
+   - **1 agent under the current wallet** → silently use its agentId as `--creator-id`; mention the choice in the confirmation (in the user's language): Chinese: "你的 agent #N <name> 会作为这条评价的发起人。" / English: "Your agent #N <name> will be the reviewer for this rating."
+   - **Multiple agents under the current wallet** → ask the user which to use, using the numbered-options pattern (`SKILL.md §Choice prompts`) in the user's language. ⛔ Render role labels per `ux-lexicon.md §Role` asymmetric rule (Chinese localizes; English keeps ERC-8004 native term):
 
      Chinese:
      ```
-     你要用哪个 agent 作为评价人？
-       1. #88 requester  MyBuyer
-       2. #99 provider   DeFi Analyzer
+     你要用哪个 agent 作为这条评价的发起人？
+       1. #88 买家  MyBuyer
+       2. #99 卖家  DeFi Analyzer
      回复对应数字。
      ```
 
@@ -97,19 +97,33 @@ Walk this ladder in order:
 
 > ⛔ `feedback-submit` is an on-chain write — the confirmation card is **mandatory** per `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)`. Auto-execute preferences, prior in-conversation confirmations of other writes, and "the user obviously wants this" do NOT bypass the gate. Render the card.
 
-Render a 2-column table (not a bash blob). Follow `display-formats.md` §Create/Update Diff style:
+Render a 2-column table (not a bash blob), in the user's language. Follow `display-formats.md` §Create/Update Diff style. ⛔ Do NOT mix languages within a single rendering (no `评分 / Rating` bilingual headers, no `服务方 (provider)` dual labels) — see `display-formats.md §Create variant` and `ux-lexicon.md §Role`.
 
-| Field | Value |
+Chinese variant:
+
+| 字段 | 值 |
 |---|---|
-| creator | #88 requester MyBuyer (你) |
-| target | #42 DeFi Analyzer (provider) |
-| 评分 / Rating | ★ 4 |
-| description | "交付及时、数据准确" |
-| task-id | 0xabc…03e8 |
+| 发起人 | #88 买家 MyBuyer（你） |
+| 目标 | #42 卖家 DeFi Analyzer |
+| 评分 | ★ 4 |
+| 评价 | "交付及时、数据准确" |
+| 任务 ID | 0xabc…03e8 |
 
 > 确认无误回复 "执行" 即可。
 
-The rating row shows `★ N` where N is the integer 0–5. Never render `85 / 100` here. Localize the row label per `SKILL.md §Language Matching` — `评分` for Chinese users, `Rating` for English users.
+English variant:
+
+| Field | Value |
+|---|---|
+| Reviewer | #88 requester MyBuyer (you) |
+| Target | #42 provider DeFi Analyzer |
+| Rating | ★ 4 |
+| Comment | "Delivered on time, data accurate" |
+| Task ID | 0xabc…03e8 |
+
+> Reply "execute" to run.
+
+The rating row shows `★ N` where N is the integer 0–5. Never render `85 / 100` here. Role labels follow `ux-lexicon.md §Role` asymmetric rule (Chinese localizes 买家 / 卖家 / 验证者; English keeps `requester` / `provider` / `evaluator`).
 
 **Do NOT show the bash command in the confirmation card.** Render it only if the user explicitly asks "把命令给我看".
 
@@ -133,7 +147,9 @@ onchainos agent feedback-submit \
 
 Render the detail outcome and offer exactly **one** next-step suggestion — not a menu (see `display-formats.md` §8):
 
-> 已给 #<target> 打 ★ N（N 是用户选的星数 0–5）。要不要看看 #<target> 的最新评价？执行 `agent feedback-list --agent-id <target> --sort-by time_desc`（按时间倒序）；想看评分最高的改 `score_desc`。用户说的中文排序意图按 `cli-reference.md` §10 的映射表转换。Never echo the raw 0–100 score in the post-success line.
+> 已给 #<target> 打 ★ N（N 是用户选的星数 0–5）。要不要看看 #<target> 最近的评价？我帮你拉 — 按时间倒序，还是按评分高低？
+
+⛔ **No CLI literal / no `--sort-by` flag in the user-visible text** (`SKILL.md §UX Output Red Lines Red line 2`). When the user picks a sort direction in natural language ("按时间" / "评分高低" / "latest" / "highest rating" / etc.), the AI maps it via `cli-reference.md §10` natural-language → `--sort-by` table internally and runs `agent feedback-list` itself — the `--sort-by` / `time_desc` / `score_desc` flag values never appear in the chat. Never echo the raw 0–100 score in the post-success line — say "评价 / 评分" / "rating / reviews".
 
 Do NOT chase with `agent feedback-list` automatically. See `_shared/no-polling.md`.
 

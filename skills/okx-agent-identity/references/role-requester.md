@@ -14,7 +14,7 @@ Once role is confirmed as `requester` and pre-check passed (requester is unique 
 
 Chinese:
 ```
-好，开始新 requester 的 create 流程。接下来会收集以下基本信息：
+好，开始注册新买家身份。接下来会收集以下基本信息：
   1. 名称
   2. 描述（可选）
   3. 头像（可选）
@@ -28,17 +28,17 @@ Got it — starting a new requester create. We'll collect:
   3. Picture (optional)
 ```
 
-The preview is **declarative**, not imperative — it describes what's next but does NOT ask for all three at once. See `role-playbook.md §STRICT — Preview ≠ multi-field ask`. Immediately follow the preview with a blank line and `Q1：` / `Q1:`.
+The preview is **declarative**, not imperative — it describes what's next but does NOT ask for all three at once. See `role-playbook.md §STRICT — Preview ≠ multi-field ask`. Immediately follow the preview with a blank line and the first question — rendered in natural language with **no `Q1：` / `Q1:` prefix** (see `SKILL.md §UX Output Red Lines Red line 3` and `references/ux-lexicon.md`).
 
 ## Standard Q&A chain
 
-Questions are labelled `Q1：` / `Q1:` (Chinese / English) in the message to the user. Each Q inlines the four-segment field spec from `field-specs.md` in the user's language only. If §One-shot capture already captured a field, **silently skip that Q** and move to the next.
+The `Q1 / Q2 / Q3` column labels below are **maintainer-internal indexes**. The prompt strings in the Chinese / English columns are the **literal text** rendered to the user — they carry **no `Q1：` / `Q1:` prefix**. Each prompt inlines the four-segment field spec from `field-specs.md` in the user's language only. If §One-shot capture already captured a field, **silently skip that Q** and move to the next.
 
 | Q | Chinese prompt | English prompt | Validation | On failure |
 |---|---|---|---|---|
-| Q1 | `Q1：这个 requester 叫什么名字？` + 4 segments | `Q1: What's the name of this requester?` + 4 segments | non-empty, ≤ 64 chars | re-ask once with a shorter example |
-| Q2 | `Q2：用一句话描述这个 requester（可选，回车 / "跳过" 即不填）。` + 4 segments | `Q2: Describe this requester in a sentence (optional — press enter or reply "skip" to leave blank).` + 4 segments | optional; if supplied then ≤ 500 chars | only re-ask if the supplied value is suspicious; empty / "skip" is accepted as-is |
-| Q3 | `Q3：要设置头像吗？` + Choice prompt (see `avatar-upload.md`) | `Q3: Want to set an avatar?` + Choice prompt | — | skip → backend default avatar |
+| Q1 | `这个买家身份叫什么名字？` + 4 segments | `What's the name of this requester?` + 4 segments | non-empty, ≤ 64 chars | re-ask once with a shorter example |
+| Q2 | `用一句话描述这个买家身份（可选，回车 / "跳过" 即不填）。` + 4 segments | `Describe this requester in a sentence (optional — press enter or reply "skip" to leave blank).` + 4 segments | optional; if supplied then ≤ 500 chars | only re-ask if the supplied value is suspicious; empty / "skip" is accepted as-is |
+| Q3 | `头像呢？用默认还是上传一张？` + Choice prompt (see `avatar-upload.md`) | `Avatar? Default, or upload one?` + Choice prompt | — | skip → backend default avatar |
 
 No service questions. No staking. (Signing address is never asked — the CLI always uses the current wallet's selected XLayer address; `--address` does not exist.)
 
@@ -101,8 +101,8 @@ Render **one visible line** using the template below — **verbatim except for t
 
 Pick the variant matching the user's language. Render **one line, declarative, no question mark, no pre-announcement of the chat handoff** (the chat flow is a silent no-op outside an OpenClaw runtime; pre-announcing would mislead users in Claude Code / Claude Desktop):
 
-- Chinese: `买家身份 #<id> 已注册，可以去 \`okx-agent-task\` 发任务。`
-- English: `Requester identity #<id> is live — head to \`okx-agent-task\` to publish a task.`
+- Chinese: `买家身份 #<id> 注册完成 — 想发任务直接跟我说"发布一个 ... 的任务"，我帮你走完整个流程。`
+- English: `Requester identity #<id> is live — say "publish a task for X" whenever you're ready and I'll take you through it.`
 
 **`#<id>` substitution rule** (per `display-formats.md` top, `#<id>` placeholder rule, **requester-specific constraints**):
 
@@ -112,8 +112,8 @@ Pick the variant matching the user's language. Render **one line, declarative, n
   2. **Post-create envelope diff:** the response envelope is double-layer (see `cli-reference.md §3`), so the filter is **wrapper-level**, not agent-row-level — **two steps, in order**: (a) locate the single wrapper in `envelope.agentList.list[*]` whose `list[*].ownerAddress == <currently selected XLayer wallet address>` (the address that signed this `create`), then (b) inside **that wrapper's** `agentList[*]` only, **diff against the pre-check `agent get` snapshot** captured by §⛔ MANDATORY pre-check gate, and pick the agentId that's **newly present** (in the post-create envelope but not in the pre-check snapshot). For requester this is unambiguous: pre-check returned 0 requesters under this address by construction, so the lone newly-appeared requester-role row in the matching wrapper IS the new id. ❌ Do NOT write the filter as `agentList[*].ownerAddress == ...` — agent rows have no `ownerAddress` field; that phrasing always misses. See `cli-reference.md §1` "Finding the newly-minted `agentId`" for the canonical algorithm. **This is not "borrowing from pre-check"** — pre-check is the baseline, the post-create envelope is the data source; the diff isolates what's new.
   3. (Future) a follow-up `agent get` in a later turn — irrelevant for this immediate response.
 - If **both** source 1 and source 2 miss — i.e. CLI returned `txHash` only **AND** the post-create `agentList` segment is absent (WS + HTTP both failed, per `cli-reference.md §1`) **OR** the diff yielded no new candidate under the current wallet — → **omit the `#<id> ` substring entirely** — do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, and do NOT borrow an id from the pre-check list. Fallback lines:
-  - Chinese: `买家身份已注册，可以去 \`okx-agent-task\` 发任务。`
-  - English: `Requester identity registered — head to \`okx-agent-task\` to publish a task.`
+  - Chinese: `买家身份注册完成 — 想发任务直接跟我说"发布一个 ... 的任务"，我帮你走完整个流程。`
+  - English: `Requester identity is live — say "publish a task for X" whenever you're ready and I'll take you through it.`
 
 Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes).
 
@@ -122,18 +122,18 @@ Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user
 ❌ Agent paraphrased:
 > "✅ 买家身份已成功上链！agentId 是 #42，区块哈希 0xabc...def。可以去 okx-agent-task 找 provider 帮你做事了。需要我帮你看看有哪些 provider 推荐吗？"
 
-Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
+Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate` + `§UX Output Red Lines`:
 
 - Adds `txHash` to the user-visible line — not in the template (txHash lives in the detail card if rendered, not the suggestion line).
 - Adds a follow-up question (`需要我帮你看看有哪些 provider 推荐吗？`) — turns a declarative line into a question. The same-turn handoff to `after-agent-list-changed.md` does not wait for a reply; a trailing question creates a stuck prompt.
 - Adds reassurance phrasing (`已成功上链！`) not in the template — paraphrasing.
-- The "可以去 okx-agent-task 找 provider 帮你做事了" half is also a paraphrase of `可以去 \`okx-agent-task\` 发任务。` — code-fence and verb both drift.
+- Leaks the literal skill name `okx-agent-task` to the user (`§UX Red Line 1` — never expose `okx-*` skill identifiers); the template instead invites the user to say "发布一个 … 的任务" in natural language.
 
 ✅ Correct (with id):
-> 买家身份 #42 已注册，可以去 `okx-agent-task` 发任务。
+> 买家身份 #42 注册完成 — 想发任务直接跟我说"发布一个 ... 的任务"，我帮你走完整个流程。
 
 ✅ Correct (id unknown, txHash-only return):
-> 买家身份已注册，可以去 `okx-agent-task` 发任务。
+> 买家身份注册完成 — 想发任务直接跟我说"发布一个 ... 的任务"，我帮你走完整个流程。
 
 ### Agent directive (internal — do NOT render to the user)
 
@@ -160,8 +160,8 @@ Skip these normally-required steps:
 
 Keep these:
 
-- Ask `name` as `Q1：` / `Q1:`.
-- Ask `description` as `Q2：` / `Q2:`.
+- Ask `name` first (in natural language, no `Q1：` prefix — same Standard Q&A chain wording).
+- Ask `description` second (same — no `Q2：` prefix).
 - Show confirmation table (still field-per-row, still mandatory).
 - Execute.
 
@@ -169,12 +169,14 @@ Keep these:
 
 Return control to the caller. The response to the user is **only one line** in the user's language — **no detail card** in passive mode (the user just confirmed all fields a turn ago; rendering the full detail card would be redundant and would break the lean handoff to `okx-agent-task`). Follow the `#<id>` placeholder rule.
 
+Canonical wording — **must match `references/passive-onboarding.md §Messages to the user` byte-for-byte**; that file is the single source of truth (see `SKILL.md §Passive Onboarding` "Full contract" note). Do NOT drift this wording — if a future change is needed, update `passive-onboarding.md` first and propagate here.
+
 With id available:
-- 中文："已为你创建买家身份 #<id>。现在继续回到发布任务的流程。"
-- English: "Requester identity #<id> created for you. Resuming the task-publish flow."
+- 中文："已为你创建买家身份 #<id>。现在继续发布任务。"
+- English: "Requester identity #<id> created. Resuming the task-publish flow."
 
 Without id:
-- 中文："已为你创建买家身份。现在继续回到发布任务的流程。"
+- 中文："已为你创建买家身份。现在继续发布任务。"
 - English: "Requester identity created. Resuming the task-publish flow."
 
 Do NOT ask "要不要发任务" / "want to publish a task?" — the task skill already has the pending intent; it will resume.

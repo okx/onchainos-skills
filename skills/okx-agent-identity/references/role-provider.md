@@ -16,7 +16,7 @@ Once role is `provider` and pre-check resolved (either "no existing provider" or
 
 Chinese:
 ```
-好，开始新 provider 的 create 流程。先收集身份基本信息：
+好，开始注册新卖家身份。先收集身份基本信息：
   1. 名称
   2. 描述
   3. 头像（可选）
@@ -36,13 +36,13 @@ The preview is declarative; Q1 follows after a blank line. See `role-playbook.md
 
 ### Q&A
 
-Questions labelled `Q1：` / `Q1:`. Each Q inlines the four-segment field spec from `field-specs.md` in the user's language only. Skip any Q whose field was already captured via §One-shot capture.
+The `Q1 / Q2 / Q3` labels in the column below are **maintainer-internal only** — they help this document index questions but **MUST NOT** appear in the prompt strings the AI sends to the user. The prompts in the Chinese/English columns are the literal text rendered to the user; they carry no `Q1：` / `Q1:` prefix. See `SKILL.md §UX Output Red Lines Red line 3` (no Q/S/Phase leakage) and `references/ux-lexicon.md` for the canonical rule. Each prompt inlines the four-segment field spec from `field-specs.md` in the user's language only. Skip any Q whose field was already captured via §One-shot capture.
 
 | Q | Chinese prompt | English prompt | Validation |
 |---|---|---|---|
-| Q1 | `Q1：这个 provider 叫什么名字？` + 4 segments | `Q1: What's the name of this provider?` + 4 segments | non-empty, ≤ 64 chars |
-| Q2 | `Q2：用一句话描述这个 provider。` + 4 segments | `Q2: Describe this provider in a sentence.` + 4 segments | non-empty, ≤ 500 chars |
-| Q3 | `Q3：要设置头像吗？` + Choice prompt (see `avatar-upload.md`) | `Q3: Want to set an avatar?` + Choice prompt | — |
+| Q1 | `这个卖家身份叫什么名字？` + 4 segments | `What's the name of this provider?` + 4 segments | non-empty, ≤ 64 chars |
+| Q2 | `用一句话描述这个卖家身份。` + 4 segments | `Describe this provider in a sentence.` + 4 segments | non-empty, ≤ 500 chars |
+| Q3 | `头像呢？用默认还是上传一张？` + Choice prompt (see `avatar-upload.md`) | `Avatar? Default, or upload one?` + Choice prompt | — |
 
 **Strict phase boundary**: Phase 1 only captures `name` / `description` / `picture`. Even if the user mentions service info ("收 10 USDT"), do NOT capture it here — see `SKILL.md §One-shot capture rule 4`.
 
@@ -56,12 +56,12 @@ Once Phase 1 is complete, render the Phase-2 preview **once** (not repeated for 
 
 Chinese:
 ```
-身份信息收到。接下来为这个 provider 添加服务，每条服务会问：
+身份信息收到。接下来给这个卖家身份配服务，每条服务会问：
   1. 名称
   2. 描述
-  3. 类型（A2MCP 或 A2A）
-  4. 价格（A2MCP 必填，A2A 选填，单位 USDT）
-  5. 接口地址（仅 A2MCP）
+  3. 类型（"API 接口式" 按次付费 / "agent 通信式" 议价 — 后面会展开问）
+  4. 价格（API 接口式必填，agent 通信式选填，单位 USDT）
+  5. 接口地址（仅 API 接口式需要）
 加完一条后会问是否继续加下一条。可以加一条或多条。
 ```
 
@@ -70,7 +70,7 @@ English:
 Identity info captured. Next we'll add services for this provider. For each service we'll ask:
   1. Name
   2. Description
-  3. Type (A2MCP or A2A)
+  3. Type (A2MCP = API-interface, pay-per-call / A2A = agent-to-agent, off-chain pricing — explained again when we ask)
   4. Fee in USDT (A2MCP required, A2A optional)
   5. Endpoint (A2MCP only)
 After each service we'll ask whether to add another. One or more services, your choice.
@@ -82,7 +82,7 @@ Preview is declarative, not imperative — see `role-playbook.md §STRICT`.
 
 For each service, ask the fields in this exact order. The reason: name + description apply to both types, so they come first; type is the branching switch; fee is required for A2MCP and optional for A2A (when an A2A user skips, the wire payload still carries `"fee": ""` because `cli/src/commands/agent_commerce/identity/models.rs:21` declares `fee: String` without `skip_serializing_if`); endpoint is only needed for A2MCP.
 
-Questions inside each service iteration are labelled `Q1：` / `Q2：` / … / `Q5：` (reset per iteration). The preamble for service `[N]` ("接下来是服务[N]：" / "Now service [N]:") contextualizes which service is being collected. Q6 is the loop gate and uses the numbered-options pattern (not a "Q" label).
+The `Q1 / Q2 / ... / Q5` column labels in the per-service tables below are **maintainer-internal indexes only** — they reset per service iteration but **MUST NOT** appear as prefixes in the prompt strings the AI sends to the user. The prompts in the Chinese/English columns are the literal text rendered to the user; they carry no `Q1：` / `Q1:` prefix. See `SKILL.md §UX Output Red Lines Red line 3` and `references/ux-lexicon.md`. The preamble for service `[N]` ("接下来是服务[N]：" / "Now service [N]:") contextualizes which service is being collected. The loop gate is a numbered-options pattern, not a Q-labelled question.
 
 The **Ask column below shows what the skill says to the user, in user language**. The **Maps to column shows the CLI JSON key** that the collected value lands under in the `--service` payload — that stays English and unchanged regardless of user language.
 
@@ -90,22 +90,22 @@ Chinese per-service Q&A (render `接下来是服务[N]：` as a one-line preambl
 
 | Step | 问用户 (label and prompt) | Validation | Maps to (JSON key) |
 |---|---|---|---|
-| Q1 | `Q1：这个服务叫什么名字？` + 4 segments (see `field-specs.md`) | non-empty, ≤ 64 chars | `name` |
-| Q2 | `Q2：详细介绍一下这项服务。` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
-| Q3 | `Q3：这项服务是哪种类型？` + numbered-options (`SKILL.md §Choice prompts`):<br>&nbsp;&nbsp;`1. A2MCP — 标准 MCP 接口，按次付费`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent 协议，价格默认链外议价（可选填上链参考价）`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid servicetype`。用户直接写 `A2MCP` / `A2A` 也接受。 | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
-| Q4 | if `A2MCP` → `Q4：每次调用收多少 USDT？（最多六位小数，例如 1.234567 / 10 / 0.5 / 0）` + 4 segments ; if `A2A` → `Q4：这项服务的参考价是多少 USDT？（选填，最多六位小数；不填表示链外按次议价。直接回车 / 回复 "跳过" / "skip" 即可跳过）` + 4 segments | A2MCP: number ≥ 0，最多六位小数。**Internal validation pattern, do NOT show to user**: `^\d+(\.\d{1,6})?$`，非空必填。A2A: 空 或 满足同一 pattern | `fee` (A2A 跳过时仍会以 `"fee":""` 进入 wire payload——`models.rs:21` 的 `fee: String` 没有 `skip_serializing_if`。skill 渲染时按 `空 → 免费/free`；后端是否区分"空串 vs 缺失键"由产品 spec 决定，本地代码不可证实) |
-| Q5 | if `A2MCP` → `Q5：MCP 接口地址是什么？必须 https:// 开头。` + 4 segments ; if `A2A` → skip | starts with `https://`; **Internal length limit, do NOT proactively show to user**: ≤ 512 chars (mention only when user input exceeds it) | `endpoint` (A2A 即使用户给了 CLI 也会清掉，见 `utils.rs::normalize_service`) |
+| Q1 | `这个服务叫什么名字？` + 4 segments (see `field-specs.md`) | non-empty, ≤ 64 chars | `name` |
+| Q2 | `详细介绍一下这项服务。` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
+| Q3 | `这项服务是哪种类型？` + numbered-options (`SKILL.md §Choice prompts`):<br>&nbsp;&nbsp;`1. API 接口式服务（按次付费，标准 MCP 接口）`<br>&nbsp;&nbsp;`2. agent 通信式服务（agent-to-agent，价格默认链外议价；可选填上链参考价）`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid servicetype`。用户直接写 `A2MCP` / `A2A` 也接受（已经认识术语）。⛔ Never render bare `A2MCP` / `A2A` to first-time user without the gloss — see `references/ux-lexicon.md` service-type table. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
+| Q4 | if `A2MCP` → `每次调用收多少 USDT？（最多六位小数，例如 1.234567 / 10 / 0.5 / 0）` + 4 segments ; if `A2A` → `这项服务的参考价是多少 USDT？（选填，最多六位小数；不填表示链外按次议价。直接回车 / 回复 "跳过" / "skip" 即可跳过）` + 4 segments | A2MCP: number ≥ 0，最多六位小数。**Internal validation pattern, do NOT show to user**: `^\d+(\.\d{1,6})?$`，非空必填。A2A: 空 或 满足同一 pattern | `fee` (A2A 跳过时仍会以 `"fee":""` 进入 wire payload——`models.rs:21` 的 `fee: String` 没有 `skip_serializing_if`。skill 渲染时按 `空 → 免费/free`；后端是否区分"空串 vs 缺失键"由产品 spec 决定，本地代码不可证实) |
+| Q5 | if `A2MCP` → `MCP 接口地址是什么？必须 https:// 开头，且公网可达（买家会从公网来调你）。` + 4 segments ; if `A2A` → skip | starts with `https://`; **Internal length limit, do NOT proactively show to user**: ≤ 512 chars (mention only when user input exceeds it); also reject any host matching `SKILL.md §Endpoint Anti-Pattern` blacklist (localhost / 127.0.0.1 / 192.168 / 10.* / 172.16-31.* / *.local / *.internal / Mock URL / `http://`). | `endpoint` (A2A 即使用户给了 CLI 也会清掉，见 `utils.rs::normalize_service`) |
 | Loop gate | Numbered-options prompt (no `Q` label, it's a flow switch):<br>`还要再加一项服务吗？`<br>&nbsp;&nbsp;`1. 再加一项`<br>&nbsp;&nbsp;`2. 不加了，到此为止`<br>`回复 1 或 2。` | reply 1 or 2 | — |
 
 English per-service Q&A (render `Now service [N]:` as a one-line preamble before Q1):
 
 | Step | Ask the user (label and prompt) | Validation | Maps to (JSON key) |
 |---|---|---|---|
-| Q1 | `Q1: What's the name of this service?` + 4 segments | non-empty, ≤ 64 chars | `name` |
-| Q2 | `Q2: Describe this service.` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
-| Q3 | `Q3: Which type is this service?` + numbered-options:<br>&nbsp;&nbsp;`1. A2MCP — standard MCP interface, pay-per-call`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent protocol, off-chain pricing by default (optional on-chain reference fee)`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid servicetype`. Writing `A2MCP` / `A2A` directly is also accepted. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
-| Q4 | if A2MCP → `Q4: Price per call in USDT? (up to 6 decimal places, e.g., 1.234567 / 10 / 0.5 / 0)` + 4 segments ; if A2A → `Q4: Reference price in USDT for this service? (optional, up to 6 decimal places; leave empty to signal off-chain per-call negotiation. Press enter / reply "skip" / "跳过" to skip)` + 4 segments | A2MCP: number ≥ 0, ≤ 6 decimal places. **Internal validation pattern, do NOT show to user**: `^\d+(\.\d{1,6})?$`, must be non-empty. A2A: empty OR matches the same pattern | `fee` (when A2A is left empty, the wire payload still carries `"fee": ""` — `models.rs:21` `fee: String` has no `skip_serializing_if`. The skill renders empty fee as `免费` / `free`; whether the backend distinguishes empty-string from absent-key is governed by the product spec and cannot be verified from this repo) |
-| Q5 | if A2MCP → `Q5: What's the MCP endpoint URL? Must start with https://.` + 4 segments ; if A2A → skip | starts with `https://`; **Internal length limit, do NOT proactively show to user**: ≤ 512 chars (mention only when user input exceeds it) | `endpoint` (for A2A the CLI clears this even if supplied — `utils.rs::normalize_service`) |
+| Q1 | `What's the name of this service?` + 4 segments | non-empty, ≤ 64 chars | `name` |
+| Q2 | `Describe this service.` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
+| Q3 | `Which type is this service?` + numbered-options:<br>&nbsp;&nbsp;`1. API-interface service (pay-per-call, standard MCP interface)`<br>&nbsp;&nbsp;`2. agent-to-agent service (off-chain pricing by default; optional on-chain reference fee)`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid servicetype`. Writing `A2MCP` / `A2A` directly is also accepted (user already speaks the term). ⛔ Never render bare `A2MCP` / `A2A` to a first-time user without the gloss — see `references/ux-lexicon.md` service-type table. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
+| Q4 | if A2MCP → `Price per call in USDT? (up to 6 decimal places, e.g., 1.234567 / 10 / 0.5 / 0)` + 4 segments ; if A2A → `Reference price in USDT for this service? (optional, up to 6 decimal places; leave empty to signal off-chain per-call negotiation. Press enter / reply "skip" / "跳过" to skip)` + 4 segments | A2MCP: number ≥ 0, ≤ 6 decimal places. **Internal validation pattern, do NOT show to user**: `^\d+(\.\d{1,6})?$`, must be non-empty. A2A: empty OR matches the same pattern | `fee` (when A2A is left empty, the wire payload still carries `"fee": ""` — `models.rs:21` `fee: String` has no `skip_serializing_if`. The skill renders empty fee as `免费` / `free`; whether the backend distinguishes empty-string from absent-key is governed by the product spec and cannot be verified from this repo) |
+| Q5 | if A2MCP → `What's the MCP endpoint URL? Must start with https:// and be reachable from the public internet (buyers will call it from anywhere).` + 4 segments ; if A2A → skip | starts with `https://`; **Internal length limit, do NOT proactively show to user**: ≤ 512 chars (mention only when user input exceeds it); also reject any host matching `SKILL.md §Endpoint Anti-Pattern` blacklist (localhost / 127.0.0.1 / 192.168 / 10.* / 172.16-31.* / *.local / *.internal / Mock URL / `http://`). | `endpoint` (for A2A the CLI clears this even if supplied — `utils.rs::normalize_service`) |
 | Loop gate | Numbered-options prompt:<br>`Want to add another service?`<br>&nbsp;&nbsp;`1. Add another`<br>&nbsp;&nbsp;`2. No more, finish here`<br>`Reply 1 or 2.` | reply 1 or 2 | — |
 
 After each service is collected, echo back a one-line summary in the user's language before the loop gate:
@@ -196,8 +196,8 @@ Render **one visible line** using the template below — **verbatim except for t
 
 Pick the variant matching the user's language. Render **one line, declarative, no question mark, no pre-announcement of the chat handoff** (the chat flow is a silent no-op outside an OpenClaw runtime; pre-announcing would mislead users in Claude Code / Claude Desktop):
 
-- Chinese: `Provider 身份 #<id> 已创建并默认上架（已上架）。可以 \`agent search\` 自检曝光，或直接等匹配来的任务。`
-- English: `Provider agent #<id> created and active by default. Run \`agent search\` to sanity-check exposure, or wait for matching tasks.`
+- Chinese: `卖家身份 #<id> 注册完成，默认已上架可以接单。想看看市场上同类卖家长什么样、或确认你自己的曝光，跟我说"找做 ... 的卖家"我帮你搜；否则就等买家上门。`
+- English: `Provider identity #<id> is live and active by default. Say "find providers doing X" if you want me to scan the marketplace for similar agents or confirm your exposure; otherwise just wait for matching tasks.`
 
 **`#<id>` substitution rule** (per `display-formats.md` top, `#<id>` placeholder rule, **with provider-specific carve-out**):
 
@@ -207,8 +207,8 @@ Pick the variant matching the user's language. Render **one line, declarative, n
   3. (Future) a follow-up `agent get` in a later turn — irrelevant for this immediate response.
 - ⚠️ **Provider-specific danger zone — DO NOT pick any id directly from the pre-check list as `#<id>`.** Pre-check reflects state *before* this `create`, so its rows are all older providers, never the newly minted one. Source 2 above is **diff-based** (post-create envelope MINUS pre-check snapshot), not "borrow from pre-check"; it picks the id that's in the post-create envelope but **not** in the pre-check snapshot. Conflating the two is a real failure mode — the agent that does "I see provider #88 in pre-check, must be the new one" instead of running the diff will surface an older provider's id as if it were freshly created, which is misleading.
 - If **both** source 1 (CLI direct id) and source 2 (envelope diff) miss — i.e. CLI returned `txHash` only **AND** the post-create `agentList` segment is also absent (WS + HTTP both failed, per `cli-reference.md §1`) **OR** the diff yielded no new candidate under the current wallet — **omit the `#<id> ` substring entirely**: do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, do NOT borrow from the pre-check list. Fallback lines:
-  - Chinese: `Provider 身份已创建并默认上架（已上架）。可以 \`agent search\` 自检曝光，或直接等匹配来的任务。`
-  - English: `Provider agent created and active by default. Run \`agent search\` to sanity-check exposure, or wait for matching tasks.`
+  - Chinese: `卖家身份注册完成，默认已上架可以接单。想看看市场上同类卖家长什么样跟我说"找做 ... 的卖家"我帮你搜；否则就等买家上门。`
+  - English: `Provider identity is live and active by default. Say "find providers doing X" if you want me to scan the marketplace; otherwise wait for matching tasks.`
 
 **Create returns active by default** / **Create 默认返回 active** — no need to follow up with `agent activate`. `activate` is only for users who previously ran `deactivate` and now want to re-publish.
 
@@ -224,13 +224,14 @@ Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
 - Not the documented template wording — "已上链" / "第二个 provider" / "4 个活跃客户端" / "你现在有 4 个 agent" are all paraphrases.
 - Mentions `活跃客户端` — that's internal `xmtp_refresh_agents` output, not user-relevant. Internal CLI fields (`agentList`, `activeClients`, refresh-agents counts, the full tx receipt) are NEVER user-facing; the template defines exactly what to expose.
 - Re-renders / counts the agent list (`你现在有 4 个 agent`) — violates the §Agent directive's "do NOT run `agent get`" rule. Even if the count is technically derivable from a prior response, surfacing it on the post-success line is template drift.
-- The template's `可以 \`agent search\` 自检曝光` half is missing — the suggested next action got dropped in favor of the inflated-success preamble.
+- The natural-language "想看市场上同类卖家就跟我说…" half is missing — the suggested next action got dropped in favor of the inflated-success preamble.
+- Uses the raw English `Provider` and the `agent search` CLI literal in Chinese user-visible text — violates `SKILL.md §UX Output Red Lines Red lines 1/2/4` and `references/ux-lexicon.md` (Chinese must localize role term to `卖家`, never paste CLI command for user to run).
 
 ✅ Correct (with id):
-> Provider 身份 #961 已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。
+> 卖家身份 #961 注册完成，默认已上架可以接单。想看看市场上同类卖家长什么样、或确认你自己的曝光，跟我说"找做 ... 的卖家"我帮你搜；否则就等买家上门。
 
 ✅ Correct (id unknown, txHash-only return):
-> Provider 身份已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。
+> 卖家身份注册完成，默认已上架可以接单。想看看市场上同类卖家长什么样跟我说"找做 ... 的卖家"我帮你搜；否则就等买家上门。
 
 ### Agent directive (internal — do NOT render to the user)
 

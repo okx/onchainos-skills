@@ -20,7 +20,7 @@
 - **`agent feedback-submit`:** the CLI returns `{txHash}` only — no agent id at all. The `#<target>` placeholder in the post-success line refers to the *target* agent being rated, which the user explicitly supplied as `--agent-id`. Use that value.
 
 If `#<id>` is not available by the rules above (notably: `feedback-submit` agent id of caller's own, or `create` with `txHash`-only CLI return — see `cli-reference.md` §1 return schema), do **NOT** render a bare `#` with nothing after it. Options, in order of preference:
-1. **Omit the `#<id> ` substring entirely** from the line — render the fallback wording defined in the relevant role file's §Post-success (e.g., "买家身份已注册，可以去 `okx-agent-task` 发任务。" / "Requester identity registered — ...").
+1. **Omit the `#<id> ` substring entirely** from the line — render the fallback wording defined in the relevant role file's §Post-success (e.g., the current requester fallback `买家身份注册完成 — 想发任务直接跟我说"发布一个 ... 的任务"…` / `Requester identity is live — say "publish a task for X" …`; see `role-requester.md` §Post-success fallback lines for the canonical wording).
 2. If no fallback is documented for this context, omit and use neutral wording that doesn't need the id — e.g. "身份已注册，agent id 待后续接口返回" / "Agent created; agent id will be available once the hash→info endpoint ships."
 3. Never invent an id. Never render `# `, `#<id>`, or `#?` to the user. Never reuse an id from the pre-check list for a `create` post-success line.
 
@@ -91,6 +91,34 @@ Rules:
 - `Status` and `Role` use the language-matching label: Chinese users see `已上架 / 已下架` and `买家 / 服务方 / 验证者`; English users see `active / inactive` and `requester / provider / evaluator`. Never render bilingual `active (已上架)`.
 - The footer summary counts BOTH wallets and total agents (`共 N 个钱包、合计 M 个 agent` / `Total N wallets, M agents in all`). `N` = `envelope.total` (= wrapper count); `M` = sum of `wrapper.agentList.length` across wrappers (computed skill-side).
 - If `envelope.total` > requested page size, append the pagination footer in the user's language (`第 <page>/<total_pages> 页，继续翻页说 "下一页"。` ↔ `Page <page>/<total_pages> — say "next page" to continue.`).
+
+### Multi-agent List Reassurance Footer (P0 — counter alarm response)
+
+When the **total agent count across all wrappers is ≥ 5** (`M >= 5`, where `M = sum(wrapper.agentList.length)`), the skill MUST append a reassurance footer **after** the agent tables and **after** the count summary line, in the user's language. This counters the common "I never created these — is my wallet compromised?" reaction that happens to users who landed on this skill via test environments / batch scripts / multiple historical sessions.
+
+Chinese:
+```
+> 提醒: 以上 M 个 agent 都是你自己的——分布在你名下不同钱包账户里
+> （`钱包 wallet-1 / wallet-2 / ...` 每组对应一个派生钱包）。如果你
+> 不记得创建过这些，多半是测试环境或历史脚本批量创建的，**不是钱包
+> 被盗**。想清理可以挑任意一个让我帮你下架。
+```
+
+English:
+```
+> Note: all M agents above are yours — spread across multiple wallet
+> accounts under your login (each `Wallet wallet-1 / wallet-2 / ...`
+> group above is one derived wallet). If you don't remember creating
+> them, they're from past test runs / batch scripts. **Your wallet is
+> not compromised.** Tell me which ones to deactivate if you want to
+> clean up.
+```
+
+**Trigger condition:** `M >= 5` (whether `M` came from 1 wrapper or N wrappers — what matters is total agent surface area visible to the user). When `M < 5` the reassurance footer is omitted (small lists don't trigger the alarm reaction).
+
+**Variant — single wrapper:** if `envelope.total == 1` (one wrapper) and `M >= 5`, drop the "分布在你名下不同钱包账户里" / "spread across multiple wallet accounts" clause and just say "都是你自己的 — 看不太对的话告诉我下架掉" / "all are yours — tell me which look off and I'll deactivate them".
+
+This rule mirrors `SKILL.md §UX Red Lines Red line 5` (no alarmist or out-of-context numbers).
 
 ---
 
@@ -217,7 +245,7 @@ Chinese variant:
 
 | 字段 | 值 |
 |---|---|
-| 角色 | 服务方 (`provider`) |
+| 角色 | 服务方 |
 | 名字 | DeFi Analyzer |
 | 描述 | 链上数据分析与收益模拟。 |
 | 头像 | 默认 |
@@ -282,6 +310,16 @@ Rules:
 - For each service entry, always list all sub-fields — easy to spot accidental drops. Localize the service-field labels per the mapping table above.
 - **Do NOT show the bash command in this card.** If the user asks "把命令给我看", render it as a separate code block afterward; otherwise omit.
 - End every diff card with exactly one line: `确认后回复 "执行" 即可。` (English variant: `Reply "execute" to run.`). Do NOT use any verb like "下发" / "dispatch" / "send" in this footer — see `SKILL.md §Step 3 — No narration between confirmation and result` for why.
+- **Cost & reversibility rows (mandatory).** Every Create-variant card AND Update Diff card MUST include two final rows (rendered immediately above the `确认后回复 "执行" 即可。` line) explaining what the user pays and whether they can undo. Phrasings (substitute the role / action wording per context — these are templates, not literal):
+  - Create variant (2 cols):
+    - 中文: `| 预计费用 | **0 USDT**（创建 / 改 / 上下架都不扣 gas，OKX 一期替你出；service fee 由买家在调用时支付，100% 归你） |`
+    - 英文: `| Estimated cost | **0 USDT** (creating / editing / activating / deactivating costs no gas — OKX covers it in phase 1; service fees are paid by buyers per call and go 100% to you) |`
+    - 中文: `| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；链上 NFT 永久保留，不会丢失记录 |`
+    - 英文: `| Reversible? | Yes — say "deactivate #N" anytime; the on-chain NFT is preserved permanently and your history stays intact |`
+  - Update variant (3 cols — these two rows use only 1 cell that spans across, so render as plain text below the table instead of as table rows):
+    - 中文: `> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再 update 一次即可；操作随时可逆。`
+    - 英文: `> Estimated cost: **0 USDT** (editing fields costs no gas — OKX covers it in phase 1). Reversible: re-run update to revert to the old value at any time.`
+- Source of truth for these costs: `SKILL.md §Cost Disclosure`. ⛔ **Never fabricate other cost items** (no "平台服务费", no "Agent 调度费", no "审核费").
 
 ---
 
@@ -326,21 +364,39 @@ Rules:
 
 ## 5. Feedback list — `agent feedback-list --agent-id <id>`
 
-Header line + one entry per review. Prose-style, not a table — the description can be multi-line.
+Header line + one entry per review. Prose-style, not a table — the description can be multi-line. Pick ONE language variant based on viewing-user language; role labels follow `ux-lexicon.md §Role` asymmetric rule (CN localized, EN kept native). The **review description** is the reviewer's own free text — render verbatim regardless of viewing-user language.
+
+Chinese variant:
+
+> Agent #42 — DeFi Analyzer (卖家) · ★ 4.6 (共 18 条评价)
+
+**#1 · 2026-04-20 · 发起人 #88 (买家 MyBuyer) · ★ 5**
+- 任务: `0xabc…03e8`
+- "交付及时，数据准确"
+
+**#2 · 2026-04-18 · 发起人 #14 (买家 CryptoPM) · ★ 5**
+- "Good analysis, but response time could improve."
+
+**#3 · 2026-04-15 · 发起人 #77 (卖家 DataCo) · ★ 4**
+- (无评论)
+
+> 第 1/2 页，输入 "下一页" 继续。当前按时间倒序排序。
+
+English variant:
 
 > Agent #42 — DeFi Analyzer (provider) · ★ 4.6 (18 reviews)
 
-**#1 · 2026-04-20 · creator #88 (requester MyBuyer) · ★ 5**
+**#1 · 2026-04-20 · reviewer #88 (requester MyBuyer) · ★ 5**
 - task: `0xabc…03e8`
 - "交付及时，数据准确"
 
-**#2 · 2026-04-18 · creator #14 (requester CryptoPM) · ★ 5**
+**#2 · 2026-04-18 · reviewer #14 (requester CryptoPM) · ★ 5**
 - "Good analysis, but response time could improve."
 
-**#3 · 2026-04-15 · creator #77 (provider DataCo) · ★ 4**
+**#3 · 2026-04-15 · reviewer #77 (provider DataCo) · ★ 4**
 - (no comment)
 
-> 第 1/2 页，输入 "下一页" 继续。`--sort-by`: time_desc（按时间倒序）。
+> Page 1/2 — say "next page" to continue. Sorted by date (newest first).
 
 Rules:
 
@@ -348,7 +404,7 @@ Rules:
 - Each review: `#<index> · <date> · creator #<id> (<role> <name>) · ★ <stars>`, where `<stars>` is the **already-converted integer 0–5** returned in each item's `score` field. Skill renders the integer directly — no `score / 20` arithmetic here. The conversion lives in `utils::convert_feedback_list_scores` per the canonical rule pinned in `SKILL.md §Amount Display Rules` reputation block. Never render the raw 0–100 number.
 - Optional `task:` row shows the jobId in backticks; omit if absent.
 - Description in quotes; render `"(no comment)"` when missing.
-- Footer: page indicator + `--sort-by` used (`time_desc` or `score_desc`; see `cli-reference.md` §10 for the natural-language mapping). If `--sort-by` was omitted, render `未指定，后端默认`.
+- Footer: page indicator + **natural-language sort summary** in the user's language. ⛔ **Never paste the raw `--sort-by` flag or its `time_desc` / `score_desc` literal into the footer** (`SKILL.md §UX Output Red Lines Red line 2` — no CLI flags in user-visible text). Render instead: Chinese `当前按时间倒序排序` / `当前按评分高低排序` / `当前按后端默认排序` ; English `Sorted by date (newest first)` / `Sorted by rating (highest first)` / `Sorted by backend default`. The mapping between user-supplied sort intent ↔ `--sort-by` flag value is the AI's internal concern (see `cli-reference.md` §10) and never appears in the chat.
 
 ---
 
@@ -357,7 +413,7 @@ Rules:
 Chinese variant:
 
 > 搜索：`"找个口碑好的做链上数据分析的 provider"`
-> 过滤条件：`--feedback=口碑好`, `--agent-info=provider,链上数据分析`
+> 理解为：口碑好 + 关键词「provider」+「链上数据分析」
 
 | Agent ID | 名字 | 角色 | 评分 | 主打服务 |
 |---|---|---|---|---|
@@ -369,7 +425,7 @@ Chinese variant:
 English variant:
 
 > Search: `"find a highly-rated provider doing on-chain data analysis"`
-> Filters: `--feedback=highly-rated`, `--agent-info=provider,on-chain data analysis`
+> Read as: highly-rated + keywords "provider" / "on-chain data analysis"
 
 | Agent ID | Name | Role | Rating | Top service |
 |---|---|---|---|---|
@@ -380,11 +436,58 @@ English variant:
 
 Rules:
 
-- Echo the `Search:` / `搜索：` line and `Filters:` / `过滤条件：` so the user sees what query produced the result — both in the user's language. The **query value inside the quotes stays the user's original utterance verbatim** (search-query-split.md §Verbatim Passthrough); do NOT translate it.
+- Echo the `Search:` / `搜索：` line so the user sees what query produced the result — in the user's language. The **query value inside the quotes stays the user's original utterance verbatim** (search-query-split.md §Verbatim Passthrough); do NOT translate it.
+- Render the follow-up "understood as / 理解为" line in **natural language** — list the buckets (口碑 / 销量 / 价格 / 状态) and the surviving keyword tokens; **⛔ do NOT paste raw CLI flag names like `--feedback` / `--agent-info` / `--service` / `--status`** (`SKILL.md §UX Output Red Lines Red line 2`). If no filter survived `search-query-split.md` rules, omit the second line entirely; just show `Search:` / `搜索：`.
 - `Top service` / `主打服务` = first service returned by backend; keep it short (≤ 40 chars; truncate with `…`).
 - Inactive agents should not appear in search results **unless the user explicitly searched for inactive agents** (i.e., the `agent search` call's `--status` filter contained a `下架` / `inactive` synonym, per `search-query-split.md` §Boundary rules). If an inactive row appears outside that case (backend anomaly), prefix the row with `⚠`. When the user opted in to inactive search, render results normally without `⚠`.
 - **`状态 / Status` column is conditional.** Default search results omit it (all rows assumed active per the previous rule). When the call's `--status` filter explicitly contained an inactive synonym (`下架` / `inactive` / etc.), MUST add a `状态 / Status` column to the table so the user can verify each row's actual state — render the value in the user's language (Chinese: `已上架` / `已下架`; English: `active` / `inactive`).
 - Role / Status labels follow user language just like §1 / §2.
+
+### Display Completeness — backend pagination vs AI-side truncation
+
+There are **two distinct truncation cases**; they have separate rules. Confusing them is the root cause of the "AI says 共 14 条, 都显示了, but only 3 rows actually rendered" failure.
+
+**Case A — Backend pagination** (`envelope.total > page_size`):
+The backend itself returned only a page. The skill renders that page's rows and appends the pagination footer (`第 <page>/<total_pages> 页，继续翻页说 "下一页"。` / `Page <page>/<total_pages> — say "next page" to continue.`). This case is already documented above in §1 footer rules.
+
+**Case B — AI-side truncation** (`envelope.total ≤ page_size` AND backend returned all rows in this single response, but the AI chooses to render only a subset for brevity):
+
+The full list is in the skill's context (CLI returned all `N` rows in one response). AI rendering K rows where K < N is a **voluntary skill-side compression** — must be signalled explicitly.
+
+- **Option ①** (recommended default): render all `N` rows. The user came here to discover and the cost of more rows is a few hundred tokens.
+- **Option ②** (only when N is large, e.g. > 8): render top K (ranked by `reputation.score` desc, then `salesCount` desc, then `lastOnlineTime` desc — whichever the backend exposes), and MUST append:
+
+  中文:
+  ```
+  > 已展示前 K 条（按口碑 / 销量排序），共 N 条。说"更多" / "展开" / "全部"看剩 N-K 条；
+  > 或说"详情 #<id>"直接看某一条详情。
+  ```
+
+  English:
+  ```
+  > Showing top K (sorted by rating / sales), N total. Say "more" / "show all" / "expand"
+  > for the remaining N-K, or "detail #<id>" to drill into a specific one.
+  ```
+
+### Cross-turn Truncation Memory (P0)
+
+When the AI used Option ② in a previous turn (i.e. it has `list[0..K]` rendered on screen and `list[K..N]` is in context but not shown), and the user **later** says "翻页 / 更多 / 展开 / 还有吗 / 下一页 / 全部 / 剩下的 / more / show all / continue / what else":
+
+- MUST list out `list[K..N]` (the previously hidden remainder) in the same table format, with a fresh "已展示第 K+1 ~ N 条 / Showing rows K+1 .. N" header.
+- ⛔ Forbidden: saying "都显示了 / all displayed / already shown" when on-screen `agentId` count `< envelope.total`.
+- ⛔ Forbidden: when the user asks for "其他候选 / others", offering `agentId`s from `list[0..K]` (already-shown) as if they were "其他" — those are not new.
+- ⛔ Forbidden: emitting an "I'll just summarize, total N agents" response with **zero new `agentId`s** in the chat — that's a no-progress turn.
+
+Self-check before sending: can I quote a specific `agentId` from `list[K..N]`? If not, I haven't actually retrieved the hidden rows; either render them or invoke the CLI again with a fresh page request.
+
+### Search-result anti-pattern audit (zero-tolerance failures)
+
+| Anti-pattern | Why forbidden |
+|---|---|
+| `"共找到 N 个" + "都在第 1 页显示了"` while on-screen rows < N | Self-contradictory; user can count |
+| `"其他候选: #X / #Y"` where #X #Y were already rendered in the same response | "Other" must mean other |
+| `tool_calls: []` + claims about marketplace agents the model couldn't have just looked up | Hallucination — must invoke `agent search` first |
+| Listing `okx-*` skill names as "candidates" instead of running `agent search` | `agent != skill` confusion — see `SKILL.md` description Discovery MUST trigger |
 
 ---
 
@@ -428,11 +531,11 @@ After `create` / `update` / `activate` / `deactivate` / `feedback-submit`, rende
 
 Good (Chinese user):
 
-> Provider 身份已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或等匹配来的任务。
+> 卖家身份注册完成，默认已上架可以接单。想看看市场上同类卖家长什么样跟我说"找做 ... 的卖家"我帮你搜；否则就等买家上门。
 
 Good (English user):
 
-> Provider agent created and active by default. Run `agent search` to sanity-check exposure, or wait for matching tasks.
+> Provider identity is live and active by default. Say "find providers doing X" if you want me to scan the marketplace; otherwise wait for matching tasks.
 
 Bad:
 

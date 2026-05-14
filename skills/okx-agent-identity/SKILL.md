@@ -27,6 +27,26 @@ description: >
   add (`wallet add` adds a wallet ACCOUNT i.e. a new private-key holder; it is never the right
   route for any "身份 / identity / agent / 买家 / 卖家 / requester / provider / evaluator" object —
   if the object word is any of those, route here regardless of which verb the user chose).
+  ⚠️ Discovery MUST (P0): user describes WHAT KIND of marketplace agent they want —
+  "找一个 X 的 agent / 找做 X 的 provider / 帮我找做 X 的 / 找个 X 服务的 agent /
+   找便宜的 / 找口碑好的 / 搜 X / discover X agent / find X provider /
+   find me an agent that does X / 我想找一个能 X 的 agent" — → MUST call
+  `onchainos agent search --query "<user utterance>"` FIRST and render real marketplace
+  rows via `references/display-formats.md §6`. DO NOT list `okx-*` skill names as
+  candidates; DO NOT ask "do you want me to use okx-dex-* or okx-wallet-* skill". Concept
+  anchor: **agent ≠ skill**. An "agent" is a marketplace entity with an on-chain agentId,
+  price, and reputation, published by someone else; a "skill" (okx-dex-* / okx-wallet-* /
+  okx-agent-* etc.) is the assistant's own internal toolset. When the user says "找一个
+  做 X 的 agent" / "find me an agent that does X" they want a marketplace listing, NOT a
+  skill recommendation. The user often does NOT know the word "skill" exists at all.
+  ⚠️ Endpoint inquiry MUST (P0 — fires even when the user is NOT inside an
+  agent-create Q&A flow): "endpoint 是啥 / endpoint 怎么填 / 接口地址怎么填 /
+   我没 https / 可以用 http 吗 / 用 localhost 行吗 / 内网地址可以吗 / 我没部署接口 /
+   Mock 服务行吗 / endpoint 没现成的怎么办 / what's endpoint / can I use http /
+   localhost ok / no https / no deployed API" → MUST quote `references/field-specs.md §endpoint`
+  (https + 公网可达 + 买家直连) AND surface `§Endpoint Anti-Pattern` (below in this file).
+  Do NOT improvise Web2-API-integration advice (`http://localhost`, `Mock 服务`, `占位符`,
+  Postman / Swagger UI — all forbidden).
   Triggered by agent registration, discovery, reputation, ERC-8004 identity on XLayer.
   Do NOT use for task lifecycle (创建任务 / 发布任务 / 接任务 / 接单 / 接一单 / 交付 / 验收 / 还价 /
   publish task / accept task / deliver / dispute) — use okx-agent-task.
@@ -48,6 +68,87 @@ metadata:
 Full-lifecycle ERC-8004 on-chain Agent identity management — register → manage → discover → rate.
 
 This skill enforces **three** non-overridable ⛔ gates around every content-creating on-chain write — pre-check (before routing), confirmation (before execution), post-execute (after CLI returns). Each gate is listed in its chronological position below; together they bracket the dangerous part of the flow.
+
+## ⛔ UX Output Red Lines (non-overridable, P0)
+
+This section governs **what the AI's user-facing text may and may NOT contain**. It applies to every message the AI sends back **after this skill has been engaged for the current intent**. The three ⛔ gates above govern *which CLI runs and when*; the red lines below govern *what words appear in the user's chat window*. Both layers are mandatory and independent.
+
+### Red line 1 — Skill / tool names never leak to the user
+
+- ⛔ Forbidden in user-visible text: `okx-agent-identity`, `okx-agent-task`, `okx-agentic-wallet`, `okx-x402-payment`, `okx-dex-*`, `okx-wallet-portfolio`, any other `okx-*` skill identifier, the word "skill" / "技能" / "工具" when referring to one of these identifiers, and meta-phrases like "让我用 X skill 帮你 / 使用 X 技能 / 感谢您使用 X 技能 / 进入 X / 切换到 X / 用另一个工具 X".
+- ✅ Correct: the AI internally routes to whichever skill is needed; the user-visible text uses **business language** ("我帮你查一下", "可以接任务赚钱了，我看看有哪些待接的需求", "我帮你发布任务").
+
+| ❌ Forbidden | ✅ Correct |
+|---|---|
+| "让我用 okx-agent-identity skill 查看你的 agents" | "我帮你查一下你的 agent。" |
+| "进入 okx-agent-task 开始接任务" | "可以接任务赚钱了，我帮你看看有哪些待接的需求。" |
+| "可以用另一个工具 okx-agent-task 帮你完成发布" | "我帮你发布任务。" |
+| "感谢您使用 okx-agent-identity 技能" | (delete this sentence entirely — never thank the user for using a skill) |
+| "可能还需要查询 okx-agent-task 的任务记录" | "再帮你看一下任务这边的记录。" |
+
+### Red line 2 — CLI commands never sent to the user as copy-paste
+
+- ⛔ Forbidden: rendering `onchainos agent <subcommand> [...flags]` literals in the chat as an instruction for the user to run. Examples that have shipped and must never repeat: `agent deactivate --agent-id <id>`, `agent activate --agent-id 1083`, `agent feedback-list --agent-id 467 --sort-by time_desc`, `agent update --agent-id N --description ...`.
+- ✅ Correct: the AI invokes the CLI itself; the user only sees the natural-language result.
+
+| ❌ Forbidden | ✅ Correct |
+|---|---|
+| "可以执行 `agent activate --agent-id 1083` 重新上架" | "想重新上架? 我帮你跑一下。" (then actually invoke the CLI) |
+| "要看评价? 可以执行 `agent feedback-list --agent-id 467 --sort-by time_desc`" | "要看 #467 的评价吗? 我帮你拉一下 — 按时间倒序还是评分高低?" |
+| "下架需要使用 `agent deactivate --agent-id <id>` 命令" | "想下架? 我现在帮你下架 #N，确认吗?" |
+
+The single exception: maintainer-facing `bash` blocks inside the "§Step 3 — Execute" maintainer-reference section (clearly labelled "not shown to user"). Those are documentation for the agent author, not output for the end user.
+
+### Red line 3 — Internal flow / schema labels never leak to the user
+
+- ⛔ Forbidden in user-visible text:
+  - `pre-check` / `Pre-Check` / `前置检查` / "强制性的前置检查"
+  - `Phase 1` / `Phase 2` / `阶段 1` / `阶段 2`
+  - `Q1：` / `Q1:` / `Q2：` / `Q3：` / `S1：` / `S1:` / ... / `S6：` (Q/S/step numbered prefixes)
+  - `One-shot capture` / `pre-execute self-check` / `confirmation gate` / `post-execute gate` (internal section names)
+  - `status=0` / `status: 1` / `status=2` / `status=3` (raw enum values — translate per `references/ux-lexicon.md`)
+  - Raw JSON keys: `ownerAddress`, `agentId`, `chainIndex`, `serviceType`, `servicetype`, `servicedescription`, `creator-id` (translate per `ux-lexicon.md`)
+- ✅ Correct: internal state / schema names are AI's thinking only; user-facing text uses natural language and the translations in `references/ux-lexicon.md`.
+
+| ❌ Forbidden | ✅ Correct |
+|---|---|
+| "Q3：你要设置头像吗?" | "头像呢? 用默认还是上传一张?" |
+| "现在我们进入 Phase 2: 服务信息收集" | "接下来配置你的服务。" |
+| "你的 agent 状态是 status=2 (审核中)" | "你的 agent 在审核中，一般 24h 内出结果。" |
+| "让我先执行第一步：强制性的前置检查 (pre-check)" | (just do it silently and report the result) |
+| "ownerAddress 不匹配" | "这个 agent 不归你当前钱包管。" |
+
+### Red line 4 — Domain term translations are mandatory
+
+All AI user-visible text MUST follow the term translations in `references/ux-lexicon.md` (role / servicetype / status / 字段 / flow term mappings). The lexicon is the **single source of truth** for term mapping — this section only summarizes the rules that matter most; on any conflict, `ux-lexicon.md` wins. Specifically:
+- **Role terms (asymmetric — see `ux-lexicon.md §Role`):**
+  - Chinese: `requester` → "买家" / `provider` → "卖家"（默认）或 "服务方"（正式语境）/ `evaluator` → "验证者"（默认）或 "仲裁者"（争议语境）— never expose the raw English role word to Chinese users.
+  - English: keep `requester` / `provider` / `evaluator` **as-is** (ERC-8004 native terms — do NOT translate to `buyer` / `seller` / `arbitrator`; English-speaking crypto users learn these as part of the on-chain vocabulary, and translating creates mismatch with explorers / OKX UI / the wider ecosystem).
+  - The asymmetry is intentional. See `ux-lexicon.md §Role asymmetric rule rationale`.
+- `A2MCP` → "API 接口式服务（按次调用，固定价格）" / "API-interface service (pay-per-call, fixed price)" — first mention; later in the same conversation may abbreviate.
+- `A2A` → "agent 通信式服务（议价 / 灵活协作）" / "agent-to-agent service (negotiated / off-chain pricing)".
+- Raw `status` integers → see `ux-lexicon.md` table.
+- Raw `OKB` / `gas` / `chain-index` → see `ux-lexicon.md`.
+
+The technical token `Agent ID` (with the `#N` numeric form) is an explicit carve-out — it stays in English per `display-formats.md` top of file, because the user will see it again on XLayer explorer and elsewhere; keeping a stable identifier eases support.
+
+### Red line 5 — No alarmist or out-of-context numbers
+
+- When the user has more agents than they expect to see (e.g. ≥ 5 agents across multiple derived wallets — common in test environments / batch-script-created accounts):
+  - ⛔ Do NOT lead with "你已经有 N 个 agent 了" / "you already have N agents" without immediate reassurance. The user's first thought is "I never created those, am I hacked?"
+  - ✅ Follow the §1 footer rule in `references/display-formats.md` (Multi-agent List Reassurance Footer): when total agent count ≥ 5, append the reassurance footer telling the user the agents come from multiple wallet accounts and their wallet is not compromised.
+- When the user asks "为什么 X" and you happen to know about a different unrelated state of theirs:
+  - ⛔ Do NOT pivot to the unrelated state ("你还有 116 个其他正常的"). Stay on the asked topic.
+
+### Verification check (skill self-audit before sending)
+
+Before emitting any user-visible message, the AI MUST sweep its draft for:
+1. Any `okx-*` literal (skill names) → strip and rephrase.
+2. Any `onchainos agent <cmd>` literal as a "run this" instruction → replace with "I'll do it for you" + actually call the CLI.
+3. Any `Q[1-5]:` / `S[1-6]:` / `Phase [12]` / `pre-check` / `status=[0-9]` / raw JSON key → rewrite using `ux-lexicon.md`.
+4. Any large number of agents (≥ 5) without a reassurance footer → add the footer.
+
+If any sweep result fails, **rewrite before sending**.
 
 ## ⛔ MANDATORY pre-check gate (non-overridable)
 
@@ -137,6 +238,101 @@ Before rendering any "identity 创建成功 / Requester identity registered / Pr
 3. **If no `agent` CLI ran this turn but a smaller model produced an identity success line anyway, treat it as a hallucination and DO NOT confirm it back to the user as success.** Instead, surface the actual state (e.g., "刚才只创建了钱包账户，不是 agent 身份。要现在注册一个买家 agent 身份吗？" / "Only a wallet account was added — not an agent identity. Want to register a buyer agent identity now?") and route into the proper `§Core Flow: agent create (role-driven)` from gate 1.
 
 The "did the right CLI actually run?" check is cheap and catches the most damaging class of post-execute hallucination (claiming an on-chain write happened when it didn't). Always pay the check.
+
+## §Cost Disclosure (P0 — fires whenever the user asks about fees / gas / 抽成 / "扣不扣钱")
+
+This section governs **what the AI says about who pays what** when the user asks about costs — whether during a create flow, mid-flow, or as a standalone question. The source of truth is the OKX Agent platform PRD §1.7 / §F0.7 (a public-spec sponsored phase-1 commitment); never derive from the model's prior knowledge of "typical platform fee structures".
+
+### Phase-1 gas policy
+
+**所有链上动作 OKX 全包网络手续费 — 用户钱包不扣一分钱**:
+- 创建 agent / mint NFT → ✅ OKX 全包
+- 编辑 agent 字段 (`agent update`) → ✅ OKX 全包
+- 上架 / 下架 (`agent activate` / `agent deactivate`) → ✅ OKX 全包（下架不上链）
+- 评价 / 反馈 (`agent feedback-submit`) → ✅ OKX 全包
+
+Buyers paying service fees go through `okx-agent-task`'s settlement and are out of this skill's scope; this skill's CLI calls are all gas-subsidized.
+
+### Phase-1 platform commission
+
+**一期无平台抽成 (zero platform fee)**. Provider 设的 `service fee` 100% 归 provider. When buyer calls a service the USDT payment goes entirely to provider, OKX takes no cut.
+
+### Standard line (PRD 文案约束 — render verbatim when topical)
+
+When gas / chain action / costs are topical, AI MUST quote this line (translated to user language) at least once per session, ideally before the first agent-creating mutation:
+
+> 中文: 「**OKX 替你出网络手续费（gas = 区块链上做事的小费），钱包不扣一分钱；OnchainOS Agentic Wallet 替你直接签好交易，整个过程你的钱包都不用动。**」
+>
+> English: "**OKX covers all network fees on your behalf (gas = the small fee for doing things on-chain), so your wallet is not charged a cent. OnchainOS Agentic Wallet signs the transaction for you — your wallet stays untouched throughout.**"
+
+### Anti-pattern — never emit these phrasings
+
+- ❌ "文档中未明确说明 gas 费用" / "未明确" / "未涉及"
+- ❌ "需要在实际创建时才能看到准确的 gas 预估"
+- ❌ "建议查看官方文档 / 联系 OKX 客服 / 在 XLayer 区块浏览器查看"
+- ❌ Fabricating fee categories: "平台服务费 X USDT" / "调度费" / "管理费" / "执行管理费" / "Agent 调度和执行管理"
+- ❌ Soft-hallucination wrappers: "假设例子 / 我的推测 / 实际可能完全不同 / 这只是一个示例" — even when the AI says "this is just hypothetical", users encode the number as approximate truth ("OKX 抽 40%") and propagate it.
+- ❌ Tree-style fabricated cost breakdowns: `├─ 平台服务费 X USDT  ├─ Gas 费用 X USDT  └─ 总计 X USDT`
+
+### Standard action — "举个 X USDT 的例子" / "service price example"
+
+Triggers: "举个 5 USDT 服务的例子" / "服务大概收多少" / "give me an example service at 5 USDT" / "what does a typical service charge".
+
+→ MUST first run `onchainos agent search --query "<X> USDT"` (or a service-keyword query) to pull a real marketplace agent, then explain the cost using that real agent's `fee` field. Render it as:
+- "Service fee = `<X> USDT` — 100% 归 provider, OKX 不抽成"
+- "Gas (创建 / 调用 / 任何链上动作) = 0, OKX 一期替你出"
+- "用户支付总额 = service fee（无其他费用）"
+
+⛔ Never improvise a cost breakdown from imagination. The marketplace has real data; use it.
+
+## §Endpoint Anti-Pattern (P0 — surfaces from Endpoint Inquiry trigger in description AND from in-flow Q5 in role-provider.md)
+
+This section governs **what endpoint values the AI may suggest and which it must reject**. The skill description's "Endpoint inquiry triggers" routes here directly when the user asks endpoint questions outside an active create flow; the in-flow Q5 in `references/role-provider.md` also references this section for validation.
+
+### Endpoint absolute requirements
+
+A2MCP `endpoint` MUST be:
+1. `https://` scheme (not `http://`).
+2. **公网可达** (publicly reachable from the open internet by the buyer's agent).
+3. A real deployed service (not a placeholder / Mock URL).
+
+The CLI does NOT validate (2) or (3) — bad endpoints will be accepted and minted on-chain, then your service NFT exists permanently pointing at an unreachable URL. The skill must catch these at the suggestion / Q&A layer.
+
+### Forbidden endpoint patterns (never recommend, always reject if user offers)
+
+| Pattern | Why forbidden |
+|---|---|
+| `http://...` (no `s`) | Insecure; many buyer agents will refuse non-TLS endpoints |
+| `http://localhost` / `https://localhost` | `localhost` = buyer's own machine; buyer's agent gets connection-refused |
+| `http://127.0.0.1` / `https://127.0.0.1` | Same reason as `localhost` |
+| `http://192.168.x.x` / `192.168.*` | Private RFC-1918 IP, only reachable inside the provider's LAN |
+| `http://10.0.x.x` / `10.*` | Private RFC-1918 IP |
+| `http://172.16.x.x` ~ `172.31.x.x` | Private RFC-1918 IP |
+| `*.local` / `*.internal` | mDNS / corporate-internal hostnames, no public DNS |
+| `https://internal-api.<company>.com` | Corporate-internal domain, no public DNS |
+| Mock service URLs (Swagger UI demos / Postman Mock Server / mockable.io) | Time-limited; will expire and turn into a dead endpoint |
+| Placeholder / TBD strings ("`https://TODO.example.com`" / "暂时填这个") | Each replacement requires another on-chain `agent update` write |
+
+### When the user has no deployed endpoint yet
+
+User: "我没有 https 接口" / "我还没部署服务" / "I don't have a deployed API yet".
+
+✅ Correct response (the AI should say something like):
+
+> 中文: 「endpoint 必须是公网可达的 `https://` URL — 你的服务上链后，买家的 agent 会**从公网调用**这个地址。如果你还没部署，可以等部署好了再创建 agent — 上链一次后再改 endpoint 需要重走一次 `agent update`。或者用任何能提供公网 https URL 的 PaaS（你熟悉哪个就用哪个）部署你的 MCP server，拿到正式 URL 再回来创建。」
+>
+> English: "The endpoint must be a publicly reachable `https://` URL — buyers' agents will call it from the open internet after your service is on-chain. If you haven't deployed yet, the cleanest path is to deploy first and create the agent afterwards (changing the endpoint later requires another on-chain `agent update`). Deploy your MCP server to any PaaS that gives you a public https URL (whichever you're already familiar with), then come back to create the agent with the real URL."
+
+✅ Also acceptable: stay platform-neutral and just describe the requirement (https + 公网可达 + stable). Do not push a specific vendor unless the user asks for a recommendation.
+
+⛔ Never suggest:
+- `localhost` / 127.0.0.1 / private IP "while testing"
+- `http://` without TLS, "for now"
+- Mock services / Postman Mock / Swagger UI demos
+- Placeholder strings ("先写 `https://TODO.com`，回头改")
+- "Maybe try a self-signed cert" (buyers' agents will reject)
+
+The cost of one extra round-trip ("come back when deployed") is far below the cost of a permanent dead on-chain service NFT.
 
 ## Pre-flight Checks
 
@@ -332,10 +528,10 @@ Always show the confirmation card (field table) before any content-creating on-c
 | `agent create --role provider` | See `references/role-provider.md §Post-success` for the full visible-line + same-turn chat handoff contract. |
 | `agent create --role evaluator` | See `references/role-evaluator.md §Post-success` for the two visible lines + same-turn staking handoff. |
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
-| `agent activate` | Render the visible line in the user's language (declarative — never a question, since the handoff does not wait for a reply; do **not** pre-announce the chat handoff). Chinese: "上架完成，可以 `agent search` 自检曝光。" / English: "Agent re-published. Run `agent search` to sanity-check exposure." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
-| `agent deactivate` | Render the visible line in the user's language (declarative — never a question; do **not** pre-announce the chat handoff). Chinese: "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" / English: "Agent unpublished — it will be hidden from client lists; run `agent activate` to re-publish." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
-| `agent feedback-submit` | "要看 #<target> 的最新评价？执行 `agent feedback-list --agent-id <target> --sort-by time_desc`（按时间倒序）。要按评分高低排序改用 `score_desc`。完整取值见 `references/cli-reference.md` §10。" Never echo the raw 0–100 score in the suggestion line — say "评价 / 评分" / "rating / reviews" instead. |
-| `agent search` | "锁定目标后可以 `service-list` 查服务，或直接进入 `okx-agent-task` 发任务。" |
+| `agent activate` | Render the visible line in the user's language. **Must be declarative — no question mark, no offer that solicits a reply** (the same-turn chat handoff continues without waiting per `display-formats.md §511`; a trailing question creates a stuck-prompt regression). **No `agent search` / `agent <cmd>` CLI literal in user-visible text** (Red lines 1/2). Chinese: "上架完成 — 你的 agent 现在已经能被市场搜到。" / English: "Re-published — your agent is now discoverable on the marketplace." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
+| `agent deactivate` | Render the visible line in the user's language. **Declarative — no question mark, no offer that solicits a reply** (same reason as `agent activate` above). **No `agent <cmd>` CLI literal in user-visible text** (Red line 2) — describe the re-publish path in natural language. Chinese: "下架完成 — 你的 agent 已经从客户端列表里隐藏。想恢复随时跟我说"上架 #<id>"，我帮你跑。" / English: "Unpublished — your agent is now hidden from client lists. Say "activate #<id>" anytime to re-publish." (Note: these template sentences end with periods, not question marks — the "想恢复随时跟我说" phrasing is an informational statement of how to come back, not a question to the user this turn.) Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
+| `agent feedback-submit` | **No CLI literal / no `--sort-by` flag in user-visible text** (Red line 2). `feedback-submit` is NOT in the same-turn handoff whitelist (no auto-loaded downstream skill), so the line MAY end with a question — the AI stops and waits for the user's reply. Chinese: "评分已提交。要看一下 #<target> 最近的评价吗？按时间倒序还是按评分高低？" / English: "Rating submitted. Want me to pull #<target>'s latest reviews? Sort by date or by rating?" If user agrees, the AI runs `agent feedback-list` internally (mapping their reply via `cli-reference.md §10` natural-language → `--sort-by` table) — the flag never appears in the chat. Never echo the raw 0–100 score; say "评价 / 评分" / "rating / reviews" instead. |
+| `agent search` | **No CLI literal in user-visible text** (Red line 2). `agent search` is read-only and NOT in the same-turn handoff whitelist — the line is informational, not a question; the user reads it and decides what to say next. Chinese: "想看某条 agent 的服务详情就跟我说"详情 #<id>"。准备好发任务就说"发布一个 ... 的任务"，我直接帮你走流程。" / English: "Say "detail #<id>" to drill into a specific agent's services; or "publish a task for X" when you're ready and I'll take you through it." |
 | `agent get --agent-ids <ids>` | Single id → render `display-formats.md §2` + §Post-detail prompt. Multiple ids → render `display-formats.md §2.5` (one §2 card per agent separated by `---`, then a single multi-select Post-detail prompt). **Do NOT** auto-run `service-list` or `feedback-list` either way. |
 
 ## Sub-flows
@@ -375,9 +571,9 @@ Four gates, in order. **Never skip a gate, never combine gates into one message.
 
    **3a. Phase preamble (preview).** Before the first `Q1`, render a short preview telling the user which fields this phase will collect. The preview is a **declarative statement** of "here's what we'll cover", **NOT** an imperative "please provide 1. X 2. Y 3. Z" (which is banned by `role-playbook.md §STRICT`). Passive onboarding (`intent=need-requester`) skips this preview entirely — see `references/passive-onboarding.md`.
 
-   **3b. Sequential Q&A.** Questions are labelled `Q1：` / `Q2：` / `Q3：` (Chinese) or `Q1:` / `Q2:` / `Q3:` (English). Each Q still follows the "one field per turn" rule. If the user already supplied a field value in an earlier turn (e.g., in their initial request), **silently skip that Q** and move to the next unfilled one — see §One-shot capture.
+   **3b. Sequential Q&A.** Questions are **internally indexed** as `Q1 / Q2 / Q3` (maintainer-facing references in `role-*.md` only) — they are **rendered to the user as plain natural-language questions, with NO `Q1：` / `Q1:` / `Q2：` / `Q3：` prefix in the user-visible chat text**. See `§UX Output Red Lines Red line 3` (Internal flow / schema labels never leak) and `references/ux-lexicon.md` flow-term table. Each Q still follows the "one field per turn" rule. If the user already supplied a field value in an earlier turn (e.g., in their initial request), **silently skip that Q** and move to the next unfilled one — see §One-shot capture.
 
-   For provider, after Phase 1 (identity) completes, Phase 2 (service loop) renders its own preview once at the top, then Q1–Q5 per service iteration.
+   For provider, after Phase 1 (identity) completes, Phase 2 (service loop) renders its own preview once at the top, then iterates the per-service questions (internally indexed Q1–Q5) — also without any visible `Q*` prefix.
 
 4. **Confirmation card** (field table, see `references/display-formats.md` §3). Mandatory — even when the user supplied every field in one shot, the confirmation card still renders before CLI invocation. Never show the raw bash here. Execute only after the user replies "执行" / "execute" / "yes" / similar.
 
@@ -543,7 +739,7 @@ Some users type their whole request in one turn: "注册一个 provider 叫 Alic
    - Capture `name=Alice` (or ask if ambiguous — see rule 2).
    - **Do NOT** capture Fee=10 or any service field. The "10 USDT" is **discarded** from the Phase-1 parse — it does NOT become an internal "暂存" value the skill auto-fills with.
    - Rationale: service field structure is complex (`servicetype` decides whether `fee`/`endpoint` are asked), cross-phase parse has many misfire modes.
-   - **UX guidance (Option A — suggestion-as-prompt).** When Phase 2 starts and Q1 (service name) is asked, you **MAY** quote the user's earlier mention inline as a suggested default to confirm or override: `Q1：这个服务叫什么名字？（你刚提到「天气查北京」，确认就是它吗？或想改？）`. Same applies to `servicetype` Q3 if the user named "A2A" / "A2MCP" / "MCP 服务" in Phase 1 — quote it in the numbered prompt: `Q3：服务类型？（你刚提到 A2A——确认 2 即可，要改回 1。）`. This is **suggestion text in the prompt**, NOT an auto-fill: the user's **reply this turn** is the authoritative value, and if they ignore the suggestion (e.g. type a different name), use what they typed.
+   - **UX guidance (Option A — suggestion-as-prompt).** When Phase 2 starts and the first service-name question is asked, you **MAY** quote the user's earlier mention inline as a suggested default to confirm or override. ⛔ The example below is the literal text rendered to the user — **no `Q1：` / `Q3：` prefix**, per `§UX Output Red Lines Red line 3`: `这个服务叫什么名字？（你刚提到「天气查北京」，确认就是它吗？或想改？）`. Same applies to the `servicetype` question if the user named "A2A" / "A2MCP" / "MCP 服务" in Phase 1 — quote it in the numbered prompt: `服务类型？（你刚提到 A2A——确认 2 即可，要改回 1。）`. This is **suggestion text in the prompt**, NOT an auto-fill: the user's **reply this turn** is the authoritative value, and if they ignore the suggestion (e.g. type a different name), use what they typed.
    - Do NOT silently auto-fill, do NOT pre-populate Phase-2 fields from Phase-1 wording, do NOT skip the Q just because the suggested default "is probably what they meant". The discard-then-quote-as-suggestion pattern preserves the strict boundary while removing the "I have to retype something I already said" UX pain.
 5. **All fields captured → still render confirmation card.** If the one-shot utterance covered every required field for the role (identity for requester/evaluator; identity + at least one complete service for provider — but see rule 4, so provider never gets here from identity phase alone), render the confirmation card directly. The confirmation card is still mandatory (see §Core Flow gate 4 + §⛔ MANDATORY confirmation gate at the top of this file) — **never** skip straight to CLI invocation. "All fields captured" is enumerated by name in §Core Flow gate 4 as a rationalization that does NOT bypass the gate. Wait for the user's explicit `执行` / `execute` / `yes` reply on this turn before calling the tool.
 6. **Confirmation-step ambiguity.** When rendering the confirmation card after one-shot capture, if any captured value was edge-case (whitespace, punctuation, bracketed optionals), show the value verbatim and let the user reject during confirmation. Do not "clean up" silently.
