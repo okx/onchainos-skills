@@ -135,7 +135,7 @@ pub struct SocialSentimentSymbolParams {
     pub token_symbols: String,
     /// Statistical period: "1" (1h, default), "2" (4h), "3" (24h).
     pub time_frame: Option<String>,
-    /// If > 0, include a `trend` series with this many equally-spaced time buckets per coin.
+    /// If > 0, include a `trend` series with this many equally-spaced time buckets per coin. Max 50.
     pub trend_points: Option<String>,
 }
 
@@ -292,7 +292,7 @@ pub enum SocialCommand {
         /// Statistical period: 1=1h (default), 2=4h, 3=24h.
         #[arg(long)]
         time_frame: Option<String>,
-        /// If > 0, switch to trend mode and return N equally-spaced buckets per coin.
+        /// If > 0, switch to trend mode and return N equally-spaced buckets per coin (max 50).
         #[arg(long)]
         trend_points: Option<String>,
     },

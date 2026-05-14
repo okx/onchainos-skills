@@ -82,7 +82,7 @@ Some endpoints in this skill may require x402 payment after free quota is exhaus
 - `--time-frame`: `1` = 1h (default), `2` = 4h, `3` = 24h. Map user phrasing: "last hour / 一小时" → `1`; "last 4 hours / 四小时" → `2`; "today / last 24h / 24小时 / 一天" → `3`. Anything longer than 24h is not supported here — for week/month ranges, look at vibe instead.
 - `sentiment-ranking` `--sort-by`: only `1` = hot is currently supported.
 - `sentiment-ranking` `--limit` range `[1, 50]`, default `10`.
-- `sentiment-symbol` requires `--token-symbols` (comma-separated, max 20). `--trend-points <N>` is optional — set it (e.g. `24` for hourly buckets across 24h) when the user asks for a chart / trendline / 走势; omit otherwise to keep payload small (snapshot mode).
+- `sentiment-symbol` requires `--token-symbols` (comma-separated, max 20). `--trend-points <N>` is optional, max `50` — set it (e.g. `24` for hourly buckets across 24h) when the user asks for a chart / trendline / 走势; omit otherwise to keep payload small (snapshot mode).
 
 **Vibe:**
 - Both vibe commands require `--chain` (resolved by name, e.g. `ethereum`, `solana`) and `--token-address`. If the user only gave a symbol, resolve via `okx-dex-token` (`onchainos token search`) first — never guess a contract address.

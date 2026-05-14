@@ -258,7 +258,7 @@ onchainos social sentiment-symbol --token-symbols <symbols> [options]
 |---|---|---|---|
 | `--token-symbols` | Yes | - | Comma-separated coin symbols (max 20) |
 | `--time-frame` | No | `1` | Statistical period: `1`=1h, `2`=4h, `3`=24h |
-| `--trend-points` | No | - | If `> 0`, include the `trend` array with this many equally-spaced buckets per coin |
+| `--trend-points` | No | - | If `> 0`, include the `trend` array with this many equally-spaced buckets per coin. Max `50`. |
 
 **Return fields**:
 

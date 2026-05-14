@@ -1417,7 +1417,7 @@ impl McpServer {
 
     #[tool(
         name = "social_sentiment_symbol",
-        description = "Aggregated social sentiment for one or more coins. token_symbols required (comma-separated, max 20). time_frame: '1'=1h (default) / '2'=4h / '3'=24h. Snapshot mode by default; pass trend_points (>0) to switch to time-bucketed trend mode."
+        description = "Aggregated social sentiment for one or more coins. token_symbols required (comma-separated, max 20). time_frame: '1'=1h (default) / '2'=4h / '3'=24h. Snapshot mode by default; pass trend_points (1–50) to switch to time-bucketed trend mode."
     )]
     async fn social_sentiment_symbol(
         &self,

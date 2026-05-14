@@ -952,3 +952,28 @@ fn mcp_social_vibe_top_kols_strips_tweet_bodies() {
     let data = result.api_data();
     assert_no_tweet_bodies(&data);
 }
+
+/// Regression guard for the MCP `social_sentiment_ranking` tool: the `period`
+/// response field must echo the resolved time_frame (1=1h / 2=4h / 3=24h).
+/// If the wire mapping ever drifts, this test catches it via the MCP layer
+/// (complementary to the CLI-level test in cli_social.rs).
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn mcp_social_sentiment_ranking_period_echo_matches_time_frame() {
+    let mut client = McpClient::start();
+    for (tf, expected) in [("1", "1h"), ("2", "4h"), ("3", "24h")] {
+        let result = client.call_tool(
+            "social_sentiment_ranking",
+            json!({"time_frame": tf, "limit": "1"}),
+        );
+        if result.is_rate_limited() {
+            continue;
+        }
+        let data = result.api_data();
+        let period = data["period"].as_str().unwrap_or("");
+        assert_eq!(
+            period, expected,
+            "time_frame={tf} expected period='{expected}', got '{period}'"
+        );
+    }
+}

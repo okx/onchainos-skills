@@ -306,3 +306,183 @@ fn assert_no_tweet_bodies(v: &Value) {
         _ => {}
     }
 }
+
+// ─── Additional coverage (pagination, detail round-trip, schema, mappings) ──
+
+/// Verifies cursor pagination: page 1 → page 2 must return different article ids.
+/// Guards against the cursor being a no-op or repeating the same page.
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn social_news_latest_pagination_advances_cursor() {
+    let page1 = run_with_retry(&["social", "news-latest", "--limit", "3"]);
+    let d1 = assert_ok_and_extract_data(&page1);
+    let cursor = d1
+        .get("cursor")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("page 1 missing cursor: {d1}"));
+    let ids1: Vec<String> = d1["articles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["id"].as_str().unwrap().to_string())
+        .collect();
+    assert!(!ids1.is_empty(), "page 1 has no articles");
+
+    let page2 = run_with_retry(&["social", "news-latest", "--limit", "3", "--cursor", cursor]);
+    let d2 = assert_ok_and_extract_data(&page2);
+    let ids2: Vec<String> = d2["articles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_ne!(
+        ids1, ids2,
+        "cursor pagination did not advance: page 1 = page 2 = {ids1:?}"
+    );
+}
+
+/// Round-trip: list latest → take first article id → fetch detail → assert full content.
+/// Covers the chained list-then-detail flow that the SKILL.md advertises.
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn social_news_detail_round_trip_returns_full_body() {
+    let list = run_with_retry(&["social", "news-latest", "--limit", "1"]);
+    let dlist = assert_ok_and_extract_data(&list);
+    let id = dlist["articles"][0]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("list response missing articles[0].id: {dlist}"))
+        .to_string();
+
+    let detail = run_with_retry(&["social", "news-detail", "--article-id", &id]);
+    let ddetail = assert_ok_and_extract_data(&detail);
+    let articles = ddetail["articles"]
+        .as_array()
+        .unwrap_or_else(|| panic!("detail missing articles[]: {ddetail}"));
+    assert_eq!(articles.len(), 1, "detail should return exactly 1 article");
+    assert_eq!(
+        articles[0]["id"].as_str(),
+        Some(id.as_str()),
+        "detail returned a different id than requested"
+    );
+    // Detail always returns the full content (no detailLevel parameter).
+    let content = articles[0]["content"].as_str().unwrap_or("");
+    assert!(
+        !content.is_empty(),
+        "detail response should have non-empty content"
+    );
+}
+
+/// Bogus article id returns ok=true with empty articles[], not an error.
+/// Spec behavior — clean empty rather than 4xx.
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn social_news_detail_bogus_id_returns_empty_articles() {
+    let output = run_with_retry(&["social", "news-detail", "--article-id", "BOGUS_DOES_NOT_EXIST_42"]);
+    let data = assert_ok_and_extract_data(&output);
+    let articles = data["articles"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected articles[] field even for bogus id: {data}"));
+    assert!(
+        articles.is_empty(),
+        "expected empty articles[] for bogus id, got {articles:?}"
+    );
+}
+
+/// Regression guard for the sentiment time_frame mapping (1=1h, 2=4h, 3=24h).
+/// The response `period` field echoes the resolved window. If the codes ever
+/// drift back to the old 24h/72h/7d/30d mapping, this test catches it.
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn social_sentiment_ranking_period_echo_matches_time_frame() {
+    for (tf, expected) in [("1", "1h"), ("2", "4h"), ("3", "24h")] {
+        let output = run_with_retry(&["social", "sentiment-ranking", "--time-frame", tf, "--limit", "1"]);
+        let data = assert_ok_and_extract_data(&output);
+        let period = data["period"].as_str().unwrap_or("");
+        assert_eq!(
+            period, expected,
+            "time-frame={tf} expected period='{expected}', got '{period}'"
+        );
+    }
+}
+
+/// Multi-coin sentiment query returns one details[] entry per requested coin
+/// (when all symbols are well-known).
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn social_sentiment_symbol_multi_coin_returns_per_coin_entries() {
+    let output = run_with_retry(&[
+        "social",
+        "sentiment-symbol",
+        "--token-symbols",
+        "BTC,ETH,SOL",
+        "--time-frame",
+        "3",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    let details = data["details"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected details[] array: {data}"));
+    assert_eq!(
+        details.len(),
+        3,
+        "expected one details[] entry per coin (BTC/ETH/SOL), got {}",
+        details.len()
+    );
+    let symbols: Vec<&str> = details
+        .iter()
+        .map(|d| d["tokenSymbol"].as_str().unwrap_or(""))
+        .collect();
+    for c in ["BTC", "ETH", "SOL"] {
+        assert!(symbols.contains(&c), "missing {c} in details: {symbols:?}");
+    }
+}
+
+/// Vibe-timeline summary contains every documented top-level field.
+/// Schema completeness guard — flags any spec drift where fields get renamed/dropped.
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn social_vibe_timeline_summary_has_documented_fields() {
+    let output = run_with_retry(&[
+        "social",
+        "vibe-timeline",
+        "--chain",
+        "ethereum",
+        "--token-address",
+        tokens::ETH_WETH,
+        "--time-frame",
+        "1",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    let summary = data
+        .get("summary")
+        .unwrap_or_else(|| panic!("missing summary object: {data}"));
+    for f in &[
+        "score",
+        "scoreType",
+        "scoreRange",
+        "scoreChangeRate",
+        "mentionsCount",
+        "mentionsCountChangeRate",
+        "engagement",
+        "engagementChangeRate",
+        "impressions",
+        "impressionsChangeRate",
+        "supportFirstMentioned",
+    ] {
+        assert!(
+            summary.get(*f).is_some(),
+            "summary missing documented field '{f}': {summary}"
+        );
+    }
+    assert_eq!(
+        summary["scoreType"].as_str(),
+        Some("dex_vibe_hotness"),
+        "scoreType should be the fixed 'dex_vibe_hotness' literal"
+    );
+    assert_eq!(
+        summary["scoreRange"].as_str(),
+        Some("0-100"),
+        "scoreRange should be the fixed '0-100' literal"
+    );
+}
