@@ -395,15 +395,15 @@ Single-word inputs (`agent`, `search`, `list`) do NOT auto-route to any sub-comm
 
 ### Roles
 
-Three roles. Always use the lowercase English value for the `--role` CLI parameter; address the user with the Chinese label.
+Three roles. Always emit the lowercase English value for the `--role` CLI parameter. User-facing wording is **language-dependent and follows the asymmetric rule in `references/ux-lexicon.md §Role`**: Chinese users see the localized term; English users keep the ERC-8004 native term (do NOT translate to `buyer` / `seller` / `arbitrator` — those create mismatch with explorers / OKX UI / the wider ecosystem).
 
-| CLI value (`--role`) | User-facing label | Meaning |
-|---|---|---|
-| `requester` | 买家 (buyer) | Publishes tasks, pays for services |
-| `provider` | 服务方 (seller) | Offers services, delivers work |
-| `evaluator` | 验证者 (arbitrator) | Judges disputes. `create` itself is unconditional; a separate stake via `okx-agent-task` is required to be assigned real disputes. |
+| CLI value (`--role`) | Chinese user-facing | English user-facing | Meaning |
+|---|---|---|---|
+| `requester` | 买家 | requester | Publishes tasks, pays for services |
+| `provider` | 卖家（默认）/ 服务方（正式语境） | provider | Offers services, delivers work |
+| `evaluator` | 验证者（默认）/ 仲裁者（争议语境） | evaluator | Judges disputes. `create` itself is unconditional; a separate stake via `okx-agent-task` is required to be assigned real disputes. |
 
-CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. The skill always emits the canonical lowercase English name to the CLI.
+CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. The skill always emits the canonical lowercase English name to the CLI. ⛔ User-visible text MUST follow `ux-lexicon.md §Role` — do NOT mix languages (no `买家 (buyer)` / `provider (服务方)` parentheticals; see `§UX Output Red Lines Red line 4`).
 
 ### Intent → Sub-flow
 

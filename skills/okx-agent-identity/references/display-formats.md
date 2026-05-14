@@ -290,7 +290,9 @@ Chinese variant:
 | 头像 | <旧 URL> | **<新 URL>** |
 | 服务[1] 价格 | 10 USDT | (不变) |
 
-> 确认后回复 "执行" 即可。`--service` 整体替换，但本次只有 服务[1] 价格 以外的字段保持不变。
+> 本次会改 描述 和 头像；其它字段保持不变。
+> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再 update 一次即可；操作随时可逆。
+> 确认后回复 "执行" 即可。
 
 English variant:
 
@@ -301,7 +303,9 @@ English variant:
 | Picture | <old URL> | **<new URL>** |
 | Service [1] Fee | 10 USDT | (unchanged) |
 
-> Reply "execute" to run it. `--service` replaces the whole list, but the only intended change here is Service [1] Fee; other fields are kept identical.
+> This update changes Description and Picture; everything else stays as-is.
+> Estimated cost: **0 USDT** (editing fields costs no gas — OKX covers it in phase 1). Reversible: re-run update to revert to the old value at any time.
+> Reply "execute" to run.
 
 Rules:
 
@@ -309,6 +313,7 @@ Rules:
 - Changed rows: bold the new-value cell so the diff reads at a glance.
 - For each service entry, always list all sub-fields — easy to spot accidental drops. Localize the service-field labels per the mapping table above.
 - **Do NOT show the bash command in this card.** If the user asks "把命令给我看", render it as a separate code block afterward; otherwise omit.
+- **Maintainer note (wholesale `--service` replacement, internal — do NOT surface to user):** the `--service` flag wire-level **replaces the full services list**, not a per-field patch. When only one sub-field of one service changes (e.g. only `Service [1] Fee`), the skill MUST construct the new `--service` JSON by **starting from the current full services list** (from the mandatory `agent get` pre-step) and applying the diff in memory — then send the **complete** list. Sending only the changed entry would silently delete every other service. This is a wire-level concern; do not mention `--service` in the user-visible card footer (Red line 2).
 - End every diff card with exactly one line: `确认后回复 "执行" 即可。` (English variant: `Reply "execute" to run.`). Do NOT use any verb like "下发" / "dispatch" / "send" in this footer — see `SKILL.md §Step 3 — No narration between confirmation and result` for why.
 - **Cost & reversibility rows (mandatory).** Every Create-variant card AND Update Diff card MUST include two final rows (rendered immediately above the `确认后回复 "执行" 即可。` line) explaining what the user pays and whether they can undo. Phrasings (substitute the role / action wording per context — these are templates, not literal):
   - Create variant (2 cols):
@@ -402,8 +407,8 @@ Rules:
 
 - Header mirrors the detail card's rating summary line — `★ <average> (<count> reviews)`, where `<average>` is the **already-converted 1-decimal star float** returned by `agent feedback-list` (CLI's `utils::convert_feedback_list_scores` maps backend 0–100 → 1-decimal stars before responding; the skill renders directly without dividing again).
 - Each review's user-visible template: `#<index> · <date> · <reviewer-label> #<id> (<role> <name>) · ★ <stars>`, where `<stars>` is the **already-converted integer 0–5** returned in each item's `score` field. Skill renders the integer directly — no `score / 20` arithmetic here. The conversion lives in `utils::convert_feedback_list_scores` per the canonical rule pinned in `SKILL.md §Amount Display Rules` reputation block. Never render the raw 0–100 number. ⛔ The `<reviewer-label>` slot is **language-dependent**, NOT the literal English word `creator`: per `ux-lexicon.md §Field` (`creator-id`) the user-visible wording is `发起人` (Chinese) / `reviewer` (English). The `<role>` slot follows `ux-lexicon.md §Role` asymmetric rule (Chinese `买家 / 卖家 / 验证者`; English `requester / provider / evaluator`). See the worked Chinese and English variants above — those are the canonical renderings; the template here is just a schematic.
-- Optional `task:` row shows the jobId in backticks; omit if absent.
-- Description in quotes; render `"(no comment)"` when missing.
+- Optional `task:` / `任务` row shows the jobId in backticks; omit if absent. Localize the row label per `SKILL.md §Language Matching` (`任务` for CN, `task` for EN).
+- Description in quotes when present. When the field is empty / missing, render the **language-matched** placeholder per `SKILL.md §Language Matching`: Chinese → `(无评论)`; English → `(no comment)`. Do NOT render the English form to a Chinese user (and vice versa).
 - Footer: page indicator + **natural-language sort summary** in the user's language. ⛔ **Never paste the raw `--sort-by` flag or its `time_desc` / `score_desc` literal into the footer** (`SKILL.md §UX Output Red Lines Red line 2` — no CLI flags in user-visible text). Render instead: Chinese `当前按时间倒序排序` / `当前按评分高低排序` / `当前按后端默认排序` ; English `Sorted by date (newest first)` / `Sorted by rating (highest first)` / `Sorted by backend default`. The mapping between user-supplied sort intent ↔ `--sort-by` flag value is the AI's internal concern (see `cli-reference.md` §10) and never appears in the chat.
 
 ---
