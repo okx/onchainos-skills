@@ -4,7 +4,7 @@ description: "Unified payment dispatcher covering x402 (`exact` / `aggr_deferred
 license: MIT
 metadata:
   author: okx
-  version: "2.0.0"
+  version: "3.3.2"
   homepage: "https://web3.okx.com"
 ---
 

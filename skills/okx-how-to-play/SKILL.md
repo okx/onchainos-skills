@@ -4,7 +4,7 @@ description: "Onchain OS entry router for open-ended onboarding questions. Rende
 license: MIT
 metadata:
   author: okx
-  version: "2.7.0"
+  version: "3.3.2"
   homepage: "https://web3.okx.com"
 ---
 
