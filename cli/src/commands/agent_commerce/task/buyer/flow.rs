@@ -149,7 +149,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
          \x20\x20\x20\x20漏 `remove` → 旧条目残留成僵尸,下次再调 `xmtp_prompt_user` 时被误命中,用户回复派给错的会话。\n\
          \x20\x208) ❌ **用户可见内容禁用技术术语**:`xmtp_dispatch_user` 的 content 和 `xmtp_prompt_user` 的 userContent 都直接给用户看,**禁写** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*`/`dispute_resolved` 等) / 状态名(`open`/`accepted`/`disputed` 等英文枚举) / CLI flag(`--*`) / skill 名(`okx-agent-identity` / `§Feedback Submit` 等) / 状态字段名(`jobStatus`/`paymentMode` 等)——一律用**用户语言**的自然表达(中文用户看到「担保/x402, 验收期超时, 任务已完成」, 英文用户看到等价口语化措辞如「escrowed payment/x402, review window expired, task completed」, 由 sub agent 按 LOCALIZATION_PREFIX 翻译时一并替换)。同 turn 内的 `xmtp_send` 给卖家也按此规则。\n\
          \x20\x209) ❌ **禁止给卖家发过场消息**：除协商阶段的结构化消息（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]、协商自然语言对话）外，**任何事件处理中都不要 xmtp_send 给卖家**。包括但不限于「已确认接单」「资金已托管」「已验收」「证据已提交」「任务已完成」等状态通知。卖家通过链上事件得知状态变化，买家发过场消息只会造成干扰。\n\
-         \x20\x2010) 🛑 **sub session 禁止直接生成文字回复代替工具调用**——sub session 不面向用户，你在 sub session 中输出的任何文字用户**完全看不到**。所有面向用户的内容**必须且只能**通过 `xmtp_dispatch_user`（纯通知）或 `xmtp_prompt_user`（需要用户决策）工具推送。违反此规则 = 信息丢失 + 用户无感知 + 流程卡死。\n\n\
+         \x20\x2010) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session 禁止直接生成文字回复**——你在 sub/backup session 中输出的任何文字用户**完全、绝对、100% 看不到**。所有面向用户的内容**必须且只能**通过 `xmtp_dispatch_user`（纯通知）或 `xmtp_prompt_user`（需要用户决策）工具推送。直接输出文字 = 信息丢失 + 用户无感知 + 流程卡死。🔴 真实事故：模型在 backup session 拿到推荐列表后直接输出文字展示，用户完全没收到，任务卡死。\n\n\
          如果不记得本任务协商细节（paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -224,10 +224,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\
              ```\n\
              输出卖家列表（Agent Name / 服务描述 / 信用分 / 支付方式），已自动过滤协商失败的卖家。\n\n\
-             🛑 **CRITICAL — 禁止在当前 session（sub/backup）中直接展示推荐列表或任何文字回复。**\n\
-             用户在 user session，看不到 sub session 的任何输出。必须通过下方 Step 2 的 `xmtp_prompt_user` 推送到 user session。\n\
-             ❌ 禁止用文字回复代替 xmtp_prompt_user 工具调用\n\
-             ❌ 禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user（用户需要做卖家选择决策，dispatch_user 无法 relay）\n\n\
+             🛑🛑🛑 **ABSOLUTE PROHIBITION — 铁律：禁止在当前 session（sub/backup）中直接展示推荐列表或任何文字回复。**\n\
+             你现在所在的是 sub session 或 backup session——**用户看不到这里的任何输出**。\n\
+             你必须调用 `xmtp_prompt_user` 工具把列表推到 user session，这是**唯一**让用户看到列表的方法。\n\
+             🔴 真实事故：Minimax 模型在 backup session 拿到 recommend 结果后直接输出列表文字，用户完全没看到，任务卡死。\n\
+             ❌ 绝对禁止用文字回复代替 xmtp_prompt_user 工具调用——文字回复 = 用户不可见 = 任务卡死\n\
+             ❌ 绝对禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user——dispatch_user 无法 relay，用户选择无法路由回 sub\n\
+             ❌ 绝对禁止先输出文字「给用户看」再调工具——sub session 的文字输出永远不会到达用户\n\n\
              **Step 2 — 展示列表给用户，让用户选择：**\n\
              调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；再调 `xmtp_prompt_user`：\n\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
