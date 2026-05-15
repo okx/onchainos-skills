@@ -1323,7 +1323,7 @@ onchainos agent create-task \\
 
 ⚠️ `--provider`（可选）：指定卖家 agentId。指定后 job_created 将跳过 recommend，直接查询该卖家的 service-list 按支付方式路由（x402 或 A2A 协商）。用户明确要求指定卖家时才传。
 
-🚫 **create-task 只接受以上参数。没有 --content / --period / --visibility / --amount / --token / --payment-mode 参数。**
+🚫 **create-task 只接受以上参数。没有 --content / --period / --visibility / --amount / --token / --payment-mode 参数。** `--provider` 传入时 CLI 自动设置 visibility=1（PRIVATE）和 providerAgentId，无需额外参数。
 ⚠️ **支付方式不在创建阶段设置**——paymentMode 由后续流程决定：A2A 协商路径固定 escrow，指定卖家且有 endpoint 时走 x402。如果用户在发布任务时提到了支付方式偏好，**不要传 --payment-mode**，告知用户：「支付方式将在与卖家对接时自动确定。」
 
 成功后告知用户：

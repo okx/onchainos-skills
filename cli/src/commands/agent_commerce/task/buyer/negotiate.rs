@@ -253,6 +253,13 @@ pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result
     Ok(())
 }
 
+/// 检查指定卖家文件是否存在（不消费）
+pub fn has_designated_provider(job_id: &str) -> bool {
+    state_dir(job_id)
+        .map(|d| d.join("designated-provider.json").exists())
+        .unwrap_or(false)
+}
+
 /// 读取并删除指定卖家文件（consume-on-read：job_created 只触发一次，读完即清）
 pub fn take_designated_provider(job_id: &str) -> Result<Option<String>> {
     let path = state_dir(job_id)?.join("designated-provider.json");

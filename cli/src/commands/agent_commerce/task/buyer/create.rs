@@ -247,7 +247,7 @@ pub async fn handle_create(
 
     let (account_id, address) = signing::resolve_wallet(None, None)?;
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "title":              validated.title,
         "description":        params.description,
         "descriptionSummary": validated.summary,
@@ -261,6 +261,10 @@ pub async fn handle_create(
         },
         "paymentMode":        0
     });
+    if let Some(ref provider_id) = params.provider {
+        body["providerAgentId"] = serde_json::json!(provider_id);
+        body["visibility"] = serde_json::json!(1);
+    }
 
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
     let job_id = resp["jobId"].as_str().unwrap_or("?").to_string();
