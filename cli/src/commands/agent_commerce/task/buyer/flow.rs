@@ -260,6 +260,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         let mut output = format!(
             "【当前状态】job_created（任务已上链，状态 Open）\n\
              【角色】买家（Client）\n\n\
+             🛑 **本事件禁止调用的 CLI**：save-agreed / set-payment-mode / confirm-accept / apply / complete / reject——此时尚未选定卖家，协商未开始，这些命令全部非法。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 0 — 通知 user session + 在当前 sub session 继续执行：**\n\
              调用 xmtp_dispatch_user 通知用户任务已上链（纯通知，不触发 LLM 思考）：\n\
@@ -441,7 +442,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
              ```\n\
              ⚠️ 参数是 `--provider-agent-id`，不是 `--agent-id`。\n\
-             ⚠️ **不要查询任务 API 验证卖家是否已 apply**——链上索引有延迟，`confirm-accept` 内部会做链上校验。\n\n\
+             🛑 **provider-agent-id 必须与卖家 a2a-agent-chat 消息的 sender.agentId 一致**——优先从本 turn 收到的卖家消息中提取 agentId，其次从 sub session 历史的 [NEGOTIATE_ACK] 中提取。不要用 common context 里的值（多任务场景可能串）。\n\
+             ⚠️ **不要查询任务 API 验证卖家是否已 apply**——链上索引有延迟，`confirm-accept` 内部会做链上校验。\n\
+             ❌ 禁止调 apply（apply 是卖家动作，买家永远不执行）\n\
+             ❌ 禁止调 set-payment-mode（已在 negotiate_ack 事件中完成）\n\n\
              → 执行后**结束本轮 turn**，等待 `job_accepted` 系统通知。\n"
         ),
 
@@ -894,6 +898,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             "【当前状态】job_payment_mode_changed（支付模式切换已上链）\n\
              【角色】买家（Client）\n\n\
              🛑 **必须通知用户支付模式变更结果。**\n\n\
+             🛑 **本事件允许的动作白名单**：escrow 路径仅 xmtp_send [NEGOTIATE_CONFIRM] + xmtp_dispatch_user 通知用户；x402 路径仅 x402-check + task-402-pay + xmtp_dispatch_user。\n\
+             ❌ 禁止再调 set-payment-mode（paymentMode 已在链上就位，重复调用会导致状态污染）\n\
+             ❌ 禁止调 save-agreed（已在 negotiate_ack 事件中完成）\n\
+             ❌ 禁止调 apply（apply 是卖家动作，买家永远不执行）\n\
+             ❌ 禁止调 confirm-accept（卖家尚未 apply，必须等卖家收到 CONFIRM 后 apply 再执行）\n\n\
              【你的下一步动作】\n\n\
              {title_query_hint}\
              **Step 1 — 从系统通知 envelope 中读取 `paymentMode` 字段：**\n\
@@ -996,7 +1005,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ⚠️ **A2A 协商会话中 paymentMode 固定 escrow**。\n\
              ⚠️ **禁止用自然语言替代 [NEGOTIATE_PROPOSE]**——卖家 Agent 只识别结构化标记，自然语言「请 apply / 条款已锁定」不会被解析。\n\
              ⚠️ **同 turn 只发一条 xmtp_send**。\n\
-             🚫 **本事件禁止调用 save-agreed / set-payment-mode / confirm-accept**——这些只在后续 negotiate_ack 事件中才能执行。即使卖家自然语言说「我接受」「同意」，也必须先发 [NEGOTIATE_PROPOSE]，等卖家回 [NEGOTIATE_ACK] 后才能进入下一阶段。\n\
+             🚫 🛑 **CRITICAL — 本事件绝对禁止调用 save-agreed / set-payment-mode / confirm-accept**——这些只在后续 negotiate_ack 事件中才能执行。卖家自然语言说「我接受」「同意」「OK」「没问题」**不是** `[NEGOTIATE_ACK]`——只有 content 以字面量 `[NEGOTIATE_ACK]` 方括号开头才算。在买家发出 [NEGOTIATE_PROPOSE] 之前，卖家不可能回 [NEGOTIATE_ACK]。违反 = 跳过三步握手 = 任务永久卡死。\n\
              → **结束本轮 turn**，等待卖家回复。\n"
         ),
 
@@ -1011,19 +1020,24 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              回看 sub session 历史，对比卖家 ACK 中的 paymentMode / tokenSymbol / tokenAmount 与你最近的 PROPOSE。\n\
              - **任一字段不一致** → 视为篡改，xmtp_send 告知卖家字段不一致并重发 [NEGOTIATE_PROPOSE]，结束 turn。\n\
              - **全部一致** → 继续 Step 2。\n\n\
-             **Step 2 — save-agreed 落盘：**\n\
+             🛑 **本事件允许的 CLI 命令白名单**：save-agreed → set-payment-mode，**仅此两个、顺序固定**。\n\
+             ❌ 禁止调 confirm-accept（卖家尚未 apply）\n\
+             ❌ 禁止调 complete / reject（任务尚未进入执行阶段）\n\
+             ❌ 禁止调 apply（apply 是卖家动作，买家永远不执行）\n\n\
+             **Step 2 — save-agreed 落盘（🛑 不可跳过）：**\n\
              ```bash\n\
              onchainos agent save-agreed {job_id} --provider <当前协商的providerAgentId> --token-symbol <ACK中的tokenSymbol> --token-amount <ACK中的tokenAmount> --agent-id {agent_id}\n\
-             ```\n\n\
+             ```\n\
+             🛑 save-agreed **必须在 set-payment-mode 之前执行**——它将协商结果落盘，后续 confirm-accept 依赖此数据。跳过 save-agreed 直接调 set-payment-mode → confirm-accept 会使用错误参数。\n\n\
              **Step 3 — set-payment-mode（A2A 协商固定 escrow）：**\n\
              ⚠️ **不论链上 paymentType 当前是什么值，都必须执行**，不要查 common context 比较。\n\
              ```bash\n\
              onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <ACK中的tokenSymbol> --token-amount <ACK中的tokenAmount>\n\
              ```\n\
              此命令返回 exit code 2 (confirming)。\n\n\
-             🚫 **此 turn 禁止 xmtp_send [NEGOTIATE_CONFIRM]**——链上 paymentMode 还在 mempool，\n\
-             卖家见 CONFIRM 会立刻 apply，但 paymentMode 没确认，apply 会失败。\n\
-             [NEGOTIATE_CONFIRM] 必须等 `job_payment_mode_changed` 事件后再发。\n\n\
+             🛑 **铁律：本 turn 绝对禁止 xmtp_send [NEGOTIATE_CONFIRM]**——这是最常见的死锁触发器。\n\
+             链上 paymentMode 还在 mempool，卖家见 CONFIRM 会立刻 apply，但 paymentMode 没确认，apply 会失败。\n\
+             [NEGOTIATE_CONFIRM] **只能**在收到 `job_payment_mode_changed` 系统事件后才能发送，没有任何例外。\n\n\
              → **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n"
         ),
 
@@ -1032,6 +1046,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             "【协商中继】negotiate_counter（卖家发送反提案 [NEGOTIATE_COUNTER]）\n\
              【角色】买家（Client）\n\n\
              卖家不接受你的 PROPOSE，发了 [NEGOTIATE_COUNTER] 反提案。\n\n\
+             🛑 **本事件禁止调用 save-agreed / set-payment-mode / confirm-accept / apply**——COUNTER 意味着条款未达成一致，只能发新 [NEGOTIATE_PROPOSE] 或 [NEGOTIATE_REJECT]。\n\n\
              {title_query_hint}\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 轮次计数：**\n\

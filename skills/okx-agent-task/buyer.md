@@ -54,13 +54,19 @@
 >
 > **真实事故 1**：卖家发自然语言报价"0.1 USDG"，agent 跳过 next-action 直接 xmtp_dispatch_user 转发给用户问"是否确认接受"——完全绕开三步握手，卖家永远等不到 `[NEGOTIATE_PROPOSE]`。
 > **真实事故 2**：卖家回复首条消息后，agent 按 SKILL.md 旧规则用 common context 当前 status=open 调了 `next-action --jobStatus job_created` → 拿到初始化剧本 → 重发首轮询盘。正确做法：路由 #4 → `negotiate_reply`。
-> **真实事故 3**：卖家自然语言说"我接受，0.1 USDG，escrow"，agent 把"我接受"当作 `[NEGOTIATE_ACK]`，跳过 [NEGOTIATE_PROPOSE] 直接调 save-agreed + set-payment-mode → 卖家从未收到 [NEGOTIATE_CONFIRM]，无法 apply，任务卡死。正确做法：路由 #4 → `negotiate_reply` → 发 [NEGOTIATE_PROPOSE] → 等真正的 [NEGOTIATE_ACK]。
+> **真实事故 3 — 🛑 CRITICAL 高频事故**：卖家自然语言说"我接受，0.1 USDG，escrow"，agent 把"我接受"当作 `[NEGOTIATE_ACK]`，跳过 [NEGOTIATE_PROPOSE] 直接调 save-agreed + set-payment-mode → 卖家从未收到 [NEGOTIATE_CONFIRM]，无法 apply，任务卡死。**这是最常发生的严重错误**——卖家的第一条回复几乎总是自然语言（报价、讨论、接受意向），**绝不可能**是结构化标记 `[NEGOTIATE_ACK]`（因为买家尚未发过 `[NEGOTIATE_PROPOSE]`，ACK 无从回起）。正确做法：路由 #4 → `negotiate_reply` → 发 [NEGOTIATE_PROPOSE] → 等真正的 [NEGOTIATE_ACK]。
+>
+> 🛑 **CRITICAL — 结构化标记 vs 自然语言的铁律判定**：
+> - **结构化标记**：content 的文本**必须以 `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_REJECT]` / `[NEGOTIATE_PROPOSE]` 方括号字面量作为行首开头**（即 `content.trim()` 以 `[NEGOTIATE_` 起始）
+> - **自然语言**：content 中**任何不以 `[NEGOTIATE_` 方括号开头的文本**——包括但不限于"我接受"、"同意"、"OK"、"可以"、"没问题"、"I accept"、"agreed"、"escrow OK"、"报价 0.1 USDG"——**全部是自然语言，全部走 #4 兜底 → `negotiate_reply`**
+> - **判定方法**：对 content 做**纯字符串前缀匹配** `content.trimStart().startsWith("[NEGOTIATE_")`——命中才走 #3，否则**无条件走 #4**。**禁止语义推断**——不要因为卖家说了"接受/同意"就推断为 `[NEGOTIATE_ACK]`
+> - **逻辑铁证**：如果买家**尚未发过 `[NEGOTIATE_PROPOSE]`**，卖家**不可能**回 `[NEGOTIATE_ACK]`——ACK 是对 PROPOSE 的回应。收到卖家第一条消息时，买家必然还没发过 PROPOSE，所以**第一条消息 100% 不是 ACK**，必须走 #4
 
 > **⚠️ a2a-agent-chat 场景路由优先级**（通过安全门后，按此顺序匹配，**首个命中即停**）：
 >
 > 1. **卖家 apply 通知**：content 含 `[PROVIDER_APPLIED]` 前缀，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无前缀的旧版本卖家） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
 > 2. **交付通知（a2a-agent-chat）** → 区分交付物形态：content 含 `fileKey` + 解密字段（`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；content 为纯文本 → 直接提取并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「卖家已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
-> 3. **协商结构化标记**（content 中包含字面量 `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_REJECT]` / `[NEGOTIATE_PROPOSE]` 前缀。⚠️ 卖家自然语言说"我接受/同意/OK/可以"**不是** `[NEGOTIATE_ACK]`——没有字面量标记的消息一律走 #4 兜底 → `negotiate_reply`） → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
+> 3. **协商结构化标记**（🛑 **MANDATORY 字面量前缀匹配，禁止语义推断**：content **必须以** `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_REJECT]` / `[NEGOTIATE_PROPOSE]` **方括号字面量开头**才命中本规则。判定方法：`content.trimStart().startsWith("[NEGOTIATE_")`。❌ 卖家自然语言"我接受/同意/OK/可以/没问题/agreed/report: 0.1 USDG" 等**不以 `[NEGOTIATE_` 开头**的文本 → **不命中 #3，必须走 #4 兜底 → `negotiate_reply`**。违反此规则 = 跳过三步握手 = 任务永久卡死） → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
 >    - status≥1 → `xmtp_send`「协商已完成，当前参数已锁定，任务执行中。」，结束本轮 turn
 >    - status=0（open）→ 按标记类型分派到对应 next-action 事件：
 >      - `[NEGOTIATE_ACK]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_ack --role buyer --agentId <你的agentId>`
