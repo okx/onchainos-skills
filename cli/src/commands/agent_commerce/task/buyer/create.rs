@@ -38,7 +38,6 @@ pub struct CreateTaskParams {
     pub deadline_open: String,
     pub deadline_submit: String,
     pub title: Option<String>,
-    pub agent_id: Option<String>,
     pub provider: Option<String>,
 }
 
@@ -161,7 +160,7 @@ fn validate_budget_decimals(budget: f64) -> Result<()> {
 
 // ─── 身份校验 ────────────────────────────────────────────────────────────
 
-pub(crate) async fn resolve_buyer_agent(specified_id: Option<&str>) -> Result<(String, String)> {
+pub(crate) async fn resolve_buyer_agent() -> Result<(String, String)> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("无法获取当前可执行文件路径: {e}"))?;
 
@@ -189,44 +188,15 @@ pub(crate) async fn resolve_buyer_agent(specified_id: Option<&str>) -> Result<(S
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份，请先执行 onchainos agent create --role requestor 注册买家身份"))?;
 
-    let buyers: Vec<_> = list.iter()
-        .filter(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))
-        .collect();
+    let buyer = list.iter()
+        .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))
+        .ok_or_else(|| anyhow::anyhow!("当前账户没有买家（requestor）身份，请先执行 onchainos agent create --role requestor 注册"))?;
 
-    if buyers.is_empty() {
-        bail!("当前账户没有买家（requestor）身份，请先执行 onchainos agent create --role requestor 注册");
-    }
-
-    if let Some(id) = specified_id {
-        let agent = buyers.iter()
-            .find(|a| a["agentId"].as_str() == Some(id))
-            .ok_or_else(|| anyhow::anyhow!(
-                "指定的 agent-id {id} 不是买家身份或不存在，当前买家 agent: {}",
-                buyers.iter()
-                    .filter_map(|a| a["agentId"].as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))?;
-        let owner_address = agent["ownerAddress"].as_str().unwrap_or("").to_string();
-        return Ok((id.to_string(), owner_address));
-    }
-
-    if buyers.len() == 1 {
-        let agent = buyers[0];
-        let agent_id = agent["agentId"].as_str()
-            .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
-            .to_string();
-        let owner_address = agent["ownerAddress"].as_str().unwrap_or("").to_string();
-        return Ok((agent_id, owner_address));
-    }
-
-    let ids: Vec<&str> = buyers.iter()
-        .filter_map(|a| a["agentId"].as_str())
-        .collect();
-    bail!(
-        "当前钱包下有多个买家身份: {}，请通过 --agent-id 指定使用哪个",
-        ids.join(", ")
-    );
+    let agent_id = buyer["agentId"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
+        .to_string();
+    let owner_address = buyer["ownerAddress"].as_str().unwrap_or("").to_string();
+    Ok((agent_id, owner_address))
 }
 
 // ─── 创建任务 ────────────────────────────────────────────────────────────
@@ -240,7 +210,7 @@ pub async fn handle_create(
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("登录态已失效，请先执行 onchainos wallet login: {e}"))?;
 
-    let (buyer_agent_id, _) = resolve_buyer_agent(params.agent_id.as_deref()).await?;
+    let (buyer_agent_id, _) = resolve_buyer_agent().await?;
     eprintln!("[task-create] 买家身份校验通过 (agentId: {buyer_agent_id})");
 
     common::ensure_sufficient_balance(params.budget, &validated.currency).await?;

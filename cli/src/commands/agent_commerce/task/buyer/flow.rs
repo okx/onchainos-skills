@@ -202,7 +202,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20执行以下指定卖家 x402 流程（不跳到 A-Step 1）：\n\n\
              \x20\x20**DX-Step 1 — 验证 endpoint：**\n\
              \x20\x20```bash\n\
-             \x20\x20onchainos agent x402-check --endpoint <endpoint>\n\
+             \x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
              \x20\x20```\n\
              \x20\x20- `valid=false` → 调用 xmtp_dispatch_user 通知用户 endpoint 不合法，引导用户换一个卖家。结束 turn。\n\n\
              \x20\x20**DX-Step 2 — 金额校验：**\n\
@@ -386,7 +386,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              🛑 **顺序铁律（[NEGOTIATE_CONFIRM] 是卖家 apply 的唯一触发器，必须 paymentMode 在链上就位后才发，否则卖家 apply 会基于错的支付状态）**：\n\n\
              **Step 6.1 — save-agreed 落盘**（无条件第一步）：\n\
              ```bash\n\
-             onchainos agent save-agreed {job_id} --provider <当前协商的providerAgentId> --token-symbol <协商币种> --token-amount <协商价格>\n\
+             onchainos agent save-agreed {job_id} --provider <当前协商的providerAgentId> --token-symbol <协商币种> --token-amount <协商价格> --agent-id {agent_id}\n\
              ```\n\
              不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
              **Step 6.2 — 执行 setPaymentMode（无条件，不判断当前链上值）**：\n\
@@ -919,7 +919,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              从上一步 set-payment-mode / x402-check 的输出中提取 endpoint、acceptsJson、feeTokenSymbol、feeAmount、provider。\n\
              如果上下文中没有 acceptsJson，重新验证：\n\
              ```bash\n\
-             onchainos agent x402-check --endpoint <endpoint>\n\
+             onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
              ```\n\
              提取 `acceptsJson`。\n\n\
              **x402 阶段 2 — 签名 + direct/accept + 重放 endpoint（原子命令）：**\n\
@@ -1012,7 +1012,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              - **全部一致** → 继续 Step 2。\n\n\
              **Step 2 — save-agreed 落盘：**\n\
              ```bash\n\
-             onchainos agent save-agreed {job_id} --provider <当前协商的providerAgentId> --token-symbol <ACK中的tokenSymbol> --token-amount <ACK中的tokenAmount>\n\
+             onchainos agent save-agreed {job_id} --provider <当前协商的providerAgentId> --token-symbol <ACK中的tokenSymbol> --token-amount <ACK中的tokenAmount> --agent-id {agent_id}\n\
              ```\n\n\
              **Step 3 — set-payment-mode（A2A 协商固定 escrow）：**\n\
              ⚠️ **不论链上 paymentType 当前是什么值，都必须执行**，不要查 common context 比较。\n\

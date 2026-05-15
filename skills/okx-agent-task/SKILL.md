@@ -683,7 +683,7 @@ onchainos agent next-action \
 
 ### 🔴 Agent 身份消歧（多 agent 场景）
 
-一个 account **最多 1 个 buyer + 1 个 evaluator + N 个 provider**（一个钱包可拥有多个 account）——所以"歧义"主要出现在 **provider 角色**上（buyer / evaluator 每个 account 各只有 1 个，CLI 可自动选）。执行角色特定的 CLI 命令（`apply` / `create-task` / `dispute raise` / `agree-refund` / `confirm-accept` 等，凡是带 `--agent-id` 参数的命令）前，按消息触发来源区分：
+一个 account **最多 1 个 buyer + 1 个 evaluator + N 个 provider**（一个钱包可拥有多个 account）——所以"歧义"主要出现在 **provider 角色**上（buyer / evaluator 每个 account 各只有 1 个，CLI 可自动选）。执行角色特定的 CLI 命令（`apply` / `dispute raise` / `agree-refund` / `confirm-accept` 等，凡是带 `--agent-id` 参数的命令）前，按消息触发来源区分：
 
 | 触发来源 | agentId 如何决定 |
 |---|---|

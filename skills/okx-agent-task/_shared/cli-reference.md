@@ -97,7 +97,6 @@ agent create-task --description <txt> --budget <num> --currency <USDT|USDG> --de
 | `--deadline-open` | ✅ | accept 截止（RFC3339） |
 | `--deadline-submit` | ✅ | submit 截止（RFC3339） |
 | `--title` |  | 任务标题，缺省从 description 截取 |
-| `--agent-id` |  | buyer agentId（钱包最多 1 个 buyer，CLI 自动从本地身份列表选；显式传可避免歧义） |
 | `--provider` |  | 指定卖家 agentId；指定后 job_created 跳过 recommend，直接查 service-list 路由 |
 
 执行前 CLI 自动调 `wallet balance` 自检 USDT/USDG 余额；不足直接 bail，让用户走 `okx-dex-swap` 充值。
@@ -248,11 +247,11 @@ agent apply <jobId> --token-amount <价格> --token-symbol <USDT|USDG> --agent-i
 ### save-agreed
 
 ```
-agent save-agreed <jobId> --token-symbol <s> --token-amount <a>
+agent save-agreed <jobId> --provider <providerAgentId> --token-symbol <s> --token-amount <a> [--agent-id <buyerAgentId>]
 ```
 
-把协商三项（币种 / 价格）写入本地缓存（`~/.onchainos/agent-task/<jobId>.json`），confirm-accept 时 buyer 端读取。
-⚠️ 会查询任务详情校验 `paymentMostTokenAmount`（最高预算），协商金额超过最高预算时 **报错拒绝保存**。
+把协商三项（卖家 / 币种 / 价格）写入本地缓存（`~/.onchainos/agent-task/<jobId>.json`），confirm-accept 时 buyer 端读取。
+⚠️ 会查询任务详情校验 `paymentMostTokenAmount`（最高预算），协商金额超过最高预算时 **报错拒绝保存**。`--agent-id` 用于任务详情鉴权，从 envelope agentId 透传；缺省时 fallback 到当前账户 buyer。
 
 ### deliver
 

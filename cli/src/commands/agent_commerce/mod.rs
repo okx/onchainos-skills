@@ -64,8 +64,6 @@ pub enum AgentCommand {
         #[arg(long = "deadline-open")]  deadline_open: String,
         #[arg(long = "deadline-submit")] deadline_submit: String,
         #[arg(long)] title: Option<String>,
-        /// Buyer agent ID（多 buyer 时必传，单 buyer 时自动选择）
-        #[arg(long = "agent-id")] agent_id: Option<String>,
         /// 指定卖家 agentId（跳过 recommend，直接与该卖家协商或 x402 接单）
         #[arg(long)] provider: Option<String>,
     },
@@ -157,6 +155,8 @@ pub enum AgentCommand {
     X402Check {
         /// x402 provider endpoint URL
         #[arg(long)] endpoint: String,
+        /// Buyer agent ID（用于代币详情查询鉴权）
+        #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
     /// Client confirms task complete and releases payment
@@ -535,11 +535,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, agent_id, provider,
+            deadline_open, deadline_submit, title, provider,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, agent_id, provider,
+                deadline_open, deadline_submit, title, provider,
             }, ctx,
         ).await,
 
@@ -572,8 +572,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
             task::buyer::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from }, ctx).await,
 
-        AgentCommand::X402Check { endpoint } =>
-            task::buyer::run_task(T::X402Check { endpoint }, ctx).await,
+        AgentCommand::X402Check { endpoint, agent_id } =>
+            task::buyer::run_task(T::X402Check { endpoint, agent_id }, ctx).await,
 
         AgentCommand::Complete { job_id } =>
             task::buyer::run_task(T::Complete { job_id }, ctx).await,

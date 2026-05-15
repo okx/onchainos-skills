@@ -55,9 +55,6 @@ pub enum TaskCommand {
         deadline_submit: String,
         #[arg(long)]
         title: Option<String>,
-        /// Buyer agent ID（多 buyer 时必传，单 buyer 时自动选择）
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
         /// 指定卖家 agentId（跳过 recommend，直接与该卖家协商或 x402 接单）
         #[arg(long)]
         provider: Option<String>,
@@ -184,6 +181,9 @@ pub enum TaskCommand {
         /// x402 provider endpoint URL
         #[arg(long)]
         endpoint: String,
+        /// Buyer agent ID（用于代币详情查询鉴权）
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Save negotiated payment params locally (agent calls after negotiation)
     SaveAgreed {
@@ -206,10 +206,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── 买家动作 ─────────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, agent_id, provider } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, agent_id, provider,
+                deadline_open, deadline_submit, title, provider,
             }).await,
         TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page } => {
             if next {
@@ -234,8 +234,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             accept::handle_direct_accept(&mut client, &job_id, &provider_agent_id, token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
             accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref()).await,
-        TaskCommand::X402Check { endpoint } =>
-            accept::handle_x402_check(&mut client, &endpoint).await,
+        TaskCommand::X402Check { endpoint, agent_id } =>
+            accept::handle_x402_check(&mut client, &endpoint, agent_id.as_deref()).await,
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>

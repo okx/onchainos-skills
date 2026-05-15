@@ -172,7 +172,7 @@ pub async fn save_agreed(
     let agent_id = if let Some(id) = agent_id.filter(|s| !s.is_empty()) {
         id.to_string()
     } else {
-        super::create::resolve_buyer_agent(None)
+        super::create::resolve_buyer_agent()
             .await
             .map(|(id, _)| id)
             .unwrap_or_default()
