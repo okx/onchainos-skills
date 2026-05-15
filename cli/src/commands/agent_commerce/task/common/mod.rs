@@ -181,51 +181,37 @@ async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     }
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
 
-    // backend 原始 shape: data = [{ list, page, pageSize, total }]
-    // CLI `agent get` 在 queries.rs:100 走 `normalize_singleton_object`,把单元素数组解包成对象,
-    // 所以这里实际可能拿到两种 shape:
-    //   - 对象 shape (normalize 解包后): { list, page, pageSize, total }
-    //   - 数组 shape (多元素 / 未解包): [{ list, ... }]
-    // 优先按对象取,失败再回退数组。
-    let list_val = data
-        .get("list")
-        .cloned()
-        .or_else(|| {
-            data.as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|x| x.get("list"))
-                .cloned()
-        });
-    let list_arr = list_val.as_ref().and_then(|v| v.as_array());
-    if list_arr.is_none() {
+    // Flatten the response (new shape: `list[].agentList[]` groups; old shape:
+    // `list[]` flat agents). No ownerAddress filter — we're looking up any
+    // agent by id, possibly belonging to another user (e.g. peer buyer profile).
+    let all_agents = flatten_agent_groups(&data);
+    if all_agents.is_empty() {
         eprintln!(
-            "[fetch_agent_profile] `agent get` 返回不含 list 字段（object/array shape 都试过）；fallback (agentId={agent_id})"
+            "[fetch_agent_profile] `agent get` returned empty agent list (agentId={agent_id}); fallback"
         );
     }
 
-    let matched = list_arr.and_then(|arr| {
-        arr.iter()
-            .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(agent_id))
-            .map(|a| AgentProfile {
-                agent_id: Some(agent_id.to_string()),
-                name: a.get("name").and_then(|v| v.as_str()).map(String::from),
-                profile_description: a
-                    .get("profileDescription")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                agent_wallet_address: a
-                    .get("agentWalletAddress")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                communication_address: a
-                    .get("communicationAddress")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-            })
-    });
-    if list_arr.is_some() && matched.is_none() {
+    let matched = all_agents.iter()
+        .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(agent_id))
+        .map(|a| AgentProfile {
+            agent_id: Some(agent_id.to_string()),
+            name: a.get("name").and_then(|v| v.as_str()).map(String::from),
+            profile_description: a
+                .get("profileDescription")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            agent_wallet_address: a
+                .get("agentWalletAddress")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            communication_address: a
+                .get("communicationAddress")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+        });
+    if !all_agents.is_empty() && matched.is_none() {
         eprintln!(
-            "[fetch_agent_profile] agentId={agent_id} 不在 `agent get` 返回列表中；fallback"
+            "[fetch_agent_profile] agentId={agent_id} not present in `agent get` response; fallback"
         );
     }
     matched.unwrap_or_else(fallback)
@@ -334,6 +320,186 @@ fn nonzero_fee(fee: &Option<String>) -> Option<&str> {
         Ok(v) if v > 0.0 => Some(f),
         _ => None,
     }
+}
+
+// ─── Current-account agent lookup ───────────────────────────────────────────
+//
+// New /agent/agent-list response shape returns multiple ownerAddress groups
+// (it's a generic communication-lookup endpoint, no longer JWT-filtered to the
+// current user). The CLI side must filter to the active account's XLayer
+// address. These helpers centralize that logic for every task-side caller.
+
+/// Resolve the current active account's XLayer (chainIndex=196) wallet address.
+///
+/// Returns lowercase string (chain addresses are case-insensitive; lowercase
+/// makes downstream `==` comparisons safe).
+/// Returns `None` if not logged in / no active account / no XLayer address.
+pub fn current_account_xlayer_address() -> Option<String> {
+    let wallets = match crate::wallet_store::load_wallets() {
+        Ok(Some(w)) => w,
+        _ => return None,
+    };
+    let account_id = crate::commands::agentic_wallet::account::resolve_active_account_id(&wallets).ok()?;
+    let entry = wallets.accounts_map.get(&account_id)?;
+    entry
+        .address_list
+        .iter()
+        .find(|a| a.chain_index == XLAYER_CHAIN_INDEX)
+        .map(|a| a.address.to_lowercase())
+}
+
+/// Spawn `onchainos agent get` (paginated mode, no `--agent-ids`) and return the
+/// list of agents belonging to the **current active account**.
+///
+/// Pipeline:
+/// 1. resolve current account's XLayer ownerAddress (lowercase)
+/// 2. shell out to `agent get` → parse JSON
+/// 3. flatten the response (new shape: `list[].agentList[]`; old shape:
+///    `list[]` flat agents) → filter by ownerAddress
+///
+/// Returns empty `Vec` on any failure (not logged in / no XLayer / network /
+/// shape mismatch) — robust by design; callers can rely on non-panicking.
+/// Each element of the returned `Vec` is the raw agent JSON object (fields:
+/// `agentId` / `name` / `role` / `status` / `agentWalletAddress` / etc.).
+pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
+    let Some(my_owner) = current_account_xlayer_address() else {
+        eprintln!("[fetch_my_agents] no current XLayer address; returning empty");
+        return Vec::new();
+    };
+
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[fetch_my_agents] current_exe failed: {e}");
+            return Vec::new();
+        }
+    };
+
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.args(["agent", "get"]);
+    eprintln!(
+        "[fetch_my_agents] running: {} agent get (filter ownerAddress={my_owner})",
+        exe.display()
+    );
+
+    let output = match cmd.output().await {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("[fetch_my_agents] spawn `agent get` failed: {e}");
+            return Vec::new();
+        }
+    };
+
+    let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "[fetch_my_agents] parse stdout failed: {e}; raw={}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return Vec::new();
+        }
+    };
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
+        eprintln!("[fetch_my_agents] `agent get` returned failure: {err}");
+        return Vec::new();
+    }
+
+    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let agents = flatten_my_agents(&data, &my_owner);
+    eprintln!(
+        "[fetch_my_agents] matched {} agents under ownerAddress={my_owner}",
+        agents.len()
+    );
+    agents
+}
+
+/// Flatten the agent-list response into a flat `Vec` of agent JSON objects —
+/// **pure shape conversion, no filtering**. Single source of truth for handling
+/// both old and new response shapes; callers layer their own filters on top.
+///
+/// Shapes handled:
+/// - **New**: `data.list[]` is groups, each `{ownerAddress, accountName, agentList[]}`.
+///   Returns all `agentList[]` items across all groups. Group-level
+///   `ownerAddress` / `accountName` are injected into each agent if the
+///   agent itself is missing them (defensive — current spec already
+///   duplicates `ownerAddress` at agent level, but next spec rev might not).
+/// - **Old**: `data.list[]` is flat agent objects. Pass through.
+///
+/// `data` is the value at `body.data` after the `{ok, data}` envelope is
+/// stripped. Handles both object shape (`{list:...}` after
+/// `normalize_singleton_object`) and array shape (`[{list:...}]`).
+pub fn flatten_agent_groups(data: &serde_json::Value) -> Vec<serde_json::Value> {
+    // data may be:
+    //   - object {list, page, ...} after normalize_singleton_object unwraps singleton
+    //   - array [{list, page, ...}]
+    let list_val = data.get("list").cloned().or_else(|| {
+        data.as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|x| x.get("list"))
+            .cloned()
+    });
+    let Some(list) = list_val.as_ref().and_then(|v| v.as_array()) else {
+        eprintln!(
+            "[flatten_agent_groups] response missing `list` field (tried both shapes); raw data: {}",
+            serde_json::to_string(data).unwrap_or_default()
+        );
+        return Vec::new();
+    };
+
+    let mut flat = Vec::new();
+    for entry in list {
+        // New shape: entry is a group with `agentList`
+        if let Some(agents) = entry.get("agentList").and_then(|v| v.as_array()) {
+            let group_owner = entry.get("ownerAddress").and_then(|v| v.as_str());
+            let group_account = entry.get("accountName").and_then(|v| v.as_str());
+            for a in agents {
+                let mut agent = a.clone();
+                if let Some(obj) = agent.as_object_mut() {
+                    if !obj.contains_key("ownerAddress") {
+                        if let Some(o) = group_owner {
+                            obj.insert(
+                                "ownerAddress".to_string(),
+                                serde_json::Value::String(o.to_string()),
+                            );
+                        }
+                    }
+                    if !obj.contains_key("accountName") {
+                        if let Some(n) = group_account {
+                            obj.insert(
+                                "accountName".to_string(),
+                                serde_json::Value::String(n.to_string()),
+                            );
+                        }
+                    }
+                }
+                flat.push(agent);
+            }
+            continue;
+        }
+        // Old shape fallback: entry is an agent itself
+        if entry.get("agentId").is_some() {
+            flat.push(entry.clone());
+        }
+    }
+    flat
+}
+
+/// Extract agents matching `my_owner` (lowercase) from the agent-list response.
+/// Thin wrapper over `flatten_agent_groups` + per-agent `ownerAddress` filter.
+fn flatten_my_agents(data: &serde_json::Value, my_owner: &str) -> Vec<serde_json::Value> {
+    flatten_agent_groups(data)
+        .into_iter()
+        .filter(|a| {
+            a.get("ownerAddress")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_lowercase())
+                .as_deref()
+                == Some(my_owner)
+        })
+        .collect()
 }
 
 // ─── 状态说明 ──────────────────────────────────────────────────────────────

@@ -10,12 +10,11 @@
 use anyhow::{bail, Result};
 use base64::engine::{general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::Value;
-use tokio::process::Command;
 
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    AGENT_ROLE_BUYER, AGENT_ROLE_EVALUATOR, AGENT_ROLE_PROVIDER,
+    fetch_my_agents, AGENT_ROLE_BUYER, AGENT_ROLE_EVALUATOR, AGENT_ROLE_PROVIDER,
     XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
@@ -113,45 +112,11 @@ pub async fn resolve_wallet_and_agent_for_provider(
     Ok((account_id, address, provider_agent_id))
 }
 
-/// 通过子进程调用 `onchainos agent get` 拉取身份列表（调用方再按需筛选）。
-async fn query_agent_list() -> Result<Vec<Value>> {
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("无法获取当前可执行文件路径: {e}"))?;
-
-    let output = Command::new(&exe)
-        .args(["agent", "get"])
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("调用 `onchainos agent get` 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "身份查询失败（`onchainos agent get` 退出码 {}）: {stderr}",
-            output.status
-        );
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Value = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow::anyhow!("解析 agent get 输出失败: {e}"))?;
-
-    if !parsed["ok"].as_bool().unwrap_or(false) {
-        let err_msg = parsed["error"].as_str().unwrap_or("未知错误");
-        bail!("身份查询失败: {err_msg}");
-    }
-
-    // 后端 data 兼容两种形态：object `{list: [...]}` 或 array `[{list: [...]}]`。
-    // 对齐 provider/find_jobs.rs 的兜底逻辑，避免环境差异导致身份解析炸掉。
-    let data = &parsed["data"];
-    let list = if data.is_array() {
-        data.get(0).and_then(|v| v.get("list")).and_then(Value::as_array)
-    } else {
-        data["list"].as_array()
-    }
-    .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份"))?;
-
-    Ok(list.clone())
+/// Fetch the current active account's agent list — thin wrapper over
+/// `fetch_my_agents()`. Kept as a function for clarity at call sites; the
+/// shape-handling + ownerAddress filter lives in `common/mod.rs`.
+async fn query_agent_list() -> Vec<Value> {
+    fetch_my_agents().await
 }
 
 /// 在 `onchainos agent get` 列表里按 `role` 筛选，可选限定 `ownerAddress`。
@@ -165,8 +130,7 @@ async fn resolve_agent_by_role(
     role_label: &str,
     wallet_address: Option<&str>,
 ) -> Result<(String, String)> {
-    let list = query_agent_list().await
-        .map_err(|e| anyhow::anyhow!("{e}（请先注册 {role_label} 身份）"))?;
+    let list = query_agent_list().await;
 
     for agent in &list {
         if agent["role"].as_i64() != Some(role_code) {
@@ -208,7 +172,7 @@ async fn find_owner_address_by_agent_id(
     if id.is_empty() {
         bail!("agent_id 不能为空");
     }
-    let list = query_agent_list().await?;
+    let list = query_agent_list().await;
     for agent in &list {
         let this_id = agent["agentId"].as_str().unwrap_or("");
         if this_id != id {

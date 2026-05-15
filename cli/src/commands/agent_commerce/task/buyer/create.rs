@@ -6,11 +6,10 @@
 //! 是否拥有买家身份（role=1），再执行任务发布流程。
 
 use anyhow::{bail, Result};
-use tokio::process::Command;
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::{
-    self, network::task_api_client::TaskApiClient,
+    self, fetch_my_agents, network::task_api_client::TaskApiClient,
     AGENT_ROLE_BUYER, XLAYER_CHAIN_ID,
 };
 use crate::commands::agent_commerce::task::signing;
@@ -162,34 +161,12 @@ fn validate_budget_decimals(budget: f64) -> Result<()> {
 // ─── 身份校验 ────────────────────────────────────────────────────────────
 
 pub(crate) async fn resolve_buyer_agent(specified_id: Option<&str>) -> Result<(String, String)> {
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("无法获取当前可执行文件路径: {e}"))?;
+    // fetch_my_agents() spawns `onchainos agent get` and filters to the current
+    // active account's XLayer ownerAddress — the new response shape returns
+    // multiple ownerAddress groups, so this filter is now mandatory client-side.
+    let agents = fetch_my_agents().await;
 
-    let output = Command::new(&exe)
-        .args(["agent", "get"])
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("调用 `onchainos agent get` 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("身份查询失败（`onchainos agent get` 退出码 {}）: {stderr}", output.status);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow::anyhow!("解析 agent get 输出失败: {e}"))?;
-
-    if !parsed["ok"].as_bool().unwrap_or(false) {
-        let err_msg = parsed["error"].as_str().unwrap_or("未知错误");
-        bail!("身份查询失败: {err_msg}");
-    }
-
-    let list = parsed["data"]["list"]
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份，请先执行 onchainos agent create --role requestor 注册买家身份"))?;
-
-    let buyers: Vec<_> = list.iter()
+    let buyers: Vec<_> = agents.iter()
         .filter(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))
         .collect();
 

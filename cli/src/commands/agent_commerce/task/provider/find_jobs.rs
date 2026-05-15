@@ -6,11 +6,10 @@
 //! 3. 对每个 Agent 调用 `recommend-task`（POST /priapi/v1/aieco/task/job/match）
 //! 4. 按 agent 分组打印匹配结果
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde_json::Value;
-use tokio::process::Command;
 
-use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::{fetch_my_agents, network::task_api_client::TaskApiClient};
 use crate::commands::agent_commerce::task::signing;
 
 /// Provider 角色值（后端约定：1=buyer, 2=provider, 3=evaluator）
@@ -19,8 +18,9 @@ const ROLE_PROVIDER: i64 = 2;
 const STATUS_ONLINE: i64 = 1;
 
 pub async fn handle_find_jobs() -> Result<()> {
-    // Step 1: 调用 `onchainos agent get` 子进程，获取当前钱包的 Agent 列表
-    let agent_list = invoke_agent_get().await?;
+    // Step 1: fetch the current active account's agents — `fetch_my_agents`
+    // shells out to `onchainos agent get` and filters by XLayer ownerAddress.
+    let agent_list = fetch_my_agents().await;
     if agent_list.is_empty() {
         println!("⚠ 当前钱包没有已注册的 Agent。请先 `onchainos agent create --role provider ...` 创建一个。");
         return Ok(());
@@ -85,45 +85,6 @@ pub async fn handle_find_jobs() -> Result<()> {
     println!("    4. **让用户决定**：呈现完后等用户说「用 <agentId> 接 <jobId>」再启动接单流程，不要替用户选");
 
     Ok(())
-}
-
-/// Spawn `onchainos agent get` 子进程，解析其 stdout JSON 取 `data.list`。
-///
-/// 使用 `std::env::current_exe()` 确保调自身（不依赖 PATH）。
-async fn invoke_agent_get() -> Result<Vec<Value>> {
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("无法获取当前可执行文件路径: {e}"))?;
-    let output = Command::new(&exe)
-        .args(["agent", "get"])
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("调用 `onchainos agent get` 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("`onchainos agent get` 退出码 {}: {stderr}", output.status);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Value = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow::anyhow!("解析 `onchainos agent get` 输出失败: {e}\n原始输出:\n{stdout}"))?;
-
-    if parsed["ok"] != true {
-        bail!(
-            "`onchainos agent get` 返回失败: {}",
-            parsed["error"].as_str().unwrap_or("unknown error")
-        );
-    }
-
-    // backend shape: data = [{ list, page, pageSize, total }]
-    let list = parsed["data"]
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.get("list"))
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    Ok(list)
 }
 
 /// 对指定 agent 调 recommend-task 接口
