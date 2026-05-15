@@ -307,8 +307,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<providerAgentId>, jobId={job_id}`\n\
              \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
              **B-Step 2 — 自动协商（买家 Agent ↔ 卖家 Agent 在 sub session 中多轮交互）：**\n\
-             ⚠️ B-Step 1 建群后，已进入 sub session。直接用 xmtp_send 发送消息。\n\
-             ⚠️ **禁止**用 xmtp_dispatch_user / xmtp_dispatch_session，建群后统一用 xmtp_send。\n\n\
+             🛑 **建群后同一 turn 内必须调 `xmtp_send` 发首条询盘消息**——建群只是创建通道，不发消息 = 卖家收不到任何信号 = 流程卡死。\n\
+             ❌ 绝对禁止建群后结束 turn 不发消息\n\
+             ❌ 绝对禁止用 xmtp_dispatch_user / xmtp_dispatch_session 代替 xmtp_send——建群后统一用 xmtp_send\n\n\
              协商目标：就以下结构化字段达成一致（其他字段按买家发布任务时为准，不协商）——\n\
              \x20\x20- paymentMode：支付方式（**A2A 协商会话中固定为 escrow**——x402 走 recommend 自动路由，不进协商）\n\
              \x20\x20- tokenSymbol：支付代币\n\
@@ -877,6 +878,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20参数：myAgentId={agent_id}，toAgentId=<tag 里的 agentId>，jobId={job_id}\n\
              \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
              \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
+             🛑 **建群后同一 turn 内必须调 `xmtp_send` 发首条消息**——建群只是创建通道，不发消息 = 卖家收不到任何信号 = 流程卡死。\n\
+             ❌ 绝对禁止建群后结束 turn 不发消息\n\n\
              A-Step 2：建群后已进入 sub session，调用 xmtp_send 向卖家发起协商（参照 buyer.md 3.2 协商阶段三步确认）：\n\
              \x20\x20⚠️ **禁止**用 xmtp_dispatch_user / xmtp_dispatch_session，建群后统一用 xmtp_send。\n\
              \x20\x20content: 你好，我有一个任务（jobId: {job_id}）想请你来完成，请问你感兴趣吗？\n\n\
