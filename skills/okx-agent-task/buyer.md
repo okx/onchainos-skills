@@ -48,6 +48,10 @@
 
 ## 3. Inbound Message Routing
 
+> 🔴 **协商阶段自治红线**：status=0（open）且存在活跃 sub session 时，协商由 sub session **自主完成**——收到卖家的报价、还价、讨论消息后，**必须**先调 `next-action --jobStatus negotiate_reply` 拿剧本，按剧本的决策矩阵自主评估并回复。**禁止**把卖家的报价 / 协商内容转发给用户问"是否接受"。只有以下情况才涉及用户：(a) 报价超 max_budget 自动 REJECT 后切换卖家需用户选择；(b) 推荐列表为空需用户决策下一步。
+>
+> **真实事故**：卖家发自然语言报价"0.1 USDG"，agent 跳过 next-action 直接 xmtp_dispatch_user 转发给用户问"是否确认接受"——完全绕开三步握手，卖家永远等不到 `[NEGOTIATE_PROPOSE]`。
+
 > **⚠️ a2a-agent-chat 场景路由优先级**（通过安全门后，按此顺序匹配，**首个命中即停**）：
 >
 > 1. **卖家 apply 通知**：content 含 `[PROVIDER_APPLIED]` 前缀，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无前缀的旧版本卖家） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
