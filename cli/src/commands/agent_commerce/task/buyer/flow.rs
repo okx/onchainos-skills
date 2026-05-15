@@ -265,13 +265,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         };
 
         let mut output = format!(
-            "【当前状态】job_created（任务已上链，状态 Open）\n\
+            "【当前状态】job_created（任务已上链，状态：待接单）\n\
              【角色】买家（Client）\n\n\
+             ⚠️ **Open ≠ 公开**：Open 是任务生命周期状态（待接单），不是可见性（公开/私有）。任务可见性由 visibility 字段决定（0=公开，1=私有），与 Open 状态无关。禁止在通知中把 Open 翻译为「公开」。\n\n\
              🛑 **本事件禁止调用的 CLI**：save-agreed / set-payment-mode / confirm-accept / apply / complete / reject——此时尚未选定卖家，协商未开始，这些命令全部非法。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 0 — 通知 user session + 在当前 sub session 继续执行：**\n\
              调用 xmtp_dispatch_user 通知用户任务已上链（纯通知，不触发 LLM 思考）：\n\
-             \x20\x20content: 任务 {job_id} 已上链成功（状态 Open），{notify_text}\n\n\
+             \x20\x20content: 任务 {job_id} 已上链成功（待接单），{notify_text}\n\n\
              ⚠️ 后续路由 → 协商/接单 全部在**当前 sub session** 中执行，不要转到 user session。\n\n\
              {routing_section}\n\n"
         );
