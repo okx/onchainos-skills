@@ -125,8 +125,10 @@ All AI user-visible text MUST follow the term translations in `references/ux-lex
   - Chinese: `requester` → "买家" / `provider` → "卖家"（默认）或 "服务方"（正式语境）/ `evaluator` → "验证者"（默认）或 "仲裁者"（争议语境）— never expose the raw English role word to Chinese users.
   - English: keep `requester` / `provider` / `evaluator` **as-is** (ERC-8004 native terms — do NOT translate to `buyer` / `seller` / `arbitrator`; English-speaking crypto users learn these as part of the on-chain vocabulary, and translating creates mismatch with explorers / OKX UI / the wider ecosystem).
   - The asymmetry is intentional. See `ux-lexicon.md §Role asymmetric rule rationale`.
-- `A2MCP` → "API 接口式服务（按次调用，固定价格）" / "API-interface service (pay-per-call, fixed price)" — first mention; later in the same conversation may abbreviate.
-- `A2A` → "agent 通信式服务（议价 / 灵活协作）" / "agent-to-agent service (negotiated / off-chain pricing)".
+- `A2MCP` / `A2A` → user-visible rendering follows **one of two acceptable patterns** defined in `references/ux-lexicon.md §Service-type` (single source of truth):
+  - **Pattern A — long form inline** (gloss inside the parenthetical attached to the name): "API 接口式服务（按次调用、固定价格）" / "API-interface service (pay-per-call, fixed price)"; "agent 通信式服务（议价 / 灵活协作）" / "agent-to-agent service (negotiated / off-chain pricing)". Used for **teaching contexts** — Q&A prompts where the user is choosing the type (e.g. `role-provider.md` Phase 2 Q3), error explanations, free-form chat.
+  - **Pattern B — short form + footnote below table** (short form in cell, separate one-line gloss footnote rendered below the table on first occurrence in the conversation): cell values `API 接口` / `agent 互调` / `API service` / `agent-to-agent`; footnote `> 服务类型：API 接口 = 按次调用、固定价格；agent 互调 = 议价 / 灵活协作。` / English equivalent. Used in **cell / table contexts** — `display-formats.md` §2 detail / §3 confirmation / §4 service-list / §6 search results.
+  - Both patterns deliver the gloss on first encounter; subsequent reuses in the same conversation MAY use the short form alone. ⛔ Raw enum `A2MCP` / `A2A` NEVER reaches user-visible text under either pattern. Full rules and worked examples → `ux-lexicon.md §Service-type` "Two acceptable rendering patterns". This Red-line entry is a pointer to that section, not a parallel spec.
 - Raw `status` integers → see `ux-lexicon.md` table.
 - Raw `OKB` / `gas` / `chain-index` → see `ux-lexicon.md`.
 
@@ -395,15 +397,15 @@ Single-word inputs (`agent`, `search`, `list`) do NOT auto-route to any sub-comm
 
 ### Roles
 
-Three roles. Always use the lowercase English value for the `--role` CLI parameter; address the user with the Chinese label.
+Three roles. Always emit the lowercase English value for the `--role` CLI parameter. User-facing wording is **language-dependent and follows the asymmetric rule in `references/ux-lexicon.md §Role`**: Chinese users see the localized term; English users keep the ERC-8004 native term (do NOT translate to `buyer` / `seller` / `arbitrator` — those create mismatch with explorers / OKX UI / the wider ecosystem).
 
-| CLI value (`--role`) | User-facing label | Meaning |
-|---|---|---|
-| `requester` | 买家 (buyer) | Publishes tasks, pays for services |
-| `provider` | 服务方 (seller) | Offers services, delivers work |
-| `evaluator` | 验证者 (arbitrator) | Judges disputes. `create` itself is unconditional; a separate stake via `okx-agent-task` is required to be assigned real disputes. |
+| CLI value (`--role`) | Chinese user-facing | English user-facing | Meaning |
+|---|---|---|---|
+| `requester` | 买家 | requester | Publishes tasks, pays for services |
+| `provider` | 卖家（默认）/ 服务方（正式语境） | provider | Offers services, delivers work |
+| `evaluator` | 验证者（默认）/ 仲裁者（争议语境） | evaluator | Judges disputes. `create` itself is unconditional; a separate stake via `okx-agent-task` is required to be assigned real disputes. |
 
-CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. The skill always emits the canonical lowercase English name to the CLI.
+CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. The skill always emits the canonical lowercase English name to the CLI. ⛔ User-visible text MUST follow `ux-lexicon.md §Role` — do NOT mix languages (no `买家 (buyer)` / `provider (服务方)` parentheticals; see `§UX Output Red Lines Red line 4`).
 
 ### Intent → Sub-flow
 
@@ -673,7 +675,7 @@ Every user-facing string the skill renders must match the user's language. Detec
 
 - When rendering role inline in a detail card, use the single form that matches the user's language: Chinese users see `验证者`, English users see `evaluator`. Do NOT render `evaluator (验证者)` bilingual — that's leftover from an earlier spec.
 - When rendering status, same rule: Chinese `已上架`, English `active`. Never mix.
-- A shared exception: inside the confirmation card for `create`, the `role` row may show the CLI value plus user-language label once (e.g. `role | evaluator` for English; `角色 | 验证者` for Chinese) so the user can see what the CLI will receive.
+- ⛔ **The `role` row follows `references/ux-lexicon.md §Role` asymmetric rule — no exception**: English users see the ERC-8004 native term (`Role | evaluator` / `Role | provider` / `Role | requester` — these happen to equal the CLI value, so the row is single-token and there is nothing extra to show); Chinese users see the localized term ONLY (`角色 | 验证者` / `角色 | 服务方` / `角色 | 买家`) — do **NOT** render the bilingual `角色 | 验证者 (evaluator)` / `角色 | 服务方 (provider)` / `角色 | 买家 (requester)` form, even on the create confirmation card. The CLI value is the AI's internal concern (gets sent as `--role` flag); the user does not need to see it to "verify what the CLI will receive". This rescinds the old "may show CLI value plus user-language label once" carve-out, which was the source of the bilingual leak (`§UX Output Red Lines Red line 4`).
 
 **Do not:**
 
@@ -739,7 +741,7 @@ Some users type their whole request in one turn: "注册一个 provider 叫 Alic
    - Capture `name=Alice` (or ask if ambiguous — see rule 2).
    - **Do NOT** capture Fee=10 or any service field. The "10 USDT" is **discarded** from the Phase-1 parse — it does NOT become an internal "暂存" value the skill auto-fills with.
    - Rationale: service field structure is complex (`servicetype` decides whether `fee`/`endpoint` are asked), cross-phase parse has many misfire modes.
-   - **UX guidance (Option A — suggestion-as-prompt).** When Phase 2 starts and the first service-name question is asked, you **MAY** quote the user's earlier mention inline as a suggested default to confirm or override. ⛔ The example below is the literal text rendered to the user — **no `Q1：` / `Q3：` prefix**, per `§UX Output Red Lines Red line 3`: `这个服务叫什么名字？（你刚提到「天气查北京」，确认就是它吗？或想改？）`. Same applies to the `servicetype` question if the user named "A2A" / "A2MCP" / "MCP 服务" in Phase 1 — quote it in the numbered prompt: `服务类型？（你刚提到 A2A——确认 2 即可，要改回 1。）`. This is **suggestion text in the prompt**, NOT an auto-fill: the user's **reply this turn** is the authoritative value, and if they ignore the suggestion (e.g. type a different name), use what they typed.
+   - **UX guidance (Option A — suggestion-as-prompt).** When Phase 2 starts and the first service-name question is asked, you **MAY** quote the user's earlier mention inline as a suggested default to confirm or override. ⛔ The example below is the literal text rendered to the user — **no `Q1：` / `Q3：` prefix**, per `§UX Output Red Lines Red line 3`: `这个服务叫什么名字？（你刚提到「天气查北京」，确认就是它吗？或想改？）`. Same applies to the `servicetype` question if the user named the type in Phase 1 — **this is a Pattern A teaching context** (user is being asked to confirm a choice; the one-shot path skips the full Q3 numbered options, so this prompt may be the user's first encounter with the type concept). **Map the user's term to the long-form-with-gloss** per `references/ux-lexicon.md §Service-type` Pattern A before quoting it back: if user said `A2A` / `agent 互调` / `agent-to-agent` / `agent 通信` then quote as `服务类型？（你刚说想要 agent 通信式服务（议价 / 灵活协作），确认 2 即可；想改回 1 也行。）`; if user said `A2MCP` / `MCP 服务` / `API 接口` then quote as `服务类型？（你刚说想要 API 接口式服务（按次调用、固定价格），确认 1 即可；想改回 2 也行。）`. ⛔ Never echo the raw enum `A2MCP` / `A2A` and ⛔ never use the short form alone here (Pattern A teaching context requires the inline gloss; the short form is for Pattern B cell contexts only). This is **suggestion text in the prompt**, NOT an auto-fill: the user's **reply this turn** is the authoritative value, and if they ignore the suggestion (e.g. type a different name), use what they typed.
    - Do NOT silently auto-fill, do NOT pre-populate Phase-2 fields from Phase-1 wording, do NOT skip the Q just because the suggested default "is probably what they meant". The discard-then-quote-as-suggestion pattern preserves the strict boundary while removing the "I have to retype something I already said" UX pain.
 5. **All fields captured → still render confirmation card.** If the one-shot utterance covered every required field for the role (identity for requester/evaluator; identity + at least one complete service for provider — but see rule 4, so provider never gets here from identity phase alone), render the confirmation card directly. The confirmation card is still mandatory (see §Core Flow gate 4 + §⛔ MANDATORY confirmation gate at the top of this file) — **never** skip straight to CLI invocation. "All fields captured" is enumerated by name in §Core Flow gate 4 as a rationalization that does NOT bypass the gate. Wait for the user's explicit `执行` / `execute` / `yes` reply on this turn before calling the tool.
 6. **Confirmation-step ambiguity.** When rendering the confirmation card after one-shot capture, if any captured value was edge-case (whitespace, punctuation, bracketed optionals), show the value verbatim and let the user reject during confirmation. Do not "clean up" silently.
@@ -758,14 +760,15 @@ Some users type their whole request in one turn: "注册一个 provider 叫 Alic
 - Service `fee` is **required for `A2MCP` and optional for `A2A`**. For `A2A` the user may either skip (skill sends `"fee": ""` — see `cli-reference.md` §1's `--service` note for why the key is always present) or supply a USDT reference price following the same format. When rendering an A2A service: if `fee` is non-empty, show it as `<N> USDT` like A2MCP; if empty / absent, show the short form `免费` / `free` in the user's language (Type=A2A on the same row already gives the off-chain-pricing context). For dedicated Fee rows in confirm/diff cards (where space allows), `（未填，链外议价）` / `(skipped — off-chain negotiation)` is also acceptable.
 - Evaluator stake amount is owned by `okx-agent-task` and may change; **never hardcode the amount** in this skill's copy. Just point users to the staking flow at `/skills/okx-agent-task/references/evaluator-staking.md`.
 - EVM contract / agent addresses must be displayed all lowercase.
-- **Reputation is rendered as 0–5 stars, never as the raw 0–100 score.** The backend wire format stays 0–100; whether the **CLI** has already converted to stars before handing the response to the skill depends on the endpoint.
+- **Reputation is rendered as 0–5 stars, never as the raw 0–100 score.** The backend wire format depends on the endpoint; whether the skill needs to convert depends on what the response carries.
+  - **Backend-returned already-scaled (skill renders directly — do NOT divide):**
+    - `agent search` — each `list[*].feedbackRate` is already a 0–5 Double from the backend per `references/cli-reference.md §7` schema. Render as `★ <feedbackRate>`; `null` → `—`. **No `/20` arithmetic, no round-half-up at this layer** — backend already did it. (Also note: the array field is `list`, NOT `items` — see §7. There is no `reputation.score` / `reputation.count` on this endpoint; that shape belongs to `agent get` only.)
   - **CLI-converted endpoints** (skill renders the value verbatim — do NOT divide again):
     - `agent feedback-list` — CLI's `utils::convert_feedback_list_scores` already maps top-level `average` to a 1-decimal star float and each `items[*].score` / `list[*].score` to an integer star bucket. Render directly: `★ <average>` / `★ <score>`.
     - `agent feedback-submit` (input) — CLI takes 0–5 stars via `--score` and multiplies by 20 internally (`utils::stars_to_score`). Skill passes user stars straight to `--score` — no multiplication on the skill side.
   - **Not-yet-converted endpoints** (CLI returns raw 0–100, skill still applies the round-half-up rule at render time):
     - `agent get` — `list[*].agentList[*].reputation.score` is the 0–100 backend aggregate (note the double-layer envelope: outer `list[*]` is an accountName wrapper, agent rows live one level deeper — see `references/cli-reference.md §3`); render as `★ <round-half-up(score / 20) to 1 decimal>`.
-    - `agent search` — `items[*].reputation.score` (single-layer envelope, and note the array field is `items`, not `list` — backend list-style endpoints are inconsistent here: `agent-list` uses `list`, `agent-search` uses `items`. See `cli-reference.md §7` return schema).
-    - These two are tracked for future extension into the CLI; until then the rule below applies skill-side.
+    - Tracked for future extension into the CLI; until then the rule below applies skill-side.
   - **Canonical rounding rule** (used both inside the CLI's converters and by skill-side rendering for the not-yet-converted endpoints): `score / 20` followed by **round-half-up** tie-breaking at the displayed precision.
     - Integer star buckets (single review): `round-half-up(score / 20)` — `50 → 3`, `70 → 4`, `90 → 5`.
     - 1-decimal aggregates: round the second decimal half-up — `92 → 4.6`, `89 → 4.5`, `85 → 4.3`, `30 → 1.5`.

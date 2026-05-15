@@ -1,6 +1,6 @@
 # UX Lexicon — 内部术语 → 用户视角翻译表
 
-⛔ **This file is referenced by `SKILL.md §UX Output Red Lines` Red line 4.** Every AI user-visible message MUST use the right-column wording. Never leak the left-column literal into chat output. Internal reasoning, tool arguments, CLI invocations, and maintainer-facing doc blocks may use the left-column literals freely — the constraint applies only to text the user sees.
+⛔ **This file is referenced by `SKILL.md §UX Output Red Lines` Red line 4.** Every AI user-visible message MUST follow the **per-section rendering rule** below — for two-form sections (e.g. Role, Status, Field) that means using the user-language column wording; for multi-form sections (e.g. Service-type, which has both a long form for Pattern A teaching contexts and a short form + footnote for Pattern B cell contexts) that means **using the form prescribed by the section's own pattern selector**, not a single "right-column" default. Never leak the left-column `内部` literal (wire-level enum / CLI flag / JSON key) into chat output. Internal reasoning, tool arguments, CLI invocations, and maintainer-facing doc blocks may use those left-column literals freely — the constraint applies only to text the user sees.
 
 ## Role 角色术语
 
@@ -16,12 +16,33 @@
 
 ## Service-type 服务类型术语
 
-| 内部 (`servicetype`) | 第一次对用户说 | 上下文已建立后可缩写为 |
-|---|---|---|
-| `A2MCP` | 「**API 接口式服务**（按次调用，固定价格）」 / "**API-interface service** (pay-per-call, fixed price)" | "API 接口" / "API service" |
-| `A2A` | 「**agent 通信式服务**（议价 / 灵活协作）」 / "**agent-to-agent service** (negotiated / off-chain pricing)" | "agent 互调" / "agent-to-agent" |
+| 内部 (`servicetype`) | 长形式（用于"教学型"上下文，gloss 内嵌） | 短形式（用于卡片单元格 / 标签场景） | 单独的 gloss 内容（用作 footnote） |
+|---|---|---|---|
+| `A2MCP` | 「**API 接口式服务**（按次调用、固定价格）」 / "**API-interface service** (pay-per-call, fixed price)" | "API 接口" / "API service" | 按次调用、固定价格 / pay-per-call, fixed price |
+| `A2A` | 「**agent 通信式服务**（议价 / 灵活协作）」 / "**agent-to-agent service** (negotiated / off-chain pricing)" | "agent 互调" / "agent-to-agent" | 议价 / 灵活协作 / negotiated / off-chain pricing |
 
-⛔ Never render bare `A2MCP` / `A2A` to a first-time user without the parenthetical gloss. Once introduced in the conversation, the short form is acceptable.
+⛔ **Raw `A2MCP` / `A2A` enum NEVER appears in user-visible text — period.** The raw form is the wire-level CLI `--service` payload value only; user output uses one of the two localized forms above.
+
+### Two acceptable rendering patterns (both deliver the gloss on first occurrence)
+
+Both patterns satisfy the "user must see the gloss on first encounter" requirement; the choice is **context-driven**, not preferential. The skill MUST use exactly one of these patterns whenever serviceType reaches user-visible text:
+
+- **Pattern A — Inline parenthetical (long form)**: render the **long form** verbatim — the gloss sits in the parenthetical attached to the name. Used in: Q&A prompts that teach the user the choice (e.g., `role-provider.md` Phase 2 Q3 numbered options), error messages explaining the constraint, free-form explanations in chat. Example:
+  > 这项服务是哪种类型？
+  >   1. API 接口式服务（按次调用、固定价格，标准 MCP 接口）
+  >   2. agent 通信式服务（议价 / 灵活协作；价格默认链外谈，可选填上链参考价）
+
+- **Pattern B — Short form + footnote below table** (preferred in cells / tables where space is tight): the **short form** sits in the cell; **on first occurrence in the conversation**, append a one-line gloss footnote below the table. Used in: `display-formats.md` §2 detail card, §3 confirmation card, §4 service-list, §6 search results, anywhere `serviceType` appears as a cell value. Example:
+  > | TVL Query | API 接口 | 10 USDT | ... |
+  > | Yield Check | agent 互调 | 免费 | ... |
+  >
+  > 服务类型：API 接口 = 按次调用、固定价格；agent 互调 = 议价 / 灵活协作。
+
+### Subsequent reuse in the same conversation
+
+After the user has seen the gloss (either via Pattern A or Pattern B), subsequent renderings in the same conversation MAY use the **short form alone** — no further gloss / footnote needed. The skill MUST still NEVER render the raw enum.
+
+This framework is the single source of truth referenced from `SKILL.md §UX Output Red Lines Red line 4` and `display-formats.md` top-level "Service-type rendering" rule; both files must stay aligned with this section.
 
 ## Status 状态术语
 
@@ -78,7 +99,7 @@ The AI's user-visible draft → sweep these rules → emit:
 
 1. Replace every `okx-*` literal with business language (see `SKILL.md §UX Red Lines Red line 1`).
 2. Replace every `onchainos agent <cmd>` literal with an "I'll do it for you" + actually invoke the CLI (Red line 2).
-3. Replace every role / type / status / field literal with its right-column translation (this file).
+3. Replace every role / status / field literal with its user-language wording (Role section / Status section / Field section in this file). For **service-type** specifically, do NOT pick a single column blindly — pick the form prescribed by the section's "Two acceptable rendering patterns" selector: **Pattern A long form** for Q&A teaching prompts / error messages / free-form chat; **Pattern B short form + footnote** for cards / tables (§2 / §3 / §4 / §6 in `display-formats.md`).
 4. Replace every flow-term / Q-prefix / S-prefix / Phase-N literal with natural-language phrasing (this file).
 5. Check ≥5 agent counts have a reassurance footer (`display-formats.md §1`, Red line 5).
 

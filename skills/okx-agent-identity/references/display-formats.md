@@ -8,6 +8,21 @@
 
 **Language matching.** Field labels, status words, and footer hints must match the user's language per `SKILL.md §Language Matching`. Every table in every section below shows a Chinese-variant and an English-variant header; render one variant, not both.
 
+**Service-type rendering — this file uses "Pattern B" from `references/ux-lexicon.md §Service-type`** (which is the **single source of truth** for service-type localization; this section follows that spec for cell-based renderings, it does not replace it).
+
+The cards and tables in §2 detail / §3 confirmation / §4 service-list / §6 search results are all **cell / table contexts** — so by the ux-lexicon framework they use **Pattern B**: short form in the cell, plus a one-line gloss footnote rendered below the table **on first occurrence in the conversation**.
+
+- Cell content: short form only — Chinese: `API 接口` / `agent 互调`; English: `API service` / `agent-to-agent`.
+- Footnote (rendered ONCE in the conversation, immediately below the table that first introduces these short forms):
+  > 中文: `> 服务类型：API 接口 = 按次调用、固定价格；agent 互调 = 议价 / 灵活协作。`
+  >
+  > English: `> Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.`
+- ⛔ Raw enum `A2MCP` / `A2A` never appears in the cell, never in the footnote, never anywhere user-visible. See `ux-lexicon.md §Service-type` for the cross-pattern rule.
+
+For **Pattern A (long form inline)** contexts — Q&A prompts that teach the user the choice, error explanations, free-form chat — see `ux-lexicon.md §Service-type` directly. The canonical example of Pattern A is `role-provider.md` Phase 2 Q3's numbered options.
+
+The canonical worked examples in §2 / §4 / §6 below **show the Pattern B footnote rendered** to be faithful end-to-end renders. If the user has already seen the gloss earlier in the conversation (via Pattern A or a previous Pattern B render), subsequent responses MAY omit the footnote.
+
 **⛔ URL literals are doc-only.** Any `https://...` value that still appears anywhere in this file's templates (e.g. inside an example service row, a Picture cell, a service-list endpoint column) is **illustrative for the doc reader only**, NOT a renderable default. When generating user-facing output:
 - Render whatever **the user actually supplied** for `endpoint` / `picture` (or, for backend-returned cards like `agent get` / `service-list`, the **backend-returned URL verbatim**) — never a literal `https://api.example.com/...` / `https://cdn.example.com/...` / `https://img.example.com/...` from this doc.
 - If the value is missing or empty, follow that row's documented fallback (`默认` / `default` for Picture; `—` for an A2A endpoint cell; etc.) — **never** fall back to a doc URL.
@@ -135,11 +150,13 @@ Chinese variant:
 | 地址 | 0xabc…1234 |
 | 描述 | 链上数据分析与收益模拟。 |
 | 头像 | <url> |
-| 服务 | [1] TVL Query — A2MCP, 10 USDT, `<user-or-backend-provided-endpoint>` |
-| 服务 | [2] Yield Check — A2A, 免费 |
-| 服务 | [3] Whale Alert — A2A, 5 USDT |
+| 服务 | [1] TVL Query — API 接口, 10 USDT, `<user-or-backend-provided-endpoint>` |
+| 服务 | [2] Yield Check — agent 互调, 免费 |
+| 服务 | [3] Whale Alert — agent 互调, 5 USDT |
 | 评分 | ★ 4.6 (18 条评价) |
 | txHash | 0xabcdef…0f12 |
+
+> 服务类型：API 接口 = 按次调用、固定价格；agent 互调 = 议价 / 灵活协作。
 
 English variant:
 
@@ -152,11 +169,13 @@ English variant:
 | Address | 0xabc…1234 |
 | Description | On-chain data analysis and yield simulation. |
 | Picture | <url> |
-| Services | [1] TVL Query — A2MCP, 10 USDT, `<user-or-backend-provided-endpoint>` |
-| Services | [2] Yield Check — A2A, free |
-| Services | [3] Whale Alert — A2A, 5 USDT |
+| Services | [1] TVL Query — API service, 10 USDT, `<user-or-backend-provided-endpoint>` |
+| Services | [2] Yield Check — agent-to-agent, free |
+| Services | [3] Whale Alert — agent-to-agent, 5 USDT |
 | Rating | ★ 4.6 (18 reviews) |
 | txHash | 0xabcdef…0f12 |
+
+> Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
 
 Rules:
 
@@ -250,9 +269,11 @@ Chinese variant:
 | 描述 | 链上数据分析与收益模拟。 |
 | 头像 | 默认 |
 | 服务[1] 名称 | TVL Query |
-| 服务[1] 类型 | A2MCP |
+| 服务[1] 类型 | API 接口 |
 | 服务[1] 价格 | 10 USDT |
 | 服务[1] 接口地址 | `<user-provided-endpoint>` |
+
+> 服务类型：API 接口 = 按次调用、固定价格；agent 互调 = 议价 / 灵活协作。
 
 English variant:
 
@@ -263,9 +284,11 @@ English variant:
 | Description | On-chain data analysis and yield simulation. |
 | Picture | default |
 | Service [1] Name | TVL Query |
-| Service [1] Type | A2MCP |
+| Service [1] Type | API service |
 | Service [1] Fee | 10 USDT |
 | Service [1] Endpoint | `<user-provided-endpoint>` |
+
+> Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
 
 Service-field label mapping (user-facing labels ↔ CLI JSON keys the skill sends to `--service`):
 
@@ -290,7 +313,9 @@ Chinese variant:
 | 头像 | <旧 URL> | **<新 URL>** |
 | 服务[1] 价格 | 10 USDT | (不变) |
 
-> 确认后回复 "执行" 即可。`--service` 整体替换，但本次只有 服务[1] 价格 以外的字段保持不变。
+> 本次会改 描述 和 头像；其它字段保持不变。
+> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再更新一次即可；操作随时可逆。
+> 确认后回复 "执行" 即可。
 
 English variant:
 
@@ -301,7 +326,9 @@ English variant:
 | Picture | <old URL> | **<new URL>** |
 | Service [1] Fee | 10 USDT | (unchanged) |
 
-> Reply "execute" to run it. `--service` replaces the whole list, but the only intended change here is Service [1] Fee; other fields are kept identical.
+> This update changes Description and Picture; everything else stays as-is.
+> Estimated cost: **0 USDT** (editing fields costs no gas — OKX covers it in phase 1). Reversible: re-run update to revert to the old value at any time.
+> Reply "execute" to run.
 
 Rules:
 
@@ -309,6 +336,7 @@ Rules:
 - Changed rows: bold the new-value cell so the diff reads at a glance.
 - For each service entry, always list all sub-fields — easy to spot accidental drops. Localize the service-field labels per the mapping table above.
 - **Do NOT show the bash command in this card.** If the user asks "把命令给我看", render it as a separate code block afterward; otherwise omit.
+- **Maintainer note (wholesale `--service` replacement, internal — do NOT surface to user):** the `--service` flag wire-level **replaces the full services list**, not a per-field patch. When only one sub-field of one service changes (e.g. only `Service [1] Fee`), the skill MUST construct the new `--service` JSON by **starting from the current full services list** (from the mandatory `agent get` pre-step) and applying the diff in memory — then send the **complete** list. Sending only the changed entry would silently delete every other service. This is a wire-level concern; do not mention `--service` in the user-visible card footer (Red line 2).
 - End every diff card with exactly one line: `确认后回复 "执行" 即可。` (English variant: `Reply "execute" to run.`). Do NOT use any verb like "下发" / "dispatch" / "send" in this footer — see `SKILL.md §Step 3 — No narration between confirmation and result` for why.
 - **Cost & reversibility rows (mandatory).** Every Create-variant card AND Update Diff card MUST include two final rows (rendered immediately above the `确认后回复 "执行" 即可。` line) explaining what the user pays and whether they can undo. Phrasings (substitute the role / action wording per context — these are templates, not literal):
   - Create variant (2 cols):
@@ -317,7 +345,7 @@ Rules:
     - 中文: `| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；链上 NFT 永久保留，不会丢失记录 |`
     - 英文: `| Reversible? | Yes — say "deactivate #N" anytime; the on-chain NFT is preserved permanently and your history stays intact |`
   - Update variant (3 cols — these two rows use only 1 cell that spans across, so render as plain text below the table instead of as table rows):
-    - 中文: `> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再 update 一次即可；操作随时可逆。`
+    - 中文: `> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再更新一次即可；操作随时可逆。`
     - 英文: `> Estimated cost: **0 USDT** (editing fields costs no gas — OKX covers it in phase 1). Reversible: re-run update to revert to the old value at any time.`
 - Source of truth for these costs: `SKILL.md §Cost Disclosure`. ⛔ **Never fabricate other cost items** (no "平台服务费", no "Agent 调度费", no "审核费").
 
@@ -333,9 +361,11 @@ Chinese variant:
 
 | # | 名称 | 类型 | 价格 | Endpoint | 描述 |
 |---|---|---|---|---|---|
-| 1 | TVL Query | A2MCP | 10 USDT | `<backend-provided-endpoint>` | 按链查询协议 TVL。 |
-| 2 | Yield Check | A2A | 免费 | — | 比较 Aave / Lido / Compound 的收益。 |
-| 3 | Whale Alert | A2A | 5 USDT | — | 大额转账实时推送（A2A 选填了上链参考价）。 |
+| 1 | TVL Query | API 接口 | 10 USDT | `<backend-provided-endpoint>` | 按链查询协议 TVL。 |
+| 2 | Yield Check | agent 互调 | 免费 | — | 比较 Aave / Lido / Compound 的收益。 |
+| 3 | Whale Alert | agent 互调 | 5 USDT | — | 大额转账实时推送（agent 互调 选填了上链参考价）。 |
+
+> 服务类型：API 接口 = 按次调用、固定价格；agent 互调 = 议价 / 灵活协作。
 
 English variant:
 
@@ -343,9 +373,11 @@ English variant:
 
 | # | Name | Type | Fee | Endpoint | Description |
 |---|---|---|---|---|---|
-| 1 | TVL Query | A2MCP | 10 USDT | `<backend-provided-endpoint>` | Query protocol TVL by chain. |
-| 2 | Yield Check | A2A | free | — | Compare yields across Aave / Lido / Compound. |
-| 3 | Whale Alert | A2A | 5 USDT | — | Real-time large-transfer alerts (A2A with on-chain reference fee supplied). |
+| 1 | TVL Query | API service | 10 USDT | `<backend-provided-endpoint>` | Query protocol TVL by chain. |
+| 2 | Yield Check | agent-to-agent | free | — | Compare yields across Aave / Lido / Compound. |
+| 3 | Whale Alert | agent-to-agent | 5 USDT | — | Real-time large-transfer alerts (agent-to-agent with on-chain reference fee supplied). |
+
+> Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
 
 Rules:
 
@@ -402,8 +434,8 @@ Rules:
 
 - Header mirrors the detail card's rating summary line — `★ <average> (<count> reviews)`, where `<average>` is the **already-converted 1-decimal star float** returned by `agent feedback-list` (CLI's `utils::convert_feedback_list_scores` maps backend 0–100 → 1-decimal stars before responding; the skill renders directly without dividing again).
 - Each review's user-visible template: `#<index> · <date> · <reviewer-label> #<id> (<role> <name>) · ★ <stars>`, where `<stars>` is the **already-converted integer 0–5** returned in each item's `score` field. Skill renders the integer directly — no `score / 20` arithmetic here. The conversion lives in `utils::convert_feedback_list_scores` per the canonical rule pinned in `SKILL.md §Amount Display Rules` reputation block. Never render the raw 0–100 number. ⛔ The `<reviewer-label>` slot is **language-dependent**, NOT the literal English word `creator`: per `ux-lexicon.md §Field` (`creator-id`) the user-visible wording is `发起人` (Chinese) / `reviewer` (English). The `<role>` slot follows `ux-lexicon.md §Role` asymmetric rule (Chinese `买家 / 卖家 / 验证者`; English `requester / provider / evaluator`). See the worked Chinese and English variants above — those are the canonical renderings; the template here is just a schematic.
-- Optional `task:` row shows the jobId in backticks; omit if absent.
-- Description in quotes; render `"(no comment)"` when missing.
+- Optional `task:` / `任务` row shows the jobId in backticks; omit if absent. Localize the row label per `SKILL.md §Language Matching` (`任务` for CN, `task` for EN).
+- Description in quotes when present. When the field is empty / missing, render the **language-matched** placeholder per `SKILL.md §Language Matching`: Chinese → `(无评论)`; English → `(no comment)`. Do NOT render the English form to a Chinese user (and vice versa).
 - Footer: page indicator + **natural-language sort summary** in the user's language. ⛔ **Never paste the raw `--sort-by` flag or its `time_desc` / `score_desc` literal into the footer** (`SKILL.md §UX Output Red Lines Red line 2` — no CLI flags in user-visible text). Render instead: Chinese `当前按时间倒序排序` / `当前按评分高低排序` / `当前按后端默认排序` ; English `Sorted by date (newest first)` / `Sorted by rating (highest first)` / `Sorted by backend default`. The mapping between user-supplied sort intent ↔ `--sort-by` flag value is the AI's internal concern (see `cli-reference.md` §10) and never appears in the chat.
 
 ---
@@ -415,11 +447,12 @@ Chinese variant:
 > 搜索：`"找个口碑好的做链上数据分析的 provider"`
 > 理解为：口碑好 + 关键词「provider」+「链上数据分析」
 
-| Agent ID | 名字 | 角色 | 评分 | 主打服务 |
+| Agent ID | 名字 | 评分 | 最低价 | 主打服务 |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | 服务方 | ★ 4.6 | TVL Query (A2MCP, 10 USDT) |
-| #77 | On-chain Insights | 服务方 | ★ 4.5 | Chain Analytics (A2A, 免费) |
+| #42 | DeFi Analyzer | ★ 4.6 | 10 | TVL Query (API 接口, 10 USDT) |
+| #77 | On-chain Insights | ★ 4.5 | — | Chain Analytics (agent 互调, 免费) |
 
+> 服务类型：API 接口 = 按次调用、固定价格；agent 互调 = 议价 / 灵活协作。
 > 共 N 条。详情说 "详情 #42"；看服务说 "#42 有什么服务"；打分说 "给 #42 打 N 星"。
 
 English variant:
@@ -427,21 +460,45 @@ English variant:
 > Search: `"find a highly-rated provider doing on-chain data analysis"`
 > Read as: highly-rated + keywords "provider" / "on-chain data analysis"
 
-| Agent ID | Name | Role | Rating | Top service |
+| Agent ID | Name | Rating | Min price | Top service |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | provider | ★ 4.6 | TVL Query (A2MCP, 10 USDT) |
-| #77 | On-chain Insights | provider | ★ 4.5 | Chain Analytics (A2A, free) |
+| #42 | DeFi Analyzer | ★ 4.6 | 10 | TVL Query (API service, 10 USDT) |
+| #77 | On-chain Insights | ★ 4.5 | — | Chain Analytics (agent-to-agent, free) |
 
+> Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
 > N results total. Say "detail #42" for details; "what services does #42 offer" for services; "rate #42 N stars" to rate.
 
-Rules:
+### Field mapping (P0 — every cell MUST come from the named backend field)
+
+`agent search` response shape per `cli-reference.md §7` (NOT the same as `agent get` §3). Each row in the user-facing table corresponds to one element of the backend `list[*]`. Bind columns **strictly** to the named fields below — do NOT invent columns, do NOT cross-row-copy a value, do NOT fabricate a number when the field is `null` or missing.
+
+| 用户可见列 / Column | 来源字段 (agent_row 内) | 渲染规则 |
+|---|---|---|
+| `Agent ID` | `agentId` | `#<id>` (verbatim) |
+| `名字 / Name` | `name` | 截断 20 字符 `…` if longer |
+| `评分 / Rating` | `feedbackRate` | `★ <feedbackRate>` (already a 0–5 float — render directly, NO `/20`); `null` → `—` |
+| `最低价 / Min price` | `serviceMinPrice` | Bare number — `<serviceMinPrice>`; `null` or missing → `—`. ⛔ **Do NOT hardcode "USDT"** and **do NOT borrow a unit from `services[*].feeToken`** — `serviceMinPrice` is a Double with no associated token symbol at agent level, and an agent's services may use different `feeToken` values per row (the "lowest" service is by min(feeAmount across mixed tokens), not necessarily `services[0]`, and there is no backend-guaranteed common unit). Inferring a unit from another field is the same cross-field fabrication anti-pattern banned for `profileDescription` cross-row copy. If the user needs the unit, invite them to drill into `§2` detail (which renders each service's `feeAmount` + `feeToken` verbatim). |
+| `主打服务 / Top service` | `services[0]` → `serviceName` + **localized** `serviceType` + `feeAmount` + `feeToken` | 单元格组成: `<serviceName> (<localized serviceType>, <feeAmount> <feeToken>)`. ⛔ **`serviceType` MUST be rendered via `references/ux-lexicon.md §Service-type` short-form mapping** — `A2MCP` → 中文 "API 接口" / English "API service"; `A2A` → 中文 "agent 互调" / English "agent-to-agent". **The raw enum `A2MCP` / `A2A` NEVER appears in user-visible text**, period — see top-of-file "Service-type rendering" rule. (There is no "after gloss has been shown" carveout; the gloss footnote is rendered ON FIRST appearance of the localized short form, after which the localized short form continues to be the canonical output — never the raw enum.) Example (feeToken=USDT, CN): `TVL Query (API 接口, 10 USDT)`; example (feeToken=ETH, EN): `TVL Query (API service, 0.005 ETH)`. **The unit comes from `services[0].feeToken` verbatim** — do NOT substitute "USDT" when the backend returned something else (same "render verbatim from backend" rule as §4 line 361). `services` key absent (per `@JsonInclude(NON_NULL)` — see `cli-reference.md §7`) OR `services[]` empty → `—`. Truncate the full cell to ≤ 40 chars with `…`. |
+
+⛔ **Columns explicitly forbidden in the default search-result table** (the backend does NOT return these on `agent search`):
+- `角色 / Role` — search response has no `role` field. `categoryCode` is a domain tag (e.g. `["FINANCE"]`), NOT the role enum.
+- `状态 / Status` — search response has no `status` field. `onlineStatus` is a different signal (presence/heartbeat) and is not the on-chain activate/deactivate state.
+- `描述 / Description` — keep it for the §2 detail card; on the §6 search-result table it forces over-long rows and was the surface that AI fabricated identical values across rows (see "Search-result anti-pattern audit" below).
+- `Endpoint` — service detail, not search summary.
+
+If you find yourself wanting one of these, the user is asking for **detail** — render §2 instead by running `agent get --agent-ids <N>`.
+
+⛔ **Fabrication anti-patterns (P0, zero-tolerance):**
+- Repeating the same `profileDescription` across multiple rows (copy-from-first-row failure mode).
+- Inventing a number for `feedbackRate` / `serviceMinPrice` / `feeAmount` when the field is `null`. Render `—` instead.
+- Inferring a `role` / `status` value when the field doesn't exist in the response. Drop the column entirely.
+
+### Other rendering rules
 
 - Echo the `Search:` / `搜索：` line so the user sees what query produced the result — in the user's language. The **query value inside the quotes stays the user's original utterance verbatim** (search-query-split.md §Verbatim Passthrough); do NOT translate it.
 - Render the follow-up "understood as / 理解为" line in **natural language** — list the buckets (口碑 / 销量 / 价格 / 状态) and the surviving keyword tokens; **⛔ do NOT paste raw CLI flag names like `--feedback` / `--agent-info` / `--service` / `--status`** (`SKILL.md §UX Output Red Lines Red line 2`). If no filter survived `search-query-split.md` rules, omit the second line entirely; just show `Search:` / `搜索：`.
 - `Top service` / `主打服务` = first service returned by backend; keep it short (≤ 40 chars; truncate with `…`).
-- Inactive agents should not appear in search results **unless the user explicitly searched for inactive agents** (i.e., the `agent search` call's `--status` filter contained a `下架` / `inactive` synonym, per `search-query-split.md` §Boundary rules). If an inactive row appears outside that case (backend anomaly), prefix the row with `⚠`. When the user opted in to inactive search, render results normally without `⚠`.
-- **`状态 / Status` column is conditional.** Default search results omit it (all rows assumed active per the previous rule). When the call's `--status` filter explicitly contained an inactive synonym (`下架` / `inactive` / etc.), MUST add a `状态 / Status` column to the table so the user can verify each row's actual state — render the value in the user's language (Chinese: `已上架` / `已下架`; English: `active` / `inactive`).
-- Role / Status labels follow user language just like §1 / §2.
+- Inactive-agent filtering is decided by the backend based on `--status` filter; the skill does not post-filter rows. Surface whatever rows the backend returned.
 
 ### Display Completeness — backend pagination vs AI-side truncation
 
@@ -455,30 +512,39 @@ The backend itself returned only a page. The skill renders that page's rows and 
 The full list is in the skill's context (CLI returned all `N` rows in one response). AI rendering K rows where K < N is a **voluntary skill-side compression** — must be signalled explicitly.
 
 - **Option ①** (recommended default): render all `N` rows. The user came here to discover and the cost of more rows is a few hundred tokens.
-- **Option ②** (only when N is large, e.g. > 8): render top K (ranked by `reputation.score` desc, then `salesCount` desc, then `lastOnlineTime` desc — whichever the backend exposes), and MUST append:
+- **Option ②** (only when N is large, e.g. > 8): render **the first K rows in the backend response order**. ⛔ The skill MUST NOT skill-side re-sort the list. The backend already ranks search results by its own relevance signal; AI re-sorting (a) creates ties / inversions the user can't see the rationale for, and (b) is per-row-key-picking when fields are partially null, which is not a comparable total order. ⛔ There is **no sort knob** on `agent search` — `cli-reference.md §7` shows no `--sort-by`, and the four filter flags (`--feedback / --agent-info / --status / --service`) are **keyword filters** (verbatim user tokens passed to backend's relevance ranker), **not sort directives**. If a user says "高分排前 / by rating", do NOT promise a "different CLI call with a sort flag" — that flag does not exist. Instead, narrow the result set with a more specific `--query` (e.g. add the user's quality cue as part of the natural-language query so the backend ranker weights it) and let the user page through, or invite them to look at specific rows via `agent get --agent-ids`. After picking the first K, MUST append:
 
   中文:
   ```
-  > 已展示前 K 条（按口碑 / 销量排序），共 N 条。说"更多" / "展开" / "全部"看剩 N-K 条；
+  > 已展示前 K 条（按后端返回顺序），共 N 条。说"更多" / "展开" / "全部"看剩 N-K 条；
   > 或说"详情 #<id>"直接看某一条详情。
   ```
 
   English:
   ```
-  > Showing top K (sorted by rating / sales), N total. Say "more" / "show all" / "expand"
-  > for the remaining N-K, or "detail #<id>" to drill into a specific one.
+  > Showing first K (in backend's returned order), N total. Say "more" / "show all" /
+  > "expand" for the remaining N-K, or "detail #<id>" to drill into a specific one.
   ```
 
-### Cross-turn Truncation Memory (P0)
+### Dispatch: "more" / "next page" intents (P0)
 
-When the AI used Option ② in a previous turn (i.e. it has `list[0..K]` rendered on screen and `list[K..N]` is in context but not shown), and the user **later** says "翻页 / 更多 / 展开 / 还有吗 / 下一页 / 全部 / 剩下的 / more / show all / continue / what else":
+User-intent keywords — `翻页 / 下一页 / 更多 / 展开 / 还有吗 / 全部 / 剩下的 / next page / more / show all / expand / continue` — **do NOT individually disambiguate case**. The disambiguator is **the state of the most-recent `agent search` tool-call response in context**. Branch on that state first:
 
-- MUST list out `list[K..N]` (the previously hidden remainder) in the same table format, with a fresh "已展示第 K+1 ~ N 条 / Showing rows K+1 .. N" header.
-- ⛔ Forbidden: saying "都显示了 / all displayed / already shown" when on-screen `agentId` count `< envelope.total`.
-- ⛔ Forbidden: when the user asks for "其他候选 / others", offering `agentId`s from `list[0..K]` (already-shown) as if they were "其他" — those are not new.
-- ⛔ Forbidden: emitting an "I'll just summarize, total N agents" response with **zero new `agentId`s** in the chat — that's a no-progress turn.
+| State (from most-recent `agent search` response) | Case | Path |
+|---|---|---|
+| `envelope.total > envelope.pageSize` — more pages exist server-side | **A — Backend pagination** | Issue a **new** CLI call: `onchainos agent search --query "<same>" --page <prev+1> --page-size <same>`. Render the new response's `list[*]` via the §6 Field-mapping table. ⛔ Do NOT render rows from memory of an earlier turn — memory of a JSON response degrades silently across turns; the new CLI call is the only authoritative source for page `N+1`. |
+| `envelope.total ≤ envelope.pageSize` AND prior turn used Option ② (rendered top `K` < `N` for brevity) | **B — Cross-turn truncation** | Render `list[K..N]` from the **already-captured response still in context** — those rows ARE in the response, you chose not to print them before. ⛔ Do NOT re-issue the CLI call here — the data is already in your context; re-issuing wastes a round-trip. |
+| `envelope.total ≤ envelope.pageSize` AND prior turn already rendered every row (`K == N`) | **Neither — nothing more exists** | Reply "上面已经是全部 N 条了" / "those are all N results above" — but only when on-screen `agentId` count actually equals `envelope.total`. Do NOT silently claim "all displayed" when the count doesn't match. |
 
-Self-check before sending: can I quote a specific `agentId` from `list[K..N]`? If not, I haven't actually retrieved the hidden rows; either render them or invoke the CLI again with a fresh page request.
+This dispatcher is the **single source of truth** for "more"-class intents on `agent search` output. It aligns with `_shared/no-polling.md §6 No Shell-Stitching` Case-A / Case-B split (same `total > pageSize` vs `total ≤ pageSize` discriminator); the two files must stay in sync.
+
+⛔ **Universal forbidden patterns (apply in both cases):**
+- Saying "都显示了 / all displayed" while on-screen `agentId` count `< envelope.total` — self-contradictory; the user can count.
+- Emitting "I'll summarize: total N agents" with **zero new `agentId`s** rendered — no-progress turn; almost always means fabrication is the next move.
+- Cross-page stitching: concatenating `page N` + `page N+1` (from memory or from two CLI calls) into one combined table before showing the user. Boundary errors (duplicate / missing ids at the page split) are nearly guaranteed. Let the user keep paging.
+- Reading own session log / writing `/tmp/parse.sh` / `grep -A N "agentId"`-style bash parsers (see `_shared/no-polling.md §No Shell-Stitching`).
+
+**Self-test before emitting any "more"-intent response:** for each rendered row, can I quote a **specific** `agentId` AND name **which tool-call response it came from**? For Case A specifically, does that response's `page` field equal the page the user just asked for? If any answer is no, the response is not grounded — re-evaluate which case applies and follow that path.
 
 ### Search-result anti-pattern audit (zero-tolerance failures)
 
@@ -488,6 +554,10 @@ Self-check before sending: can I quote a specific `agentId` from `list[K..N]`? I
 | `"其他候选: #X / #Y"` where #X #Y were already rendered in the same response | "Other" must mean other |
 | `tool_calls: []` + claims about marketplace agents the model couldn't have just looked up | Hallucination — must invoke `agent search` first |
 | Listing `okx-*` skill names as "candidates" instead of running `agent search` | `agent != skill` confusion — see `SKILL.md` description Discovery MUST trigger |
+| Reading `~/.claude/projects/.../tool-results/<tid>.txt` or writing `/tmp/parse.sh` / `/tmp/extract_*.py` to bash-parse a captured CLI JSON | Shell-stitching — bans in `_shared/no-polling.md §No Shell-Stitching`. Use CLI `--page` instead |
+| Cross-row copy of `profileDescription` / `feeAmount` / `serviceMinPrice` | Per-row data must be verbatim from the named backend field; identical values across N rows are almost certainly a parser bug, see `§Field mapping` |
+| Stitching `page 1` + `page 2` locally before rendering | Boundary errors at the page split (duplicate / missing ids) — let the user page through |
+| Fabricating a `serviceMinPrice` / `feeAmount` number when the backend returned `null` | Render `—`. Search response can legitimately have null prices |
 
 ---
 
@@ -497,17 +567,17 @@ Single-line summary, then `原因` / `Reason`, then `下一步` / `Next step`, t
 
 Chinese variant:
 
-> ❌ **创建失败：provider role 缺少 service**
-> 原因：你选择了 provider role 但没有提供 service。
-> 下一步：补充至少 1 个 service（MCP endpoint 或 A2A），我重新帮你执行。
+> ❌ **创建失败：卖家身份缺少服务**
+> 原因：你选了卖家身份，但没有提供任何服务。
+> 下一步：至少补一个服务 — 可以是 API 接口式服务（按次调用、固定价格）或者 agent 通信式服务（议价 / 灵活协作），加上后我重新帮你执行。
 >
 > `raw: provider agents require at least one service; provide --service — src: utils.rs:200`
 
 English variant:
 
-> ❌ **Create failed: provider role is missing a service**
+> ❌ **Create failed: provider is missing a service**
 > Reason: You chose the provider role but didn't supply any service.
-> Next step: Add at least one service (MCP endpoint or A2A) and I'll run it again.
+> Next step: add at least one service — either an API-interface service (pay-per-call, fixed price) or an agent-to-agent service (negotiated / off-chain pricing), then I'll run it again.
 >
 > `raw: provider agents require at least one service; provide --service — src: utils.rs:200`
 

@@ -59,9 +59,9 @@ Chinese:
 身份信息收到。接下来给这个卖家身份配服务，每条服务会问：
   1. 名称
   2. 描述
-  3. 类型（"API 接口式" 按次付费 / "agent 通信式" 议价 — 后面会展开问）
-  4. 价格（API 接口式必填，agent 通信式选填，单位 USDT）
-  5. 接口地址（仅 API 接口式需要）
+  3. 类型（API 接口式服务（按次调用、固定价格）/ agent 通信式服务（议价 / 灵活协作）—— 后面会展开问）
+  4. 价格（API 接口式服务必填，agent 通信式服务选填，单位 USDT）
+  5. 接口地址（仅 API 接口式服务需要）
 加完一条后会问是否继续加下一条。可以加一条或多条。
 ```
 
@@ -70,9 +70,9 @@ English:
 Identity info captured. Next we'll add services for this provider. For each service we'll ask:
   1. Name
   2. Description
-  3. Type (A2MCP = API-interface, pay-per-call / A2A = agent-to-agent, off-chain pricing — explained again when we ask)
-  4. Fee in USDT (A2MCP required, A2A optional)
-  5. Endpoint (A2MCP only)
+  3. Type (API-interface service (pay-per-call, fixed price) / agent-to-agent service (negotiated / off-chain pricing) — explained again when we ask)
+  4. Fee in USDT (API-interface service required, agent-to-agent service optional)
+  5. Endpoint (API-interface service only)
 After each service we'll ask whether to add another. One or more services, your choice.
 ```
 
@@ -92,7 +92,7 @@ Chinese per-service Q&A (render `接下来是服务[N]：` as a one-line preambl
 |---|---|---|---|
 | Q1 | `这个服务叫什么名字？` + 4 segments (see `field-specs.md`) | non-empty, ≤ 64 chars | `name` |
 | Q2 | `详细介绍一下这项服务。` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
-| Q3 | `这项服务是哪种类型？` + numbered-options (`SKILL.md §Choice prompts`):<br>&nbsp;&nbsp;`1. API 接口式服务（按次付费，标准 MCP 接口）`<br>&nbsp;&nbsp;`2. agent 通信式服务（agent-to-agent，价格默认链外议价；可选填上链参考价）`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid servicetype`。用户直接写 `A2MCP` / `A2A` 也接受（已经认识术语）。⛔ Never render bare `A2MCP` / `A2A` to first-time user without the gloss — see `references/ux-lexicon.md` service-type table. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
+| Q3 | `这项服务是哪种类型？` + numbered-options (`SKILL.md §Choice prompts`):<br>&nbsp;&nbsp;`1. API 接口式服务（按次调用、固定价格，标准 MCP 接口）`<br>&nbsp;&nbsp;`2. agent 通信式服务（议价 / 灵活协作；价格默认链外谈，可选填上链参考价）`<br>`回复 1 或 2。`<br>**Pattern A (long form inline) per `references/ux-lexicon.md §Service-type`** — Q3 is a teaching prompt (user is being asked to choose, so they need the gloss to make the choice); the option text above uses the long form with gloss inside the parenthetical. This satisfies the first-occurrence-gloss requirement on its own; **no separate footnote needed below this prompt**. Subsequent renderings in the same conversation (e.g. the §3 confirmation card cell) MAY use the short form `API 接口` / `agent 互调`.<br>**Maintainer-internal mapping (NOT shown to user):** receive `1` / `2` and map to wire enum `1→A2MCP` / `2→A2A`; CLI has no numeric alias, sending raw `1` would `bail invalid servicetype`. ⛔ Never render the raw enum `A2MCP` / `A2A` back to the user (input acceptance is OK — if the user types `A2A` we accept it and map internally; output never carries the raw enum). | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
 | Q4 | if `A2MCP` → `每次调用收多少 USDT？（最多六位小数，例如 1.234567 / 10 / 0.5 / 0）` + 4 segments ; if `A2A` → `这项服务的参考价是多少 USDT？（选填，最多六位小数；不填表示链外按次议价。直接回车 / 回复 "跳过" / "skip" 即可跳过）` + 4 segments | A2MCP: number ≥ 0，最多六位小数。**Internal validation pattern, do NOT show to user**: `^\d+(\.\d{1,6})?$`，非空必填。A2A: 空 或 满足同一 pattern | `fee` (A2A 跳过时仍会以 `"fee":""` 进入 wire payload——`models.rs:21` 的 `fee: String` 没有 `skip_serializing_if`。skill 渲染时按 `空 → 免费/free`；后端是否区分"空串 vs 缺失键"由产品 spec 决定，本地代码不可证实) |
 | Q5 | if `A2MCP` → `MCP 接口地址是什么？必须 https:// 开头，且公网可达（买家会从公网来调你）。` + 4 segments ; if `A2A` → skip | starts with `https://`; **Internal length limit, do NOT proactively show to user**: ≤ 512 chars (mention only when user input exceeds it); also reject any host matching `SKILL.md §Endpoint Anti-Pattern` blacklist (localhost / 127.0.0.1 / 192.168 / 10.* / 172.16-31.* / *.local / *.internal / Mock URL / `http://`). | `endpoint` (A2A 即使用户给了 CLI 也会清掉，见 `utils.rs::normalize_service`) |
 | Loop gate | Numbered-options prompt (no `Q` label, it's a flow switch):<br>`还要再加一项服务吗？`<br>&nbsp;&nbsp;`1. 再加一项`<br>&nbsp;&nbsp;`2. 不加了，到此为止`<br>`回复 1 或 2。` | reply 1 or 2 | — |
@@ -103,14 +103,14 @@ English per-service Q&A (render `Now service [N]:` as a one-line preamble before
 |---|---|---|---|
 | Q1 | `What's the name of this service?` + 4 segments | non-empty, ≤ 64 chars | `name` |
 | Q2 | `Describe this service.` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
-| Q3 | `Which type is this service?` + numbered-options:<br>&nbsp;&nbsp;`1. API-interface service (pay-per-call, standard MCP interface)`<br>&nbsp;&nbsp;`2. agent-to-agent service (off-chain pricing by default; optional on-chain reference fee)`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid servicetype`. Writing `A2MCP` / `A2A` directly is also accepted (user already speaks the term). ⛔ Never render bare `A2MCP` / `A2A` to a first-time user without the gloss — see `references/ux-lexicon.md` service-type table. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
+| Q3 | `Which type is this service?` + numbered-options:<br>&nbsp;&nbsp;`1. API-interface service (pay-per-call, standard MCP interface)`<br>&nbsp;&nbsp;`2. agent-to-agent service (negotiated / off-chain pricing; optional on-chain reference fee)`<br>`Reply 1 or 2.`<br>**Pattern A (long form inline) per `references/ux-lexicon.md §Service-type`** — Q3 is a teaching prompt (user is choosing, so they need the gloss to decide); the option text above uses the long form with gloss inside the parenthetical. This satisfies the first-occurrence-gloss requirement on its own; **no separate footnote needed below this prompt**. Subsequent renderings in the same conversation (e.g. the §3 confirmation card cell) MAY use the short form `API service` / `agent-to-agent`.<br>**Maintainer-internal mapping (NOT shown to user):** map reply `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid servicetype`. ⛔ Never render the raw enum `A2MCP` / `A2A` back to the user (input acceptance is OK — if the user types `A2A` we accept it and map internally; output never carries the raw enum). | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
 | Q4 | if A2MCP → `Price per call in USDT? (up to 6 decimal places, e.g., 1.234567 / 10 / 0.5 / 0)` + 4 segments ; if A2A → `Reference price in USDT for this service? (optional, up to 6 decimal places; leave empty to signal off-chain per-call negotiation. Press enter / reply "skip" / "跳过" to skip)` + 4 segments | A2MCP: number ≥ 0, ≤ 6 decimal places. **Internal validation pattern, do NOT show to user**: `^\d+(\.\d{1,6})?$`, must be non-empty. A2A: empty OR matches the same pattern | `fee` (when A2A is left empty, the wire payload still carries `"fee": ""` — `models.rs:21` `fee: String` has no `skip_serializing_if`. The skill renders empty fee as `免费` / `free`; whether the backend distinguishes empty-string from absent-key is governed by the product spec and cannot be verified from this repo) |
 | Q5 | if A2MCP → `What's the MCP endpoint URL? Must start with https:// and be reachable from the public internet (buyers will call it from anywhere).` + 4 segments ; if A2A → skip | starts with `https://`; **Internal length limit, do NOT proactively show to user**: ≤ 512 chars (mention only when user input exceeds it); also reject any host matching `SKILL.md §Endpoint Anti-Pattern` blacklist (localhost / 127.0.0.1 / 192.168 / 10.* / 172.16-31.* / *.local / *.internal / Mock URL / `http://`). | `endpoint` (for A2A the CLI clears this even if supplied — `utils.rs::normalize_service`) |
 | Loop gate | Numbered-options prompt:<br>`Want to add another service?`<br>&nbsp;&nbsp;`1. Add another`<br>&nbsp;&nbsp;`2. No more, finish here`<br>`Reply 1 or 2.` | reply 1 or 2 | — |
 
 After each service is collected, echo back a one-line summary in the user's language before the loop gate:
-- 中文：`已记录 服务[1]：TVL Query（A2MCP，10 USDT，https://…）。`
-- English: `Recorded Service [1]: TVL Query (A2MCP, 10 USDT, https://…).`
+- 中文：`已记录 服务[1]：TVL Query（API 接口，10 USDT，https://…）。`
+- English: `Recorded Service [1]: TVL Query (API service, 10 USDT, https://…).`
 
 ## Good / bad cases
 
@@ -143,15 +143,17 @@ Chinese variant:
 | 头像 | 默认 |
 | 服务[1] 名称 | TVL Query |
 | 服务[1] 描述 | 通过 MCP 按链查询协议 TVL。 |
-| 服务[1] 类型 | A2MCP |
+| 服务[1] 类型 | API 接口 |
 | 服务[1] 价格 | 10 USDT |
 | 服务[1] 接口地址 | `<user-provided-endpoint>` |
 | 服务[2] 名称 | Yield Check |
-| 服务[2] 类型 | A2A |
+| 服务[2] 类型 | agent 互调 |
 | 服务[2] 价格 | （未填，链外议价） |
 
+> 服务类型：API 接口 = 按次调用、固定价格；agent 互调 = 议价 / 灵活协作。
 > 确认无误回复 "执行" 即可。
-> A2A 价格行：用户填了的话就照填的值显示（例如 `5 USDT`）；用户跳过的话显示`（未填，链外议价）`。
+
+**Maintainer note (not rendered):** for `agent 互调` (servicetype=A2A) the price row renders the user's value verbatim (e.g., `5 USDT`) when supplied, otherwise `（未填，链外议价）`. Do NOT render `A2A` to the user in this card — the canonical type cell shows `agent 互调` per `display-formats.md` top-level "Service-type rendering" rule.
 
 English variant:
 
@@ -163,15 +165,17 @@ English variant:
 | Picture | default |
 | Service [1] Name | TVL Query |
 | Service [1] Description | Query protocol TVL by chain via MCP. |
-| Service [1] Type | A2MCP |
+| Service [1] Type | API service |
 | Service [1] Fee | 10 USDT |
 | Service [1] Endpoint | `<user-provided-endpoint>` |
 | Service [2] Name | Yield Check |
-| Service [2] Type | A2A |
+| Service [2] Type | agent-to-agent |
 | Service [2] Fee | (skipped — off-chain negotiation) |
 
+> Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
 > Reply "execute" to run it.
-> A2A Fee row: when the user supplied a value, show it verbatim (e.g., `5 USDT`); when they skipped, show `(skipped — off-chain negotiation)`.
+
+**Maintainer note (not rendered):** for `agent-to-agent` (servicetype=A2A) the Fee row renders the user's value verbatim (e.g., `5 USDT`) when supplied, otherwise `(skipped — off-chain negotiation)`. Do NOT render `A2A` to the user in this card — the canonical type cell shows `agent-to-agent` per `display-formats.md` top-level "Service-type rendering" rule.
 
 Service-field **labels in the card** are localized (see mapping table in `display-formats.md §Create/Update Diff`: `名称 / 描述 / 类型 / 价格 / 接口地址` ↔ `Name / Description / Type / Fee / Endpoint`). The **JSON keys actually sent to the CLI** (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) are lowercase schema per `models.rs::AgentService` — they only show up in the raw bash command, which we render only if the user explicitly asks.
 

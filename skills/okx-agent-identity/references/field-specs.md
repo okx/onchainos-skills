@@ -49,24 +49,26 @@ The provider's `--service` is a JSON array whose elements have the fields below.
 ### servicetype
 
 - **用途** / Purpose: 决定结算与调用方式的核心开关。 / Switch that determines settlement and call protocol.
-  - `A2MCP`：标准 MCP 接口，买家按次付费调用。 / Standard MCP interface; buyers pay per call.
-  - `A2A`：纯 agent-to-agent 协议，定价默认在链外谈；可选填一个 USDT 参考价上链供搜索 / 匹配参考。 / Pure agent-to-agent protocol; pricing is off-chain by default, with an optional USDT reference price stored on-chain to aid search / matching.
+  - **API 接口式服务**（按次调用、固定价格）：标准 MCP 接口，买家按次付费调用。 / **API-interface service** (pay-per-call, fixed price): standard MCP interface; buyers pay per call.
+  - **agent 通信式服务**（议价 / 灵活协作）：纯 agent-to-agent 协议，定价默认在链外谈；可选填一个 USDT 参考价上链供搜索 / 匹配参考。 / **agent-to-agent service** (negotiated / off-chain pricing): pure agent-to-agent protocol; pricing is off-chain by default, with an optional USDT reference price stored on-chain to aid search / matching.
 - **可见范围** / Visibility: 上链公开，影响可被哪类买家发现。 / On-chain public; affects which buyers discover you.
-- **请注意** / Please note: `A2MCP` 或 `A2A`（CLI 大小写不敏感，skill 统一下发大写）。 / Must be `A2MCP` or `A2A` (CLI is case-insensitive; the skill always emits uppercase).
-- **示例** / Example: `A2MCP` / `A2A`.
+- **请注意** / Please note: 用户回复 `1` / `2` 选择，或者直接说 `API 接口` / `agent 互调` (中文) / `API service` / `agent-to-agent` (English)；skill 会把选择映射成 CLI 接受的值再下发。 / The user replies `1` / `2` to choose, or names the kind directly as `API service` / `agent-to-agent` (English) or `API 接口` / `agent 互调` (Chinese); the skill maps the choice to the CLI's accepted value before issuing.
+- **示例** / Example: `1` / `2` / `API 接口` / `agent 互调` / `API service` / `agent-to-agent`.
+
+**Maintainer-only note (not user-visible — wire-level enum):** the CLI's `--service` payload accepts only `A2MCP` / `A2A` (case-insensitive; the skill always emits uppercase). The raw enum NEVER appears in user-visible text per `references/ux-lexicon.md §Service-type` + `references/display-formats.md` top-level "Service-type rendering" rule.
 
 ### fee
 
 - **用途** / Purpose: 每次调用的单价。 / Price per call.
 - **可见范围** / Visibility: 上链公开。 / On-chain public.
-- **请注意** / Please note: USDT 数字字符串，最多六位小数（如 `1.234567` / `10` / `0.5`）；`0` 表示免费引流（A2MCP 上 `0` 表示后续不能再按量收费）。**A2MCP 必填，A2A 选填**——A2A 跳过时上链 payload 中 `fee` 字段会序列化为空字符串 `""`（model `fee: String` 没有 `skip_serializing_if`，见 `cli/src/commands/agent_commerce/identity/models.rs:21`）；填了的值会作为参考价上链。**skill 渲染端把空字符串当作"未填"**显示为 `免费` / `free`；后端是否同样区分"空串 vs 缺失键"取决于产品 spec，本地代码不可证实，需要时请去查后端契约或 product spec。**格式校验由 skill 端执行**，CLI 只对 A2MCP 检查非空。 / USDT numeric string with up to 6 decimal places (e.g., `1.234567` / `10` / `0.5`); `0` means free lead-gen (on A2MCP, `0` means you cannot charge per-call later). **A2MCP requires it; A2A is optional** — when the user skips on A2A, the wire payload still carries `"fee": ""` (the model's `fee: String` has no `skip_serializing_if`, see `cli/src/commands/agent_commerce/identity/models.rs:21`); a non-empty value is recorded on-chain as a reference price. **The skill's render layer treats empty string as "not specified"** and displays `免费` / `free`; whether the backend also distinguishes "empty string vs absent key" is governed by the product spec, not by anything in this repo — consult the backend contract / product spec when exact semantics matter. **Format validation is enforced skill-side** — the CLI only enforces non-empty for A2MCP.
-- **示例** / Example: `1.22` / `10` / `0.5` / `0` / （A2A 选填留空）/ (empty for A2A optional skip).
+- **请注意** / Please note: USDT 数字字符串，最多六位小数（如 `1.234567` / `10` / `0.5`）；`0` 表示免费引流（**API 接口** 上填 `0` 等于承诺后续不再按量收费）。**API 接口必填，agent 互调选填** —— agent 互调跳过时，skill 端会按 `免费` / `free` 渲染。 / USDT numeric string with up to 6 decimal places (e.g., `1.234567` / `10` / `0.5`); `0` means free lead-gen (on **API service**, `0` means you've committed to no per-call charges going forward). **API service requires it; agent-to-agent is optional** — when the user skips on agent-to-agent, the skill renders the price as `免费` / `free`. <br><br>**Maintainer-only note (not user-visible):** the CLI wire-level enums are `A2MCP` / `A2A` (case-insensitive). When `A2A` skips fee, the wire payload still carries `"fee": ""` because `cli/src/commands/agent_commerce/identity/models.rs:21` declares `fee: String` with no `skip_serializing_if`; whether the backend distinguishes empty-string from absent-key is governed by the product spec, not anything in this repo. Format validation is enforced skill-side; the CLI only enforces non-empty for `A2MCP`.
+- **示例** / Example: `1.22` / `10` / `0.5` / `0` / （agent 互调选填留空）/ (empty for agent-to-agent optional skip).
 
-### endpoint (A2MCP only)
+### endpoint (API 接口 / API service only)
 
 - **用途** / Purpose: MCP server URL，买家 agent 直接连这里。 / MCP server URL the buyer's agent connects to.
 - **可见范围** / Visibility: 上链公开；需保证 skill 级访问权限。 / On-chain public; ensure skill-level access.
-- **请注意** / Please note: 必须以 `https://` 开头；A2A 即使传了 CLI 也会清掉。 / Must start with `https://`; the CLI discards the value when `servicetype` is A2A.
+- **请注意** / Please note: 必须以 `https://` 开头；如果服务类型是 agent 互调，这个字段填了也不会上链（CLI 自动清掉）。 / Must start with `https://`. If the service type is agent-to-agent, this field is dropped at CLI level even if supplied (it never goes on-chain).
 - **示例** / Example: 你部署的 MCP server 公网地址（必须以 `https://` 开头，例如域名 + 路径形式）。 / Your deployed MCP server's public URL (must start with `https://`, typically a domain + path).
 - **⛔ 渲染禁令 / Render constraint**: 写到这条 spec 时**绝对不要**在 `示例 / Example` 段里贴具体的 `https://...` 字面值（包括 `https://api.example.com/...` / `https://svc.example.com/...` / 任何形如 `https://xxx.yyy/zzz` 的占位串）。原因：这些字面值会被 Lark / 飞书 / Slack / 微信等 IM 渲染器自动识别为可点击的超链接，部分用户会真的点过去，而该域名要么不存在要么是错误目标。**只用文字描述**告诉用户「填什么样的链接」，不给 URL 范本。/ When rendering this spec, do **NOT** put a literal `https://...` value inside the `Example` segment (no `https://api.example.com/...`, no `https://svc.example.com/...`, no `https://anything/anything`). IM renderers auto-linkify these and users may accidentally click — the example domains are not real targets. Describe **what kind of URL** in words; never give a URL template.
 - **Internal validation, do NOT inline into user-facing prompt** / **内部校验，不要进入对外提示**: A2MCP endpoint length ≤ 512 chars (skill-side check; CLI does not enforce length). On rejection, surface the 512-char limit verbatim in the error copy (see `troubleshooting.md` §3).
