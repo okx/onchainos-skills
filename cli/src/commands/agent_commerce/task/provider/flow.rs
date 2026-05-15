@@ -7,6 +7,8 @@
 use crate::commands::agent_commerce::task::common::pending::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
+const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` / `userContent:` templates below are samples — translate to the user's language before `xmtp_dispatch_user` / `xmtp_prompt_user`.\n\n";
+
 /// Provider 在某 status 下应该执行的下一步（用于 `agent common context` 输出末尾的菜单）。
 ///
 /// 第一行恒为 `next-action` 调用——这是 sub agent 在当前 status 下**唯一第一步动作**：
@@ -131,7 +133,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x20\x20\x20• 解析 `[USER_DECISION_RELAY]` 后、调 next-action 前: `onchainos agent pending-decisions remove --job-id {job_id} --role provider --agent-id {agent_id}`\n\
          \x20\x20\x20\x20漏 `add` → 用户回复时反查不到本条决策,无法 relay 回本会话;\n\
          \x20\x20\x20\x20漏 `remove` → 旧条目残留成僵尸,下次再调 `xmtp_prompt_user` 时被误命中,用户回复派给错的会话。\n\
-         \x20\x208) ❌ **用户可见内容禁用技术术语**:`xmtp_dispatch_user` 的 content 和 `xmtp_prompt_user` 的 userContent 都直接给用户看,**禁写** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*`/`dispute_resolved` 等) / 状态名(`open`/`accepted`/`disputed` 等英文枚举) / CLI flag(`--*`) / skill 名(`okx-agent-identity` / `§Feedback Submit` 等) / 状态字段名(`jobStatus`/`paymentMode` 等)——一律用自然中文(担保/x402,验收期超时,任务已完成,等)。同 turn 内的 `xmtp_send` 给买家也按此规则。\n\n\
+         \x20\x208) ❌ **用户可见内容禁用技术术语**:`xmtp_dispatch_user` 的 content 和 `xmtp_prompt_user` 的 userContent 都直接给用户看,**禁写** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*`/`dispute_resolved` 等) / 状态名(`open`/`accepted`/`disputed` 等英文枚举) / CLI flag(`--*`) / skill 名(`okx-agent-identity` / `§Feedback Submit` 等) / 状态字段名(`jobStatus`/`paymentMode` 等)——一律用**用户语言**的自然表达(中文用户看到「担保/x402, 验收期超时, 任务已完成」, 英文用户看到等价口语化措辞如「escrowed payment/x402, review window expired, task completed」, 由 sub agent 按 LOCALIZATION_PREFIX 翻译时一并替换)。同 turn 内的 `xmtp_send` 给买家也按此规则。\n\n\
          如果不记得本任务协商细节（paymentMode / token / 买家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -780,5 +782,5 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              3. 不要预测/假设其他通知\n"
         ),
     };
-    format!("{context_preamble}{body}")
+    format!("{LOCALIZATION_PREFIX}{context_preamble}{body}")
 }
