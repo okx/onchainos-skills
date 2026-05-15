@@ -39,3 +39,29 @@ When a write command fails, the recovery path is **always** through the user, no
 Silent extra calls make every agent action feel slow and opaque. A user who says "下架 #42" expects one network round-trip and a line of confirmation — not a `get` + `deactivate` + `get` triple that the CLI printer has to unwind. Errors compound: a hidden pre-check that fails obscures the actual command the user wanted to run.
 
 Treat each user message as a contract: execute exactly what they asked for, surface what happened, then stop.
+
+## No Shell-Stitching of CLI Output (P0 — symmetric counterpart of "no polling")
+
+The five rules above forbid **over-querying** (extra CLI calls). This rule forbids the symmetric failure: **under-querying — reading your own session log, writing bash parsers, and stitching together a response from `grep` / `sed` instead of re-invoking the CLI.** Empirically this is more damaging than polling because the stitched data **does not error out** — it silently turns into hallucinated values that look plausible to the user.
+
+⛔ **Forbidden:**
+
+- Reading your own session transcript / tool-result files (e.g. `~/.claude/projects/<sid>/tool-results/<tid>.txt`) to "reconstruct" backend data you already saw.
+- Writing parser scripts (e.g. `/tmp/parse.sh`, `/tmp/extract_agents.py`) that `grep` / `sed` / `awk` over a captured CLI JSON response. **Especially toxic pattern:** `grep -A N '"agentId"' file | grep '"profileDescription"' | head -1` — in single-line JSON (the common case) this matches the *first* `profileDescription` in the whole response for *every* `agentId`, producing identical fields across rows. This was the direct root cause of TC-J8-001c hallucination.
+- Caching one page's content in memory and "deriving" what page 2 / 3 / … should contain.
+- Stitching multiple pages locally into a single "complete" table (e.g. concatenating page 1 + page 2 and presenting as "all 94"). Boundary errors (duplicate ids at the page-split, missing ids at the edge) are guaranteed and the user has no way to spot them.
+- Sending `--page-size 100` to "get everything in one call" when the backend caps at 50 (`cli-reference.md §7`).
+
+✅ **Correct path when a previous CLI response doesn't contain the next thing the user asked for:**
+
+- Want page 2? → `onchainos agent search --query "<same>" --page <prev+1> --page-size <same>` and render that response directly.
+- Want a specific row's full detail? → `onchainos agent get --agent-ids <id>` (single id is cheap).
+- Need a different filter cut? → re-issue `agent search` with the new filter values; do not post-filter rows in bash.
+- Output really is large? → render the first N rows + the language-and-case-matched continuation footer per `display-formats.md §6 Display Completeness`. ⛔ The two cases use **different** continuation phrases and must not be mixed:
+  - **Case A — Backend pagination** (`envelope.total > page_size`, more pages exist server-side) → footer says `第 <page>/<total_pages> 页，继续翻页说 "下一页"。` / `Page <page>/<total_pages> — say "next page" to continue.` The next user action is another CLI call with `--page <prev+1>`.
+  - **Case B — AI-side truncation** (`envelope.total ≤ page_size`, full result already in this response, AI chose to show top K) → footer says `说"更多" / "展开" / "全部"看剩 N-K 条` / `Say "more" / "show all" / "expand" for the remaining N-K`. The next user action is **rendering the remaining rows from this same in-context response** — no new CLI call.
+  Do NOT silently summarize "总共 N 条" without quoting the actual rows you'd render — the moment you can't quote a specific `agentId` from the bucket you're summarizing, the bucket is fabrication.
+
+**Self-test before emitting any table whose rows came from a CLI response:** for each row, can I point to **the exact field in the most-recent CLI tool-call result** that gave me this value? If the answer is "I derived it from an earlier turn / parsed it via bash / inferred from context" — **STOP**. Re-issue the CLI call and render that response.
+
+The asymmetry vs. polling: polling adds latency and visible jitter (users notice). Shell-stitching produces clean-looking but wrong data (users don't notice until it matters). Both are banned; this one is the worse failure mode and must never ship.

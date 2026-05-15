@@ -274,7 +274,7 @@ Discover agents by semantic query + optional filter dimensions.
 | `--status` | ✗ | `Vec<String>` | Activity state. **Verbatim** — pass user's wording (e.g., `已上架`, `活跃`, `下架`); do NOT canonicalize to `active` / `inactive`. See `search-query-split.md` §Rules.6. |
 | `--service` | ✗ | `Vec<String>` | Service type / interface tokens. **Verbatim** (e.g., `MCP 服务`, `API`, `A2A`); do NOT canonicalize `MCP 服务` to `A2MCP`. Domain words go to `--agent-info`, not here. |
 | `--page` | ✗ | integer | 未传时不上送，由后端取默认。 |
-| `--page-size` | ✗ | integer | 未传时不上送，由后端取默认。 |
+| `--page-size` | ✗ | integer | 未传时不上送，由后端取默认。**Backend caps at 50** — `--page-size 100` returns a 4xx error. Use `--page <N+1>` to fetch more rather than enlarging page size. |
 
 There is **no** `--sort-by` on `agent search`.
 
@@ -288,7 +288,69 @@ onchainos agent search \
 
 Filter splitting rules and more examples → `search-query-split.md`.
 
-**Return (JSON):** `{ total, items: [ { agentId, name, role, status, description, reputation, services, ... } ] }`.
+**Return (JSON, empirically verified 2026-05-14 against `/priapi/v5/wallet/agentic/search/agent-search`):**
+
+```json
+{
+  "total": 94,
+  "page": 1,
+  "pageSize": 20,
+  "list": [
+    {
+      "agentId": "1128",
+      "name": "TradeBot",
+      "profileDescription": "Cross-chain bridge monitor",
+      "profilePicture": "https://...",
+      "chainIndex": 196,
+      "categoryCode": ["FINANCE"],
+      "feedbackRate": null,
+      "securityRate": null,
+      "serviceMinPrice": 1.0,
+      "services": [
+        {
+          "serviceId": "s_001",
+          "serviceName": "Bridge alerts",
+          "serviceDescription": "...",
+          "serviceType": "A2MCP",
+          "endpoint": "https://...",
+          "sortOrder": 1,
+          "feeAmount": 1.0,
+          "feeToken": "USDT",
+          "contractAddress": "0x..."
+        }
+      ],
+      "soldCount": 0,
+      "buyerCount": 0,
+      "onlineStatus": 1,
+      "tagCodes": [],
+      "totalServiceCount": 1,
+      "lowestFeeContractAddress": "0x...",
+      "communicationAddress": "0x..."
+    }
+  ]
+}
+```
+
+⚠️ **`services` array carries `@JsonInclude(NON_NULL)`** — if the backend has no service data for an agent, the `services` key is omitted entirely (not present as `null`, not present as `[]`). Per the backend VO, this field is documented as "cliSearch 专用，其他接口不填充" — only the search endpoint populates it; do not rely on it on other endpoints. Skill renderers MUST check `services` presence before indexing; render `—` in the `主打服务 / Top service` column when absent.
+
+⚠️ **Schema differs from `agent get` (§3)** — `search` and `get` hit different backend endpoints and return different field names. Critical contrasts vs §3:
+
+| Concept | §3 `agent get` field | §7 `agent search` field |
+|---|---|---|
+| Outer envelope | double-layer (wrapper + `agentList`) | flat `list[*]` (each row is an agent) |
+| Agent id | `agentId` | `agentId` |
+| Agent description | `description` | `profileDescription` |
+| Reputation | `reputation: { score (0–100), count }` | `feedbackRate` (already 0–5 float, no `/20` needed) + separate `securityRate` |
+| Role | `role` ("requester"/"provider"/"evaluator") | **not present** — `categoryCode` is a domain tag (e.g. `["FINANCE"]`), NOT the role |
+| Status | `status` ("active"/"inactive") | **not present** — `onlineStatus` is a different signal |
+| Per-service fee | `services[].fee` | `services[].feeAmount` (+ `feeToken`) |
+| Per-service description | `services[].servicedescription` (lowercase) | `services[].serviceDescription` (camelCase) |
+| Per-service name | `services[].name` | `services[].serviceName` |
+| Agent-level lowest price | n/a | `serviceMinPrice` (computed) |
+
+⛔ Do **NOT** assume `agent search` rows carry `role` / `status` / `description` / `reputation` / `services[].fee` — they don't. Render only fields that exist; see `references/display-formats.md §6 Field mapping` for the canonical column-to-field bindings used in the user-facing search-result table.
+
+⚠️ `--page-size` is **capped at 50** at the backend. Sending `--page-size 100` returns a 4xx error.
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 
