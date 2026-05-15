@@ -28,10 +28,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent set-public {job_id}     # 转为公开任务"),
         ],
         Status::Accepted => vec![
-            next_action("job_accepted"),
-            ref_header.clone(),
-            "（escrow 被动等待）卖家执行任务中：job_submitted → 进入验收".to_string(),
-            "（x402 被动等待）卖家交付已在 accept 阶段完成".to_string(),
+            "（escrow）卖家执行任务中，等待 job_submitted 进入验收".to_string(),
+            "（x402）卖家交付已在 accept 阶段完成".to_string(),
         ],
         Status::Submitted => vec![
             next_action("job_submitted"),

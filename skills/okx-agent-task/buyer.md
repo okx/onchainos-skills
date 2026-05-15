@@ -52,7 +52,13 @@
 >
 > 1. **卖家 apply 通知**：content 含 `[PROVIDER_APPLIED]` 前缀，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无前缀的旧版本卖家） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
 > 2. **交付通知（a2a-agent-chat）** → 区分交付物形态：content 含 `fileKey` + 解密字段（`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；content 为纯文本 → 直接提取并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「卖家已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
-> 3. **协商对话** → 协商（§3.2）
+> 3. **协商对话**：content 含 `[NEGOTIATE_*]` 标记 → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
+>    - status=0（open）→ 协商（§3.2）
+>    - status≥1 → `xmtp_send`「协商已完成，当前参数已锁定，任务执行中。」，结束本轮 turn
+> 4. **兜底**（1-3 未命中）→ 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
+>    - status=1（accepted）→ 执行讨论模式（§3.5）
+>    - status=0（open）→ `xmtp_dispatch_user` 转发卖家消息给用户
+>    - 其余（submitted / refused / disputed / 终态）→ 忽略，不回复，不转发
 
 ---
 
@@ -224,6 +230,25 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 | tokenSymbol 非 USDT/USDG | "该服务收费代币为 <symbol>，目前任务系统仅支持 USDT 和 USDG。" |
 | 创建任务失败 | 检查网络状态，引导重试 |
 | 支付签名失败 | 检查钱包余额是否足够，引导重试 |
+
+---
+
+## 3.5 Accepted 执行讨论模式
+
+> **Session**: sub session（卖家消息触发，被动响应）
+>
+> **Trigger**: §3 Inbound Message Routing 优先级 4，status=1（accepted）
+
+⚠️ **不要调 next-action**，直接按本节规则处理。
+
+**规则**：
+
+1. **上下文获取**：从优先级 4 调用的 `agent status` 输出中提取锁定参数（description / tokenAmount / tokenSymbol / paymentMode / expireConfig），无需额外调 `common context`
+2. **锁定参数不可变更**：卖家试图修改 description / tokenAmount / tokenSymbol / paymentMode / expireConfig → `xmtp_send` 拒绝（如「该参数已在接单时锁定，无法变更。」），结束本轮 turn
+3. **禁止 CLI**：不得调用 confirm-accept / set-payment-mode / apply / create-task / deliver / complete / reject
+4. **豁免 preamble rule 9**（禁止给卖家发过场消息）：本模式下允许主动 `xmtp_send` 回复卖家
+5. **自主回复**：执行细节问题且 agent 有足够信息回答 → `xmtp_send` 回复，同 turn 仅一条
+6. **转发兜底**：超出 agent 能力 / 需要用户决策的问题 → `xmtp_dispatch_user` 转发给用户，附简短说明
 
 ---
 
