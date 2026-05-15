@@ -284,9 +284,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20• 任何形式的「替代握手」短路——卖家 flow 里把 `[NEGOTIATE_CONFIRM]` 字面量当作 apply 唯一触发器，你发自然语言『请 apply』根本不会被识别，卖家只能继续等 [NEGOTIATE_PROPOSE]\n\n\
              正确做法：协商达成一致后，**严格用** `[NEGOTIATE_PROPOSE]` 模板（见下方 B-Step 2 Step 4），让握手机器解析跑通。**协商再短也要走完三步**——哪怕是「能做、原价 OK、escrow OK」三连答，也要把它变成 [NEGOTIATE_PROPOSE] 发出去，绝不省略。\n\n\
              ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
-             **B-Step 0 — 防重复检查：**\n\
+             **B-Step 0 — 防重复检查（🛑 硬门禁）：**\n\
              调 `session_status` 检查当前 job 是否已有 sub session（即是否已建群）。\n\
-             如果**已存在** sub session → 说明 job_created 被重复处理，**跳过建群和发消息，直接结束本轮 turn**。\n\
+             如果**已存在** sub session → 说明首轮询盘已发过。**立即结束本轮 turn**——不建群、不发消息、不发询盘、不执行后续任何 B-Step。\n\
              如果**不存在** → 继续 B-Step 1。\n\n\
              **B-Step 1 — 建群：**\n\
              调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
@@ -968,7 +968,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20jobId: {job_id}\n\
              \x20\x20\x20\x20reason: 报价超出最高预算\n\
              \x20\x20b) `onchainos agent mark-failed {job_id} --provider <当前卖家agentId>`\n\
-             \x20\x20c) 回到推荐列表（`onchainos agent recommend {job_id} --current`），由用户选择下一个卖家\n\n\
+             \x20\x20c) 调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；调 `xmtp_prompt_user` 让用户决定下一步：\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] 用户选择查看推荐卖家 → relay「查看推荐」；选择指定卖家并提供 agentId → relay「指定卖家 agentId=X」；选择关闭 → relay「关闭任务」\n\
+             \x20\x20\x20\x20userContent: [任务 {short_id}] 卖家报价超出最高预算，协商已终止。请选择下一步：\n\
+             \x20\x20\x20\x20\x20\x20A. 查看推荐卖家列表\n\
+             \x20\x20\x20\x20\x20\x20B. 指定其他卖家（请提供 agentId）\n\
+             \x20\x20\x20\x20\x20\x20C. 关闭任务\n\
+             \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后：A → `recommend`；B → `next-action --provider <agentId>`；C → `close`。\n\n\
              **Step 3 — 回复卖家（取决于 Step 2 评估）：**\n\n\
              ▸ **卖家还在讨论阶段（未给出明确价格或在询问细节）** → xmtp_send 自然语言回复，继续讨论。\n\n\
              ▸ **双方就 tokenAmount / tokenSymbol / paymentMode 达成一致** → 发送 [NEGOTIATE_PROPOSE]：\n\
@@ -982,6 +988,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ⚠️ **A2A 协商会话中 paymentMode 固定 escrow**。\n\
              ⚠️ **禁止用自然语言替代 [NEGOTIATE_PROPOSE]**——卖家 Agent 只识别结构化标记，自然语言「请 apply / 条款已锁定」不会被解析。\n\
              ⚠️ **同 turn 只发一条 xmtp_send**。\n\
+             🚫 **本事件禁止调用 save-agreed / set-payment-mode / confirm-accept**——这些只在后续 negotiate_ack 事件中才能执行。即使卖家自然语言说「我接受」「同意」，也必须先发 [NEGOTIATE_PROPOSE]，等卖家回 [NEGOTIATE_ACK] 后才能进入下一阶段。\n\
              → **结束本轮 turn**，等待卖家回复。\n"
         ),
 
@@ -1028,8 +1035,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20jobId: {job_id}\n\
              \x20\x20reason: 协商轮次超限，已达 3 次 COUNTER\n\
              \x20\x20然后 `onchainos agent mark-failed {job_id} --provider <当前卖家agentId>`，\n\
-             \x20\x20回到推荐列表（`onchainos agent recommend {job_id} --current`），由用户选择下一个卖家。\n\
-             \x20\x20→ **结束本轮 turn**。\n\n\
+             \x20\x20调 xmtp_prompt_user 让用户决定下一步（同 negotiate_reply 超预算处理：A.查看推荐 / B.指定卖家 / C.关闭任务）。\n\
+             \x20\x20→ **结束本轮 turn**，等用户 relay。\n\n\
              - 未超限 → 继续 Step 2。\n\n\
              **Step 2 — PROPOSE 笔误自检（优先级最高）：**\n\
              ⚠️ **先回看 sub session 历史，确认你上次发的 [NEGOTIATE_PROPOSE] 是否填错了**：\n\
@@ -1045,7 +1052,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20|---|---|\n\
              \x20\x20| ≤ budget | 可接受，用 COUNTER 值发新 [NEGOTIATE_PROPOSE] |\n\
              \x20\x20| budget < 报价 ≤ max_budget | 可接受或继续还价，发新 [NEGOTIATE_PROPOSE] |\n\
-             \x20\x20| > max_budget | xmtp_send `[NEGOTIATE_REJECT]`，mark-failed，回到推荐列表 |\n\n\
+             \x20\x20| > max_budget | xmtp_send `[NEGOTIATE_REJECT]`，mark-failed，xmtp_prompt_user 让用户决定下一步（同 negotiate_reply 的超预算处理） |\n\n\
              - 检查 tokenSymbol 改动：卖家提出不同币种时评估是否可接受\n\
              - paymentMode 固定 escrow，不接受其他支付方式\n\n\
              **Step 4 — 发送新 [NEGOTIATE_PROPOSE]（如决定接受或还价）：**\n\

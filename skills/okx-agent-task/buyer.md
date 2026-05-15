@@ -48,15 +48,19 @@
 
 ## 3. Inbound Message Routing
 
-> 🔴 **协商阶段自治红线**：status=0（open）且存在活跃 sub session 时，协商由 sub session **自主完成**——收到卖家的报价、还价、讨论消息后，**必须**先调 `next-action --jobStatus negotiate_reply` 拿剧本，按剧本的决策矩阵自主评估并回复。**禁止**把卖家的报价 / 协商内容转发给用户问"是否接受"。只有以下情况才涉及用户：(a) 报价超 max_budget 自动 REJECT 后切换卖家需用户选择；(b) 推荐列表为空需用户决策下一步。
+> 🔴 **协商阶段自治红线**：status=0（open）且存在活跃 sub session 时，协商由 sub session **自主完成**——收到卖家的报价、还价、讨论消息后，**必须**按下方路由优先级匹配，命中 #4 时调 `next-action --jobStatus negotiate_reply` 拿剧本，按剧本的决策矩阵自主评估并回复。**禁止**把卖家的报价 / 协商内容转发给用户问"是否接受"。**禁止**手动执行 D-Step / B-Step 流程（service-list → 建群 → 发询盘），这些只在 `job_created` 首次触发时由 next-action 剧本驱动。只有以下情况才涉及用户：(a) 报价超 max_budget 自动 REJECT 后切换卖家需用户选择；(b) 推荐列表为空需用户决策下一步。
 >
-> **真实事故**：卖家发自然语言报价"0.1 USDG"，agent 跳过 next-action 直接 xmtp_dispatch_user 转发给用户问"是否确认接受"——完全绕开三步握手，卖家永远等不到 `[NEGOTIATE_PROPOSE]`。
+> ⚠️ **本节路由优先级覆盖 SKILL.md「接收 peer 消息」的通用规则**。不要用 common context 返回的当前 status（如 open）调 next-action——直接用下方路由匹配到的 jobStatus（如 `negotiate_reply` / `negotiate_ack` / `provider_applied`）。
+>
+> **真实事故 1**：卖家发自然语言报价"0.1 USDG"，agent 跳过 next-action 直接 xmtp_dispatch_user 转发给用户问"是否确认接受"——完全绕开三步握手，卖家永远等不到 `[NEGOTIATE_PROPOSE]`。
+> **真实事故 2**：卖家回复首条消息后，agent 按 SKILL.md 旧规则用 common context 当前 status=open 调了 `next-action --jobStatus job_created` → 拿到初始化剧本 → 重发首轮询盘。正确做法：路由 #4 → `negotiate_reply`。
+> **真实事故 3**：卖家自然语言说"我接受，0.1 USDG，escrow"，agent 把"我接受"当作 `[NEGOTIATE_ACK]`，跳过 [NEGOTIATE_PROPOSE] 直接调 save-agreed + set-payment-mode → 卖家从未收到 [NEGOTIATE_CONFIRM]，无法 apply，任务卡死。正确做法：路由 #4 → `negotiate_reply` → 发 [NEGOTIATE_PROPOSE] → 等真正的 [NEGOTIATE_ACK]。
 
 > **⚠️ a2a-agent-chat 场景路由优先级**（通过安全门后，按此顺序匹配，**首个命中即停**）：
 >
 > 1. **卖家 apply 通知**：content 含 `[PROVIDER_APPLIED]` 前缀，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无前缀的旧版本卖家） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
 > 2. **交付通知（a2a-agent-chat）** → 区分交付物形态：content 含 `fileKey` + 解密字段（`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；content 为纯文本 → 直接提取并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「卖家已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
-> 3. **协商结构化标记** → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
+> 3. **协商结构化标记**（content 中包含字面量 `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_REJECT]` / `[NEGOTIATE_PROPOSE]` 前缀。⚠️ 卖家自然语言说"我接受/同意/OK/可以"**不是** `[NEGOTIATE_ACK]`——没有字面量标记的消息一律走 #4 兜底 → `negotiate_reply`） → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
 >    - status≥1 → `xmtp_send`「协商已完成，当前参数已锁定，任务执行中。」，结束本轮 turn
 >    - status=0（open）→ 按标记类型分派到对应 next-action 事件：
 >      - `[NEGOTIATE_ACK]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_ack --role buyer --agentId <你的agentId>`
