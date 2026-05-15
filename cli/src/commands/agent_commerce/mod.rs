@@ -20,6 +20,10 @@ pub enum AgentCommand {
     /// Query your Agents / agent details
     Get(identity::GetArgs),
 
+    /// Reverse-lookup an Agent by communication address + chainIndex (hidden, internal).
+    #[command(name = "get-by-address", hide = true)]
+    GetByAddress(identity::GetByAddressArgs),
+
     /// Activate an Agent
     Activate(identity::AgentStatusArgs),
 
@@ -518,6 +522,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Create(args) => identity::create(args, ctx).await,
         AgentCommand::Update(args) => identity::update(args, ctx).await,
         AgentCommand::Get(args) => identity::get(args, ctx).await,
+        AgentCommand::GetByAddress(args) => identity::get_by_address(args, ctx).await,
         AgentCommand::Activate(args) => identity::activate(args, ctx).await,
         AgentCommand::Deactivate(args) => identity::deactivate(args, ctx).await,
         AgentCommand::Upload(args) => identity::upload(args, ctx).await,

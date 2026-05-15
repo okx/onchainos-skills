@@ -77,6 +77,18 @@ pub struct ServiceListArgs {
     pub agent_id: Option<String>,
 }
 
+/// `onchainos agent get-by-address`: 按通信地址 + 链反查 agent。
+/// 隐藏指令（hide=true），仅服务于 sub agent / xmtp 场景，不进 `agent -h`。
+#[derive(Args, Clone, Debug)]
+pub struct GetByAddressArgs {
+    /// 通信地址（agent 上链注册时绑定的 communicationAddress）— 必填
+    #[arg(long = "communication-address", required = true)]
+    pub communication_address: String,
+    /// 链 chainIndex，缺省走 XLayer (196)
+    #[arg(long = "chain-index")]
+    pub chain_index: Option<String>,
+}
+
 #[derive(Args, Clone, Debug)]
 pub struct FeedbackSubmitArgs {
     /// 必填：被评价的 agent id，进 create-comment 请求体 `comment.agentid`。

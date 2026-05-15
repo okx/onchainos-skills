@@ -11,7 +11,7 @@ use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::Context;
 use crate::output;
 
-use super::args::{FeedbackListArgs, GetArgs, SearchArgs, ServiceListArgs};
+use super::args::{FeedbackListArgs, GetArgs, GetByAddressArgs, SearchArgs, ServiceListArgs};
 use super::models::XLAYER_CHAIN_INDEX;
 use super::utils::{
     convert_feedback_list_scores, normalize_singleton_object, parse_u32_arg, push_multi_query,
@@ -38,6 +38,11 @@ pub async fn service_list(args: ServiceListArgs, ctx: &Context) -> Result<()> {
 
 pub async fn feedback_list(args: FeedbackListArgs, ctx: &Context) -> Result<()> {
     output::success(feedback_list_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn get_by_address(args: GetByAddressArgs, ctx: &Context) -> Result<()> {
+    output::success(get_by_address_impl(&args, ctx).await?);
     Ok(())
 }
 
@@ -271,4 +276,66 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
     let mut out = normalize_singleton_object(result?);
     convert_feedback_list_scores(&mut out);
     Ok(out)
+}
+
+// ─── `agent get-by-address` ───────────────────────────────────────────────
+//
+// Hidden command. Reverse-lookup an agent by its on-chain communication
+// address + chainIndex. Same JWT-auth shape as the other read-side calls.
+
+async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+    // clap 已强制 required = true；这里再防御性 trim 防止 `--communication-address ""`。
+    let communication_address =
+        require_non_empty(Some(args.communication_address.as_str()), "--communication-address")?;
+    let chain_index = args
+        .chain_index
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(XLAYER_CHAIN_INDEX);
+
+    let query = vec![
+        (
+            "communicationAddress".to_string(),
+            communication_address.to_string(),
+        ),
+        ("chainIndex".to_string(), chain_index.to_string()),
+    ];
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    eprintln!(
+        "[agent-identity] get-by-address request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(
+            ctx,
+            "/priapi/v5/wallet/agentic/agent/by-communication-address",
+            &query_refs,
+        ),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/by-communication-address",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] get-by-address response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] get-by-address response err: {:#}", e),
+    }
+
+    Ok(normalize_singleton_object(result?))
 }
