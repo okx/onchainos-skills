@@ -19,6 +19,7 @@
 | 看涨新闻 / 看跌新闻 | bullish / bearish news | `--sentiment 1` (bullish) / `--sentiment 2` (bearish) on `news-by-symbol` / `news-search` |
 | 一小时 / 四小时 / 24小时 | 1h / 4h / 24h | sentiment endpoints: `--time-frame 1` / `2` / `3` |
 | 24小时 / 三天 / 一周 / 一个月 | 24h / 72h / 7d / 30d | vibe endpoints: `--time-frame 1` / `2` / `3` / `4` |
+| 最近 / 近期 / 近来 | recently, lately | News: omit `--begin` / `--end` (server defaults to now − 72h, max 180d lookback). Sentiment / vibe: omit `--time-frame` to use each endpoint's default window. |
 
 ## Period Code Reference
 
