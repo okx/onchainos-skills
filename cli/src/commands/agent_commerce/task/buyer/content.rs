@@ -4,10 +4,13 @@
 //!
 //! 1. **User-facing** (`xmtp_dispatch_user(content)` / `xmtp_prompt_user(userContent)`)
 //!    给用户看的聊天内容。命名后缀 `_user_notify` / `_user_prompt`。
-//!    规则:**禁用** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*` 等) /
+//!    规则:**禁用技术术语** —— tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*` 等) /
 //!    状态名(`open`/`accepted` 等英文枚举) / CLI flag(`--*`) /
 //!    skill 名(`okx-agent-identity` 等) / 状态字段名(`jobStatus`/`paymentMode`)。
-//!    用自然中文(担保/x402,验收期超时,任务已完成,等)。
+//!    **本文件模板的字面量是中文**(担保/x402,验收期超时,任务已完成,等),作为 sub agent
+//!    LOCALIZATION_PREFIX 翻译时的 source-of-truth —— 中文用户原样呈现,非中文用户由
+//!    sub agent 翻成等价口语化表达(英文用户:「escrowed payment/x402, review window expired,
+//!    task completed」等)。禁用技术术语这条对所有语言生效,不止中文。
 //!
 //! 2. **Peer-facing** (`xmtp_send` content,给卖家 sub agent)
 //!    agent-to-agent 协议消息。命名后缀 `_to_seller`。
