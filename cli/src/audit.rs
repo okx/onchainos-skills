@@ -343,6 +343,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Create(_) => "create".into(),
         AgentCommand::Update(_) => "update".into(),
         AgentCommand::Get(_) => "get".into(),
+        AgentCommand::GetByAddress(_) => "get-by-address".into(),
         AgentCommand::Activate(_) => "activate".into(),
         AgentCommand::Deactivate(_) => "deactivate".into(),
         AgentCommand::Upload(_) => "upload".into(),
