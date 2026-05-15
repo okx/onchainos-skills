@@ -209,6 +209,14 @@ pub enum Event {
     /// DisputeManager.VoterCooldownEntered 上链（被动进入冷却期；通知 evaluator）
     CooldownEntered,
 
+    // ── 协商中继事件(buyer 本地派发,不改 status) ────────────────────
+    /// 卖家自然语言回复(不含 [NEGOTIATE_*] 标记),buyer.md Route 4 → negotiate_reply
+    NegotiateReply,
+    /// 卖家回 [NEGOTIATE_ACK](接受 PROPOSE),buyer.md Route 3 → negotiate_ack
+    NegotiateAck,
+    /// 卖家回 [NEGOTIATE_COUNTER](反提案),buyer.md Route 3 → negotiate_counter
+    NegotiateCounter,
+
     // ── 网络/重启恢复事件(过场,不改 status) ─────────────────────────
     /// 网络/电脑重启后,后端通知 agent 唤起本任务续跑剧本。
     /// envelope 形态(per-task fan-out):
@@ -269,6 +277,10 @@ impl Event {
             // evaluator 额外 lifecycle
             "stake_stopped"             => Event::StakeStopped,
             "cooldown_entered"          => Event::CooldownEntered,
+            // 协商中继(buyer 本地派发)
+            "negotiate_reply"           => Event::NegotiateReply,
+            "negotiate_ack"             => Event::NegotiateAck,
+            "negotiate_counter"         => Event::NegotiateCounter,
             // 网络/重启恢复
             "wakeup_notify"             => Event::WakeupNotify,
             other                       => Event::Other(other.to_string()),
@@ -311,6 +323,9 @@ impl Event {
             Event::ReviewDeadlineWarn     => "review_deadline_warn",
             Event::StakeStopped           => "stake_stopped",
             Event::CooldownEntered        => "cooldown_entered",
+            Event::NegotiateReply         => "negotiate_reply",
+            Event::NegotiateAck           => "negotiate_ack",
+            Event::NegotiateCounter       => "negotiate_counter",
             Event::WakeupNotify           => "wakeup_notify",
             Event::Other(s)               => s.as_str(),
         }
@@ -347,7 +362,8 @@ impl Event {
 pub fn status_when_event(e: &Event) -> Status {
     match e {
         // 主流程
-        Event::JobCreated | Event::ProviderApplied                          => Status::Open,
+        Event::JobCreated | Event::ProviderApplied
+        | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Open,
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
         Event::JobRefused | Event::RefuseExpired                             => Status::Refused,

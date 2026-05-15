@@ -168,6 +168,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             Event::DisputeResolved => "xmtp_dispatch_user (通知仲裁结果)",
             Event::JobRefunded => "xmtp_dispatch_user (通知退款完成)",
             Event::JobAutoRefunded => "xmtp_dispatch_user (claimAutoRefund tx 回执)",
+            Event::NegotiateReply => "xmtp_send (评估卖家自然语言回复)",
+            Event::NegotiateAck => "save-agreed → set-payment-mode (ACK 校验 → 落盘)",
+            Event::NegotiateCounter => "xmtp_send (评估 COUNTER → 新 PROPOSE 或 REJECT)",
             _ => "无",
         }
     );
@@ -938,6 +941,124 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n"
         ),
 
+        // ─── 协商中继：卖家自然语言回复（无 [NEGOTIATE_*] 标记）────────
+        Event::NegotiateReply => format!(
+            "【协商中继】negotiate_reply（卖家自然语言回复，无结构化标记）\n\
+             【角色】买家（Client）\n\n\
+             卖家在协商过程中发了自然语言消息（可能是报价、讨论细节、提问等）。你需要**自主评估并回复**。\n\n\
+             {title_query_hint}\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 获取任务上下文（如本 turn 未查过则查一次）：**\n\
+             ```bash\n\
+             onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+             ```\n\
+             提取关键字段：budget、paymentMostTokenAmount（max_budget）、tokenSymbol、description。\n\n\
+             **Step 2 — 评估卖家回复内容：**\n\n\
+             从卖家消息中提取报价信息（如有）：金额、币种、支付方式偏好、交付时间。\n\n\
+             🔴 **报价评估决策矩阵**（如卖家给出了明确价格）：\n\
+             \x20\x20| 卖家报价 | 动作 |\n\
+             \x20\x20|---|---|\n\
+             \x20\x20| ≤ budget | 价格可接受，确认其他条款后进入 [NEGOTIATE_PROPOSE] |\n\
+             \x20\x20| budget < 报价 ≤ max_budget | 有谈判空间，自主还价 |\n\
+             \x20\x20| > max_budget | **自动 REJECT + 切换**（见下方） |\n\n\
+             **报价 > max_budget 的强制动作**：\n\
+             \x20\x20a) xmtp_send 发 `[NEGOTIATE_REJECT]`：\n\
+             \x20\x20\x20\x20content=\n\
+             \x20\x20\x20\x20[NEGOTIATE_REJECT]\n\
+             \x20\x20\x20\x20jobId: {job_id}\n\
+             \x20\x20\x20\x20reason: 报价超出最高预算\n\
+             \x20\x20b) `onchainos agent mark-failed {job_id} --provider <当前卖家agentId>`\n\
+             \x20\x20c) 回到推荐列表（`onchainos agent recommend {job_id} --current`），由用户选择下一个卖家\n\n\
+             **Step 3 — 回复卖家（取决于 Step 2 评估）：**\n\n\
+             ▸ **卖家还在讨论阶段（未给出明确价格或在询问细节）** → xmtp_send 自然语言回复，继续讨论。\n\n\
+             ▸ **双方就 tokenAmount / tokenSymbol / paymentMode 达成一致** → 发送 [NEGOTIATE_PROPOSE]：\n\
+             \x20\x20📋 **填字段前必做自检**：逐字段回看 sub session 历史找**最后一次双方明确同意的值**。\n\
+             \x20\x20content=\n\
+             \x20\x20[NEGOTIATE_PROPOSE]\n\
+             \x20\x20jobId: {job_id}\n\
+             \x20\x20paymentMode: escrow\n\
+             \x20\x20tokenSymbol: <USDT|USDG>\n\
+             \x20\x20tokenAmount: <金额>\n\n\
+             ⚠️ **A2A 协商会话中 paymentMode 固定 escrow**。\n\
+             ⚠️ **禁止用自然语言替代 [NEGOTIATE_PROPOSE]**——卖家 Agent 只识别结构化标记，自然语言「请 apply / 条款已锁定」不会被解析。\n\
+             ⚠️ **同 turn 只发一条 xmtp_send**。\n\
+             → **结束本轮 turn**，等待卖家回复。\n"
+        ),
+
+        // ─── 协商中继：卖家回 [NEGOTIATE_ACK] ──────────────────────
+        Event::NegotiateAck => format!(
+            "【协商中继】negotiate_ack（卖家接受 PROPOSE，回 [NEGOTIATE_ACK]）\n\
+             【角色】买家（Client）\n\n\
+             卖家回复了 [NEGOTIATE_ACK]——表示接受你的 [NEGOTIATE_PROPOSE] 条款。\n\n\
+             {title_query_hint}\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 逐字段校验 ACK 与你发的 PROPOSE 一致：**\n\
+             回看 sub session 历史，对比卖家 ACK 中的 paymentMode / tokenSymbol / tokenAmount 与你最近的 PROPOSE。\n\
+             - **任一字段不一致** → 视为篡改，xmtp_send 告知卖家字段不一致并重发 [NEGOTIATE_PROPOSE]，结束 turn。\n\
+             - **全部一致** → 继续 Step 2。\n\n\
+             **Step 2 — save-agreed 落盘：**\n\
+             ```bash\n\
+             onchainos agent save-agreed {job_id} --provider <当前协商的providerAgentId> --token-symbol <ACK中的tokenSymbol> --token-amount <ACK中的tokenAmount>\n\
+             ```\n\n\
+             **Step 3 — set-payment-mode（A2A 协商固定 escrow）：**\n\
+             ⚠️ **不论链上 paymentType 当前是什么值，都必须执行**，不要查 common context 比较。\n\
+             ```bash\n\
+             onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <ACK中的tokenSymbol> --token-amount <ACK中的tokenAmount>\n\
+             ```\n\
+             此命令返回 exit code 2 (confirming)。\n\n\
+             🚫 **此 turn 禁止 xmtp_send [NEGOTIATE_CONFIRM]**——链上 paymentMode 还在 mempool，\n\
+             卖家见 CONFIRM 会立刻 apply，但 paymentMode 没确认，apply 会失败。\n\
+             [NEGOTIATE_CONFIRM] 必须等 `job_payment_mode_changed` 事件后再发。\n\n\
+             → **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n"
+        ),
+
+        // ─── 协商中继：卖家回 [NEGOTIATE_COUNTER] ─────────────────
+        Event::NegotiateCounter => format!(
+            "【协商中继】negotiate_counter（卖家发送反提案 [NEGOTIATE_COUNTER]）\n\
+             【角色】买家（Client）\n\n\
+             卖家不接受你的 PROPOSE，发了 [NEGOTIATE_COUNTER] 反提案。\n\n\
+             {title_query_hint}\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 轮次计数：**\n\
+             回看 sub session 历史，统计卖家已发送的 `[NEGOTIATE_COUNTER]` 总次数（含本次）。\n\
+             🔢 **COUNTER 轮次上限 = 3 次**：\n\
+             - 本次是第 3 次（含）以上 COUNTER → **不处理 COUNTER 内容**，直接 xmtp_send 发：\n\
+             \x20\x20content=\n\
+             \x20\x20[NEGOTIATE_REJECT]\n\
+             \x20\x20jobId: {job_id}\n\
+             \x20\x20reason: 协商轮次超限，已达 3 次 COUNTER\n\
+             \x20\x20然后 `onchainos agent mark-failed {job_id} --provider <当前卖家agentId>`，\n\
+             \x20\x20回到推荐列表（`onchainos agent recommend {job_id} --current`），由用户选择下一个卖家。\n\
+             \x20\x20→ **结束本轮 turn**。\n\n\
+             - 未超限 → 继续 Step 2。\n\n\
+             **Step 2 — PROPOSE 笔误自检（优先级最高）：**\n\
+             ⚠️ **先回看 sub session 历史，确认你上次发的 [NEGOTIATE_PROPOSE] 是否填错了**：\n\
+             \x20\x20- COUNTER 金额 **等于** 自然语言里你最后同意的数 → **是你 PROPOSE 写错了**：直接用 COUNTER 值重发 [NEGOTIATE_PROPOSE]，不要再讨价还价。\n\
+             \x20\x20- COUNTER 金额 **高于** 自然语言里你最后同意的数 → 才是卖家加价，继续 Step 3。\n\n\
+             **Step 3 — 评估 COUNTER 条款：**\n\
+             获取 max_budget：\n\
+             ```bash\n\
+             onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+             ```\n\
+             提取 `paymentMostTokenAmount`。\n\n\
+             \x20\x20| COUNTER 报价 | 动作 |\n\
+             \x20\x20|---|---|\n\
+             \x20\x20| ≤ budget | 可接受，用 COUNTER 值发新 [NEGOTIATE_PROPOSE] |\n\
+             \x20\x20| budget < 报价 ≤ max_budget | 可接受或继续还价，发新 [NEGOTIATE_PROPOSE] |\n\
+             \x20\x20| > max_budget | xmtp_send `[NEGOTIATE_REJECT]`，mark-failed，回到推荐列表 |\n\n\
+             - 检查 tokenSymbol 改动：卖家提出不同币种时评估是否可接受\n\
+             - paymentMode 固定 escrow，不接受其他支付方式\n\n\
+             **Step 4 — 发送新 [NEGOTIATE_PROPOSE]（如决定接受或还价）：**\n\
+             \x20\x20content=\n\
+             \x20\x20[NEGOTIATE_PROPOSE]\n\
+             \x20\x20jobId: {job_id}\n\
+             \x20\x20paymentMode: escrow\n\
+             \x20\x20tokenSymbol: <USDT|USDG>\n\
+             \x20\x20tokenAmount: <金额>\n\n\
+             ⚠️ **禁止用自然语言替代 [NEGOTIATE_PROPOSE]**——卖家 Agent 只识别结构化标记。\n\
+             → **结束本轮 turn**，等待卖家回复 [NEGOTIATE_ACK] / [NEGOTIATE_COUNTER] / [NEGOTIATE_REJECT]。\n"
+        ),
+
         // ─── 关闭任务（仅 Open 状态可用，user-instruction 伪 event）─────
         Event::Other(ref s) if s == "close" => format!(
             "【当前动作】关闭任务\n\
@@ -995,18 +1116,34 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             "【系统通知】review_deadline_warn（验收截止时间快到了）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 调用 xmtp_prompt_user 通知用户验收截止时间即将到期，请求决策：**\n\
+             **Step 1 — 幂等检查：查询是否已有此任务的待决事项：**\n\
+             ```bash\n\
+             onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+             ```\n\
+             如果返回列表中已存在 jobId={job_id} 且 role=buyer 的条目 → **说明已经通知过用户,本次是重复事件,直接结束 turn,不再通知。**\n\
+             如果不存在 → 继续 Step 2。\n\n\
+             **Step 2 — 获取 sessionKey 并注册 pending-decision（硬规则 7）：**\n\
+             先调 `session_status` 拿到 sessionKey，然后：\n\
+             ```bash\n\
+             onchainos agent pending-decisions add --sub-key <sessionKey> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"验收截止时间即将到期\" --user-content \"[验收截止提醒] 任务 {job_id} 的验收截止时间即将到期。超时后卖家可自动领取资金。请尽快决定：A. 通过验收 B. 拒绝交付物\"\n\
+             ```\n\n\
+             **Step 3 — 调用 xmtp_prompt_user 通知用户验收截止时间即将到期，请求决策：**\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              用户回复「通过」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：验收通过\") relay 回 sub session 执行 complete；\
              用户回复「拒绝」+ 原因 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：拒绝，原因是<用户原话>\") relay 回 sub session 执行 reject。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20userContent:\n\
              \x20\x20[验收截止提醒] 任务 {job_id} 的验收截止时间即将到期。\n\
-             \x20\x20超时后卖家可自动领取资金（claimAutoComplete）。\n\
+             \x20\x20超时后卖家可自动领取资金。\n\
              \x20\x20请尽快决定：\n\
              \x20\x20A. 通过验收 — 回复「通过」\n\
              \x20\x20B. 拒绝交付物 — 回复「拒绝」并说明原因\n\n\
-             **Step 2 — 等待用户回复后执行对应命令：**\n\
+             **Step 4 — 等待用户回复后执行对应命令：**\n\
+             收到 `[USER_DECISION_RELAY] 用户决策：...` 后，先调 `pending-decisions remove`（硬规则 7）：\n\
+             ```bash\n\
+             onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
+             ```\n\
+             然后按用户决策执行：\n\
              - 用户选择通过：\n\
              ```bash\n\
              onchainos agent complete {job_id}\n\

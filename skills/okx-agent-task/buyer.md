@@ -52,12 +52,17 @@
 >
 > 1. **卖家 apply 通知**：content 含 `[PROVIDER_APPLIED]` 前缀，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无前缀的旧版本卖家） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
 > 2. **交付通知（a2a-agent-chat）** → 区分交付物形态：content 含 `fileKey` + 解密字段（`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；content 为纯文本 → 直接提取并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「卖家已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
-> 3. **协商对话**：content 含 `[NEGOTIATE_*]` 标记 → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
->    - status=0（open）→ 协商（§3.2）
+> 3. **协商结构化标记** → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
 >    - status≥1 → `xmtp_send`「协商已完成，当前参数已锁定，任务执行中。」，结束本轮 turn
+>    - status=0（open）→ 按标记类型分派到对应 next-action 事件：
+>      - `[NEGOTIATE_ACK]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_ack --role buyer --agentId <你的agentId>`
+>      - `[NEGOTIATE_COUNTER]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_counter --role buyer --agentId <你的agentId>`
+>      - `[NEGOTIATE_REJECT]` → 卖家主动拒绝协商，**不再回复**，`onchainos agent mark-failed <jobId> --provider <卖家agentId>`，回到推荐列表（`onchainos agent recommend <jobId> --current`），由用户选择下一个卖家
+>      - `[NEGOTIATE_PROPOSE]` → 异常（卖家不应发 PROPOSE），xmtp_send 告知「PROPOSE 由买家发起，请回复 ACK/COUNTER/REJECT」
 > 4. **兜底**（1-3 未命中）→ 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
 >    - status=1（accepted）→ 执行讨论模式（§3.5）
->    - status=0（open）→ `xmtp_dispatch_user` 转发卖家消息给用户
+>    - status=0（open）且存在活跃 sub session（`session_status` 有值）→ 协商中的自然语言讨论，调 `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <你的agentId>` 拿剧本
+>    - status=0（open）且无 sub session → `xmtp_dispatch_user` 转发卖家消息给用户
 >    - 其余（submitted / refused / disputed / 终态）→ 忽略，不回复，不转发
 
 ---
@@ -118,6 +123,12 @@
 ## 3.2 协商阶段
 
 **单一信源在 CLI**——每次进入协商场景都先调 next-action 拿完整剧本。**剧本里有的细节本文件不重复**——以 next-action 输出为准。
+
+> **⚠️ 协商阶段有两类入口**：
+> - **初次进入**（job_created / user session 选择卖家）→ `--jobStatus job_created`，含建群 + 发首条询盘
+> - **协商中途**（卖家回复 a2a-agent-chat）→ 由 §3 路由分派到 `negotiate_reply` / `negotiate_ack` / `negotiate_counter`，**不走 job_created**
+>
+> 下方 `统一入口` 只用于**初次进入**（建群 + 首条询盘）。协商中途收到卖家回复时，由 §3 路由直接分派到对应事件，不要重新走此入口。
 
 > **⚠️ User Session 意图触发**（用户在 user session 中说以下话时，必须走 next-action 拿剧本，**不要**尝试找 `negotiate` 命令——CLI 没有这个子命令，协商通过 XMTP 通信工具实现）：
 >

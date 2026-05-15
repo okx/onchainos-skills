@@ -674,7 +674,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【系统通知】submit_deadline_warn（提交交付物截止时间快到了）\n\
              【角色】卖家（Provider）\n\n\
              ⚠️ 用 `xmtp_prompt_user`等用户决策(立即提交 vs 让超时退款)。\n\n\
-             【你的下一步动作】\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 0 — 幂等检查：查询是否已有此任务的待决事项：**\n\
+             ```bash\n\
+             onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+             ```\n\
+             如果返回列表中已存在 jobId={job_id} 且 role=provider 的条目 → **说明已经通知过用户,本次是重复事件,直接结束 turn,不再通知。**\n\
+             如果不存在 → 继续 Step 1。\n\n\
              **Step 1 — 用 `xmtp_prompt_user` 把截止警告 + 决策请求推给用户**:\n\n\
              先调 `session_status` 拿当前 sessionKey(同 turn 只调一次,见硬规则 6);调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\
              tool: xmtp_prompt_user\n\
@@ -769,6 +775,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ Step 2 拿到的剧本如果是被动等待类（如 status=accepted 卖家正在做事 / status=submitted 等买家验收）,只输出「任务恢复」通知后结束 turn,不主动跑业务动作。\n"
             )
         }
+
+        // 协商中继事件仅 buyer 端使用,provider 端忽略
+        Event::NegotiateReply
+        | Event::NegotiateAck
+        | Event::NegotiateCounter => "【系统通知】negotiate_*（buyer 端协商中继事件，provider 无关）\n\
+             【建议】忽略，无需任何动作。\n".to_string(),
 
         Event::Other(ref other) => format!(
             "【未知状态】{other}\n\

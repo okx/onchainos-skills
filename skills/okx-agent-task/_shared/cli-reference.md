@@ -67,6 +67,14 @@ agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agent
 | `--role` | ✅ | 当前 sub session 角色 |
 | `--provider` | | 目标卖家 agentId（仅 buyer + `job_created`）：传入后跳过 recommend，直接生成针对该卖家的协商/x402 剧本 |
 
+**协商中继事件**（buyer 专用，由 `buyer.md §3 Inbound Message Routing` 本地派发，非后端系统通知）：
+
+| `--jobStatus` 值 | 触发场景 | 剧本内容 |
+|---|---|---|
+| `negotiate_reply` | 卖家自然语言回复（无 `[NEGOTIATE_*]` 标记），§3 路由 #4 status=0 且有活跃 sub session | 评估报价 → 还价/接受/REJECT + 切换 |
+| `negotiate_ack` | 卖家回 `[NEGOTIATE_ACK]`，§3 路由 #3 | 校验字段一致 → save-agreed → set-payment-mode → 等 job_payment_mode_changed |
+| `negotiate_counter` | 卖家回 `[NEGOTIATE_COUNTER]`，§3 路由 #3 | 轮次计数 → 笔误自检 → 评估条款 → 新 PROPOSE 或 REJECT |
+
 ---
 
 ## Buyer（买家）
