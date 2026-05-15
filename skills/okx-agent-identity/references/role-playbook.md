@@ -141,13 +141,13 @@ The prompt **must match the user's language**. Follow `SKILL.md §Language Match
 
 > ⛔ The card is **mandatory before every content-creating on-chain write** — `agent create` / `update` / `feedback-submit`. This is enforced by `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)`; that section is the canonical source. Memory preferences, plan-mode exit, one-shot capture, urgency, and "intent is obvious" all do **NOT** bypass it — see the rationalization list in `SKILL.md §Core Flow` gate 4. State toggles (`agent activate` / `agent deactivate`) are NOT gated and run directly via `SKILL.md §Intent → Sub-flow`.
 
-Always a table of fields — never a bash blob. Match the user's language per `SKILL.md §Language Matching`. Render field labels and row values in one language only. For the `role` row you may show the CLI value once so the user sees what gets sent. See `display-formats.md` §Create/Update Diff for the full template with both language variants.
+Always a table of fields — never a bash blob. Match the user's language per `SKILL.md §Language Matching`. Render field labels and row values in one language only. ⛔ The `role` row MUST follow `ux-lexicon.md §Role` asymmetric rule (Chinese localized `买家 / 服务方 / 验证者`; English `requester / provider / evaluator`) — **do NOT render bilingual `服务方 (`provider`)` / `买家 (`requester`)` parentheticals** (`SKILL.md §UX Output Red Lines Red line 4`). See `display-formats.md` §Create/Update Diff for the full template with both language variants.
 
 Chinese variant:
 
 | 字段 | 值 |
 |---|---|
-| 角色 | 服务方 (`provider`) |
+| 角色 | 服务方 |
 | 名字 | <...> |
 | 描述 | <...> |
 | 头像 | 默认 — 若用户上传了图片或给了链接，这里**直接贴实际 URL**（例：`https://…/abc.png`），不要写 "已上传" / "uploaded" / 提到 "CDN" 等占位词。 |

@@ -62,7 +62,7 @@ Chinese variant:
 
 | 字段 | 值 |
 |---|---|
-| 角色 | 验证者 (`evaluator`) |
+| 角色 | 验证者 |
 | 名字 | Solidity Auditor |
 | 描述 | 仲裁 Solidity 相关任务的争议；5 年审计经验。 |
 | 头像 | 默认 |
