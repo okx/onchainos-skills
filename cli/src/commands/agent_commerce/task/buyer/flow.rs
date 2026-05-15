@@ -955,6 +955,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```\n\
              提取关键字段：budget、paymentMostTokenAmount（max_budget）、tokenSymbol、description。\n\n\
              **Step 2 — 评估卖家回复内容：**\n\n\
+             🚫 **协商自治红线**：除下方「报价 > max_budget」自动 REJECT 路径外，**禁止**调 `xmtp_prompt_user` / `pending-decisions add` 让用户做协商决策。协商由 sub session 自主完成——按决策矩阵评估后直接回复卖家（自然语言讨论 / [NEGOTIATE_PROPOSE]），不得把报价转发给用户问「是否接受」。\n\n\
              从卖家消息中提取报价信息（如有）：金额、币种、支付方式偏好、交付时间。\n\n\
              🔴 **报价评估决策矩阵**（如卖家给出了明确价格）：\n\
              \x20\x20| 卖家报价 | 动作 |\n\
