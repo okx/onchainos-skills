@@ -498,7 +498,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             "【当前状态】job_submitted（卖家已提交交付物）\n\
              【角色】买家（Client）\n\n\
              🚫 **担保模式严禁自动验收**：escrow 模式下收到交付物后**必须通知 user session，由用户决定验收通过还是拒绝**。\n\
-             Agent 不得替用户做验收决策，即使交付物看起来符合验收标准。\n\
+             Agent 不得替用户做验收决策，即使交付物看起来完全符合验收标准。\n\
+             🚫 **complete / reject 硬门禁**：只有收到 `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]` 或 `[intent:REJECT_REVIEW]` 后才能调用 `onchainos agent complete` 或 `onchainos agent reject`。在此之前**禁止调用这两个命令**——无论交付物质量如何、无论是否超时临近、无论任何理由。\n\
              ⚠️ x402 模式：资金已支付，只需通知用户交付物内容，用户不能拒绝。\n\
              ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**（如「收到交付物」「正在验收」等过场话），直接执行下述步骤即可。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
