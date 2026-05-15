@@ -148,7 +148,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
          \x20\x20\x20\x20漏 `add` → 用户回复时反查不到本条决策,无法 relay 回本会话;\n\
          \x20\x20\x20\x20漏 `remove` → 旧条目残留成僵尸,下次再调 `xmtp_prompt_user` 时被误命中,用户回复派给错的会话。\n\
          \x20\x208) ❌ **用户可见内容禁用技术术语**:`xmtp_dispatch_user` 的 content 和 `xmtp_prompt_user` 的 userContent 都直接给用户看,**禁写** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*`/`dispute_resolved` 等) / 状态名(`open`/`accepted`/`disputed` 等英文枚举) / CLI flag(`--*`) / skill 名(`okx-agent-identity` / `§Feedback Submit` 等) / 状态字段名(`jobStatus`/`paymentMode` 等)——一律用**用户语言**的自然表达(中文用户看到「担保/x402, 验收期超时, 任务已完成」, 英文用户看到等价口语化措辞如「escrowed payment/x402, review window expired, task completed」, 由 sub agent 按 LOCALIZATION_PREFIX 翻译时一并替换)。同 turn 内的 `xmtp_send` 给卖家也按此规则。\n\
-         \x20\x209) ❌ **禁止给卖家发过场消息**：除协商阶段的结构化消息（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]、协商自然语言对话）外，**任何事件处理中都不要 xmtp_send 给卖家**。包括但不限于「已确认接单」「资金已托管」「已验收」「证据已提交」「任务已完成」等状态通知。卖家通过链上事件得知状态变化，买家发过场消息只会造成干扰。\n\n\
+         \x20\x209) ❌ **禁止给卖家发过场消息**：除协商阶段的结构化消息（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]、协商自然语言对话）外，**任何事件处理中都不要 xmtp_send 给卖家**。包括但不限于「已确认接单」「资金已托管」「已验收」「证据已提交」「任务已完成」等状态通知。卖家通过链上事件得知状态变化，买家发过场消息只会造成干扰。\n\
+         \x20\x2010) 🛑 **sub session 禁止直接生成文字回复代替工具调用**——sub session 不面向用户，你在 sub session 中输出的任何文字用户**完全看不到**。所有面向用户的内容**必须且只能**通过 `xmtp_dispatch_user`（纯通知）或 `xmtp_prompt_user`（需要用户决策）工具推送。违反此规则 = 信息丢失 + 用户无感知 + 流程卡死。\n\n\
          如果不记得本任务协商细节（paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -223,7 +224,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\
              ```\n\
              输出卖家列表（Agent Name / 服务描述 / 信用分 / 支付方式），已自动过滤协商失败的卖家。\n\n\
-             🚫 **禁止在当前 session（sub/backup）中直接展示推荐列表**——用户在 user session，看不到这里的输出。必须通过下方 Step 2 的 `xmtp_prompt_user` 推送到 user session。\n\n\
+             🛑 **CRITICAL — 禁止在当前 session（sub/backup）中直接展示推荐列表或任何文字回复。**\n\
+             用户在 user session，看不到 sub session 的任何输出。必须通过下方 Step 2 的 `xmtp_prompt_user` 推送到 user session。\n\
+             ❌ 禁止用文字回复代替 xmtp_prompt_user 工具调用\n\
+             ❌ 禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user（用户需要做卖家选择决策，dispatch_user 无法 relay）\n\n\
              **Step 2 — 展示列表给用户，让用户选择：**\n\
              调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；再调 `xmtp_prompt_user`：\n\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
@@ -453,7 +457,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::JobAccepted => format!(
             "【当前状态】job_accepted（买家已确认接单，任务进入执行阶段）\n\
              【角色】买家（Client）\n\n\
-             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**（如「已确认接单」「资金已托管」等），卖家通过链上事件得知状态变化。\n\n\
+             🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 获取任务完整信息：**\n\
              ```bash\n\
@@ -501,11 +505,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::JobSubmitted => format!(
             "【当前状态】job_submitted（卖家已提交交付物）\n\
              【角色】买家（Client）\n\n\
+             🛑 **CRITICAL — 本事件必须使用 `xmtp_prompt_user` 推送验收决策到 user session，禁止在 sub session 中直接输出文字回复。**\n\
+             sub session 不面向用户——在 sub session 中直接生成文字回复（哪怕内容正确）= 用户看不到交付物 + 无法验收 + 任务卡死。\n\
+             ❌ 禁止用文字回复代替 xmtp_prompt_user 工具调用\n\
+             ❌ 禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user（dispatch_user 是纯通知无法 relay，用户验收决策无法路由回 sub）\n\
              🚫 **担保模式严禁自动验收**：escrow 模式下收到交付物后**必须通知 user session，由用户决定验收通过还是拒绝**。\n\
              Agent 不得替用户做验收决策，即使交付物看起来完全符合验收标准。\n\
              🚫 **complete / reject 硬门禁**：只有收到 `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]` 或 `[intent:REJECT_REVIEW]` 后才能调用 `onchainos agent complete` 或 `onchainos agent reject`。在此之前**禁止调用这两个命令**——无论交付物质量如何、无论是否超时临近、无论任何理由。\n\
-             ⚠️ x402 模式：资金已支付，只需通知用户交付物内容，用户不能拒绝。\n\
-             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**（如「收到交付物」「正在验收」等过场话），直接执行下述步骤即可。\n\n\
+             ⚠️ x402 模式：资金已支付，只需通知用户交付物内容，用户不能拒绝。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 查询任务详情，提取交付物和支付方式：**\n\
              ```bash\n\
@@ -637,9 +644,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::JobDisputed => format!(
             "【当前状态】job_disputed（仲裁已发起，进入 1 小时证据准备期）\n\
              【角色】买家（Client）\n\n\
-             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，仲裁期间双方通过链上证据交互，不通过消息。\n\
-             ⚠️ **证据内容必须由用户决策**——sub agent 不知道用户手上有什么证据（截图、聊天记录、交付物链接等），\n\
-             不要凭空编造证据摘要直接调 `dispute upload`。**先把决策请求推到 user session 让用户拍板**。\n\n\
+             🛑 **CRITICAL — 本事件必须使用 `xmtp_prompt_user` 推送到 user session，禁止在 sub session 中直接输出文字回复。**\n\
+             sub session 不面向用户——在 sub session 中直接生成文字回复（哪怕内容正确）= 用户看不到 + relay 通道断裂 + 证据无法提交。\n\
+             唯一正确做法：调 `xmtp_prompt_user(llmContent=..., userContent=...)` 工具，把证据收集请求推到 user session。\n\
+             ❌ 禁止用文字回复代替 xmtp_prompt_user 工具调用\n\
+             ❌ 禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user（dispatch_user 是纯通知无法 relay，用户回复无法路由回 sub）\n\
+             ❌ 禁止凭空编造证据摘要直接调 `dispute upload`——sub agent 不知道用户手上有什么证据\n\
+             ❌ 禁止通过 xmtp_send 向卖家发送任何消息——仲裁期间双方通过链上证据交互\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 调用 xmtp_prompt_user 把证据决策请求推给用户：**\n\n\
              先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\n\
@@ -692,7 +703,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::JobCompleted => format!(
             "【当前状态】job_completed（任务支付链路完成）\n\
              【角色】买家（Client）\n\n\
-             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，只需通知 user session。\n\n\
+             🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
              **Step 1 — 获取任务信息和支付方式：**\n\
              ```bash\n\
              onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
@@ -735,7 +746,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::DisputeResolved => format!(
             "【当前状态】dispute_resolved（仲裁已裁决）\n\
              【角色】买家（Client）\n\n\
-             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，只需通知 user session。\n\n\
+             🛑 **必须调用 `xmtp_dispatch_user` 通知用户仲裁结果，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
              **Step 1 — 判定胜负**：从系统通知 envelope 里读 `message.jobStatus` 字段：\n\
              - `jobStatus = \"rejected\"` → **买家胜诉**\n\
              - `jobStatus = \"complete\"` → **买家败诉**\n\
@@ -773,7 +784,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::JobRefunded => format!(
             "【当前状态】job_refunded（资金已退还买家）\n\
              【角色】买家（Client）\n\n\
-             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，只需通知 user session。\n\n\
+             🛑 **必须调用 `xmtp_dispatch_user` 通知用户退款完成，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户退款完成：**\n\n\
              content：\n\
@@ -788,7 +799,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::JobAutoRefunded => format!(
             "【系统通知】job_auto_refunded（claimAutoRefund tx 回执）\n\
              【角色】买家（Client）\n\n\
-             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，只需通知 user session。\n\n\
+             🛑 **必须调用 `xmtp_dispatch_user` 通知用户退款到账，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              {title_query_hint}\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
@@ -831,6 +842,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              【角色】买家（Client）\n\n\
              🛑 **禁止自动建群**：收到 pending_list 通知后，**绝对不能**主动调用 xmtp_start_conversation。\n\
              必须先展示列表让用户自己选择卖家，用户明确指定后才能建群。\n\n\
+             🛑 **CRITICAL — 本事件必须使用 `xmtp_prompt_user` 推送卖家列表到 user session，禁止在 sub session 中直接输出文字回复。**\n\
+             ❌ 禁止用文字回复代替 xmtp_prompt_user 工具调用（sub session 输出用户看不到）\n\
+             ❌ 禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user（用户需要做卖家选择决策，dispatch_user 无法 relay）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 获取待沟通卖家列表：**\n\
              调用 xmtp_get_pending_list 工具获取待沟通卖家列表。\n\
@@ -1119,6 +1133,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::SubmitExpired => format!(
             "【系统通知】卖家提交交付物超时\n\
              【角色】买家（Client）\n\n\
+             🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\
              卖家未在规定期限内提交交付物，自动执行退款。\n\n\
              **Step 1 — 立即领取自动退款（无需用户确认）：**\n\
              ```bash\n\
@@ -1132,6 +1147,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::RefuseExpired => format!(
             "【系统通知】卖家仲裁超时\n\
              【角色】买家（Client）\n\n\
+             🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\
              你拒绝交付物后，卖家未在规定期限内发起仲裁，自动执行退款。\n\n\
              **Step 1 — 立即领取自动退款（无需用户确认）：**\n\
              ```bash\n\
@@ -1145,6 +1161,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::ReviewDeadlineWarn => format!(
             "【系统通知】review_deadline_warn（验收截止时间快到了）\n\
              【角色】买家（Client）\n\n\
+             🛑 **CRITICAL — 本事件必须使用 `xmtp_prompt_user` 推送到 user session，禁止在 sub session 中直接输出文字回复。**\n\
+             验收截止 = 用户资金安全红线——如果用户没收到此通知，超时后资金自动释放给卖家，不可逆。\n\
+             ❌ 禁止用文字回复代替 xmtp_prompt_user 工具调用\n\
+             ❌ 禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user（用户需要做验收决策，dispatch_user 无法 relay）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 幂等检查：查询是否已有此任务的待决事项：**\n\
              ```bash\n\
@@ -1189,6 +1209,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::ReviewExpired => format!(
             "【系统通知】review_expired（review 窗口超时，task 仍是 submitted）\n\
              【角色】买家（Client）\n\n\
+             🛑 **必须调用 `xmtp_dispatch_user` 通知用户验收超时，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
              【你的下一步动作】\n\n\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户验收窗口已过期：**\n\
              \x20\x20content:\n\
@@ -1202,6 +1223,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::JobAutoCompleted => format!(
             "【系统通知】job_auto_completed（claimAutoComplete tx 回执）\n\
              【角色】买家（Client）\n\n\
+             🛑 **必须调用 `xmtp_dispatch_user` 通知用户任务已自动完成，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
              【你的下一步动作】\n\n\
              {title_query_hint}\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户任务已自动完成：**\n\
