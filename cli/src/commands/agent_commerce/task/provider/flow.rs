@@ -226,10 +226,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
-             用户语义「发起仲裁/不接受/dispute/start arbitration/我做的没问题 等 + 给出理由」→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:START_DISPUTE] 用户原话：<用户回复原文，不解读、不翻译>；理由是：<从原话抽出的简洁理由>\") 执行 dispute_raise；\
-             用户语义「同意退款/退款/agree refund/refund OK 等」→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:AGREE_REFUND] 用户原话：<用户回复原文，不解读、不翻译>\") 执行 agree_refund。\
+             用户语义「发起仲裁/不接受/dispute/start arbitration/我做的没问题 等 + 给出理由」→ **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:START_DISPUTE] 用户原话：<用户回复原文，不解读、不翻译>；理由是：<从原话抽出的简洁理由>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 dispute_raise,你不要做其它事)；\
+             用户语义「同意退款/退款/agree refund/refund OK 等」→ **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:AGREE_REFUND] 用户原话：<用户回复原文，不解读、不翻译>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 agree_refund,你不要做其它事)。\
              ⚠️ **路由 tag 协议**：`[intent:START_DISPUTE]` / `[intent:AGREE_REFUND]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支。\n\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止自己执行 task CLI。24h 内必须决策。\n\
+             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。**user session 唯一动作 = relay**:禁止自己执行 task CLI / 禁止 xmtp_send 给买家 / 禁止 xmtp_dispatch_user 多发通知——relay 一次就结束 turn。24h 内必须决策。\n\
              userContent:\n\
              {user_prompt}\n\n\
              **Step 2 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由**：\n\
@@ -387,9 +387,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
-             用户提供证据后 → 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") 执行 dispute upload。\
+             用户提供证据后 → **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 dispute upload,你不要做其它事)。\
              ⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。\n\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。task CLI 只在本任务 agent 跑,1 小时内必须提交。\n\
+             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。**user session 唯一动作 = relay**:禁止自己执行 task CLI / 禁止 xmtp_send 给买家 / 禁止 xmtp_dispatch_user 多发通知——relay 一次就结束 turn。1 小时内必须提交。\n\
              userContent:\n\
              {user_prompt}\n\n\
              **Step 2 — 等用户回复**:\n\
