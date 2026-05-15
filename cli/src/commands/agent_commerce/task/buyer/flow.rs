@@ -323,9 +323,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20• 卖家 profile / service-list 同类服务单价 vs 当前报价（卖家自己挂的价就是参考锚）\n\
              \x20\x20• A2A 协商路径 paymentMode 固定为 escrow（资金有担保保障）\n\
              \x20\x20• 多个推荐卖家的话，不要勉强跟某一个谈拢；不合适直接 5 分钟超时切下一个\n\n\
+             🛑🛑🛑 **ABSOLUTE PROHIBITION — 铁律：协商全程禁止向卖家透露最高预算（max_budget / paymentMostTokenAmount）。**\n\
+             任何发给卖家的消息（自然语言、[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]）中都**绝对不能**包含 max_budget 数值。\n\
+             泄露最高预算 = 卖家直接报上限价 = 买家丧失全部议价能力。\n\
+             ❌ 绝对禁止在 xmtp_send 中提及「最高预算」「上限」「max budget」「最多能出」等字眼或对应数值\n\
+             ❌ 绝对禁止把 paymentMostTokenAmount 字段值写入任何发给卖家的消息\n\n\
              协商步骤：\n\
-             1. 调用 xmtp_send 发送第一条询盘消息（自然语言，不要把 budget 数字直接抛给卖家——让卖家先给报价，你再判断）：\n\
-             \x20\x20content=<任务描述 + 期望交付物 + paymentMode 倾向，**先不暴露上限价**>\n\
+             1. 调用 xmtp_send 发送第一条询盘消息（自然语言，让卖家先给报价，你再判断）：\n\
+             \x20\x20content=<任务描述 + 期望交付物 + paymentMode 倾向 + budget（基准预算），**禁止暴露 max_budget**>\n\
              \x20\x20→ 等待卖家回复（5 分钟超时）\n\
              2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\n\
              🔴 **Step 2.5 — 卖家首次报价评估（全自动，禁止问用户）**：\n\
@@ -991,6 +996,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```\n\
              提取关键字段：budget、paymentMostTokenAmount（max_budget）、tokenSymbol、description。\n\n\
              **Step 2 — 评估卖家回复内容：**\n\n\
+             🛑 **铁律：回复卖家的任何消息中绝对禁止透露 max_budget（最高预算）数值**——泄露 = 卖家直接报上限价 = 买家丧失全部议价能力。\n\
              🚫 **协商自治红线**：除下方「报价 > max_budget」自动 REJECT 路径外，**禁止**调 `xmtp_prompt_user` / `pending-decisions add` 让用户做协商决策。协商由 sub session 自主完成——按决策矩阵评估后直接回复卖家（自然语言讨论 / [NEGOTIATE_PROPOSE]），不得把报价转发给用户问「是否接受」。\n\n\
              从卖家消息中提取报价信息（如有）：金额、币种、支付方式偏好、交付时间。\n\n\
              🔴 **报价评估决策矩阵**（如卖家给出了明确价格）：\n\
@@ -1067,7 +1073,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             "【协商中继】negotiate_counter（卖家发送反提案 [NEGOTIATE_COUNTER]）\n\
              【角色】买家（Client）\n\n\
              卖家不接受你的 PROPOSE，发了 [NEGOTIATE_COUNTER] 反提案。\n\n\
-             🛑 **本事件禁止调用 save-agreed / set-payment-mode / confirm-accept / apply**——COUNTER 意味着条款未达成一致，只能发新 [NEGOTIATE_PROPOSE] 或 [NEGOTIATE_REJECT]。\n\n\
+             🛑 **本事件禁止调用 save-agreed / set-payment-mode / confirm-accept / apply**——COUNTER 意味着条款未达成一致，只能发新 [NEGOTIATE_PROPOSE] 或 [NEGOTIATE_REJECT]。\n\
+             🛑 **铁律：回复卖家的任何消息中绝对禁止透露 max_budget（最高预算）数值**——泄露 = 卖家直接报上限价 = 买家丧失全部议价能力。\n\n\
              {title_query_hint}\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 轮次计数：**\n\
