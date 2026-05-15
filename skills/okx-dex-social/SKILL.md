@@ -159,6 +159,25 @@ When a command fails with error code `50125` or `80001`, display:
 
 Do not expose raw error codes or internal error messages to the user.
 
+## Error Codes
+
+The social endpoints share the OKX standard error envelope. Common codes the agent should recognise (full list in the upstream `social-news-error-code` doc):
+
+| Code | HTTP | Meaning | Suggested response |
+|---|---|---|---|
+| `0` | 200 | Success | — |
+| `50011` | 429 | Rate limit exceeded | Back off 1–2s then retry once; on second failure, surface "the service is rate-limiting, please try again in a minute" |
+| `50014` | 400 | Required parameter is empty | Re-check the call — typically a blank `tokenSymbols` / `articleId` / `chainIndex` / `tokenAddress` |
+| `50026` | 500 | Upstream system error | Retry once; if still failing, surface "the service is temporarily unavailable" |
+| `50103`–`50107` | 401 | Auth header missing (key / passphrase / sign / timestamp) | API credentials are not configured — ask the user to set `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` in their env or `~/.onchainos/.env` |
+| `50111`–`50113` | 401 | Invalid API key / timestamp / signature | Credentials are present but rejected — suggest the user verify the keys in the OKX developer portal or check system clock skew |
+| `50125` / `80001` | — | Region blocked (see section above) | Show the region message |
+| `51000` | 400 | Parameter is invalid | Re-check enum codes — likely an out-of-range `importance` / `sentiment` / `sortBy` / `timeFrame` |
+
+For x402 payment failures on payment-gated endpoints (`invalid payment header`, `payer_blocked`, `risk_address`, `not_yet_valid`, `expired`, `nonce_used`, `insufficient_balance`, `onchain_error`, `payment processing`, etc.), the canonical mapping lives in the upstream doc; the `notifications[]` handling in `../okx-dex-market/_shared/payment-notifications.md` already covers the agent-side flow.
+
+Never expose raw error codes or internal error messages to the user — always paraphrase per the rows above.
+
 ## Global Notes
 
 - News and sentiment commands take **coin symbols** (uppercase, e.g. `BTC`, `ETH`). Vibe commands take **contract addresses** (EVM addresses must be all lowercase).
