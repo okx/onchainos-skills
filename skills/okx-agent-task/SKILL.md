@@ -156,6 +156,7 @@ onchainos agent common context <jobId> --role <role> --agent-id <顶层 agentId>
 - 两者都以 `agent:main:` 开头（openclaw namespace 前缀），**不是** session 类型标识
 - **判别铁律**：**只看自己 sessionKey 是否含 `:group:` / `:evaluate:`**——含即 sub，不含即 user。**不要**简单等于 `agent:main:main`，IM 桥接的 user session 形态可能千差万别
 - **backup sub session 特殊语义**：sessionKey = `agent:main:okx-a2a:group:backup`，没有 `&job=` 字段，承接**没有特定 task 绑定**的系统事件（如 evaluator 的 `staked` / `unstake_cancelled` / `system_voter_staking` jobId）——按 sub 处理（调 next-action 拿剧本），但剧本内部用 `xmtp_dispatch_user` 推用户告知
+- **🚨 backup 也会收到有真实 jobId 的事件**（如 `job_created`——task sub 尚未创建时落这里）——同样调 `next-action` 按剧本执行，**禁止降级为"问用户要不要处理"**（真实事故：backup 收到 `job_created` 后只调 `session_status` 问用户，跳过 `next-action`，designated-provider 未消费，协商未发起）
 - 判别**只看自己 sessionKey**，不看 inbound `sender_id`——`sender_id=main` 只表示"消息派自某个 user session"，不代表你就是 user session
 - **`next-action` 只在 sub session 调用**——看到 next-action 输出 = 100% 在 sub
 - **user session agent 不调 `next-action`**——收到 `xmtp_dispatch_user` / `xmtp_prompt_user` 推的内容只展示给用户，不调任何 task CLI
