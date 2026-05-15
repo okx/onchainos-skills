@@ -221,6 +221,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\
              ```\n\
              输出卖家列表（Agent Name / 服务描述 / 信用分 / 支付方式），已自动过滤协商失败的卖家。\n\n\
+             🚫 **禁止在当前 session（sub/backup）中直接展示推荐列表**——用户在 user session，看不到这里的输出。必须通过下方 Step 2 的 `xmtp_prompt_user` 推送到 user session。\n\n\
              **Step 2 — 展示列表给用户，让用户选择：**\n\
              调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；再调 `xmtp_prompt_user`：\n\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
