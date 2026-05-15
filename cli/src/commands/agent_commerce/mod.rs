@@ -64,8 +64,6 @@ pub enum AgentCommand {
         #[arg(long = "deadline-open")]  deadline_open: String,
         #[arg(long = "deadline-submit")] deadline_submit: String,
         #[arg(long)] title: Option<String>,
-        /// Buyer agent ID（多 buyer 时必传，单 buyer 时自动选择）
-        #[arg(long = "agent-id")] agent_id: Option<String>,
         /// 指定卖家 agentId（跳过 recommend，直接与该卖家协商或 x402 接单）
         #[arg(long)] provider: Option<String>,
     },
@@ -76,6 +74,15 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
         #[arg(long)] next: bool,
         #[arg(long)] current: bool,
+        #[arg(long)] page: Option<usize>,
+        #[arg(long = "next-page")] next_page: bool,
+    },
+
+    /// Mark a provider as failed negotiation (excluded from future recommend lists)
+    #[command(name = "mark-failed")]
+    MarkFailed {
+        job_id: String,
+        #[arg(long = "provider")] provider_agent_id: String,
     },
 
     /// Get current task status
@@ -148,6 +155,8 @@ pub enum AgentCommand {
     X402Check {
         /// x402 provider endpoint URL
         #[arg(long)] endpoint: String,
+        /// Buyer agent ID（用于代币详情查询鉴权）
+        #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
     /// Client confirms task complete and releases payment
@@ -526,16 +535,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, agent_id, provider,
+            deadline_open, deadline_submit, title, provider,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, agent_id, provider,
+                deadline_open, deadline_submit, title, provider,
             }, ctx,
         ).await,
 
-        AgentCommand::Recommend { job_id, agent_id, next, current } =>
-            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current }, ctx).await,
+        AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page } =>
+            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page }, ctx).await,
+
+        AgentCommand::MarkFailed { job_id, provider_agent_id } =>
+            task::buyer::run_task(T::MarkFailed { job_id, provider_agent_id }, ctx).await,
 
         AgentCommand::Status { job_id, agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
@@ -560,8 +572,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
             task::buyer::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from }, ctx).await,
 
-        AgentCommand::X402Check { endpoint } =>
-            task::buyer::run_task(T::X402Check { endpoint }, ctx).await,
+        AgentCommand::X402Check { endpoint, agent_id } =>
+            task::buyer::run_task(T::X402Check { endpoint, agent_id }, ctx).await,
 
         AgentCommand::Complete { job_id } =>
             task::buyer::run_task(T::Complete { job_id }, ctx).await,
@@ -716,6 +728,34 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                      → 结束 turn。"
                 );
                 return Ok(());
+            }
+
+            // job_created + --provider 未传 → 本地文件不存在时从 API 查 designatedProvider 写入（跨 session fallback）
+            if provider.is_none()
+                && (job_status == "job_created" || job_status == "open")
+                && !task::buyer::negotiate::has_designated_provider(&job_id)
+            {
+                let mut c = task::common::network::task_api_client::TaskApiClient::new();
+                match c.get_with_identity(&c.task_path(&job_id), &agent_id).await {
+                    Err(e) => eprintln!("[next-action] API fallback query failed: {e}"),
+                    Ok(resp) => {
+                        let zero = "0x0000000000000000000000000000000000000000";
+                        if let Some(dp) = resp.get("designatedProvider")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty() && *s != zero)
+                        {
+                            let failed = task::buyer::negotiate::load_failed(&job_id);
+                            if failed.contains(&dp.to_string()) {
+                                eprintln!("[next-action] API fallback: designatedProvider={dp} 已在失败列表中，跳过");
+                            } else {
+                                eprintln!("[next-action] API fallback: designatedProvider={dp}");
+                                if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, dp) {
+                                    eprintln!("[next-action] save_designated_provider failed: {e}");
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // 状态脱节 → block 输出剧本（避免 sub 按 stale event 跑老剧本上链）

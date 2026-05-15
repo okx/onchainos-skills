@@ -45,11 +45,12 @@ pub fn resolve_wallet(
     let wallets = crate::wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
 
+    let (resolved_acct, addr_info) = resolve_address(&wallets, address, XLAYER_CHAIN_NAME)?;
+
     let acct_id = account_id
         .map(|s| s.to_string())
-        .unwrap_or_else(|| wallets.selected_account_id.clone());
+        .unwrap_or(resolved_acct);
 
-    let (_, addr_info) = resolve_address(&wallets, address, XLAYER_CHAIN_NAME)?;
     Ok((acct_id, addr_info.address))
 }
 

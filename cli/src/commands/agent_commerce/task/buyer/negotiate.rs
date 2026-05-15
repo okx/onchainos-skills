@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 pub struct ProviderInfo {
     pub provider_address: String,
     pub provider_agent_id: String,
+    #[serde(default)]
+    pub provider_name: String,
     pub match_score: f64,
     pub credit_score: i64,
     pub capability_summary: String,
@@ -72,6 +74,12 @@ pub struct NegotiateState {
     /// 按 provider_agent_id 存储各卖家的协商结果（支持同时与多个卖家协商）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub agreed: HashMap<String, AgreedTerms>,
+    /// 当前页码（0-based）
+    #[serde(default)]
+    pub page: usize,
+    /// 协商失败的 provider agentId 列表（跨页保留，accept 成功时 cleanup 清除）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed_providers: Vec<String>,
 }
 
 // ─── 路径 ────────────────────────────────────────────────────────────
@@ -89,9 +97,15 @@ fn state_path(job_id: &str) -> Result<std::path::PathBuf> {
 // ─── 公共函数 ────────────────────────────────────────────────────────
 
 /// 保存推荐列表，index 重置为 0
-pub fn save(job_id: &str, providers: Vec<ProviderInfo>) -> Result<()> {
+///
+/// `page` 为当前页码（0-based）。会从已有状态合并 `failed_providers`。
+pub fn save(job_id: &str, providers: Vec<ProviderInfo>, page: usize) -> Result<()> {
     let dir = state_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
+
+    let existing_failed = load(job_id)
+        .map(|s| s.failed_providers)
+        .unwrap_or_default();
 
     let state = NegotiateState {
         job_id: job_id.to_string(),
@@ -99,6 +113,8 @@ pub fn save(job_id: &str, providers: Vec<ProviderInfo>) -> Result<()> {
         current_index: 0,
         created_at: chrono::Utc::now().to_rfc3339(),
         agreed: HashMap::new(),
+        page,
+        failed_providers: existing_failed,
     };
 
     let json = serde_json::to_string_pretty(&state)?;
@@ -156,7 +172,7 @@ pub async fn save_agreed(
     let agent_id = if let Some(id) = agent_id.filter(|s| !s.is_empty()) {
         id.to_string()
     } else {
-        super::create::resolve_buyer_agent(None)
+        super::create::resolve_buyer_agent()
             .await
             .map(|(id, _)| id)
             .unwrap_or_default()
@@ -193,6 +209,8 @@ pub async fn save_agreed(
                 current_index: 0,
                 created_at: chrono::Utc::now().to_rfc3339(),
                 agreed: HashMap::new(),
+                page: 0,
+                failed_providers: vec![],
             }
         }
     };
@@ -235,6 +253,13 @@ pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result
     Ok(())
 }
 
+/// 检查指定卖家文件是否存在（不消费）
+pub fn has_designated_provider(job_id: &str) -> bool {
+    state_dir(job_id)
+        .map(|d| d.join("designated-provider.json").exists())
+        .unwrap_or(false)
+}
+
 /// 读取并删除指定卖家文件（consume-on-read：job_created 只触发一次，读完即清）
 pub fn take_designated_provider(job_id: &str) -> Result<Option<String>> {
     let path = state_dir(job_id)?.join("designated-provider.json");
@@ -245,6 +270,41 @@ pub fn take_designated_provider(job_id: &str) -> Result<Option<String>> {
     let _ = std::fs::remove_file(&path);
     let v: serde_json::Value = serde_json::from_str(&raw)?;
     Ok(v["agentId"].as_str().map(|s| s.to_string()))
+}
+
+/// 标记某个 provider 协商失败（后续 recommend 展示时过滤掉）
+pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
+    let mut state = match load(job_id) {
+        Ok(s) => s,
+        Err(_) => {
+            let dir = state_dir(job_id)?;
+            std::fs::create_dir_all(&dir)?;
+            NegotiateState {
+                job_id: job_id.to_string(),
+                providers: vec![],
+                current_index: 0,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                agreed: HashMap::new(),
+                page: 0,
+                failed_providers: vec![],
+            }
+        }
+    };
+    let pid = provider_agent_id.to_string();
+    if !state.failed_providers.contains(&pid) {
+        state.failed_providers.push(pid);
+    }
+    let json = serde_json::to_string_pretty(&state)?;
+    std::fs::write(state_path(job_id)?, json)?;
+    println!("✓ 已标记 provider {provider_agent_id} 为协商失败 (job={job_id})");
+    Ok(())
+}
+
+/// 读取失败 provider 列表
+pub fn load_failed(job_id: &str) -> Vec<String> {
+    load(job_id)
+        .map(|s| s.failed_providers)
+        .unwrap_or_default()
 }
 
 /// 清理状态文件（accept 成功后调用，同时清除 designated-provider.json）

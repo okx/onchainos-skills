@@ -37,7 +37,6 @@ pub struct CreateTaskParams {
     pub deadline_open: String,
     pub deadline_submit: String,
     pub title: Option<String>,
-    pub agent_id: Option<String>,
     pub provider: Option<String>,
 }
 
@@ -160,50 +159,21 @@ fn validate_budget_decimals(budget: f64) -> Result<()> {
 
 // ─── 身份校验 ────────────────────────────────────────────────────────────
 
-pub(crate) async fn resolve_buyer_agent(specified_id: Option<&str>) -> Result<(String, String)> {
+pub(crate) async fn resolve_buyer_agent() -> Result<(String, String)> {
     // fetch_my_agents() spawns `onchainos agent get` and filters to the current
     // active account's XLayer ownerAddress — the new response shape returns
     // multiple ownerAddress groups, so this filter is now mandatory client-side.
     let agents = fetch_my_agents().await;
 
-    let buyers: Vec<_> = agents.iter()
-        .filter(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))
-        .collect();
+    let buyer = agents.iter()
+        .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))
+        .ok_or_else(|| anyhow::anyhow!("当前账户没有买家（requestor）身份，请先执行 onchainos agent create --role requestor 注册"))?;
 
-    if buyers.is_empty() {
-        bail!("当前账户没有买家（requestor）身份，请先执行 onchainos agent create --role requestor 注册");
-    }
-
-    if let Some(id) = specified_id {
-        let agent = buyers.iter()
-            .find(|a| a["agentId"].as_str() == Some(id))
-            .ok_or_else(|| anyhow::anyhow!(
-                "指定的 agent-id {id} 不是买家身份或不存在，当前买家 agent: {}",
-                buyers.iter()
-                    .filter_map(|a| a["agentId"].as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))?;
-        let owner_address = agent["ownerAddress"].as_str().unwrap_or("").to_string();
-        return Ok((id.to_string(), owner_address));
-    }
-
-    if buyers.len() == 1 {
-        let agent = buyers[0];
-        let agent_id = agent["agentId"].as_str()
-            .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
-            .to_string();
-        let owner_address = agent["ownerAddress"].as_str().unwrap_or("").to_string();
-        return Ok((agent_id, owner_address));
-    }
-
-    let ids: Vec<&str> = buyers.iter()
-        .filter_map(|a| a["agentId"].as_str())
-        .collect();
-    bail!(
-        "当前钱包下有多个买家身份: {}，请通过 --agent-id 指定使用哪个",
-        ids.join(", ")
-    );
+    let agent_id = buyer["agentId"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
+        .to_string();
+    let owner_address = buyer["ownerAddress"].as_str().unwrap_or("").to_string();
+    Ok((agent_id, owner_address))
 }
 
 // ─── 创建任务 ────────────────────────────────────────────────────────────
@@ -217,14 +187,14 @@ pub async fn handle_create(
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("登录态已失效，请先执行 onchainos wallet login: {e}"))?;
 
-    let (buyer_agent_id, _) = resolve_buyer_agent(params.agent_id.as_deref()).await?;
+    let (buyer_agent_id, _) = resolve_buyer_agent().await?;
     eprintln!("[task-create] 买家身份校验通过 (agentId: {buyer_agent_id})");
 
     common::ensure_sufficient_balance(params.budget, &validated.currency).await?;
 
     let (account_id, address) = signing::resolve_wallet(None, None)?;
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "title":              validated.title,
         "description":        params.description,
         "descriptionSummary": validated.summary,
@@ -238,6 +208,10 @@ pub async fn handle_create(
         },
         "paymentMode":        0
     });
+    if let Some(ref provider_id) = params.provider {
+        body["providerAgentId"] = serde_json::json!(provider_id);
+        body["visibility"] = serde_json::json!(1);
+    }
 
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
     let job_id = resp["jobId"].as_str().unwrap_or("?").to_string();
