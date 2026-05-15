@@ -136,6 +136,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::defi::DefiCommand,
     },
+    /// Limit-order strategy trading on Agentic Wallet (create-limit / cancel / list / resume)
+    Strategy {
+        #[command(subcommand)]
+        command: Box<commands::strategy::StrategyCommand>,
+    },
     /// Multi-step workflow commands that chain API calls for complete operations
     Workflow {
         #[command(subcommand)]
@@ -205,6 +210,7 @@ async fn run() {
         Commands::Payment { command } => commands::payment::execute(command).await,
         Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
+        Commands::Strategy { command } => commands::strategy::execute(&ctx, *command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,

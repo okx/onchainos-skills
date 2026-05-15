@@ -629,10 +629,11 @@ struct CompetitionRankParams {
     /// Activity identifier: either the numeric id from a prior `competition_list`
     /// response, or the activity `name` / `shortName`. Auto-resolved server-side.
     activity_id: String,
-    /// Optional user wallet address. If omitted, auto-resolves from the currently
-    /// selected account: the activity's chain (Solana vs EVM) determines whether
-    /// the SOL or EVM address is used. Pass an explicit value only when
-    /// querying someone else's rank.
+    /// Optional wallet address. Omit to auto-resolve from the active account
+    /// based on the activity's chain (fetched from `competition_detail.chainId`).
+    /// Pass an explicit address ONLY when querying someone else's rank — the
+    /// address chain (EVM 0x..., else Solana) must match the activity chain;
+    /// mismatched addresses are rejected, not silently coerced.
     wallet: Option<String>,
     /// Sort type: 1=PnL% (realized ROI), 7=PnL (realized profit). Default 1. The exact values
     /// for a given competition are returned by `competition_detail` under
@@ -2578,12 +2579,15 @@ After this returns, follow okx-growth-competition SKILL.md Step 5 fixed CASE 1 /
             Ok(id) => id,
             Err(e) => return err(e),
         };
-        let wallet = match p.wallet {
-            Some(w) => w,
-            None => match competition::resolve_wallet_for_activity(&mut client, &resolved_id).await {
-                Ok(addr) => addr,
-                Err(e) => return err(e),
-            },
+        let wallet = match competition::resolve_or_validate_wallet_for_activity(
+            &mut client,
+            &resolved_id,
+            p.wallet.as_deref(),
+        )
+        .await
+        {
+            Ok(addr) => addr,
+            Err(e) => return err(e),
         };
         match competition::rank_for_mcp(
             &mut client,

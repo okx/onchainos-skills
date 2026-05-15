@@ -303,6 +303,126 @@ impl std::fmt::Display for GasStationStatus {
     }
 }
 
+/// Batch broadcast element. Same shape as the single-tx
+/// `broadcast_transaction` body.
+#[derive(Default, Debug, Clone)]
+pub struct BatchBroadcastElement {
+    pub account_id: String,
+    pub address: String,
+    pub chain_index: String,
+    /// Serialized JSON, built per-element in `batch_sign_and_broadcast`.
+    pub extra_data: String,
+}
+
+/// Batch unsignedInfo element. Same shape as the single-tx
+/// `pre_transaction_unsigned_info` body.
+#[derive(Default, Debug, Clone)]
+pub struct BatchUnsignedInfoElement {
+    pub chain_path: String,
+    pub chain_index: u64,
+    pub from_addr: String,
+    pub to_addr: String,
+    pub amount: String,
+    pub contract_addr: Option<String>,
+    pub session_cert: String,
+    pub input_data: Option<String>,
+    pub unsigned_tx: Option<String>,
+    pub gas_limit: Option<String>,
+    pub aa_dex_token_addr: Option<String>,
+    pub aa_dex_token_amount: Option<String>,
+    pub transaction_type: Option<String>,
+}
+
+/// Backend cap on batch size (both unsignedInfo + broadcast).
+pub const BATCH_MAX: usize = 5;
+
+/// Parse `data` from `batch/supportChainIndexList` into chainIndex strings.
+/// Accepts string (`"1"`) and numeric (`1`) elements to survive type drift.
+fn parse_supported_chain_list(data: &Value) -> Result<Vec<String>> {
+    let arr = data
+        .as_array()
+        .context("batch supportChainIndexList: expected data to be an array")?;
+    let mut chains = Vec::with_capacity(arr.len());
+    for v in arr {
+        let s = if let Some(s) = v.as_str() {
+            s.to_string()
+        } else if let Some(n) = v.as_i64() {
+            n.to_string()
+        } else {
+            anyhow::bail!("batch supportChainIndexList: unexpected element {v:?}");
+        };
+        chains.push(s);
+    }
+    Ok(chains)
+}
+
+/// Enforce 1..=BATCH_MAX. `api` is the caller's endpoint name for error tag.
+pub fn validate_batch_size(api: &str, len: usize) -> Result<()> {
+    if len == 0 {
+        anyhow::bail!("{api}: empty request array");
+    }
+    if len > BATCH_MAX {
+        anyhow::bail!("{api}: backend allows up to {BATCH_MAX} elements, got {len}");
+    }
+    Ok(())
+}
+
+/// JSON body for POST `.../batch/unsignedInfo`. Omits empty optional fields.
+pub fn build_batch_unsignedinfo_body(elements: &[BatchUnsignedInfoElement]) -> Value {
+    let arr: Vec<Value> = elements
+        .iter()
+        .map(|e| {
+            let mut obj = json!({
+                "chainPath": e.chain_path,
+                "chainIndex": e.chain_index,
+                "fromAddr": e.from_addr,
+                "toAddr": e.to_addr,
+                "amount": e.amount,
+                "sessionCert": e.session_cert,
+            });
+            if let Some(ca) = &e.contract_addr {
+                obj["contractAddr"] = Value::String(ca.clone());
+            }
+            if let Some(d) = &e.input_data {
+                obj["inputData"] = Value::String(d.clone());
+            }
+            if let Some(t) = &e.unsigned_tx {
+                obj["unsignedTx"] = Value::String(t.clone());
+            }
+            if let Some(g) = &e.gas_limit {
+                obj["gasLimit"] = Value::String(g.clone());
+            }
+            if let Some(a) = &e.aa_dex_token_addr {
+                obj["aaDexTokenAddr"] = Value::String(a.clone());
+            }
+            if let Some(a) = &e.aa_dex_token_amount {
+                obj["aaDexTokenAmount"] = Value::String(a.clone());
+            }
+            if let Some(tt) = &e.transaction_type {
+                obj["transactionType"] = Value::String(tt.clone());
+            }
+            obj
+        })
+        .collect();
+    Value::Array(arr)
+}
+
+/// JSON body for POST `.../batch-broadcast-transaction`.
+pub fn build_batch_broadcast_body(elements: &[BatchBroadcastElement]) -> Value {
+    let arr: Vec<Value> = elements
+        .iter()
+        .map(|e| {
+            json!({
+                "accountId": e.account_id,
+                "address": e.address,
+                "chainIndex": e.chain_index,
+                "extraData": e.extra_data,
+            })
+        })
+        .collect();
+    Value::Array(arr)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnsignedInfoResponse {
@@ -330,7 +450,9 @@ pub struct UnsignedInfoResponse {
     pub encoding: String,
     #[serde(default, deserialize_with = "nullable_string")]
     pub jito_unsigned_tx: String,
-    /// backend 返的 712 message hash（contract-call 等场景）；非空时客户端需 ed25519_sign_encoded 算 sessionSignature
+    /// 712 message hash returned by backend (e.g. contract-call flows).
+    /// When non-empty, the client must compute sessionSignature via
+    /// `ed25519_sign_encoded`.
     #[serde(default, deserialize_with = "nullable_string")]
     pub eip712_message_hash: String,
     // ── Gas Station fields ──
@@ -374,7 +496,7 @@ pub struct UnsignedInfoResponse {
 }
 
 impl UnsignedInfoResponse {
-    /// 解析后端返回的 gasStationStatus 字符串为枚举
+    /// Parse the backend's `gasStationStatus` string into the enum.
     pub fn gs_status(&self) -> GasStationStatus {
         GasStationStatus::parse(&self.gas_station_status)
     }
@@ -544,6 +666,41 @@ impl WalletApiClient {
                     }
                     return Err(e)
                         .context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
+    }
+
+    /// GET with NO headers at all (truly anonymous). For endpoints whose gateway
+    /// auth is gated by the presence of any `OK-ACCESS-*` / `Ok-Access-*` header —
+    /// passing those headers triggers `10008 Invalid access token` even when the
+    /// controller is NO_CHECK. Currently used by `/priapi/v5/wallet/agentic/geoblock/check`.
+    /// Reuses the WalletApiClient HTTP + DoH setup for DNS-restricted regions.
+    pub fn get_no_okheaders<'a>(
+        &'a mut self,
+        path: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let effective = self.effective_base_url();
+            let url = format!("{}{}", effective.trim_end_matches('/'), path);
+
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][get_no_okheaders] url_path={}", &url);
+            }
+
+            let resp = match self.http.get(&url).send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self.get_no_okheaders(path).await;
+                    }
+                    return Err(e).context(
+                        "Network unavailable — check your connection and try again",
+                    );
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
@@ -1090,6 +1247,68 @@ impl WalletApiClient {
         Ok(resp)
     }
 
+    /// POST /priapi/v5/wallet/agentic/pre-transaction/batch/unsignedInfo
+    ///
+    /// Gate on [`Self::batch_support_chain_index_list`] before calling —
+    /// unsupported chains should never reach here.
+    pub async fn batch_pre_transaction_unsigned_info(
+        &mut self,
+        access_token: &str,
+        elements: &[BatchUnsignedInfoElement],
+        trace_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Vec<UnsignedInfoResponse>> {
+        validate_batch_size("batch unsignedInfo", elements.len())?;
+        let body = build_batch_unsignedinfo_body(elements);
+        let data = self
+            .post_authed_with_headers(
+                "/priapi/v5/wallet/agentic/pre-transaction/batch/unsignedInfo",
+                access_token,
+                &body,
+                trace_headers,
+            )
+            .await?;
+        let arr = data
+            .as_array()
+            .context("batch unsignedInfo: expected data to be an array")?;
+        // Response.len may be < request.len on merging chains (X Layer EIP-5792).
+        if arr.is_empty() {
+            anyhow::bail!("batch unsignedInfo: response data array is empty");
+        }
+        if arr.len() > elements.len() {
+            anyhow::bail!(
+                "batch unsignedInfo: response length {} exceeds request length {}",
+                arr.len(),
+                elements.len()
+            );
+        }
+        arr.iter()
+            .enumerate()
+            .map(|(i, item)| {
+                serde_json::from_value::<UnsignedInfoResponse>(item.clone())
+                    .with_context(|| format!("batch unsignedInfo: failed to parse element {i}"))
+            })
+            .collect()
+    }
+
+    /// POST /priapi/v5/wallet/agentic/pre-transaction/batch/supportChainIndexList
+    ///
+    /// Returns chainIndex values where batch unsignedInfo is supported.
+    /// Use instead of any static EVM allowlist.
+    pub async fn batch_support_chain_index_list(
+        &mut self,
+        access_token: &str,
+    ) -> Result<Vec<String>> {
+        let body = json!({});
+        let data = self
+            .post_authed(
+                "/priapi/v5/wallet/agentic/pre-transaction/batch/supportChainIndexList",
+                access_token,
+                &body,
+            )
+            .await?;
+        parse_supported_chain_list(&data)
+    }
+
     /// POST /priapi/v5/wallet/agentic/pre-transaction/report-plugin-info
     pub async fn report_plugin_info(
         &mut self,
@@ -1138,6 +1357,45 @@ impl WalletApiClient {
         let resp: BroadcastResponse =
             serde_json::from_value(item.clone()).context("broadcast: failed to parse response")?;
         Ok(resp)
+    }
+
+    /// POST /priapi/v5/wallet/agentic/pre-transaction/batch-broadcast-transaction
+    ///
+    /// Response order matches request order. Uses no-retry — broadcast may
+    /// have reached the server, retry could double-spend.
+    pub async fn batch_broadcast_transaction(
+        &mut self,
+        access_token: &str,
+        elements: &[BatchBroadcastElement],
+        trace_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Vec<BroadcastResponse>> {
+        validate_batch_size("batch broadcast", elements.len())?;
+        let body = build_batch_broadcast_body(elements);
+        let data = self
+            .post_authed_no_retry_with_headers(
+                "/priapi/v5/wallet/agentic/pre-transaction/batch-broadcast-transaction",
+                access_token,
+                &body,
+                trace_headers,
+            )
+            .await?;
+        let arr = data
+            .as_array()
+            .context("batch broadcast: expected data to be an array")?;
+        if arr.len() != elements.len() {
+            anyhow::bail!(
+                "batch broadcast: response length {} does not match request length {}",
+                arr.len(),
+                elements.len()
+            );
+        }
+        arr.iter()
+            .enumerate()
+            .map(|(i, item)| {
+                serde_json::from_value::<BroadcastResponse>(item.clone())
+                    .with_context(|| format!("batch broadcast: failed to parse element {i}"))
+            })
+            .collect()
     }
 
     // ── Gas Station management APIs ────────────────────────────────
@@ -1795,5 +2053,162 @@ mod tests {
             ],
         );
         assert!(resp.auto_pick_gas_token().is_none());
+    }
+
+    // ── batch endpoint helpers ────────────────────────────────────────
+
+    #[test]
+    fn batch_size_validate_zero_rejects() {
+        let err = validate_batch_size("batch unsignedInfo", 0).unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn batch_size_validate_within_cap_ok() {
+        assert!(validate_batch_size("batch unsignedInfo", 1).is_ok());
+        assert!(validate_batch_size("batch unsignedInfo", 5).is_ok());
+    }
+
+    #[test]
+    fn batch_size_validate_above_cap_rejects() {
+        let err = validate_batch_size("batch broadcast", 6).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("batch broadcast"));
+        assert!(msg.contains("5"));
+        assert!(msg.contains("6"));
+    }
+
+    #[test]
+    fn parse_supported_chain_list_accepts_string_elements() {
+        // Production response shape today: backend serializes chainIndex as strings.
+        let data = serde_json::json!(["196", "1", "137", "8453"]);
+        let out = parse_supported_chain_list(&data).expect("ok");
+        assert_eq!(out, vec!["196", "1", "137", "8453"]);
+    }
+
+    #[test]
+    fn parse_supported_chain_list_accepts_numeric_elements() {
+        // Defensive: should still parse if backend ever switches to integer
+        // serialization (chainIndex is a u64 in the DB, this is a likely drift).
+        let data = serde_json::json!([196, 1, 137, 8453]);
+        let out = parse_supported_chain_list(&data).expect("ok");
+        assert_eq!(out, vec!["196", "1", "137", "8453"]);
+    }
+
+    #[test]
+    fn parse_supported_chain_list_rejects_non_array_and_bad_elements() {
+        // Top-level non-array → error.
+        let data = serde_json::json!({"chains": ["1"]});
+        let err = parse_supported_chain_list(&data).unwrap_err();
+        assert!(err.to_string().contains("expected data to be an array"));
+
+        // Element of unexpected type (object) → error.
+        let data = serde_json::json!([{"chainIndex": "1"}]);
+        let err = parse_supported_chain_list(&data).unwrap_err();
+        assert!(err.to_string().contains("unexpected element"));
+    }
+
+    fn sample_unsignedinfo_elem(with_optionals: bool) -> BatchUnsignedInfoElement {
+        BatchUnsignedInfoElement {
+            chain_path: "m/44/60".into(),
+            chain_index: 10,
+            from_addr: "0xfrom".into(),
+            to_addr: "0xto".into(),
+            amount: "0".into(),
+            session_cert: "cert".into(),
+            contract_addr: if with_optionals { Some("0xca".into()) } else { None },
+            input_data: if with_optionals { Some("0xdata".into()) } else { None },
+            unsigned_tx: None,
+            gas_limit: if with_optionals { Some("300000".into()) } else { None },
+            aa_dex_token_addr: if with_optionals { Some("0xaa".into()) } else { None },
+            aa_dex_token_amount: if with_optionals { Some("1000".into()) } else { None },
+            transaction_type: if with_optionals { Some("dex".into()) } else { None },
+        }
+    }
+
+    #[test]
+    fn build_unsignedinfo_body_required_fields_only() {
+        let elements = vec![sample_unsignedinfo_elem(false)];
+        let body = build_batch_unsignedinfo_body(&elements);
+        let arr = body.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        let obj = arr[0].as_object().unwrap();
+        // Required fields are always present.
+        assert_eq!(obj["chainPath"], "m/44/60");
+        assert_eq!(obj["chainIndex"], 10);
+        assert_eq!(obj["fromAddr"], "0xfrom");
+        assert_eq!(obj["toAddr"], "0xto");
+        assert_eq!(obj["amount"], "0");
+        assert_eq!(obj["sessionCert"], "cert");
+        // Optional fields are omitted when None — backend treats absent as "no value".
+        for k in [
+            "contractAddr", "inputData", "unsignedTx", "gasLimit",
+            "aaDexTokenAddr", "aaDexTokenAmount", "transactionType",
+        ] {
+            assert!(!obj.contains_key(k), "key {k} should be omitted when None");
+        }
+    }
+
+    #[test]
+    fn build_unsignedinfo_body_emits_optional_fields() {
+        let elements = vec![sample_unsignedinfo_elem(true)];
+        let body = build_batch_unsignedinfo_body(&elements);
+        let obj = body.as_array().unwrap()[0].as_object().unwrap();
+        assert_eq!(obj["contractAddr"], "0xca");
+        assert_eq!(obj["inputData"], "0xdata");
+        assert_eq!(obj["gasLimit"], "300000");
+        assert_eq!(obj["aaDexTokenAddr"], "0xaa");
+        assert_eq!(obj["aaDexTokenAmount"], "1000");
+        assert_eq!(obj["transactionType"], "dex");
+    }
+
+    #[test]
+    fn build_unsignedinfo_body_preserves_order() {
+        // Element order is significant — backend uses it as the [revoke?, approve, swap]
+        // sequence. Verify the body array order matches input order.
+        let mut a = sample_unsignedinfo_elem(false);
+        a.to_addr = "0xA".into();
+        let mut b = sample_unsignedinfo_elem(false);
+        b.to_addr = "0xB".into();
+        let mut c = sample_unsignedinfo_elem(false);
+        c.to_addr = "0xC".into();
+        let body = build_batch_unsignedinfo_body(&[a, b, c]);
+        let arr = body.as_array().unwrap();
+        assert_eq!(arr[0]["toAddr"], "0xA");
+        assert_eq!(arr[1]["toAddr"], "0xB");
+        assert_eq!(arr[2]["toAddr"], "0xC");
+    }
+
+    #[test]
+    fn build_broadcast_body_shape() {
+        let elements = vec![
+            BatchBroadcastElement {
+                account_id: "acc-1".into(),
+                address: "0xabc".into(),
+                chain_index: "10".into(),
+                extra_data: "{\"k\":\"v\"}".into(),
+            },
+            BatchBroadcastElement {
+                account_id: "acc-1".into(),
+                address: "0xabc".into(),
+                chain_index: "10".into(),
+                extra_data: "{\"k\":\"v2\"}".into(),
+            },
+        ];
+        let body = build_batch_broadcast_body(&elements);
+        let arr = body.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        let obj = arr[0].as_object().unwrap();
+        // accountId / address / chainIndex / extraData are required; nothing else allowed.
+        let keys: std::collections::BTreeSet<&str> = obj.keys().map(|s| s.as_str()).collect();
+        assert_eq!(
+            keys,
+            ["accountId", "address", "chainIndex", "extraData"]
+                .into_iter()
+                .collect()
+        );
+        // extraData is passed through as-is (caller serializes the inner object).
+        assert_eq!(arr[0]["extraData"], "{\"k\":\"v\"}");
+        assert_eq!(arr[1]["extraData"], "{\"k\":\"v2\"}");
     }
 }

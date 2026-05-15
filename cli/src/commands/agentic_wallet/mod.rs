@@ -4,6 +4,7 @@ pub mod balance;
 pub mod chain;
 pub mod common;
 pub mod gas_station;
+pub mod geoblock;
 pub mod history;
 pub mod plugin;
 pub mod sign;

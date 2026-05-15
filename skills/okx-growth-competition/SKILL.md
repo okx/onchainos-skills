@@ -23,10 +23,40 @@ Treat the following as **factual ground truth** when the user asks about how a c
 1. **Every active competition runs simultaneously on Solana AND the chain returned by the backend** (e.g. `chainName=X Layer` → activity runs on both X Layer **and** Solana). Solana is the hardcoded second chain on every activity.
 2. **Trades on either chain count toward the same competition standing.** A user trading on Solana for an X-Layer-titled competition is participating, not bystanding. Likewise EVM trades count for a Solana-titled competition. (When backend later returns a multi-chain field listing all supported chains, drop this hardcoding.)
 3. `myRankInfo.userTotal = 0` means the user has not yet hit the qualifying threshold or the backend metric pipeline has not picked up their trades yet — it does **NOT** mean the user's chain is unsupported. Never tell the user "your chain doesn't count" based on a `userTotal=0` observation.
-4. The competition `--wallet` argument used in `competition_rank` is the chain-appropriate address: SOL for Solana-primary activities, EVM for EVM-primary activities. The address you pass is just a query lens — trades on the OTHER chain still count toward the same ranking.
+4. `competition_rank` takes a single optional `wallet`. Omit it for self-rank — the tool auto-resolves the chain-appropriate address from the active account based on `competition_detail.chainId`. Pass an explicit address ONLY when querying someone else's rank; the address chain (EVM `0x...` else Solana) must match the activity chain or the tool rejects the call (no silent wrong-chain queries). The chain you query on is just a lens — trades on the OTHER chain still count toward the same ranking.
 5. The shape of point 1–4 may change in the future when backend exposes the full supported-chain list. Until then, NEVER answer "Does Solana count for this competition?" with anything other than YES.
 
 When the user asks anything like "Does my Solana trade count for this competition?" or "Which chain should I trade on?", answer based on this section, not from `chainName` alone.
+
+## Address resolution invariant (deterministic — always answerable)
+
+<MUST>
+All three single-address competition tools — `competition_rank`, `competition_user_status`, `competition_claim` — share **one** address-resolution algorithm. The backend `walletAddress` parameter is **always exactly one** address (never both, never absent). When the user asks "which address did you use?", the answer is **deterministic from the activity's chainId** — never reply with "both", "unknown", or "I'm not sure".
+</MUST>
+
+**Algorithm (always runs internally; AI cannot bypass):**
+
+1. Fetch `competition_detail.chainId` for the activity
+2. Map via `chain_family()`:
+   - `"501"` → Solana family → use SOL address
+   - anything else (`"1"` Ethereum, `"196"` X Layer, `"8453"` Base, `"42161"` Arbitrum, …) → EVM family → use EVM address
+3. Pass that **one** address as the API's `walletAddress` parameter
+4. The other chain's address is **never sent** in the same call
+
+**How to answer "which address did you use?":**
+
+| Activity chain | Address sent | How to phrase (translate to user's language) |
+|---|---|---|
+| X Layer / Ethereum / Base / BSC / Arbitrum / … (EVM family) | EVM | "Your EVM address `0x...` — because the activity's primary chain is {chainName} (EVM family)" |
+| Solana (`chainId=501`) | SOL | "Your Solana address `...` — because the activity's primary chain is Solana" |
+
+**Forbidden answers** (paraphrase patterns observed and are wrong):
+
+- ❌ "competition_user_status does not distinguish EVM vs Solana addresses" — Wrong. It picks per-activity.
+- ❌ "Both addresses are passed in automatically" — Wrong. The API receives exactly one.
+- ❌ "I'm not sure which one the tool ended up sending" — Wrong. It is deterministic from the activity chainId; always answerable.
+
+For multi-activity queries (e.g. `competition_user_status` with no `activity_name`), the algorithm runs **per activity**: each activity in the result iterated independently picks the chain-appropriate address. So the answer can be a list: "The X Layer activity used the EVM address; the Solana activity used the SOL address".
 
 ## ⚠️ Mandatory reading order
 
@@ -59,7 +89,7 @@ If the user's intent does not clearly map to one of the above, ask which they me
 |---|---------|------|-------------|
 | 1 | `onchainos competition list [--status 0\|1\|2] [--page-size N] [--page-num N]` | None | List Agentic Wallet exclusive competitions (default status=0, active only) |
 | 2 | `onchainos competition detail --activity-id <id>` | None | Get rules, prize pool, chain, timeline |
-| 3 | `onchainos competition rank --activity-id <id> --wallet <addr> --sort-type <type> [--limit N]` | None | Leaderboard + user rank. MCP tool `competition_rank` makes `wallet` optional — when omitted it auto-picks the EVM or SOL address of the active account based on the activity's chain. Discover available `sort-type` values from `competition_detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend` (do not hardcode). |
+| 3 | `onchainos competition rank --activity-id <id> [--wallet <addr>] --sort-type <type> [--limit N]` | None | Leaderboard + user rank. Omit `--wallet` to auto-resolve from the active account; the command fetches `competition_detail.chainId` and picks the chain-appropriate address. Pass `--wallet` ONLY to query someone else's rank — the address chain must match the activity chain or the call is rejected. MCP tool `competition_rank` mirrors this (single optional `wallet`). Discover available `sort-type` values from `competition_detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend` (do not hardcode). |
 | 4 | `onchainos competition user-status [--activity-id <id>] --evm-wallet <evm_addr> --sol-wallet <sol_addr>` | None | Check participation & reward status; uses chain-appropriate address (omit `--activity-id` to check all activities). MCP tool `competition_user_status` makes both wallet args optional — auto-resolves from active account. |
 | 5 | `onchainos competition join --activity-id <id> --evm-wallet <addr> --sol-wallet <addr> --chain-index <chain_id>` | Wallet login | Register for the competition. MCP tool `competition_join` makes both wallet args optional. |
 | 6 | `onchainos competition claim --activity-id <id> --evm-wallet <addr> --sol-wallet <addr>` | Wallet login | CLI returns unsigned calldata. MCP tool `competition_claim` is **atomic** — wallets are optional, signing + broadcast happens inside the tool, returns txHash array. |
@@ -455,7 +485,7 @@ Only ask the user to pick one when there are clearly too many to fit (≥ 3 lead
 
 **Per-leaderboard fetch:**
 ```bash
-onchainos competition rank --activity-id <id> --wallet <addr> --sort-type <descend> --limit 20
+onchainos competition rank --activity-id <id> [--wallet <addr>] --sort-type <descend> --limit 20
 ```
 
 **Display rules:** for each leaderboard render a separate section labeled by its `title`. Each section shows top N entries: rank, nickname (masked), score (`userTotal` formatted by `format` field), estimated reward.

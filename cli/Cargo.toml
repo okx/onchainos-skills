@@ -1,6 +1,6 @@
 [package]
 name = "onchainos-cli"
-version = "3.2.0"
+version = "3.3.2"
 edition = "2021"
 
 [[bin]]
@@ -76,6 +76,7 @@ libc = "0.2"
 # Utils
 hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
+qrcode = { version = "0.14", default-features = false }
 
 # MCP Server
 rmcp = { version = "1.1.1", features = ["transport-io"] }

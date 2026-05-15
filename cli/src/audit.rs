@@ -329,6 +329,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Competition { command } => format!("competition {}", competition_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
+        Commands::Strategy { command } => format!("strategy {}", strategy_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
@@ -377,6 +378,16 @@ fn social_sub(c: &SocialCommand) -> &'static str {
         SocialCommand::SentimentSymbol { .. } => "sentiment-symbol",
         SocialCommand::VibeTimeline { .. } => "vibe-timeline",
         SocialCommand::VibeTopKols { .. } => "vibe-top-kols",
+    }
+}
+
+fn strategy_sub(c: &crate::commands::strategy::StrategyCommand) -> &'static str {
+    use crate::commands::strategy::StrategyCommand;
+    match c {
+        StrategyCommand::CreateLimit(_) => "create-limit",
+        StrategyCommand::Cancel(_) => "cancel",
+        StrategyCommand::List(_) => "list",
+        StrategyCommand::Resume(_) => "resume",
     }
 }
 
@@ -477,8 +488,10 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Switch { .. } => "switch",
         WalletCommand::Status => "status",
         WalletCommand::Addresses { .. } => "addresses",
+        WalletCommand::Qrcode { .. } => "qrcode",
         WalletCommand::Logout => "logout",
         WalletCommand::Chains => "chains",
+        WalletCommand::Geoblock => "geoblock",
         WalletCommand::Balance { .. } => "balance",
         WalletCommand::Send { .. } => "send",
         WalletCommand::History { .. } => "history",
