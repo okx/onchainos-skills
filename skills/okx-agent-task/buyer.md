@@ -14,7 +14,9 @@
 
 > **全程免 gas**：buyer 所有链上动作（发任务 / confirm-accept / 验收 / 退款 / 仲裁等）走平台代付通道，**用户钱包不需要任何 gas / native 余额**。**禁止**给用户引导"准备 gas / 留 gas / 余额够不够"，**禁止**把 gas 预留算进金额建议。
 
-> 🛑🛑🛑 **ABSOLUTE PROHIBITION — 禁止 `sessions_spawn` / `sessions_yield`**：你（sub session / backup session）**自己就是**负责执行剧本的 agent。收到系统事件后必须**自己调 `next-action`、自己执行剧本**，**绝对禁止**调 `sessions_spawn` 派生子 agent、**绝对禁止**调 `sessions_yield` 交出控制权。backup session 也是 sub，同样适用。🔴 真实事故：backup 收到 `job_created` 后调 `sessions_spawn` 委托给子 agent，designated-provider 消费上下文断裂、协商流程不可控。
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — 禁止 `sessions_spawn` / `sessions_yield`**：你（sub session / backup session）**自己就是**负责执行剧本的 agent。收到系统事件后必须**自己调 `next-action`、自己执行剧本**，**绝对禁止**调 `sessions_spawn` 派生子 agent、**绝对禁止**调 `sessions_yield` 交出控制权。backup session 也是 sub，同样适用。
+> 🔴 真实事故 1：backup 收到 `job_created` 后调 `sessions_spawn` 委托给子 agent，designated-provider 消费上下文断裂、协商流程不可控。
+> 🔴 真实事故 2（2026-05-16，MiniMax）：backup 收到 `job_created`（"北京天气查询"）→ 第一个 tool call 是 `sessions_spawn` → 子 agent 没有 flow.rs 剧本 → 直接文字输出"协商已启动，等待结果" → 用户完全看不到 → recommend 未触发 → 任务永久卡死。**`sessions_spawn` 是 backup session 上最常见的致命错误**。
 
 任务状态机搬到了 CLI (`onchainos agent next-action`)——**不需要记忆每个状态的步骤**，收到任何系统通知（链事件 / user session 转来的用户决策）调 next-action，按输出执行即可。
 
@@ -334,7 +336,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
    - **escrow** → 调 `next-action --jobStatus job_created --provider <新agentId>` 拿剧本，按剧本建群 + 发协商询盘
    - **x402** → 复用 §3.4 x402 流程（从 Step 2 endpoint 验证开始）
    - ❌ 等待 `task_provider_change` 上链确认后才启动 = 新卖家流程被无意义阻塞 = 用户等待时间翻倍
-6. 子 session 收到 `task_provider_change` → 自动向旧卖家发 [NEGOTIATE_REJECT]（静默，由子 session 处理，user session 不介入）
+6. 子 session 收到 `task_provider_change` → 先查 `agent status <jobId>` 比对 providerAgentId 与本 session 卖家：**不一致才发 [NEGOTIATE_REJECT]**，一致则忽略（避免误关新卖家的 session）。静默处理，user session 不介入
 
 > ❌ **禁止**调 `mark-failed`——仅终止协商，不排除该卖家
 > ❌ **禁止**在已有的和其他卖家的会话中继续聊——旧会话的 REJECT 由子 session 自动发送

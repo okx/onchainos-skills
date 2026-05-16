@@ -1473,18 +1473,27 @@ onchainos agent create-task \\
              本事件会广播到所有买家侧子 session。\n\
              - 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n\
              - 如果你是 **sub session（与某卖家的协商会话）**→ 先执行 Step 0 活跃检查，再执行后续步骤\n\n\
-             【sub session 动作（🛑 三步严格顺序，MUST 全部执行）】\n\n\
+             【sub session 动作（🛑 四步严格顺序，MUST 全部执行）】\n\n\
              **Step 0 — 🛑 MUST 检查本 session 是否仍活跃：**\n\
              回顾本 session 上下文：如果你在本 session 中已发送或收到 `[NEGOTIATE_REJECT]`（协商已终止），\n\
              **忽略本事件，结束 turn**——已终止的协商不需要再发 REJECT。\n\
              只有确认本 session 仍活跃（协商进行中）才继续 Step 1。\n\n\
-             **Step 1 — 🛑 MUST 获取 sessionKey（路径 4 两步必做之一）：**\n\
+             **Step 1 — 🛑 MUST 查询任务详情，比对 provider 是否变更（跳过 = 可能误关新卖家的 session）：**\n\
+             ```bash\n\
+             onchainos agent status {job_id}\n\
+             ```\n\
+             从返回中提取 `providerAgentId`（链上当前卖家），与**本 session 正在协商的卖家 agentId** 比对：\n\
+             \x20\x20- **一致**（本 session 的卖家就是链上最新 provider）→ 本 session 是新卖家的会话，**忽略本事件，结束 turn**，不发 REJECT\n\
+             \x20\x20- **不一致**（本 session 的卖家已被替换）→ 继续 Step 2 发 REJECT\n\
+             \x20\x20- **providerAgentId 为空或不存在** → 继续 Step 2 发 REJECT（保守处理）\n\
+             ❌ 跳过此步 = 无差别对所有 sub session 发 REJECT = 新卖家的 session 也被误关 = 协商中断\n\n\
+             **Step 2 — 🛑 MUST 获取 sessionKey（路径 4 两步必做之一）：**\n\
              调用 `session_status` 工具拿当前 sub session 的 `sessionKey`。\n\
              ❌ 跳过此步 = xmtp_send 缺 sessionKey = REJECT 发不出去\n\n\
-             **Step 2 — 🛑 MUST 向当前 session 的卖家发送 [NEGOTIATE_REJECT]（不可跳过）：**\n\
+             **Step 3 — 🛑 MUST 向当前 session 的卖家发送 [NEGOTIATE_REJECT]（不可跳过）：**\n\
              本任务的 provider 已在链上变更为其他卖家，当前会话的协商即刻终止。\n\
              ❌ 不发 REJECT = 旧卖家不知道被换掉 = 继续等待/发消息 = 协商永远挂起\n\n\
-             调用 xmtp_send（sessionKey = Step 1 拿到的值）：\n\
+             调用 xmtp_send（sessionKey = Step 2 拿到的值）：\n\
              \x20\x20content:\n\
              \x20\x20[NEGOTIATE_REJECT]\n\
              \x20\x20jobId: {job_id}\n\
