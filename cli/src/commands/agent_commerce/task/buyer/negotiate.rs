@@ -269,7 +269,7 @@ pub fn take_designated_provider(job_id: &str) -> Result<Option<String>> {
     let raw = std::fs::read_to_string(&path)?;
     let _ = std::fs::remove_file(&path);
     let v: serde_json::Value = serde_json::from_str(&raw)?;
-    Ok(v["agentId"].as_str().map(|s| s.to_string()))
+    Ok(v["agentId"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()))
 }
 
 /// 标记某个 provider 协商失败（后续 recommend 展示时过滤掉）

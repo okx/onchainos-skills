@@ -28,6 +28,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent direct-accept {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt>  # x402 阶段 2b: endpoint 交互后调用"),
             format!("  onchainos agent close {job_id}          # 关闭任务"),
             format!("  onchainos agent set-public {job_id}     # 转为公开任务"),
+            format!("  onchainos agent set-token-and-budget {job_id} --token-symbol <USDT|USDG> --budget <amount>  # 修改支付代币及金额（上链）"),
+            format!("  onchainos agent set-provider {job_id} --provider-agent-id <agentId>  # 修改卖家（上链）"),
+            format!("  onchainos agent set-max-budget {job_id} --max-budget <amount>  # 修改最高预算（不上链）"),
         ],
         Status::Accepted => vec![
             "（escrow）卖家执行任务中，等待 job_submitted 进入验收".to_string(),
@@ -1310,6 +1313,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
 
         // ─── 发布任务（user session 主动操作，非链事件）────────────────
         Event::Other(ref s) if s == "create_task" => "\
+🔒 **前置检查**：你是否已读过 `skills/okx-agent-task/SKILL.md` 和 `skills/okx-agent-task/buyer.md`？\n\
+如果没有 → **立即停止执行本剧本**，先按 CLAUDE.md 路由规则加载 SKILL.md → 确认角色为 buyer → 读 buyer.md → 再回到此处。\n\
+跳过 skill 加载 = 不了解工具白名单/通信协议/安全门 = 后续流程（job_created 事件处理、协商、接单）必然出错。\n\n\
 【当前操作】发布任务（create_task）
 【角色】买家（Client）
 【会话类型】user session（直接与用户对话）
@@ -1372,7 +1378,7 @@ Step 4 — 展示确认表单（格式见 `skills/okx-agent-task/references/disp
 | 最高预算 | <数字>（协商价格上限） |
 | 接单时限 | <Nh>（发布后 N 小时无人接单自动关闭） |
 | 交付时限 | <Nh>（接单后 N 小时内须完成交付） |
-| 指定卖家 | <agentId>（仅用户指定时展示此行；未指定则不展示） |
+| 指定卖家 | <agentId>（🛑 仅用户主动指定时才展示此行；**未指定则整行不展示**——禁止写「无」「无（公开任务）」等占位。任务默认私有，未指定卖家 ≠ 公开任务） |
 
 > 确认无误？确认后我立即上链创建任务。
 
@@ -1408,6 +1414,69 @@ onchainos agent create-task \\
 ⚠️ 不要说「发布成功」——此时尚未上链确认。上链确认由 job_created 消息触发。
 ⚠️ 不要调 recommend——推荐在 job_created 收到后自动执行（指定卖家时会跳过 recommend）。
 ".to_string(),
+
+        // ─── 买家条款变更上链回执 ─────────────────────────────────────
+        Event::TaskTokenBudgetChange => format!(
+            "【系统通知】task_token_budget_change（支付代币/金额变更已上链）\n\
+             【角色】买家（Client）\n\n\
+             ⚠️ 本事件由 user session 调用 `set-token-and-budget` 触发。条款已在链上更新。\n\n\
+             【接收场景判断——🛑 MANDATORY，判断错误 = 流程卡死】\n\
+             本事件会广播到所有买家侧子 session。\n\
+             - 如果你是 **sub session（与某卖家的协商会话）**→ 执行下方动作\n\
+             - 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n\n\
+             【sub session 动作（🛑 三步严格顺序，每步 MUST 等上一步 tool_result 返回后再执行下一步）】\n\n\
+             **Step 1 — 🛑 MUST 查询最新任务详情（禁止用缓存/旧值）：**\n\
+             ```bash\n\
+             onchainos agent status {job_id}\n\
+             ```\n\
+             从返回中提取最新的 tokenSymbol、tokenAmount（budget）。\n\
+             ❌ 跳过此步 = PROPOSE 发送旧金额 = 卖家收到过期条款 = 协商基于错误数据\n\n\
+             **Step 2 — 🛑 MUST 获取 sessionKey（路径 4 两步必做之一）：**\n\
+             调用 `session_status` 工具拿当前 sub session 的 `sessionKey`。\n\
+             ❌ 跳过此步 = xmtp_send 缺 sessionKey = 消息发不出去 = 卖家永远收不到新条款\n\n\
+             **Step 3 — 🛑 MUST 向卖家发送新一轮 [NEGOTIATE_PROPOSE]（不可跳过、不可延迟）：**\n\
+             使用 Step 1 拿到的最新 tokenSymbol 和 tokenAmount 构造新的 PROPOSE 消息。\n\
+             paymentMode 固定为 escrow（条款变更仅适用于担保支付场景）。\n\n\
+             调用 xmtp_send（sessionKey = Step 2 拿到的值）：\n\
+             \x20\x20content:\n\
+             \x20\x20[NEGOTIATE_PROPOSE]\n\
+             \x20\x20jobId: {job_id}\n\
+             \x20\x20paymentMode: escrow\n\
+             \x20\x20tokenSymbol: <Step 1 最新 tokenSymbol>\n\
+             \x20\x20tokenAmount: <Step 1 最新 tokenAmount>\n\n\
+             ⚠️ 这是新一轮协商，COUNTER 计数器归零。\n\
+             ❌ 跳过 Step 3 = 卖家不知道条款已变 = 协商基于旧条款继续 = 最终 accept 参数不一致\n\
+             ❌ 禁止 xmtp_dispatch_user（用户在 user session 已知晓变更）\n\
+             ❌ 禁止调用 set-token-and-budget / set-provider / set-max-budget（user session 已执行）\n\n\
+             → **结束本轮 turn**，等待卖家回复（[NEGOTIATE_ACK] / [NEGOTIATE_COUNTER] / [NEGOTIATE_REJECT]）。\n"
+        ),
+
+        Event::TaskProviderChange => format!(
+            "【系统通知】task_provider_change（卖家变更已上链）\n\
+             【角色】买家（Client）\n\n\
+             ⚠️ 本事件由 user session 调用 `set-provider` 触发。provider 已在链上更新。\n\n\
+             【接收场景判断——🛑 MANDATORY，判断错误 = 流程卡死】\n\
+             本事件会广播到所有买家侧子 session。\n\
+             - 如果你是 **sub session（与某卖家的协商会话）**→ 执行下方动作\n\
+             - 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n\n\
+             【sub session 动作（🛑 两步严格顺序，MUST 全部执行）】\n\n\
+             **Step 1 — 🛑 MUST 获取 sessionKey（路径 4 两步必做之一）：**\n\
+             调用 `session_status` 工具拿当前 sub session 的 `sessionKey`。\n\
+             ❌ 跳过此步 = xmtp_send 缺 sessionKey = REJECT 发不出去\n\n\
+             **Step 2 — 🛑 MUST 向当前 session 的卖家发送 [NEGOTIATE_REJECT]（不可跳过）：**\n\
+             本任务的 provider 已在链上变更为其他卖家，当前会话的协商即刻终止。\n\
+             ❌ 不发 REJECT = 旧卖家不知道被换掉 = 继续等待/发消息 = 协商永远挂起\n\n\
+             调用 xmtp_send（sessionKey = Step 1 拿到的值）：\n\
+             \x20\x20content:\n\
+             \x20\x20[NEGOTIATE_REJECT]\n\
+             \x20\x20jobId: {job_id}\n\
+             \x20\x20reason: 买家已更换卖家\n\n\
+             ❌ 禁止 xmtp_dispatch_user（用户在 user session 已知晓变更）\n\
+             ❌ 禁止调用 set-token-and-budget / set-provider / set-max-budget（user session 已执行）\n\
+             ❌ 禁止调用 mark-failed（仅终止协商，不排除该卖家）\n\
+             ❌ 禁止在 REJECT 后继续与该卖家对话（协商已终止，本 sub session 使命结束）\n\n\
+             → **结束本轮 turn**。新卖家的协商由 user session 发起，与本 sub session 无关。\n"
+        ),
 
         // ─── 买家不会收到的事件（evaluator 质押 lifecycle）──────────
         Event::Staked

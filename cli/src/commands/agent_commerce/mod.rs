@@ -266,6 +266,36 @@ pub enum AgentCommand {
     #[command(name = "claim-auto-refund")]
     ClaimAutoRefund { job_id: String },
 
+    /// Change payment token and amount (on-chain, wait for task_token_budget_change)
+    #[command(name = "set-token-and-budget")]
+    SetTokenAndBudget {
+        job_id: String,
+        #[arg(long = "token-symbol")]
+        token_symbol: String,
+        #[arg(long)]
+        budget: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Change provider (on-chain, does not wait for confirmation)
+    #[command(name = "set-provider")]
+    SetProvider {
+        job_id: String,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Change max budget (off-chain, succeeds immediately)
+    #[command(name = "set-max-budget")]
+    SetMaxBudget {
+        job_id: String,
+        #[arg(long = "max-budget")]
+        max_budget: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+
     /// Provider claims auto-complete after buyer review timeout (review_expired)
     #[command(name = "claim-auto-complete")]
     ClaimAutoComplete {
@@ -595,6 +625,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
+
+        AgentCommand::SetTokenAndBudget { job_id, token_symbol, budget, agent_id } =>
+            task::buyer::run_task(T::SetTokenAndBudget { job_id, token_symbol, budget, agent_id }, ctx).await,
+        AgentCommand::SetProvider { job_id, provider_agent_id, agent_id } =>
+            task::buyer::run_task(T::SetProvider { job_id, provider_agent_id, agent_id }, ctx).await,
+        AgentCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
+            task::buyer::run_task(T::SetMaxBudget { job_id, max_budget, agent_id }, ctx).await,
 
         AgentCommand::ClaimAutoComplete { job_id, agent_id } =>
             task::provider::run_provider(

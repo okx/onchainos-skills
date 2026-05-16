@@ -25,6 +25,7 @@ pub(crate) mod negotiate;
 mod query;
 mod recommend;
 mod refuse;
+mod set_terms;
 mod x402_flow;
 
 use anyhow::Result;
@@ -185,6 +186,32 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
+    /// Change payment token and amount (on-chain, wait for task_token_budget_change)
+    SetTokenAndBudget {
+        job_id: String,
+        #[arg(long = "token-symbol")]
+        token_symbol: String,
+        #[arg(long)]
+        budget: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Change provider (on-chain, does not wait for confirmation)
+    SetProvider {
+        job_id: String,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Change max budget (off-chain, succeeds immediately)
+    SetMaxBudget {
+        job_id: String,
+        #[arg(long = "max-budget")]
+        max_budget: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
     /// Save negotiated payment params locally (agent calls after negotiation)
     SaveAgreed {
         job_id: String,
@@ -246,6 +273,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             changepublic::handle_set_public(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
+        TaskCommand::SetTokenAndBudget { job_id, token_symbol, budget, agent_id } =>
+            set_terms::handle_set_token_and_budget(&mut client, &job_id, &token_symbol, &budget, agent_id.as_deref()).await,
+        TaskCommand::SetProvider { job_id, provider_agent_id, agent_id } =>
+            set_terms::handle_set_provider(&mut client, &job_id, &provider_agent_id, agent_id.as_deref()).await,
+        TaskCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
+            set_terms::handle_set_max_budget(&mut client, &job_id, &max_budget, agent_id.as_deref()).await,
         TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {
             negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await
         }

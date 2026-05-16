@@ -717,6 +717,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             event = event.as_str()
         ),
 
+        // ─── 买家条款变更上链回执 — provider 不收这两个事件,兜底忽略 ─────
+        Event::TaskTokenBudgetChange
+        | Event::TaskProviderChange => format!(
+            "【系统通知】{event}（买家条款变更回执，provider 不直接处理）\n\
+             【角色】卖家（Provider）\n\n\
+             静默忽略,结束本轮 turn。\n",
+            event = event.as_str()
+        ),
+
         // ─── 质押 / 奖励 / 罚没 lifecycle tx 回执 — provider 不是 evaluator 时无关 ─────
         Event::Staked
         | Event::UnstakeRequested

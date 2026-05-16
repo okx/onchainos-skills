@@ -209,6 +209,12 @@ pub enum Event {
     /// DisputeManager.VoterCooldownEntered 上链（被动进入冷却期；通知 evaluator）
     CooldownEntered,
 
+    // ── 买家条款变更上链回执(不改 status,仍 open) ──────────────────
+    /// setTokenAndBudget tx 上链成功(通知 buyer 侧所有子 session;无子 session 时通知 backup)
+    TaskTokenBudgetChange,
+    /// setProviderAndAgentId tx 上链成功(通知 buyer 侧所有子 session;无子 session 时通知 backup)
+    TaskProviderChange,
+
     // ── 协商中继事件(buyer 本地派发,不改 status) ────────────────────
     /// 卖家自然语言回复(不含 [NEGOTIATE_*] 标记),buyer.md Route 4 → negotiate_reply
     NegotiateReply,
@@ -277,6 +283,9 @@ impl Event {
             // evaluator 额外 lifecycle
             "stake_stopped"             => Event::StakeStopped,
             "cooldown_entered"          => Event::CooldownEntered,
+            // 买家条款变更上链回执
+            "task_token_budget_change"  => Event::TaskTokenBudgetChange,
+            "task_provider_change"      => Event::TaskProviderChange,
             // 协商中继(buyer 本地派发)
             "negotiate_reply"           => Event::NegotiateReply,
             "negotiate_ack"             => Event::NegotiateAck,
@@ -323,6 +332,8 @@ impl Event {
             Event::ReviewDeadlineWarn     => "review_deadline_warn",
             Event::StakeStopped           => "stake_stopped",
             Event::CooldownEntered        => "cooldown_entered",
+            Event::TaskTokenBudgetChange  => "task_token_budget_change",
+            Event::TaskProviderChange    => "task_provider_change",
             Event::NegotiateReply         => "negotiate_reply",
             Event::NegotiateAck           => "negotiate_ack",
             Event::NegotiateCounter       => "negotiate_counter",
@@ -337,6 +348,8 @@ impl Event {
             Event::JobClosed          => "关闭失败",
             Event::JobVisibilityChanged  => "可见性切换失败",
             Event::JobPaymentModeChanged => "支付模式切换失败",
+            Event::TaskTokenBudgetChange => "支付条款变更失败",
+            Event::TaskProviderChange    => "卖家变更失败",
             Event::JobAutoCompleted   => "自动完成失败",
             Event::RewardClaimed      => "奖励领取失败",
             Event::DisputeApproved    => "仲裁发起失败",
@@ -363,6 +376,7 @@ pub fn status_when_event(e: &Event) -> Status {
     match e {
         // 主流程
         Event::JobCreated | Event::ProviderApplied
+        | Event::TaskTokenBudgetChange | Event::TaskProviderChange
         | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Open,
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
