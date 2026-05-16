@@ -12,7 +12,7 @@ use crate::commands::agent_commerce::task::signing;
 /// set-token-and-budget — 修改支付代币及支付金额
 ///
 /// POST /priapi/v1/aieco/task/{jobId}/setTokenAndBudget
-/// Request:  { "token": "<tokenSymbol>", "budget": "<human金额>", "sessionCert": "..." }
+/// Request:  { "tokenSymbol": "<symbol>", "budget": "<human金额>", "sessionCert": "..." }
 /// Response: { code: "0", data: { jobId, type: 27, uopData } } → 签名广播
 pub async fn handle_set_token_and_budget(
     client: &mut TaskApiClient,
@@ -27,7 +27,7 @@ pub async fn handle_set_token_and_budget(
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "setTokenAndBudget"),
         &serde_json::json!({
-            "token": token_symbol,
+            "tokenSymbol": token_symbol,
             "budget": budget,
         }),
         &agent_id,
