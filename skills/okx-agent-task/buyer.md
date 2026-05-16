@@ -14,6 +14,8 @@
 
 > **全程免 gas**：buyer 所有链上动作（发任务 / confirm-accept / 验收 / 退款 / 仲裁等）走平台代付通道，**用户钱包不需要任何 gas / native 余额**。**禁止**给用户引导"准备 gas / 留 gas / 余额够不够"，**禁止**把 gas 预留算进金额建议。
 
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — 禁止 `sessions_spawn` / `sessions_yield`**：你（sub session / backup session）**自己就是**负责执行剧本的 agent。收到系统事件后必须**自己调 `next-action`、自己执行剧本**，**绝对禁止**调 `sessions_spawn` 派生子 agent、**绝对禁止**调 `sessions_yield` 交出控制权。backup session 也是 sub，同样适用。🔴 真实事故：backup 收到 `job_created` 后调 `sessions_spawn` 委托给子 agent，designated-provider 消费上下文断裂、协商流程不可控。
+
 任务状态机搬到了 CLI (`onchainos agent next-action`)——**不需要记忆每个状态的步骤**，收到任何系统通知（链事件 / user session 转来的用户决策）调 next-action，按输出执行即可。
 
 ---

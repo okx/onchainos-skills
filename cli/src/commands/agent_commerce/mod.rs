@@ -767,33 +767,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
 
-            // job_created + --provider 未传 → 本地文件不存在时从 API 查 designatedProvider 写入（跨 session fallback）
-            if provider.is_none()
-                && (job_status == "job_created" || job_status == "open")
-                && !task::buyer::negotiate::has_designated_provider(&job_id)
-            {
-                let mut c = task::common::network::task_api_client::TaskApiClient::new();
-                match c.get_with_identity(&c.task_path(&job_id), &agent_id).await {
-                    Err(e) => eprintln!("[next-action] API fallback query failed: {e}"),
-                    Ok(resp) => {
-                        let zero = "0x0000000000000000000000000000000000000000";
-                        if let Some(dp) = resp.get("designatedProvider")
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.is_empty() && *s != zero)
-                        {
-                            let failed = task::buyer::negotiate::load_failed(&job_id);
-                            if failed.contains(&dp.to_string()) {
-                                eprintln!("[next-action] API fallback: designatedProvider={dp} 已在失败列表中，跳过");
-                            } else {
-                                eprintln!("[next-action] API fallback: designatedProvider={dp}");
-                                if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, dp) {
-                                    eprintln!("[next-action] save_designated_provider failed: {e}");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // designated-provider 只由 --provider 写入（line 748）或 create.rs 写入，
+            // 不再从 API designatedProvider 字段回填——后端该字段是链上地址，
+            // 与 agentId 语义不同，且未指定卖家时也可能返回非零值导致误判。
 
             // 状态脱节 → block 输出剧本（避免 sub 按 stale event 跑老剧本上链）
             // 只在 PSEUDO_EVENTS / unknown / network failure 时跳过校验，正常情况下严格守门

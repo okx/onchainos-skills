@@ -153,7 +153,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
          \x20\x208) ❌ **用户可见内容禁用技术术语**:`xmtp_dispatch_user` 的 content 和 `xmtp_prompt_user` 的 userContent 都直接给用户看,**禁写** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*`/`dispute_resolved` 等) / 状态名(`open`/`accepted`/`disputed` 等英文枚举) / CLI flag(`--*`) / skill 名(`okx-agent-identity` / `§Feedback Submit` 等) / 状态字段名(`jobStatus`/`paymentMode` 等)——一律用**用户语言**的自然表达(中文用户看到「担保/x402, 验收期超时, 任务已完成」, 英文用户看到等价口语化措辞如「escrowed payment/x402, review window expired, task completed」, 由 sub agent 按 LOCALIZATION_PREFIX 翻译时一并替换)。同 turn 内的 `xmtp_send` 给卖家也按此规则。\n\
          \x20\x209) ❌ **禁止给卖家发过场消息**：除协商阶段的结构化消息（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]、协商自然语言对话）外，**任何事件处理中都不要 xmtp_send 给卖家**。包括但不限于「已确认接单」「资金已托管」「已验收」「证据已提交」「任务已完成」等状态通知。卖家通过链上事件得知状态变化，买家发过场消息只会造成干扰。\n\
          \x20\x2010) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session 禁止直接生成文字回复**——你在 sub/backup session 中输出的任何文字用户**完全、绝对、100% 看不到**。所有面向用户的内容**必须且只能**通过 `xmtp_dispatch_user`（纯通知）或 `xmtp_prompt_user`（需要用户决策）工具推送。直接输出文字 = 信息丢失 + 用户无感知 + 流程卡死。🔴 真实事故：模型在 backup session 拿到推荐列表后直接输出文字展示，用户完全没收到，任务卡死。\n\
-         \x20\x2011) 🛑🛑🛑 **job_submitted 验收硬门禁 — 禁止自动 complete/reject**：收到 `job_submitted` 事件后，escrow 模式下**本 turn 唯一允许的终端动作是 `xmtp_prompt_user`**（把交付物展示给用户并请求验收决策）。`onchainos agent complete` 和 `onchainos agent reject` **只能在后续 turn 收到 `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]` 或 `[intent:REJECT_REVIEW]` 之后执行**。🔴 真实事故：模型收到 job_submitted 后跳过 xmtp_prompt_user，直接调 `onchainos agent complete` 自动验收释放资金——用户完全没看到交付物、没做验收决策，资金不可逆地转给卖家。**同 turn 内调 xmtp_prompt_user 之后又调 complete = 违规**——xmtp_prompt_user 发出后必须结束 turn，等下一个 inbound 带 `[USER_DECISION_RELAY]` 才继续。\n\n\
+         \x20\x2012) 🛑🛑🛑 **ABSOLUTE PROHIBITION — 禁止 `sessions_spawn` / `sessions_yield`**——你（sub session / backup session）**自己就是**负责执行剧本的 agent。**绝对禁止**调 `sessions_spawn` 派生子 agent 再委托、**绝对禁止**调 `sessions_yield` 交出控制权。backup session 也是 sub，收到 `source:\"system\"` 事件后必须**自己调 `next-action`、自己执行剧本**。🔴 真实事故：backup 收到 `job_created` 后调 `sessions_spawn` 派生子 agent，虽然结果碰巧正确但执行路径错误——designated-provider 可能未被正确消费、协商上下文断裂。\n\
+         \x20\x2013) 🛑🛑🛑 **job_submitted 验收硬门禁 — 禁止自动 complete/reject**：收到 `job_submitted` 事件后，escrow 模式下**本 turn 唯一允许的终端动作是 `xmtp_prompt_user`**（把交付物展示给用户并请求验收决策）。`onchainos agent complete` 和 `onchainos agent reject` **只能在后续 turn 收到 `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]` 或 `[intent:REJECT_REVIEW]` 之后执行**。🔴 真实事故：模型收到 job_submitted 后跳过 xmtp_prompt_user，直接调 `onchainos agent complete` 自动验收释放资金——用户完全没看到交付物、没做验收决策，资金不可逆地转给卖家。**同 turn 内调 xmtp_prompt_user 之后又调 complete = 违规**——xmtp_prompt_user 发出后必须结束 turn，等下一个 inbound 带 `[USER_DECISION_RELAY]` 才继续。\n\n\
          如果不记得本任务协商细节（paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -269,15 +270,21 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         };
 
         let mut output = format!(
-            "【当前状态】job_created（任务已上链，状态：待接单）\n\
+            "🛑🛑🛑 **IDENTITY CHECK — 你就是执行者，禁止委托**\n\
+             你现在所在的是 sub session 或 backup session。**你自己**就是负责执行本剧本的 agent。\n\
+             ❌ **绝对禁止** `sessions_spawn`——不要派生子 agent 来「帮你」处理本事件\n\
+             ❌ **绝对禁止** `sessions_yield`——不要交出控制权\n\
+             🔴 真实事故：backup 收到 job_created 后调 sessions_spawn 委托给子 agent，导致 designated-provider 消费上下文断裂、协商流程不可控。\n\
+             **正确做法**：你自己按下方步骤逐步执行 CLI 命令和 xmtp 工具调用。\n\n\
+             【当前状态】job_created（任务已上链，状态：待接单）\n\
              【角色】买家（Client）\n\n\
              ⚠️ **Open ≠ 公开**：Open 是任务生命周期状态（待接单），不是可见性（公开/私有）。任务可见性由 visibility 字段决定（0=公开，1=私有），与 Open 状态无关。禁止在通知中把 Open 翻译为「公开」。\n\n\
              🛑 **本事件禁止调用的 CLI**：save-agreed / set-payment-mode / confirm-accept / apply / complete / reject——此时尚未选定卖家，协商未开始，这些命令全部非法。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 0 — 通知 user session + 在当前 sub session 继续执行：**\n\
+             **Step 0 — 通知 user session + 在当前 sub/backup session 继续执行：**\n\
              调用 xmtp_dispatch_user 通知用户任务已上链（纯通知，不触发 LLM 思考）：\n\
              \x20\x20content: 任务 {job_id} 已上链成功（待接单），{notify_text}\n\n\
-             ⚠️ 后续路由 → 协商/接单 全部在**当前 sub session** 中执行，不要转到 user session。\n\n\
+             ⚠️ 后续路由 → 协商/接单 全部在**当前 session** 中执行，不要转到 user session，不要 sessions_spawn。\n\n\
              {routing_section}\n\n"
         );
 
@@ -1422,9 +1429,16 @@ onchainos agent create-task \\
              ⚠️ 本事件由 user session 调用 `set-token-and-budget` 触发。条款已在链上更新。\n\n\
              【接收场景判断——🛑 MANDATORY，判断错误 = 流程卡死】\n\
              本事件会广播到所有买家侧子 session。\n\
-             - 如果你是 **sub session（与某卖家的协商会话）**→ 执行下方动作\n\
-             - 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n\n\
-             【sub session 动作（🛑 三步严格顺序，每步 MUST 等上一步 tool_result 返回后再执行下一步）】\n\n\
+             - 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n\
+             - 如果你是 **sub session（与某卖家的协商会话）**→ 先执行 Step 0 活跃检查，再执行后续步骤\n\n\
+             【sub session 动作（🛑 四步严格顺序，每步 MUST 等上一步 tool_result 返回后再执行下一步）】\n\n\
+             **Step 0 — 🛑 MUST 检查本 session 是否仍活跃（跳过 = 向已终止的卖家发无效消息）：**\n\
+             回顾本 session 上下文：如果满足以下**任一条件**，本 session 已终止，**忽略本事件，结束 turn**：\n\
+             \x20\x20- 你曾发送或收到 `[NEGOTIATE_REJECT]`（协商已终止）\n\
+             \x20\x20- 你曾调用 `mark-failed` 标记过当前卖家（卖家已被标记失败）\n\
+             \x20\x20- 卖家已超过 24h 未回复（协商已冷却）\n\
+             如果上下文不足以判断 → 调 `xmtp_get_conversation_history` 检查最近消息，含 [NEGOTIATE_REJECT] 则终止。\n\
+             ⚠️ 只有确认本 session 仍活跃（协商进行中）才继续 Step 1。\n\n\
              **Step 1 — 🛑 MUST 查询最新任务详情（禁止用缓存/旧值）：**\n\
              ```bash\n\
              onchainos agent status {job_id}\n\
@@ -1457,9 +1471,13 @@ onchainos agent create-task \\
              ⚠️ 本事件由 user session 调用 `set-provider` 触发。provider 已在链上更新。\n\n\
              【接收场景判断——🛑 MANDATORY，判断错误 = 流程卡死】\n\
              本事件会广播到所有买家侧子 session。\n\
-             - 如果你是 **sub session（与某卖家的协商会话）**→ 执行下方动作\n\
-             - 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n\n\
-             【sub session 动作（🛑 两步严格顺序，MUST 全部执行）】\n\n\
+             - 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n\
+             - 如果你是 **sub session（与某卖家的协商会话）**→ 先执行 Step 0 活跃检查，再执行后续步骤\n\n\
+             【sub session 动作（🛑 三步严格顺序，MUST 全部执行）】\n\n\
+             **Step 0 — 🛑 MUST 检查本 session 是否仍活跃：**\n\
+             回顾本 session 上下文：如果你在本 session 中已发送或收到 `[NEGOTIATE_REJECT]`（协商已终止），\n\
+             **忽略本事件，结束 turn**——已终止的协商不需要再发 REJECT。\n\
+             只有确认本 session 仍活跃（协商进行中）才继续 Step 1。\n\n\
              **Step 1 — 🛑 MUST 获取 sessionKey（路径 4 两步必做之一）：**\n\
              调用 `session_status` 工具拿当前 sub session 的 `sessionKey`。\n\
              ❌ 跳过此步 = xmtp_send 缺 sessionKey = REJECT 发不出去\n\n\

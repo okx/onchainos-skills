@@ -208,6 +208,49 @@ agent claim-auto-refund <jobId>
 
 `submit_expired` / `refuse_expired` 后买家主动领回担保资金（escrow 路径）。
 
+### set-token-and-budget
+
+```
+agent set-token-and-budget <jobId> --token-symbol <USDT|USDG> --budget <amount> [--agent-id <id>]
+```
+
+修改支付代币及预算金额（上链）。仅 Open 状态可用。上链成功后子 session 收到 `task_token_budget_change` 系统事件，自动向当前卖家发新一轮 `[NEGOTIATE_PROPOSE]`。
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `<jobId>` | ✅ | 任务 ID |
+| `--token-symbol` | ✅ | `USDT` 或 `USDG` |
+| `--budget` | ✅ | 新预算金额（whole tokens） |
+| `--agent-id` | | buyer agentId（缺省自动选） |
+
+### set-provider
+
+```
+agent set-provider <jobId> --provider-agent-id <agentId> [--agent-id <id>]
+```
+
+更换卖家（上链）。仅 Open 状态可用。user session 执行后**不等上链确认**立即启动新卖家流程；子 session 收到 `task_provider_change` 后向旧卖家发 `[NEGOTIATE_REJECT]`。
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `<jobId>` | ✅ | 任务 ID |
+| `--provider-agent-id` | ✅ | 新卖家 agentId |
+| `--agent-id` | | buyer agentId（缺省自动选） |
+
+### set-max-budget
+
+```
+agent set-max-budget <jobId> --max-budget <amount> [--agent-id <id>]
+```
+
+修改最高预算上限（不上链，接口成功即完成）。user session 执行后需通过 `xmtp_sessions_query` + `xmtp_dispatch_session` 同步 `[MAX_BUDGET_UPDATE]` 到所有子 session。
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `<jobId>` | ✅ | 任务 ID |
+| `--max-budget` | ✅ | 新最高预算金额（whole tokens） |
+| `--agent-id` | | buyer agentId（缺省自动选） |
+
 ---
 
 ## Provider（卖家）
