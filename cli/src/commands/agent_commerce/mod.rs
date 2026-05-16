@@ -203,6 +203,32 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: String,
     },
 
+    /// List agents belonging to the **current active account**, flat output.
+    ///
+    /// Wrapper over `fetch_my_agents` — hides the agent-list response shape
+    /// (`data[0].list[].agentList[]` nesting) from the LLM. Optional `--role`
+    /// filter; output is a flat JSON array `[{agentId, name, role, status, ...}]`
+    /// already scoped to the current account's XLayer ownerAddress.
+    #[command(name = "my-agents")]
+    MyAgents {
+        /// Optional role filter: buyer | provider | evaluator (also accepts 1/2/3)
+        #[arg(long)] role: Option<String>,
+    },
+
+    /// Look up a single agent's profile by `agentId` (any owner, not limited
+    /// to current account). Wrapper over `agent get --agent-ids` that flattens
+    /// the `list[].agentList[]` nesting and returns the matched agent as a
+    /// single flat object. Used for verifying peer / designated provider
+    /// identities (e.g. buyer.md §3.4 Provider 校验).
+    ///
+    /// `ok: false` when not found / agentId malformed; otherwise `data` is
+    /// the agent object `{agentId, name, role, status, ownerAddress,
+    /// communicationAddress, agentWalletAddress, profileDescription, ...}`.
+    Profile {
+        /// Target agentId (ERC-8004 token ID, decimal string)
+        agent_id: String,
+    },
+
     // ── Task system (Provider) ──────────────────────────────────────────────
     /// Provider fetches recommended Public tasks matching their skill
     #[command(name = "recommend-task")]
@@ -647,6 +673,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::provider::run_provider(
                 task::provider::ProviderCommand::ClaimRewards { agent_id }, ctx,
             ).await,
+
+        AgentCommand::MyAgents { role } =>
+            task::common::handle_my_agents(role.as_deref()).await,
+
+        AgentCommand::Profile { agent_id } =>
+            task::common::handle_profile(&agent_id).await,
 
         // ── Provider task commands ──────────────────────────────────
         AgentCommand::RecommendTask { agent_id } => {

@@ -45,7 +45,7 @@
 | `content` | string | 消息正文（纯文本；文件类交付物走 `xmtp_file_upload` + 在 content 里附 fileKey + 元数据，详见 SKILL.md `Session 通信契约 4.8`） |
 | `contentType` | string | 固定 `"text"` |
 | `fromXmtpAddress` | string (EVM) | 发送方 XMTP 通信地址（与 ERC-8004 agent 的 `communicationAddress` 对应） |
-| `toXmtpAddress` | string (EVM) | 接收方 XMTP 通信地址；**多 agent 钱包**用它去 `agent get` 列表里反查命中的 `agentId`（详见 SKILL.md `## How to Determine Your Role`） |
+| `toXmtpAddress` | string (EVM) | 接收方 XMTP 通信地址；**多 agent 钱包**用它去 `onchainos agent my-agents` 返回的扁平列表里反查命中的 `agentId`（详见 SKILL.md `## How to Determine Your Role`） |
 | `groupId` | string | XMTP 群聊 ID（同 jobId 双方共享一个 group） |
 | `jobId` | string (0x…) | 任务链上 ID；**激活本 skill 的关键字段之二**（非空即激活，不论字面值长什么样） |
 | `sender.agentId` | string | 发送方 ERC-8004 agent ID |
@@ -105,7 +105,7 @@
 onchainos agent next-action \
   --jobid <message.jobId> \
   --jobStatus <message.event>          # 优先 event；event 缺失才 fallback message.jobStatus
-  --role <provider|buyer|evaluator>    # 调 agent get --agent-ids <顶层 agentId> 查 role 字段
+  --role <provider|buyer|evaluator>    # 调 onchainos agent profile <envelope 顶层 agentId> 拿 role 字段
   --agentId <顶层 agentId>              # 原样透传，多 agent 钱包靠它定位钱包签名
   --code <message.code>                # 可选；envelope 中有 message.code 字段时透传，CLI 内部处理 tx 失败
 ```
@@ -270,8 +270,8 @@ sub → 按用户原话路由到 reject 流程
 | 我要 | 从哪儿拿 |
 |---|---|
 | jobId（必带） | a2a-agent-chat → 顶层 `jobId`；系统通知 → `message.jobId` |
-| 我自己的 agentId（多 agent 钱包要） | a2a-agent-chat → 用 `toXmtpAddress` 在 `agent get` 输出里反查 `communicationAddress`；系统通知 → 顶层 `agentId` |
-| 我的角色 | a2a-agent-chat → `sender.role` 反推（1↔2 互换）；系统通知 → `agent get --agent-ids <顶层 agentId>` 查 `role` 字段 |
+| 我自己的 agentId（多 agent 钱包要） | a2a-agent-chat → 用 `toXmtpAddress` 在 `onchainos agent my-agents` 返回的扁平列表里反查 `communicationAddress`；系统通知 → 顶层 `agentId` |
+| 我的角色 | a2a-agent-chat → `sender.role` 反推（1↔2 互换）；系统通知 → 调 `onchainos agent profile <顶层 agentId>` 直接拿 `role` 字段 |
 | 当前任务状态 | a2a-agent-chat → 调 `agent common context <jobId> --role <role> --agent-id <agentId>` 拉；系统通知 → 优先 `message.event`，fallback `message.jobStatus` |
 | 业务参数（budget / token / paymentMode 等） | 系统通知里**部分携带**（业务事件类）；不全的话调 `common context` 兜底 |
 

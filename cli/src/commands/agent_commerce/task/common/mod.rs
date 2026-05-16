@@ -181,51 +181,37 @@ async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     }
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
 
-    // backend 原始 shape: data = [{ list, page, pageSize, total }]
-    // CLI `agent get` 在 queries.rs:100 走 `normalize_singleton_object`,把单元素数组解包成对象,
-    // 所以这里实际可能拿到两种 shape:
-    //   - 对象 shape (normalize 解包后): { list, page, pageSize, total }
-    //   - 数组 shape (多元素 / 未解包): [{ list, ... }]
-    // 优先按对象取,失败再回退数组。
-    let list_val = data
-        .get("list")
-        .cloned()
-        .or_else(|| {
-            data.as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|x| x.get("list"))
-                .cloned()
-        });
-    let list_arr = list_val.as_ref().and_then(|v| v.as_array());
-    if list_arr.is_none() {
+    // Flatten the response (new shape: `list[].agentList[]` groups; old shape:
+    // `list[]` flat agents). No ownerAddress filter — we're looking up any
+    // agent by id, possibly belonging to another user (e.g. peer buyer profile).
+    let all_agents = flatten_agent_groups(&data);
+    if all_agents.is_empty() {
         eprintln!(
-            "[fetch_agent_profile] `agent get` 返回不含 list 字段（object/array shape 都试过）；fallback (agentId={agent_id})"
+            "[fetch_agent_profile] `agent get` returned empty agent list (agentId={agent_id}); fallback"
         );
     }
 
-    let matched = list_arr.and_then(|arr| {
-        arr.iter()
-            .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(agent_id))
-            .map(|a| AgentProfile {
-                agent_id: Some(agent_id.to_string()),
-                name: a.get("name").and_then(|v| v.as_str()).map(String::from),
-                profile_description: a
-                    .get("profileDescription")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                agent_wallet_address: a
-                    .get("agentWalletAddress")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                communication_address: a
-                    .get("communicationAddress")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-            })
-    });
-    if list_arr.is_some() && matched.is_none() {
+    let matched = all_agents.iter()
+        .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(agent_id))
+        .map(|a| AgentProfile {
+            agent_id: Some(agent_id.to_string()),
+            name: a.get("name").and_then(|v| v.as_str()).map(String::from),
+            profile_description: a
+                .get("profileDescription")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            agent_wallet_address: a
+                .get("agentWalletAddress")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            communication_address: a
+                .get("communicationAddress")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+        });
+    if !all_agents.is_empty() && matched.is_none() {
         eprintln!(
-            "[fetch_agent_profile] agentId={agent_id} 不在 `agent get` 返回列表中；fallback"
+            "[fetch_agent_profile] agentId={agent_id} not present in `agent get` response; fallback"
         );
     }
     matched.unwrap_or_else(fallback)
@@ -334,6 +320,272 @@ fn nonzero_fee(fee: &Option<String>) -> Option<&str> {
         Ok(v) if v > 0.0 => Some(f),
         _ => None,
     }
+}
+
+// ─── Current-account agent lookup ───────────────────────────────────────────
+//
+// New /agent/agent-list response shape returns multiple ownerAddress groups
+// (it's a generic communication-lookup endpoint, no longer JWT-filtered to the
+// current user). The CLI side must filter to the active account's XLayer
+// address. These helpers centralize that logic for every task-side caller.
+
+/// Resolve the current active account's XLayer (chainIndex=196) wallet address.
+///
+/// Returns lowercase string (chain addresses are case-insensitive; lowercase
+/// makes downstream `==` comparisons safe).
+/// Returns `None` if not logged in / no active account / no XLayer address.
+pub fn current_account_xlayer_address() -> Option<String> {
+    let wallets = match crate::wallet_store::load_wallets() {
+        Ok(Some(w)) => w,
+        _ => return None,
+    };
+    let account_id = crate::commands::agentic_wallet::account::resolve_active_account_id(&wallets).ok()?;
+    let entry = wallets.accounts_map.get(&account_id)?;
+    entry
+        .address_list
+        .iter()
+        .find(|a| a.chain_index == XLAYER_CHAIN_INDEX)
+        .map(|a| a.address.to_lowercase())
+}
+
+/// Spawn `onchainos agent get` (paginated mode, no `--agent-ids`) and return the
+/// list of agents belonging to the **current active account**.
+///
+/// Pipeline:
+/// 1. resolve current account's XLayer ownerAddress (lowercase)
+/// 2. shell out to `agent get` → parse JSON
+/// 3. flatten the response (new shape: `list[].agentList[]`; old shape:
+///    `list[]` flat agents) → filter by ownerAddress
+///
+/// Returns empty `Vec` on any failure (not logged in / no XLayer / network /
+/// shape mismatch) — robust by design; callers can rely on non-panicking.
+/// Each element of the returned `Vec` is the raw agent JSON object (fields:
+/// `agentId` / `name` / `role` / `status` / `agentWalletAddress` / etc.).
+pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
+    let Some(my_owner) = current_account_xlayer_address() else {
+        eprintln!("[fetch_my_agents] no current XLayer address; returning empty");
+        return Vec::new();
+    };
+
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[fetch_my_agents] current_exe failed: {e}");
+            return Vec::new();
+        }
+    };
+
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.args(["agent", "get"]);
+    eprintln!(
+        "[fetch_my_agents] running: {} agent get (filter ownerAddress={my_owner})",
+        exe.display()
+    );
+
+    let output = match cmd.output().await {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("[fetch_my_agents] spawn `agent get` failed: {e}");
+            return Vec::new();
+        }
+    };
+
+    let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "[fetch_my_agents] parse stdout failed: {e}; raw={}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return Vec::new();
+        }
+    };
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
+        eprintln!("[fetch_my_agents] `agent get` returned failure: {err}");
+        return Vec::new();
+    }
+
+    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let agents = flatten_my_agents(&data, &my_owner);
+    eprintln!(
+        "[fetch_my_agents] matched {} agents under ownerAddress={my_owner}",
+        agents.len()
+    );
+    agents
+}
+
+/// Resolve a `--role` CLI arg into the corresponding `role` numeric value
+/// (1/2/3). Accepts both names (buyer / provider / requestor / evaluator)
+/// and raw integers ("1" / "2" / "3"). Returns `None` for unrecognized input.
+fn parse_role_filter(raw: &str) -> Option<i64> {
+    match raw.trim().to_lowercase().as_str() {
+        "buyer" | "requestor" | "1" => Some(AGENT_ROLE_BUYER),
+        "provider" | "seller" | "2" => Some(AGENT_ROLE_PROVIDER),
+        "evaluator" | "arbiter" | "3" => Some(AGENT_ROLE_EVALUATOR),
+        _ => None,
+    }
+}
+
+/// `onchainos agent profile <agent_id>` — look up a single agent by id and
+/// return its flat JSON profile. Works for **any** agent (current account or
+/// peer), used to verify peer / designated-provider identities.
+///
+/// Internally calls `agent get --agent-ids <id>` then walks the response via
+/// `flatten_agent_groups` to find the matching agent and prints it as the
+/// `data` payload. Errors when agentId is empty, the subprocess fails, the
+/// response shape is broken, or no agent matches the queried id.
+pub async fn handle_profile(agent_id: &str) -> Result<()> {
+    let id = agent_id.trim();
+    if id.is_empty() {
+        bail!("agent_id must not be empty");
+    }
+
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+
+    let output = tokio::process::Command::new(&exe)
+        .args(["agent", "get", "--agent-ids", id])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn `agent get` failed: {e}"))?;
+
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow::anyhow!(
+            "parse `agent get` stdout failed: {e}; raw={}",
+            String::from_utf8_lossy(&output.stdout)
+        ))?;
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
+        bail!("`agent get` returned failure: {err}");
+    }
+
+    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let all = flatten_agent_groups(&data);
+    let matched = all.into_iter().find(|a| {
+        a.get("agentId").and_then(|v| v.as_str()) == Some(id)
+    });
+
+    match matched {
+        Some(agent) => {
+            crate::output::success(agent);
+            Ok(())
+        }
+        None => bail!("agentId={id} not found in `agent get` response"),
+    }
+}
+
+/// `onchainos agent my-agents [--role <r>]` — flat list of the current active
+/// account's agents (XLayer ownerAddress filter applied automatically),
+/// optionally filtered by `role`. Hides the agent-list response shape
+/// (`data[0].list[].agentList[]` nesting) from callers; downstream tooling /
+/// LLM consumers receive a flat array.
+pub async fn handle_my_agents(role: Option<&str>) -> Result<()> {
+    let role_filter = match role {
+        Some(raw) => match parse_role_filter(raw) {
+            Some(n) => Some(n),
+            None => bail!(
+                "unrecognized --role value: {raw:?} (expected buyer / provider / evaluator, or 1 / 2 / 3)"
+            ),
+        },
+        None => None,
+    };
+
+    let mut agents = fetch_my_agents().await;
+    if let Some(want) = role_filter {
+        agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(want));
+    }
+
+    crate::output::success(serde_json::Value::Array(agents));
+    Ok(())
+}
+
+/// Flatten the agent-list response into a flat `Vec` of agent JSON objects —
+/// **pure shape conversion, no filtering**. Single source of truth for handling
+/// both old and new response shapes; callers layer their own filters on top.
+///
+/// Shapes handled:
+/// - **New**: `data.list[]` is groups, each `{ownerAddress, accountName, agentList[]}`.
+///   Returns all `agentList[]` items across all groups. Group-level
+///   `ownerAddress` / `accountName` are injected into each agent if the
+///   agent itself is missing them (defensive — current spec already
+///   duplicates `ownerAddress` at agent level, but next spec rev might not).
+/// - **Old**: `data.list[]` is flat agent objects. Pass through.
+///
+/// `data` is the value at `body.data` after the `{ok, data}` envelope is
+/// stripped. Handles both object shape (`{list:...}` after
+/// `normalize_singleton_object`) and array shape (`[{list:...}]`).
+pub fn flatten_agent_groups(data: &serde_json::Value) -> Vec<serde_json::Value> {
+    // data may be:
+    //   - object {list, page, ...} after normalize_singleton_object unwraps singleton
+    //   - array [{list, page, ...}]
+    let list_val = data.get("list").cloned().or_else(|| {
+        data.as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|x| x.get("list"))
+            .cloned()
+    });
+    let Some(list) = list_val.as_ref().and_then(|v| v.as_array()) else {
+        eprintln!(
+            "[flatten_agent_groups] response missing `list` field (tried both shapes); raw data: {}",
+            serde_json::to_string(data).unwrap_or_default()
+        );
+        return Vec::new();
+    };
+
+    let mut flat = Vec::new();
+    for entry in list {
+        // New shape: entry is a group with `agentList`
+        if let Some(agents) = entry.get("agentList").and_then(|v| v.as_array()) {
+            let group_owner = entry.get("ownerAddress").and_then(|v| v.as_str());
+            let group_account = entry.get("accountName").and_then(|v| v.as_str());
+            for a in agents {
+                let mut agent = a.clone();
+                if let Some(obj) = agent.as_object_mut() {
+                    if !obj.contains_key("ownerAddress") {
+                        if let Some(o) = group_owner {
+                            obj.insert(
+                                "ownerAddress".to_string(),
+                                serde_json::Value::String(o.to_string()),
+                            );
+                        }
+                    }
+                    if !obj.contains_key("accountName") {
+                        if let Some(n) = group_account {
+                            obj.insert(
+                                "accountName".to_string(),
+                                serde_json::Value::String(n.to_string()),
+                            );
+                        }
+                    }
+                }
+                flat.push(agent);
+            }
+            continue;
+        }
+        // Old shape fallback: entry is an agent itself
+        if entry.get("agentId").is_some() {
+            flat.push(entry.clone());
+        }
+    }
+    flat
+}
+
+/// Extract agents matching `my_owner` (lowercase) from the agent-list response.
+/// Thin wrapper over `flatten_agent_groups` + per-agent `ownerAddress` filter.
+fn flatten_my_agents(data: &serde_json::Value, my_owner: &str) -> Vec<serde_json::Value> {
+    flatten_agent_groups(data)
+        .into_iter()
+        .filter(|a| {
+            a.get("ownerAddress")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_lowercase())
+                .as_deref()
+                == Some(my_owner)
+        })
+        .collect()
 }
 
 // ─── 状态说明 ──────────────────────────────────────────────────────────────
@@ -611,7 +863,7 @@ async fn build_context(
         let agent_id_hint = profile.agent_id.as_deref().unwrap_or("<你的agentId>");
         out.push_str("【⚠️ 第二步：按可见性分流（匹配通过才走这里）】\n\n");
         if task.visibility == Some(0) {
-            // 公开任务 → provider 主动建群
+            // 公开任务 → provider 主动建群 + 发冷启动开场白(不调 next-action)
             out.push_str("当前任务**可见性 = 公开（Public）** → 你需要**主动联系买家发起协商**：\n\n");
             out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.7）：\n");
             out.push_str(&format!(
@@ -619,7 +871,14 @@ async fn build_context(
                 task.job_id
             ));
             out.push_str("   - 成功返回 `sessionKey`（新 sub 的 key，下面 step 2 直接用，**不要再调 `session_status`**——bootstrap 阶段 `session_status` 可能返回当前所在 user session 的 key，会拿错）+ `xmtpGroupId`\n");
-            out.push_str("2. **必须先调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <agentId>` 拿协商首回合剧本**，按剧本输出去 `xmtp_send`——不要凭这里的简版直接发自我确认。\n\n");
+            out.push_str("2. **直接 `xmtp_send` 一条冷启动开场白**（自然语言模板，详见 `provider.md §2.1 末尾「用户选定后怎么协商」`）：\n");
+            out.push_str(&format!(
+                "   - 内容只是：自我介绍 + 看到了「{}」任务 + 我能做 + 问买家预算 / 验收标准 / 支付方式偏好\n",
+                task.title
+            ));
+            out.push_str("   - ❌ **首条禁止报具体价格**（service-list 注册价 / 工作量估算的判断等买家回信后再走 next-action）\n");
+            out.push_str("   - ❌ **首条禁止产工作内容 / 杜撰协议字面量**（`[INTEREST]` / `[CONTACT_INIT]` 等都是幻觉）\n");
+            out.push_str("   - **本 turn 在这里结束**，等买家回信。买家回信后**才**调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <agentId>` 拿协商剧本。\n\n");
             out.push_str("🛑 **必须用 `xmtp_send`，禁止用 `xmtp_dispatch_session` / `xmtp_dispatch_user` / `xmtp_prompt_user` 替代**——给 peer agent 发 a2a-agent-chat 业务消息**只有 `xmtp_send` 一种路径**。看到「建立协商通道 / 派发到 sub / dispatch」这种语感**也只能选 `xmtp_send`**。`xmtp_dispatch_session` 是 user→sub `[USER_DECISION_RELAY]` 决策回传专用，跟协商首条 a2a-agent-chat 形态完全不符。\n\n");
         } else {
             // 私有任务 → provider 被动等买家先来

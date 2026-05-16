@@ -223,7 +223,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 从消息解析：`agentId`（不可变）、`ServiceTitle`、`ServiceType`、`Price`/`symbol`（可变）。
 
 **流程**：
-1. **Provider 校验**：`onchainos agent get --agent-ids <agentId>` — 不存在 / role ≠ 2 → 告知用户，不继续（⚠️ create-task 之前执行）
+1. **Provider 校验**：`onchainos agent profile <agentId>` — `ok=false` / `data.role ≠ 2` → 告知用户，不继续（⚠️ create-task 之前执行）
 2. **服务类型判断**：`onchainos agent service-list --agent-id <agentId>`（serviceType + endpoint 联合）：
    - 支持 x402 → 带 `agentId` + `endpoint` 转入 §3.4（Step 2 起）
    - 否则 → A2A（下方 step 3）
