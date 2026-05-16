@@ -1367,8 +1367,15 @@ async fn cmd_execute(
             .ok_or_else(|| anyhow::anyhow!("missing tx.data (unsigned tx) in swap response"))?;
         let to_addr = tx["to"].as_str().unwrap_or("");
 
-        // Jito MEV protection
-        let jito_tx = swap_result["jitoCalldata"].as_str();
+        // Jito MEV protection: `/swap` returns jitoCalldata nested inside
+        // tx.signatureData[0] as a JSON string, not at the top level.
+        let jito_tx_owned: Option<String> = tx["signatureData"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+            .and_then(|v| v["jitoCalldata"].as_str().map(str::to_string));
+        let jito_tx = jito_tx_owned.as_deref();
         let effective_mev = jito_tx.is_some() || mev_protection;
 
         let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
