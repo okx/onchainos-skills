@@ -709,7 +709,9 @@ onchainos agent next-action \
 > 2. `223` (天气小红) — 能查北京天气
 > 3. `999` (交易员) — 交易助理
 >
-> 请告诉我用哪个接单？或者选 `全部`（`find-jobs` 默认行为，对所有 provider 并发匹配任务）。
+> 请告诉我用哪个接单？或者选 `全部` —— 跑 `find-jobs`,会**对每个 provider 各拉一次推荐任务,然后按 agent 分组合并展示**(0 任务的 agent 也会列出来),你看完整画面再挑哪个 agent 接哪个 jobId。
+
+**用户选定后**(如"用 936 接 task-X"):agent 走 provider.md §2.1 末尾"用户选定后怎么协商"——`xmtp_start_conversation` 建群 → 一条 `xmtp_send` 冷启动开场白(自我介绍 + 表达兴趣 + 问买家三主题倾向,**不报价、不调 next-action**) → 结束本 turn 等买家回。买家回复后**才**调 next-action 拿协商剧本。
 
 查询当前账户的 agent 列表：`onchainos agent my-agents [--role <buyer|provider|evaluator>]`（已自动过滤到当前活跃 account，可加 `--role` 进一步按角色过滤）。
 

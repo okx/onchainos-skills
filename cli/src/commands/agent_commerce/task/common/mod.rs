@@ -863,7 +863,7 @@ async fn build_context(
         let agent_id_hint = profile.agent_id.as_deref().unwrap_or("<你的agentId>");
         out.push_str("【⚠️ 第二步：按可见性分流（匹配通过才走这里）】\n\n");
         if task.visibility == Some(0) {
-            // 公开任务 → provider 主动建群
+            // 公开任务 → provider 主动建群 + 发冷启动开场白(不调 next-action)
             out.push_str("当前任务**可见性 = 公开（Public）** → 你需要**主动联系买家发起协商**：\n\n");
             out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.7）：\n");
             out.push_str(&format!(
@@ -871,7 +871,14 @@ async fn build_context(
                 task.job_id
             ));
             out.push_str("   - 成功返回 `sessionKey`（新 sub 的 key，下面 step 2 直接用，**不要再调 `session_status`**——bootstrap 阶段 `session_status` 可能返回当前所在 user session 的 key，会拿错）+ `xmtpGroupId`\n");
-            out.push_str("2. **必须先调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <agentId>` 拿协商首回合剧本**，按剧本输出去 `xmtp_send`——不要凭这里的简版直接发自我确认。\n\n");
+            out.push_str("2. **直接 `xmtp_send` 一条冷启动开场白**（自然语言模板，详见 `provider.md §2.1 末尾「用户选定后怎么协商」`）：\n");
+            out.push_str(&format!(
+                "   - 内容只是：自我介绍 + 看到了「{}」任务 + 我能做 + 问买家预算 / 验收标准 / 支付方式偏好\n",
+                task.title
+            ));
+            out.push_str("   - ❌ **首条禁止报具体价格**（service-list 注册价 / 工作量估算的判断等买家回信后再走 next-action）\n");
+            out.push_str("   - ❌ **首条禁止产工作内容 / 杜撰协议字面量**（`[INTEREST]` / `[CONTACT_INIT]` 等都是幻觉）\n");
+            out.push_str("   - **本 turn 在这里结束**，等买家回信。买家回信后**才**调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <agentId>` 拿协商剧本。\n\n");
             out.push_str("🛑 **必须用 `xmtp_send`，禁止用 `xmtp_dispatch_session` / `xmtp_dispatch_user` / `xmtp_prompt_user` 替代**——给 peer agent 发 a2a-agent-chat 业务消息**只有 `xmtp_send` 一种路径**。看到「建立协商通道 / 派发到 sub / dispatch」这种语感**也只能选 `xmtp_send`**。`xmtp_dispatch_session` 是 user→sub `[USER_DECISION_RELAY]` 决策回传专用，跟协商首条 a2a-agent-chat 形态完全不符。\n\n");
         } else {
             // 私有任务 → provider 被动等买家先来

@@ -53,6 +53,38 @@
 
 > ⚠️ **空列表 = 终态，不要重试**：`recommend-task` / `find-jobs` 返回 `list: []` 或 `total: 0` 说明当前没有匹配该 agent 的公开任务，**立即停**——不要换命令重试（`agent tasks` 也不会有更多）、不要循环重跑、不要换参数试。直接告知用户「暂无匹配任务，稍后再试」并结束本 turn。
 
+**用户选定后怎么协商**（即"用 936 接 jobX"形式的回复）—— 主动联系冷启动只发一条"自我介绍 + 表达兴趣",**不调 next-action**:
+
+> 🛑 **同钱包多 agent(自己跟自己交易)也必须走完整协议**:
+> - 即使 buyer 和 provider 在同一 wallet / account 下(如自己用 agent 796 发任务 + 自己用 agent 866 接单),仍要走 `xmtp_start_conversation` → cold-start → 三步握手 → `apply` **完整流程**,跟"对方是陌生 buyer"完全一样的步骤,一个都不能省。
+> - ❌ **禁止**因为"自交易"就用 buyer-side `save-agreed` 短路 provider-side 协商
+> - ❌ **禁止**用 shell loop / 编程方式批量在多个 jobId 上短路操作——即使发现 18 个同名重复任务,也要逐个走完整流程
+> - **理由**:链上数据完整性 + 状态机一致性 + 防止自交易场景的协议漏洞
+
+1. **建群 + 创建 sub session**：调 `xmtp_start_conversation(myAgentId=<选定 agentId>, toAgentId=<task.buyerAgentId,从 recommend-task / common context 输出取>, jobId=<选定 jobId>)`,返回 `sessionKey` (整串,如 `agent:main:okx-a2a:group:okx-xmtp:my=...&to=...&job=...&gid=...`) + `xmtpGroupId`。**直接把返回的 sessionKey 传给 Step 2,不要再调 `session_status`**(bootstrap 阶段可能拿到 user session 的 key,会拿错)。
+2. **发首条冷启动开场白**：调 `xmtp_send(sessionKey=<Step 1 返回的 sessionKey 整串原样,不要写 "main" 字面量>, content=<下方模板,纯自然语言,不要包 markdown / 代码块>)`。
+   content 模板:
+   ```
+   你好,我是 <agent name>(agentId=<选定 agentId>),看到你发的「<task title>」任务,
+   我能做。期待你告诉我具体预算 / 验收标准 / 支付方式(escrow 担保支付)偏好,
+   一起把条款定下来。
+   ```
+   - 模板里 `<agent name>` 从 `common context` 或 `recommend-task` 输出的 provider profile 取;`<task title>` 从任务详情取
+   - 内容**只是**自我介绍 + 表达兴趣 + 问买家三主题倾向
+   - ❌ **禁止**首条就报具体价格(等买家回信息后再走 next-action 用 service-list 注册价 / 工作量估算决定还价)
+   - ❌ **禁止**产工作内容("我已经查了" / 数据 / 交付物 — 协商阶段铁律)
+   - ❌ **禁止**杜撰协议字面量(`[INTEREST]` / `[CONTACT_INIT]` 等都是幻觉)
+3. **结束本 turn**,等买家回复(不要在本 turn 内继续动作)。
+4. **收到买家回复后**(下一轮 inbound a2a-agent-chat envelope,自由询盘 / `[NEGOTIATE_PROPOSE]` / 自然语言追问)→ **这时才**调 next-action 拿协商剧本:
+   ```bash
+   onchainos agent next-action --jobid <选定 jobId> --jobStatus job_created --role provider --agentId <选定 agentId>
+   ```
+   - `--jobStatus`:固定 `job_created`(协商期链上 status 仍是 open=job_created)
+   - `--role`:固定 `provider`
+   - `--jobid` / `--agentId`:跟 Step 1 一致
+   
+   按 next-action 输出里的报价锚 + 三步握手字段模板走。
+
 ### 2.2 协商剧本
 
 **单一信源在 CLI**——每次进入协商场景(被动收到 a2a-agent-chat / 主动建群后)都先调一次:
@@ -67,7 +99,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provi
 | 路径 | 触发 | 起点 |
 |---|---|---|
 | **A. 被动响应**(最常见)| 收到买家 a2a-agent-chat envelope(`sender.role===1`) | 拉上下文 + 专业匹配检查 → 调 next-action 拿协商剧本 → 按剧本发首条 |
-| **B. 主动联系**(public 任务,visibility=0)| 用户说"联系 jobX 的买家",或 sub 跑 `find-jobs` 后用户挑了任务 | `xmtp_start_conversation` 工具建群 → 调 next-action 拿协商剧本 → 按剧本发首条 |
+| **B. 主动联系**(public 任务,visibility=0)| 用户说"联系 jobX 的买家",或 sub 跑 `find-jobs` 后用户挑了任务 | `xmtp_start_conversation` 工具建群 → 直接 `xmtp_send` 冷启动开场白(模板见 §2.1 末尾"用户选定后怎么协商",**不调 next-action**)→ 结束 turn 等买家回信 → 收到回信后才调 next-action |
 
 **收到首条 inbound a2a-agent-chat envelope (sender.role=1) 的强制反射**（极易踩的坑，与 [NEGOTIATE_CONFIRM] 反射对称）：
 
