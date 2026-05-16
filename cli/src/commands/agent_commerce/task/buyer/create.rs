@@ -227,10 +227,9 @@ pub async fn handle_create(
         super::negotiate::save_designated_provider(&job_id, provider_id)?;
     }
 
-    println!("✓ 任务已上链");
+    println!("✓ 任务发布中（交易已广播，等待上链确认）");
     println!("  jobId:  {job_id}");
     println!("  txHash: {tx_hash}");
-    println!("  状态:   open（等待 Provider 报名）");
     if let Some(ref provider_id) = params.provider {
         println!("  指定卖家: {provider_id}（跳过 recommend，直接路由）");
     }
