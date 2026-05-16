@@ -416,6 +416,92 @@ pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
     agents
 }
 
+/// Resolve a `--role` CLI arg into the corresponding `role` numeric value
+/// (1/2/3). Accepts both names (buyer / provider / requestor / evaluator)
+/// and raw integers ("1" / "2" / "3"). Returns `None` for unrecognized input.
+fn parse_role_filter(raw: &str) -> Option<i64> {
+    match raw.trim().to_lowercase().as_str() {
+        "buyer" | "requestor" | "1" => Some(AGENT_ROLE_BUYER),
+        "provider" | "seller" | "2" => Some(AGENT_ROLE_PROVIDER),
+        "evaluator" | "arbiter" | "3" => Some(AGENT_ROLE_EVALUATOR),
+        _ => None,
+    }
+}
+
+/// `onchainos agent profile <agent_id>` — look up a single agent by id and
+/// return its flat JSON profile. Works for **any** agent (current account or
+/// peer), used to verify peer / designated-provider identities.
+///
+/// Internally calls `agent get --agent-ids <id>` then walks the response via
+/// `flatten_agent_groups` to find the matching agent and prints it as the
+/// `data` payload. Errors when agentId is empty, the subprocess fails, the
+/// response shape is broken, or no agent matches the queried id.
+pub async fn handle_profile(agent_id: &str) -> Result<()> {
+    let id = agent_id.trim();
+    if id.is_empty() {
+        bail!("agent_id must not be empty");
+    }
+
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+
+    let output = tokio::process::Command::new(&exe)
+        .args(["agent", "get", "--agent-ids", id])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn `agent get` failed: {e}"))?;
+
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow::anyhow!(
+            "parse `agent get` stdout failed: {e}; raw={}",
+            String::from_utf8_lossy(&output.stdout)
+        ))?;
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
+        bail!("`agent get` returned failure: {err}");
+    }
+
+    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let all = flatten_agent_groups(&data);
+    let matched = all.into_iter().find(|a| {
+        a.get("agentId").and_then(|v| v.as_str()) == Some(id)
+    });
+
+    match matched {
+        Some(agent) => {
+            crate::output::success(agent);
+            Ok(())
+        }
+        None => bail!("agentId={id} not found in `agent get` response"),
+    }
+}
+
+/// `onchainos agent my-agents [--role <r>]` — flat list of the current active
+/// account's agents (XLayer ownerAddress filter applied automatically),
+/// optionally filtered by `role`. Hides the agent-list response shape
+/// (`data[0].list[].agentList[]` nesting) from callers; downstream tooling /
+/// LLM consumers receive a flat array.
+pub async fn handle_my_agents(role: Option<&str>) -> Result<()> {
+    let role_filter = match role {
+        Some(raw) => match parse_role_filter(raw) {
+            Some(n) => Some(n),
+            None => bail!(
+                "unrecognized --role value: {raw:?} (expected buyer / provider / evaluator, or 1 / 2 / 3)"
+            ),
+        },
+        None => None,
+    };
+
+    let mut agents = fetch_my_agents().await;
+    if let Some(want) = role_filter {
+        agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(want));
+    }
+
+    crate::output::success(serde_json::Value::Array(agents));
+    Ok(())
+}
+
 /// Flatten the agent-list response into a flat `Vec` of agent JSON objects —
 /// **pure shape conversion, no filtering**. Single source of truth for handling
 /// both old and new response shapes; callers layer their own filters on top.

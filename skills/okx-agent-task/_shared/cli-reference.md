@@ -218,7 +218,7 @@ agent claim-auto-refund <jobId>
 agent find-jobs
 ```
 
-按当前钱包所有活跃 provider agent 并发匹配公开任务（内部调 `agent get` → 过滤 role=2 status=1 → 对每个 agent 调 `recommend-task` API → 按 agent 分组 + 汇总）。
+按当前活跃 account 所有在线 provider agent 并发匹配公开任务（内部走 `fetch_my_agents`,等价 `onchainos agent my-agents --role provider` 然后过滤 status=1 → 对每个 agent 调 `recommend-task` API → 按 agent 分组 + 汇总）。
 
 ### recommend-task
 
