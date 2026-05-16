@@ -149,7 +149,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
          \x20\x20\x20\x20漏 `remove` → 旧条目残留成僵尸,下次再调 `xmtp_prompt_user` 时被误命中,用户回复派给错的会话。\n\
          \x20\x208) ❌ **用户可见内容禁用技术术语**:`xmtp_dispatch_user` 的 content 和 `xmtp_prompt_user` 的 userContent 都直接给用户看,**禁写** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*`/`dispute_resolved` 等) / 状态名(`open`/`accepted`/`disputed` 等英文枚举) / CLI flag(`--*`) / skill 名(`okx-agent-identity` / `§Feedback Submit` 等) / 状态字段名(`jobStatus`/`paymentMode` 等)——一律用**用户语言**的自然表达(中文用户看到「担保/x402, 验收期超时, 任务已完成」, 英文用户看到等价口语化措辞如「escrowed payment/x402, review window expired, task completed」, 由 sub agent 按 LOCALIZATION_PREFIX 翻译时一并替换)。同 turn 内的 `xmtp_send` 给卖家也按此规则。\n\
          \x20\x209) ❌ **禁止给卖家发过场消息**：除协商阶段的结构化消息（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]、协商自然语言对话）外，**任何事件处理中都不要 xmtp_send 给卖家**。包括但不限于「已确认接单」「资金已托管」「已验收」「证据已提交」「任务已完成」等状态通知。卖家通过链上事件得知状态变化，买家发过场消息只会造成干扰。\n\
-         \x20\x2010) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session 禁止直接生成文字回复**——你在 sub/backup session 中输出的任何文字用户**完全、绝对、100% 看不到**。所有面向用户的内容**必须且只能**通过 `xmtp_dispatch_user`（纯通知）或 `xmtp_prompt_user`（需要用户决策）工具推送。直接输出文字 = 信息丢失 + 用户无感知 + 流程卡死。🔴 真实事故：模型在 backup session 拿到推荐列表后直接输出文字展示，用户完全没收到，任务卡死。\n\n\
+         \x20\x2010) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session 禁止直接生成文字回复**——你在 sub/backup session 中输出的任何文字用户**完全、绝对、100% 看不到**。所有面向用户的内容**必须且只能**通过 `xmtp_dispatch_user`（纯通知）或 `xmtp_prompt_user`（需要用户决策）工具推送。直接输出文字 = 信息丢失 + 用户无感知 + 流程卡死。🔴 真实事故：模型在 backup session 拿到推荐列表后直接输出文字展示，用户完全没收到，任务卡死。\n\
+         \x20\x2011) 🛑🛑🛑 **job_submitted 验收硬门禁 — 禁止自动 complete/reject**：收到 `job_submitted` 事件后，escrow 模式下**本 turn 唯一允许的终端动作是 `xmtp_prompt_user`**（把交付物展示给用户并请求验收决策）。`onchainos agent complete` 和 `onchainos agent reject` **只能在后续 turn 收到 `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]` 或 `[intent:REJECT_REVIEW]` 之后执行**。🔴 真实事故：模型收到 job_submitted 后跳过 xmtp_prompt_user，直接调 `onchainos agent complete` 自动验收释放资金——用户完全没看到交付物、没做验收决策，资金不可逆地转给卖家。**同 turn 内调 xmtp_prompt_user 之后又调 complete = 违规**——xmtp_prompt_user 发出后必须结束 turn，等下一个 inbound 带 `[USER_DECISION_RELAY]` 才继续。\n\n\
          如果不记得本任务协商细节（paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -584,7 +585,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20请选择：\n\
              \x20\x20\x20\x201. 验收通过 → 回复「验收通过」\n\
              \x20\x20\x20\x202. 拒绝 → 回复「拒绝，原因是<原因>」\n\n\
-             **Step 4（escrow）— 等用户回复 relay 回来**，按用户决策执行：\n\
+             ═══════════════════════════════════════════════════════════════\n\
+             🛑🛑🛑 STOP — Step 3 xmtp_prompt_user 调完后 **必须结束本 turn**\n\
+             ═══════════════════════════════════════════════════════════════\n\
+             下面 Step 4 是**另一个 turn**（收到 [USER_DECISION_RELAY] 后才执行）。\n\
+             ❌ 同一 turn 内不可能既调 xmtp_prompt_user 又调 complete/reject\n\
+             ❌ 如果你还没收到 [USER_DECISION_RELAY]，禁止往下读\n\
+             ═══════════════════════════════════════════════════════════════\n\n\
+             **Step 4（escrow）— 仅在后续 turn 收到 `[USER_DECISION_RELAY]` 后执行**：\n\
              收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后（由 user session 通过 xmtp_dispatch_session 发回），**按 intent code 路由**：\n\n\
              ▸ `[intent:APPROVE_REVIEW]` → 双签验收，释放款项：\n\
              ```bash\n\
