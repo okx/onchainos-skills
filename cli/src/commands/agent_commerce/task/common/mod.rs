@@ -113,15 +113,15 @@ struct TaskDetail {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct AgentProfile {
+pub struct AgentProfile {
     #[allow(dead_code)]
-    agent_id: Option<String>,
-    name: Option<String>,
-    profile_description: Option<String>,
+    pub agent_id: Option<String>,
+    pub name: Option<String>,
+    pub profile_description: Option<String>,
     /// 钱包地址（owner / 部署该 agent 的 EOA）
-    agent_wallet_address: Option<String>,
+    pub agent_wallet_address: Option<String>,
     /// XMTP 通信地址（agent 之间 P2P 通讯用）
-    communication_address: Option<String>,
+    pub communication_address: Option<String>,
 }
 
 /// 查询指定 agentId 的 agent 资料（name / profileDescription / 钱包地址 / 通信地址）。
@@ -129,7 +129,7 @@ struct AgentProfile {
 /// 直接 spawn `onchainos agent get --agent-ids <id>` 子进程 + parse stdout——
 /// 不复刻 token / wallet client / URL 拼装逻辑，`agent get` 实现以后改了这里自动跟上。
 /// 任何错误路径都回退到带 agentId 的占位符（地址字段为 None），保证返回值非空。
-async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
+pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     let fallback = || AgentProfile {
         agent_id: Some(agent_id.to_string()),
         name: Some(format!("Agent {agent_id}")),

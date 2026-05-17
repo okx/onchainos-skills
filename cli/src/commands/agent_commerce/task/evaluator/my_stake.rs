@@ -3,7 +3,6 @@ use chrono::TimeZone;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::evaluator::staking_types;
-use crate::commands::agent_commerce::task::signing;
 
 /// 渲染 unix 秒时间戳。0 表示"不适用"。
 fn fmt_unix_seconds(ts: i64, none_label: &str) -> String {
@@ -20,9 +19,7 @@ pub async fn handle_my_stake(
     client: &mut TaskApiClient,
     agent_id: &str,
 ) -> Result<()> {
-    let (_account_id, _address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
-    let s = staking_types::get_my_stake(client, &agent_id).await?;
+    let s = staking_types::get_my_stake(client, agent_id).await?;
 
     println!("my stake (链上质押状态)");
     println!("  voter address      : {}", s.voter_address);

@@ -14,7 +14,7 @@ use serde_json::Value;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    fetch_my_agents, AGENT_ROLE_BUYER, AGENT_ROLE_EVALUATOR, AGENT_ROLE_PROVIDER,
+    fetch_agent_profile, fetch_my_agents, AGENT_ROLE_BUYER, AGENT_ROLE_PROVIDER,
     XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
@@ -159,48 +159,12 @@ async fn resolve_agent_by_role(
     }
 }
 
-/// 按 `agent_id` 在身份列表里精确定位，并校验 `role` 一致；返回该身份的 `ownerAddress`。
-///
-/// 入参 `agent_id` 来自系统消息 envelope 的顶层 `agentId` 字段——这是真后端识别身份的
-/// 权威来源。CLI 用它反查 `ownerAddress`，再去 wallet store 找对应的本地账户来签名，
-/// 保证多身份场景下"该 agentId 由其名下钱包签名"的对应关系不会错位。
-async fn find_owner_address_by_agent_id(
-    agent_id: &str,
-    role_code: i64,
-    role_label: &str,
-) -> Result<String> {
-    let id = agent_id.trim();
-    if id.is_empty() {
-        bail!("agent_id 不能为空");
-    }
-    let list = query_agent_list().await;
-    for agent in &list {
-        let this_id = agent["agentId"].as_str().unwrap_or("");
-        if this_id != id {
-            continue;
-        }
-        let role = agent["role"].as_i64().unwrap_or(0);
-        if role != role_code {
-            bail!(
-                "agentId={id} 不是 {role_label} 身份（role={role}），请确认 envelope.agentId 与角色匹配"
-            );
-        }
-        let owner = agent["ownerAddress"].as_str().unwrap_or("").to_string();
-        if owner.is_empty() {
-            bail!("agentId={id} 缺少 ownerAddress 字段，无法定位钱包");
-        }
-        return Ok(owner);
-    }
-    bail!(
-        "`onchainos agent get` 列表中没有 agentId={id} 的身份；请确认该 agentId 属于当前登录账户名下"
-    )
-}
-
 /// Resolve wallet + evaluator agentId for signing.
 ///
-/// 按 `agent_id` 在 `agent get` 列表中精确定位 → 拿 `ownerAddress` → 在 wallet
-/// store 中找对应账户。`agent_id` 必传（来自系统消息 envelope 的顶层 `agentId`），
-/// 是多身份场景下唯一的正确路径——禁用「默认钱包反查」兜底以防错位签名。
+/// 按 `agent_id` 调 `fetch_agent_profile`（走 `agent get --agent-ids <id>` 单查，
+/// 无 owner 过滤）拿 `agentWalletAddress` → 在 wallet store 中找对应账户。
+/// `agent_id` 必传（来自系统消息 envelope 的顶层 `agentId`），是多身份场景下
+/// 唯一的正确路径——禁用「默认钱包反查」兜底以防错位签名。
 ///
 /// 唯一例外：`staking-config` 是 platform-level 只读 API，不签名、不动
 /// 钱包，直接调 `resolve_agent_id_by_role(AGENT_ROLE_EVALUATOR)` 取 header 用。
@@ -213,12 +177,15 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
     if id.is_empty() {
         bail!("agent_id 不能为空（必须传 envelope 顶层 agentId）");
     }
-    let owner = find_owner_address_by_agent_id(
-        id,
-        AGENT_ROLE_EVALUATOR,
-        "evaluator（仲裁者）",
-    )
-    .await?;
+
+    let profile = fetch_agent_profile(id).await;
+    let owner = profile.agent_wallet_address.unwrap_or_default();
+    if owner.is_empty() {
+        bail!(
+            "无法获取 agentId={id} 的钱包地址；请确认该 agentId 在 `onchainos agent get` 中可查"
+        );
+    }
+
     let (account_id, address) = resolve_wallet(None, Some(&owner)).map_err(|e| {
         anyhow::anyhow!(
             "agentId={id} 对应钱包 {owner} 不在本地（{e}）"

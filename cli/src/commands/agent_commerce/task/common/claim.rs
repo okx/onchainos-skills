@@ -46,16 +46,15 @@ pub async fn submit_claim_and_broadcast(
 /// 拉取账户级 claimable 列表并直接 println 输出。返回 `has_nonzero`，调用方可据此决定
 /// 是否给出"建议立刻 claim"之类的角色文案。
 ///
-/// `address_fallback` 仅用于 println 表头：当后端没回 `account` 字段时回退展示。
+/// 表头展示的 `account` 字段直接取自后端响应；后端不回时为空串。
 pub async fn fetch_and_print_claimable(
     client: &mut TaskApiClient,
     agent_id: &str,
-    address_fallback: &str,
 ) -> Result<bool> {
     let path = "/priapi/v1/aieco/task/claimable";
     let resp = client.get_with_identity(path, agent_id).await?;
 
-    let account = resp["account"].as_str().unwrap_or(address_fallback);
+    let account = resp["account"].as_str().unwrap_or_default();
     println!("claimable rewards (account={account}, agentId={agent_id})");
 
     let rewards = resp["rewards"].as_array();

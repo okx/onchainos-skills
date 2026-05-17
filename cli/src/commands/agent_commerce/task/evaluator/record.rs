@@ -2,7 +2,6 @@ use anyhow::Result;
 use std::fs;
 
 use super::helpers::evidence_dir;
-use crate::commands::agent_commerce::task::signing;
 
 /// 用户自定义 rubric 删除了 §3 裁决书模板、或 LLM 未按模板产出时落盘的占位符。
 /// 留下 jobId / agentId 让审计槽位永不为空。
@@ -27,10 +26,7 @@ pub async fn handle_record(
     agent_id: &str,
     verdict: Option<&str>,
 ) -> Result<()> {
-    let (_account_id, _address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
-
-    let dir = evidence_dir(job_id, &agent_id)?;
+    let dir = evidence_dir(job_id, agent_id)?;
     fs::create_dir_all(&dir)?;
     let path = dir.join("verdict.md");
 
@@ -38,7 +34,7 @@ pub async fn handle_record(
     let content: &str = match verdict {
         Some(v) if !v.is_empty() => v,
         _ => {
-            content_owned = placeholder(job_id, &agent_id);
+            content_owned = placeholder(job_id, agent_id);
             &content_owned
         }
     };
