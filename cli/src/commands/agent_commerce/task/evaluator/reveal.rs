@@ -1,5 +1,7 @@
 use anyhow::{bail, Result};
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -17,9 +19,22 @@ pub async fn handle_reveal(
     let can_resp = client.get_with_identity(&can_reveal_path, &agent_id).await?;
     match can_resp["canReveal"].as_bool() {
         Some(true) => {}
-        Some(false) => bail!(
-            "后端 canReveal=false（jobId={job_id}）：reveal 窗口尚未开启 / 本轮已结算 / 未 commit。"
-        ),
+        Some(false) => {
+            audit::log(
+                "cli",
+                "evaluator/vote_reveal_skipped",
+                true,
+                Duration::default(),
+                Some(vec![
+                    format!("jobId={job_id}"),
+                    format!("agentId={agent_id}"),
+                ]),
+                None,
+            );
+            bail!(
+                "后端 canReveal=false（jobId={job_id}）：reveal 窗口尚未开启 / 本轮已结算 / 未 commit。"
+            )
+        }
         None => bail!("canReveal 响应缺少布尔字段，后端可能返回异常: {can_resp}"),
     }
 
@@ -39,6 +54,19 @@ pub async fn handle_reveal(
         &agent_id,
     )
     .await?;
+
+    audit::log(
+        "cli",
+        "evaluator/vote_revealed",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("vote revealed (jobId={job_id})");
     println!("  txHash:       {tx_hash}");

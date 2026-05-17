@@ -815,8 +815,22 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 "buyer" | "client" =>
                     task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id, title_ref),
-                "evaluator" =>
-                    task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id),
+                "evaluator" => {
+                    crate::audit::log(
+                        "cli",
+                        "evaluator/next_action_received",
+                        true,
+                        std::time::Duration::default(),
+                        Some(vec![
+                            format!("jobId={job_id}"),
+                            format!("agentId={agent_id}"),
+                            format!("jobStatus={job_status}"),
+                            format!("code={code}"),
+                        ]),
+                        None,
+                    );
+                    task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id)
+                }
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };
             println!("{prompt}");

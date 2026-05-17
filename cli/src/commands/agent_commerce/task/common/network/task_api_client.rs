@@ -7,12 +7,40 @@
 //! 所有请求方法接收 **path**（如 `/priapi/v1/aieco/task/{jobId}/apply`），
 //! 不再接收完整 URL。返回值为 `body["data"]`。
 
+use std::time::Instant;
+
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
+use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::wallet_api::WalletApiClient;
 use crate::wallet_store;
+
+/// 把一次 API 请求结果写到 audit.jsonl。
+/// 成功不带 error；失败带截断后的 error。命令名固定 `api/<method>` 便于 jq 筛选。
+fn log_api(
+    method: &str,
+    path: &str,
+    agent_id: &str,
+    ok: bool,
+    elapsed: std::time::Duration,
+    error: Option<&str>,
+    extra: Option<&str>,
+) {
+    let mut args = vec![format!("path={path}"), format!("agentId={agent_id}")];
+    if let Some(e) = extra {
+        args.push(e.to_string());
+    }
+    audit::log(
+        "cli",
+        &format!("api/{method}"),
+        ok,
+        elapsed,
+        Some(args),
+        error,
+    );
+}
 
 /// 任务 API 路径前缀
 const TASK_PREFIX: &str = "/priapi/v1/aieco/task";
@@ -103,10 +131,19 @@ impl TaskApiClient {
         let query: Vec<(&str, &str)> = vec![];
         let headers: Vec<(&str, &str)> = vec![("agenticId", agent_id)];
         eprintln!("[TaskAPI] GET(jwt+agenticId) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
+        let started = Instant::now();
         let result = self.wallet.get_authed_with_headers(path, &token, &query, Some(&headers)).await;
+        let elapsed = started.elapsed();
         match &result {
-            Ok(data) => eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← {data}"),
-            Err(e) => eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← ERROR: {e}"),
+            Ok(data) => {
+                eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← {data}");
+                log_api("get", path, agent_id, true, elapsed, None, None);
+            }
+            Err(e) => {
+                let err_msg = format!("{e:#}");
+                eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← ERROR: {err_msg}");
+                log_api("get", path, agent_id, false, elapsed, Some(&err_msg), None);
+            }
         }
         result
     }
@@ -125,12 +162,21 @@ impl TaskApiClient {
             .unwrap_or_default();
         eprintln!("[TaskAPI] GET {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
         let headers = [("agenticId", agent_id)];
+        let started = Instant::now();
         let result = self.wallet
             .get_authed_with_headers(path, &token, &query, Some(&headers))
             .await;
+        let elapsed = started.elapsed();
         match &result {
-            Ok(data) => eprintln!("[TaskAPI] GET {url} ← {data}"),
-            Err(e) => eprintln!("[TaskAPI] GET {url} ← ERROR: {e}"),
+            Ok(data) => {
+                eprintln!("[TaskAPI] GET {url} ← {data}");
+                log_api("get", path, agent_id, true, elapsed, None, None);
+            }
+            Err(e) => {
+                let err_msg = format!("{e:#}");
+                eprintln!("[TaskAPI] GET {url} ← ERROR: {err_msg}");
+                log_api("get", path, agent_id, false, elapsed, Some(&err_msg), None);
+            }
         }
         result
     }
@@ -157,20 +203,82 @@ impl TaskApiClient {
             "[TaskAPI] GET(bytes) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}",
             token.len()
         );
-        let resp = self
+        let query_summary = query
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        let query_extra = if query_summary.is_empty() {
+            None
+        } else {
+            Some(format!("query={query_summary}"))
+        };
+        let started = Instant::now();
+        let resp = match self
             .raw_http
             .get(&url)
             .headers(headers)
             .query(query)
             .send()
             .await
-            .context("evidence download request failed")?;
+            .context("evidence download request failed")
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("{e:#}");
+                log_api(
+                    "get_bytes",
+                    path,
+                    agent_id,
+                    false,
+                    started.elapsed(),
+                    Some(&err_msg),
+                    query_extra.as_deref(),
+                );
+                return Err(e);
+            }
+        };
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("evidence download failed ({status}): {url}; body={body}"));
+            let err_msg = format!("evidence download failed ({status}): {url}; body={body}");
+            log_api(
+                "get_bytes",
+                path,
+                agent_id,
+                false,
+                started.elapsed(),
+                Some(&err_msg),
+                query_extra.as_deref(),
+            );
+            return Err(anyhow!("{err_msg}"));
         }
-        Ok(resp.bytes().await?.to_vec())
+        let bytes = match resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                let err_msg = format!("{e:#}");
+                log_api(
+                    "get_bytes",
+                    path,
+                    agent_id,
+                    false,
+                    started.elapsed(),
+                    Some(&err_msg),
+                    query_extra.as_deref(),
+                );
+                return Err(e.into());
+            }
+        };
+        log_api(
+            "get_bytes",
+            path,
+            agent_id,
+            true,
+            started.elapsed(),
+            None,
+            query_extra.as_deref(),
+        );
+        Ok(bytes.to_vec())
     }
 
     /// POST JSON + JWT + 身份头 → 返回 data（自动注入 sessionCert）
@@ -185,12 +293,21 @@ impl TaskApiClient {
         let token = get_access_token().await?;
         eprintln!("[TaskAPI] POST {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {body}", token.len());
         let headers = [("agenticId", agent_id)];
+        let started = Instant::now();
         let result = self.wallet
             .post_authed_with_headers(path, &token, &body, Some(&headers))
             .await;
+        let elapsed = started.elapsed();
         match &result {
-            Ok(data) => eprintln!("[TaskAPI] POST {url} ← {data}"),
-            Err(e) => eprintln!("[TaskAPI] POST {url} ← ERROR: {e}"),
+            Ok(data) => {
+                eprintln!("[TaskAPI] POST {url} ← {data}");
+                log_api("post", path, agent_id, true, elapsed, None, None);
+            }
+            Err(e) => {
+                let err_msg = format!("{e:#}");
+                eprintln!("[TaskAPI] POST {url} ← ERROR: {err_msg}");
+                log_api("post", path, agent_id, false, elapsed, Some(&err_msg), None);
+            }
         }
         result
     }
@@ -209,18 +326,28 @@ impl TaskApiClient {
     ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await?;
+        let content_len = body.len();
         eprintln!(
-            "[TaskAPI] POST(raw) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}, Content-Type={content_type}, Content-Length={}",
+            "[TaskAPI] POST(raw) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}, Content-Type={content_type}, Content-Length={content_len}",
             token.len(),
-            body.len(),
         );
         let extra = [("agenticId", agent_id)];
+        let extra_meta = format!("contentType={content_type}; contentLength={content_len}");
+        let started = Instant::now();
         let result = self.wallet
             .post_authed_raw_with_headers(path, &token, body, content_type, Some(&extra))
             .await;
+        let elapsed = started.elapsed();
         match &result {
-            Ok(data) => eprintln!("[TaskAPI] POST(raw) {url} ← {data}"),
-            Err(e) => eprintln!("[TaskAPI] POST(raw) {url} ← ERROR: {e}"),
+            Ok(data) => {
+                eprintln!("[TaskAPI] POST(raw) {url} ← {data}");
+                log_api("post_raw", path, agent_id, true, elapsed, None, Some(&extra_meta));
+            }
+            Err(e) => {
+                let err_msg = format!("{e:#}");
+                eprintln!("[TaskAPI] POST(raw) {url} ← ERROR: {err_msg}");
+                log_api("post_raw", path, agent_id, false, elapsed, Some(&err_msg), Some(&extra_meta));
+            }
         }
         result
     }

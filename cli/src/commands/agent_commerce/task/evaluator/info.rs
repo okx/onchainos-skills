@@ -1,10 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::{json, Map, Value};
 
 use super::helpers::evidence_dir;
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
 /// 双方证据袋的顶层 key（后端返回扁平结构，provider/client 直接在顶层）。
@@ -37,7 +39,21 @@ pub async fn handle_info(
                     );
                 }
                 Err(e) => {
-                    merged.insert("downloadError".into(), Value::String(e.to_string()));
+                    let err_msg = e.to_string();
+                    audit::log(
+                        "cli",
+                        "evaluator/evidence_download_failed",
+                        false,
+                        Duration::default(),
+                        Some(vec![
+                            format!("jobId={job_id}"),
+                            format!("agentId={agent_id}"),
+                            format!("side={side}"),
+                            format!("fileKey={file_key}"),
+                        ]),
+                        Some(&err_msg),
+                    );
+                    merged.insert("downloadError".into(), Value::String(err_msg));
                 }
             }
             *item = Value::Object(merged);

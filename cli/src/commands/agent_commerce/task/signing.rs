@@ -10,7 +10,9 @@
 use anyhow::{bail, Result};
 use base64::engine::{general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::Value;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
@@ -181,14 +183,38 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
     let profile = fetch_agent_profile(id).await;
     let owner = profile.agent_wallet_address.unwrap_or_default();
     if owner.is_empty() {
+        audit::log(
+            "cli",
+            "evaluator/wallet_resolve_failed",
+            false,
+            Duration::default(),
+            Some(vec![
+                format!("agentId={id}"),
+                "reason=missing_agent_wallet_address".into(),
+            ]),
+            Some("fetch_agent_profile returned empty agentWalletAddress"),
+        );
         bail!(
             "无法获取 agentId={id} 的钱包地址；请确认该 agentId 在 `onchainos agent get` 中可查"
         );
     }
 
     let (account_id, address) = resolve_wallet(None, Some(&owner)).map_err(|e| {
+        let msg = format!("{e}");
+        audit::log(
+            "cli",
+            "evaluator/wallet_resolve_failed",
+            false,
+            Duration::default(),
+            Some(vec![
+                format!("agentId={id}"),
+                format!("ownerAddress={owner}"),
+                "reason=wallet_not_in_local_store".into(),
+            ]),
+            Some(&msg),
+        );
         anyhow::anyhow!(
-            "agentId={id} 对应钱包 {owner} 不在本地（{e}）"
+            "agentId={id} 对应钱包 {owner} 不在本地（{msg}）"
         )
     })?;
     Ok((account_id, address, id.to_string()))

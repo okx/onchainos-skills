@@ -1,7 +1,9 @@
 use anyhow::{bail, Result};
 use chrono::TimeZone;
 use std::cmp::Ordering;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::evaluator::{decimal_str, staking_types};
 use crate::commands::agent_commerce::task::signing;
@@ -109,6 +111,19 @@ pub async fn handle_request_unstake(
     )
     .await?;
 
+    audit::log(
+        "cli",
+        "evaluator/unstake_requested",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("agentId={agent_id}"),
+            format!("amount={trimmed}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
+
     println!("request-unstake submitted (agentId={agent_id})");
     println!("  amount:  -{trimmed} OKB（申请中）");
     println!("  voter:   {address}");
@@ -163,6 +178,18 @@ pub async fn handle_claim_unstake(
     )
     .await?;
 
+    audit::log(
+        "cli",
+        "evaluator/unstake_claimed",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("agentId={agent_id}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
+
     println!("claim-unstake submitted (agentId={agent_id})");
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
@@ -206,6 +233,18 @@ pub async fn handle_cancel_unstake(
         &agent_id,
     )
     .await?;
+
+    audit::log(
+        "cli",
+        "evaluator/unstake_cancelled",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("agentId={agent_id}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("cancel-unstake submitted (agentId={agent_id})");
     println!("  voter:   {address}");

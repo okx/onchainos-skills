@@ -1,5 +1,7 @@
 use anyhow::{bail, Result};
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -38,6 +40,21 @@ pub async fn handle_commit(
     ).await?;
 
     let vote_label = if vote == 0 { "Approve (Client wins)" } else { "Reject (Provider wins)" };
+
+    audit::log(
+        "cli",
+        "evaluator/vote_committed",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("vote={vote}"),
+            format!("commitHash={commit_hash}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("vote committed (jobId={job_id})");
     println!("  vote:       {vote} ({vote_label})");

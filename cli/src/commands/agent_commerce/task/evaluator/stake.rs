@@ -1,6 +1,8 @@
 use anyhow::{bail, Result};
 use std::cmp::Ordering;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::evaluator::{decimal_str, staking_types};
 use crate::commands::agent_commerce::task::signing;
@@ -60,6 +62,25 @@ async fn run(
 
     let (tx_hash, endpoint) =
         execute_stake_or_increase(client, trimmed, &account_id, &address, &agent_id).await?;
+
+    let event = if endpoint == "increaseStake" {
+        "evaluator/stake_increased"
+    } else {
+        "evaluator/staked"
+    };
+    audit::log(
+        "cli",
+        event,
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("agentId={agent_id}"),
+            format!("amount={trimmed}"),
+            format!("endpoint={endpoint}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("{} submitted (agentId={agent_id}, via={endpoint})", ux.label);
     println!("  amount:  {}{trimmed} OKB", ux.amount_prefix);

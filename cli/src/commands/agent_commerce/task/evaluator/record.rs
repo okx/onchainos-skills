@@ -1,7 +1,9 @@
 use anyhow::Result;
 use std::fs;
+use std::time::Duration;
 
 use super::helpers::evidence_dir;
+use crate::audit;
 
 /// 用户自定义 rubric 删除了 §3 裁决书模板、或 LLM 未按模板产出时落盘的占位符。
 /// 留下 jobId / agentId 让审计槽位永不为空。
@@ -30,15 +32,38 @@ pub async fn handle_record(
     fs::create_dir_all(&dir)?;
     let path = dir.join("verdict.md");
 
+    let is_placeholder;
     let content_owned;
     let content: &str = match verdict {
-        Some(v) if !v.is_empty() => v,
+        Some(v) if !v.is_empty() => {
+            is_placeholder = false;
+            v
+        }
         _ => {
+            is_placeholder = true;
             content_owned = placeholder(job_id, agent_id);
             &content_owned
         }
     };
     fs::write(&path, content)?;
+
+    let event = if is_placeholder {
+        "evaluator/verdict_placeholder_written"
+    } else {
+        "evaluator/verdict_written"
+    };
+    audit::log(
+        "cli",
+        event,
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("path={}", path.display()),
+        ]),
+        None,
+    );
 
     println!("verdict written (jobId={job_id})");
     println!("  path: {}", path.display());

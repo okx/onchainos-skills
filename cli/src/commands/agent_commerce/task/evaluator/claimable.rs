@@ -1,5 +1,7 @@
 use anyhow::Result;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::{
     claim as common_claim, network::task_api_client::TaskApiClient,
 };
@@ -14,6 +16,18 @@ pub async fn handle_claimable(
 ) -> Result<()> {
     let has_nonzero =
         common_claim::fetch_and_print_claimable(client, agent_id).await?;
+
+    audit::log(
+        "cli",
+        "evaluator/arbitration_claimable_checked",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("agentId={agent_id}"),
+            format!("hasClaimable={has_nonzero}"),
+        ]),
+        None,
+    );
 
     if has_nonzero {
         println!("\nnext: 有可领奖励 — 跟我说『领取奖励』即可一次性提走，确认上链后入账。");

@@ -1,5 +1,7 @@
 use anyhow::Result;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::{
     claim as common_claim, network::task_api_client::TaskApiClient,
 };
@@ -14,6 +16,19 @@ pub async fn handle_claim(
 
     let tx_hash =
         common_claim::submit_claim_and_broadcast(client, &account_id, &address, &agent_id).await?;
+
+    audit::log(
+        "cli",
+        "evaluator/arbitration_claimed",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("agentId={agent_id}"),
+            format!("account={address}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("reward claim submitted (account={address})");
     println!("  txHash:   {tx_hash}");
