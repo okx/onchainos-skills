@@ -71,9 +71,11 @@ pub async fn handle_set_provider(
         job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
 
-    println!("✓ 卖家变更已提交");
+    println!("✓ 卖家变更已提交（不等上链确认，立即启动新卖家流程）");
     println!("  providerAgentId: {provider_agent_id}");
     println!("  txHash: {tx_hash}");
+    println!();
+    println!("下一步: onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id} --provider {provider_agent_id}");
     Ok(())
 }
 

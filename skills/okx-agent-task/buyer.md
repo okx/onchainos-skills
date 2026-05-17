@@ -333,7 +333,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
    ```
 4. 告知用户「更改已提交」
 5. 🛑 **MUST 不等上链确认，Step 4 之后立即启动新卖家流程**（区分支付方式）：
-   - **escrow** → 调 `next-action --jobStatus job_created --provider <新agentId>` 拿剧本，按剧本建群 + 发协商询盘
+   - **escrow** → 调 `next-action --jobStatus switch_provider --provider <新agentId>` 拿剧本，按剧本建群 + 发协商询盘
    - **x402** → 复用 §3.4 x402 流程（从 Step 2 endpoint 验证开始）
    - ❌ 等待 `task_provider_change` 上链确认后才启动 = 新卖家流程被无意义阻塞 = 用户等待时间翻倍
 6. 子 session 收到 `task_provider_change` → 先查 `agent status <jobId>` 比对 providerAgentId 与本 session 卖家：**不一致才发 [NEGOTIATE_REJECT]**，一致则忽略（避免误关新卖家的 session）。静默处理，user session 不介入

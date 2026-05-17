@@ -9,6 +9,195 @@ use crate::commands::agent_commerce::task::common::state_machine::Status;
 
 const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` / `userContent:` templates below are samples — translate to the user's language before `xmtp_dispatch_user` / `xmtp_prompt_user`.\n\n";
 
+/// 指定卖家 D-Step 路由（service-list 查询 → x402 或 A2A 分支入口）
+fn designated_provider_d_steps(job_id: &str, agent_id: &str, dp_id: &str) -> String {
+    format!("\
+             🎯 **指定卖家**: {dp_id}\n\
+             ⚠️ 指定卖家的持久化文件已由 CLI 在生成本提示词时自动删除（consume-on-read），无需手动清理。\n\n\
+             **D-Step 1 — 查询卖家 service-list：**\n\
+             ```bash\n\
+             onchainos agent service-list --agent-id {dp_id}\n\
+             ```\n\
+             检查返回结果中是否有服务（services 数组非空）以及服务中的 endpoint、feeAmount、feeTokenSymbol 字段。\n\n\
+             **D-Step 2 — 按 service-list 结果路由：**\n\
+             - **有服务且含 endpoint（支持 x402）** → 提取 services[0] 的 feeAmount、feeTokenSymbol、endpoint。\n\
+             \x20\x20⚠️ **feeAmount 是卖家注册时手动填写的，不一定等于链上实际价格**，须经 DX-Step 1 `x402-check` 验证。展示给用户时注明「注册费用」。\n\
+             \x20\x20执行以下指定卖家 x402 流程（不跳到 A-Step 1）：\n\n\
+             \x20\x20**DX-Step 1 — 验证 endpoint：**\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
+             \x20\x20```\n\
+             \x20\x20- `valid=false` → 调用 xmtp_dispatch_user 通知用户 endpoint 不合法，引导用户换一个卖家。结束 turn。\n\n\
+             \x20\x20**DX-Step 2 — 金额校验：**\n\
+             \x20\x20比较 x402-check 的 `amountHuman` 与 services[0] 的 `feeAmount`：\n\
+             \x20\x20- 不一致（差异 > 1%）→ 调用 xmtp_prompt_user 询问用户是否接受实际价格：\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「肯定/接受/accept/OK/同意 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 继续 DX-Step 3；用户语义「否定/拒绝/reject/decline/no 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 引导换卖家。⚠️ **路由 tag 协议**：`[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
+             \x20\x20\x20\x20userContent: 任务 {job_id} 指定卖家（AgentID={dp_id}）实际收费 <amountHuman> <tokenSymbol>，与注册费用 <feeAmount> <feeTokenSymbol> 不一致，是否接受？\n\
+             \x20\x20- 一致 → 继续 DX-Step 3。\n\n\
+             \x20\x20**DX-Step 3 — 预算检查：**\n\
+             \x20\x20比较 `amountHuman` 与任务最高预算（tokenAmount）：\n\
+             \x20\x20- 超出 → 调用 xmtp_dispatch_user 通知用户费用超额，引导换卖家。结束 turn。\n\
+             \x20\x20- 未超出 → 进入 **A-Step 3**（set-payment-mode + task-402-pay）。\n\n\
+             - **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。")
+}
+
+/// 指定卖家 B-Step 协商协议（三步握手 + 建群 + 多轮协商 + 落盘 + fallback）
+fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
+    let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent recommend {job_id} --agent-id {agent_id}");
+    let fallback_lines = format!("先执行 `onchainos agent mark-failed {job_id} --provider {dp_id}` 标记失败，再执行 `onchainos agent recommend {job_id} --agent-id {agent_id}` 获取新推荐列表。\n\
+             \x20\x20如果列表非空 → 按 xmtp_prompt_user 模板展示给用户选择（格式同非指定卖家的 Step 2：列出卖家信息 + 选择/翻页/公开/关闭选项）。\n\
+             \x20\x20如果列表为空 → 按下方引导用户选择 A/B/C");
+    format!("\
+             🛑 **硬约束 — 三步握手是让卖家 apply 的唯一合法路径**\n\n\
+             你想让卖家进入 apply 阶段（escrow），**必须**完整发完三步握手：\n\
+             \x20\x201) `[NEGOTIATE_PROPOSE]`（你 → 卖家，结构化提案）\n\
+             \x20\x202) 等卖家回 `[NEGOTIATE_ACK]`（字段全等）或 `[NEGOTIATE_COUNTER]`（继续谈）或 `[NEGOTIATE_REJECT]`（卖家拒绝）\n\
+             \x20\x203) 你回 `[NEGOTIATE_CONFIRM]`（原样回传 ACK 字段，卖家见到这个标记才会 apply）\n\
+             \x20\x20⚡ 任一方可随时发 `[NEGOTIATE_REJECT]` 终止协商（含 jobId + reason），收到后**不再回复**，立即切换下一个卖家。\n\n\
+             ❌ **禁止用自然语言绕过握手**——不要发以下这种消息：\n\
+             \x20\x20• 「协商条款已锁定 / 条款已敲定 / 无需额外提案 / 请你直接 apply / 请直接接单」\n\
+             \x20\x20• 「最终确认：任务/价格/支付方式 ...」之类的纯文字总结，没带 [NEGOTIATE_PROPOSE] / [NEGOTIATE_CONFIRM] 标记\n\
+             \x20\x20• 任何形式的「替代握手」短路——卖家 flow 里把 `[NEGOTIATE_CONFIRM]` 字面量当作 apply 唯一触发器，你发自然语言『请 apply』根本不会被识别，卖家只能继续等 [NEGOTIATE_PROPOSE]\n\n\
+             正确做法：协商达成一致后，**严格用** `[NEGOTIATE_PROPOSE]` 模板（见下方 B-Step 2 Step 4），让握手机器解析跑通。**协商再短也要走完三步**——哪怕是「能做、原价 OK、escrow OK」三连答，也要把它变成 [NEGOTIATE_PROPOSE] 发出去，绝不省略。\n\n\
+             ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
+             **B-Step 0 — 防重复检查（🛑 硬门禁）：**\n\
+             调 `session_status` 检查当前 job 是否已有 sub session（即是否已建群）。\n\
+             如果**已存在** sub session → 说明首轮询盘已发过。**立即结束本轮 turn**——不建群、不发消息、不发询盘、不执行后续任何 B-Step。\n\
+             如果**不存在** → 继续 B-Step 1。\n\n\
+             **B-Step 1 — 建群：**\n\
+             调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
+             \x20\x20参数：myAgentId={agent_id}，toAgentId=<{dp_id}>，jobId={job_id}\n\
+             \x20\x20成功返回 sessionKey + xmtpGroupId。\n\
+             \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<providerAgentId>, jobId={job_id}`\n\
+             \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
+             **B-Step 2 — 自动协商（买家 Agent ↔ 卖家 Agent 在 sub session 中多轮交互）：**\n\
+             🛑 **建群后同一 turn 内必须调 `xmtp_send` 发首条询盘消息**——建群只是创建通道，不发消息 = 卖家收不到任何信号 = 流程卡死。\n\
+             ❌ 绝对禁止建群后结束 turn 不发消息\n\
+             ❌ 绝对禁止用 xmtp_dispatch_user / xmtp_dispatch_session 代替 xmtp_send——建群后统一用 xmtp_send\n\n\
+             协商目标：就以下结构化字段达成一致（其他字段按买家发布任务时为准，不协商）——\n\
+             \x20\x20- paymentMode：支付方式（**A2A 协商会话中固定为 escrow**——x402 走 recommend 自动路由，不进协商）\n\
+             \x20\x20- tokenSymbol：支付代币\n\
+             \x20\x20- tokenAmount：支付金额\n\n\
+             ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商超时，5 分钟未回复）给卖家，再 `{fallback_cmd}` 切换下一个卖家（**禁止 xmtp_delete_conversation 删群**）。超时后若再收到该卖家的 a2a-agent-chat 消息，**不回复、不处理**，直接忽略。\n\n\
+             ⚠️ **协商消息格式铁律**：所有协商阶段的结构化消息（PROPOSE / CONFIRM / REJECT）**必须以对应前缀标记开头**，\n\
+             content 第一行必须是 `[NEGOTIATE_PROPOSE]` / `[NEGOTIATE_CONFIRM]` / `[NEGOTIATE_REJECT]`，**严禁用自然语言替代**。\n\
+             卖家 Agent 通过前缀做机器解析，缺少前缀会导致协商流程卡死。\n\n\
+             📌 **你有完整的协商权 —— 不要机械接受卖家任何报价**。看 context 里的【任务详情】+【卖家 profile / service-list / 历史 securityRate / feedback】，自己判断：\n\
+             \x20\x20• 卖家给的价格相对任务工作量是否合理；超过你预算上限就不要勉强答应\n\
+             \x20\x20• 卖家 profile / service-list 同类服务单价 vs 当前报价（卖家自己挂的价就是参考锚）\n\
+             \x20\x20• A2A 协商路径 paymentMode 固定为 escrow（资金有担保保障）\n\
+             \x20\x20• 多个推荐卖家的话，不要勉强跟某一个谈拢；不合适直接 5 分钟超时切下一个\n\n\
+             🛑🛑🛑 **ABSOLUTE PROHIBITION — 铁律：协商全程禁止向卖家透露最高预算（max_budget / paymentMostTokenAmount）。**\n\
+             任何发给卖家的消息（自然语言、[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]）中都**绝对不能**包含 max_budget 数值。\n\
+             泄露最高预算 = 卖家直接报上限价 = 买家丧失全部议价能力。\n\
+             ❌ 绝对禁止在 xmtp_send 中提及「最高预算」「上限」「max budget」「最多能出」等字眼或对应数值\n\
+             ❌ 绝对禁止把 paymentMostTokenAmount 字段值写入任何发给卖家的消息\n\n\
+             协商步骤：\n\
+             1. 调用 xmtp_send 发送第一条询盘消息（自然语言，让卖家先给报价，你再判断）：\n\
+             \x20\x20content=<任务描述 + 期望交付物 + paymentMode 倾向 + budget（基准预算），**禁止暴露 max_budget**>\n\
+             \x20\x20→ 等待卖家回复（5 分钟超时）\n\
+             2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\n\
+             🔴 **Step 2.5 — 卖家首次报价评估（全自动，禁止问用户）**：\n\
+             收到卖家自然语言报价后，**立即**从报价中提取最低价格，与任务 budget / max_budget 做对比。\n\
+             max_budget 从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 的 `paymentMostTokenAmount` 字段获取。\n\n\
+             \x20\x20| 卖家报价 | 动作 | 说明 |\n\
+             \x20\x20|---|---|---|\n\
+             \x20\x20| ≤ budget | → 价格可接受；继续确认 paymentMode 等条款，全部明确后进 Step 4 | 价格在预算内，但其他条款仍需协商 |\n\
+             \x20\x20| budget < 报价 ≤ max_budget | → 进 Step 3 自然语言还价 | 有谈判空间，自主砍价 |\n\
+             \x20\x20| > max_budget | → **自动 REJECT + 切换**（见下方） | 超出硬上限，不可接受 |\n\n\
+             \x20\x20**报价 > max_budget 的强制动作（全自动执行，不询问用户，不 xmtp_dispatch_user）**：\n\
+             \x20\x20a) xmtp_send 发送 `[NEGOTIATE_REJECT]`：\n\
+             \x20\x20\x20\x20content=\n\
+             \x20\x20\x20\x20[NEGOTIATE_REJECT]\n\
+             \x20\x20\x20\x20jobId: {job_id}\n\
+             \x20\x20\x20\x20reason: 报价超出最高预算\n\
+             \x20\x20b) `{fallback_cmd}` 切换下一个卖家\n\
+             \x20\x20c) 回到 Step 2 路由判断\n\n\
+             3. （sub session 内）双方就价格/条件进行自然语言调整（可能多轮，每轮 5 分钟超时，卖家 COUNTER 上限 3 次）\n\
+             \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
+             \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
+             ⚠️ **币种可协商**：tokenSymbol 允许双方协商变更（如 USDT ↔ USDG），但须双方明确同意。协商初始币种从 `onchainos agent common context` 获取。\n\n\
+             ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商超时，先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商超时）给卖家，再 `{fallback_cmd}` 切换下一个卖家（**不删群**）。超时后再收到该卖家消息一律忽略、不回复。\n\n\
+             4. 达成初步一致后，调用 xmtp_send 发送 **[NEGOTIATE_PROPOSE]** 结构化提案（必须严格使用此格式，卖家 Agent 会机器解析）：\n\
+             \n\
+             📋 **填字段前必做的口头记录自检（防止『记忆穿越』）**：\n\
+             \x20\x20在写 [NEGOTIATE_PROPOSE] 任何字段前，**逐字段从最近一条往前回看本 sub session 的所有 xmtp_send 内容**，找到**最后一次双方明确同意的值**：\n\
+             \x20\x20- tokenAmount：以**最后一次自然语言达成的价格**为准（不是任务原始预算、不是 recommend 列表里的标价、不是中间任意一轮的报价）\n\
+             \x20\x20- paymentMode：同样取最后一次共识\n\
+             \x20\x20- 任一字段在对话里没有明确共识 → **不要发 [NEGOTIATE_PROPOSE]**，先 xmtp_send 自然语言再确认一次\n\
+             \x20\x20⚠️ 不要凭印象直接填——你的训练数据里没有本次会话的记忆，唯一可靠来源是回看本 sub session 的消息历史。\n\n\
+             \x20\x20content=\n\
+             [NEGOTIATE_PROPOSE]\n\
+             jobId: {job_id}\n\
+             paymentMode: escrow\n\
+             tokenSymbol: <USDT|USDG>\n\
+             tokenAmount: <金额>\n\n\
+             5. **等待卖家回复 [NEGOTIATE_ACK] 或 [NEGOTIATE_COUNTER]**（5 分钟超时）：\n\n\
+             \x20\x20▸ 收到 **[NEGOTIATE_ACK]** → 逐字段校验卖家回传的值与你发送的 PROPOSE 完全一致：\n\
+             \x20\x20\x20\x20- 全部一致 → ✅ **立即执行 Step 6**（不发任何消息，直接跑 bash 命令）：\n\
+             \x20\x20\x20\x20\x20\x20🚫 **此处禁止 xmtp_send**——不发 [NEGOTIATE_CONFIRM]、不发自然语言、不发任何消息。\n\
+             \x20\x20\x20\x20\x20\x20[NEGOTIATE_CONFIRM] 必须等 Step 6 的 set-payment-mode 上链确认（`job_payment_mode_changed` 事件）后才发。\n\
+             \x20\x20\x20\x20\x20\x20→ **现在**跳到下方 Step 6，执行 save-agreed + set-payment-mode。\n\
+             \x20\x20\x20\x20- 任一字段不一致 → 视为篡改，调 xmtp_send 告知卖家字段不一致并重新发送 [NEGOTIATE_PROPOSE]\n\n\
+             \x20\x20▸ 收到 **[NEGOTIATE_COUNTER]** → **先计数**：回看本 sub session 历史，统计卖家已发送的 `[NEGOTIATE_COUNTER]` 总次数（含本次）。\n\
+             \x20\x20\x20\x20🔢 **COUNTER 轮次上限 = 3 次**：如果本次是第 3 次（含）以上 COUNTER，**不处理 COUNTER 内容**，直接 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商轮次超限，已达 3 次 COUNTER），然后 `{fallback_cmd}` 切换下一个卖家。\n\
+             \x20\x20\x20\x20未超限 → 继续下方价值判断：\n\n\
+             \x20\x20\x20\x20卖家提出反提案，**带价值判断决定接不接，不要机械接受**：\n\
+             \x20\x20\x20\x20⚠️ **第 0 步：先回看 sub session 历史，确认你刚才发的 [NEGOTIATE_PROPOSE] 是否填错了**：\n\
+             \x20\x20\x20\x20\x20\x20· 回看自然语言协商最后一次明确同意的金额 / paymentMode\n\
+             \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**等于**自然语言里你最后同意的那个数 → **是你 PROPOSE 写错了，不是卖家加价**：直接用 COUNTER 的金额重发新 [NEGOTIATE_PROPOSE]，**不要再讨价还价**也不要嘴硬说『我们之前是 X』，直接修正即可\n\
+             \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**高于**自然语言里你最后同意的数 → 才是卖家加价，按下方决策矩阵处理\n\n\
+             \x20\x20\x20\x20- 检查 tokenSymbol 改动：卖家提出不同币种时评估是否可接受（须双方明确同意）\n\
+             \x20\x20\x20\x20- 评估 tokenAmount（**max_budget 优先，不是百分比**）：\n\
+             \x20\x20\x20\x20\x20\x20· COUNTER 价 ≤ 任务 budget（原预算）→ 可接受，用 COUNTER 值发新 [NEGOTIATE_PROPOSE]\n\
+             \x20\x20\x20\x20\x20\x20· budget < COUNTER 价 ≤ max_budget（最高预算）→ 可接受，或继续还价取折中（带理由发新 [NEGOTIATE_PROPOSE]）\n\
+             \x20\x20\x20\x20\x20\x20· COUNTER 价 > max_budget → 调 xmtp_send 发送 `[NEGOTIATE_REJECT]` 结束协商，然后**立即** `{fallback_cmd}` 切换下一个卖家：\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20content=\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20[NEGOTIATE_REJECT]\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20jobId: {job_id}\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20reason: 报价超出最高预算\n\
+             \x20\x20\x20\x20\x20\x20· max_budget 不知道 → 调 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 取 `paymentMostTokenAmount` 字段\n\
+             \x20\x20\x20\x20- paymentMode 固定为 escrow，不接受其他支付方式\n\
+             \x20\x20\x20\x20- 全部可接受 → 用 COUNTER 中的值发新的 [NEGOTIATE_PROPOSE]，回到 Step 5 等 ACK\n\n\
+             \x20\x20▸ 收到 **[NEGOTIATE_REJECT]** → 卖家主动拒绝协商。**不再回复**，立即 `{fallback_cmd}` 切换下一个卖家。\n\n\
+             \x20\x20▸ 收到的回复**不含** [NEGOTIATE_ACK] / [NEGOTIATE_COUNTER] / [NEGOTIATE_REJECT] 标记 → 视为自然语言讨论，继续协商，重新回到 Step 4\n\n\
+             6. **收到 [NEGOTIATE_ACK] 全等 → 落盘 + setPaymentMode → 最后才发 [NEGOTIATE_CONFIRM]**：\n\n\
+             🛑 **顺序铁律（[NEGOTIATE_CONFIRM] 是卖家 apply 的唯一触发器，必须 paymentMode 在链上就位后才发，否则卖家 apply 会基于错的支付状态）**：\n\n\
+             **Step 6.1 — save-agreed 落盘**（无条件第一步）：\n\
+             ```bash\n\
+             onchainos agent save-agreed {job_id} --provider <当前协商的providerAgentId> --token-symbol <协商币种> --token-amount <协商价格> --agent-id {agent_id}\n\
+             ```\n\
+             不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
+             **Step 6.2 — 执行 setPaymentMode（无条件，不判断当前链上值）**：\n\
+             ⚠️ **不论链上 paymentType 当前是什么值（0 / 1 / 2 / 3），都必须执行 set-payment-mode。** 不要查 common context 比较——直接调：\n\
+             ⚠️ **A2A 协商会话中固定 escrow**：无论卖家是否有 endpoint，协商会话中只用 escrow。此处 set-payment-mode 会覆盖链上值。\n\n\
+             ```bash\n\
+             onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <协商币种> --token-amount <协商价格>\n\
+             ```\n\
+             此命令执行 setPaymentMode → 签名 → 广播，然后返回 exit code 2 (confirming)。\n\
+             ⚠️ **绝对不要**在此 turn 内 xmtp_send [NEGOTIATE_CONFIRM]——卖家见 [NEGOTIATE_CONFIRM] 会立刻 apply，但链上 paymentMode 还在 mempool / 没确认，apply 会失败或行为错位。[NEGOTIATE_CONFIRM] 必须等 `job_payment_mode_changed` 事件确认 paymentMode 上链后再发。\n\n\
+             **Step 6.3 — 结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
+             （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（escrow），链上 paymentMode 已就位。\n\n\
+             ━━━━━━━━━ 协商失败 / 切换卖家 ━━━━━━━━━\n\n\
+             当前卖家超时未回复（5 分钟）/ COUNTER 轮次超限（≥3 次）/ 收到 `[NEGOTIATE_REJECT]` / 协商失败 → 先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason 填超时/超限/失败原因）给卖家，再切换：\n\
+             \x20\x20{fallback_lines}\n\
+             ⚠️ **切换时必须先发 [NEGOTIATE_REJECT] 再切走**（让卖家有明确终止信号），但**禁止 xmtp_delete_conversation 删群**。切走后再收到该卖家消息一律忽略、不回复。\n\
+             当前页无剩余卖家且翻页也无结果 → 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
+             用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
+             用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
+             用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
+             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
+             \x20\x20userContent: [任务 {short_id} 你作为买家] 推荐卖家均不合适。请选择下一步：\n\
+             \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
+             \x20\x20B. 转为公开任务 — 让更多卖家看到任务\n\
+             \x20\x20C. 关闭任务 — 取消并退款\n\
+             \x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后继续执行。\n\n\
+             【后续事件】\n\
+             - x402 → set-payment-mode → job_payment_mode_changed → task-402-pay（签名 + direct/accept + endpoint 重放）→ job_accepted → complete\n\
+             - escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 apply → 卖家 apply 上链 → 卖家 xmtp_send 通知买家 → 买家收到 a2a-agent-chat → confirm-accept → job_accepted\n")
+}
+
 /// Buyer 在某 status 下可执行的 CLI 命令清单（用于 `agent common context` 输出末尾的菜单）。
 ///
 /// 每个 status 列出主动作 + 一行索引指回 `next-action` 完整剧本（
@@ -194,34 +383,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         };
 
         let routing_section = if let Some(dp_id) = &designated_provider {
-            format!("\
-             🎯 **指定卖家**: {dp_id}\n\
-             ⚠️ 指定卖家的持久化文件已由 CLI 在生成本提示词时自动删除（consume-on-read），无需手动清理。\n\n\
-             **D-Step 1 — 查询卖家 service-list：**\n\
-             ```bash\n\
-             onchainos agent service-list --agent-id {dp_id}\n\
-             ```\n\
-             检查返回结果中是否有服务（services 数组非空）以及服务中的 endpoint、feeAmount、feeTokenSymbol 字段。\n\n\
-             **D-Step 2 — 按 service-list 结果路由：**\n\
-             - **有服务且含 endpoint（支持 x402）** → 提取 services[0] 的 feeAmount、feeTokenSymbol、endpoint。\n\
-             \x20\x20⚠️ **feeAmount 是卖家注册时手动填写的，不一定等于链上实际价格**，须经 DX-Step 1 `x402-check` 验证。展示给用户时注明「注册费用」。\n\
-             \x20\x20执行以下指定卖家 x402 流程（不跳到 A-Step 1）：\n\n\
-             \x20\x20**DX-Step 1 — 验证 endpoint：**\n\
-             \x20\x20```bash\n\
-             \x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
-             \x20\x20```\n\
-             \x20\x20- `valid=false` → 调用 xmtp_dispatch_user 通知用户 endpoint 不合法，引导用户换一个卖家。结束 turn。\n\n\
-             \x20\x20**DX-Step 2 — 金额校验：**\n\
-             \x20\x20比较 x402-check 的 `amountHuman` 与 services[0] 的 `feeAmount`：\n\
-             \x20\x20- 不一致（差异 > 1%）→ 调用 xmtp_prompt_user 询问用户是否接受实际价格：\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「肯定/接受/accept/OK/同意 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 继续 DX-Step 3；用户语义「否定/拒绝/reject/decline/no 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 引导换卖家。⚠️ **路由 tag 协议**：`[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
-             \x20\x20\x20\x20userContent: 任务 {job_id} 指定卖家（AgentID={dp_id}）实际收费 <amountHuman> <tokenSymbol>，与注册费用 <feeAmount> <feeTokenSymbol> 不一致，是否接受？\n\
-             \x20\x20- 一致 → 继续 DX-Step 3。\n\n\
-             \x20\x20**DX-Step 3 — 预算检查：**\n\
-             \x20\x20比较 `amountHuman` 与任务最高预算（tokenAmount）：\n\
-             \x20\x20- 超出 → 调用 xmtp_dispatch_user 通知用户费用超额，引导换卖家。结束 turn。\n\
-             \x20\x20- 未超出 → 进入 **A-Step 3**（set-payment-mode + task-402-pay）。\n\n\
-             - **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。")
+            designated_provider_d_steps(job_id, agent_id, dp_id)
         } else {
             format!("\
              **Step 1 — 查询推荐卖家列表：**\n\
@@ -289,164 +451,33 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         );
 
         if let Some(ref dp_id) = designated_provider {
-            let to_agent_id_desc = dp_id.as_str();
-            let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent recommend {job_id} --agent-id {agent_id}");
-            let fallback_lines = format!("先执行 `onchainos agent mark-failed {job_id} --provider {dp_id}` 标记失败，再执行 `onchainos agent recommend {job_id} --agent-id {agent_id}` 获取新推荐列表。\n\
-             \x20\x20如果列表非空 → 按 xmtp_prompt_user 模板展示给用户选择（格式同非指定卖家的 Step 2：列出卖家信息 + 选择/翻页/公开/关闭选项）。\n\
-             \x20\x20如果列表为空 → 按下方引导用户选择 A/B/C");
-            output.push_str(&format!("\
-             🛑 **硬约束 — 三步握手是让卖家 apply 的唯一合法路径**\n\n\
-             你想让卖家进入 apply 阶段（escrow），**必须**完整发完三步握手：\n\
-             \x20\x201) `[NEGOTIATE_PROPOSE]`（你 → 卖家，结构化提案）\n\
-             \x20\x202) 等卖家回 `[NEGOTIATE_ACK]`（字段全等）或 `[NEGOTIATE_COUNTER]`（继续谈）或 `[NEGOTIATE_REJECT]`（卖家拒绝）\n\
-             \x20\x203) 你回 `[NEGOTIATE_CONFIRM]`（原样回传 ACK 字段，卖家见到这个标记才会 apply）\n\
-             \x20\x20⚡ 任一方可随时发 `[NEGOTIATE_REJECT]` 终止协商（含 jobId + reason），收到后**不再回复**，立即切换下一个卖家。\n\n\
-             ❌ **禁止用自然语言绕过握手**——不要发以下这种消息：\n\
-             \x20\x20• 「协商条款已锁定 / 条款已敲定 / 无需额外提案 / 请你直接 apply / 请直接接单」\n\
-             \x20\x20• 「最终确认：任务/价格/支付方式 ...」之类的纯文字总结，没带 [NEGOTIATE_PROPOSE] / [NEGOTIATE_CONFIRM] 标记\n\
-             \x20\x20• 任何形式的「替代握手」短路——卖家 flow 里把 `[NEGOTIATE_CONFIRM]` 字面量当作 apply 唯一触发器，你发自然语言『请 apply』根本不会被识别，卖家只能继续等 [NEGOTIATE_PROPOSE]\n\n\
-             正确做法：协商达成一致后，**严格用** `[NEGOTIATE_PROPOSE]` 模板（见下方 B-Step 2 Step 4），让握手机器解析跑通。**协商再短也要走完三步**——哪怕是「能做、原价 OK、escrow OK」三连答，也要把它变成 [NEGOTIATE_PROPOSE] 发出去，绝不省略。\n\n\
-             ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
-             **B-Step 0 — 防重复检查（🛑 硬门禁）：**\n\
-             调 `session_status` 检查当前 job 是否已有 sub session（即是否已建群）。\n\
-             如果**已存在** sub session → 说明首轮询盘已发过。**立即结束本轮 turn**——不建群、不发消息、不发询盘、不执行后续任何 B-Step。\n\
-             如果**不存在** → 继续 B-Step 1。\n\n\
-             **B-Step 1 — 建群：**\n\
-             调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
-             \x20\x20参数：myAgentId={agent_id}，toAgentId=<{to_agent_id_desc}>，jobId={job_id}\n\
-             \x20\x20成功返回 sessionKey + xmtpGroupId。\n\
-             \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<providerAgentId>, jobId={job_id}`\n\
-             \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
-             **B-Step 2 — 自动协商（买家 Agent ↔ 卖家 Agent 在 sub session 中多轮交互）：**\n\
-             🛑 **建群后同一 turn 内必须调 `xmtp_send` 发首条询盘消息**——建群只是创建通道，不发消息 = 卖家收不到任何信号 = 流程卡死。\n\
-             ❌ 绝对禁止建群后结束 turn 不发消息\n\
-             ❌ 绝对禁止用 xmtp_dispatch_user / xmtp_dispatch_session 代替 xmtp_send——建群后统一用 xmtp_send\n\n\
-             协商目标：就以下结构化字段达成一致（其他字段按买家发布任务时为准，不协商）——\n\
-             \x20\x20- paymentMode：支付方式（**A2A 协商会话中固定为 escrow**——x402 走 recommend 自动路由，不进协商）\n\
-             \x20\x20- tokenSymbol：支付代币\n\
-             \x20\x20- tokenAmount：支付金额\n\n\
-             ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商超时，5 分钟未回复）给卖家，再 `{fallback_cmd}` 切换下一个卖家（**禁止 xmtp_delete_conversation 删群**）。超时后若再收到该卖家的 a2a-agent-chat 消息，**不回复、不处理**，直接忽略。\n\n\
-             ⚠️ **协商消息格式铁律**：所有协商阶段的结构化消息（PROPOSE / CONFIRM / REJECT）**必须以对应前缀标记开头**，\n\
-             content 第一行必须是 `[NEGOTIATE_PROPOSE]` / `[NEGOTIATE_CONFIRM]` / `[NEGOTIATE_REJECT]`，**严禁用自然语言替代**。\n\
-             卖家 Agent 通过前缀做机器解析，缺少前缀会导致协商流程卡死。\n\n\
-             📌 **你有完整的协商权 —— 不要机械接受卖家任何报价**。看 context 里的【任务详情】+【卖家 profile / service-list / 历史 securityRate / feedback】，自己判断：\n\
-             \x20\x20• 卖家给的价格相对任务工作量是否合理；超过你预算上限就不要勉强答应\n\
-             \x20\x20• 卖家 profile / service-list 同类服务单价 vs 当前报价（卖家自己挂的价就是参考锚）\n\
-             \x20\x20• A2A 协商路径 paymentMode 固定为 escrow（资金有担保保障）\n\
-             \x20\x20• 多个推荐卖家的话，不要勉强跟某一个谈拢；不合适直接 5 分钟超时切下一个\n\n\
-             🛑🛑🛑 **ABSOLUTE PROHIBITION — 铁律：协商全程禁止向卖家透露最高预算（max_budget / paymentMostTokenAmount）。**\n\
-             任何发给卖家的消息（自然语言、[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]）中都**绝对不能**包含 max_budget 数值。\n\
-             泄露最高预算 = 卖家直接报上限价 = 买家丧失全部议价能力。\n\
-             ❌ 绝对禁止在 xmtp_send 中提及「最高预算」「上限」「max budget」「最多能出」等字眼或对应数值\n\
-             ❌ 绝对禁止把 paymentMostTokenAmount 字段值写入任何发给卖家的消息\n\n\
-             协商步骤：\n\
-             1. 调用 xmtp_send 发送第一条询盘消息（自然语言，让卖家先给报价，你再判断）：\n\
-             \x20\x20content=<任务描述 + 期望交付物 + paymentMode 倾向 + budget（基准预算），**禁止暴露 max_budget**>\n\
-             \x20\x20→ 等待卖家回复（5 分钟超时）\n\
-             2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\n\
-             🔴 **Step 2.5 — 卖家首次报价评估（全自动，禁止问用户）**：\n\
-             收到卖家自然语言报价后，**立即**从报价中提取最低价格，与任务 budget / max_budget 做对比。\n\
-             max_budget 从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 的 `paymentMostTokenAmount` 字段获取。\n\n\
-             \x20\x20| 卖家报价 | 动作 | 说明 |\n\
-             \x20\x20|---|---|---|\n\
-             \x20\x20| ≤ budget | → 价格可接受；继续确认 paymentMode 等条款，全部明确后进 Step 4 | 价格在预算内，但其他条款仍需协商 |\n\
-             \x20\x20| budget < 报价 ≤ max_budget | → 进 Step 3 自然语言还价 | 有谈判空间，自主砍价 |\n\
-             \x20\x20| > max_budget | → **自动 REJECT + 切换**（见下方） | 超出硬上限，不可接受 |\n\n\
-             \x20\x20**报价 > max_budget 的强制动作（全自动执行，不询问用户，不 xmtp_dispatch_user）**：\n\
-             \x20\x20a) xmtp_send 发送 `[NEGOTIATE_REJECT]`：\n\
-             \x20\x20\x20\x20content=\n\
-             \x20\x20\x20\x20[NEGOTIATE_REJECT]\n\
-             \x20\x20\x20\x20jobId: {job_id}\n\
-             \x20\x20\x20\x20reason: 报价超出最高预算\n\
-             \x20\x20b) `{fallback_cmd}` 切换下一个卖家\n\
-             \x20\x20c) 回到 Step 2 路由判断\n\n\
-             3. （sub session 内）双方就价格/条件进行自然语言调整（可能多轮，每轮 5 分钟超时，卖家 COUNTER 上限 3 次）\n\
-             \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
-             \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
-             ⚠️ **币种可协商**：tokenSymbol 允许双方协商变更（如 USDT ↔ USDG），但须双方明确同意。协商初始币种从 `onchainos agent common context` 获取。\n\n\
-             ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商超时，先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商超时）给卖家，再 `{fallback_cmd}` 切换下一个卖家（**不删群**）。超时后再收到该卖家消息一律忽略、不回复。\n\n\
-             4. 达成初步一致后，调用 xmtp_send 发送 **[NEGOTIATE_PROPOSE]** 结构化提案（必须严格使用此格式，卖家 Agent 会机器解析）：\n\
-             \n\
-             📋 **填字段前必做的口头记录自检（防止『记忆穿越』）**：\n\
-             \x20\x20在写 [NEGOTIATE_PROPOSE] 任何字段前，**逐字段从最近一条往前回看本 sub session 的所有 xmtp_send 内容**，找到**最后一次双方明确同意的值**：\n\
-             \x20\x20- tokenAmount：以**最后一次自然语言达成的价格**为准（不是任务原始预算、不是 recommend 列表里的标价、不是中间任意一轮的报价）\n\
-             \x20\x20- paymentMode：同样取最后一次共识\n\
-             \x20\x20- 任一字段在对话里没有明确共识 → **不要发 [NEGOTIATE_PROPOSE]**，先 xmtp_send 自然语言再确认一次\n\
-             \x20\x20⚠️ 不要凭印象直接填——你的训练数据里没有本次会话的记忆，唯一可靠来源是回看本 sub session 的消息历史。\n\n\
-             \x20\x20content=\n\
-             [NEGOTIATE_PROPOSE]\n\
-             jobId: {job_id}\n\
-             paymentMode: escrow\n\
-             tokenSymbol: <USDT|USDG>\n\
-             tokenAmount: <金额>\n\n\
-             5. **等待卖家回复 [NEGOTIATE_ACK] 或 [NEGOTIATE_COUNTER]**（5 分钟超时）：\n\n\
-             \x20\x20▸ 收到 **[NEGOTIATE_ACK]** → 逐字段校验卖家回传的值与你发送的 PROPOSE 完全一致：\n\
-             \x20\x20\x20\x20- 全部一致 → ✅ **立即执行 Step 6**（不发任何消息，直接跑 bash 命令）：\n\
-             \x20\x20\x20\x20\x20\x20🚫 **此处禁止 xmtp_send**——不发 [NEGOTIATE_CONFIRM]、不发自然语言、不发任何消息。\n\
-             \x20\x20\x20\x20\x20\x20[NEGOTIATE_CONFIRM] 必须等 Step 6 的 set-payment-mode 上链确认（`job_payment_mode_changed` 事件）后才发。\n\
-             \x20\x20\x20\x20\x20\x20→ **现在**跳到下方 Step 6，执行 save-agreed + set-payment-mode。\n\
-             \x20\x20\x20\x20- 任一字段不一致 → 视为篡改，调 xmtp_send 告知卖家字段不一致并重新发送 [NEGOTIATE_PROPOSE]\n\n\
-             \x20\x20▸ 收到 **[NEGOTIATE_COUNTER]** → **先计数**：回看本 sub session 历史，统计卖家已发送的 `[NEGOTIATE_COUNTER]` 总次数（含本次）。\n\
-             \x20\x20\x20\x20🔢 **COUNTER 轮次上限 = 3 次**：如果本次是第 3 次（含）以上 COUNTER，**不处理 COUNTER 内容**，直接 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商轮次超限，已达 3 次 COUNTER），然后 `{fallback_cmd}` 切换下一个卖家。\n\
-             \x20\x20\x20\x20未超限 → 继续下方价值判断：\n\n\
-             \x20\x20\x20\x20卖家提出反提案，**带价值判断决定接不接，不要机械接受**：\n\
-             \x20\x20\x20\x20⚠️ **第 0 步：先回看 sub session 历史，确认你刚才发的 [NEGOTIATE_PROPOSE] 是否填错了**：\n\
-             \x20\x20\x20\x20\x20\x20· 回看自然语言协商最后一次明确同意的金额 / paymentMode\n\
-             \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**等于**自然语言里你最后同意的那个数 → **是你 PROPOSE 写错了，不是卖家加价**：直接用 COUNTER 的金额重发新 [NEGOTIATE_PROPOSE]，**不要再讨价还价**也不要嘴硬说『我们之前是 X』，直接修正即可\n\
-             \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**高于**自然语言里你最后同意的数 → 才是卖家加价，按下方决策矩阵处理\n\n\
-             \x20\x20\x20\x20- 检查 tokenSymbol 改动：卖家提出不同币种时评估是否可接受（须双方明确同意）\n\
-             \x20\x20\x20\x20- 评估 tokenAmount（**max_budget 优先，不是百分比**）：\n\
-             \x20\x20\x20\x20\x20\x20· COUNTER 价 ≤ 任务 budget（原预算）→ 可接受，用 COUNTER 值发新 [NEGOTIATE_PROPOSE]\n\
-             \x20\x20\x20\x20\x20\x20· budget < COUNTER 价 ≤ max_budget（最高预算）→ 可接受，或继续还价取折中（带理由发新 [NEGOTIATE_PROPOSE]）\n\
-             \x20\x20\x20\x20\x20\x20· COUNTER 价 > max_budget → 调 xmtp_send 发送 `[NEGOTIATE_REJECT]` 结束协商，然后**立即** `{fallback_cmd}` 切换下一个卖家：\n\
-             \x20\x20\x20\x20\x20\x20\x20\x20content=\n\
-             \x20\x20\x20\x20\x20\x20\x20\x20[NEGOTIATE_REJECT]\n\
-             \x20\x20\x20\x20\x20\x20\x20\x20jobId: {job_id}\n\
-             \x20\x20\x20\x20\x20\x20\x20\x20reason: 报价超出最高预算\n\
-             \x20\x20\x20\x20\x20\x20· max_budget 不知道 → 调 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 取 `paymentMostTokenAmount` 字段\n\
-             \x20\x20\x20\x20- paymentMode 固定为 escrow，不接受其他支付方式\n\
-             \x20\x20\x20\x20- 全部可接受 → 用 COUNTER 中的值发新的 [NEGOTIATE_PROPOSE]，回到 Step 5 等 ACK\n\n\
-             \x20\x20▸ 收到 **[NEGOTIATE_REJECT]** → 卖家主动拒绝协商。**不再回复**，立即 `{fallback_cmd}` 切换下一个卖家。\n\n\
-             \x20\x20▸ 收到的回复**不含** [NEGOTIATE_ACK] / [NEGOTIATE_COUNTER] / [NEGOTIATE_REJECT] 标记 → 视为自然语言讨论，继续协商，重新回到 Step 4\n\n\
-             6. **收到 [NEGOTIATE_ACK] 全等 → 落盘 + setPaymentMode → 最后才发 [NEGOTIATE_CONFIRM]**：\n\n\
-             🛑 **顺序铁律（[NEGOTIATE_CONFIRM] 是卖家 apply 的唯一触发器，必须 paymentMode 在链上就位后才发，否则卖家 apply 会基于错的支付状态）**：\n\n\
-             **Step 6.1 — save-agreed 落盘**（无条件第一步）：\n\
-             ```bash\n\
-             onchainos agent save-agreed {job_id} --provider <当前协商的providerAgentId> --token-symbol <协商币种> --token-amount <协商价格> --agent-id {agent_id}\n\
-             ```\n\
-             不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
-             **Step 6.2 — 执行 setPaymentMode（无条件，不判断当前链上值）**：\n\
-             ⚠️ **不论链上 paymentType 当前是什么值（0 / 1 / 2 / 3），都必须执行 set-payment-mode。** 不要查 common context 比较——直接调：\n\
-             ⚠️ **A2A 协商会话中固定 escrow**：无论卖家是否有 endpoint，协商会话中只用 escrow。此处 set-payment-mode 会覆盖链上值。\n\n\
-             ```bash\n\
-             onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <协商币种> --token-amount <协商价格>\n\
-             ```\n\
-             此命令执行 setPaymentMode → 签名 → 广播，然后返回 exit code 2 (confirming)。\n\
-             ⚠️ **绝对不要**在此 turn 内 xmtp_send [NEGOTIATE_CONFIRM]——卖家见 [NEGOTIATE_CONFIRM] 会立刻 apply，但链上 paymentMode 还在 mempool / 没确认，apply 会失败或行为错位。[NEGOTIATE_CONFIRM] 必须等 `job_payment_mode_changed` 事件确认 paymentMode 上链后再发。\n\n\
-             **Step 6.3 — 结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
-             （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（escrow），链上 paymentMode 已就位。\n\n\
-             ━━━━━━━━━ 协商失败 / 切换卖家 ━━━━━━━━━\n\n\
-             当前卖家超时未回复（5 分钟）/ COUNTER 轮次超限（≥3 次）/ 收到 `[NEGOTIATE_REJECT]` / 协商失败 → 先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason 填超时/超限/失败原因）给卖家，再切换：\n\
-             \x20\x20{fallback_lines}\n\
-             ⚠️ **切换时必须先发 [NEGOTIATE_REJECT] 再切走**（让卖家有明确终止信号），但**禁止 xmtp_delete_conversation 删群**。切走后再收到该卖家消息一律忽略、不回复。\n\
-             当前页无剩余卖家且翻页也无结果 → 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
-             用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
-             用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
-             \x20\x20userContent: [任务 {short_id} 你作为买家] 推荐卖家均不合适。请选择下一步：\n\
-             \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
-             \x20\x20B. 转为公开任务 — 让更多卖家看到任务\n\
-             \x20\x20C. 关闭任务 — 取消并退款\n\
-             \x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后继续执行。\n\n\
-             【后续事件】\n\
-             - x402 → set-payment-mode → job_payment_mode_changed → task-402-pay（签名 + direct/accept + endpoint 重放）→ job_accepted → complete\n\
-             - escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 apply → 卖家 apply 上链 → 卖家 xmtp_send 通知买家 → 买家收到 a2a-agent-chat → confirm-accept → job_accepted\n"
-            ));
+            output.push_str(&designated_provider_negotiate(job_id, agent_id, &short_id, dp_id));
         }
 
         output
+        },
+
+        // ─── switch_provider: user session 发起的卖家变更后立即启动新卖家流程 ──
+        Event::SwitchProvider => {
+        let designated_provider = super::negotiate::take_designated_provider(job_id).ok().flatten();
+        let dp_id = match &designated_provider {
+            Some(id) => id.clone(),
+            None => {
+                return format!("{LOCALIZATION_PREFIX}【错误】switch_provider 缺少 --provider 参数。\n\
+                     请重新调用：onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id} --provider <新卖家agentId>\n");
+            }
+        };
+
+        let d_steps = designated_provider_d_steps(job_id, agent_id, &dp_id);
+        let negotiate = designated_provider_negotiate(job_id, agent_id, &short_id, &dp_id);
+        format!("\
+             【卖家变更】set-provider 已提交，立即启动新卖家流程（不等 task_provider_change 上链确认）\n\
+             【角色】买家（Client） | 【执行环境】user session\n\n\
+             🛑 **本事件禁止调用的 CLI**：save-agreed / set-payment-mode / confirm-accept / apply / complete / reject——此时尚未与新卖家协商，这些命令全部非法。\n\n\
+             ⚠️ 旧卖家的 sub session 会在收到 `task_provider_change` 上链事件后自动发 [NEGOTIATE_REJECT]，无需你干预。\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             {d_steps}\n\n\
+             {negotiate}\n")
         },
 
         // ─── provider_applied（卖家已 apply）──────────────────
@@ -1525,7 +1556,7 @@ onchainos agent create-task \\
         ),
     };
 
-    let core = if job_status == "create_task" {
+    let core = if job_status == "create_task" || job_status == "switch_provider" {
         body
     } else {
         format!("{context_preamble}{body}")

@@ -795,6 +795,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         | Event::NegotiateCounter => "【系统通知】negotiate_*（buyer 端协商中继事件，provider 无关）\n\
              【建议】忽略，无需任何动作。\n".to_string(),
 
+        Event::SwitchProvider => "【系统通知】switch_provider（buyer 端卖家变更事件，provider 无关）\n\
+             【建议】忽略，无需任何动作。\n".to_string(),
+
         Event::Other(ref other) => format!(
             "【未知状态】{other}\n\
              【建议】\n\

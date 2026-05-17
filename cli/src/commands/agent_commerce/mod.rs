@@ -882,7 +882,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // wakeup_notify 是网络/重启恢复事件,真实 status 在 envelope.message.jobStatus 字段;
     // agent 应该用 message.jobStatus 重调 next-action,这里跳过校验让 WakeupNotify arm 输出引导剧本。
     const PSEUDO_EVENTS: &[&str] = &[
-        "create_task",
+        "create_task", "switch_provider",
         "dispute_raise", "agree_refund", "dispute_evidence",
         "close", "set_public",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",

@@ -215,6 +215,10 @@ pub enum Event {
     /// setProviderAndAgentId tx 上链成功(通知 buyer 侧所有子 session;无子 session 时通知 backup)
     TaskProviderChange,
 
+    // ── user session 伪事件(user 指令触发,不改 status) ────────────────
+    /// set-provider 成功后 user session 立即发起新卖家流程(不等 task_provider_change 上链确认)
+    SwitchProvider,
+
     // ── 协商中继事件(buyer 本地派发,不改 status) ────────────────────
     /// 卖家自然语言回复(不含 [NEGOTIATE_*] 标记),buyer.md Route 4 → negotiate_reply
     NegotiateReply,
@@ -286,6 +290,8 @@ impl Event {
             // 买家条款变更上链回执
             "task_token_budget_change"  => Event::TaskTokenBudgetChange,
             "task_provider_change"      => Event::TaskProviderChange,
+            // user session 伪事件
+            "switch_provider"           => Event::SwitchProvider,
             // 协商中继(buyer 本地派发)
             "negotiate_reply"           => Event::NegotiateReply,
             "negotiate_ack"             => Event::NegotiateAck,
@@ -334,6 +340,7 @@ impl Event {
             Event::CooldownEntered        => "cooldown_entered",
             Event::TaskTokenBudgetChange  => "task_token_budget_change",
             Event::TaskProviderChange    => "task_provider_change",
+            Event::SwitchProvider         => "switch_provider",
             Event::NegotiateReply         => "negotiate_reply",
             Event::NegotiateAck           => "negotiate_ack",
             Event::NegotiateCounter       => "negotiate_counter",
@@ -377,6 +384,7 @@ pub fn status_when_event(e: &Event) -> Status {
         // 主流程
         Event::JobCreated | Event::ProviderApplied
         | Event::TaskTokenBudgetChange | Event::TaskProviderChange
+        | Event::SwitchProvider
         | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Open,
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
