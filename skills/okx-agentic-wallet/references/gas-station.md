@@ -374,7 +374,7 @@ When the user replies with something matching "check order xxx" / "what's the st
 
 ## Passive Response Templates (blocked scenarios)
 
-Per PRD, these scenarios make Gas Station unavailable for the tx. **Do NOT proactively push Gas Station as an option in these scenarios.** The default flow (native gas or normal error) runs as usual. Only when the user **directly asks** a variant of "can I pay gas with stablecoin?" / "why can't I use Gas Station for this?" does the Agent respond with the matching template below.
+These scenarios make Gas Station unavailable for the tx. **Do NOT proactively push Gas Station as an option in these scenarios.** The default flow (native gas or normal error) runs as usual. Only when the user **directly asks** a variant of "can I pay gas with stablecoin?" / "why can't I use Gas Station for this?" does the Agent respond with the matching template below.
 
 ### Template 1 — HAS_PENDING_TX (a prior Gas Station tx is still pending)
 

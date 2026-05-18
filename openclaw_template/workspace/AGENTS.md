@@ -70,6 +70,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-dex-bridge | Cross-chain bridging / transfer across Stargate, Across, Relay, Gas.zip | User wants to move tokens between chains, get cross-chain quotes, compare bridge fees, or check bridge status |
 | okx-dex-strategy | Limit-order strategy trading on Agentic Wallet TEE: create, cancel, list, resume | User wants to place a price-triggered limit order (buy dip, take profit, stop loss), manage pending orders, or recover orders suspended by TEE upgrades |
 | okx-dex-token | Token search, metadata, rankings, liquidity, holders, top traders, cluster analysis | User searches for tokens, wants rankings, holder info, or cluster analysis |
+| okx-dex-social | Crypto news, sentiment, KOL / vibe analytics | User asks for news, market sentiment, top KOLs discussing a token, or token vibe score |
 | okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a tx, estimate gas, or check tx status |
 | okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred` — TEE or local-key), MPP (`charge` / `session` — open / voucher / topUp / close), and a2a-pay (paymentId-based create / pay / status). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session, pays for streaming / voucher / top-up payment-gated resources, or works with a paymentId / `a2a_...` link |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |

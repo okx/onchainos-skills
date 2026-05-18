@@ -209,10 +209,10 @@ fn mcp_tools_list_returns_all_tools() {
     let mut client = McpClient::start();
     let tools = client.list_tools();
 
-    // Verify minimum tool count (includes 5 workflow tools added in feat/workflows)
+    // Verify minimum tool count (includes 5 workflow tools + 9 social tools)
     assert!(
-        tools.len() >= 53,
-        "expected at least 53 tools, got {}: {:?}",
+        tools.len() >= 62,
+        "expected at least 62 tools, got {}: {:?}",
         tools.len(),
         tools
     );
@@ -243,6 +243,16 @@ fn mcp_tools_list_returns_all_tools() {
         "workflow_new_tokens",
         "workflow_wallet_analysis",
         "workflow_portfolio",
+        // Social tools
+        "social_news_latest",
+        "social_news_by_symbol",
+        "social_news_search",
+        "social_news_detail",
+        "social_news_platforms",
+        "social_sentiment_ranking",
+        "social_sentiment_symbol",
+        "social_vibe_timeline",
+        "social_vibe_top_kols",
     ];
     for name in expected {
         assert!(
@@ -751,4 +761,209 @@ fn mcp_workflow_portfolio_has_discriminator_and_required_fields() {
     assert!(data.get("balances").is_some(), "balances field missing");
     assert!(data.get("totalValue").is_some(), "totalValue field missing");
     assert!(data.get("overview").is_some(), "overview field missing");
+}
+
+// ── Social tools ───────────────────────────────────────────────────────
+
+/// Walks the JSON tree and asserts no `text` / `content` / `translatedContent`
+/// field appears anywhere — compliance red line for DEX vibe.
+fn assert_no_tweet_bodies(v: &Value) {
+    match v {
+        Value::Object(map) => {
+            for forbidden in &["text", "content", "translatedContent"] {
+                assert!(
+                    !map.contains_key(*forbidden),
+                    "compliance violation: forbidden field '{forbidden}' present: {v}"
+                );
+            }
+            for child in map.values() {
+                assert_no_tweet_bodies(child);
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                assert_no_tweet_bodies(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn mcp_social_news_latest() {
+    let mut client = McpClient::start();
+    let result = client.call_tool("social_news_latest", json!({"limit": "5"}));
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(
+        data.get("articles").is_some(),
+        "expected 'articles' field: {data}"
+    );
+}
+
+#[test]
+fn mcp_social_news_by_symbol() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_news_by_symbol",
+        json!({"token_symbols": "ETH", "limit": "5"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(
+        data.get("articles").is_some(),
+        "expected 'articles' field: {data}"
+    );
+}
+
+#[test]
+fn mcp_social_news_search() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_news_search",
+        json!({"keyword": "ethereum", "limit": "5"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(
+        data.get("articles").is_some(),
+        "expected 'articles' field: {data}"
+    );
+}
+
+#[test]
+fn mcp_social_news_platforms() {
+    let mut client = McpClient::start();
+    let result = client.call_tool("social_news_platforms", json!({}));
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    let platforms = data
+        .get("platforms")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("expected 'platforms' array: {data}"));
+    assert!(!platforms.is_empty(), "platforms list should not be empty");
+}
+
+#[test]
+fn mcp_social_sentiment_ranking() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_sentiment_ranking",
+        json!({"time_frame": "1", "limit": "5"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    assert!(
+        !result.is_error,
+        "social_sentiment_ranking failed: {}",
+        result.content
+    );
+}
+
+#[test]
+fn mcp_social_sentiment_symbol_snapshot() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_sentiment_symbol",
+        json!({"token_symbols": "BTC", "time_frame": "1"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    assert!(
+        !result.is_error,
+        "social_sentiment_symbol failed: {}",
+        result.content
+    );
+}
+
+#[test]
+fn mcp_social_sentiment_symbol_trend_mode() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_sentiment_symbol",
+        json!({"token_symbols": "BTC", "time_frame": "1", "trend_points": "8"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    if let Some(details) = data.get("details").and_then(|v| v.as_array()) {
+        if let Some(first) = details.first() {
+            assert!(
+                first.get("trend").is_some(),
+                "trend mode should populate 'trend' field: {first}"
+            );
+        }
+    }
+}
+
+#[test]
+fn mcp_social_vibe_timeline_strips_tweet_bodies() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_vibe_timeline",
+        json!({
+            "chain": "solana",
+            "token_address": common::tokens::SOL_WSOL,
+            "time_frame": "1"
+        }),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert_no_tweet_bodies(&data);
+}
+
+#[test]
+fn mcp_social_vibe_top_kols_strips_tweet_bodies() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_vibe_top_kols",
+        json!({
+            "chain": "solana",
+            "token_address": common::tokens::SOL_WSOL,
+            "time_frame": "1",
+            "limit": "5"
+        }),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert_no_tweet_bodies(&data);
+}
+
+/// Regression guard for the MCP `social_sentiment_ranking` tool: the `period`
+/// response field must echo the resolved time_frame (1=1h / 2=4h / 3=24h).
+/// If the wire mapping ever drifts, this test catches it via the MCP layer
+/// (complementary to the CLI-level test in cli_social.rs).
+#[test]
+fn mcp_social_sentiment_ranking_period_echo_matches_time_frame() {
+    let mut client = McpClient::start();
+    for (tf, expected) in [("1", "1h"), ("2", "4h"), ("3", "24h")] {
+        let result = client.call_tool(
+            "social_sentiment_ranking",
+            json!({"time_frame": tf, "limit": "1"}),
+        );
+        if result.is_rate_limited() {
+            continue;
+        }
+        let data = result.api_data();
+        let period = data["period"].as_str().unwrap_or("");
+        assert_eq!(
+            period, expected,
+            "time_frame={tf} expected period='{expected}', got '{period}'"
+        );
+    }
 }

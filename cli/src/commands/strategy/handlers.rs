@@ -29,7 +29,7 @@ const ROUTER_MODE_MEV_ON: i64 = 2;
 const ROUTER_MODE_MEV_OFF: i64 = 3;
 /// BE-confirmed 2026-05-08: fee derives from `limitOrderFeeLevel`; `limitOrderFeeValue` not sent.
 const DEFAULT_LIMIT_ORDER_FEE_LEVEL: i64 = 2;
-/// SD-A activation TTL (PRD §4.2: always 30 days).
+/// SD-A activation TTL: always 30 days.
 const ACTIVATE_DEFAULT_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// `sourceType` value for Agentic-Wallet origin (BE-confirmed 2026-05-12).
 const SOURCE_TYPE_AGENTIC: i32 = 4;
@@ -960,7 +960,7 @@ mod tests {
 
     #[test]
     fn build_default_preset_default_15_percent_to_15hundreths() {
-        // PRD §5.2 default `15` → `"0.15"` on the wire.
+        // Default `15` → `"0.15"` on the wire.
         let v = build_default_preset(DEFAULT_SLIPPAGE_VALUE, None, direction::BUY);
         assert_eq!(v["buyPreset"]["slippageValue"], serde_json::json!("0.15"));
     }

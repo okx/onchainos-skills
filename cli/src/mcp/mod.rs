@@ -13,8 +13,8 @@ use tokio::sync::Mutex;
 
 use crate::client::ApiClient;
 use crate::commands::{
-    cross_chain, defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token,
-    tracker, workflows, competition,
+    competition, cross_chain, defi, gateway, leaderboard, market, memepump, portfolio, signal,
+    social, swap, token, tracker, workflows,
 };
 
 // ── DeFi ──────────────────────────────────────────────────────────────
@@ -1325,6 +1325,149 @@ impl McpServer {
             &p.address,
             &chain_index,
             p.wallet_address.as_deref().unwrap_or(""),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── Social: news / sentiment / vibe ───────────────────────────────
+
+    #[tool(
+        name = "social_news_latest",
+        description = "Latest crypto news feed (across all coins by default). Optional filters: token_symbols (comma-separated, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), importance ('1'=High/'2'=Medium/'3'=Low), platform, language ('en_US' default / 'zh_CN'). Pagination via limit range [1, 50] + cursor. detail_level='2' includes full article body."
+    )]
+    async fn social_news_latest(
+        &self,
+        Parameters(p): Parameters<social::SocialNewsLatestParams>,
+    ) -> Result<String, String> {
+        match social::fetch_news_latest(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_news_by_symbol",
+        description = "News filtered by coin symbol(s). token_symbols required (comma-separated, max 20). sort_by: '1'=Latest (default), '2'=Hot. sentiment: '1'=Bullish/'2'=Bearish/'3'=Neutral. importance: '1'=High/'2'=Medium/'3'=Low. begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback). limit range [1, 50]."
+    )]
+    async fn social_news_by_symbol(
+        &self,
+        Parameters(p): Parameters<social::SocialNewsBySymbolParams>,
+    ) -> Result<String, String> {
+        match social::fetch_news_by_symbol(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_news_search",
+        description = "Full-text crypto news search. keyword required. Optional sort_by ('1'=Latest/'2'=Hot), sentiment, importance, platform, token_symbols (additional filter, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), detail_level, limit range [1, 50], cursor, language."
+    )]
+    async fn social_news_search(
+        &self,
+        Parameters(p): Parameters<social::SocialNewsSearchParams>,
+    ) -> Result<String, String> {
+        match social::fetch_news_search(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_news_detail",
+        description = "Get the full body of a single news article by id. article_id is required and comes from the `articles[].id` field of any news listing endpoint. Use this when a list call returned only summaries (detail_level='1')."
+    )]
+    async fn social_news_detail(
+        &self,
+        Parameters(p): Parameters<social::SocialNewsDetailParams>,
+    ) -> Result<String, String> {
+        match social::fetch_news_detail(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_news_platforms",
+        description = "List available news source platforms. Use the returned identifiers as the `platform` filter on social_news_latest / social_news_by_symbol / social_news_search."
+    )]
+    async fn social_news_platforms(&self) -> Result<String, String> {
+        match social::fetch_news_platforms(&mut *self.client.lock().await).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_sentiment_ranking",
+        description = "Top coins ranked by social activity (mention count) over a window. time_frame: '1'=1h (default), '2'=4h, '3'=24h. sort_by: '1'=Hot (only value supported). limit range [1, 50], default '10'."
+    )]
+    async fn social_sentiment_ranking(
+        &self,
+        Parameters(p): Parameters<social::SocialSentimentRankingParams>,
+    ) -> Result<String, String> {
+        match social::fetch_sentiment_ranking(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_sentiment_symbol",
+        description = "Aggregated social sentiment for one or more coins. token_symbols required (comma-separated, max 20). time_frame: '1'=1h (default) / '2'=4h / '3'=24h. Snapshot mode by default; pass trend_points (1–50) to switch to time-bucketed trend mode."
+    )]
+    async fn social_sentiment_symbol(
+        &self,
+        Parameters(p): Parameters<social::SocialSentimentSymbolParams>,
+    ) -> Result<String, String> {
+        match social::fetch_sentiment_symbol(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_vibe_timeline",
+        description = "Token vibe (hotness) summary + time-bucketed timeline + sample KOLs per bucket. Keyed by chain + token_address (NOT symbol — resolve to a contract address first). time_frame: '1'=24h (default) / '2'=72h / '3'=7d / '4'=30d. Tweet bodies are stripped from the response (compliance red line)."
+    )]
+    async fn social_vibe_timeline(
+        &self,
+        Parameters(p): Parameters<social::SocialVibeTimelineParams>,
+    ) -> Result<String, String> {
+        let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
+        match social::fetch_vibe_timeline(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.token_address,
+            p.time_frame.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_vibe_top_kols",
+        description = "Top KOLs discussing a token (capped at upstream TOP50). sort_by: '1'=Engagement (default) / '2'=Mentions / '3'=Impressions. time_frame: '1'/'2'/'3'/'4'. Keyed by chain + token_address. Tweet bodies stripped (compliance); tweet URLs and KOL identity fields pass through."
+    )]
+    async fn social_vibe_top_kols(
+        &self,
+        Parameters(p): Parameters<social::SocialVibeTopKolsParams>,
+    ) -> Result<String, String> {
+        let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
+        match social::fetch_vibe_top_kols(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.token_address,
+            p.sort_by.as_deref(),
+            p.time_frame.as_deref(),
+            p.limit.as_deref(),
         )
         .await
         {
