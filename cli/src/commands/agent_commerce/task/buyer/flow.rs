@@ -366,7 +366,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             Event::ProviderApplied => "（无动作）等待 job_accepted",
             Event::JobAccepted => "xmtp_dispatch_user (通知接单成功)",
             Event::JobSubmitted => "xmtp_prompt_user (转发交付物请求验收决策)",
-            Event::JobRefused => "无 (等待卖家决策)",
+            Event::JobRefused => "xmtp_dispatch_user (通知拒绝已上链) → 等待卖家决策",
             Event::JobDisputed => "xmtp_prompt_user (转发仲裁通知请求证据)",
             Event::DisputeResolved => "xmtp_dispatch_user (通知仲裁结果)",
             Event::JobRefunded => "xmtp_dispatch_user (通知退款完成)",
@@ -662,20 +662,28 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              - x402: 流程已结束\n"
         ),
 
-        // ─── job_refused: 买家已拒绝，等待卖家决策 ─────────────────
-        Event::JobRefused =>
-            "【当前状态】job_refused（买家已拒绝交付物，等待卖家决定）\n\
+        // ─── job_refused: 买家已拒绝，通知用户后等待卖家决策 ────────
+        Event::JobRefused => format!(
+            "【当前状态】job_refused（买家拒绝交付物已上链，等待卖家决定）\n\
              【角色】买家（Client）\n\n\
-             【你的下一步动作】\n\n\
-             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，静默等待即可。\n\
-             无需执行 CLI 命令。卖家有 24h 决定：\n\
+             🛑 **必须调用 `xmtp_dispatch_user` 通知用户拒绝已上链，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             {title_query_hint}\
+             **Step 1 — 调用 xmtp_dispatch_user 通知用户拒绝已确认：**\n\n\
+             content：\n\
+             \x20\x20\x20\x20[拒绝已确认] 任务 **{title_display}**（{job_id}）的交付物已拒绝，等待卖家处理。\n\
+             \x20\x20\x20\x20卖家将在 24 小时内选择：发起仲裁 或 同意退款。\n\
+             \x20\x20\x20\x20超时未操作将自动退款至您的钱包。\n\n\
+             **Step 2 — 静默等待卖家决策：**\n\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**。卖家有 24h 决定：\n\
              - 发起仲裁 → 你将收到 job_disputed\n\
              - 同意退款 → 你将收到 job_refunded\n\
              - 24h 超时 → 系统自动退款，你将收到 job_refunded\n\n\
+             跑完 Step 1 → **结束本轮 turn**，等待下一个系统事件。\n\n\
              【后续事件】\n\
              - job_disputed → 提交买家证据（Scene 6）\n\
-             - job_refunded → 退款完成\n".to_string()
-        ,
+             - job_refunded → 退款完成\n"
+        ),
 
         // ─── Scene 6: 仲裁已发起，提交买家证据 ─────────────────────
         Event::JobDisputed => format!(
