@@ -812,6 +812,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             // 不再从 API designatedProvider 字段回填——后端该字段是链上地址，
             // 与 agentId 语义不同，且未指定卖家时也可能返回非零值导致误判。
 
+            // ── review gate：buyer 验收门禁自动标记 ──────────────────────
+            if matches!(role.as_str(), "buyer" | "client") {
+                if job_status == "job_submitted" {
+                    if let Err(e) = task::common::review_gate::mark_pending(&job_id) {
+                        eprintln!("[next-action] review_gate mark_pending failed: {e}");
+                    }
+                } else if job_status == "approve_review" {
+                    if let Err(e) = task::common::review_gate::mark_approved(&job_id) {
+                        eprintln!("[next-action] review_gate mark_approved failed: {e}");
+                    }
+                }
+            }
+
             // 状态脱节 → block 输出剧本（避免 sub 按 stale event 跑老剧本上链）
             // 只在 PSEUDO_EVENTS / unknown / network failure 时跳过校验，正常情况下严格守门
             if let Some(w) = check_status_freshness(&job_id, &job_status, &agent_id).await {
@@ -934,7 +947,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // agent 应该用 message.jobStatus 重调 next-action,这里跳过校验让 WakeupNotify arm 输出引导剧本。
     const PSEUDO_EVENTS: &[&str] = &[
         "create_task", "switch_provider",
-        "dispute_raise", "agree_refund", "dispute_evidence",
+        "dispute_raise", "agree_refund", "dispute_evidence", "approve_review", "reject_review",
         "close", "set_public",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
         "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "slashed", "cooldown_entered", "round_failed",

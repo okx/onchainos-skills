@@ -28,6 +28,9 @@ pub async fn handle_complete(
     let payment_mode = PaymentMode::from_int(task["paymentMode"].as_i64().unwrap_or(0) as i32);
 
     if payment_mode == PaymentMode::Escrow {
+        // ── 验收门禁：escrow 模式下必须经过 approve_review 伪事件 ────
+        crate::commands::agent_commerce::task::common::review_gate::check_and_consume(job_id)?;
+
         // ── 担保：双签 pre-complete → complete ──────────────────────
         let result = signing::task_dual_sign_and_broadcast(
             client, job_id, "pre-complete", "complete",

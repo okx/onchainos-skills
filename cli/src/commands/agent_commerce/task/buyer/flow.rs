@@ -227,9 +227,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Submitted => vec![
             next_action("job_submitted"),
-            ref_header,
-            format!("  onchainos agent complete {job_id}       # escrow：验收通过，释放款项"),
-            format!("  onchainos agent reject {job_id} --reason <reason>  # 拒绝验收（仅 escrow）"),
+            "⚠️ complete/reject 不在 job_submitted 剧本中——收到用户验收决策后调 next-action 拿对应伪事件剧本：".to_string(),
+            format!("  onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId <agentId>  # 用户验收通过后"),
+            format!("  onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId <agentId>  # 用户拒绝验收后"),
             format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <score> --task-id {job_id}  # 评价卖家（用户回复「评价」后再收集评分和内容）"),
         ],
         Status::Refused => vec![
@@ -343,7 +343,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
          \x20\x209) ❌ **禁止给卖家发过场消息**：除协商阶段的结构化消息（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]、协商自然语言对话）外，**任何事件处理中都不要 xmtp_send 给卖家**。包括但不限于「已确认接单」「资金已托管」「已验收」「证据已提交」「任务已完成」等状态通知。卖家通过链上事件得知状态变化，买家发过场消息只会造成干扰。\n\
          \x20\x2010) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session 禁止直接生成文字回复**——你在 sub/backup session 中输出的任何文字用户**完全、绝对、100% 看不到**。所有面向用户的内容**必须且只能**通过 `xmtp_dispatch_user`（纯通知）或 `xmtp_prompt_user`（需要用户决策）工具推送。直接输出文字 = 信息丢失 + 用户无感知 + 流程卡死。🔴 真实事故：模型在 backup session 拿到推荐列表后直接输出文字展示，用户完全没收到，任务卡死。\n\
          \x20\x2012) 🛑🛑🛑 **ABSOLUTE PROHIBITION — 禁止 `sessions_spawn` / `sessions_yield`**——你（sub session / backup session）**自己就是**负责执行剧本的 agent。**绝对禁止**调 `sessions_spawn` 派生子 agent 再委托、**绝对禁止**调 `sessions_yield` 交出控制权。backup session 也是 sub，收到 `source:\"system\"` 事件后必须**自己调 `next-action`、自己执行剧本**。🔴 真实事故：backup 收到 `job_created` 后调 `sessions_spawn` 派生子 agent，虽然结果碰巧正确但执行路径错误——designated-provider 可能未被正确消费、协商上下文断裂。\n\
-         \x20\x2013) 🛑🛑🛑 **job_submitted 验收硬门禁 — 禁止自动 complete/reject**：收到 `job_submitted` 事件后，escrow 模式下**本 turn 唯一允许的终端动作是 `xmtp_prompt_user`**（把交付物展示给用户并请求验收决策）。`onchainos agent complete` 和 `onchainos agent reject` **只能在后续 turn 收到 `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]` 或 `[intent:REJECT_REVIEW]` 之后执行**。🔴 真实事故：模型收到 job_submitted 后跳过 xmtp_prompt_user，直接调 `onchainos agent complete` 自动验收释放资金——用户完全没看到交付物、没做验收决策，资金不可逆地转给卖家。**同 turn 内调 xmtp_prompt_user 之后又调 complete = 违规**——xmtp_prompt_user 发出后必须结束 turn，等下一个 inbound 带 `[USER_DECISION_RELAY]` 才继续。\n\n\
+         \x20\x2013) 🛑🛑🛑 **job_submitted 验收硬门禁 — 禁止自动 complete/reject**：`job_submitted` 剧本中**不包含** `onchainos agent complete` / `onchainos agent reject` 命令——它们被拆分到独立伪事件 `approve_review` / `reject_review` 中。收到 `[USER_DECISION_RELAY]` 后，**必须调 `next-action --jobStatus approve_review` 或 `reject_review` 拿剧本**，不要自己拼 complete/reject 命令。🔴 真实事故：模型收到 job_submitted 后跳过 xmtp_prompt_user，直接调 `onchainos agent complete` 自动验收释放资金——用户完全没看到交付物、没做验收决策，资金不可逆地转给卖家。\n\n\
          如果不记得本任务协商细节（paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -557,13 +557,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::JobSubmitted => format!(
             "【当前状态】job_submitted（卖家已提交交付物）\n\
              【角色】买家（Client）\n\n\
-             🛑 **CRITICAL — 本事件必须使用 `xmtp_prompt_user` 推送验收决策到 user session，禁止在 sub session 中直接输出文字回复。**\n\
-             sub session 不面向用户——在 sub session 中直接生成文字回复（哪怕内容正确）= 用户看不到交付物 + 无法验收 + 任务卡死。\n\
-             ❌ 禁止用文字回复代替 xmtp_prompt_user 工具调用\n\
-             ❌ 禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user（dispatch_user 是纯通知无法 relay，用户验收决策无法路由回 sub）\n\
-             🚫 **担保模式严禁自动验收**：escrow 模式下收到交付物后**必须通知 user session，由用户决定验收通过还是拒绝**。\n\
-             Agent 不得替用户做验收决策，即使交付物看起来完全符合验收标准。\n\
-             🚫 **complete / reject 硬门禁**：只有收到 `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]` 或 `[intent:REJECT_REVIEW]` 后才能调用 `onchainos agent complete` 或 `onchainos agent reject`。在此之前**禁止调用这两个命令**——无论交付物质量如何、无论是否超时临近、无论任何理由。\n\
+             🛑 **必须用 `xmtp_prompt_user` 推送验收决策到 user session**——sub session 不面向用户，直接输出文字 = 用户看不到交付物 + 任务卡死。禁止用 `xmtp_dispatch_user` 代替（纯通知无法 relay）。\n\
+             🛑 **escrow 严禁自动验收**：必须等用户通过 relay 做出决策，Agent 不得替用户决定——无论交付物质量如何、无论是否超时临近。\n\
              ⚠️ x402 模式：资金已支付，只需通知用户交付物内容，用户不能拒绝。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 查询任务详情，提取交付物和支付方式：**\n\
@@ -602,8 +597,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
              调用 xmtp_prompt_user 把交付物和验收决策请求推给用户（sessionKey 复用 Step 2 已获取的值;调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`,见硬规则 7）：\n\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户语义「肯定/通过/approve/OK/同意/yes 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 complete；\
-             用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session 执行 reject。\
+             用户语义「肯定/通过/approve/OK/同意/yes 等」→ **仅调** xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 approve_review 流程，你不要做其它事）；\
+             用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ **仅调** xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 reject_review 流程，你不要做其它事）。\
              ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略 / 拆开**——sub 按 intent tag 分支，不再按文字匹配，避免多语言失配。\n\
              ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。禁止 user session agent 自己执行 task CLI。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
              \x20\x20\x20\x20userContent（按 deliverableType 分,首行务必带 `[任务 {short_id} 你作为买家]` 前缀）：\n\n\
@@ -629,35 +624,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ═══════════════════════════════════════════════════════════════\n\
              🛑🛑🛑 STOP — Step 3 xmtp_prompt_user 调完后 **必须结束本 turn**\n\
              ═══════════════════════════════════════════════════════════════\n\
-             下面 Step 4 是**另一个 turn**（收到 [USER_DECISION_RELAY] 后才执行）。\n\
-             ❌ 同一 turn 内不可能既调 xmtp_prompt_user 又调 complete/reject\n\
-             ❌ 如果你还没收到 [USER_DECISION_RELAY]，禁止往下读\n\
+             本剧本到此结束。后续 turn 收到 `[USER_DECISION_RELAY]` 后，\n\
+             按 intent 调 `next-action` 拿对应剧本：\n\
+             ▸ `[intent:APPROVE_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}`\n\
+             ▸ `[intent:REJECT_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId {agent_id}`\n\
+             ❌ 本 turn 内禁止调 `onchainos agent complete` / `onchainos agent reject`——这两个命令不在本剧本中。\n\
              ═══════════════════════════════════════════════════════════════\n\n\
-             **Step 4（escrow）— 仅在后续 turn 收到 `[USER_DECISION_RELAY]` 后执行**：\n\
-             收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后（由 user session 通过 xmtp_dispatch_session 发回），**按 intent code 路由**：\n\n\
-             ▸ `[intent:APPROVE_REVIEW]` → 双签验收，释放款项：\n\
-             ```bash\n\
-             onchainos agent complete {job_id}\n\
-             ```\n\
-             内部流程：\n\
-             \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-complete（712 标准，非 uop）→ 获取 digest\n\
-             \x20\x202. ED25519 签名 digest → signature\n\
-             \x20\x203. POST /priapi/v1/aieco/task/{job_id}/complete（body: {{\"signature\": \"<sig>\"}}）→ 获取 uopData\n\
-             \x20\x204. 签名 uopHash → 广播上链\n\
-             \x20\x20→ 任务状态变为 Complete，资金从合约释放给卖家。\n\n\
-             🛑 **complete CLI 成功后禁止 xmtp_dispatch_user / xmtp_prompt_user 通知用户**——\n\
-             链上确认后会收到 `job_completed` 系统事件，由该事件的剧本统一发完成通知，\n\
-             此处提前发会导致用户收到重复卡片。记住 CLI 输出中的 txHash，后续 `job_completed` 剧本会用到。\n\n\
-             ▸ `[intent:REJECT_REVIEW]` → 双签拒绝（reason 从 `用户原话：` 后面抽取，传给 --reason）：\n\
-             ```bash\n\
-             onchainos agent reject {job_id} --reason \"<用户原话里的拒绝理由>\"\n\
-             ```\n\
-             内部流程：\n\
-             \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-refuse（712 标准，非 uop）→ 获取 digest\n\
-             \x20\x202. ED25519 签名 digest → signature\n\
-             \x20\x203. POST /priapi/v1/aieco/task/{job_id}/refuse（body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}）→ 获取 uopData\n\
-             \x20\x204. 签名 uopHash → 广播上链\n\
-             \x20\x20→ 任务状态变为 Refused，卖家 24h 内可发起仲裁。\n\n\
              ━━━━━━━━━ 分支 B：x402 — 通知用户交付物内容（不可拒绝） ━━━━━━━━━\n\n\
              ⚠️ x402 流程中资金已在 job_accepted 阶段支付，用户**不能拒绝交付物**，只需通知。\n\
              \n\
@@ -756,6 +728,55 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              - job_completed → 仲裁卖家胜诉，任务完成\n\
              - job_refunded → 仲裁买家胜诉，退款\n\n\
              跑完 Step 1-3 → **结束本轮 turn，不要 xmtp_dispatch_user / xmtp_prompt_user 推 main**。\n"
+        ),
+
+        // ─── approve_review: 用户验收通过，执行 complete（伪 event）─────
+        Event::Other(ref s) if s == "approve_review" => format!(
+            "【当前动作】验收通过 — 执行 complete 释放款项\n\
+             【角色】买家（Client）\n\n\
+             已通过 `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]` 路由进来，用户已确认验收通过。\n\n\
+             **Step 1 — 清除 pending-decisions：**\n\
+             ```bash\n\
+             onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
+             ```\n\n\
+             **Step 2 — 双签验收，释放款项：**\n\
+             ```bash\n\
+             onchainos agent complete {job_id}\n\
+             ```\n\
+             内部流程：\n\
+             \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-complete（712 标准，非 uop）→ 获取 digest\n\
+             \x20\x202. ED25519 签名 digest → signature\n\
+             \x20\x203. POST /priapi/v1/aieco/task/{job_id}/complete（body: {{\"signature\": \"<sig>\"}}）→ 获取 uopData\n\
+             \x20\x204. 签名 uopHash → 广播上链\n\
+             \x20\x20→ 任务状态变为 Complete，资金从合约释放给卖家。\n\n\
+             🛑 **complete CLI 成功后禁止 xmtp_dispatch_user / xmtp_prompt_user 通知用户**——\n\
+             链上确认后会收到 `job_completed` 系统事件，由该事件的剧本统一发完成通知，\n\
+             此处提前发会导致用户收到重复卡片。记住 CLI 输出中的 txHash，后续 `job_completed` 剧本会用到。\n\n\
+             跑完 Step 1-2 → **结束本轮 turn**，等待 `job_completed` 系统通知。\n"
+        ),
+
+        // ─── reject_review: 用户拒绝验收，执行 reject（伪 event）─────
+        Event::Other(ref s) if s == "reject_review" => format!(
+            "【当前动作】拒绝验收 — 执行 reject\n\
+             【角色】买家（Client）\n\n\
+             已通过 `[USER_DECISION_RELAY][intent:REJECT_REVIEW]` 路由进来，用户已拒绝交付物。\n\
+             从 relay 消息的 `用户原话：` 后面提取拒绝理由。\n\n\
+             **Step 1 — 清除 pending-decisions：**\n\
+             ```bash\n\
+             onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
+             ```\n\n\
+             **Step 2 — 双签拒绝：**\n\
+             ```bash\n\
+             onchainos agent reject {job_id} --reason \"<用户原话里的拒绝理由>\"\n\
+             ```\n\
+             内部流程：\n\
+             \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-refuse（712 标准，非 uop）→ 获取 digest\n\
+             \x20\x202. ED25519 签名 digest → signature\n\
+             \x20\x203. POST /priapi/v1/aieco/task/{job_id}/refuse（body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}）→ 获取 uopData\n\
+             \x20\x204. 签名 uopHash → 广播上链\n\
+             \x20\x20→ 任务状态变为 Refused，卖家 24h 内可发起仲裁。\n\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**（如「已拒绝」），卖家通过链上事件得知。\n\n\
+             跑完 Step 1-2 → **结束本轮 turn**，等待 `job_refused` 系统通知。\n"
         ),
 
         // ─── 任务完成（按支付方式分流） ─────────────────────────────────

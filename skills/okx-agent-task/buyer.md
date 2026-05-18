@@ -389,8 +389,8 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 
 | 用户原话关键词 | pseudo event |
 |---|---|
-| 含『验收通过』/『完成』/『accept』 | `complete` |
-| 含『拒绝』/『不达标』/『reject』 | `reject` |
+| 含『验收通过』/『完成』/『accept』 | `approve_review` |
+| 含『拒绝』/『不达标』/『reject』 | `reject_review` |
 | 含『证据』/『evidence』/『摘要』/『图片』/『screenshot』（仲裁阶段） | `dispute_evidence` |
 | 含『关闭』/『取消』/『close』 | `close` |
 | 含『公开』/『set public』 | `set_public` |

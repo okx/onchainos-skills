@@ -15,6 +15,7 @@ pub mod network;
 pub mod payment_mode;
 pub mod pending;
 pub mod query;
+pub mod review_gate;
 pub mod state_machine;
 pub mod util;
 
