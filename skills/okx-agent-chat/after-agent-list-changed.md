@@ -22,7 +22,7 @@ The flow is safe to invoke unconditionally: if the user is not in an OpenClaw ru
 When the user **is** running inside an OpenClaw runtime:
 
 - If the OKX A2A plugin is **already installed and loaded**, refresh OpenClaw's cached agent list so the new/updated agent becomes visible without a gateway restart.
-- If the plugin is **not yet installed**, install it from the npm `beta` dist-tag of `test-okx-openclaw-a2a`. If the legacy `openclaw-okx-a2a-extension` plugin is still around, uninstall it first.
+- If the plugin is **not yet installed**, install it from npm dist-tag `beta` of `@okxweb3/a2a-openclaw` (install spec: `@okxweb3/a2a-openclaw@beta`). If the legacy `openclaw-okx-a2a-extension` plugin is still around, uninstall it first.
 
 When the user is **not** running inside an OpenClaw runtime (e.g., they triggered agent creation through Claude Code, Claude Desktop, or another LLM entry), this flow is a silent no-op.
 
@@ -30,7 +30,8 @@ All steps are idempotent — re-running this flow is safe.
 
 ## Target Plugin
 
-- **npm package**: `test-okx-openclaw-a2a` (install from the `beta` dist-tag)
+- **npm package**: `@okxweb3/a2a-openclaw`
+- **Install spec**: `@okxweb3/a2a-openclaw@beta` — the `@beta` dist-tag is **required**; the bare name will fail until a version is promoted to `latest` via `npm dist-tag add @okxweb3/a2a-openclaw@<version> latest`.
 - **Legacy plugin id to clean up if present**: `openclaw-okx-a2a-extension`
 
 ## Config Requirements
@@ -50,7 +51,7 @@ Step 1  Fast path
 Step 2  OpenClaw version check
 Step 3  Clean up deprecated debug plugins (id contains `xmtp`)
 Step 4  Update OpenClaw config (idempotent)
-Step 5  (Uninstall legacy openclaw-okx-a2a-extension if present) → install test-okx-openclaw-a2a@beta
+Step 5  (Uninstall legacy openclaw-okx-a2a-extension if present) → install @okxweb3/a2a-openclaw
 ```
 
 ## Why Config Goes Before Install
@@ -153,7 +154,7 @@ Before running the install command, you **must** tell the user the gateway will 
 
 Tell the user (translate to the user's language as needed):
 
-> 即将安装 OKX A2A 插件（npm 包 `test-okx-openclaw-a2a@beta`）。安装完成后 openclaw gateway 将自动重启，这是预期行为，请稍候即可，无需手动操作。
+> 即将安装 OKX A2A 插件（npm 包 `@okxweb3/a2a-openclaw@beta`，beta dist-tag 必填）。安装完成后 openclaw gateway 将自动重启，这是预期行为，请稍候即可，无需手动操作。
 
 #### 5.1 — Detect and remove the legacy plugin (only when present)
 
@@ -172,7 +173,7 @@ Reuse the `openclaw plugins list` output captured in Step 3 (or re-run it). Chec
 #### 5.2 — Install the new package
 
 ```bash
-openclaw plugins install test-okx-openclaw-a2a@beta
+openclaw plugins install @okxweb3/a2a-openclaw@beta
 ```
 
 If the install fails, surface the error verbatim and stop.
@@ -194,6 +195,6 @@ On success, the gateway auto-restarts, loads the new plugin, and picks up the co
 | `openclaw config set` fails | Surface the error and stop — do not run install with partial config. |
 | Legacy `openclaw-okx-a2a-extension` not present in `openclaw plugins list` | Skip Step 5.1, go straight to 5.2. |
 | `openclaw plugins uninstall openclaw-okx-a2a-extension` fails | Surface the error and stop — do not install while the legacy plugin is half-removed. |
-| `openclaw plugins install test-okx-openclaw-a2a@beta` fails | Surface the error verbatim and stop. |
+| `openclaw plugins install @okxweb3/a2a-openclaw@beta` fails | Surface the error verbatim and stop. |
 | `openclaw` command not found despite `OPENCLAW_*` env var | Inform the user that the OpenClaw CLI is required (rare — Step 0 already confirmed runtime). |
 | Plugin already installed and config already in place | Step 1 fast path covers it — single `xmtp_refresh_agents` call, done. |
