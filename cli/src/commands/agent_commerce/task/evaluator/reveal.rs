@@ -32,10 +32,10 @@ pub async fn handle_reveal(
                 None,
             );
             bail!(
-                "后端 canReveal=false（jobId={job_id}）：reveal 窗口尚未开启 / 本轮已结算 / 未 commit。"
+                "backend canReveal=false (jobId={job_id}): reveal window not yet open / current round already settled / no commit submitted."
             )
         }
-        None => bail!("canReveal 响应缺少布尔字段，后端可能返回异常: {can_resp}"),
+        None => bail!("canReveal response missing boolean field, backend may have returned malformed data: {can_resp}"),
     }
 
     let reveal_path = client.endpoint(job_id, "vote/reveal");

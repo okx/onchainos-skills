@@ -470,13 +470,11 @@ pub enum AgentCommand {
     },
     /// Read platform staking & arbitration config (Apollo-driven, JWT auth, no body).
     /// Mirrors GET /priapi/v1/aieco/task/staking/config.
-    /// `--agent-id` 在此命令上**可选**——platform-level 只读，缺省时按 evaluator role
-    /// 在本地身份列表里反查首个匹配的 agentId 走 header。
     #[command(name = "staking-config", visible_alias = "stakingconfig")]
     StakingConfig {
-        /// Evaluator agentId. Optional — falls back to first local evaluator agent.
+        /// Evaluator agentId (required — backend interceptor needs it for header auth).
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Read the current account's on-chain stake state (activeStake / pendingUnstake /
     /// validStake / activeDisputes / cooldown timestamps / registered flag).
@@ -768,7 +766,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         }
         AgentCommand::StakingConfig { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::staking_config::handle_staking_config(&mut c, agent_id.as_deref()).await
+            task::evaluator::staking_config::handle_staking_config(&mut c, &agent_id).await
         }
         AgentCommand::MyStake { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
@@ -780,7 +778,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title, provider } => {
             eprintln!(
-                "[next-action] 收到系统通知: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
+                "[next-action] received system notification: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
                 title = job_title.as_deref().unwrap_or("(none)"),
                 provider = provider.as_deref().unwrap_or("(none)")
             );

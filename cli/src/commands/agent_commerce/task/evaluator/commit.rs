@@ -29,7 +29,7 @@ pub async fn handle_commit(
     let salt = resp["salt"].as_str()
         .unwrap_or("");
     if salt.is_empty() {
-        bail!("后端未返回 salt，无法广播 vote/commit");
+        bail!("backend did not return salt, cannot broadcast vote/commit");
     }
     let commit_hash = resp["commitHash"].as_str().unwrap_or("");
 

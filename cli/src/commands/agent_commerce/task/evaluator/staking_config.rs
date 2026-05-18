@@ -1,17 +1,13 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::evaluator::staking_types;
 
 pub async fn handle_staking_config(
     client: &mut TaskApiClient,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
-    let agent_id = match agent_id_hint.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(id) => id.to_string(),
-        None => bail!("缺少 --agent-id，请显式传入 evaluator agent_id"),
-    };
-    let cfg = staking_types::get_staking_config(client, &agent_id).await?;
+    let cfg = staking_types::get_staking_config(client, agent_id).await?;
     println!("staking & arbitration config");
     println!("  minCumulativeStakeOkb       : {} OKB", cfg.min_cumulative_stake_okb);
     println!("  partialUnstakeMinRetainOkb  : {} OKB", cfg.partial_unstake_min_retain_okb);

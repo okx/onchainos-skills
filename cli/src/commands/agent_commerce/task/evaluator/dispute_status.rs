@@ -66,7 +66,7 @@ pub async fn get_dispute_status(
 ) -> Result<DisputeStatusResponse> {
     let path = client.endpoint(job_id, "dispute/status");
     let data = client.get_with_identity(&path, agent_id).await?;
-    serde_json::from_value(data).context("解析 dispute/status 响应失败")
+    serde_json::from_value(data).context("failed to parse dispute/status response")
 }
 
 /// 跑 4 条 AND 硬门：通过返回 `true` 并打印 `selected: yes`；任一不过返回 `false`
@@ -101,8 +101,8 @@ pub async fn precheck_round_gate(
     println!(
         "  selectedVoter: {}",
         match &s.selected_voter {
-            Some(_) => "present (本账户命中本轮陪审)",
-            None => "null (未命中本轮陪审 / 通知已过期 / 无 active dispute)",
+            Some(_) => "present (this account is selected as juror for current round)",
+            None => "null (not selected for current round / notification expired / no active dispute)",
         },
     );
 
@@ -113,30 +113,30 @@ pub async fn precheck_round_gate(
     // disputeStatus 不为 null → 再验 disputeStatus == CommitPhase → 最后验本账户命中。
     let reason: Option<String> = if task_status.is_terminal() {
         Some(format!(
-            "taskStatus={} ({}) 已终态 — 任务结束，仲裁窗口关闭",
+            "taskStatus={} ({}) is terminal — task finished, dispute window closed",
             s.task_status, task_status.as_str(),
         ))
     } else {
         match round_num.parse::<i64>() {
-            Err(e) => Some(format!("--round-num 无法解析为整数: {round_num:?} ({e})")),
+            Err(e) => Some(format!("--round-num cannot be parsed as integer: {round_num:?} ({e})")),
             Ok(req_round) => match (s.current_round, dispute_status.as_ref()) {
                 (None, _) => Some(
-                    "currentRound=null — 无 active dispute（任务未进入争议 / 已结束 / 后端尚未推进轮次）".into(),
+                    "currentRound=null — no active dispute (task not in dispute / already ended / backend has not advanced round)".into(),
                 ),
                 (Some(cur), _) if req_round != cur => Some(format!(
-                    "round 不一致：envelope round_num={req_round} ≠ 链上 currentRound={cur} (stale envelope)",
+                    "round mismatch: envelope round_num={req_round} != on-chain currentRound={cur} (stale envelope)",
                 )),
                 (Some(_), None) => Some(
-                    "disputeStatus=null — 仲裁子状态机未启动 / 已结算（commit 窗口必然不开）".into(),
+                    "disputeStatus=null — dispute sub-state-machine not started / already settled (commit window guaranteed closed)".into(),
                 ),
                 (Some(_), Some(ds)) if *ds != DisputeStatus::CommitPhase => Some(format!(
-                    "disputeStatus={} ({}) 不是 {} — commit 窗口未开 / 已关",
+                    "disputeStatus={} ({}) is not {} — commit window not open / already closed",
                     fmt_opt_i32(s.dispute_round_status),
                     ds.as_str(),
                     DisputeStatus::CommitPhase.as_str(),
                 )),
                 (Some(_), Some(_)) if s.selected_voter.is_none() => {
-                    Some("selectedVoter=null — 本账户不是当前轮次选中陪审".into())
+                    Some("selectedVoter=null — this account is not the selected juror for the current round".into())
                 }
                 (Some(_), Some(_)) => None,
             },

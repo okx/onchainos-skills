@@ -93,10 +93,10 @@ async fn run(
 fn validate_amount(amount: &str) -> Result<&str> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {
-        bail!("--amount 不能为空（OKB 金额，UI 单位）");
+        bail!("--amount must not be empty (OKB amount in UI units)");
     }
     if !trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
-        bail!("--amount 必须是数字（OKB 金额，UI 单位）；如含小数点请使用 `.`，且不要包含千分位分隔符，got: {trimmed}");
+        bail!("--amount must be numeric (OKB amount in UI units); use `.` for decimal point and no thousands separators, got: {trimmed}");
     }
     Ok(trimmed)
 }
@@ -116,10 +116,10 @@ pub(super) async fn execute_stake_or_increase(
 ) -> Result<(String, &'static str)> {
     let m = staking_types::get_my_stake(client, agent_id)
         .await
-        .map_err(|e| anyhow::anyhow!("my-stake 拉取失败，无法判定 stake / increase-stake 路由：{e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to fetch my-stake, cannot route stake vs increase-stake: {e}"))?;
     let cfg = staking_types::get_staking_config(client, agent_id)
         .await
-        .map_err(|e| anyhow::anyhow!("staking-config 拉取失败，无法校验累计质押门槛：{e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to fetch staking-config, cannot validate cumulative stake threshold: {e}"))?;
 
     // 累计质押门槛硬校验（无论 registered=true/false）：activeStake + amount >= min
     // 全部走字符串十进制运算：避免 f64 精度抖动把"恰好达标"误判为"差一点"。
@@ -134,8 +134,8 @@ pub(super) async fn execute_stake_or_increase(
             // total < min ∧ amount > 0 ⇒ active < min ⇒ min - active 不会 underflow
             let needed = decimal_str::sub(min_str, active).unwrap_or_else(|_| min_str.clone());
             bail!(
-                "累计质押不足：本次 {amount} OKB + 当前 activeStake {active} OKB < 平台最低门槛 {min_str} OKB（minCumulativeStakeOkb）。\
-                 请提高金额，至少需追加 {needed} OKB。"
+                "cumulative stake too low: this {amount} OKB + current activeStake {active} OKB < platform minimum {min_str} OKB (minCumulativeStakeOkb). \
+                 increase --amount by at least {needed} OKB."
             );
         }
     }

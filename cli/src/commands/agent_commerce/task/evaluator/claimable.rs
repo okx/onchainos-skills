@@ -30,10 +30,10 @@ pub async fn handle_claimable(
     );
 
     if has_nonzero {
-        println!("\nnext: 有可领奖励 — 跟我说『领取奖励』即可一次性提走，确认上链后入账。");
+        println!("\nnext: rewards available — say 'claim rewards' to withdraw all at once; settles after on-chain confirm.");
         println!("hasClaimable: yes");
     } else {
-        println!("\n(当前无待领奖励)");
+        println!("\n(no claimable rewards)");
         println!("hasClaimable: no");
     }
     Ok(())

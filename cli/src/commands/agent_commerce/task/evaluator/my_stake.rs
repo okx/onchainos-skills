@@ -11,7 +11,7 @@ fn fmt_unix_seconds(ts: i64, none_label: &str) -> String {
     } else if let Some(dt) = chrono::Local.timestamp_opt(ts, 0).single() {
         format!("{ts} ({})", dt.format("%Y-%m-%d %H:%M:%S %Z"))
     } else {
-        format!("{ts} (无法解析)")
+        format!("{ts} (unparseable)")
     }
 }
 
@@ -21,35 +21,35 @@ pub async fn handle_my_stake(
 ) -> Result<()> {
     let s = staking_types::get_my_stake(client, agent_id).await?;
 
-    println!("my stake (链上质押状态)");
+    println!("my stake (on-chain staking state)");
     println!("  voter address      : {}", s.voter_address);
     println!(
         "  agentId            : {} (registered={})",
         s.agent_id, s.registered
     );
     println!(
-        "  activeStake        : {} OKB  # 当前已质押（已扣罚没）",
+        "  activeStake        : {} OKB  # currently staked (net of slashing)",
         s.active_stake_okb
     );
     println!(
-        "  pendingUnstake     : {} OKB  # 冷却期中待解锁",
+        "  pendingUnstake     : {} OKB  # in cooldown, awaiting unlock",
         s.pending_unstake_okb
     );
     println!(
-        "  validStake         : {} OKB  # 可加权选取 = activeStake - pendingUnstake",
+        "  validStake         : {} OKB  # weight-eligible = activeStake - pendingUnstake",
         s.valid_stake_okb
     );
     println!(
-        "  activeDisputes     : {}  # 参与中的仲裁数（>0 时不可解质押）",
+        "  activeDisputes     : {}  # disputes in progress (unstake blocked while >0)",
         s.active_disputes
     );
     println!(
         "  unstakeAvailableAt : {}",
-        fmt_unix_seconds(s.unstake_available_at, "无待解锁")
+        fmt_unix_seconds(s.unstake_available_at, "no pending unstake")
     );
     println!(
         "  cooldownEndsAt     : {}",
-        fmt_unix_seconds(s.cooldown_ends_at, "不在罚没冷却期")
+        fmt_unix_seconds(s.cooldown_ends_at, "not in slashing cooldown")
     );
 
     if !s.registered {

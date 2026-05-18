@@ -157,7 +157,7 @@ pub async fn get_staking_config(
     let data = client
         .get_with_identity("/priapi/v1/aieco/task/staking/config", agent_id)
         .await?;
-    serde_json::from_value(data).context("解析 staking config 响应失败")
+    serde_json::from_value(data).context("failed to parse staking config response")
 }
 
 /// 拉取当前登录账户的链上质押状态（GET /priapi/v1/aieco/task/staking/myStake）。
@@ -174,5 +174,5 @@ pub async fn get_my_stake(client: &mut TaskApiClient, agent_id: &str) -> Result<
     let data = client
         .get_with_identity("/priapi/v1/aieco/task/staking/myStake", agent_id)
         .await?;
-    serde_json::from_value(data).context("解析 myStake 响应失败")
+    serde_json::from_value(data).context("failed to parse myStake response")
 }

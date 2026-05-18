@@ -32,6 +32,6 @@ pub async fn handle_claim(
 
     println!("reward claim submitted (account={address})");
     println!("  txHash:   {tx_hash}");
-    println!("note: 一次性领取所有已结算争议的奖励，到账金额会在链上确认后通知。");
+    println!("note: claims all rewards from settled disputes at once; settled amount will be notified after on-chain confirmation.");
     Ok(())
 }

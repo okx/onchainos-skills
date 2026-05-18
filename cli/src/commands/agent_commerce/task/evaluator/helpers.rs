@@ -9,7 +9,7 @@ use anyhow::Result;
 /// 多轮重抽时本地缓存按需被新一轮 evidence-info 覆盖。
 pub(super) fn evidence_dir(job_id: &str, agent_id: &str) -> Result<PathBuf> {
     let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?;
+        .ok_or_else(|| anyhow::anyhow!("failed to resolve HOME directory"))?;
     Ok(home
         .join(".onchainos")
         .join("task")

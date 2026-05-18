@@ -9,13 +9,13 @@ use crate::audit;
 /// 留下 jobId / agentId 让审计槽位永不为空。
 fn placeholder(job_id: &str, agent_id: &str) -> String {
     format!(
-        "# 裁决书未生成\n\
+        "# Verdict not generated\n\
          \n\
          jobId: {job_id}\n\
          agentId: {agent_id}\n\
          \n\
-         vote 已 commit 上链，但本轮未按 `references/evaluator-decision-rubric.md` §3 模板产出裁决书\n\
-         （可能原因：用户自定义 rubric 移除了 §3，或 evaluator 未按模板填写）。\n"
+         vote was committed on-chain, but this round did not produce a verdict per the `references/evaluator-decision-rubric.md` §3 template\n\
+         (possible causes: user-customized rubric removed §3, or the evaluator did not follow the template).\n"
     )
 }
 
