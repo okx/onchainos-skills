@@ -117,7 +117,7 @@ mod tests {
         assert!(!out["overview"].is_null());
     }
 
-    // ── PRD: partial failures → null fields, rest continues ──────────
+    // ── partial failures → null fields, rest continues ───────────────
 
     #[test]
     fn balances_null_others_present() {
