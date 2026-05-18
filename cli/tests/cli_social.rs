@@ -1,4 +1,4 @@
-//! Integration tests for `onchainos social` commands (DEXMARKET-7736).
+//! Integration tests for `onchainos social` commands.
 //!
 //! Covers the 9 social CLI subcommands: news-latest, news-by-symbol, news-search,
 //! news-detail, news-platforms, sentiment-ranking, sentiment-symbol,
@@ -17,7 +17,6 @@ use serde_json::Value;
 // ─── news-latest ────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_news_latest_returns_articles() {
     let output = run_with_retry(&["social", "news-latest", "--limit", "5"]);
     let data = assert_ok_and_extract_data(&output);
@@ -40,7 +39,6 @@ fn social_news_latest_returns_articles() {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_news_latest_with_coin_filter() {
     let output = run_with_retry(&[
         "social",
@@ -60,7 +58,6 @@ fn social_news_latest_with_coin_filter() {
 // ─── news-by-symbol ───────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_news_by_symbol_returns_articles_for_eth() {
     let output = run_with_retry(&[
         "social",
@@ -89,7 +86,6 @@ fn social_news_by_symbol_missing_coins_arg_fails() {
 // ─── news-search ────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_news_search_with_keyword() {
     let output = run_with_retry(&[
         "social",
@@ -118,7 +114,6 @@ fn social_news_search_missing_keyword_fails() {
 // ─── news-platforms ─────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_news_platforms_returns_list() {
     let output = run_with_retry(&["social", "news-platforms"]);
     let data = assert_ok_and_extract_data(&output);
@@ -150,7 +145,6 @@ fn social_news_detail_missing_id_fails() {
 // ─── sentiment-ranking ──────────────────────────────────────────────────
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_sentiment_ranking_returns_ranked_coins() {
     let output = run_with_retry(&["social", "sentiment-ranking", "--limit", "5"]);
     let data = assert_ok_and_extract_data(&output);
@@ -167,7 +161,6 @@ fn social_sentiment_ranking_returns_ranked_coins() {
 // ─── sentiment-symbol ─────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_sentiment_symbol_snapshot_mode() {
     let output = run_with_retry(&[
         "social",
@@ -185,7 +178,6 @@ fn social_sentiment_symbol_snapshot_mode() {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_sentiment_symbol_trend_mode_includes_trend_array() {
     let output = run_with_retry(&[
         "social",
@@ -224,7 +216,6 @@ fn social_sentiment_symbol_missing_coins_arg_fails() {
 // ─── vibe-timeline ────────────────────────────────────────────────
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_vibe_timeline_for_wsol_strips_tweet_bodies() {
     let output = run_with_retry(&[
         "social",
@@ -252,7 +243,6 @@ fn social_vibe_timeline_missing_args_fails() {
 // ─── vibe-top-kols ─────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_vibe_top_kols_for_wsol_strips_tweet_bodies() {
     let output = run_with_retry(&[
         "social",
@@ -281,7 +271,7 @@ fn social_vibe_top_kols_missing_args_fails() {
 
 // ─── compliance helper ──────────────────────────────────────────────────
 
-/// PRD §3.6 / §6.3 red line: DEX vibe responses must not include tweet
+/// Compliance red line: DEX vibe responses must not include tweet
 /// bodies anywhere in the response tree. The CLI's `strip_tweet_bodies`
 /// pass enforces this; this assertion verifies the contract end-to-end
 /// against the live API.
@@ -312,7 +302,6 @@ fn assert_no_tweet_bodies(v: &Value) {
 /// Verifies cursor pagination: page 1 → page 2 must return different article ids.
 /// Guards against the cursor being a no-op or repeating the same page.
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_news_latest_pagination_advances_cursor() {
     let page1 = run_with_retry(&["social", "news-latest", "--limit", "3"]);
     let d1 = assert_ok_and_extract_data(&page1);
@@ -345,7 +334,6 @@ fn social_news_latest_pagination_advances_cursor() {
 /// Round-trip: list latest → take first article id → fetch detail → assert full content.
 /// Covers the chained list-then-detail flow that the SKILL.md advertises.
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_news_detail_round_trip_returns_full_body() {
     let list = run_with_retry(&["social", "news-latest", "--limit", "1"]);
     let dlist = assert_ok_and_extract_data(&list);
@@ -376,7 +364,6 @@ fn social_news_detail_round_trip_returns_full_body() {
 /// Bogus article id returns ok=true with empty articles[], not an error.
 /// Spec behavior — clean empty rather than 4xx.
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_news_detail_bogus_id_returns_empty_articles() {
     let output = run_with_retry(&["social", "news-detail", "--article-id", "BOGUS_DOES_NOT_EXIST_42"]);
     let data = assert_ok_and_extract_data(&output);
@@ -393,7 +380,6 @@ fn social_news_detail_bogus_id_returns_empty_articles() {
 /// The response `period` field echoes the resolved window. If the codes ever
 /// drift back to the old 24h/72h/7d/30d mapping, this test catches it.
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_sentiment_ranking_period_echo_matches_time_frame() {
     for (tf, expected) in [("1", "1h"), ("2", "4h"), ("3", "24h")] {
         let output = run_with_retry(&["social", "sentiment-ranking", "--time-frame", tf, "--limit", "1"]);
@@ -409,7 +395,6 @@ fn social_sentiment_ranking_period_echo_matches_time_frame() {
 /// Multi-coin sentiment query returns one details[] entry per requested coin
 /// (when all symbols are well-known).
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_sentiment_symbol_multi_coin_returns_per_coin_entries() {
     let output = run_with_retry(&[
         "social",
@@ -441,7 +426,6 @@ fn social_sentiment_symbol_multi_coin_returns_per_coin_entries() {
 /// Vibe-timeline summary contains every documented top-level field.
 /// Schema completeness guard — flags any spec drift where fields get renamed/dropped.
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn social_vibe_timeline_summary_has_documented_fields() {
     let output = run_with_retry(&[
         "social",

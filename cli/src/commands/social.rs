@@ -8,7 +8,7 @@ use super::Context;
 use crate::client::ApiClient;
 use crate::output;
 
-// ── Compliance strip (PRD §3.6 / §6.3) ──────────────────────────────────
+// ── Compliance strip ────────────────────────────────────────────────────
 //
 // DEX vibe endpoints must NOT pass tweet bodies through to the agent. The
 // upstream OpenAPI shape does not currently include them, but defense-in-depth:
@@ -629,7 +629,7 @@ pub async fn fetch_sentiment_symbol(
 /// GET /api/v6/dex/market/social/vibe/timeline
 ///
 /// Compliance: any `text` / `content` / `translatedContent` fields anywhere in
-/// the response tree are stripped before returning (PRD §3.6 / §6.3 red line).
+/// the response tree are stripped before returning (compliance red line).
 pub async fn fetch_vibe_timeline(
     client: &mut ApiClient,
     chain_index: &str,

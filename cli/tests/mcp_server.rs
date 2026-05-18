@@ -243,7 +243,7 @@ fn mcp_tools_list_returns_all_tools() {
         "workflow_new_tokens",
         "workflow_wallet_analysis",
         "workflow_portfolio",
-        // Social tools (DEXMARKET-7736)
+        // Social tools
         "social_news_latest",
         "social_news_by_symbol",
         "social_news_search",
@@ -763,10 +763,10 @@ fn mcp_workflow_portfolio_has_discriminator_and_required_fields() {
     assert!(data.get("overview").is_some(), "overview field missing");
 }
 
-// ── Social tools (DEXMARKET-7736) ──────────────────────────────────────
+// ── Social tools ───────────────────────────────────────────────────────
 
 /// Walks the JSON tree and asserts no `text` / `content` / `translatedContent`
-/// field appears anywhere — PRD §3.6 / §6.3 compliance red line for DEX vibe.
+/// field appears anywhere — compliance red line for DEX vibe.
 fn assert_no_tweet_bodies(v: &Value) {
     match v {
         Value::Object(map) => {
@@ -790,7 +790,6 @@ fn assert_no_tweet_bodies(v: &Value) {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn mcp_social_news_latest() {
     let mut client = McpClient::start();
     let result = client.call_tool("social_news_latest", json!({"limit": "5"}));
@@ -805,7 +804,6 @@ fn mcp_social_news_latest() {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn mcp_social_news_by_symbol() {
     let mut client = McpClient::start();
     let result = client.call_tool(
@@ -823,7 +821,6 @@ fn mcp_social_news_by_symbol() {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn mcp_social_news_search() {
     let mut client = McpClient::start();
     let result = client.call_tool(
@@ -841,7 +838,6 @@ fn mcp_social_news_search() {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn mcp_social_news_platforms() {
     let mut client = McpClient::start();
     let result = client.call_tool("social_news_platforms", json!({}));
@@ -857,7 +853,6 @@ fn mcp_social_news_platforms() {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn mcp_social_sentiment_ranking() {
     let mut client = McpClient::start();
     let result = client.call_tool(
@@ -875,7 +870,6 @@ fn mcp_social_sentiment_ranking() {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn mcp_social_sentiment_symbol_snapshot() {
     let mut client = McpClient::start();
     let result = client.call_tool(
@@ -893,7 +887,6 @@ fn mcp_social_sentiment_symbol_snapshot() {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn mcp_social_sentiment_symbol_trend_mode() {
     let mut client = McpClient::start();
     let result = client.call_tool(
@@ -915,7 +908,6 @@ fn mcp_social_sentiment_symbol_trend_mode() {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn mcp_social_vibe_timeline_strips_tweet_bodies() {
     let mut client = McpClient::start();
     let result = client.call_tool(
@@ -934,7 +926,6 @@ fn mcp_social_vibe_timeline_strips_tweet_bodies() {
 }
 
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn mcp_social_vibe_top_kols_strips_tweet_bodies() {
     let mut client = McpClient::start();
     let result = client.call_tool(
@@ -958,7 +949,6 @@ fn mcp_social_vibe_top_kols_strips_tweet_bodies() {
 /// If the wire mapping ever drifts, this test catches it via the MCP layer
 /// (complementary to the CLI-level test in cli_social.rs).
 #[test]
-#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
 fn mcp_social_sentiment_ranking_period_echo_matches_time_frame() {
     let mut client = McpClient::start();
     for (tf, expected) in [("1", "1h"), ("2", "4h"), ("3", "24h")] {
