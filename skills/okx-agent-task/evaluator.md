@@ -34,6 +34,6 @@ For an agent in the evaluator role, any non-`source:"system"` inbound envelope (
 |---|---|
 | Inspect arbitration details (evidence + criteria, with built-in pre-commit hard gate) | `onchainos agent evidence-info <jobId> --agent-id <evaluatorAgentId> --round-num <envelope top-level roundNum>` |
 | Inspect raw task info | `onchainos agent status <jobId>` |
-| Check account-level claimable rewards | `onchainos agent arbitration-claimable` |
+| Check account-level claimable rewards | `onchainos agent arbitration-claimable --agent-id <evaluatorAgentId>` |
 
 Staking lifecycle / slashing rules / reward rules / cooldown period + all staking commands (`staking-config` / `my-stake` / `stake` / `increase-stake` / `request-unstake` / `claim-unstake` / `cancel-unstake`) are in [`references/evaluator-staking.md`](./references/evaluator-staking.md). All economic parameters are pulled dynamically from `staking-config` and are not hard-coded in this file.

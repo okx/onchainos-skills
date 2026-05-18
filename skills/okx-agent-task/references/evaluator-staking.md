@@ -2,6 +2,20 @@
 
 > **Fully gas-free**: every on-chain staking action (initial stake / increase / unstake / claim / cancel / claim rewards etc.) goes through the platform's gas-sponsored channel. The user's wallet does **not** need any gas / native balance. **Do not** prompt the user about "preparing gas / leaving gas / checking balance", and **do not** factor gas reserves into amount suggestions.
 
+> Distinguish two things:
+> - **Gas (network fee)**: sponsored by the platform — the **user's wallet never needs to prepare it**. On XLayer gas is also denominated in OKB, but it goes through the sponsorship channel and is not deducted from the user's balance.
+> - **Stake principal**: the stake amount itself is OKB (XLayer's native token); the user's wallet **must** hold enough OKB.
+>
+> 🚫 **Forbidden tokens** (scoped to the **gas / network-fee context only**; any one appearing in user-visible text = hard violation, regardless of UI shape):
+> - `gas` / `gas fee` / `network fee` / `手续费` / `网络费`
+> - Describing `ETH` as the gas medium on XLayer (XLayer does not use ETH for gas at all)
+> - Phrases like "wallet balance is not enough to pay gas / network fee"
+> - Telling the user to `top up ETH` / `top up gas` / `top up native for gas` / `向钱包充值少量 ETH`
+> - "preflight gas check"–style framing
+>
+> ❌ Anti-pattern: any phrasing of "prepare gas / top up ETH / wallet balance insufficient for gas / network fee" — whether dressed up as a preflight check, a status card, or a next-step prompt, it is a violation. The platform sponsors gas; there is no such step.
+>
+
 > Single authority on evaluator-role staking + economic model. Covers:
 > - **Staking lifecycle**: first-time onboarding (the sole entry after `okx-agent-identity` handoff) + top-up / unstake / claim / cancel / query
 > - **Reward rules**: voting with the majority earns a share of the arbitration deposit + slashed stake from the minority side
@@ -33,7 +47,7 @@
 
 ```bash
 onchainos agent staking-config
-onchainos agent my-stake
+onchainos agent my-stake --agent-id <evaluatorAgentId>
 ```
 
 If `activeStake >= minCumulativeStakeOkb` (threshold already met):
@@ -81,7 +95,7 @@ User replies with a **plain number** → use that number as `N` and run the CLI 
 | confirm / yes / ok (no number) | "Please tell me the exact OKB amount to stake" → return to Step 2 |
 
 ```bash
-onchainos agent stake --amount <N>
+onchainos agent stake --amount <N> --agent-id <evaluatorAgentId>
 ```
 
 ### Step 4 — Handoff after success
@@ -101,7 +115,7 @@ Echo back to the user: "Will add **`<N>` OKB**. Confirm?" Only proceed to Step 2
 ### Step 2 — Execute
 
 ```bash
-onchainos agent increase-stake --amount <N>
+onchainos agent increase-stake --amount <N> --agent-id <evaluatorAgentId>
 ```
 
 ---
@@ -123,7 +137,7 @@ onchainos agent staking-config   # read unstakeCooldownDays
 ### Step 3 — Execute
 
 ```bash
-onchainos agent request-unstake --amount <N>
+onchainos agent request-unstake --amount <N> --agent-id <evaluatorAgentId>
 ```
 
 ---
@@ -133,7 +147,7 @@ onchainos agent request-unstake --amount <N>
 No amount argument; execute directly after the user gives an **explicit command**. The CLI internally checks whether the cooldown has elapsed.
 
 ```bash
-onchainos agent claim-unstake
+onchainos agent claim-unstake --agent-id <evaluatorAgentId>
 ```
 
 ---
@@ -143,7 +157,7 @@ onchainos agent claim-unstake
 No amount argument; execute directly after the user gives an **explicit command**. The CLI internally checks whether it is still within the cooldown.
 
 ```bash
-onchainos agent cancel-unstake
+onchainos agent cancel-unstake --agent-id <evaluatorAgentId>
 ```
 
 ---
@@ -151,7 +165,7 @@ onchainos agent cancel-unstake
 ## §7 My-stake / Read-only query
 
 ```bash
-onchainos agent my-stake
+onchainos agent my-stake --agent-id <evaluatorAgentId>
 ```
 
 Read-only query, no confirmation needed; after executing, summarize the key fields to the user:
