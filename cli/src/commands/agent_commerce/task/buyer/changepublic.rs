@@ -3,7 +3,9 @@
 //! 买家动作：设为 Public — onchainos agent set-public
 
 use anyhow::Result;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -25,6 +27,19 @@ pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str, explici
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "buyer/set_public_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("✓ 任务已转为公开，其他卖家可以看到并报名");
     println!("  txHash: {tx_hash}");

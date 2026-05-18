@@ -6,7 +6,9 @@
 //! Response: `{ jobId, type: 23, uopData: { ... } }`
 
 use anyhow::Result;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -25,6 +27,19 @@ pub async fn handle_claim_auto_refund(client: &mut TaskApiClient, job_id: &str) 
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "buyer/auto_refund_claimed",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("✓ 超时自动退款已领取，资金将退回账户");
     println!("  jobId:  {job_id}");

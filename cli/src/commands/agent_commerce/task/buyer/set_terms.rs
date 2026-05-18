@@ -5,7 +5,9 @@
 //! - `set-max-budget`       — 修改最高预算（不上链，接口成功即完成）
 
 use anyhow::Result;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -37,6 +39,21 @@ pub async fn handle_set_token_and_budget(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "buyer/token_budget_change_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("tokenSymbol={token_symbol}"),
+            format!("budget={budget}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("✓ 支付条款变更已提交，等待上链确认（task_token_budget_change）");
     println!("  token: {token_symbol}, budget: {budget}");
@@ -70,6 +87,20 @@ pub async fn handle_set_provider(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "buyer/provider_change_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("newProvider={provider_agent_id}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("✓ 卖家变更已提交（不等上链确认，立即启动新卖家流程）");
     println!("  providerAgentId: {provider_agent_id}");
@@ -106,6 +137,19 @@ pub async fn handle_set_max_budget(
         }),
         &agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "buyer/max_budget_updated",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("maxBudget={max_budget}"),
+        ]),
+        None,
+    );
 
     println!("✓ 最高预算已更新为 {max_budget}");
     Ok(())

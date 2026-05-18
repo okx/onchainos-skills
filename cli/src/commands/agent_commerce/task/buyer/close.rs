@@ -4,7 +4,9 @@
 //! 附带：领取仲裁奖金 (onchainos agent arbitration-claim)
 
 use anyhow::Result;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -23,6 +25,19 @@ pub async fn handle_close(client: &mut TaskApiClient, job_id: &str, explicit_age
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "buyer/close_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("✓ 任务已关闭，状态 → close");
     println!("  txHash: {tx_hash}");

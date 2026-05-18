@@ -820,10 +820,38 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
             let title_ref = job_title.as_deref();
             let prompt = match role.as_str() {
-                "provider" | "seller" =>
-                    task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
-                "buyer" | "client" =>
-                    task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id, title_ref),
+                "provider" | "seller" => {
+                    crate::audit::log(
+                        "cli",
+                        "provider/next_action_received",
+                        true,
+                        std::time::Duration::default(),
+                        Some(vec![
+                            format!("jobId={job_id}"),
+                            format!("agentId={agent_id}"),
+                            format!("jobStatus={job_status}"),
+                            format!("code={code}"),
+                        ]),
+                        None,
+                    );
+                    task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id)
+                }
+                "buyer" | "client" => {
+                    crate::audit::log(
+                        "cli",
+                        "buyer/next_action_received",
+                        true,
+                        std::time::Duration::default(),
+                        Some(vec![
+                            format!("jobId={job_id}"),
+                            format!("agentId={agent_id}"),
+                            format!("jobStatus={job_status}"),
+                            format!("code={code}"),
+                        ]),
+                        None,
+                    );
+                    task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id, title_ref)
+                }
                 "evaluator" => {
                     crate::audit::log(
                         "cli",
