@@ -12,7 +12,9 @@
 //! 支付设计：https://okg-block.sg.larksuite.com/docx/CwWbd6eCOopgq6x6VwTlWEivgrc
 
 use anyhow::{bail, Context, Result};
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::util::{
     json_str, json_u64, fetch_token_detail,
@@ -166,10 +168,37 @@ pub async fn handle_set_payment_mode(
             &agent_id,
         ).await?;
 
-        signing::sign_uop_and_broadcast(
+        let tx_hash = signing::sign_uop_and_broadcast(
             client, &resp["uopData"], &account_id, &address,
             job_id, signing::extract_biz_type(&resp), &agent_id,
         ).await?;
+
+        audit::log(
+            "cli",
+            "buyer/payment_mode_set",
+            true,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("paymentMode={}", payment_mode.as_str()),
+                format!("txHash={tx_hash}"),
+            ]),
+            None,
+        );
+    } else {
+        audit::log(
+            "cli",
+            "buyer/payment_mode_already_set",
+            true,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("paymentMode={}", payment_mode.as_str()),
+            ]),
+            None,
+        );
     }
 
     let (msg, next) = if let Some(resolved) = x402_resolved {
@@ -395,6 +424,22 @@ async fn confirm_accept_escrow(
         job_id, signing::extract_biz_type(&resp), agent_id,
         payment_verify,
     ).await?;
+    audit::log(
+        "cli",
+        "buyer/confirm_accept_completed",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("provider={provider}"),
+            format!("paymentMode=escrow"),
+            format!("tokenSymbol={symbol}"),
+            format!("tokenAmount={amount}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
     println!("✓ 已接受卖家 {provider}（担保支付），资金已托管");
     println!("  txHash: {tx_hash}");
     Ok(())
@@ -429,6 +474,22 @@ pub async fn handle_direct_accept(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
+    audit::log(
+        "cli",
+        "buyer/direct_accept_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("provider={provider}"),
+            format!("paymentMode=x402"),
+            format!("tokenSymbol={}", token_symbol.unwrap_or("")),
+            format!("tokenAmount={}", token_amount.unwrap_or("")),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
     println!("✓ direct/accept 完成（x402），任务状态 → accepted");
     println!("  txHash: {tx_hash}");
     println!("  等待 job_accepted 系统通知后执行 complete");
@@ -659,6 +720,22 @@ pub async fn handle_task_402_pay(
     };
 
     // Step 4: 输出完整结果
+    audit::log(
+        "cli",
+        if replay_success { "buyer/task_402_pay_completed" } else { "buyer/task_402_pay_replay_failed" },
+        replay_success,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("provider={provider}"),
+            format!("tokenSymbol={token_symbol}"),
+            format!("tokenAmount={token_amount}"),
+            format!("replayStatus={replay_status}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
     crate::output::success(serde_json::json!({
         "replaySuccess": replay_success,
         "replayStatus": replay_status,

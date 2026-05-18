@@ -7,7 +7,9 @@
 //! - x402: /direct/complete 单签 → broadcast（资金已在 accept 阶段支付）
 
 use anyhow::Result;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::PaymentMode;
 use crate::commands::agent_commerce::task::signing;
@@ -33,6 +35,19 @@ pub async fn handle_complete(
             &account_id, &address, &agent_id,
         ).await?;
 
+        audit::log(
+            "cli",
+            "buyer/complete_submitted",
+            true,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("paymentMode=escrow"),
+                format!("txHash={}", result.tx_hash),
+            ]),
+            None,
+        );
         println!("✓ 任务验收通过（担保），状态 → complete，款项已释放");
         println!("  txHash: {}", result.tx_hash);
     } else {
@@ -48,6 +63,19 @@ pub async fn handle_complete(
             job_id, signing::extract_biz_type(&resp), &agent_id,
         ).await?;
 
+        audit::log(
+            "cli",
+            "buyer/complete_submitted",
+            true,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("paymentMode=x402"),
+                format!("txHash={tx_hash}"),
+            ]),
+            None,
+        );
         println!("✓ 任务 complete 完成（x402），状态 → complete");
         println!("  txHash: {tx_hash}");
     }

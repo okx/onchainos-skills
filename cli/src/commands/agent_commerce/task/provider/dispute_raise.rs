@@ -11,7 +11,9 @@
 //! reason 仅作 user-facing log，不上链。
 
 use anyhow::{bail, Context, Result};
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::{self, network::task_api_client::TaskApiClient};
 use crate::commands::agent_commerce::task::signing;
 
@@ -60,6 +62,20 @@ pub async fn handle_dispute_raise(
         job_id, signing::extract_biz_type(&approve_resp), agent_id,
     ).await
         .context("dispute raise (阶段 1): approve 上链失败")?;
+
+    audit::log(
+        "cli",
+        "provider/dispute_approve_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("reasonLen={}", reason.chars().count()),
+            format!("txHash={approve_tx}"),
+        ]),
+        None,
+    );
 
     println!("✓ 仲裁阶段 1: approve 上链 (token 授权给 dispute 合约)");
     println!("  原因记录: {reason}");

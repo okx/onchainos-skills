@@ -244,27 +244,15 @@ impl WalletApiClient {
     }
 
     pub fn with_base_url(base_url_override: Option<&str>) -> Result<Self> {
-        let (base_url, source) = if let Ok(v) = std::env::var("OKX_BASE_URL") {
-            (v, "env:OKX_BASE_URL")
-        } else if let Some(v) = option_env!("OKX_BASE_URL") {
-            (v.to_string(), "compile-time:OKX_BASE_URL")
-        } else if let Some(v) = base_url_override {
-            (v.to_string(), "override")
-        } else {
-            (crate::client::DEFAULT_BASE_URL.to_string(), "DEFAULT_BASE_URL")
-        };
-        // DoH proxy 只对 web3.okx.com 域有效；如果 base_url 不指向它，应跳过 DoH，
-        // 否则磁盘里 cache 的 proxy node 会覆盖自定义/泳道 base_url，导致请求悄悄打到线上。
-        let doh_domain = "web3.okx.com";
-        let custom = std::env::var("OKX_BASE_URL").is_ok()
-            || option_env!("OKX_BASE_URL").is_some()
-            || !base_url.contains(doh_domain);
-        eprintln!(
-            "[wallet_api] base_url = {} (source={}, doh_bypass={})",
-            base_url, source, custom,
-        );
+        let base_url = std::env::var("OKX_BASE_URL")
+            .ok()
+            .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
+            .or_else(|| base_url_override.map(|s| s.to_string()))
+            .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
-        let mut doh = DohManager::new(doh_domain, &base_url, custom);
+        let custom = std::env::var("OKX_BASE_URL").is_ok()
+            || option_env!("OKX_BASE_URL").is_some();
+        let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
         doh.prepare();
 
         let mut builder = Client::builder()
@@ -274,11 +262,6 @@ impl WalletApiClient {
         }
         if doh.is_proxy() {
             builder = builder.user_agent(doh.doh_user_agent());
-        }
-
-        let effective = doh.proxy_base_url().unwrap_or_else(|| base_url.clone());
-        if effective != base_url {
-            eprintln!("[wallet_api] ⚠ DoH proxy active → effective_base_url = {}", effective);
         }
 
         Ok(Self {

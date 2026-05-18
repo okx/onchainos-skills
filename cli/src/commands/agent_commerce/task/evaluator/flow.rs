@@ -84,13 +84,16 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              **1.3** Compare the two `[evaluator-routing]` lines above character-by-character (don't go by impression — base it on the two printed lines):\n\
              - Exact match → proceed to Step 2.\n\
              - Any character differs → call `xmtp_dispatch_session` (`sessionKey=arbKey`, `content=<the entire current inbound envelope as a JSON string>`, **insert all fields verbatim, no rewriting**), then **end this turn**.\n\n\
-             **Step 2 — Extract `jobId` (envelope top-level `jobId` field) and top-level `agentId` (your evaluator agentId) from the inbound message.**\n\
-             If either `jobId` or top-level `agentId` is missing, abort this turn immediately and output `missing jobId/agentId in payload; abort` log.\n\
-             **Step 3 — Fetch evidence and process local state (must pass inbound envelope top-level `agentId` to `--agent-id`):**\n\
+             **Step 2 — Extract `jobId`, top-level `agentId` (your evaluator agentId), and top-level `roundNum` from the inbound envelope.**\n\
+             If any of `jobId` / top-level `agentId` / `roundNum` is missing, abort this turn immediately and output `missing jobId/agentId/roundNum in payload; abort` log.\n\
+             **Step 3 — Fetch evidence:**\n\
              ```bash\n\
-             onchainos agent evidence-info <jobId> --agent-id <envelope top-level agentId>\n\
+             onchainos agent evidence-info <jobId> --agent-id <envelope top-level agentId> --round-num <envelope top-level roundNum>\n\
              ```\n\
-             Return structure (top level): `{{ title, description, provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`. `description` / `title` is the task's original definition; `texts[]` is text evidence; `images[]` is already downloaded — each item has `localPath` (absolute path; use it to open the image).\n\n\
+             The CLI first calls `dispute/status` and verifies (AND) `taskStatus` not terminal / `--round-num` == on-chain `currentRound` / `disputeStatus = commit_phase` / this account hit `selectedVoter`. **Decide based only on the stable marker at the bottom of stdout**:\n\
+             - `selected: no` (accompanied by the preceding `reason: <...>` line — log it then **end this turn immediately**; no evidence JSON follows, no commit, no vote-record. The envelope is stale / round already re-rolled / window closed / this account not selected this round)\n\
+             - `selected: yes` → continue to parse the evidence JSON that follows\n\n\
+             Evidence JSON top-level: `{{ title, description, provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`. `description` / `title` is the task's original definition; `texts[]` is text evidence; `images[]` is already downloaded — each item has `localPath` (absolute path; use it to open the image).\n\n\
              **Post-evidence hard constraints**:\n\
              - An image item with a `downloadError` field = that evidence is **considered missing**\n\
              - **Do not** scan local disk for replacement files; a missing `localPath` means the CLI already knows the image is unavailable\n\

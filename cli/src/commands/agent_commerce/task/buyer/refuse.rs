@@ -5,7 +5,9 @@
 //! 流程：pre-refuse(orderId,deadline) → 签 digest → refuse(signatureData+reason) → 签 uopHash → broadcast
 
 use anyhow::Result;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -23,6 +25,20 @@ pub async fn handle_reject(
         Some(&serde_json::json!({ "reason": reason })),
         &account_id, &address, &agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "buyer/reject_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("reasonLen={}", reason.chars().count()),
+            format!("txHash={}", result.tx_hash),
+        ]),
+        None,
+    );
 
     println!("✓ 已拒绝验收（原因：{reason}），状态 → refused");
     println!("  卖家有 24 小时内可申请仲裁");

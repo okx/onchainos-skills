@@ -3,7 +3,9 @@
 //! 卖家动作：同意退款 — onchainos agent agree-refund
 
 use anyhow::{bail, Result};
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -30,6 +32,19 @@ pub async fn handle_agree_refund(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "provider/agree_refund_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("✓ 已同意退款，等待链上确认（job_refunded）");
     println!("  txHash: {tx_hash}");

@@ -6,8 +6,11 @@
 //! 清理时机：买家执行 confirm-accept 成功后
 
 use std::collections::HashMap;
+use std::time::Duration;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
+
+use crate::audit;
 
 /// 推荐卖家信息（从 /match 接口返回的子集）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,6 +224,20 @@ pub async fn save_agreed(
     });
     let json = serde_json::to_string_pretty(&state)?;
     std::fs::write(state_path(job_id)?, json)?;
+    audit::log(
+        "cli",
+        "buyer/agreed_terms_saved",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("provider={provider_agent_id}"),
+            format!("tokenSymbol={token_symbol}"),
+            format!("tokenAmount={token_amount}"),
+        ]),
+        None,
+    );
     println!("✓ 协商结果已保存: provider={provider_agent_id}, {token_symbol} {token_amount} (job={job_id})");
     Ok(())
 }
@@ -296,6 +313,17 @@ pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
     }
     let json = serde_json::to_string_pretty(&state)?;
     std::fs::write(state_path(job_id)?, json)?;
+    audit::log(
+        "cli",
+        "buyer/provider_marked_failed",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("provider={provider_agent_id}"),
+        ]),
+        None,
+    );
     println!("✓ 已标记 provider {provider_agent_id} 为协商失败 (job={job_id})");
     Ok(())
 }

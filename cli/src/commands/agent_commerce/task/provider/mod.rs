@@ -27,9 +27,11 @@ pub mod recommend_task;
 
 use anyhow::Result;
 use clap::Subcommand;
+use std::time::Duration;
 
 use anyhow::bail;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::{
     claim as common_claim, dispute_upload, network::task_api_client::TaskApiClient,
 };
@@ -176,6 +178,17 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             }
             let has_nonzero =
                 common_claim::fetch_and_print_claimable(&mut client, &agent_id).await?;
+            audit::log(
+                "cli",
+                "provider/arbitration_claimable_checked",
+                true,
+                Duration::default(),
+                Some(vec![
+                    format!("agentId={agent_id}"),
+                    format!("hasClaimable={has_nonzero}"),
+                ]),
+                None,
+            );
             if has_nonzero {
                 println!("\nnext: 有可领奖励 — 跑 `onchainos agent provider-claim-rewards --agent-id {agent_id}` 一次性提走。");
             } else {
@@ -190,6 +203,18 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             let (account_id, address) = signing::resolve_wallet(None, None)?;
             let tx_hash =
                 common_claim::submit_claim_and_broadcast(&mut client, &account_id, &address, &agent_id).await?;
+            audit::log(
+                "cli",
+                "provider/arbitration_claimed",
+                true,
+                Duration::default(),
+                Some(vec![
+                    format!("agentId={agent_id}"),
+                    format!("account={address}"),
+                    format!("txHash={tx_hash}"),
+                ]),
+                None,
+            );
             println!("✓ reward claim submitted (account={address})");
             println!("  txHash: {tx_hash}");
             println!("note: 一次性领取所有已结算争议的奖励，到账金额会在链上确认后通知。");

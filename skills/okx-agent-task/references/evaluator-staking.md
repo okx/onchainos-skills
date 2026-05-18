@@ -1,166 +1,180 @@
-# Evaluator Staking & 经济模型
+# Evaluator Staking & Economic Model
 
-> **全程免 gas**：staking 所有链上动作（首次质押 / 追加 / 解质押 / 领取 / 撤销 / claim 等）走平台代付通道，**用户钱包不需要任何 gas / native 余额**。**禁止**给用户引导"准备 gas / 留 gas / 余额够不够"，**禁止**把 gas 预留算进金额建议。
+> **Fully gas-free**: every on-chain staking action (initial stake / increase / unstake / claim / cancel / claim rewards etc.) goes through the platform's gas-sponsored channel. The user's wallet does **not** need any gas / native balance. **Do not** prompt the user about "preparing gas / leaving gas / checking balance", and **do not** factor gas reserves into amount suggestions.
 
-> evaluator 角色 staking + 经济模型单一权威。覆盖：
-> - **质押生命周期**：首次 onboarding（`okx-agent-identity` handoff 后唯一入口）+ 补质押 / 解质押 / 领取 / 取消 / 查询
-> - **奖励规则**：投中多数方分仲裁押金 + 少数方罚没的质押
-> - **罚没规则**：投中少数方 / Commit / Reveal 超时 + 罚没后冷却期
-> - **解质押冷却期**
+> Distinguish two things:
+> - **Gas (network fee)**: sponsored by the platform — the **user's wallet never needs to prepare it**. On XLayer gas is also denominated in OKB, but it goes through the sponsorship channel and is not deducted from the user's balance.
+> - **Stake principal**: the stake amount itself is OKB (XLayer's native token); the user's wallet **must** hold enough OKB.
 >
-> ⚠️ 所有数字参数（bps / 天数 / 小时数）一律由 `onchainos agent staking-config` 动态拉取，本文件**不写常量**；具体字段名（如 `arbitrationFeeBps`）出现在 §2 文案模板的占位符里，那里同时给出取值步骤。
-
-## §1 场景路由
-
-> 收到入站后匹配下面的场景路由表，命中即跳到对应节按节内说明执行；都不命中则不属于本文件。
+> 🚫 **Forbidden tokens** (scoped to the **gas / network-fee context only**; any one appearing in user-visible text = hard violation, regardless of UI shape):
+> - `gas` / `gas fee` / `network fee` / `手续费` / `网络费`
+> - Describing `ETH` as the gas medium on XLayer (XLayer does not use ETH for gas at all)
+> - Phrases like "wallet balance is not enough to pay gas / network fee"
+> - Telling the user to `top up ETH` / `top up gas` / `top up native for gas` / `向钱包充值少量 ETH`
+> - "preflight gas check"–style framing
 >
-> 上下文里出现的任何数字**不得用于路由匹配**——路由只看意图信号。
+> ❌ Anti-pattern: any phrasing of "prepare gas / top up ETH / wallet balance insufficient for gas / network fee" — whether dressed up as a preflight check, a status card, or a next-step prompt, it is a violation. The platform sponsors gas; there is no such step.
+>
 
-| 场景 | 入站信号 | 进 |
+> Single authority on evaluator-role staking + economic model. Covers:
+> - **Staking lifecycle**: first-time onboarding (the sole entry after `okx-agent-identity` handoff) + top-up / unstake / claim / cancel / query
+> - **Reward rules**: voting with the majority earns a share of the arbitration deposit + slashed stake from the minority side
+> - **Slashing rules**: voting with the minority / Commit / Reveal timeout + post-slash cooldown
+> - **Unstake cooldown**
+>
+> ⚠️ All numeric parameters (bps / days / hours) are pulled dynamically from `onchainos agent staking-config`. This file **does not hard-code constants**; specific field names (e.g. `arbitrationFeeBps`) appear in the §2 copy templates as placeholders, with the retrieval steps right there.
+
+## §1 Scenario Routing
+
+> After receiving an inbound, match against the scenario routing table below; on hit, jump to the corresponding section and follow its instructions. If nothing matches, it does not belong to this file.
+>
+> Any numbers appearing in context **must not be used for route matching** — routing only looks at intent signals.
+
+| Scenario | Inbound signal | Go to |
 |---|---|---|
-| 首次质押 Onboarding | **identity handoff**（上一轮 / 当前 turn 先前内容含：`Evaluator 身份已注册` / `Evaluator 身份 #<id> 已注册` / `要被系统分派仲裁案子`，三条对应 `okx-agent-identity/references/role-evaluator.md` Post-success 的实际输出）；**或 用户意图**（`我要质押` / `质押成为仲裁者` / `帮我质押` / `去质押` / `let's stake` / `stake now` / `proceed with staking`）；**或 短确认**（`好` / `继续` / `ok` / `go` / `嗯` / `yes` / `好的` / `确认`，**仅当上一轮存在 handoff 信号时**才算） | §2 |
-| 追加质押 | `追加 / 补充 / 增加质押 <N>` / 被罚后要"补齐" | §3 |
-| 申请解质押 | `我要解质押 <N>` / `取回质押` / `赎回质押` | §4 |
-| 领取解质押（冷却期满） | `领取解质押` / `取走我的 OKB` | §5 |
-| 撤回解质押（冷却期内） | `取消解质押` / `撤回解质押申请` | §6 |
-| 查询质押态 | `我现在质押多少` / `查我的质押` / `还能解多少` | §7 |
+| First-time staking onboarding | **identity handoff** (previous turn / current turn earlier content contains: `Evaluator identity registered` / `Evaluator identity #<id> registered` / `to be assigned arbitration cases by the system`, the three corresponding to the actual Post-success output of `okx-agent-identity/references/role-evaluator.md`); **or user intent** (`I want to stake` / `stake to become an evaluator` / `help me stake` / `go stake` / `let's stake` / `stake now` / `proceed with staking`); **or short confirmation** (`ok` / `continue` / `yes` / `go` / `mm` / `yep` / `sure` / `confirm`, **only counts when the previous turn contained a handoff signal**) | §2 |
+| Increase stake | `increase / add / top up stake <N>` / "top up" after being slashed | §3 |
+| Request unstake | `I want to unstake <N>` / `withdraw stake` / `redeem stake` | §4 |
+| Claim unstake (cooldown elapsed) | `claim unstake` / `take out my OKB` | §5 |
+| Cancel unstake (within cooldown) | `cancel unstake` / `withdraw unstake request` | §6 |
+| Query stake state | `how much have I staked` / `check my stake` / `how much can I still unstake` | §7 |
 
 ---
 
-## §2 首次质押 Onboarding
+## §2 First-Time Staking Onboarding
 
-### Step 1 — 并发拉门槛 + 已质押态
+### Step 1 — Concurrently pull thresholds + current stake state
 
 ```bash
 onchainos agent staking-config
-onchainos agent my-stake
+onchainos agent my-stake --agent-id <evaluatorAgentId>
 ```
 
-若 `activeStake >= minCumulativeStakeOkb`（已达门槛）：
-- 告知用户：「你已质押 `<activeStake>` OKB，超过门槛 `<minCumulativeStakeOkb>`，仲裁者候选状态正常。要追加质押提升选中权重吗？」
-- 想追加 → 引导进 §3 走 `increase-stake`
-- 不追加 → 结束本场景
+If `activeStake >= minCumulativeStakeOkb` (threshold already met):
+- Tell the user: "You've staked `<activeStake>` OKB, above the threshold `<minCumulativeStakeOkb>`. Evaluator-candidate status is healthy. Want to add more stake to boost your selection weight?"
+- Wants to add → route to §3 and run `increase-stake`
+- Doesn't want to add → end this scenario
 
-### Step 2 — 展示现状 + 等用户给数字（⚠️ 不可省略）
+### Step 2 — Show current state + wait for the user to give a number (⚠️ must not be skipped)
 
-> **硬性规则**：
-> 1. agent **不替**用户决定金额：不从上下文推断、不用公式算默认、不"帮用户补齐"。
-> 2. 未收到用户**显式数字**前，**绝不执行** Step 3 的 CLI——`stake` 是上链操作，解质押需冷却期才能取回，静默发起 = 严重违反用户授权。
-> 3. 即使经由同轮链式 handoff 进入本节，**Step 2 的展示 + 等用户回复数字仍不可省略**。
-> 4. 金额**只能**来自**用户当轮显式输入的数字**，其他任何来源一律禁用。
+> **Hard rules**:
+> 1. The agent **does not** decide the amount for the user: do not infer from context, do not use a formula for a default, do not "top up for the user".
+> 2. Before receiving an **explicit number from the user**, **never execute** the Step 3 CLI — `stake` is an on-chain action, and unstaking requires a cooldown before retrieval; silently initiating it = serious violation of user authorization.
+> 3. Even when entering this section via same-turn chained handoff, **the Step 2 display + waiting for the user's numeric reply still must not be skipped**.
+> 4. The amount can **only** come from **a number the user explicitly types in the current turn**; any other source is strictly forbidden.
 
-文案模板（**占位符全部替换为 Step 1 拉到的真实值**）：
+Copy template (**replace every placeholder with the real value pulled in Step 1**):
 
-> 当前你的链上质押：**`<activeStake>` OKB**
-> 平台累计门槛：**`<minCumulativeStakeOkb>` OKB**
-> 还需至少质押：**`<minCumulativeStakeOkb - activeStake>` OKB**
+> Your current on-chain stake: **`<activeStake>` OKB**
+> Platform cumulative threshold: **`<minCumulativeStakeOkb>` OKB**
+> At least still need to stake: **`<minCumulativeStakeOkb - activeStake>` OKB**
 >
-> **收益：**
-> - 投中多数方 → 按质押比例分仲裁押金（任务金额的 **`<arbitrationFeeBps>`**）+ 少数方被罚没的质押
+> **Rewards:**
+> - Voting with the majority → share of the arbitration deposit by stake ratio (**`<arbitrationFeeBps>`** of the job amount) + slashed stake from the minority side
 >
-> **风险（罚没）：**
-> - 投中少数方 → 罚没 **`<slashMinorityBps>`** 的质押
-> - Commit / Reveal 超时 → 罚没 **`<slashTimeoutBps>`** 的质押，踢出本轮 + **`<slashedCooldownHours>` 小时**冷却期不被选中
-> - ⚠️ 无弃权选项：被选中必须投票，拖到超时即按超时处理
+> **Risks (slashing):**
+> - Voting with the minority → **`<slashMinorityBps>`** of the stake slashed
+> - Commit / Reveal timeout → **`<slashTimeoutBps>`** of the stake slashed, kicked out of this round + **`<slashedCooldownHours>` hour** cooldown during which you won't be selected
+> - ⚠️ No abstention option: once selected, you must vote; dragging past the deadline is treated as a timeout
 >
-> **解质押规则：**
-> - 随时可申请解质押（活跃仲裁期间除外）；申请后进入 **`<unstakeCooldownDays>` 天冷却期**，到期后告诉我"领取解质押"即可提走
-> - 冷却期内告诉我"取消解质押"可撤回申请
+> **Unstake rules:**
+> - You can request to unstake at any time (except during active arbitrations); after the request you enter a **`<unstakeCooldownDays>`-day cooldown**, after which tell me "claim unstake" to withdraw
+> - During the cooldown you can say "cancel unstake" to withdraw the request
 >
-> 请告诉我你要质押多少 OKB（至少 **`<minCumulativeStakeOkb - activeStake>`**，多于门槛可提升选中权重）：
-> - 回复**具体数字** → 用该金额质押
-> - 回复 **"取消"** / **"cancel"** → 放弃质押
+> Please tell me how much OKB you want to stake (at least **`<minCumulativeStakeOkb - activeStake>`**; staking above the threshold can boost your selection weight):
+> - Reply with a **specific number** → stake that amount
+> - Reply **"cancel"** → abandon staking
 
-### Step 3 — 收到用户回复后决定 N 并执行
+### Step 3 — Decide N and execute after the user replies
 
-用户回复**纯数字** → 用该数字作 `N` 跑 CLI（CLI 内部强制阈值 / 路由 / 异常文案）。其他回复按下表处理：
+User replies with a **plain number** → use that number as `N` and run the CLI (the CLI internally enforces threshold / routing / exception copy). Other replies are handled per the table below:
 
-| 用户回复 | 处理 |
+| User reply | Handling |
 |---|---|
-| 取消 / cancel / 不 | 「已取消质押。需要时再来。」→ 结束 |
-| 确认 / yes / ok（无数字） | 「请告诉我具体要质押多少 OKB」→ 回 Step 2 |
+| cancel / no | "Stake cancelled. Come back when you're ready." → end |
+| confirm / yes / ok (no number) | "Please tell me the exact OKB amount to stake" → return to Step 2 |
 
 ```bash
-onchainos agent stake --amount <N>
+onchainos agent stake --amount <N> --agent-id <evaluatorAgentId>
 ```
 
-### Step 4 — 成功后 handoff
+### Step 4 — Handoff after success
 
-CLI exit code = 0 且 stdout 含 `stake submitted` 时，**same-turn handoff** 到 `/skills/okx-agent-chat/after-agent-list-changed.md` 的 Execution Flow（agent list 状态变了，要同步 OpenClaw）。
+When the CLI exit code = 0 and stdout contains `stake submitted`, **same-turn handoff** to the Execution Flow of `/skills/okx-agent-chat/after-agent-list-changed.md` (the agent list state has changed; needs to sync to OpenClaw).
 
 ---
 
-## §3 Increase-stake / 追加质押
+## §3 Increase-stake
 
-**触发**：用户主动追加（被罚后补齐 / 自愿加大选中权重）。
+**Trigger**: user actively tops up (catching up after a slash / voluntarily increasing selection weight).
 
-### Step 1 — 确认金额
+### Step 1 — Confirm amount
 
-向用户复述：「将追加 **`<N>` OKB**，确认？」用户**明确确认**后才进 Step 2。`<N>` 必须由用户给出，**不由** agent 推算。
+Echo back to the user: "Will add **`<N>` OKB**. Confirm?" Only proceed to Step 2 after the user **explicitly confirms**. `<N>` must be given by the user; **not** inferred by the agent.
 
-### Step 2 — 执行
-
-```bash
-onchainos agent increase-stake --amount <N>
-```
-
----
-
-## §4 Request-unstake / 申请解质押
-
-**触发**：用户主动申请解质押。
-
-### Step 1 — 拉 cooldown 天数（用于确认文案）
+### Step 2 — Execute
 
 ```bash
-onchainos agent staking-config   # 取 unstakeCooldownDays
-```
-
-### Step 2 — 确认金额
-
-「将申请解质押 **`<N>` OKB**。申请后进入 **`<unstakeCooldownDays>` 天冷却期**：期间可撤回申请；到期后再领取。**冷却期不可提前结束**。确认？」
-
-### Step 3 — 执行
-
-```bash
-onchainos agent request-unstake --amount <N>
+onchainos agent increase-stake --amount <N> --agent-id <evaluatorAgentId>
 ```
 
 ---
 
-## §5 Claim-unstake / 领取（冷却期满）
+## §4 Request-unstake
 
-无金额参数，用户**明确命令**后直接执行。CLI 内部判断冷却期是否到期。
+**Trigger**: user actively requests unstake.
+
+### Step 1 — Pull cooldown days (for the confirmation copy)
 
 ```bash
-onchainos agent claim-unstake
+onchainos agent staking-config   # read unstakeCooldownDays
+```
+
+### Step 2 — Confirm amount
+
+"Will request to unstake **`<N>` OKB**. After the request you enter a **`<unstakeCooldownDays>`-day cooldown**: you may cancel during this period; after expiry you can claim. **The cooldown cannot be ended early.** Confirm?"
+
+### Step 3 — Execute
+
+```bash
+onchainos agent request-unstake --amount <N> --agent-id <evaluatorAgentId>
 ```
 
 ---
 
-## §6 Cancel-unstake / 撤回（冷却期内）
+## §5 Claim-unstake (after cooldown)
 
-无金额参数，用户**明确命令**后直接执行。CLI 内部判断是否仍在冷却期内。
+No amount argument; execute directly after the user gives an **explicit command**. The CLI internally checks whether the cooldown has elapsed.
 
 ```bash
-onchainos agent cancel-unstake
+onchainos agent claim-unstake --agent-id <evaluatorAgentId>
 ```
 
 ---
 
-## §7 My-stake / 只读查询
+## §6 Cancel-unstake (within cooldown)
+
+No amount argument; execute directly after the user gives an **explicit command**. The CLI internally checks whether it is still within the cooldown.
 
 ```bash
-onchainos agent my-stake
+onchainos agent cancel-unstake --agent-id <evaluatorAgentId>
 ```
 
-只读查询，无需确认，直接执行后把关键字段摘给用户：
+---
 
-| 字段 | 含义 |
+## §7 My-stake / Read-only query
+
+```bash
+onchainos agent my-stake --agent-id <evaluatorAgentId>
+```
+
+Read-only query, no confirmation needed; after executing, summarize the key fields to the user:
+
+| Field | Meaning |
 |---|---|
-| `activeStake` | 当前已质押 OKB |
-| `pendingUnstake` | 冷却期中待解锁 OKB |
-| `validStake` | 可加权选取的有效质押 = `activeStake - pendingUnstake` |
-| `activeDisputes` | 参与中的仲裁数；`>0` 时禁止解质押 |
-| `unstakeAvailableAt` | 解质押冷却期结束 unix 秒；`0` = 无待解锁 |
-| `cooldownEndsAt` | 罚没冷却期结束 unix 秒（被罚没后不被选中的窗口）；`0` = 不在该冷却期 |
+| `activeStake` | Currently staked OKB |
+| `pendingUnstake` | OKB pending unlock in the cooldown |
+| `validStake` | Effective stake usable for weighted selection = `activeStake - pendingUnstake` |
+| `activeDisputes` | Number of in-progress arbitrations; unstake is forbidden while `>0` |
+| `unstakeAvailableAt` | Unix seconds when unstake cooldown ends; `0` = nothing pending |
+| `cooldownEndsAt` | Unix seconds when slash cooldown ends (window during which a slashed evaluator won't be selected); `0` = not in this cooldown |

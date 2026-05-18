@@ -3,7 +3,9 @@
 //! 卖家动作：交付 — onchainos agent deliver
 
 use anyhow::{bail, Result};
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 use crate::commands::agent_commerce::task::signing;
@@ -33,6 +35,19 @@ pub async fn handle_deliver(
         .ok_or_else(|| anyhow::anyhow!("任务详情缺少 status 字段，无法判定能否交付"))?;
     let status = Status::from_int(status_int);
     if status != Status::Accepted {
+        audit::log(
+            "cli",
+            "provider/deliver_blocked_wrong_status",
+            false,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("statusInt={status_int}"),
+                format!("status={}", status.as_str()),
+            ]),
+            Some("status != accepted(1)"),
+        );
         bail!(
             "deliver 拒绝执行：任务当前 status = {} ({}), 必须为 accepted (1) 才能交付。\n\
              如果你刚 apply，需要等买家 confirm-accept 上链，收到 `job_accepted` 系统通知后再 deliver。\n\
@@ -58,6 +73,19 @@ pub async fn handle_deliver(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "provider/deliver_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("✓ 交付物已提交，等待链上确认（job_submitted）");
     println!("  txHash: {tx_hash}");

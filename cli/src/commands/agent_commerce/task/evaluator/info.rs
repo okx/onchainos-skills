@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use serde_json::{json, Map, Value};
 
+use super::dispute_status;
 use super::helpers::evidence_dir;
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
@@ -16,7 +17,15 @@ pub async fn handle_info(
     client: &mut TaskApiClient,
     job_id: &str,
     agent_id: &str,
+    round_num: &str,
 ) -> Result<()> {
+    // 前置门：commit 前的 4 条 AND 硬门（taskStatus 非终态 / round 对齐 /
+    // disputeStatus=CommitPhase / selectedVoter 非空）。任一不过 → precheck
+    // 内部已打印 `reason: ...` + `selected: no`，本函数早返回不下载证据，
+    if !dispute_status::precheck_round_gate(client, job_id, agent_id, round_num).await? {
+        return Ok(());
+    }
+
     let path = client.endpoint(job_id, "evidence");
     let mut data = client.get_with_identity(&path, agent_id).await?;
 

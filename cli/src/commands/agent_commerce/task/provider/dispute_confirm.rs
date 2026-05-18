@@ -8,7 +8,9 @@
 //! 完成后等链上 `job_disputed` 通知，再调 next-action 进入证据准备期。
 
 use anyhow::{bail, Context, Result};
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -33,6 +35,19 @@ pub async fn handle_dispute_confirm(
         job_id, signing::extract_biz_type(&dispute_resp), agent_id,
     ).await
         .context("dispute confirm (阶段 2): dispute 上链失败")?;
+
+    audit::log(
+        "cli",
+        "provider/dispute_confirm_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("txHash={dispute_tx}"),
+        ]),
+        None,
+    );
 
     println!("✓ 仲裁阶段 2: dispute 上链");
     println!("  txHash: {dispute_tx}");

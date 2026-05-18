@@ -6,7 +6,9 @@
 //! 是否拥有买家身份（role=1），再执行任务发布流程。
 
 use anyhow::{bail, Result};
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::{
     self, fetch_my_agents, network::task_api_client::TaskApiClient,
@@ -226,6 +228,23 @@ pub async fn handle_create(
     if let Some(ref provider_id) = params.provider {
         super::negotiate::save_designated_provider(&job_id, provider_id)?;
     }
+
+    audit::log(
+        "cli",
+        "buyer/task_created",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={buyer_agent_id}"),
+            format!("currency={}", validated.currency),
+            format!("budget={}", params.budget),
+            format!("maxBudget={}", params.max_budget),
+            format!("designatedProvider={}", params.provider.as_deref().unwrap_or("")),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("✓ 任务发布中（交易已广播，等待上链确认）");
     println!("  jobId:  {job_id}");

@@ -3,7 +3,9 @@
 //! 卖家动作：申请接单 — onchainos agent apply
 
 use anyhow::Result;
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -32,6 +34,21 @@ pub async fn handle_apply(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "provider/apply_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("tokenSymbol={token_symbol}"),
+            format!("tokenAmount={token_amount}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("✓ 已提交接单申请（apply），等待链上确认（provider_applied）");
     println!("  报价: {token_amount} {token_symbol}");

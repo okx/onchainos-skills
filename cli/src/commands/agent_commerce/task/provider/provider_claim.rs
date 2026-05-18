@@ -8,7 +8,9 @@
 //! → AP.complete → 状态 complete，资金乐观结算给 provider
 
 use anyhow::{bail, Result};
+use std::time::Duration;
 
+use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -35,6 +37,19 @@ pub async fn handle_claim_auto_complete(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), agent_id,
     ).await?;
+
+    audit::log(
+        "cli",
+        "provider/claim_auto_complete_submitted",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={job_id}"),
+            format!("agentId={agent_id}"),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
 
     println!("✓ 已发起超时领取（claimAutoComplete），等待链上确认（job_completed）");
     println!("  txHash: {tx_hash}");
