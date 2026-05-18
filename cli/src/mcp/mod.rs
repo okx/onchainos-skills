@@ -1333,7 +1333,7 @@ impl McpServer {
         }
     }
 
-    // ── Social: news / sentiment / vibe (PRD: DEXMARKET-7736) ─────────
+    // ── Social: news / sentiment / vibe ───────────────────────────────
 
     #[tool(
         name = "social_news_latest",
