@@ -315,6 +315,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
     match cmd {
         Commands::Market { command } => format!("market {}", market_sub(command)),
         Commands::Signal { command } => format!("signal {}", signal_sub(command)),
+        Commands::Social { command } => format!("social {}", social_sub(command)),
         Commands::Memepump { command } => format!("memepump {}", memepump_sub(command)),
         Commands::Token { command } => format!("token {}", token_sub(command)),
         Commands::Swap { command } => format!("swap {}", swap_sub(command)),
@@ -342,7 +343,7 @@ use crate::commands::{
     competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
     leaderboard::LeaderboardCommand, market::MarketCommand, memepump::MemepumpCommand,
     portfolio::PortfolioCommand, security::SecurityCommand, signal::SignalCommand,
-    swap::SwapCommand, token::TokenCommand, tracker::TrackerCommand,
+    social::SocialCommand, swap::SwapCommand, token::TokenCommand, tracker::TrackerCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -363,6 +364,20 @@ fn signal_sub(c: &SignalCommand) -> &'static str {
     match c {
         SignalCommand::Chains => "chains",
         SignalCommand::List { .. } => "list",
+    }
+}
+
+fn social_sub(c: &SocialCommand) -> &'static str {
+    match c {
+        SocialCommand::NewsLatest { .. } => "news-latest",
+        SocialCommand::NewsBySymbol { .. } => "news-by-symbol",
+        SocialCommand::NewsSearch { .. } => "news-search",
+        SocialCommand::NewsDetail { .. } => "news-detail",
+        SocialCommand::NewsPlatforms => "news-platforms",
+        SocialCommand::SentimentRanking { .. } => "sentiment-ranking",
+        SocialCommand::SentimentSymbol { .. } => "sentiment-symbol",
+        SocialCommand::VibeTimeline { .. } => "vibe-timeline",
+        SocialCommand::VibeTopKols { .. } => "vibe-top-kols",
     }
 }
 

@@ -103,7 +103,7 @@ Gas Station broadcast is **asynchronous** — `txHash` returns "processing", act
 
 ### Blocked scenarios (do NOT proactively mention Gas Station)
 
-Per PRD, when any of these conditions hold, the backend returns `gasStationUsed=false` and the normal flow runs. Agent must NOT suggest enabling Gas Station in these cases:
+When any of these conditions hold, the backend returns `gasStationUsed=false` and the normal flow runs. Agent must NOT suggest enabling Gas Station in these cases:
 
 - A previous Gas Station tx is still pending (7702 upgrade or regular)
 - A prior EOA transaction is blocking 7702 upgrade slot on this chain

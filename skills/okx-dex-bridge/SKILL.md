@@ -37,7 +37,7 @@ one-shot execution, and status tracking.
 CLI `--from-chain` and `--to-chain` accept both numeric chainIndex (e.g. `1`, `8453`, `42161`) and common chain names (`ethereum`, `base`, `arbitrum`, `bsc`, `polygon`, `optimism`, `xlayer`, `avalanche`, `linea`, `scroll`, `zksync`, `solana`). For chains without a name alias, pass numeric chainIndex directly.
 </IMPORTANT>
 
-Cross-chain supported scope (PRD baseline):
+Cross-chain supported scope:
 
 | # | Chain | chainIndex | Cross-chain |
 |---|---|---|---|

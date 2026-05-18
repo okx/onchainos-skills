@@ -484,4 +484,4 @@ All strategy subcommands always emit the standard onchainos JSON envelope `{ok: 
 | Events stream / cursor consumption | `eventCursor` is surfaced verbatim; no consumer in Phase 1 |
 | `cancel --all` source-channel filter (KD-009) | Pass-through to BE default; CLI does not pre-filter |
 | Multi-account batch | Out of scope; CLI uses the active account only |
-| `get_account_status` (PRD §5.1) | Intentionally not implemented. SA activation / expiry is handled transparently inside the 60018 (UPGRADE_REQUIRED) flow — the CLI runs SD-A and retries silently. The agent does not need to query SA state up-front; just call the intended subcommand and let the CLI handle activation on demand. |
+| `get_account_status` | Intentionally not implemented. SA activation / expiry is handled transparently inside the 60018 (UPGRADE_REQUIRED) flow — the CLI runs SD-A and retries silently. The agent does not need to query SA state up-front; just call the intended subcommand and let the CLI handle activation on demand. |
