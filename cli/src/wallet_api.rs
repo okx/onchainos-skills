@@ -845,7 +845,8 @@ impl WalletApiClient {
                 Value::Number(n) => n.to_string(),
                 other => other.to_string(),
             };
-            let msg = body["msg"].as_str().unwrap_or("unknown error").to_string();
+            let msg = body["msg"].as_str().unwrap_or("unknown error");
+            let msg = crate::client::augment_auth_error_msg(&code_str, msg);
             return Err(ApiCodeError {
                 code: code_str,
                 msg,

@@ -214,8 +214,8 @@ pub fn check_response(value: &serde_json::Value) -> Result<()> {
     let msg = value
         .get("msg")
         .and_then(|v| v.as_str())
-        .unwrap_or(kind.user_message())
-        .to_string();
+        .unwrap_or(kind.user_message());
+    let msg = crate::client::augment_auth_error_msg(&code.to_string(), msg);
     Err(StrategyApiError { code, msg, kind }.into())
 }
 
