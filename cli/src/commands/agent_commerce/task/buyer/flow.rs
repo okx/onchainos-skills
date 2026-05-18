@@ -578,8 +578,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              先调 `session_status` 拿到本 sub session 的 sessionKey（后续 Step 3 复用，同 turn 不再重复调）。\n\
              再调 `xmtp_get_conversation_history`（sessionKey = 上一步拿到的 sessionKey）拉取与卖家的聊天记录，完成两件事：\n\
              \x20\x20a) 从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 提取 `qualityStandards`（验收标准，按任务发布时为准）；如果字段为空则后续展示时省略该行。\n\
-             \x20\x20b) 找到卖家发送的**最近一条交付物消息**（通常是最后一条或倒数几条中包含文件元数据或交付说明的消息），判断交付物类型：\n\n\
-             ━━━ 情况 A：交付物是文件（消息包含 fileKey / digest / salt / nonce / secret 等加密元数据）━━━\n\n\
+             \x20\x20b) 找到卖家发送的**以 `[NEGOTIATE_DELIVER]` 前缀开头的消息**（从最新往前找，首个命中即为交付物消息），根据 `deliverableType` 字段判断类型：\n\n\
+             ━━━ 情况 A：deliverableType=file（消息包含 fileKey / digest / salt / nonce / secret 解密字段）━━━\n\n\
              调用 xmtp_file_download 工具下载文件：\n\
              \x20\x20参数：\n\
              \x20\x20- fileKey：卖家上传时返回的 fileKey\n\
@@ -596,8 +596,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              如果下载失败 → 在展示中注明「文件下载失败，请联系卖家重新发送」。\n\
              ⚠️ 如果卖家消息除文件外还包含文字说明（如「这是交付物，请查收」），一并记录到 deliverableText。\n\
              交付物展示变量：deliverableType=file, localPath=<完整路径>, deliverableText=<文字说明，无则留空>\n\n\
-             ━━━ 情况 B：交付物是纯文字（消息不含加密元数据，直接是文本内容）━━━\n\n\
-             直接提取卖家消息中的文字内容，**完整保留原文**，不要截断或概括。\n\
+             ━━━ 情况 B：deliverableType=text（`---` 分隔符之间的正文内容）━━━\n\n\
+             提取 `[NEGOTIATE_DELIVER]` 消息中 `---` 分隔符之间的文字内容，**完整保留原文**，不要截断或概括。\n\
              交付物展示变量：deliverableType=text, deliverableText=<卖家发送的完整文字内容>\n\n\
              **Step 3 — 按支付方式分流：**\n\n\
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\

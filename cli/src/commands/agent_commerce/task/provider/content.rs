@@ -164,9 +164,12 @@ pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
 /// **不指挥**对方 CLI——买家 sub agent 收到后会自己按 `Event::JobSubmitted` 剧本走。
 pub fn deliver_text_to_buyer(job_id: &str) -> String {
     format!(
-        "任务 {job_id} 已完成。交付物:\n\
+        "[NEGOTIATE_DELIVER]\n\
+         jobId: {job_id}\n\
+         deliverableType: text\n\
+         ---\n\
          <这里贴交付内容文本>\n\
-         请验收。"
+         ---"
     )
 }
 
@@ -177,14 +180,15 @@ pub fn deliver_text_to_buyer(job_id: &str) -> String {
 /// **不指挥**对方 CLI。
 pub fn deliver_file_to_buyer(job_id: &str) -> String {
     format!(
-        "任务 {job_id} 已完成。以下是交付信息:\n\
-         - fileKey: <A-Step 1 返回的 fileKey 完整字符串>\n\
-         - digest: <A-Step 1 返回的 digest>\n\
-         - salt: <A-Step 1 返回的 salt>\n\
-         - nonce: <A-Step 1 返回的 nonce>\n\
-         - secret: <A-Step 1 返回的 secret>\n\
-         - filename: <A-Step 1 返回的 filename>\n\
-         请验收。"
+        "[NEGOTIATE_DELIVER]\n\
+         jobId: {job_id}\n\
+         deliverableType: file\n\
+         fileKey: <A-Step 1 返回的 fileKey 完整字符串>\n\
+         digest: <A-Step 1 返回的 digest>\n\
+         salt: <A-Step 1 返回的 salt>\n\
+         nonce: <A-Step 1 返回的 nonce>\n\
+         secret: <A-Step 1 返回的 secret>\n\
+         filename: <A-Step 1 返回的 filename>"
     )
 }
 

@@ -180,7 +180,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ▸ **文件交付物**（图片/PDF/文档）：调 `xmtp_file_upload`（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.8）：\n\
              \x20\x20参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
              \x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段（解密元数据）全部记录\n\n\
-             **A-Step 2 — `xmtp_send` 把交付物发给买家**（同 turn 内紧接着 A-Step 1 跑）：\n\n\
+             **A-Step 2 — `xmtp_send` 把交付物发给买家**（同 turn 内紧接着 A-Step 1 跑）：\n\
+             ⚠️ content **必须以 `[NEGOTIATE_DELIVER]` 行首前缀开头**——买家 Agent 按此前缀路由识别交付物。缺少前缀 = 买家无法识别为交付物 = 流程卡死。\n\n\
              文本交付物 content：\n\
              {send_to_peer}\n\
              {deliver_text}\n\n\
