@@ -388,6 +388,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             None => "正在自动查询推荐卖家...".to_string(),
         };
 
+        let created_notify = super::content::job_created_user_notify(job_id, &notify_text);
+
         let routing_section = if let Some(dp_id) = &designated_provider {
             designated_provider_d_steps(job_id, agent_id, dp_id)
         } else {
@@ -451,7 +453,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              【你的下一步动作（严格顺序）】\n\n\
              **Step 0 — 通知 user session + 在当前 sub/backup session 继续执行：**\n\
              调用 xmtp_dispatch_user 通知用户任务已上链（纯通知，不触发 LLM 思考）：\n\
-             \x20\x20content: 任务 {job_id} 已上链成功（待接单），{notify_text}\n\n\
+             \x20\x20content: {created_notify}\n\n\
              ⚠️ 后续路由 → 协商/接单 全部在**当前 session** 中执行，不要转到 user session，不要 sessions_spawn。\n\n\
              {routing_section}\n\n"
         );
@@ -512,7 +514,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         ),
 
         // ─── job_accepted: 按支付方式分流（escrow 等交付，x402 直接 complete）──────────────────
-        Event::JobAccepted => format!(
+        Event::JobAccepted => {
+            let accepted_escrow_notify = super::content::job_accepted_escrow_user_notify(job_id, title_display);
+            let accepted_x402_fail = super::content::job_accepted_x402_replay_fail_user_notify(job_id);
+            format!(
             "【当前状态】job_accepted（买家已确认接单，任务进入执行阶段）\n\
              【角色】买家（Client）\n\n\
              🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
@@ -526,13 +531,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ━━━━━━━━━ 分支 A：escrow（担保）━━━━━━━━━\n\n\
              调用 xmtp_dispatch_user 通知用户接单成功：\n\
              \x20\x20content:\n\
-             \x20\x20[接单成功] 任务 {job_id} 已确认接单，进入执行阶段。\n\
-             \x20\x20任务标题：{title_display}\n\
-             \x20\x20任务描述：<description>\n\
-             \x20\x20卖家 AgentID：<providerAgentId>\n\
-             \x20\x20支付方式：担保\n\
-             \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20等待卖家执行并提交交付物。\n\n\
+             {accepted_escrow_notify}\n\n\
              【后续事件】\n\
              - job_submitted → 验收交付物\n\n\
              ━━━━━━━━━ 分支 B：x402 ━━━━━━━━━\n\n\
@@ -550,14 +549,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              **B-Step 1 — 通知用户重放失败：**\n\
              调用 xmtp_dispatch_user：\n\
              \x20\x20content:\n\
-             \x20\x20[x402 重放失败] 任务 {job_id} 已接单但 endpoint 重放失败。\n\
-             \x20\x20HTTP 状态：<replayStatus>\n\
-             \x20\x20错误信息：<replayBody>\n\
-             \x20\x20任务已进入 accepted 状态，等待进一步处理。\n\n\
+             {accepted_x402_fail}\n\n\
              【后续事件】\n\
              - replaySuccess=true: job_completed → 最终确认\n\
              - replaySuccess=false: 等待用户指示（可重试或关闭任务）\n"
-        ),
+        )},
 
         // ─── Scene 7: 卖家提交交付物，下载 + 验收（区分支付方式） ─────────
         Event::JobSubmitted => format!(
@@ -663,7 +659,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         ),
 
         // ─── job_refused: 买家已拒绝，通知用户后等待卖家决策 ────────
-        Event::JobRefused => format!(
+        Event::JobRefused => {
+            let refused_notify = super::content::job_refused_user_notify(job_id, title_display);
+            format!(
             "【当前状态】job_refused（买家拒绝交付物已上链，等待卖家决定）\n\
              【角色】买家（Client）\n\n\
              🛑 **必须调用 `xmtp_dispatch_user` 通知用户拒绝已上链，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
@@ -671,9 +669,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              {title_query_hint}\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户拒绝已确认：**\n\n\
              content：\n\
-             \x20\x20\x20\x20[拒绝已确认] 任务 **{title_display}**（{job_id}）的交付物已拒绝，等待卖家处理。\n\
-             \x20\x20\x20\x20卖家将在 24 小时内选择：发起仲裁 或 同意退款。\n\
-             \x20\x20\x20\x20超时未操作将自动退款至您的钱包。\n\n\
+             {refused_notify}\n\n\
              **Step 2 — 静默等待卖家决策：**\n\n\
              ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**。卖家有 24h 决定：\n\
              - 发起仲裁 → 你将收到 job_disputed\n\
@@ -683,10 +679,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              【后续事件】\n\
              - job_disputed → 提交买家证据（Scene 6）\n\
              - job_refunded → 退款完成\n"
-        ),
+        )},
 
         // ─── Scene 6: 仲裁已发起，提交买家证据 ─────────────────────
-        Event::JobDisputed => format!(
+        Event::JobDisputed => {
+            let evidence_prompt = super::content::job_disputed_user_evidence_prompt(&short_id);
+            format!(
             "【当前状态】job_disputed（仲裁已发起，进入 1 小时证据准备期）\n\
              【角色】买家（Client）\n\n\
              🛑 **CRITICAL — 本事件必须使用 `xmtp_prompt_user` 推送到 user session，禁止在 sub session 中直接输出文字回复。**\n\
@@ -702,14 +700,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              用户提供证据后，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay 回 sub session 执行 dispute upload。⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。1 小时内必须提交。\n\
              \x20\x20\x20\x20userContent:\n\
-             \x20\x20\x20\x20[任务 {short_id} 你作为买家] 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
-             \x20\x20\x20\x20- 文字摘要（必填）：说明交付物不达标的关键证据点\n\
-             \x20\x20\x20\x20- 图片路径（可选）：截图、聊天记录等本地文件路径\n\
-             \x20\x20\x20\x20回复格式示例：『证据：交付物缺少 X/Y/Z；图片：/path/to/screenshot.png』\n\n\
+             {evidence_prompt}\n\n\
              **Step 2 — 等用户回复 relay 回来**：收到 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：...` 后，调 `next-action --jobStatus dispute_evidence` 拿上传剧本（intent tag 已是路由确认；用户证据原文从 `用户证据：` 后面读）。\n\n\
              ⚠️ 1 小时内必须提交证据，过期后失效。\n\n\
              跑完 Step 1-2 → **结束本轮 turn**，等用户回复。\n"
-        ),
+        )},
 
         // ─── dispute_evidence: 用户提供了证据，执行上传（伪 event）─────
         Event::Other(ref s) if s == "dispute_evidence" => format!(
@@ -794,7 +789,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         ),
 
         // ─── 任务完成（按支付方式分流） ─────────────────────────────────
-        Event::JobCompleted => format!(
+        Event::JobCompleted => {
+            let completed_escrow_notify = super::content::job_completed_escrow_user_notify(job_id, title_display);
+            let completed_x402_notify = super::content::job_completed_x402_user_notify(job_id, title_display);
+            format!(
             "【当前状态】job_completed（任务支付链路完成）\n\
              【角色】买家（Client）\n\n\
              🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
@@ -810,13 +808,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ⚠️ txHash：从本 sub session 上下文中找到之前 `onchainos agent complete` CLI 输出的 txHash（格式 0x...）。\n\
              如果上下文中没有（如 auto-complete 等非主动验收场景），省略链上凭证行即可。\n\
              content：\n\
-             \x20\x20\x20\x20[任务完成] **{title_display}**（{job_id}）已验收通过，资金已释放给卖家。\n\
-             \x20\x20\x20\x20  - 支出：**<tokenAmount> <tokenSymbol>**\n\
-             \x20\x20\x20\x20  - 支付方式：**担保**\n\
-             \x20\x20\x20\x20  - 链上凭证：<txHash>（来自 complete CLI 输出）\n\
-             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
-             \x20\x20\x20\x20\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
+             {completed_escrow_notify}\n\n\
              **A-Step 2 — 终态收尾（保留 sub session）：**\n\
              {terminal_session_hint}\n\
              ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复「评价」。」\n\
@@ -826,18 +818,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              交付物已在 task-402-pay 阶段（A-Step 4）发送给用户，此处只做最终汇总。\n\n\
              **B-Step 1 — 调用 xmtp_dispatch_user 发送最终汇总：**\n\
              content：\n\
-             \x20\x20\x20\x20[x402 任务完成] **{title_display}**（{job_id}）全部流程已完成。\n\
-             \x20\x20\x20\x20  - 支出：**<tokenAmount> <tokenSymbol>**\n\
-             \x20\x20\x20\x20  - 支付方式：**x402**\n\
-             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
-             \x20\x20\x20\x20如需评价卖家，请回复「评价」。\n\n\
+             {completed_x402_notify}\n\n\
              **B-Step 2 — 终态收尾（保留 sub session）：**\n\
              {terminal_session_hint}\n\
              任务完整结束。\n"
-        ),
+        )},
 
         // ─── 仲裁结束（DisputeSettled） ─────────────────────────────
-        Event::DisputeResolved => format!(
+        Event::DisputeResolved => {
+            let dispute_won = super::content::dispute_won_user_notify(job_id, title_display);
+            let dispute_lost = super::content::dispute_lost_user_notify(job_id, title_display);
+            format!(
             "【当前状态】dispute_resolved（仲裁已裁决）\n\
              【角色】买家（Client）\n\n\
              🛑 **必须调用 `xmtp_dispatch_user` 通知用户仲裁结果，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
@@ -858,39 +849,36 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              **Step 3 — 调用 xmtp_dispatch_user 通知用户仲裁结果（按胜负分流）：**\n\n\
              ━━━━━━━━━━━━━ 买家胜诉（jobStatus=rejected）━━━━━━━━━━━━━\n\
              content：\n\
-             \x20\x20\x20\x20[仲裁胜诉] **{title_display}**（{job_id}）仲裁完成，**买方胜诉**。\n\
-             \x20\x20\x20\x20  - 退款：**<tokenAmount> <tokenSymbol>**\n\
-             \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家胜诉）\n\
-             \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复「评价」。\n\n\
+             {dispute_won}\n\n\
              ━━━━━━━━━━━━━ 买家败诉（jobStatus=complete）━━━━━━━━━━━━━\n\
              content：\n\
-             \x20\x20\x20\x20[仲裁败诉] **{title_display}**（{job_id}）仲裁完成，**卖方胜诉**。\n\
-             \x20\x20\x20\x20  - 损失：**<tokenAmount> <tokenSymbol>**（资金已释放给卖家）\n\
-             \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家败诉）\n\
-             \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复「评价」。\n\n\
+             {dispute_lost}\n\n\
              **Step 4 — 终态收尾（保留 sub session）：**\n\
              {terminal_session_hint}\n\
              ⚠️ **不要自动评价**。\n\
              仲裁流程完整结束。\n"
-        ),
+        )},
 
         // ─── 卖家同意退款 / 仲裁退款上链 ─────────────────────────────
-        Event::JobRefunded => format!(
+        Event::JobRefunded => {
+            let refunded_notify = super::content::job_refunded_user_notify(job_id);
+            format!(
             "【当前状态】job_refunded（资金已退还买家）\n\
              【角色】买家（Client）\n\n\
              🛑 **必须调用 `xmtp_dispatch_user` 通知用户退款完成，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户退款完成：**\n\n\
              content：\n\
-             \x20\x20\x20\x20[退款完成] 任务 {job_id} 退款已上链，**资金已返还**至您的钱包。\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
+             {refunded_notify}\n\n\
              **Step 2 — 终态收尾（保留 sub session）：**\n\
              {terminal_session_hint}\n\
              退款流程完整结束。\n"
-        ),
+        )},
 
         // ─── claimAutoRefund tx 回执（submit/refuse 超时后 buyer 主动领回资金）──
-        Event::JobAutoRefunded => format!(
+        Event::JobAutoRefunded => {
+            let auto_refunded_notify = super::content::job_auto_refunded_user_notify(job_id, title_display);
+            format!(
             "【系统通知】job_auto_refunded（claimAutoRefund tx 回执）\n\
              【角色】买家（Client）\n\n\
              🛑 **必须调用 `xmtp_dispatch_user` 通知用户退款到账，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
@@ -898,40 +886,45 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              {title_query_hint}\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
              content：\n\
-             \x20\x20\x20\x20[自动退款成功] **{title_display}**（{job_id}）的担保资金已退还至您的钱包。\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
+             {auto_refunded_notify}\n\n\
              **Step 2 — 终态收尾（保留 sub session）：**\n\
              {terminal_session_hint}\n\
              退款流程完整结束。\n"
-        ),
+        )},
 
         // ─── 任务超时（OPEN→EXPIRED 或 ACCEPTED→EXPIRED）──────────
-        Event::JobExpired => format!(
+        Event::JobExpired => {
+            let expired_notify = super::content::job_expired_user_notify(job_id);
+            format!(
             "【当前状态】job_expired（任务超时，无人接单或卖家未提交）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户任务已超时：**\n\
-             \x20\x20content: 任务 {job_id} **已超时**（accept 截止前未接单 或 submit 截止前未提交），任务已结束。\n\n\
+             \x20\x20content: {expired_notify}\n\n\
              本任务已到达终态，流程结束。\n"
-        ),
+        )},
 
         // ─── 任务已关闭（close tx 结果）─────────────────────────────
-        Event::JobClosed => format!(
+        Event::JobClosed => {
+            let closed_notify = super::content::job_closed_user_notify(job_id, title_display);
+            format!(
             "【当前状态】job_closed（close tx 结果通知）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              {title_query_hint}\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
-             \x20\x20content: **{title_display}**（{job_id}）**已关闭**，资金已回收。\n\n\
+             \x20\x20content: {closed_notify}\n\n\
              **终态收尾（保留 sub session）：**\n\
              {terminal_session_hint}\n\
              任务关闭流程结束。\n"
-        ),
+        )},
 
         // ─── 卖家主动联系买家（public 任务，卖家找到任务后发起会话）─────
         // 触发方式：user session 收到自然语言消息（如"有N个卖家待沟通"），
         // 不再依赖 provider_conversation 系统通知。
-        Event::Other(ref s) if s == "provider_conversation" => format!(
+        Event::Other(ref s) if s == "provider_conversation" => {
+            let no_sellers = super::content::no_more_sellers_user_notify(job_id);
+            format!(
             "【触发】收到「有卖家待沟通」类消息（user session 侧）\n\
              【角色】买家（Client）\n\n\
              🛑 **禁止自动建群**：收到 pending_list 通知后，**绝对不能**主动调用 xmtp_start_conversation。\n\
@@ -981,12 +974,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              B-Step 2：重新调用 xmtp_get_pending_list 获取最新待沟通列表。\n\n\
              B-Step 3：如果列表不为空 → 回到 Step 2，展示剩余卖家让用户选择。\n\n\
              B-Step 4：如果列表为空 → 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: 任务 {job_id} 当前没有更多待沟通卖家，建议等待新卖家联系或调整任务描述。\n\n\
+             \x20\x20content: {no_sellers}\n\n\
              【循环结束条件】xmtp_get_pending_list 返回空列表 或 协商成功进入场景 6。\n"
-        ),
+        )},
 
         // ─── 可见性切换结果（setVisibility tx 结果）───────────────────
-        Event::JobVisibilityChanged => format!(
+        Event::JobVisibilityChanged => {
+            let visibility_public = super::content::visibility_public_user_notify(job_id, title_display);
+            let visibility_private = super::content::visibility_private_user_notify(job_id, title_display);
+            format!(
             "【当前状态】job_visibility_changed（公开/私有切换已上链）\n\
              【角色】买家（Client）\n\n\
              🛑 **这不是辅助事件，必须通知用户。**\n\n\
@@ -997,14 +993,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              - `visibility=1` → 私有（private）\n\n\
              **Step 2 — 调用 xmtp_dispatch_user 通知用户可见性已变更：**\n\
              content：\n\
-             \x20\x20- visibility=0 → [可见性变更] **{title_display}**（{job_id}）已切换为**公开（public）**，等待卖家主动联系。\n\
-             \x20\x20- visibility=1 → [可见性变更] **{title_display}**（{job_id}）已切换为**私有（private）**。\n\n\
+             \x20\x20- visibility=0 → {visibility_public}\n\
+             \x20\x20- visibility=1 → {visibility_private}\n\n\
              ⚠️ 切换为 public 后，**不要**请求推荐卖家列表（recommend），买家只需等待卖家主动找过来。\n\
              → **结束本轮 turn**。\n"
-        ),
+        )},
 
         // ─── 支付模式切换结果（setPaymentMode tx 结果）────────────────
-        Event::JobPaymentModeChanged => format!(
+        Event::JobPaymentModeChanged => {
+            let payment_escrow_notify = super::content::payment_mode_escrow_user_notify(job_id, title_display);
+            let x402_deliverable = super::content::x402_deliverable_user_notify(job_id);
+            let x402_replay_fail = super::content::x402_replay_fail_payment_user_notify(job_id);
+            format!(
             "【当前状态】job_payment_mode_changed（支付模式切换已上链）\n\
              【角色】买家（Client）\n\n\
              🛑 **必须通知用户支付模式变更结果。**\n\n\
@@ -1033,7 +1033,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ⚠️ apply 是卖家动作，买家不执行 apply。\n\n\
              **Step 4 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
-             \x20\x20content: **{title_display}**（{job_id}）更新支付方式成功，设置卖家 **<providerName>**（<providerAgentId>）接单中...\n\n\
+             \x20\x20content: {payment_escrow_notify}\n\n\
              → **结束本轮 turn**，等待卖家 XMTP 消息告知已 apply（buyer.md 路由优先级 #2 处理）。\n\n\
              ━━━━━━━━━ x402（paymentMode=3）━━━━━━━━━\n\n\
              从上一步 set-payment-mode / x402-check 的输出中提取 endpoint、acceptsJson、feeTokenSymbol、feeAmount、provider。\n\
@@ -1051,24 +1051,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              **x402 阶段 2 Step 3 — 检查重放结果并通知用户：**\n\
              - replaySuccess=true → 交付物在 replayBody 中。**立即**调用 xmtp_dispatch_user 将交付物发送给用户：\n\
              \x20\x20content:\n\
-             \x20\x20[x402 交付物已获取] 任务 {job_id} endpoint 重放成功。\n\
-             \x20\x20卖家 AgentID：<providerAgentId>\n\
-             \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20---交付物内容---\n\
-             \x20\x20<replayBody 完整内容，JSON 则格式化输出>\n\
-             \x20\x20---交付物结束---\n\
-             \x20\x20正在等待链上确认（job_accepted），确认后将自动完成任务。\n\n\
+             {x402_deliverable}\n\n\
              - replaySuccess=false → 调用 xmtp_dispatch_user 通知用户重放失败：\n\
              \x20\x20content:\n\
-             \x20\x20[x402 重放失败] 任务 {job_id} 已接单但 endpoint 重放失败。\n\
-             \x20\x20HTTP 状态：<replayStatus>\n\
-             \x20\x20错误信息：<replayBody>\n\
-             \x20\x20等待 `job_accepted` 后**不会自动执行 complete**，需要用户指示。\n\n\
+             {x402_replay_fail}\n\n\
              → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n"
-        ),
+        )},
 
         // ─── 协商中继：卖家自然语言回复（无 [NEGOTIATE_*] 标记）────────
-        Event::NegotiateReply => format!(
+        Event::NegotiateReply => {
+            let over_budget = super::content::over_budget_user_prompt(&short_id);
+            format!(
             "【协商中继】negotiate_reply（卖家自然语言回复，无结构化标记）\n\
              【角色】买家（Client）\n\n\
              卖家在协商过程中发了自然语言消息（可能是报价、讨论细节、提问等）。你需要**自主评估并回复**。\n\n\
@@ -1099,10 +1092,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20b) `onchainos agent mark-failed {job_id} --provider <当前卖家agentId>`\n\
              \x20\x20c) 调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；调 `xmtp_prompt_user` 让用户决定下一步：\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] 用户选择查看推荐卖家 → relay「查看推荐」；选择指定卖家并提供 agentId → relay「指定卖家 agentId=X」；选择关闭 → relay「关闭任务」\n\
-             \x20\x20\x20\x20userContent: [任务 {short_id}] 卖家报价超出最高预算，协商已终止。请选择下一步：\n\
-             \x20\x20\x20\x20\x20\x20A. 查看推荐卖家列表\n\
-             \x20\x20\x20\x20\x20\x20B. 指定其他卖家（请提供 agentId）\n\
-             \x20\x20\x20\x20\x20\x20C. 关闭任务\n\
+             \x20\x20\x20\x20userContent:\n\
+             {over_budget}\n\
              \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后：A → `recommend`；B → `next-action --provider <agentId>`；C → `close`。\n\n\
              **Step 3 — 回复卖家（取决于 Step 2 评估）：**\n\n\
              ▸ **卖家还在讨论阶段（未给出明确价格或在询问细节）** → xmtp_send 自然语言回复，继续讨论。\n\n\
@@ -1119,7 +1110,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ⚠️ **同 turn 只发一条 xmtp_send**。\n\
              🚫 🛑 **CRITICAL — 本事件绝对禁止调用 save-agreed / set-payment-mode / confirm-accept**——这些只在后续 negotiate_ack 事件中才能执行。卖家自然语言说「我接受」「同意」「OK」「没问题」**不是** `[NEGOTIATE_ACK]`——只有 content 以字面量 `[NEGOTIATE_ACK]` 方括号开头才算。在买家发出 [NEGOTIATE_PROPOSE] 之前，卖家不可能回 [NEGOTIATE_ACK]。违反 = 跳过三步握手 = 任务永久卡死。\n\
              → **结束本轮 turn**，等待卖家回复。\n"
-        ),
+        )},
 
         // ─── 协商中继：卖家回 [NEGOTIATE_ACK] ──────────────────────
         Event::NegotiateAck => format!(
@@ -1203,7 +1194,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         ),
 
         // ─── 关闭任务（仅 Open 状态可用，user-instruction 伪 event）─────
-        Event::Other(ref s) if s == "close" => format!(
+        Event::Other(ref s) if s == "close" => {
+            let close_notify = super::content::close_user_notify(job_id);
+            format!(
             "【当前动作】关闭任务\n\
              【角色】买家（Client）\n\n\
              **Step 1 — 关闭任务（仅 Open 状态有效）：**\n\
@@ -1212,11 +1205,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```\n\n\
              **Step 2 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
-             content: \"任务 {job_id} 已关闭。\"\n"
-        ),
+             content: \"{close_notify}\"\n"
+        )},
 
         // ─── 设为公开任务（user-instruction 伪 event）────────────────
-        Event::Other(ref s) if s == "set_public" => format!(
+        Event::Other(ref s) if s == "set_public" => {
+            let set_public_notify = super::content::set_public_user_notify(job_id);
+            format!(
             "【当前动作】转为公开任务\n\
              【角色】买家（Client）\n\n\
              **Step 1 — 转为公开任务：**\n\
@@ -1225,11 +1220,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```\n\n\
              **Step 2 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
-             content: \"任务 {job_id} 已转为公开任务，等待卖家主动申请。\"\n"
-        ),
+             content: \"{set_public_notify}\"\n"
+        )},
 
         // ─── 卖家未提交交付物超时 ─────────────────────────────────────
-        Event::SubmitExpired => format!(
+        Event::SubmitExpired => {
+            let submit_expired = super::content::submit_expired_user_notify(job_id);
+            format!(
             "【系统通知】卖家提交交付物超时\n\
              【角色】买家（Client）\n\n\
              🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\
@@ -1239,11 +1236,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              onchainos agent claim-auto-refund {job_id}\n\
              ```\n\n\
              **Step 2 — 调用 xmtp_dispatch_user 通知用户：**\n\
-             content: \"任务 {job_id} 的卖家未在截止时间前提交交付物，已自动申请退款，资金将退回你的账户。\"\n"
-        ),
+             content: \"{submit_expired}\"\n"
+        )},
 
         // ─── 买家拒绝后卖家仲裁超时 ─────────────────────────────────
-        Event::RefuseExpired => format!(
+        Event::RefuseExpired => {
+            let refuse_expired = super::content::refuse_expired_user_notify(job_id);
+            format!(
             "【系统通知】卖家仲裁超时\n\
              【角色】买家（Client）\n\n\
              🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\
@@ -1253,11 +1252,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              onchainos agent claim-auto-refund {job_id}\n\
              ```\n\n\
              **Step 2 — 调用 xmtp_dispatch_user 通知用户：**\n\
-             content: \"任务 {job_id} 的卖家在你拒绝交付物后未及时发起仲裁，已自动申请退款，资金将退回你的账户。\"\n"
-        ),
+             content: \"{refuse_expired}\"\n"
+        )},
 
         // ─── buyer 自己的截止提醒 ─────────────────────────────────────
-        Event::ReviewDeadlineWarn => format!(
+        Event::ReviewDeadlineWarn => {
+            let review_deadline_prompt = super::content::review_deadline_warn_user_prompt(job_id);
+            format!(
             "【系统通知】review_deadline_warn（验收截止时间快到了）\n\
              【角色】买家（Client）\n\n\
              🛑 **CRITICAL — 本事件必须使用 `xmtp_prompt_user` 推送到 user session，禁止在 sub session 中直接输出文字回复。**\n\
@@ -1283,11 +1284,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略**——sub 按 intent tag 分支，不按文字匹配。\n\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20userContent:\n\
-             \x20\x20[验收截止提醒] 任务 {job_id} 的验收截止时间即将到期。\n\
-             \x20\x20超时后卖家可自动领取资金。\n\
-             \x20\x20请尽快决定：\n\
-             \x20\x20A. 通过验收 — 回复「通过」\n\
-             \x20\x20B. 拒绝交付物 — 回复「拒绝」并说明原因\n\n\
+             {review_deadline_prompt}\n\n\
              **Step 4 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由：**\n\
              先调 `pending-decisions remove`（硬规则 7）：\n\
              ```bash\n\
@@ -1302,24 +1299,26 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```bash\n\
              onchainos agent reject {job_id} --reason \"<用户原话里的拒绝理由>\"\n\
              ```\n"
-        ),
+        )},
 
         // ─── review_expired: review 窗口超时，等 provider 调 claimAutoComplete ─────
-        Event::ReviewExpired => format!(
+        Event::ReviewExpired => {
+            let review_expired = super::content::review_expired_user_notify(job_id);
+            format!(
             "【系统通知】review_expired（review 窗口超时，task 仍是 submitted）\n\
              【角色】买家（Client）\n\n\
              🛑 **必须调用 `xmtp_dispatch_user` 通知用户验收超时，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
              【你的下一步动作】\n\n\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户验收窗口已过期：**\n\
              \x20\x20content:\n\
-             \x20\x20[验收超时] 任务 {job_id} 的验收窗口已过期，你未在截止时间前做出验收决定。\n\
-             \x20\x20卖家现在可以调用 claimAutoComplete 自动领取资金。\n\
-             \x20\x20等待卖家操作中...\n\n\
+             {review_expired}\n\n\
              **Step 2** — 等待 `job_auto_completed` 系统通知到达后做收尾。\n"
-        ),
+        )},
 
         // ─── job_auto_completed: provider 的 claim 回执，buyer 端只需观察 ─────
-        Event::JobAutoCompleted => format!(
+        Event::JobAutoCompleted => {
+            let auto_completed_notify = super::content::job_auto_completed_user_notify(job_id, title_display);
+            format!(
             "【系统通知】job_auto_completed（claimAutoComplete tx 回执）\n\
              【角色】买家（Client）\n\n\
              🛑 **必须调用 `xmtp_dispatch_user` 通知用户任务已自动完成，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
@@ -1327,11 +1326,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              {title_query_hint}\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户任务已自动完成：**\n\
              \x20\x20content:\n\
-             \x20\x20[任务自动完成] **{title_display}**（{job_id}）因**验收超时**，卖家已通过 claimAutoComplete 领取资金。\n\
-             \x20\x20任务状态：completed\n\
-             \x20\x20本任务流程结束。\n\n\
+             {auto_completed_notify}\n\n\
              {terminal_session_hint}\n"
-        ),
+        )},
 
         // ─── provider 的截止提醒 — buyer 端无关 ────────────────────────
         Event::SubmitDeadlineWarn => "【系统通知】submit_deadline_warn（provider 端截止提醒）\n\
@@ -1351,17 +1348,21 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         ),
 
         // ─── reward_claimed: buyer 自己的 claim tx 回执（仲裁胜诉退款等） ─────
-        Event::RewardClaimed => format!(
+        Event::RewardClaimed => {
+            let reward_claimed = super::content::reward_claimed_user_notify(job_id, title_display);
+            format!(
             "【系统通知】reward_claimed（claimRewards tx 回执）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              {title_query_hint}\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户奖励已到账：**\n\
-             \x20\x20content: [奖励已到账] **{title_display}**（{job_id}）的**奖励/退款已成功领取**到您的钱包。\n"
-        ),
+             \x20\x20content: {reward_claimed}\n"
+        )},
 
         // ─── 网络/重启唤醒 ──────────────────────────────────────────
-        Event::WakeupNotify => format!(
+        Event::WakeupNotify => {
+            let wakeup_resume = super::content::wakeup_resume_user_notify(job_id);
+            format!(
             "【系统通知】wakeup_notify（网络/电脑重启后任务唤醒）\n\
              【角色】买家（Client）\n\n\
              ⚠️ 这是 wake-up 心跳事件,**不是**业务驱动事件。真实业务状态在 envelope.message.jobStatus 字段。\n\
@@ -1379,11 +1380,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```bash\n\
              onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
              ```\n\
-             - 该 jobId 已有 pending 条目（断线前已 prompt 过）→ **跳过本次 xmtp_prompt_user 重发**,改成 `xmtp_dispatch_user` 通知「任务 {job_id} 已恢复,请继续在 user session 处理决策」\n\
+             - 该 jobId 已有 pending 条目（断线前已 prompt 过）→ **跳过本次 xmtp_prompt_user 重发**,改成 `xmtp_dispatch_user` 通知「{wakeup_resume}」\n\
              - 无 pending 条目（首次或之前已 RELAY 关闭）→ 按 Step 2 剧本正常执行(包括 pending-decisions add + xmtp_prompt_user)\n\n\
              ⚠️ **不要** xmtp_send 给卖家「我重新上线了」之类的过场——对方不关心你的连接状态。\n\
              ⚠️ Step 2 拿到的剧本如果是被动等待类（如 status=accepted 等卖家交付）,只输出「任务恢复」通知后结束 turn,不主动跑业务动作。\n"
-        ),
+        )},
 
         // ─── 发布任务（user session 主动操作，非链事件）────────────────
         Event::Other(ref s) if s == "create_task" => "\
