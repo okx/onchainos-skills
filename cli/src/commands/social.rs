@@ -15,6 +15,11 @@ use crate::output;
 // recursively drop `text`, `content`, and `translatedContent` from any object
 // in the response tree before returning. Tweet URLs, KOL identity fields, and
 // aggregate metrics remain untouched.
+//
+// SCOPE: Only call `strip_tweet_bodies` on the two vibe fetchers
+// (`fetch_vibe_timeline`, `fetch_vibe_top_kols`). Do NOT call it on the news
+// endpoints — `content` there is the intentional article body returned when
+// `detailLevel=2` / via `news-detail` and must pass through unchanged.
 const TWEET_BODY_FIELDS: &[&str] = &["text", "content", "translatedContent"];
 
 fn strip_tweet_bodies(v: &mut Value) {
@@ -514,6 +519,9 @@ fn push_if_present<'a>(query: &mut Vec<(&'a str, &'a str)>, key: &'a str, val: O
 }
 
 /// GET /api/v6/dex/market/social/news/latest
+///
+/// Note: `content` in the news payload is the intentional article body and
+/// must NOT be stripped — `strip_tweet_bodies` is vibe-only.
 pub async fn fetch_news_latest(
     client: &mut ApiClient,
     p: SocialNewsLatestParams,
@@ -573,6 +581,8 @@ pub async fn fetch_news_search(
 }
 
 /// GET /api/v6/dex/market/social/news/detail
+///
+/// Note: returns full `content` (article body); do NOT apply `strip_tweet_bodies`.
 pub async fn fetch_news_detail(
     client: &mut ApiClient,
     p: SocialNewsDetailParams,
