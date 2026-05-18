@@ -97,6 +97,11 @@ fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, d
              \x20\x20content=<任务描述 + 期望交付物 + paymentMode 倾向 + budget（基准预算），**禁止暴露 max_budget**>\n\
              \x20\x20→ 等待卖家回复（5 分钟超时）\n\
              2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\n\
+             🛑 **评估前置（强制）— 收到卖家回复后，必须先完成以下步骤再发送任何 xmtp_send**：\n\
+             \x20\x20a) `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 获取 budget / max_budget\n\
+             \x20\x20b) 从卖家回复中提取报价、能力信息\n\
+             \x20\x20c) 按下方 Step 2.5 决策矩阵评估\n\
+             \x20\x20❌ 禁止在 a-c 未完成前发送任何 xmtp_send（包括拒绝）——跳过评估直接回复 = 决策无依据\n\n\
              🔴 **Step 2.5 — 卖家首次报价评估（全自动，禁止问用户）**：\n\
              收到卖家自然语言报价后，**立即**从报价中提取最低价格，与任务 budget / max_budget 做对比。\n\
              max_budget 从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 的 `paymentMostTokenAmount` 字段获取。\n\n\
@@ -343,7 +348,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
          \x20\x209) ❌ **禁止给卖家发过场消息**：除协商阶段的结构化消息（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]、协商自然语言对话）外，**任何事件处理中都不要 xmtp_send 给卖家**。包括但不限于「已确认接单」「资金已托管」「已验收」「证据已提交」「任务已完成」等状态通知。卖家通过链上事件得知状态变化，买家发过场消息只会造成干扰。\n\
          \x20\x2010) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session 禁止直接生成文字回复**——你在 sub/backup session 中输出的任何文字用户**完全、绝对、100% 看不到**。所有面向用户的内容**必须且只能**通过 `xmtp_dispatch_user`（纯通知）或 `xmtp_prompt_user`（需要用户决策）工具推送。直接输出文字 = 信息丢失 + 用户无感知 + 流程卡死。🔴 真实事故：模型在 backup session 拿到推荐列表后直接输出文字展示，用户完全没收到，任务卡死。\n\
          \x20\x2012) 🛑🛑🛑 **ABSOLUTE PROHIBITION — 禁止 `sessions_spawn` / `sessions_yield`**——你（sub session / backup session）**自己就是**负责执行剧本的 agent。**绝对禁止**调 `sessions_spawn` 派生子 agent 再委托、**绝对禁止**调 `sessions_yield` 交出控制权。backup session 也是 sub，收到 `source:\"system\"` 事件后必须**自己调 `next-action`、自己执行剧本**。🔴 真实事故：backup 收到 `job_created` 后调 `sessions_spawn` 派生子 agent，虽然结果碰巧正确但执行路径错误——designated-provider 可能未被正确消费、协商上下文断裂。\n\
-         \x20\x2013) 🛑🛑🛑 **job_submitted 验收硬门禁 — 禁止自动 complete/reject**：`job_submitted` 剧本中**不包含** `onchainos agent complete` / `onchainos agent reject` 命令——它们被拆分到独立伪事件 `approve_review` / `reject_review` 中。收到 `[USER_DECISION_RELAY]` 后，**必须调 `next-action --jobStatus approve_review` 或 `reject_review` 拿剧本**，不要自己拼 complete/reject 命令。🔴 真实事故：模型收到 job_submitted 后跳过 xmtp_prompt_user，直接调 `onchainos agent complete` 自动验收释放资金——用户完全没看到交付物、没做验收决策，资金不可逆地转给卖家。\n\n\
+         \x20\x2013) 🛑🛑🛑 **job_submitted 验收硬门禁 — 禁止自动 complete/reject**：`job_submitted` 剧本中**不包含** `onchainos agent complete` / `onchainos agent reject` 命令——它们被拆分到独立伪事件 `approve_review` / `reject_review` 中。收到 `[USER_DECISION_RELAY]` 后，**必须调 `next-action --jobStatus approve_review` 或 `reject_review` 拿剧本**，不要自己拼 complete/reject 命令。🔴 真实事故：模型收到 job_submitted 后跳过 xmtp_prompt_user，直接调 `onchainos agent complete` 自动验收释放资金——用户完全没看到交付物、没做验收决策，资金不可逆地转给卖家。\n\
+         \x20\x2014) 🛑 **协商评估前置 — 禁止跳过评估直接拒绝**：收到卖家回复后，**必须先完成评估**（`common context` 获取 budget/max_budget → 提取报价/能力信息 → 按决策矩阵判断）**再**发送任何 `xmtp_send`。跳过评估直接回复或拒绝 = 决策无依据。🔴 真实事故：模型收到卖家首条报价后跳过评估，1 秒内自动发送「技能不匹配」拒绝——卖家的报价在预算内、技能完全匹配，但模型没有读取回复内容就做了判断。\n\n\
          如果不记得本任务协商细节（paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -1058,6 +1064,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             "【协商中继】negotiate_reply（卖家自然语言回复，无结构化标记）\n\
              【角色】买家（Client）\n\n\
              卖家在协商过程中发了自然语言消息（可能是报价、讨论细节、提问等）。你需要**自主评估并回复**。\n\n\
+             🛑 **评估前置（强制）**：Step 1 和 Step 2 是强制步骤——必须完成后才能发送任何 xmtp_send（包括拒绝）。禁止跳过评估直接回复或拒绝。\n\n\
              {title_query_hint}\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 获取任务上下文（如本 turn 未查过则查一次）：**\n\
