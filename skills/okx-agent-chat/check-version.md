@@ -1,6 +1,6 @@
-# Check XMTP Plugin Version
+# Update OKX A2A Plugin
 
-Check whether a newer version of the XMTP plugin (`openclaw-a2a-chat-extension`) is available. If an update exists, ask the user whether to update. After updating, restart the openclaw gateway.
+(Re)install the OKX A2A OpenClaw plugin from the npm `beta` dist-tag of `test-okx-openclaw-a2a`. If the legacy plugin (`openclaw-okx-a2a-extension`) is already installed, uninstall it first; then install the new package. `openclaw plugins install` auto-restarts the gateway, so no manual gateway control is required.
 
 This flow can be run independently or is automatically invoked after `after-agent-list-changed.md`.
 
@@ -8,113 +8,91 @@ This flow can be run independently or is automatically invoked after `after-agen
 
 | # | Command | Description |
 |---|---|---|
-| 0 | `node --version` / `openclaw --version` | Verify Node >= 22.14 and OpenClaw >= 2026.3.0 |
-| 1 | `npm list -g openclaw-a2a-chat-extension --depth=0` | Get current installed version |
-| 2 | `npm view openclaw-a2a-chat-extension version` | Get latest available version from npm |
-| 3 | `openclaw gateway stop` | Stop the gateway before update |
-| 4 | `npm install -g openclaw-a2a-chat-extension@latest` | Update to latest version |
-| 5 | `openclaw gateway start` | Start the gateway after update |
+| 0 | `openclaw --version` | Verify OpenClaw >= 2026.4.1 |
+| 1 | `npm view test-okx-openclaw-a2a@beta version` | Show the latest beta version (informational, for the user prompt) |
+| 2 | `openclaw plugins list` | Detect whether the legacy `openclaw-okx-a2a-extension` plugin is installed |
+| 3 | `openclaw plugins uninstall openclaw-okx-a2a-extension` | Remove the legacy plugin (only if Step 2 found it) |
+| 4 | `openclaw plugins install test-okx-openclaw-a2a@beta` | Install the new npm package; gateway auto-restarts on success |
 
-## Why Gateway Restart Is Required
+## Why Use `openclaw plugins install`
 
-The XMTP extension is an **OpenClaw plugin** that registers its channel, daemon, hooks, and services inside `register()` at load time. Updating the npm package does not reload the plugin — a full gateway stop/start cycle is required for the new version to take effect.
+`openclaw plugins install` is the only correct entry point for installing/updating OpenClaw plugins. It:
+- Pulls the npm tarball from the given package name + dist-tag,
+- Materializes the plugin into `~/.openclaw/extensions/<plugin-id>/`,
+- Automatically restarts the gateway so `register()` reloads with the new build.
+
+Do **not** use `npm install -g` — the OKX A2A plugin is not a globally installed npm CLI, it is an OpenClaw extension and lives under `~/.openclaw/extensions/`.
 
 ## Execution Flow
 
 ### Pre-flight: Environment check
 
-A plugin update may bump minimum runtime requirements. Before checking versions, confirm the host still meets them.
-
 Run:
 ```bash
-node --version && openclaw --version 2>&1
+openclaw --version 2>&1
 ```
 
 Requirements:
-- Node **>= 22.14**
-- OpenClaw **>= 2026.3.0**
+- OpenClaw **>= 2026.4.1**
 
-If either is below the minimum, inform the user which component needs upgrading and stop. Do not proceed to the version check.
+If OpenClaw is below the minimum, inform the user it needs upgrading and stop.
 
-### Step 1: Get current installed version
-
-Run:
-```bash
-npm list -g openclaw-a2a-chat-extension --depth=0 2>/dev/null
-```
-
-Extract the installed version number from the output (e.g., `openclaw-a2a-chat-extension@1.0.0`).
-
-- If not installed → inform the user and load `after-agent-list-changed.md` first. Stop.
-
-### Step 2: Get latest available version
+### Step 1: Show the user what will be installed
 
 Run:
 ```bash
-npm view openclaw-a2a-chat-extension version
+npm view test-okx-openclaw-a2a@beta version
 ```
 
-This returns the latest published version on npm.
+Display to the user (translate to their language as needed):
+> 即将（重新）安装 OKX A2A 插件 `test-okx-openclaw-a2a@beta`（当前 beta 版本：`A.B.C`）。
+> 安装过程中 openclaw gateway 会自动重启，请稍候即可。
+> 是否继续？
 
-### Step 3: Compare versions
+- User says **no** → stop.
+- User says **yes** → proceed to Step 2.
 
-- If installed version equals latest version → inform the user: "XMTP plugin is up to date (version X.Y.Z)." Stop.
-- If installed version is older → proceed to Step 4.
+### Step 2: Detect the legacy plugin
 
-### Step 4: Ask user to update
+```bash
+openclaw plugins list 2>&1
+```
 
-Display to the user:
-> A new version of the XMTP plugin is available.
-> - Current: X.Y.Z
-> - Latest: A.B.C
->
-> Would you like to update?
+Scan the output for an entry whose plugin id equals `openclaw-okx-a2a-extension`.
 
-- If user says **yes** → proceed to Step 5.
-- If user says **no** → inform: "Update skipped. You can update later by running this check again." Stop.
+- Found → proceed to Step 3.
+- Not found → skip Step 3, jump directly to Step 4.
 
-### Step 5: Update the extension
+### Step 3: Uninstall the legacy plugin (only when present)
 
 <MUST>
-**Gateway must be stopped before update and started after.** The plugin's `register()` method runs at gateway startup — updating while the gateway is running will not load the new version.
+Do **not** delete `~/.openclaw/extensions/openclaw-okx-a2a-extension` with `rm -rf`. Always go through the OpenClaw CLI so plugin hooks, daemons, and config bindings are cleaned up properly.
 </MUST>
 
-First, stop the gateway:
 ```bash
-openclaw gateway stop
+openclaw plugins uninstall openclaw-okx-a2a-extension
 ```
 
-Then update:
+If uninstall fails, surface the error and stop.
+
+### Step 4: Install the new package
+
 ```bash
-npm install -g openclaw-a2a-chat-extension@latest
+openclaw plugins install test-okx-openclaw-a2a@beta
 ```
 
-If update succeeds:
-- Inform the user: "XMTP plugin updated to version A.B.C."
-- Start the gateway:
-  ```bash
-  openclaw gateway start
-  ```
-- Inform the user: "openclaw gateway started."
+`openclaw plugins install` auto-restarts the gateway on success — the new plugin loads in that single restart. Flow ends here; no manual `gateway stop` / `gateway start` is needed.
 
-If update fails:
-- Display the error message to the user.
-- Suggest checking npm permissions or network connectivity.
-- Start the gateway even on failure (it was stopped):
-  ```bash
-  openclaw gateway start
-  ```
+If install fails, surface the error verbatim and stop. Suggest checking npm registry connectivity or OpenClaw logs.
 
 ## Edge Cases
 
 | Scenario | Behavior |
 |---|---|
-| Node < 22.14 or OpenClaw < 2026.3.0 | Inform user which component is too old, stop. Do not attempt update. |
-| Extension not installed | Inform user, load `after-agent-list-changed.md` first |
-| npm not found | Inform user that Node.js/npm is required |
-| npm view fails (network) | Inform user, suggest checking network connectivity |
-| Permission denied on npm install -g | Suggest `sudo npm install -g` or fixing npm global prefix |
-| openclaw command not found | Inform user that openclaw CLI is required |
-| Gateway stop fails | Display error, attempt update anyway |
-| Gateway start fails | Display error, suggest manual start |
-| Already on latest version | Inform user, no action needed (no gateway restart) |
+| OpenClaw < 2026.4.1 | Inform the user OpenClaw is too old, stop. Do not attempt install. |
+| `npm view test-okx-openclaw-a2a@beta version` fails (network) | Surface the error and stop. Suggest checking network connectivity. |
+| `openclaw plugins list` fails | Surface the error and stop — cannot determine plugin state. |
+| Legacy plugin `openclaw-okx-a2a-extension` not present in `openclaw plugins list` | Skip Step 3, proceed straight to Step 4. |
+| `openclaw plugins uninstall` fails | Surface the error and stop. Do not run install while the legacy plugin is still half-removed. |
+| `openclaw plugins install` fails | Surface the error verbatim. Suggest checking npm registry / OpenClaw logs. |
+| `openclaw` command not found | Inform the user the OpenClaw CLI is required. |

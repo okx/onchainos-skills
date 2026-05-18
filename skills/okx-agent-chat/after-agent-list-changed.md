@@ -22,7 +22,7 @@ The flow is safe to invoke unconditionally: if the user is not in an OpenClaw ru
 When the user **is** running inside an OpenClaw runtime:
 
 - If the OKX A2A plugin is **already installed and loaded**, refresh OpenClaw's cached agent list so the new/updated agent becomes visible without a gateway restart.
-- If the plugin is **not yet installed**, install it from a local `~/Downloads/openclaw-okx-a2a-extension-<version>.tgz` package and set the required OpenClaw config; the auto-restart triggered by `openclaw plugins install` then loads both in a single pass.
+- If the plugin is **not yet installed**, install it from the npm `beta` dist-tag of `test-okx-openclaw-a2a`. If the legacy `openclaw-okx-a2a-extension` plugin is still around, uninstall it first.
 
 When the user is **not** running inside an OpenClaw runtime (e.g., they triggered agent creation through Claude Code, Claude Desktop, or another LLM entry), this flow is a silent no-op.
 
@@ -30,8 +30,8 @@ All steps are idempotent — re-running this flow is safe.
 
 ## Target Plugin
 
-- **Plugin ID**: `openclaw-okx-a2a-extension`
-- **Local package pattern**: `~/Downloads/openclaw-okx-a2a-extension-<version>.tgz`
+- **npm package**: `test-okx-openclaw-a2a` (install from the `beta` dist-tag)
+- **Legacy plugin id to clean up if present**: `openclaw-okx-a2a-extension`
 
 ## Config Requirements
 
@@ -47,11 +47,10 @@ Step 1  Fast path
   └─ Tool `xmtp_refresh_agents` present in current toolset?
        ├─ Yes → call it → done
        └─ No  → enter full install flow (Step 2 onwards)
-Step 2  Node + OpenClaw version check
+Step 2  OpenClaw version check
 Step 3  Clean up deprecated debug plugins (id contains `xmtp`)
-Step 4  Locate the .tgz package in ~/Downloads
-Step 5  Update OpenClaw config (idempotent)
-Step 6  Notify user, then `openclaw plugins install` (auto-restart)
+Step 4  Update OpenClaw config (idempotent)
+Step 5  (Uninstall legacy openclaw-okx-a2a-extension if present) → install test-okx-openclaw-a2a@beta
 ```
 
 ## Why Config Goes Before Install
@@ -89,14 +88,13 @@ Inspect the **current toolset**:
 ### Step 2: Environment version check
 
 ```bash
-node --version && openclaw --version 2>&1
+openclaw --version 2>&1
 ```
 
 Requirements:
-- Node **≥ 22.14**
-- OpenClaw **≥ 2026.3.0**
+- OpenClaw **>= 2026.4.1**
 
-If either is below the minimum, inform the user which component needs upgrading and stop. Do not proceed.
+If OpenClaw is below the minimum, inform the user it needs upgrading and stop. Do not proceed.
 
 ### Step 3: Clean up deprecated debug plugins
 
@@ -122,46 +120,7 @@ For **each** matching plugin id:
 
 After all deprecated plugins are removed (or none were found), proceed to Step 4.
 
-### Step 4: Locate the local package
-
-```bash
-ls ~/Downloads/ 2>/dev/null | grep -E '^openclaw-okx-a2a-extension-[0-9]+(\.[0-9]+)*\.tgz$'
-```
-
-**Branch A — no matching file**
-
-If no file matches, send the user the official download link and stop:
-
-> 未在 `~/Downloads/` 找到 OKX A2A 插件包（命名格式：`openclaw-okx-a2a-extension-<version>.tgz`）。
-> 请先到下面的文档下载最新插件包，下载完成后重新执行本流程：
-> https://okg-block.sg.larksuite.com/wiki/JMilw2rFoipWrLkZtSfloqgrgtu#share-DDsIdTHcTog5umxvxzjlXOsVgdD
-
-(Translate the prompt to match the user's language; keep the URL unchanged.)
-
-**Branch B — one or more matching files**
-
-Pick the highest semantic version:
-
-```bash
-PLUGIN_PATH=$(
-  ls ~/Downloads/ 2>/dev/null \
-    | grep -E '^openclaw-okx-a2a-extension-[0-9]+(\.[0-9]+)*\.tgz$' \
-    | sort -V \
-    | tail -n 1
-)
-PLUGIN_PATH="$HOME/Downloads/$PLUGIN_PATH"
-echo "Selected plugin package: $PLUGIN_PATH"
-```
-
-Confirm with the user before continuing:
-
-> 在 `~/Downloads/` 找到插件包：`openclaw-okx-a2a-extension-<version>.tgz`
-> 是否使用此包进行安装？(yes / no)
-
-- User declines → stop. Ask them to place the desired version into `~/Downloads/` and re-run.
-- User confirms → proceed to Step 5.
-
-### Step 5: Update OpenClaw config (idempotent, runs before install)
+### Step 4: Update OpenClaw config (idempotent, runs before install)
 
 <MUST>
 Update config **before** running `openclaw plugins install`. The install command triggers a single automatic gateway restart; that restart needs to load the new plugin and the updated config together.
@@ -170,41 +129,55 @@ Update config **before** running `openclaw plugins install`. The install command
 Run as a single shell block so each check is independent:
 
 ```bash
-# 5.1 — tools.alsoAllow MUST contain 'group:plugins'
+# 4.1 — tools.alsoAllow MUST contain 'group:plugins'
 CURRENT=$(openclaw config get tools.alsoAllow 2>/dev/null || echo '[]')
 if ! echo "$CURRENT" | grep -q '"group:plugins"'; then
   UPDATED=$(node -e "const a=JSON.parse(process.argv[1]); a.push('group:plugins'); console.log(JSON.stringify(a))" "$CURRENT")
   openclaw config set tools.alsoAllow --strict-json "$UPDATED" 2>&1
 fi
 
-# 5.2 — session.dmScope MUST equal 'per-channel-peer'
+# 4.2 — session.dmScope MUST equal 'per-channel-peer'
 CURRENT=$(openclaw config get session.dmScope 2>/dev/null || echo '')
 if [ "$CURRENT" != '"per-channel-peer"' ]; then
   openclaw config set session.dmScope '"per-channel-peer"' --strict-json 2>&1
 fi
 ```
 
-If any `openclaw config set` call fails, surface the error and stop — do not proceed to Step 6 with a partially applied config.
+If any `openclaw config set` call fails, surface the error and stop — do not proceed to Step 5 with a partially applied config.
 
-### Step 6: Notify user, then run install
+### Step 5: Uninstall legacy plugin (if present), then install the new one
 
 <MUST>
-Before running the install command, you **must** tell the user that the gateway will auto-restart afterwards. This sets expectations so the user does not mistake the restart for a bug.
+Before running the install command, you **must** tell the user the gateway will auto-restart afterwards. This sets expectations so the user does not mistake the restart for a bug.
 </MUST>
 
 Tell the user (translate to the user's language as needed):
 
-> 即将安装 OKX A2A 插件。安装完成后 openclaw gateway 将自动重启，这是预期行为，请稍候即可，无需手动操作。
+> 即将安装 OKX A2A 插件（npm 包 `test-okx-openclaw-a2a@beta`）。安装完成后 openclaw gateway 将自动重启，这是预期行为，请稍候即可，无需手动操作。
 
-Then run:
+#### 5.1 — Detect and remove the legacy plugin (only when present)
+
+Reuse the `openclaw plugins list` output captured in Step 3 (or re-run it). Check whether plugin id `openclaw-okx-a2a-extension` appears.
+
+- **Present** → uninstall it (go through the OpenClaw CLI — do **not** `rm -rf` the extension dir, plugin hooks/daemons/config bindings must be cleaned up properly):
+
+  ```bash
+  openclaw plugins uninstall openclaw-okx-a2a-extension
+  ```
+
+  If uninstall fails, surface the error and stop.
+
+- **Not present** → skip; nothing to clean up.
+
+#### 5.2 — Install the new package
 
 ```bash
-openclaw plugins install "$PLUGIN_PATH"
+openclaw plugins install test-okx-openclaw-a2a@beta
 ```
 
-If the install fails, surface the error and stop.
+If the install fails, surface the error verbatim and stop.
 
-On success, the gateway auto-restarts, loads the new plugin, and picks up the config changes from Step 5 in the same restart. The newly created agent will be visible in the refreshed agent list once the gateway is back up. Flow ends here — no further actions needed, no manual restart, no follow-up `xmtp_refresh_agents` call.
+On success, the gateway auto-restarts, loads the new plugin, and picks up the config changes from Step 4 in the same restart. The newly created/updated agent will be visible in the refreshed agent list once the gateway is back up. Flow ends here — no further actions needed, no manual restart, no follow-up `xmtp_refresh_agents` call.
 
 ## Edge Cases
 
@@ -213,15 +186,14 @@ On success, the gateway auto-restarts, loads the new plugin, and picks up the co
 | Neither `OPENCLAW_CLI` nor `OPENCLAW_SHELL` is set | Silent no-op. The user is not running inside an OpenClaw runtime. |
 | Tool `xmtp_refresh_agents` already present in toolset | Take the fast path — call it and end. |
 | `xmtp_refresh_agents` call returns an error | Surface the error verbatim and stop. |
-| Node < 22.14 or OpenClaw < 2026.3.0 | Inform the user which component is too old, stop. |
+| OpenClaw < 2026.4.1 | Inform the user OpenClaw is too old, stop. |
 | `openclaw plugins list` fails | Surface the error and stop — cannot determine plugin state. |
 | Plugin id contains `xmtp` (deprecated debug build) | Inform the user it is a deprecated test plugin and run `openclaw plugins uninstall <id>` for each match before continuing. |
 | `openclaw plugins uninstall <deprecated-id>` fails | Surface the error and stop — do not proceed with stale debug plugin still loaded. |
-| No matching `.tgz` in `~/Downloads/` | Send the user the download link (https://okg-block.sg.larksuite.com/wiki/JMilw2rFoipWrLkZtSfloqgrgtu#share-DDsIdTHcTog5umxvxzjlXOsVgdD) and stop. |
-| Multiple matching `.tgz` files | Pick the highest semantic version (`sort -V \| tail -n 1`), confirm with the user before installing. |
-| User declines the candidate `.tgz` | Stop. Ask the user to place the desired version into `~/Downloads/` and re-run. |
 | `openclaw config get` returns empty / errors | Treat the value as missing and apply the required setting. |
 | `openclaw config set` fails | Surface the error and stop — do not run install with partial config. |
-| `openclaw plugins install` fails | Surface the error and stop. |
+| Legacy `openclaw-okx-a2a-extension` not present in `openclaw plugins list` | Skip Step 5.1, go straight to 5.2. |
+| `openclaw plugins uninstall openclaw-okx-a2a-extension` fails | Surface the error and stop — do not install while the legacy plugin is half-removed. |
+| `openclaw plugins install test-okx-openclaw-a2a@beta` fails | Surface the error verbatim and stop. |
 | `openclaw` command not found despite `OPENCLAW_*` env var | Inform the user that the OpenClaw CLI is required (rare — Step 0 already confirmed runtime). |
 | Plugin already installed and config already in place | Step 1 fast path covers it — single `xmtp_refresh_agents` call, done. |
