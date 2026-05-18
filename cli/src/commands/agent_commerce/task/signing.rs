@@ -16,7 +16,7 @@ use crate::audit;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    fetch_agent_profile, fetch_my_agents, AGENT_ROLE_BUYER, AGENT_ROLE_PROVIDER,
+    fetch_my_agent_by_id, fetch_my_agents, AGENT_ROLE_BUYER, AGENT_ROLE_PROVIDER,
     XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
@@ -163,8 +163,8 @@ async fn resolve_agent_by_role(
 
 /// Resolve wallet + evaluator agentId for signing.
 ///
-/// 按 `agent_id` 调 `fetch_agent_profile`（走 `agent get --agent-ids <id>` 单查，
-/// 无 owner 过滤）拿 `agentWalletAddress` → 在 wallet store 中找对应账户。
+/// 按 `agent_id` 调 `fetch_my_agent_by_id`（走 `agent get` 全量拉，然后客户端
+/// 按 `agentId` 过滤）拿 `agentWalletAddress` → 在 wallet store 中找对应账户。
 /// `agent_id` 必传（来自系统消息 envelope 的顶层 `agentId`），是多身份场景下
 /// 唯一的正确路径——禁用「默认钱包反查」兜底以防错位签名。
 ///
@@ -180,8 +180,14 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
         bail!("agent_id 不能为空（必须传 envelope 顶层 agentId）");
     }
 
-    let profile = fetch_agent_profile(id).await;
-    let owner = profile.agent_wallet_address.unwrap_or_default();
+    let owner = fetch_my_agent_by_id(id)
+        .await
+        .and_then(|a| {
+            a.get("agentWalletAddress")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_default();
     if owner.is_empty() {
         audit::log(
             "cli",
@@ -192,7 +198,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
                 format!("agentId={id}"),
                 "reason=missing_agent_wallet_address".into(),
             ]),
-            Some("fetch_agent_profile returned empty agentWalletAddress"),
+            Some("fetch_my_agent_by_id returned no agentWalletAddress"),
         );
         bail!(
             "无法获取 agentId={id} 的钱包地址；请确认该 agentId 在 `onchainos agent get` 中可查"

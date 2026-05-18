@@ -416,6 +416,71 @@ pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
     agents
 }
 
+/// Spawn `onchainos agent get` (paginated mode, no `--agent-ids`) and return
+/// the single agent whose `agentId` matches the argument, by filtering the
+/// flattened response client-side.
+///
+/// Same pipeline as [`fetch_my_agents`] but the filter key is `agentId` rather
+/// than `ownerAddress`. Returns `None` on any failure (empty id / subprocess /
+/// parse / shape mismatch) or when no agent matches.
+pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
+    let id = agent_id.trim();
+    if id.is_empty() {
+        eprintln!("[fetch_my_agent_by_id] empty agent_id; returning None");
+        return None;
+    }
+
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[fetch_my_agent_by_id] current_exe failed: {e}");
+            return None;
+        }
+    };
+
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.args(["agent", "get"]);
+    eprintln!(
+        "[fetch_my_agent_by_id] running: {} agent get (filter agentId={id})",
+        exe.display()
+    );
+
+    let output = match cmd.output().await {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("[fetch_my_agent_by_id] spawn `agent get` failed: {e}");
+            return None;
+        }
+    };
+
+    let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "[fetch_my_agent_by_id] parse stdout failed: {e}; raw={}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return None;
+        }
+    };
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
+        eprintln!("[fetch_my_agent_by_id] `agent get` returned failure: {err}");
+        return None;
+    }
+
+    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let hit = flatten_agent_groups(&data)
+        .into_iter()
+        .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(id));
+    eprintln!(
+        "[fetch_my_agent_by_id] {} for agentId={id}",
+        if hit.is_some() { "matched" } else { "no match" }
+    );
+    hit
+}
+
 /// Resolve a `--role` CLI arg into the corresponding `role` numeric value
 /// (1/2/3). Accepts both names (buyer / provider / requestor / evaluator)
 /// and raw integers ("1" / "2" / "3"). Returns `None` for unrecognized input.
