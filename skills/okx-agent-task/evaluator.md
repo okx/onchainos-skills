@@ -33,7 +33,7 @@ evaluator role 下的 agent，任何非 `source:"system"` envelope 入站（a2a-
 | 场景 | 命令 |
 |---|---|
 | 不知道自己是谁 / 任务啥情况 | `onchainos agent common context <jobId> --role evaluator` |
-| 查仲裁详情（证据 + 标准） | `onchainos agent evidence-info <jobId>` |
+| 查仲裁详情（证据 + 标准，自带 commit 前硬门） | `onchainos agent evidence-info <jobId> --agent-id <evaluatorAgentId> --round-num <envelope 顶层 roundNum>` |
 | 查任务原始信息 | `onchainos agent status <jobId>` |
 | 查账户级待领奖励 | `onchainos agent arbitration-claimable` |
 

@@ -350,12 +350,21 @@ pub enum AgentCommand {
 
     /// Fetch dispute evidence (text + images downloaded locally so multimodal agents can view them).
     /// Backend resolves the active dispute round from jobId — CLI does not need disputeId.
+    ///
+    /// 内部前置门（合并自原 `dispute-status`）：在拉取/下载证据前先校验
+    /// `taskStatus` 非终态 / `--round-num` == 链上 currentRound /
+    /// `disputeStatus = CommitPhase` / 本账户命中本轮 selectedVoter，任一不过
+    /// 输出 `reason: ...` + `selected: no` 早返回不下载（避免 stale envelope 后续
+    /// commit 被罚 stake）。全过输出 `selected: yes` 继续下载并打印证据 JSON。
     #[command(name = "evidence-info")]
     EvidenceInfo {
         job_id: String,
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
         agent_id: String,
+        /// 从 inbound envelope 顶层 `roundNum` 透传——和链上 currentRound 比对发现 stale envelope。
+        #[arg(long = "round-num")]
+        round_num: String,
     },
     /// Commit a vote (Phase 1 of commit-reveal). vote: 0 = Approve (Client wins), 1 = Reject (Provider wins).
     /// Body sent to backend is only `{ vote }` — reason is NOT part of the API (lives in agent session memory).
@@ -714,9 +723,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::pending::run(c).await,
 
         // ── Evaluator (arbitrator) flat dispatch ────────────────────
-        AgentCommand::EvidenceInfo { job_id, agent_id } => {
+        AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::info::handle_info(&mut c, &job_id, &agent_id).await
+            task::evaluator::info::handle_info(&mut c, &job_id, &agent_id, &round_num).await
         }
         AgentCommand::VoteCommit { job_id, vote, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();

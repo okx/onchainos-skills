@@ -11,6 +11,7 @@ pub mod claim;
 pub mod claimable;
 pub mod commit;
 pub mod decimal_str;
+pub mod dispute_status;
 pub mod flow;
 pub mod helpers;
 pub mod info;

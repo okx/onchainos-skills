@@ -118,6 +118,72 @@ impl Status {
             other => Status::Other(format!("status_{other}")),
         }
     }
+
+    /// 任务主状态机的终态——这些 status 下任务已结束，不会再有新链事件可推进；
+    /// dispute 子流程（如果存在）也必然已经关闭，commit/reveal 投票一律会被罚。
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Status::Completed | Status::Close | Status::Expired | Status::Rejected,
+        )
+    }
+}
+
+// ─── DisputeStatus ──────────────────────────────────────────────────────
+
+/// 仲裁子状态机当前阶段，由 `GET /priapi/v1/aieco/task/{jobId}/dispute/status`
+/// 的 `disputeStatus: int` 字段携带（与任务主状态 [`Status`] 正交——一个 Disputed
+/// 任务在仲裁子流程里可能依次穿过 VoterSelection / CommitPhase / RevealPhase /
+/// Settlement / Completed 这条链）。
+///
+/// 对齐后端 `DisputeStatusEnum`：
+/// NONE=0, PREPARATION=1, VOTER_SELECTION=2, COMMIT_PHASE=3, REVEAL_PHASE=4,
+/// SETTLEMENT=5, COMPLETED=6, REJECTED=7, DISPUTE_INVALIDATED=8
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisputeStatus {
+    None,                // 0 — 任务无 active dispute
+    Preparation,         // 1 — dispute 已 raise，等取证 / 进选评审
+    VoterSelection,      // 2 — VRF 选评审中
+    CommitPhase,         // 3 — commit 窗口
+    RevealPhase,         // 4 — reveal 窗口
+    Settlement,          // 5 — 计票 + 派奖 / 罚没结算中
+    Completed,           // 6 — 仲裁结算 client 胜（Approve 多）
+    Rejected,            // 7 — 仲裁结算 provider 胜（Reject 多）
+    DisputeInvalidated,  // 8 — 本轮失效（票数不足 / 无人 reveal），等下一轮重抽
+    /// 后端返回的、当前枚举不认识的状态码（容错保留原值）
+    Other(i32),
+}
+
+impl DisputeStatus {
+    pub fn from_int(n: i32) -> Self {
+        match n {
+            0 => DisputeStatus::None,
+            1 => DisputeStatus::Preparation,
+            2 => DisputeStatus::VoterSelection,
+            3 => DisputeStatus::CommitPhase,
+            4 => DisputeStatus::RevealPhase,
+            5 => DisputeStatus::Settlement,
+            6 => DisputeStatus::Completed,
+            7 => DisputeStatus::Rejected,
+            8 => DisputeStatus::DisputeInvalidated,
+            other => DisputeStatus::Other(other),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            DisputeStatus::None                => "none",
+            DisputeStatus::Preparation         => "preparation",
+            DisputeStatus::VoterSelection      => "voter_selection",
+            DisputeStatus::CommitPhase         => "commit_phase",
+            DisputeStatus::RevealPhase         => "reveal_phase",
+            DisputeStatus::Settlement          => "settlement",
+            DisputeStatus::Completed           => "completed",
+            DisputeStatus::Rejected            => "rejected",
+            DisputeStatus::DisputeInvalidated  => "dispute_invalidated",
+            DisputeStatus::Other(_)            => "unknown",
+        }
+    }
 }
 
 // ─── Event ──────────────────────────────────────────────────────────────
