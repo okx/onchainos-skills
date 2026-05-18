@@ -155,6 +155,20 @@ fn extract_msg(msg_field: &Value) -> &str {
     if s.is_empty() { "unknown error" } else { s }
 }
 
+/// Append actionable login guidance to known auth-error messages so every
+/// skill surfaces a consistent prompt without needing its own troubleshooting
+/// doc. Returns the original `msg` unchanged for codes we don't augment.
+pub fn augment_auth_error_msg(code: &str, msg: &str) -> String {
+    if code == "50114" {
+        format!(
+            "{}. You are not logged in, run `wallet login` to sign into OKX Agentic Wallet.",
+            msg
+        )
+    } else {
+        msg.to_string()
+    }
+}
+
 /// Apply the `{code, msg, data}` envelope check to a parsed JSON body.
 ///
 /// - Bare arrays (no envelope) pass through as the data payload.
@@ -189,6 +203,7 @@ fn unwrap_envelope(body: Value) -> Result<Value> {
         // so the user-visible string never ends with a dangling colon
         // (e.g. `API error (code=82000): `).
         let msg = extract_msg(&body["msg"]);
+        let msg = augment_auth_error_msg(&code_str, msg);
         bail!("API error (code={}): {}", code_str, msg);
     }
 
