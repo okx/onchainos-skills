@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::{bail, Result};
 use base64::Engine;
 use serde_json::json;
 
+use crate::audit;
 use crate::keyring_store;
 use crate::output;
 use crate::wallet_api::{ApiCodeError, WalletApiClient};
@@ -346,6 +348,282 @@ pub(crate) fn format_api_error(e: anyhow::Error) -> anyhow::Error {
 
 // ── Login ────────────────────────────────────────────────────────────
 
+/// Derive the planned login mode for THIS invocation of `cmd_login`.
+///
+/// Rules (spec §1.3, M3):
+/// - Email clap arg present (non-empty) → `Some("email")`
+/// - Email arg absent AND all three `OKX_API_KEY` + `OKX_SECRET_KEY` +
+///   `OKX_PASSPHRASE` env vars are non-empty → `Some("ak")`
+/// - Otherwise → `None` (caller bails before mode-diff check matters).
+fn derive_current_mode(email_arg: Option<&str>) -> Option<&'static str> {
+    if let Some(e) = email_arg {
+        if !e.is_empty() {
+            return Some("email");
+        }
+    }
+    let ak_ok = std::env::var("OKX_API_KEY")
+        .or_else(|_| std::env::var("OKX_ACCESS_KEY"))
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let sk_ok = std::env::var("OKX_SECRET_KEY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let pp_ok = std::env::var("OKX_PASSPHRASE")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    if ak_ok && sk_ok && pp_ok {
+        Some("ak")
+    } else {
+        None
+    }
+}
+
+/// CLI defensive login-diff pre-check.
+///
+/// Detects three scenarios that would silently overwrite the locally bound
+/// account if not confirmed:
+///
+/// 1. **Mode switch** — `last_login_mode != current_mode` (email ↔ ak). Scene
+///    line names the two modes.
+/// 2. **Same-mode different-account (email)** — both sides are `email` and the
+///    email address differs from the persisted one (PII-masked in the scene
+///    line).
+/// 3. **Same-mode different-account (ak)** — both sides are `ak` and the
+///    incoming `api_key` differs from the one persisted in `session.json`
+///    (PII-masked in the scene line). This subsumes the older standalone
+///    AK-switch `bail!()` guard so the AK→AK case shares the unified exit-2
+///    confirming envelope + audit events with the other two scenarios.
+///
+/// `current_email` is the email arg of `wallet login` (only populated on the
+/// email path; `None` for the AK env-driven path).
+///
+/// `current_api_key` is the API key from `$OKX_API_KEY` (or alias) for the
+/// AK env-driven path; `None` for the email path. Used only to detect the
+/// AK→AK same-mode account-switch case.
+///
+/// Audit table (per spec §5.2 unified write rule, extended with `switch_kind`):
+///
+/// | `would_fire` | `force` | Audit writes (in order)                                     | Control flow                  |
+/// |--------------|---------|-------------------------------------------------------------|-------------------------------|
+/// | false        | —       | none                                                        | `Ok(())` — proceed normally   |
+/// | true         | false   | `login_mode_prompt_shown`                                   | `Err(CliConfirming)` (exit 2) |
+/// | true         | true    | `login_mode_prompt_shown` THEN `login_mode_prompt_user_choice` | `Ok(())` — proceed with login |
+///
+/// `switch_kind=mode|account` is included in audit args so off-box telemetry
+/// can distinguish the two scenarios. `user_choice=no` is never written by the
+/// CLI (accepted gap: the CLI cannot observe a No answer).
+fn check_login_mode_diff(
+    current_mode: &'static str,
+    current_email: Option<&str>,
+    current_api_key: Option<&str>,
+    force: bool,
+) -> Result<()> {
+    let t = if cfg!(feature = "debug-log") {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
+
+    // Load wallets first — both scenarios need access to the persisted email.
+    let wallets = match wallet_store::load_wallets() {
+        Ok(Some(w)) => w,
+        _ => {
+            if let Some(start) = t {
+                eprintln!(
+                    "[DEBUG] mode-diff check (no wallets): {:?}",
+                    start.elapsed()
+                );
+            }
+            return Ok(());
+        }
+    };
+
+    let last_mode = match super::common::derive_last_login_mode(&wallets.email, wallets.is_ak) {
+        Some(m) => m,
+        None => {
+            if let Some(start) = t {
+                eprintln!(
+                    "[DEBUG] mode-diff check (no last mode): {:?}",
+                    start.elapsed()
+                );
+            }
+            return Ok(());
+        }
+    };
+
+    // Decide scenario and the scene-specific line. The four scenarios are
+    // dispatched by the (last_mode, current_mode) pair. Each arm builds the
+    // user-facing scene line and tags the audit event via `switch_kind`.
+    //
+    // Display rules:
+    //   - User-facing labels are `Email` and `API Key` (Title Case / spaced);
+    //     internal mode tokens stay lowercase in audit args and comparisons.
+    //   - On mode switch, the `Email` side carries the masked email of the
+    //     *email* account in parentheses, regardless of direction. The
+    //     `API Key` side never displays the key itself (api_keys are more
+    //     sensitive than emails and the user already knows the env value).
+    //   - On same-mode email switch, both old and new emails are masked
+    //     using `mask_email`.
+    //   - On same-mode AK switch, no key (masked or otherwise) appears in
+    //     the message; a fixed line tells the user their env api_key has
+    //     diverged from the persisted one.
+    let (scene_line, switch_kind) = match (last_mode, current_mode) {
+        ("email", "ak") => {
+            // Mode switch: persisted=email, this login=ak. The Email side
+            // is OLD — show its masked form in parens.
+            (
+                format!(
+                    "Login method: Email ({}) → API Key",
+                    super::common::mask_email(&wallets.email),
+                ),
+                "mode",
+            )
+        }
+        ("ak", "email") => {
+            // Mode switch: persisted=ak, this login=email. The Email side
+            // is NEW — show the new email's masked form in parens.
+            let new_email = current_email.unwrap_or("");
+            (
+                format!(
+                    "Login method: API Key → Email ({})",
+                    super::common::mask_email(new_email),
+                ),
+                "mode",
+            )
+        }
+        ("email", "email") => {
+            // Same-mode account switch (email). Compare addresses,
+            // case-insensitive + whitespace-trimmed. Empty new email
+            // shouldn't reach here in practice (cmd_login rejects empty
+            // email arg before calling us), but guard anyway.
+            let new_raw = current_email.unwrap_or("");
+            let new_norm = new_raw.trim().to_lowercase();
+            let old_norm = wallets.email.trim().to_lowercase();
+            if new_norm.is_empty() || old_norm.is_empty() || new_norm == old_norm {
+                if let Some(start) = t {
+                    eprintln!(
+                        "[DEBUG] mode-diff check (no-op, same email): {:?}",
+                        start.elapsed()
+                    );
+                }
+                return Ok(());
+            }
+            (
+                format!(
+                    "Account: {} → {}",
+                    super::common::mask_email(&wallets.email),
+                    super::common::mask_email(new_raw),
+                ),
+                "account",
+            )
+        }
+        ("ak", "ak") => {
+            // Same-mode account switch (ak). Compare api_keys; the persisted
+            // key lives in session.json (not wallets.json). If session is
+            // missing or empty, the comparison is undefined — fall through
+            // to no-op (matches the previous AK-switch guard's
+            // `if let Ok(Some(..))` tolerance). Same-value comparison is
+            // also a no-op.
+            //
+            // When the gate fires the scene line is a fixed PII-clean
+            // sentence — no key (masked or otherwise) appears in the
+            // user-facing message. The user already knows the value of
+            // their `OKX_API_KEY` env var; the CLI's job is to flag that
+            // it diverges from the persisted one.
+            let new_key = current_api_key.unwrap_or("").trim();
+            let old_key = match wallet_store::load_session() {
+                Ok(Some(session)) => session.api_key,
+                _ => String::new(),
+            };
+            if new_key.is_empty() || old_key.is_empty() || new_key == old_key {
+                if let Some(start) = t {
+                    eprintln!(
+                        "[DEBUG] mode-diff check (no-op, same ak / missing session): {:?}",
+                        start.elapsed()
+                    );
+                }
+                return Ok(());
+            }
+            (
+                "The API Key in your env has changed".to_string(),
+                "account",
+            )
+        }
+        _ => {
+            // Unknown (mode, mode) combination — should never occur given
+            // `derive_last_login_mode` and `derive_current_mode` only
+            // return "email" / "ak". Defensive: no-op.
+            if let Some(start) = t {
+                eprintln!(
+                    "[DEBUG] mode-diff check (no-op, unknown mode pair): {:?}",
+                    start.elapsed()
+                );
+            }
+            return Ok(());
+        }
+    };
+
+    audit::log(
+        "cli",
+        "login_mode_prompt_shown",
+        true,
+        Duration::ZERO,
+        Some(vec![
+            format!("current_mode={current_mode}"),
+            format!("last_login_mode={last_mode}"),
+            format!("switch_kind={switch_kind}"),
+        ]),
+        None,
+    );
+
+    if force {
+        // Skill-first Yes path: paired prompt_shown + user_choice=yes events
+        // back-to-back so the audit trail is complete.
+        audit::log(
+            "cli",
+            "login_mode_prompt_user_choice",
+            true,
+            Duration::ZERO,
+            Some(vec![
+                format!("current_mode={current_mode}"),
+                format!("last_login_mode={last_mode}"),
+                format!("switch_kind={switch_kind}"),
+                "user_choice=yes".to_string(),
+            ]),
+            None,
+        );
+
+        if let Some(start) = t {
+            eprintln!("[DEBUG] mode-diff check (force): {:?}", start.elapsed());
+        }
+        return Ok(());
+    }
+
+    // CLI defensive path: emit confirming + exit 2. The first line is the
+    // skill discriminator (substring `not the account you used last time` is
+    // matched verbatim — never translated). Scene line is filled per scenario
+    // above; reassurance + Yes/No prompt are shared.
+    let message = format!(
+        "⚠️ This is not the account you used last time.\n\
+         {scene_line}\n\
+         Your previous account's assets are untouched and still accessible — log in with the original account to view them.\n\
+         Continue? [Yes / No]"
+    );
+
+    let confirming = output::CliConfirming {
+        message,
+        next: "If the user confirms, re-run the same command with --force flag appended to proceed.".to_string(),
+    };
+
+    if let Some(start) = t {
+        eprintln!(
+            "[DEBUG] mode-diff check (gate fires): {:?}",
+            start.elapsed()
+        );
+    }
+    Err(confirming.into())
+}
+
 /// Validate a user-supplied locale value against the OTP-email whitelist.
 ///
 /// Returns `(validated_locale, did_fallback)`:
@@ -375,6 +653,16 @@ pub(super) async fn cmd_login(
         if cfg!(feature = "debug-log") {
             eprintln!("[DEBUG] cmd_login: email={email}, locale={locale:?}");
         }
+
+        // Login-diff pre-check: fires before any auth API call when (a) the
+        // previous session used `ak` and this login uses `email` (mode
+        // switch), or (b) this email differs from the persisted one (same-
+        // mode different-account, prevents silent OTP redirect to a new
+        // address). `current_api_key` is None on the email path. Runs
+        // before locale validation so an exit-2 confirming response is
+        // returned without any side-effect (including the stderr fallback
+        // warning).
+        check_login_mode_diff("email", Some(email), None, force)?;
 
         // Validate locale before calling auth_init.
         let validated_locale: Option<&str> = match locale {
@@ -424,23 +712,15 @@ pub(super) async fn cmd_login(
                     );
                 }
 
-                // Check if switching API Keys — warn unless --force
-                if !force {
-                    if let Ok(Some(wallets)) = wallet_store::load_wallets() {
-                        if wallets.is_ak {
-                            if let Ok(Some(session)) = wallet_store::load_session() {
-                                if !session.api_key.is_empty() && session.api_key != api_key {
-                                    bail!(
-                                        "You are about to switch from API Key \"{}\" to \"{}\". \
-                                         If you are sure, re-run with --force to confirm.",
-                                        session.api_key,
-                                        api_key
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
+                // Login-diff pre-check: handles all three scenarios in a
+                // single gate — mode switch (email → ak), same-mode email
+                // account switch (N/A on this branch), and same-mode AK
+                // account switch (different api_key vs persisted session).
+                // The old standalone AK-switch `bail!()` guard has been
+                // folded into this call; on AK→AK with a different key the
+                // function returns `Err(CliConfirming)` with exit 2 and
+                // emits `login_mode_prompt_shown` (switch_kind=account).
+                check_login_mode_diff("ak", None, Some(&api_key), force)?;
 
                 cmd_login_ak(&api_key, &secret_key, &passphrase, locale).await
             }
@@ -923,9 +1203,10 @@ fn apply_all_account_address_list(list: &[crate::wallet_api::RefreshAccountItem]
                 chain_path: a.chain_path.clone(),
             })
             .collect();
-        wallets
-            .accounts_map
-            .insert(item.account_id.clone(), wallet_store::AccountMapEntry { address_list });
+        wallets.accounts_map.insert(
+            item.account_id.clone(),
+            wallet_store::AccountMapEntry { address_list },
+        );
     }
 
     let _ = wallet_store::save_wallets(&wallets);
@@ -1190,6 +1471,619 @@ mod tests {
         let key_b64 = base64::engine::general_purpose::STANDARD.encode(&[1u8; 32]);
         assert!(crate::crypto::hpke_decrypt_session_sk(&short_b64, &key_b64).is_err());
     }
+
+    // ── cmd_login mode-diff tests (T5) ───────────────────────────────
+
+    /// Build a fresh sandbox dir under `target/test_tmp/<name>`, set
+    /// `ONCHAINOS_HOME` to it, and remove all OKX_* AK env vars so each test
+    /// starts from a clean slate. The caller MUST hold `TEST_ENV_MUTEX`.
+    fn cmd_login_mode_diff_sandbox(name: &str) -> std::path::PathBuf {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join(name);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).ok();
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        std::env::remove_var("OKX_API_KEY");
+        std::env::remove_var("OKX_ACCESS_KEY");
+        std::env::remove_var("OKX_SECRET_KEY");
+        std::env::remove_var("OKX_PASSPHRASE");
+        dir
+    }
+
+    fn cmd_login_mode_diff_cleanup() {
+        std::env::remove_var("ONCHAINOS_HOME");
+        std::env::remove_var("OKX_API_KEY");
+        std::env::remove_var("OKX_ACCESS_KEY");
+        std::env::remove_var("OKX_SECRET_KEY");
+        std::env::remove_var("OKX_PASSPHRASE");
+    }
+
+    /// Read `audit.jsonl` from the sandbox dir and return only the entry
+    /// lines whose `command` starts with `login_mode_prompt_` (skipping the
+    /// device-header line + any unrelated entries).
+    fn cmd_login_mode_diff_audit_lines(dir: &std::path::Path) -> Vec<serde_json::Value> {
+        let path = dir.join("audit.jsonl");
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        content
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|v| {
+                v.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c.starts_with("login_mode_prompt_"))
+                    .unwrap_or(false)
+            })
+            .collect()
+    }
+
+    // ── derive_current_mode ───────────────────────────────────────────
+
+    #[test]
+    fn derive_current_mode_email_arg_returns_email() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_derive_email_arg");
+        assert_eq!(derive_current_mode(Some("user@example.com")), Some("email"));
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn derive_current_mode_email_empty_string_falls_through() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_derive_empty_email");
+        // Empty email string is treated like absent → falls through to AK env,
+        // which has been cleared, so result is None.
+        assert_eq!(derive_current_mode(Some("")), None);
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn derive_current_mode_all_three_ak_envs_returns_ak() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_derive_ak");
+        std::env::set_var("OKX_API_KEY", "ak-test");
+        std::env::set_var("OKX_SECRET_KEY", "sk-test");
+        std::env::set_var("OKX_PASSPHRASE", "pp-test");
+        assert_eq!(derive_current_mode(None), Some("ak"));
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn derive_current_mode_partial_ak_envs_returns_none() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_derive_partial_ak");
+        std::env::set_var("OKX_API_KEY", "ak-test");
+        // SECRET_KEY and PASSPHRASE missing → not "ak"
+        assert_eq!(derive_current_mode(None), None);
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn derive_current_mode_email_arg_wins_over_ak_envs() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_derive_email_beats_ak");
+        std::env::set_var("OKX_API_KEY", "ak-test");
+        std::env::set_var("OKX_SECRET_KEY", "sk-test");
+        std::env::set_var("OKX_PASSPHRASE", "pp-test");
+        assert_eq!(derive_current_mode(Some("u@e.com")), Some("email"));
+        cmd_login_mode_diff_cleanup();
+    }
+
+    // ── check_login_mode_diff truth table (spec §5.2) ────────────────
+
+    #[test]
+    fn cmd_login_mode_diff_fires_when_email_to_ak_no_force() {
+        // Scenario (a): wallets.json has lastLoginMode=email (is_ak=false,
+        // email non-empty); current_mode=ak; force=false → exit 2 +
+        // CliConfirming with discriminator; ONE prompt_shown audit, NO
+        // user_choice audit.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_email_to_ak");
+
+        let prev = WalletsJson {
+            email: "prev@example.com".to_string(),
+            is_ak: false,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+
+        let res = check_login_mode_diff("ak", None, None, false);
+        let err = res.expect_err("mode-diff must fire");
+        let confirming = err
+            .downcast_ref::<output::CliConfirming>()
+            .expect("must be CliConfirming");
+        assert!(confirming
+            .message
+            .contains("not the account you used last time"));
+        // Scene line for Email→AK mode switch: Email side carries the
+        // masked persisted email in parens; API Key side does not show
+        // the key.
+        assert!(confirming
+            .message
+            .contains("Login method: Email (p***v@example.com) → API Key"));
+        assert!(confirming
+            .message
+            .starts_with("⚠️ This is not the account you used last time"));
+        assert_eq!(
+            confirming.next,
+            "If the user confirms, re-run the same command with --force flag appended to proceed."
+        );
+
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert_eq!(entries.len(), 1, "exactly one prompt_shown entry");
+        assert_eq!(entries[0]["command"], "login_mode_prompt_shown");
+        let args = entries[0]["args"].as_array().expect("args present");
+        let arg_strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
+        // Audit args keep the internal lowercase tokens; display form is
+        // user-facing only.
+        assert!(arg_strs.contains(&"current_mode=ak"));
+        assert!(arg_strs.contains(&"last_login_mode=email"));
+        assert!(arg_strs.contains(&"switch_kind=mode"));
+        assert!(!arg_strs.iter().any(|s| s.contains("user_choice")));
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_fires_when_ak_to_email_no_force() {
+        // Scenario (b): wallets.json has lastLoginMode=ak (is_ak=true);
+        // current_mode=email; force=false → exit 2 + audit pair reversed.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_ak_to_email");
+
+        let prev = WalletsJson {
+            email: String::new(),
+            is_ak: true,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+
+        let res = check_login_mode_diff("email", Some("new@example.com"), None, false);
+        let err = res.expect_err("mode-diff must fire");
+        let confirming = err
+            .downcast_ref::<output::CliConfirming>()
+            .expect("must be CliConfirming");
+        assert!(confirming
+            .message
+            .contains("not the account you used last time"));
+        // Mirror direction: ak → email. The Email side is NEW — show the
+        // new email's masked form in parens.
+        assert!(confirming
+            .message
+            .contains("Login method: API Key → Email (n***w@example.com)"));
+
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["command"], "login_mode_prompt_shown");
+        let args = entries[0]["args"].as_array().expect("args present");
+        let arg_strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
+        assert!(arg_strs.contains(&"current_mode=email"));
+        assert!(arg_strs.contains(&"last_login_mode=ak"));
+        assert!(arg_strs.contains(&"switch_kind=mode"));
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_no_prompt_when_no_prior_wallets() {
+        // Scenario (c): no wallets.json on disk → derive returns None → no
+        // prompt; no audit entries.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_no_prior");
+
+        let res = check_login_mode_diff("email", Some("anyone@example.com"), None, false);
+        assert!(res.is_ok(), "no wallets.json → proceed normally");
+
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert!(entries.is_empty(), "no audit entries written");
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_no_prompt_when_same_email() {
+        // Scenario (d): wallets.json has lastLoginMode=email with email
+        // "prev@example.com"; current_mode=email AND current_email matches
+        // (case-insensitive after trim) → no prompt; no audit entries.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_same_email");
+
+        let prev = WalletsJson {
+            email: "prev@example.com".to_string(),
+            is_ak: false,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+
+        // Same email (varied casing + surrounding whitespace) must still be
+        // treated as the same account.
+        let res = check_login_mode_diff("email", Some("  PREV@Example.com  "), None, false);
+        assert!(res.is_ok());
+
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert!(entries.is_empty());
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_fires_when_email_to_different_email_no_force() {
+        // Same-mode different-account scenario: wallets.json has
+        // lastLoginMode=email with email "prev@example.com"; current_mode=email
+        // BUT current_email="new@example.com" → fires the same exit-2
+        // confirming envelope. Scene line uses masked emails (PII §8.1).
+        // Audit args include switch_kind=account so off-box telemetry can
+        // split this case from a mode switch.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_email_to_email");
+
+        let prev = WalletsJson {
+            email: "prev@example.com".to_string(),
+            is_ak: false,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+
+        let res = check_login_mode_diff("email", Some("newalice@example.com"), None, false);
+        let err = res.expect_err("same-mode different-account must fire");
+        let confirming = err
+            .downcast_ref::<output::CliConfirming>()
+            .expect("must be CliConfirming");
+        assert!(confirming
+            .message
+            .contains("not the account you used last time"));
+        // PII §8.1 regression: raw email local parts must NOT appear.
+        assert!(
+            !confirming.message.contains("prev@example.com"),
+            "raw old email leaked: {}",
+            confirming.message
+        );
+        assert!(
+            !confirming.message.contains("newalice@example.com"),
+            "raw new email leaked: {}",
+            confirming.message
+        );
+        // Masked forms (first char + last char + domain) should appear.
+        assert!(
+            confirming.message.contains("p***v@example.com"),
+            "old masked email missing: {}",
+            confirming.message
+        );
+        assert!(
+            confirming.message.contains("n***e@example.com"),
+            "new masked email missing: {}",
+            confirming.message
+        );
+
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["command"], "login_mode_prompt_shown");
+        let args = entries[0]["args"].as_array().expect("args present");
+        let arg_strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
+        assert!(arg_strs.contains(&"current_mode=email"));
+        assert!(arg_strs.contains(&"last_login_mode=email"));
+        assert!(arg_strs.contains(&"switch_kind=account"));
+        // Audit args MUST NOT carry the raw email either.
+        assert!(
+            !arg_strs.iter().any(|s| s.contains("prev@example.com")
+                || s.contains("newalice@example.com")),
+            "audit args leaked raw email"
+        );
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_force_bypasses_and_writes_paired_audit() {
+        // Scenario (f): mode-diff with --force → no prompt; login proceeds;
+        // audit contains TWO new entries back-to-back: prompt_shown THEN
+        // user_choice (user_choice=yes).
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_force_pair");
+
+        let prev = WalletsJson {
+            email: "prev@example.com".to_string(),
+            is_ak: false,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+
+        let res = check_login_mode_diff("ak", None, None, true);
+        assert!(res.is_ok(), "--force must bypass the gate");
+
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert_eq!(entries.len(), 2, "paired prompt_shown + user_choice");
+        assert_eq!(entries[0]["command"], "login_mode_prompt_shown");
+        assert_eq!(entries[1]["command"], "login_mode_prompt_user_choice");
+
+        let user_args = entries[1]["args"].as_array().expect("args");
+        let user_arg_strs: Vec<&str> = user_args.iter().filter_map(|v| v.as_str()).collect();
+        assert!(user_arg_strs.contains(&"current_mode=ak"));
+        assert!(user_arg_strs.contains(&"last_login_mode=email"));
+        assert!(user_arg_strs.contains(&"switch_kind=mode"));
+        assert!(user_arg_strs.contains(&"user_choice=yes"));
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_force_no_diff_writes_no_audit() {
+        // Last row of the truth table: would_fire=false + force=true → no
+        // audit writes; proceed normally.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_force_no_diff");
+
+        let prev = WalletsJson {
+            email: "prev@example.com".to_string(),
+            is_ak: false,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+
+        // Same mode (email) + same email + force=true → would_fire=false → no audit.
+        let res = check_login_mode_diff("email", Some("prev@example.com"), None, true);
+        assert!(res.is_ok());
+
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert!(entries.is_empty());
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_confirming_payload_shape() {
+        // Confirming payload contract — message is the 4-line template:
+        //   1. discriminator "This is not the account you used last time."
+        //   2. scene line (depends on scenario — for Email→AK mode switch,
+        //      "Login method: Email (<masked>) → API Key")
+        //   3. asset-safety reassurance
+        //   4. "Continue? [Yes / No]"
+        // `next` is the verbatim skill re-invocation instruction. Re-verified
+        // standalone so message-format regressions are easy to spot.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_payload_shape");
+
+        let prev = WalletsJson {
+            email: "prev@example.com".to_string(),
+            is_ak: false,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+
+        let err = check_login_mode_diff("ak", None, None, false).expect_err("fires");
+        let c = err
+            .downcast_ref::<output::CliConfirming>()
+            .expect("CliConfirming");
+        let expected_msg = "⚠️ This is not the account you used last time.\n\
+             Login method: Email (p***v@example.com) → API Key\n\
+             Your previous account's assets are untouched and still accessible — log in with the original account to view them.\n\
+             Continue? [Yes / No]";
+        assert_eq!(c.message, expected_msg);
+        assert_eq!(
+            c.next,
+            "If the user confirms, re-run the same command with --force flag appended to proceed."
+        );
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_no_prompt_when_same_ak_mode_no_session() {
+        // Edge: last=ak, current=ak, but session.json is missing on disk.
+        // Without the previous api_key, the comparison is undefined →
+        // no-op (preserves the old AK-switch guard's `if let Ok(Some(..))`
+        // tolerance). Documents the no-session fall-through path.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_same_ak_no_session");
+
+        let prev = WalletsJson {
+            email: String::new(),
+            is_ak: true,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+        // Note: no save_session — session.json is absent.
+
+        let res = check_login_mode_diff("ak", None, Some("anyKey-abcd-1234-5678"), false);
+        assert!(res.is_ok(), "missing session → no prompt");
+
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert!(entries.is_empty(), "no audit entries written");
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_no_prompt_when_same_ak_same_key() {
+        // last=ak with api_key="abcd1234-5678-90ab-cdef-1234567890ab",
+        // current=ak with the SAME api_key → no prompt; no audit entries.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_same_ak_same_key");
+
+        let prev = WalletsJson {
+            email: String::new(),
+            is_ak: true,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+
+        let same_key = "abcd1234-5678-90ab-cdef-1234567890ab";
+        wallet_store::save_session(&wallet_store::SessionJson {
+            api_key: same_key.to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let res = check_login_mode_diff("ak", None, Some(same_key), false);
+        assert!(res.is_ok(), "same ak + same key → no prompt");
+
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert!(entries.is_empty(), "no audit entries written");
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_fires_when_same_ak_different_key() {
+        // Same-mode different-account scenario for AK: wallets.json has
+        // is_ak=true, session.json has api_key="OLDKEY...". Caller passes
+        // a different api_key → fires exit-2 confirming envelope with
+        // mask_api_key applied to BOTH keys in the scene line. Audit args
+        // include switch_kind=account (mirrors the email1→email2 case).
+        // Replaces the previous AK-switch `bail!()` guard with the unified
+        // confirming flow.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_ak_to_different_ak");
+
+        let prev = WalletsJson {
+            email: String::new(),
+            is_ak: true,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+
+        let old_key = "OLDKEY1234-5678-90ab-cdef-1234567890ab";
+        let new_key = "NEWKEY5678-9012-34cd-ef01-5678901234ef";
+        wallet_store::save_session(&wallet_store::SessionJson {
+            api_key: old_key.to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let res = check_login_mode_diff("ak", None, Some(new_key), false);
+        let err = res.expect_err("same-mode different-ak must fire");
+        let confirming = err
+            .downcast_ref::<output::CliConfirming>()
+            .expect("must be CliConfirming");
+        assert!(confirming
+            .message
+            .contains("not the account you used last time"));
+        // PII §8.1 regression: raw api_keys must NOT appear in the message.
+        assert!(
+            !confirming.message.contains(old_key),
+            "raw old api_key leaked: {}",
+            confirming.message
+        );
+        assert!(
+            !confirming.message.contains(new_key),
+            "raw new api_key leaked: {}",
+            confirming.message
+        );
+        // Same-mode AK switch uses a fixed PII-clean sentence — no key
+        // (masked or otherwise) appears in the user-facing message. The
+        // user already knows the env value; we only flag the divergence.
+        assert!(
+            confirming
+                .message
+                .contains("The API Key in your env has changed"),
+            "scene line shape wrong: {}",
+            confirming.message
+        );
+
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["command"], "login_mode_prompt_shown");
+        let args = entries[0]["args"].as_array().expect("args present");
+        let arg_strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
+        assert!(arg_strs.contains(&"current_mode=ak"));
+        assert!(arg_strs.contains(&"last_login_mode=ak"));
+        assert!(arg_strs.contains(&"switch_kind=account"));
+        // Audit args MUST NOT carry raw api_keys either.
+        assert!(
+            !arg_strs.iter().any(|s| s.contains(old_key) || s.contains(new_key)),
+            "audit args leaked raw api_key"
+        );
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    #[test]
+    fn cmd_login_mode_diff_audit_disk_failure_control_flow_unchanged() {
+        // Scenario (k) / FR-4-AC-3: when audit::log cannot write to disk
+        // (simulated by replacing audit.jsonl with a directory so the append
+        // path fails), control flow MUST remain identical to the
+        // writable-disk case. `audit::log` swallows I/O errors internally
+        // (see `audit.rs:try_log`), so `check_login_mode_diff` keeps
+        // returning the expected `Err(CliConfirming)` for the (would_fire,
+        // !force) row and the expected `Ok(())` for the (would_fire, force)
+        // row regardless of audit success.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_audit_disk_fail");
+
+        let prev = WalletsJson {
+            email: "prev@example.com".to_string(),
+            is_ak: false,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&prev).unwrap();
+
+        // Force audit writes to fail: place a directory at audit.jsonl so
+        // OpenOptions::append(true).open(...) returns an error every call.
+        let audit_path = dir.join("audit.jsonl");
+        std::fs::create_dir_all(&audit_path).unwrap();
+
+        // (would_fire=true, force=false) — control flow must still be Err.
+        let err = check_login_mode_diff("ak", None, None, false).expect_err("must still fire");
+        let confirming = err
+            .downcast_ref::<output::CliConfirming>()
+            .expect("must be CliConfirming");
+        assert!(confirming
+            .message
+            .contains("not the account you used last time"));
+
+        // (would_fire=true, force=true) — control flow must still be Ok.
+        let ok = check_login_mode_diff("ak", None, None, true);
+        assert!(ok.is_ok(), "--force path must still succeed");
+
+        // Audit lines remain unreadable (directory at audit.jsonl), so the
+        // helper returns an empty list — confirms writes silently failed.
+        let entries = cmd_login_mode_diff_audit_lines(&dir);
+        assert!(
+            entries.is_empty(),
+            "audit writes must be silently dropped when disk is unwritable"
+        );
+
+        cmd_login_mode_diff_cleanup();
+    }
+
+    // ── validate_locale tests ────────────────────────────────────────
 
     #[test]
     fn validate_locale_passes_en_us() {
