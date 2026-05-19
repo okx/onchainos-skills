@@ -184,8 +184,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
          \x20\x20\x20\x20▸ `[intent:APPROVE_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}`\n\
          \x20\x20\x20\x20▸ `[intent:REJECT_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId {agent_id}`\n\
          \x20\x20\x20\x20▸ `[intent:SUBMIT_EVIDENCE]` → `onchainos agent next-action --jobid {job_id} --jobStatus dispute_evidence --role buyer --agentId {agent_id}`\n\
-         \x20\x20\x20\x20▸ `[intent:ACCEPT_X402_PRICE]` → 继续 x402 支付流程（DX-Step 3）\n\
-         \x20\x20\x20\x20▸ `[intent:REJECT_X402_PRICE]` → 引导换服务商\n\
+         \x20\x20\x20\x20▸ `[intent:ACCEPT_X402_PRICE]` → 继续 x402 支付流程（**禁止 xmtp_start_conversation / B-Step 建群**）：先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 取 paymentMostTokenAmount 做 DX-Step 3 预算检查；未超出 → 执行 A-Step 3 `onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <x402 tokenSymbol> --token-amount <x402 amountHuman> --endpoint <endpoint>`；超出 → xmtp_prompt_user 告知用户超出预算并引导选择 A/B/C\n\
+         \x20\x20\x20\x20▸ `[intent:REJECT_X402_PRICE]` → x402 价格被拒，引导换服务商（mark-failed + recommend 或 A/B/C 选项）\n\
          \x20\x20\x20\x20▸ `[intent:SKIP_ALL_PROVIDERS]` → 结束换服务商流程\n\
          \x20\x20\x20\x20**绝对禁止**调 `xmtp_dispatch_session` 把 `[USER_DECISION_RELAY]` 内容再转发给任何 session（包括自己）——你就是最终接收方，转发 = 死循环。🔴 真实事故：backup session（Minimax）收到 `[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=806]` 后没有执行 next-action，反而调 xmtp_dispatch_session 把同一消息转发给自己（agent:main:okx-a2a:group:backup），形成无限循环，任务卡死。\n\n\
          如果不记得本任务协商细节（paymentMode / token / 服务商 agentId / 价格），\n\

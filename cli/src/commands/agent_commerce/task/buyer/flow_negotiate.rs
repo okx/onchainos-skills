@@ -42,7 +42,11 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20userContent: 任务 {job_id} 指定服务商（AgentID={dp_id}）实际收费 <amountHuman> <tokenSymbol>，与注册费用 <feeAmount> <feeTokenSymbol> 不一致，是否接受？\n\
              \x20\x20- 一致 → 继续 DX-Step 3。\n\n\
              \x20\x20**DX-Step 3 — 预算检查：**\n\
-             \x20\x20先调 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 获取 `paymentMostTokenAmount`（最高预算/价格上限）。\n\
+             \x20\x20先调 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}`，提取 `paymentMostTokenAmount`（最高预算）和任务的 `tokenSymbol`。\n\
+             \x20\x20⚠️ **币种校验**：比较 x402-check 返回的 `tokenSymbol` 与任务的 `tokenSymbol`——\n\
+             \x20\x20- 不一致（如任务 USDG、x402 收 USDT）→ 因 USDT/USDG 均为 USD 稳定币（≈1:1），仍按数值比较预算。\n\
+             \x20\x20\x20\x20`set-payment-mode` 会将链上支付代币**切换为 x402 endpoint 的代币**（不再是任务创建时的币种）。\n\
+             \x20\x20- 一致 → 直接比较。\n\
              \x20\x20比较 `amountHuman` 与 `paymentMostTokenAmount`（**不是 tokenAmount，tokenAmount 是基准预算**）：\n\
              \x20\x20- 超出 → 调用 xmtp_prompt_user 通知用户费用超出最高预算，引导用户选择下一步（需要用户决策）：\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「选 A / 指定服务商」并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户提供的agentId>] 用户原话：<用户回复原文>\") relay 回 sub session；用户语义「选 B / 公开」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文>\") relay；用户语义「选 C / 关闭」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\") relay。⚠️ 路由 tag 协议：intent 名完全大写 ASCII 原样塞入；禁止翻译/改写。⚠️ relay 必须使用 xmtp_dispatch_session。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
@@ -51,7 +55,13 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20B. 转为公开任务 — 让更多服务商看到任务\n\
              \x20\x20\x20\x20C. 关闭任务\n\
              \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复。\n\
-             \x20\x20- 未超出 → 进入 **A-Step 3**（set-payment-mode + task-402-pay）。\n\n\
+             \x20\x20- 未超出 → 执行下方 **A-Step 3**。\n\n\
+             \x20\x20**A-Step 3 — set-payment-mode（x402 上链）：**\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <x402-check 返回的 tokenSymbol> --token-amount <x402-check 返回的 amountHuman> --endpoint <endpoint>\n\
+             \x20\x20```\n\
+             \x20\x20⚠️ tokenSymbol 和 tokenAmount 使用 **x402-check 返回的实际值**（不是任务创建时的原始预算）。\n\
+             \x20\x20→ **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知（届时按 Activation 铁律处理，剧本会引导执行 task-402-pay）。\n\n\
              - **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。",
              CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
 }
@@ -260,22 +270,20 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              ❌ 绝对禁止先输出文字「给用户看」再调工具——sub session 的文字输出永远不会到达用户\n\n\
              **Step 2 — 展示列表给用户，让用户选择：**\n\
              调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；再调 `xmtp_prompt_user`：\n\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户语义「选某个服务商」（如 \"864\"/\"选择 864\"/\"选择服务商 864\"/\"4\"/\"序号 4\"/\"第4个\" 等，给出 AgentID 或序号）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户选中的agentId>] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session；\
-             用户语义「翻页 / 下一页 / more / next」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:NEXT_PAGE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session；\
-             用户语义「公开 / 转公开 / public」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 set-public；\
-             用户语义「关闭 / 取消 / close」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 close。\
-             ⚠️ **路由 tag 协议**：`[intent:PICK_PROVIDER agentId=<...>]` / `[intent:NEXT_PAGE]` / `[intent:SET_PUBLIC]` / `[intent:CLOSE_TASK]` 必须**完全大写 ASCII** 原样塞入（intent 名 + 字段名不变；只填值）；禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。\
-             ⚠️ 如果用户给的是序号（如 \"4\"），**必须从 userContent 列表中查找对应的 AgentID** 填入 `agentId=` 字段——sub 只读 tag 里的 agentId，不识别序号。\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\n\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer]\n\
+             \x20\x20序号→AgentID 映射：<从 recommend 输出提取，格式如 1→798, 2→806, 3→866, 4→864, 5→865, 6→916, 7→810>\n\
+             \x20\x20用户回复数字（如 \"2\"\"4\"）→ 按上方映射表转为 AgentID；用户回复 3 位数 AgentID（如 \"864\"）→ 直接使用。\n\
+             \x20\x20路由规则：\n\
+             \x20\x20- 用户选服务商（数字序号或 AgentID）→ xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<映射后的AgentID>] 用户原话：<用户回复原文>\")\n\
+             \x20\x20- 用户说「下一页/more/next」→ xmtp_dispatch_session(sessionKey=\"<同上>\", content=\"[USER_DECISION_RELAY][intent:NEXT_PAGE] 用户原话：<用户回复原文>\")\n\
+             \x20\x20- 用户说「公开/public」→ xmtp_dispatch_session(sessionKey=\"<同上>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文>\")\n\
+             \x20\x20- 用户说「关闭/取消/close」→ xmtp_dispatch_session(sessionKey=\"<同上>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\")\n\
+             \x20\x20⚠️ intent tag 必须完全大写 ASCII 原样塞入，禁止翻译/改写。relay 必须使用 xmtp_dispatch_session。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\n\
+             \x20\x20⚠️ llmContent 中的「序号→AgentID 映射」**必须**从 recommend 输出逐行提取并内联——user session agent 看不到 userContent 列表，没有映射表就无法把用户的序号转为 AgentID，导致路由失败。\n\n\
              \x20\x20userContent: [任务 {short_id} 你作为用户] 以下是推荐服务商列表：\n\
              \x20\x20<将 recommend 输出的服务商列表完整粘贴，每个服务商一段：序号 / Agent Name / AgentID / 服务名称与描述 / 信用分 / 费用 / 支付方式>\n\
              \x20\x20---\n\
-             \x20\x20请选择：\n\
-             \x20\x20• 选择服务商 — 回复服务商序号或 AgentID\n\
-             \x20\x20• 查看更多 — 回复「下一页」\n\
-             \x20\x20• 转为公开任务 — 回复「公开」\n\
-             \x20\x20• 关闭任务 — 回复「关闭」\n\n\
+             \x20\x20请选择：回复序号（如 1、2、3）或 AgentID（如 864）选择服务商 | 回复「下一页」查看更多 | 回复「公开」转为公开任务 | 回复「关闭」关闭任务\n\n\
              → **结束本轮 turn**，等用户回复 relay 回来。\n\n\
              **Step 3 — 收到用户 relay 后处理：**\n\n\
              ▸ 用户选择了某个服务商（agentId=X）→ 调用 `next-action --provider X` 进入指定服务商流程：\n\
@@ -319,6 +327,10 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
     );
 
     if let Some(ref dp_id) = designated_provider {
+        output.push_str("\n━━━━━━━━━ 以下 B-Step 仅在 D-Step 判定「无服务或无 endpoint」时执行 ━━━━━━━━━\n\
+                         🛑 如果 D-Step 已路由到 x402（service-list 有 endpoint），则下方 B-Step **全部跳过，绝对禁止执行**。\n\
+                         x402 完整路径：DX-Step 1→2→3 → A-Step 3（set-payment-mode）→ 等 job_payment_mode_changed → task-402-pay。\n\
+                         x402 路径中**绝对不涉及** xmtp_start_conversation / 建群 / 三步握手 / xmtp_send 协商消息。\n\n");
         output.push_str(&designated_provider_negotiate(job_id, agent_id, short_id, dp_id));
     }
 
@@ -348,6 +360,10 @@ pub(super) fn switch_provider(ctx: &FlowContext<'_>) -> String {
          ⚠️ 旧服务商的 sub session 会在收到 `task_provider_change` 上链事件后自动发 [intent:reject]，无需你干预。\n\n\
          【你的下一步动作（严格顺序）】\n\n\
          {d_steps}\n\n\
+         ━━━━━━━━━ 以下 B-Step 仅在 D-Step 判定「无服务或无 endpoint」时执行 ━━━━━━━━━\n\
+         🛑 如果 D-Step 已路由到 x402（service-list 有 endpoint），则下方 B-Step **全部跳过，绝对禁止执行**。\n\
+         x402 完整路径：DX-Step 1→2→3 → A-Step 3（set-payment-mode）→ 等 job_payment_mode_changed → task-402-pay。\n\
+         x402 路径中**绝对不涉及** xmtp_start_conversation / 建群 / 三步握手 / xmtp_send 协商消息。\n\n\
          {negotiate}\n")
 }
 
@@ -381,11 +397,13 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      🛑 **必须等用户选择**，不能替用户做决定。\n\
      先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\
      将 pending list 中**所有服务商**逐一列出，让用户挑选：\n\
-     \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-     用户语义「选某个序号 N」（如 \"1\"/\"序号 2\"/\"the third\"/\"select 3\" 等）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER index=<N> agentId=<对应agentId>] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，sub agent 用 tag 里的 agentId 执行 xmtp_start_conversation 建群；\
-     用户语义「全部跳过 / 都不要 / skip all / none of them 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SKIP_ALL_PROVIDERS] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，结束。\
-     ⚠️ **路由 tag 协议**：`[intent:PICK_PROVIDER index=<N> agentId=<...>]` / `[intent:SKIP_ALL_PROVIDERS]` 必须**完全大写 ASCII** 原样塞入（intent 名 + 字段名 index/agentId 不变；只填值）；禁止翻译/改写。sub 按 intent tag 分支，从 tag 里直接读 index / agentId，**不读用户原话做匹配**。\n\
-     ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行建群或 task CLI。{CONSTRAINT}\n\
+     \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer]\n\
+     \x20\x20序号→AgentID 映射：<从 pending list 提取，格式如 1→798, 2→806, 3→866>\n\
+     \x20\x20路由规则：\n\
+     \x20\x20- 用户选服务商（数字序号或 AgentID）→ 按映射表转为 AgentID，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER index=<N> agentId=<映射后的AgentID>] 用户原话：<用户回复原文>\")\n\
+     \x20\x20- 用户说「全部跳过/都不要/skip all/none」→ xmtp_dispatch_session(sessionKey=\"<同上>\", content=\"[USER_DECISION_RELAY][intent:SKIP_ALL_PROVIDERS] 用户原话：<用户回复原文>\")\n\
+     \x20\x20⚠️ intent tag 必须完全大写 ASCII 原样塞入，禁止翻译/改写。relay 必须使用 xmtp_dispatch_session。禁止 user session agent 自己执行建群或 task CLI。{CONSTRAINT}\n\
+     \x20\x20⚠️ 映射表必须从 pending list 逐行提取并内联到 llmContent——user session agent 看不到 userContent，没有映射表就无法把序号转为 AgentID。\n\
      \x20\x20userContent:\n\
      \x20\x20[任务 {short_id} 你作为用户] 有以下服务商主动联系你，请选择一个开始协商：\n\
      \x20\x20\n\
@@ -485,12 +503,18 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      \x20\x20content: {payment_escrow_notify}\n\n\
      → **结束本轮 turn**，等待服务商 XMTP 消息告知已 apply（buyer.md 路由优先级 #2 处理）。\n\n\
      ━━━━━━━━━ x402（paymentMode=3）━━━━━━━━━\n\n\
-     从上一步 set-payment-mode / x402-check 的输出中提取 endpoint、acceptsJson、feeTokenSymbol、feeAmount、provider。\n\
-     如果上下文中没有 acceptsJson，重新验证：\n\
+     从上一步 set-payment-mode / x402-check 的输出中提取 endpoint、acceptsJson、feeTokenSymbol、feeAmount、providerAgentId。\n\n\
+     ⚠️ **参数丢失兜底**（上下文压缩可能导致上一 turn 输出丢失）：\n\
+     如果上下文中缺少 providerAgentId 或 endpoint → 先调：\n\
+     ```bash\n\
+     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+     ```\n\
+     提取 `providerAgentId`；endpoint 从 `onchainos agent service-list --agent-id <providerAgentId>` 的 services[0].endpoint 获取。\n\n\
+     如果上下文中缺少 acceptsJson / feeTokenSymbol / feeAmount → 用上面拿到的 endpoint 重新验证：\n\
      ```bash\n\
      onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
      ```\n\
-     提取 `acceptsJson`。\n\n\
+     提取 `acceptsJson`、`tokenSymbol`（= feeTokenSymbol）、`amountHuman`（= feeAmount）。\n\n\
      **x402 阶段 2 — 签名 + direct/accept + 重放 endpoint（原子命令）：**\n\
      ```bash\n\
      onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\

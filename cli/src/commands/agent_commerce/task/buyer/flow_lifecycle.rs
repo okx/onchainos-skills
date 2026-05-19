@@ -66,23 +66,27 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      【后续事件】\n\
      - job_submitted → 验收交付物\n\n\
      ━━━━━━━━━ 分支 B：x402 ━━━━━━━━━\n\n\
-     ⚠️ 回顾本会话上一轮 turn 中 `task-402-pay` 命令的 JSON 输出（该命令在 job_payment_mode_changed 事件处理时执行），\n\
-     从中提取 `replaySuccess`、`replayBody`、`replayStatus` 等字段：\n\n\
-     **B-分支 1：replaySuccess=true（重放成功，交付物已获取）**\n\n\
-     **B-Step 1 — 执行 complete（单签）：**\n\
+     x402 模式下 accept 已完成上链（资金已支付），task-402-pay 在上一 turn（job_payment_mode_changed）中已执行。\n\n\
+     **B-Step 1 — 判断上一 turn task-402-pay 的 replaySuccess：**\n\
+     从本 sub session 上下文中查找 task-402-pay 的输出。\n\
+     ⚠️ 如果上下文中找不到（可能因上下文压缩丢失），**默认按 replaySuccess=true 处理**——\n\
+     x402 资金在 accept 阶段已支付，用户已在上一 turn 被通知交付结果（成功或失败），\n\
+     不执行 complete 会导致任务永久卡在 accepted 状态。\n\n\
+     **B-分支 1：replaySuccess=true（或上下文丢失按默认）**\n\n\
+     **B-Step 2 — 执行 complete（单签）：**\n\
      ```bash\n\
      onchainos agent complete {job_id}\n\
      ```\n\
      （内部：POST /priapi/v1/aieco/task/{job_id}/direct/complete → 获取 calldata → 签名 uopHash → 广播上链）\n\n\
-     ⚠️ **不要通知用户**——交付物已在 task-402-pay 后（A-Step 4）发送过，最终汇总由 job_completed 事件负责。\n\n\
-     **B-分支 2：replaySuccess=false（重放失败，未获取交付物）**\n\n\
-     ⚠️ **不要执行 complete**——用户未收到交付物，不能完成支付。\n\n\
-     **B-Step 1 — 通知用户重放失败：**\n\
+     ⚠️ **不要通知用户**——交付物已在 task-402-pay 后发送过，最终汇总由 job_completed 事件负责。\n\n\
+     **B-分支 2：replaySuccess=false（仅在上下文中明确找到 replaySuccess=false 时走此分支）**\n\n\
+     ⚠️ **不要执行 complete**——用户未收到交付物。\n\n\
+     **B-Step 2 — 通知用户重放失败：**\n\
      调用 xmtp_dispatch_user：\n\
      \x20\x20content:\n\
      {accepted_x402_fail}\n\n\
      【后续事件】\n\
-     - replaySuccess=true: job_completed → 最终确认\n\
+     - replaySuccess=true / 默认: job_completed → 最终确认\n\
      - replaySuccess=false: 等待用户指示（可重试或关闭任务）\n"
     )
 }
