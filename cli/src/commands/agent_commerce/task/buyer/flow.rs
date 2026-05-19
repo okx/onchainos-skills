@@ -31,7 +31,13 @@ fn designated_provider_d_steps(job_id: &str, agent_id: &str, dp_id: &str) -> Str
              \x20\x20**DX-Step 2 — 金额校验：**\n\
              \x20\x20比较 x402-check 的 `amountHuman` 与 services[0] 的 `feeAmount`：\n\
              \x20\x20- 不一致（差异 > 1%）→ 调用 xmtp_prompt_user 询问用户是否接受实际价格：\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「肯定/接受/accept/OK/同意 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 继续 DX-Step 3；用户语义「否定/拒绝/reject/decline/no 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 引导换卖家。⚠️ **路由 tag 协议**：`[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
+             🛑 **禁止执行** onchainos agent 命令（set-payment-mode/task-402-pay/complete 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
+             用户**真实回复到达后**（下一 turn）：\
+             用户语义「肯定/接受/accept/OK/同意 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 继续 DX-Step 3；\
+             用户语义「否定/拒绝/reject/decline/no 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 引导换卖家。\
+             ⚠️ **路由 tag 协议**：`[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
              \x20\x20\x20\x20userContent: 任务 {job_id} 指定卖家（AgentID={dp_id}）实际收费 <amountHuman> <tokenSymbol>，与注册费用 <feeAmount> <feeTokenSymbol> 不一致，是否接受？\n\
              \x20\x20- 一致 → 继续 DX-Step 3。\n\n\
              \x20\x20**DX-Step 3 — 预算检查：**\n\
@@ -189,10 +195,13 @@ fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, d
              ⚠️ **切换时必须先发 [NEGOTIATE_REJECT] 再切走**（让卖家有明确终止信号），但**禁止 xmtp_delete_conversation 删群**。切走后再收到该卖家消息一律忽略、不回复。\n\
              当前页无剩余卖家且翻页也无结果 → 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
+             🛑 **禁止执行** onchainos agent 命令（close/set-public/recommend 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
+             用户**真实回复到达后**（下一 turn）：\
              用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
              用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
              用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
+             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
              \x20\x20userContent: [任务 {short_id} 你作为买家] 推荐卖家均不合适。请选择下一步：\n\
              \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
              \x20\x20B. 转为公开任务 — 让更多卖家看到任务\n\
@@ -409,11 +418,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              **Step 2 — 展示列表给用户，让用户选择：**\n\
              调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；再调 `xmtp_prompt_user`：\n\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
+             🛑 **禁止执行** onchainos agent 命令（recommend/set-public/close 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
+             用户**真实回复到达后**（下一 turn）：\
              用户选择某个卖家（给出 agentId 或序号）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：选择卖家 agentId=<用户选中的agentId>\") relay 回 sub session；\
              用户要求翻页 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：翻页\") relay 回 sub session；\
              用户选择转为公开任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
              用户选择关闭任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\n\
+             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。\n\n\
              \x20\x20userContent: [任务 {short_id} 你作为买家] 以下是推荐卖家列表：\n\
              \x20\x20<将 recommend 输出的卖家列表完整粘贴，每个卖家一段：序号 / Agent Name / AgentID / 服务名称与描述 / 信用分 / 费用 / 支付方式>\n\
              \x20\x20---\n\
@@ -698,7 +710,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              **Step 1 — 调用 xmtp_prompt_user 把证据决策请求推给用户：**\n\n\
              先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户提供证据后，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay 回 sub session 执行 dispute upload。⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。1 小时内必须提交。\n\
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策或自行编造证据。\
+             🛑 **禁止执行** onchainos agent 命令（dispute upload 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
+             用户**真实回复到达后**（下一 turn）：\
+             用户提供证据后，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay 回 sub session 执行 dispute upload。\
+             ⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。1 小时内必须提交。\n\
              \x20\x20\x20\x20userContent:\n\
              {evidence_prompt}\n\n\
              **Step 2 — 等用户回复 relay 回来**：收到 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：...` 后，调 `next-action --jobStatus dispute_evidence` 拿上传剧本（intent tag 已是路由确认；用户证据原文从 `用户证据：` 后面读）。\n\n\
@@ -943,10 +959,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\
              将 pending list 中**所有卖家**逐一列出，让用户挑选：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
+             🛑 **禁止执行** onchainos agent 命令（xmtp_start_conversation/set-public/close 等一切 task CLI 和建群工具）——你只负责展示和 relay，不负责执行。\
+             用户**真实回复到达后**（下一 turn）：\
              用户语义「选某个序号 N」（如 \"1\"/\"序号 2\"/\"the third\"/\"select 3\" 等）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER index=<N> agentId=<对应agentId>] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，sub agent 用 tag 里的 agentId 执行 xmtp_start_conversation 建群；\
              用户语义「全部跳过 / 都不要 / skip all / none of them 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SKIP_ALL_PROVIDERS] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，结束。\
              ⚠️ **路由 tag 协议**：`[intent:PICK_PROVIDER index=<N> agentId=<...>]` / `[intent:SKIP_ALL_PROVIDERS]` 必须**完全大写 ASCII** 原样塞入（intent 名 + 字段名 index/agentId 不变；只填值）；禁止翻译/改写。sub 按 intent tag 分支，从 tag 里直接读 index / agentId，**不读用户原话做匹配**。\n\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行建群或 task CLI。\n\
+             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
              \x20\x20userContent:\n\
              \x20\x20[任务 {short_id} 你作为买家] 有以下卖家主动联系你，请选择一个开始协商：\n\
              \x20\x20\n\
@@ -1091,7 +1110,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20reason: 报价超出最高预算\n\
              \x20\x20b) `onchainos agent mark-failed {job_id} --provider <当前卖家agentId>`\n\
              \x20\x20c) 调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；调 `xmtp_prompt_user` 让用户决定下一步：\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] 用户选择查看推荐卖家 → relay「查看推荐」；选择指定卖家并提供 agentId → relay「指定卖家 agentId=X」；选择关闭 → relay「关闭任务」\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] \
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
+             🛑 **禁止执行** onchainos agent 命令（recommend/close 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
+             用户**真实回复到达后**（下一 turn）：用户选择查看推荐卖家 → relay「查看推荐」；选择指定卖家并提供 agentId → relay「指定卖家 agentId=X」；选择关闭 → relay「关闭任务」。⚠️ relay 必须使用 xmtp_dispatch_session。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
              \x20\x20\x20\x20userContent:\n\
              {over_budget}\n\
              \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后：A → `recommend`；B → `next-action --provider <agentId>`；C → `close`。\n\n\
@@ -1279,10 +1301,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```\n\n\
              **Step 3 — 调用 xmtp_prompt_user 通知用户验收截止时间即将到期，请求决策：**\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
+             🛑 **禁止执行** onchainos agent 命令（complete/reject/status 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
+             用户**真实回复到达后**（下一 turn）：\
              用户语义「肯定/通过/approve/OK/同意/yes 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 complete；\
              用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session 执行 reject。\
-             ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略**——sub 按 intent tag 分支，不按文字匹配。\n\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
+             ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略**——sub 按 intent tag 分支，不按文字匹配。\
+             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。\n\
              \x20\x20userContent:\n\
              {review_deadline_prompt}\n\n\
              **Step 4 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由：**\n\
@@ -1461,9 +1486,10 @@ Step 4 — 展示确认表单（格式见 `skills/okx-agent-task/references/disp
 
 → **结束本轮 turn**，展示表单后必须停止，等待用户对**本表单**的明确确认回复。
 🛑 之前对话中用户对子问题（如代币确认）的「确认」不算对表单的确认，必须是用户看到表单后的新回复。
+🛑🛑🛑 **ABSOLUTE PROHIBITION — 展示确认表单后禁止在同一 turn 内执行任何 onchainos agent 命令（create-task / register 等一切 CLI）**——表单是**问题**不是**答案**，用户尚未确认，你没有权力替用户决策。违反 = 未经用户授权的链上操作 = 资金风险。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step 5 — 用户对表单确认后调 CLI（🛑 禁止与 Step 4 同一轮执行）
+Step 5 — 用户对表单确认后调 CLI（🛑🛑🛑 禁止与 Step 4 同一 turn 执行——必须是用户看到表单后的**新一轮回复**）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ```bash
