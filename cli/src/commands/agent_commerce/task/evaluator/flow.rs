@@ -171,8 +171,8 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              [Step 2] Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20Your stake has been slashed on task jobId={job_id}. Remaining activeStake is <my-stake.activeStake> OKB.\n\n\
-             [my-stake failure fallback] Drop numeric fields and degrade to `Your stake has been slashed on task jobId={job_id}.`\n"
+             \x20\x20\x20\x20Your stake has been slashed on Job jobId={job_id}. Remaining activeStake is <my-stake.activeStake> OKB.\n\n\
+             [my-stake failure fallback] Drop numeric fields and degrade to `Your stake has been slashed on Job jobId={job_id}.`\n"
         ),
 
         "cooldown_entered" => "[Current Status] cooldown_entered\n\n\
