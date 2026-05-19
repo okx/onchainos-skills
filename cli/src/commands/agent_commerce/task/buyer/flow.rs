@@ -599,10 +599,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
              调用 xmtp_prompt_user 把交付物和验收决策请求推给用户（sessionKey 复用 Step 2 已获取的值;调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`,见硬规则 7）：\n\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
+             🛑 **禁止执行** onchainos agent 命令（complete/reject/status 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
+             用户**真实回复到达后**（下一 turn）：\
              用户语义「肯定/通过/approve/OK/同意/yes 等」→ **仅调** xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 approve_review 流程，你不要做其它事）；\
              用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ **仅调** xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 reject_review 流程，你不要做其它事）。\
              ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略 / 拆开**——sub 按 intent tag 分支，不再按文字匹配，避免多语言失配。\n\
-             ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。禁止 user session agent 自己执行 task CLI。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
+             ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
              \x20\x20\x20\x20userContent（按 deliverableType 分,首行务必带 `[任务 {short_id} 你作为买家]` 前缀）：\n\n\
              \x20\x20\x20\x20▸ deliverableType=file：\n\
              \x20\x20\x20\x20[任务 {short_id} 你作为买家] 卖家已提交交付物（文件），已下载到本地。\n\
