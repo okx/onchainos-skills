@@ -69,3 +69,6 @@ run.sh
 test-cases.json
 
 evals/
+
+# Agent task workspace (local only)
+skills/okx-agent-task-workspace/
