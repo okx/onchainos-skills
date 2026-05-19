@@ -31,8 +31,8 @@ onchainos competition list [--status <0|1|2>] [--page-size <n>] [--page-num <n>]
       "rewards": "50000 HIPPO",
       "startTime": 1742913600,
       "endTime": 1743432000,
-      "chainId": 42161,
-      "chainName": "Arbitrum One",
+      "chainId": 196,
+      "chainName": "X Layer",
       "status": 3
     }
   ],
@@ -63,8 +63,10 @@ onchainos competition detail --activity-id <id>
 | `--activity-id` | Yes | Activity ID from `competition list` |
 
 **Output:** Competition object. Key fields:
-- `chainId` / `chainName`: competition chain
-- `startTime` / `endTime`: 10-digit Unix timestamps
+- `chainId` / `chainName`: the activity's **primary chain** — it is BOTH a trading chain (its trades count toward the competition standing) AND the **claim chain** (rewards / activity contract live here).
+- `participateChainIds`: array of **additional trading chains** beyond `chainId` (e.g. with `chainId=196` and `participateChainIds=[501]`, trades on both X Layer and Solana count). Returned by **both `list` and `detail`** endpoints. May be empty on activities created before the field was added. Trading-eligibility = `{chainId} ∪ participateChainIds` (dedup). Claim path = `chainId` only.
+- `startTime` / `endTime`: 10-digit Unix timestamps (raw — kept for backward compat, not recommended for display)
+- `startTimeFormatted` / `endTimeFormatted`: pre-formatted UTC+8 strings (`yyyy-MM-dd HH:mm:ss`, e.g. `"2026-05-07 18:00:00"`) — **use these for display**, just append ` (UTC+8)` for the timezone suffix; do not recompute from epoch
 - `tabConfigs[]`: one entry per leaderboard tab
   - `tab`: `1`=volume, `3`=realized PnL, `4`=boost token volume
   - `tabDetails[].title` / `tabDetails[].desc`: rules text (paragraphs separated by `\n`)
@@ -87,12 +89,12 @@ onchainos competition rank --activity-id <id> [--wallet <addr>] --sort-type <typ
 
 **API**: `GET /priapi/v1/dapp/agentic/competition/rank`
 
-> Omit `--wallet` to query your own rank — the command fetches `competition_detail.chainId` and auto-picks the EVM or SOL address from the active account. Pass `--wallet` only to query someone else's rank; the address chain (EVM `0x...` else Solana) must match the activity chain or the command errors out (no silent wrong-chain query).
+> The backend takes either `accountId` (self-query) or `walletAddress` (cross-user query) — never both. Omit `--wallet` to query your own rank; the command loads `accountId` from the active wallet session. Pass `--wallet` only to query someone else's rank; the address chain (EVM `0x...` else Solana) must match the activity chain or the command errors out (no silent wrong-chain query).
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--activity-id` | Yes | — | Activity ID |
-| `--wallet` | No | (active account, chain-matched) | Optional wallet address. Omit for self-rank; pass for someone else (chain-validated against the activity). |
+| `--wallet` | No | (uses active account's `accountId` instead) | Optional wallet address — pass to query someone else's rank (chain-validated against the activity). |
 | `--sort-type` | Yes | 1 | Currently observed: 1=PnL% (realized ROI), 7=PnL (realized profit). Future activities may add more — discover via `competition detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend`. |
 | `--limit` | No | 20 | Max entries in `allRankInfos` (max 100; applied client-side) |
 
@@ -128,20 +130,22 @@ onchainos competition rank --activity-id <id> [--wallet <addr>] --sort-type <typ
 Get user's participation and reward status.
 
 ```
-onchainos competition user-status [--activity-id <id>] --evm-wallet <evm_addr> --sol-wallet <sol_addr>
+onchainos competition user-status [--activity-id <id>]
 ```
 
-**API**: `GET /priapi/v1/dapp/agentic/competition/userStatus`
+**API**:
+- Single activity (`--activity-id` provided) → `GET /priapi/v1/dapp/agentic/competition/userStatus`
+- All activities (`--activity-id` omitted) → `GET /priapi/v1/dapp/agentic/competition/batchUserStatus` (chunked at 20 ids per call, results merged transparently)
 
-> When `--activity-id` is provided, the CLI fetches `competition_detail.chainId` and picks the chain-appropriate address (EVM or SOL). Both addresses are required so the chain check cannot be bypassed.
+> The CLI sends `accountId` (loaded from the local wallet session) as the API identity, NOT a wallet address. One `accountId` covers every chain in the competition's `participateChainIds` — no chain picking, no wallet args. The batch endpoint replaces per-activity loops with a single (chunked) round-trip.
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--activity-id` | No | Activity ID; omit to check **all** activities (active + ended) |
-| `--evm-wallet` | Yes | EVM wallet address |
-| `--sol-wallet` | Yes | Solana wallet address |
 
-When `--activity-id` is omitted, the CLI calls `competition list --status 2` first to get all activity IDs, then queries `userStatus` for each and returns an array with activity metadata merged in.
+When `--activity-id` is omitted, the CLI calls `competition list --status 2` first to get all activity IDs, then queries them via the **batch** endpoint (`batchUserStatus`, chunked at 20 ids per call) and returns an array with activity metadata merged in — fewer round-trips than the old loop-and-call approach.
+
+Per-activity `userStatus` payload from the batch endpoint also includes extra fields not present in the single-activity response: `joinedAddress`, `winnerDownUrl`, `needContact`.
 
 **Output (single activity):**
 ```json
@@ -163,7 +167,7 @@ When `--activity-id` is omitted, the CLI calls `competition list --status 2` fir
     "activityId": 106,
     "activityName": "XXX Trading Competition",
     "shortName": "xxx",
-    "chainName": "BNB Chain",
+    "chainName": "Solana",
     "activityStatus": 4,
     "userStatus": { "joinStatus": 1, "rewardStatus": 1, "rewardAmount": "45", ... }
   }
@@ -173,9 +177,9 @@ When `--activity-id` is omitted, the CLI calls `competition list --status 2` fir
 | Field | Values |
 |-------|--------|
 | `joinStatus` | 0=not joined, 1=joined |
-| `rewardStatus` | 0=not won, 1=won (unclaimed), 2=claimed, 3=expired |
+| `rewardStatus` | 0=not won, 1=won (unclaimed), 2=claimed, 3=expired, 4=pending draw (winners not yet announced) |
 
-`rewardAmount`, `rewardUnit`, `winnerDownUrl` only present when `rewardStatus >= 1`.
+`rewardAmount`, `rewardUnit`, `winnerDownUrl` only present when `rewardStatus=1` or `2` (a winner has been determined).
 
 ---
 
@@ -237,7 +241,7 @@ onchainos competition claim --activity-id <id> --evm-wallet <evm_addr> --sol-wal
 | `--evm-wallet` | Yes | EVM wallet address |
 | `--sol-wallet` | Yes | Solana wallet address |
 
-**Output:** aggregate result with reward metadata, successful txHashes, and any per-entry failures:
+**Output:** aggregate result with reward metadata, successful txHashes, and any per-entry failures. Also surfaces `needContact` (true for top-tier winners who have not yet shared a contact method), plus the activity/account/wallet identifiers needed by the downstream `submit-contact` flow:
 
 ```json
 {
@@ -252,13 +256,17 @@ onchainos competition claim --activity-id <id> --evm-wallet <evm_addr> --sol-wal
       "txHash": "5abc...",
       "orderId": "..."
     }],
-    "failed": []
+    "failed": [],
+    "needContact": false,
+    "activityId": "107",
+    "accountId": "5747d742-...",
+    "joinedAddress": "0x8e3f..."
   }
 }
 ```
 
 Internally the command:
-1. Calls `competition_user_status` to verify `rewardStatus == 1` (won, unclaimed). Bails with a plain error if 0/2/3.
+1. Calls `competition_user_status` to verify `rewardStatus == 1` (won, unclaimed). Bails with a plain error if 0 (not won), 2 (already claimed), 3 (expired), or 4 (pending draw — winners not announced yet).
 2. Calls the claim API to fetch unsigned calldata for each entry.
 3. For Solana entries: extracts the unsigned tx bytes from `tx.data` (Buffer JSON shape) and base58-encodes them locally — empirically `base58CallData` is empty in real responses, so this fallback is always taken.
 4. For EVM entries: takes the 0x-prefixed `input` directly.
@@ -270,3 +278,43 @@ Internally the command:
 - code 11008 → reward already claimed or claim window expired
 - code 1860402 → backend failed to assemble the transaction; retry, then escalate
 - "Sui-chain reward claims are not yet supported" → user must claim from the Sui-compatible wallet UI
+
+---
+
+## competition submit-contact
+
+Record a contact method for top-tier winners (Top 10 on PnL% / PnL leaderboards). Called **only** after a `competition claim` that returned `needContact: true`, and only when the user has affirmatively shared a contact value. **Requires wallet login.**
+
+```
+onchainos competition submit-contact --activity-id <id> --contact-type <type> --contact-value <text>
+```
+
+**API**: `POST /priapi/v5/wallet/agentic/competition/submitContact`
+
+**Extra header**: `OK-ACCESS-PROJECT: 4d156bf0c61130f2692d097ecb68dbe4`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--activity-id` | Yes | Activity ID |
+| `--contact-type` | Yes | One of: `Telegram`, `WeChat`, `Email`, `Twitter` (case-sensitive — backend rejects other values) |
+| `--contact-value` | Yes | The contact value (max 256 chars). e.g. `@username` for Telegram/Twitter, the WeChat ID, the email address |
+
+`accountId` and `walletAddress` are resolved internally: accountId comes from the local wallet store, walletAddress is looked up from `joinedAddress` via a fresh `batchUserStatus` call (ensures the address we submit matches the one the user actually joined with).
+
+**Output:**
+```json
+{
+  "ok": true,
+  "data": {
+    "submitted": true,
+    "activityId": "107",
+    "contactType": "Telegram"
+  }
+}
+```
+
+**Errors:**
+- `contactType must be one of: Telegram, WeChat, Email, Twitter` → caller typo; backend rejects anything else
+- `contactValue exceeds 256 character limit` → trim before retry
+- `not registered for activity X` → user never joined; submit-contact only makes sense post-claim
+- `Refresh token expired` → re-login required
