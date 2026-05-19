@@ -19,7 +19,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         format!("**下一步必做** → `onchainos agent next-action --jobid {job_id} --jobStatus {evt} --role provider --agentId <agentId>` 拿当前 status 完整剧本，**严格按剧本走**。\n  ⚠️ **禁止**自己根据 status 名推 CLI 命令直接调（apply / deliver / dispute raise / agree-refund / dispute upload 等）—— 剧本通常前置 `xmtp_prompt_user` / `xmtp_send` / `pending-decisions add` 等步骤，跳过会出事故（已发生过）。")
     };
     match status {
-        Status::Open => vec![next_action("job_created")],
+        Status::Created => vec![next_action("job_created")],
         Status::Accepted => vec![next_action("job_accepted")],
         Status::Submitted => vec![
             next_action("job_submitted"),
@@ -181,7 +181,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
              \x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段（解密元数据）全部记录\n\n\
              **A-Step 2 — `xmtp_send` 把交付物发给买家**（同 turn 内紧接着 A-Step 1 跑）：\n\
-             ⚠️ content **必须以 `[NEGOTIATE_DELIVER]` 行首前缀开头**——买家 Agent 按此前缀路由识别交付物。缺少前缀 = 买家无法识别为交付物 = 流程卡死。\n\n\
+             ⚠️ content **必须以 `[intent:deliver]` 行尾后缀结尾**——买家 Agent 按此后缀路由识别交付物。缺少后缀 = 买家无法识别为交付物 = 流程卡死。\n\n\
              文本交付物 content：\n\
              {send_to_peer}\n\
              {deliver_text}\n\n\
@@ -418,7 +418,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ==== 协商 / 交付聊天记录（从 xmtp_get_conversation_history 拉取） ====\n\
              [时间] 买家(<agentId>): ...\n\
              [时间] 卖家(<agentId>): ...\n\
-             ...（按时间顺序，关键节点：买家询盘 / NEGOTIATE_PROPOSE / 你回 NEGOTIATE_ACK / 买家 NEGOTIATE_CONFIRM / 你的 deliver 消息）\n\n\
+             ...（按时间顺序，关键节点：买家询盘 / [intent:propose] / 你回 [intent:ack] / 买家 [intent:confirm] / 你的 deliver 消息）\n\n\
              ==== 用户证据摘要 ====\n\
              <用户原话摘要>\n\
              ```\n\n\
@@ -444,22 +444,22 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              协商失败无法撤销。必须先走完下方协商三项全部确认后再 apply。\n\n\
              🛑 **硬约束 — 三步握手 + 同一 turn 禁止 xmtp_send 之后再跑任何 onchainos CLI**\n\n\
              协商必须完整走完三步握手（buyer 协议铁律，已由买家代码强制）：\n\
-             \x20\x201) `[NEGOTIATE_PROPOSE]`（buyer → provider）\n\
-             \x20\x202) `[NEGOTIATE_ACK]` 或 `[NEGOTIATE_COUNTER]`（provider → buyer）或 `[NEGOTIATE_REJECT]`（任一方拒绝）\n\
-             \x20\x203) `[NEGOTIATE_CONFIRM]`（buyer → provider，原样回传所有字段）\n\
-             \x20\x20⚡ 任一方可随时发 `[NEGOTIATE_REJECT]` 终止协商（含 jobId + reason），收到后**不再回复**，协商结束。\n\n\
-             apply 必须**已收到 `[NEGOTIATE_CONFIRM]`** 才能跑（其它任何 inbound 都不算，包括三项问题、free-form 邀请、buyer 的『同意/接受』自然语言回复，甚至 buyer 自然语言『请 apply』也不算）。\n\n\
+             \x20\x201) `[intent:propose]`（buyer → provider）\n\
+             \x20\x202) `[intent:ack]` 或 `[intent:counter]`（provider → buyer）或 `[intent:reject]`（任一方拒绝）\n\
+             \x20\x203) `[intent:confirm]`（buyer → provider，原样回传所有字段）\n\
+             \x20\x20⚡ 任一方可随时发 `[intent:reject]` 终止协商（含 jobId + reason），收到后**不再回复**，协商结束。\n\n\
+             apply 必须**已收到 `[intent:confirm]`** 才能跑（其它任何 inbound 都不算，包括三项问题、free-form 邀请、buyer 的『同意/接受』自然语言回复，甚至 buyer 自然语言『请 apply』也不算）。\n\n\
              换句话说，**同一 turn 收到的 inbound 决定你能做什么**：\n\
              \x20\x20• 收到 buyer free-form 邀请 → 只能 `xmtp_send` 发三项问题（下方 Step 3），**禁止 apply**\n\
-             \x20\x20• 收到 buyer `[NEGOTIATE_PROPOSE]` → 只能 `xmtp_send` 回 `[NEGOTIATE_ACK]`（下方 Step 3.5），**禁止 apply**\n\
-             \x20\x20• 收到 buyer `[NEGOTIATE_CONFIRM]` → 校验字段一致后才进 Step 4 跑 `apply`\n\
-             \x20\x20• 没看到 `[NEGOTIATE_CONFIRM]` 字面量 → **永远不要 apply**，无论 buyer 自然语言说了什么\n\n\
-             ❌ **特别禁止**：不要在 `xmtp_send` 三项问题的内容里写「我确认以下三项 / 三项确认完毕 / 我将立即 apply」之类的自我确认词——三项是要**问**买家的，不是你自己 confirm 后立刻 apply。这种自我 confirm 会让自己错觉协商已完成跳过 [NEGOTIATE_PROPOSE]/[NEGOTIATE_ACK]/[NEGOTIATE_CONFIRM] 握手，直接非法 apply（已发生过线上事故）。\n\n\
-             🛑 **协商阶段铁律 — 严禁产出工作内容**(收到买家询盘 → 收到 [NEGOTIATE_CONFIRM] 之间)\n\n\
+             \x20\x20• 收到 buyer `[intent:propose]` → 只能 `xmtp_send` 回 `[intent:ack]`（下方 Step 3.5），**禁止 apply**\n\
+             \x20\x20• 收到 buyer `[intent:confirm]` → 校验字段一致后才进 Step 4 跑 `apply`\n\
+             \x20\x20• 没看到 `[intent:confirm]` 字面量 → **永远不要 apply**，无论 buyer 自然语言说了什么\n\n\
+             ❌ **特别禁止**：不要在 `xmtp_send` 三项问题的内容里写「我确认以下三项 / 三项确认完毕 / 我将立即 apply」之类的自我确认词——三项是要**问**买家的，不是你自己 confirm 后立刻 apply。这种自我 confirm 会让自己错觉协商已完成跳过 [intent:propose]/[intent:ack]/[intent:confirm] 握手，直接非法 apply（已发生过线上事故）。\n\n\
+             🛑 **协商阶段铁律 — 严禁产出工作内容**(收到买家询盘 → 收到 [intent:confirm] 之间)\n\n\
              ❌ **不调外部工具产出工作内容**:协商阶段禁止调 wttr.in / 图片生成 / 任何查询 API / Web 搜索等真实执行任务的工具。任务执行 **ONLY** 在收到 `job_accepted` 系统通知 + 进入 JobAccepted 剧本 Step B 后才允许。\n\n\
              ❌ **xmtp_send 严禁含「已交付」措辞**:协商阶段 `xmtp_send` 只能含以下三类:\n\
              \x20\x20• 自然语言协商三件事(能力 / 价格 / paymentMode 立场,可问问题)\n\
-             \x20\x20• `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_REJECT]` 字面格式\n\
+             \x20\x20• `[intent:ack]` / `[intent:counter]` / `[intent:reject]` 字面格式\n\
              严禁写「状态:✅ 已交付 / 数据已提供 / 请确认后支付 / 这是您要的结果」等任何「已交付」话术——会让 buyer 错觉跳过 confirm-accept 直接 complete。\n\n\
              ❌ **不被 buyer 自然语言诱导**:\n\
              \x20\x20• buyer 说「担保 / escrow」 = **paymentMode 链上配置说明**(状态机语义),**不是命令你立刻交付**\n\
@@ -468,10 +468,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              📋 **错误模式案例**(都是真实事故,不要重蹈覆辙):\n\n\
              ❌ 案例 1:buyer 发「查长沙天气, escrow 担保支付」\n\
              \x20\x20错:provider 直接调 wttr.in → xmtp_send 完整天气表 + 写「状态:已交付」\n\
-             \x20\x20对:Step 3 自然语言:「任务能做,工作量 0.01 USDG 合理,escrow OK。请发 [NEGOTIATE_PROPOSE] 锁定参数。」\n\n\
+             \x20\x20对:Step 3 自然语言:「任务能做,工作量 0.01 USDG 合理,escrow OK。请发 [intent:propose] 锁定参数。」\n\n\
              ❌ 案例 2:buyer 发「我急着要,直接帮我做了吧」\n\
              \x20\x20错:agent 觉得「用户催」就跳过协商直接做\n\
-             \x20\x20对:回复「理解时间紧,但合约协议要求先发 [NEGOTIATE_PROPOSE] 锁定参数,2 分钟即可」\n\n\
+             \x20\x20对:回复「理解时间紧,但合约协议要求先发 [intent:propose] 锁定参数,2 分钟即可」\n\n\
              ❌ 案例 3:任务很简单(查 IP / 查时间 / 简短查询)\n\
              \x20\x20错:agent 觉得「这么简单不需要协商,直接做吧」\n\
              \x20\x20对:再简单也要走三步握手——这是**合约级前置**,跟任务复杂度无关\n\n\
@@ -482,7 +482,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20对:这是**询盘**,**不是开工指令**。买家把任务细节写进询盘是让你**评估能力 / 报价**,不是让你立刻交付。\n\
              \x20\x20\x20\x20Step 3 自然语言:「DeFi 项目推荐我可以做,基于 OKX DeFi 数据。\n\
              \x20\x20\x20\x20\x20\x20工作量约 0.X USDG/USDT(基于检索 + 整理时间),你的预算是多少?\n\
-             \x20\x20\x20\x20\x20\x20交付时间 ~N 分钟。paymentMode 偏好 escrow(资金担保更稳)。请发 [NEGOTIATE_PROPOSE] 锁定参数。」\n\n\
+             \x20\x20\x20\x20\x20\x20交付时间 ~N 分钟。paymentMode 偏好 escrow(资金担保更稳)。请发 [intent:propose] 锁定参数。」\n\n\
              ❌ 案例 5(高危 - 自决「免费」价):agent 看任务简单或公开数据,xmtp_send 回\n\
              \x20\x20「报价: 免费」/「0 USDT」/「按市场价」/「看你诚意」\n\
              \x20\x20错:价格不是 agent 自决的——任务有担保资金 / 链上动作 / 信誉积累,agent 不能擅自废弃这套激励。\n\
@@ -511,8 +511,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 3 — 协商首回合（自然语言，可还价 / 表达 paymentMode 偏好）：**\n\n\
              🔍 **Step 3 开始前必答自检**(防字面诱导):\n\
              \x20\x201. 我现在收到 buyer 什么消息?\n\
-             \x20\x20\x20• 自由询盘 / [NEGOTIATE_PROPOSE] / [NEGOTIATE_COUNTER] / [NEGOTIATE_CONFIRM] / 自然语言追问 → ✅ 走协商,xmtp_send **只**发文字立场或字面 [NEGOTIATE_*]\n\
-             \x20\x20\x20• `[NEGOTIATE_REJECT]` → 买家主动终止协商,**不再回复**,结束本 turn\n\
+             \x20\x20\x20• 自由询盘 / [intent:propose] / [intent:counter] / [intent:confirm] / 自然语言追问 → ✅ 走协商,xmtp_send **只**发文字立场或字面 [intent:*]\n\
+             \x20\x20\x20• `[intent:reject]` → 买家主动终止协商,**不再回复**,结束本 turn\n\
              \x20\x20\x20• `job_accepted` 系统通知 → ❌ 那是 JobAccepted arm,不是 JobCreated;立即重调 next-action\n\
              \x20\x202. 我即将调任何外部工具(wttr.in / 搜索 / 图片生成等)产出工作内容吗?\n\
              \x20\x20\x20• 是 → ❌ 停下,这是协商阶段铁律违规,改成 Step 3 文字协商\n\
@@ -537,66 +537,66 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x202) **价格立场**：原价接受 / 还价（明确报新价 + 简短理由，比如『工作量评估更接近 X USDT，原价偏低』）/ 直接拒绝\n\
              \x20\x203) **paymentMode 立场**：A2A 协商路径固定 escrow（担保）\n\n\
              示例风格（自然语言，不要套模板格式）：\n\
-             \x20\x20『任务我能做，验收标准 OK。价格我看 0.01 USDT 偏低，按工作量我希望 0.05 USDT；担保支付（escrow）比较合适，避免后续争议。如果同意请发 [NEGOTIATE_PROPOSE]。』\n\n\
+             \x20\x20『任务我能做，验收标准 OK。价格我看 0.01 USDT 偏低，按工作量我希望 0.05 USDT；担保支付（escrow）比较合适，避免后续争议。如果同意请发 [intent:propose]。』\n\n\
              ⚠️ 还价幅度参考：context 给的 service-list 单价 × (1 ± 30%) 内通常能谈成，离谱报价（× 5+）会被买家直接换人。\n\n\
              {send_to_peer}\n\
              <上面 1) 2) 3) 拼出的协商三项立场,自然语言>\n\n\
-             **Step 3.5 — 处理买家的 [NEGOTIATE_PROPOSE] 结构化提案：**\n\n\
+             **Step 3.5 — 处理买家的 [intent:propose] 结构化提案：**\n\n\
              买家协商达成一致后会发送格式化提案：\n\
              ```\n\
-             [NEGOTIATE_PROPOSE]\n\
              jobId: ...\n\
              paymentMode: ...\n\
              tokenSymbol: ...\n\
              tokenAmount: ...\n\
+             [intent:propose]\n\
              ```\n\n\
-             收到 [NEGOTIATE_PROPOSE] 后**逐字段校验 + 价值判断**：\n\
+             收到 [intent:propose] 后**逐字段校验 + 价值判断**：\n\
              - tokenSymbol 是否与任务详情一致；卖家可提出不同币种，但须双方明确同意\n\
-             - tokenAmount / paymentMode 是否跟你 Step 3 表达的立场一致；如果你 Step 3 还了价，看 buyer 在 [NEGOTIATE_PROPOSE] 里给的金额是否是双方折中后的合理值\n\n\
+             - tokenAmount / paymentMode 是否跟你 Step 3 表达的立场一致；如果你 Step 3 还了价，看 buyer 在 [intent:propose] 里给的金额是否是双方折中后的合理值\n\n\
              **判断标准（带主观能动性，不是机械接受）**：\n\
              \x20\x20• 价格在你心理预期 ±10% 内、paymentMode 没硬冲突 → ACK\n\
              \x20\x20• 价格仍偏离（buyer 没采纳还价 / 还价幅度不够）→ COUNTER 继续谈，不要勉强 ACK 委屈成交\n\
              \x20\x20• paymentMode 跟你 Step 3 表达的偏好相反、且金额不小 → COUNTER 改 paymentMode\n\n\
-             ▸ **全部同意** → 调 xmtp_send 回复 **[NEGOTIATE_ACK]**（必须严格使用此格式，原样回传所有字段）：\n\
+             ▸ **全部同意** → 调 xmtp_send 回复 **[intent:ack]**（必须严格使用此格式，原样回传所有字段）：\n\
              \x20\x20content=\n\
-             \x20\x20[NEGOTIATE_ACK]\n\
              \x20\x20jobId: <与 PROPOSE 完全相同>\n\
              \x20\x20paymentMode: <与 PROPOSE 完全相同>\n\
              \x20\x20tokenSymbol: <与 PROPOSE 完全相同>\n\
-             \x20\x20tokenAmount: <与 PROPOSE 完全相同>\n\n\
-             ▸ **部分不同意**（如价格偏低）→ 调 xmtp_send 回复 **[NEGOTIATE_COUNTER]**（填入你期望的值）：\n\
+             \x20\x20tokenAmount: <与 PROPOSE 完全相同>\n\
+             \x20\x20[intent:ack]\n\n\
+             ▸ **部分不同意**（如价格偏低）→ 调 xmtp_send 回复 **[intent:counter]**（填入你期望的值）：\n\
              \x20\x20content=\n\
-             \x20\x20[NEGOTIATE_COUNTER]\n\
              \x20\x20jobId: <与 PROPOSE 相同>\n\
              \x20\x20paymentMode: <同意则原样，不同意则填你的版本>\n\
              \x20\x20tokenSymbol: <同意则原样，不同意则填你期望的币种>\n\
              \x20\x20tokenAmount: <你期望的金额>\n\
-             \x20\x20reason: <简要说明修改原因>\n\n\
-             ▸ **完全拒绝** → 调 xmtp_send 发送 `[NEGOTIATE_REJECT]` 结束协商：\n\
+             \x20\x20reason: <简要说明修改原因>\n\
+             \x20\x20[intent:counter]\n\n\
+             ▸ **完全拒绝** → 调 xmtp_send 发送 `[intent:reject]` 结束协商：\n\
              \x20\x20content=\n\
-             \x20\x20[NEGOTIATE_REJECT]\n\
              \x20\x20jobId: <与 PROPOSE 相同>\n\
              \x20\x20reason: <简要说明拒绝原因，如「价格低于成本」「无法满足交付时限」>\n\
+             \x20\x20[intent:reject]\n\
              \x20\x20发送后**结束本 turn**，不再回复买家后续消息。\n\n\
-             ⚠️ 回复 [NEGOTIATE_ACK] 后**结束本轮 turn**，等买家发 [NEGOTIATE_CONFIRM]（三步握手第 3 步，buyer 校验你的 ACK 字段一致后会发）。**收到 [NEGOTIATE_CONFIRM] 之前，禁止跑任何 onchainos CLI（apply）**。\n\
-             ⚠️ 如果等到的是 `[NEGOTIATE_REJECT]` 而非 `[NEGOTIATE_CONFIRM]` → 买家终止协商，**不再回复**，结束本 turn。\n\n\
-             **Step 3.7 — 收到买家的 [NEGOTIATE_CONFIRM]（apply 的唯一合法触发器）：**\n\n\
+             ⚠️ 回复 [intent:ack] 后**结束本轮 turn**，等买家发 [intent:confirm]（三步握手第 3 步，buyer 校验你的 ACK 字段一致后会发）。**收到 [intent:confirm] 之前，禁止跑任何 onchainos CLI（apply）**。\n\
+             ⚠️ 如果等到的是 `[intent:reject]` 而非 `[intent:confirm]` → 买家终止协商，**不再回复**，结束本 turn。\n\n\
+             **Step 3.7 — 收到买家的 [intent:confirm]（apply 的唯一合法触发器）：**\n\n\
              ```\n\
-             [NEGOTIATE_CONFIRM]\n\
              jobId: ...\n\
              paymentMode: ...\n\
              tokenSymbol: ...\n\
              tokenAmount: ...\n\
+             [intent:confirm]\n\
              ```\n\n\
-             **逐字段校验** [NEGOTIATE_CONFIRM] 与你之前发的 [NEGOTIATE_ACK] 是否完全一致：\n\
+             **逐字段校验** [intent:confirm] 与你之前发的 [intent:ack] 是否完全一致：\n\
              \x20\x20• 全部一致 → 协商正式锁定，进入 Step 4 跑 apply\n\
-             \x20\x20• 任一字段不一致 → 视为篡改，调 xmtp_send 回复「[NEGOTIATE_CONFIRM] 字段与 [NEGOTIATE_ACK] 不一致，拒绝」（指出哪个字段不对），**禁止 apply**，结束\n\n\
-             🛑 **收到 [NEGOTIATE_CONFIRM] 字段全等后,只做 Step 4 的业务动作,严禁 xmtp_send 回 ACK / 致谢 / 任何 P2P 消息给买家**——\n\
+             \x20\x20• 任一字段不一致 → 视为篡改，调 xmtp_send 回复「[intent:confirm] 字段与 [intent:ack] 不一致，拒绝」（指出哪个字段不对），**禁止 apply**，结束\n\n\
+             🛑 **收到 [intent:confirm] 字段全等后,只做 Step 4 的业务动作,严禁 xmtp_send 回 ACK / 致谢 / 任何 P2P 消息给买家**——\n\
              \x20\x20• escrow 路径:跑 apply CLI → 直接结束 turn(等 provider_applied 通知)\n\
-             \x20\x20• 买家发完 [NEGOTIATE_CONFIRM] 立刻跑 confirm-accept,不等你 ACK;你回 ACK 反而触发买家循环 +「同 turn 不重复 xmtp_send」铁律。\n\n\
-             ⚠️ 不要把 buyer 的自然语言『同意 / 好的 / 请 apply』当作 [NEGOTIATE_CONFIRM]——只认字面量带 `[NEGOTIATE_CONFIRM]` 标记的消息，其它一律视为协商未完成。\n\n\
-             🛑 **协议字面量白名单**：`[NEGOTIATE_*]` 只有 5 个合法值——`[NEGOTIATE_PROPOSE]` / `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_CONFIRM]` / `[NEGOTIATE_REJECT]`。**严禁造词**：`[NEGOTIATE_CONFIRM_ACK]` / `[NEGOTIATE_CONFIRM_OK]` / `[NEGOTIATE_DONE]` / `[CONFIRM_ACK]` 等都是幻觉,buyer 代码不识别,发出去等于污染会话历史。`[NEGOTIATE_CONFIRM]` **没有对应 ACK**(不像 PROPOSE→ACK 是对称握手)——收到 CONFIRM 后直接跑 Step 4 业务动作,**不回任何 P2P 消息**。\n\n\
-             **Step 4 — 收到 [NEGOTIATE_CONFIRM] 校验一致后，执行 apply 上链：**\n\n\
+             \x20\x20• 买家发完 [intent:confirm] 立刻跑 confirm-accept,不等你 ACK;你回 ACK 反而触发买家循环 +「同 turn 不重复 xmtp_send」铁律。\n\n\
+             ⚠️ 不要把 buyer 的自然语言『同意 / 好的 / 请 apply』当作 [intent:confirm]——只认字面量带 `[intent:confirm]` 标记的消息，其它一律视为协商未完成。\n\n\
+             🛑 **协议字面量白名单**：`[intent:*]` 只有 5 个合法值——`[intent:propose]` / `[intent:ack]` / `[intent:counter]` / `[intent:confirm]` / `[intent:reject]`。**严禁造词**：`[intent:confirm_ack]` / `[intent:confirm_ok]` / `[intent:done]` / `[confirm_ack]` 等都是幻觉,buyer 代码不识别,发出去等于污染会话历史。`[intent:confirm]` **没有对应 ACK**(不像 PROPOSE→ACK 是对称握手)——收到 CONFIRM 后直接跑 Step 4 业务动作,**不回任何 P2P 消息**。\n\n\
+             **Step 4 — 收到 [intent:confirm] 校验一致后，执行 apply 上链：**\n\n\
              ```bash\n\
              onchainos agent apply {job_id} --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id {agent_id}\n\
              ```\n\

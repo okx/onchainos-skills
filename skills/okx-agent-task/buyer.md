@@ -52,36 +52,36 @@
 
 ## 3. Inbound Message Routing
 
-> 🔴 **协商阶段自治红线**：status=0（open）且存在活跃 sub session 时，协商由 sub session **自主完成**——收到服务商的报价、还价、讨论消息后，**必须**按下方路由优先级匹配，命中 #5 时调 `next-action --jobStatus negotiate_reply` 拿剧本，按剧本的决策矩阵自主评估并回复。**禁止**把服务商的报价 / 协商内容转发给用户问"是否接受"。**禁止**手动执行 D-Step / B-Step 流程（service-list → 建群 → 发询盘），这些只在 `job_created` 首次触发时由 next-action 剧本驱动。只有以下情况才涉及用户：(a) 报价超 max_budget 自动 REJECT 后切换服务商需用户选择；(b) 推荐列表为空需用户决策下一步。
+> 🔴 **协商阶段自治红线**：status=0（created）且存在活跃 sub session 时，协商由 sub session **自主完成**——收到服务商的报价、还价、讨论消息后，**必须**按下方路由优先级匹配，命中 #5 时调 `next-action --jobStatus negotiate_reply` 拿剧本，按剧本的决策矩阵自主评估并回复。**禁止**把服务商的报价 / 协商内容转发给用户问"是否接受"。**禁止**手动执行 D-Step / B-Step 流程（service-list → 建群 → 发询盘），这些只在 `job_created` 首次触发时由 next-action 剧本驱动。只有以下情况才涉及用户：(a) 报价超 max_budget 自动 REJECT 后切换服务商需用户选择；(b) 推荐列表为空需用户决策下一步。
 >
-> ⚠️ **本节路由优先级覆盖 SKILL.md「接收 peer 消息」的通用规则**。不要用 common context 返回的当前 status（如 open）调 next-action——直接用下方路由匹配到的 jobStatus（如 `negotiate_reply` / `negotiate_ack` / `provider_applied`）。
+> ⚠️ **本节路由优先级覆盖 SKILL.md「接收 peer 消息」的通用规则**。不要用 common context 返回的当前 status（如 created）调 next-action——直接用下方路由匹配到的 jobStatus（如 `negotiate_reply` / `negotiate_ack` / `provider_applied`）。
 >
-> **真实事故 1**：服务商发自然语言报价"0.1 USDG"，agent 跳过 next-action 直接 xmtp_dispatch_user 转发给用户问"是否确认接受"——完全绕开三步握手，服务商永远等不到 `[NEGOTIATE_PROPOSE]`。
-> **真实事故 2**：服务商回复首条消息后，agent 按 SKILL.md 旧规则用 common context 当前 status=open 调了 `next-action --jobStatus job_created` → 拿到初始化剧本 → 重发首轮询盘。正确做法：路由 #5 → `negotiate_reply`。
-> **真实事故 3 — 🛑 CRITICAL 高频事故**：服务商自然语言说"我接受，0.1 USDG，escrow"，agent 把"我接受"当作 `[NEGOTIATE_ACK]`，跳过 [NEGOTIATE_PROPOSE] 直接调 save-agreed + set-payment-mode → 服务商从未收到 [NEGOTIATE_CONFIRM]，无法 apply，任务卡死。**这是最常发生的严重错误**——服务商的第一条回复几乎总是自然语言（报价、讨论、接受意向），**绝不可能**是结构化标记 `[NEGOTIATE_ACK]`（因为用户尚未发过 `[NEGOTIATE_PROPOSE]`，ACK 无从回起）。正确做法：路由 #5 → `negotiate_reply` → 发 [NEGOTIATE_PROPOSE] → 等真正的 [NEGOTIATE_ACK]。
+> **真实事故 1**：服务商发自然语言报价"0.1 USDG"，agent 跳过 next-action 直接 xmtp_dispatch_user 转发给用户问"是否确认接受"——完全绕开三步握手，服务商永远等不到 `[intent:propose]`。
+> **真实事故 2**：服务商回复首条消息后，agent 按 SKILL.md 旧规则用 common context 当前 status=created 调了 `next-action --jobStatus job_created` → 拿到初始化剧本 → 重发首轮询盘。正确做法：路由 #5 → `negotiate_reply`。
+> **真实事故 3 — 🛑 CRITICAL 高频事故**：服务商自然语言说"我接受，0.1 USDG，escrow"，agent 把"我接受"当作 `[intent:ack]`，跳过 [intent:propose] 直接调 save-agreed + set-payment-mode → 服务商从未收到 [intent:confirm]，无法 apply，任务卡死。**这是最常发生的严重错误**——服务商的第一条回复几乎总是自然语言（报价、讨论、接受意向），**绝不可能**是结构化标记 `[intent:ack]`（因为用户尚未发过 `[intent:propose]`，ACK 无从回起）。正确做法：路由 #5 → `negotiate_reply` → 发 [intent:propose] → 等真正的 [intent:ack]。
 >
 > 🛑 **CRITICAL — 结构化标记 vs 自然语言的铁律判定**：
-> - **结构化标记**：content 的文本**必须以 `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_REJECT]` / `[NEGOTIATE_PROPOSE]` 方括号字面量作为行首开头**（即 `content.trim()` 以 `[NEGOTIATE_` 起始）
-> - **自然语言**：content 中**任何不以 `[NEGOTIATE_` 方括号开头的文本**——包括但不限于"我接受"、"同意"、"OK"、"可以"、"没问题"、"I accept"、"agreed"、"escrow OK"、"报价 0.1 USDG"——**全部是自然语言，全部走 #5 兜底 → `negotiate_reply`**
-> - **判定方法**：对 content 做**纯字符串前缀匹配** `content.trimStart().startsWith("[NEGOTIATE_")`——命中才走 #3，否则**无条件走 #5**。**禁止语义推断**——不要因为服务商说了"接受/同意"就推断为 `[NEGOTIATE_ACK]`
-> - **逻辑铁证**：如果用户**尚未发过 `[NEGOTIATE_PROPOSE]`**，服务商**不可能**回 `[NEGOTIATE_ACK]`——ACK 是对 PROPOSE 的回应。收到服务商第一条消息时，用户必然还没发过 PROPOSE，所以**第一条消息 100% 不是 ACK**，必须走 #5
+> - **结构化标记**：content 的文本**必须包含 `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` 方括号字面量**（即 `content.includes("[intent:")` 为 true）——注意 intent 标记是**后缀**，出现在消息末尾
+> - **自然语言**：content 中**不包含 `[intent:` 的文本**——包括但不限于"我接受"、"同意"、"OK"、"可以"、"没问题"、"I accept"、"agreed"、"escrow OK"、"报价 0.1 USDG"——**全部是自然语言，全部走 #5 兜底 → `negotiate_reply`**
+> - **判定方法**：对 content 做**子串包含匹配** `content.includes("[intent:")`——命中才走 #3，否则**无条件走 #5**。**禁止语义推断**——不要因为服务商说了"接受/同意"就推断为 `[intent:ack]`
+> - **逻辑铁证**：如果用户**尚未发过 `[intent:propose]`**，服务商**不可能**回 `[intent:ack]`——ACK 是对 PROPOSE 的回应。收到服务商第一条消息时，用户必然还没发过 PROPOSE，所以**第一条消息 100% 不是 ACK**，必须走 #5
 
 > **⚠️ sub session 消息路由优先级**（通过安全门后，按此顺序匹配，**首个命中即停**）：
 >
 > 1. **服务商 apply 通知**（来源：peer）：content 含 `[PROVIDER_APPLIED]` 前缀，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无前缀的旧版本服务商） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
-> 2. **交付通知**（来源：peer）：content 以 `[NEGOTIATE_DELIVER]` 前缀开头（判定方法：`content.trimStart().startsWith("[NEGOTIATE_DELIVER]")`）。区分交付物形态：content 含 `deliverableType: file` + 解密字段（`fileKey`/`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；`deliverableType: text` → 提取 `---` 分隔符之间的正文内容并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「服务商已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
-> 3. **协商结构化标记**（来源：peer）（🛑 **MANDATORY 字面量前缀匹配，禁止语义推断**：content **必须以** `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_REJECT]` / `[NEGOTIATE_PROPOSE]` **方括号字面量开头**才命中本规则。判定方法：`content.trimStart().startsWith("[NEGOTIATE_")`。❌ 服务商自然语言"我接受/同意/OK/可以/没问题/agreed/report: 0.1 USDG" 等**不以 `[NEGOTIATE_` 开头**的文本 → **不命中 #3，必须走 #5 兜底 → `negotiate_reply`**。违反此规则 = 跳过三步握手 = 任务永久卡死） → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
+> 2. **交付通知**（来源：peer）：content 包含 `[intent:deliver]` 标记（判定方法：`content.includes("[intent:deliver]")`）。区分交付物形态：content 含 `deliverableType: file` + 解密字段（`fileKey`/`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；`deliverableType: text` → 提取 `---` 分隔符之间的正文内容并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「服务商已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
+> 3. **协商结构化标记**（来源：peer）（🛑 **MANDATORY 字面量包含匹配，禁止语义推断**：content **必须包含** `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` **方括号字面量**才命中本规则。判定方法：`content.includes("[intent:")`。❌ 服务商自然语言"我接受/同意/OK/可以/没问题/agreed/report: 0.1 USDG" 等**不包含 `[intent:` 的文本** → **不命中 #3，必须走 #5 兜底 → `negotiate_reply`**。违反此规则 = 跳过三步握手 = 任务永久卡死） → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
 >    - status≥1 → `xmtp_send`「协商已完成，当前参数已锁定，任务执行中。」，结束本轮 turn
->    - status=0（open）→ 按标记类型分派到对应 next-action 事件：
->      - `[NEGOTIATE_ACK]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_ack --role buyer --agentId <你的agentId>`
->      - `[NEGOTIATE_COUNTER]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_counter --role buyer --agentId <你的agentId>`
->      - `[NEGOTIATE_REJECT]` → 服务商主动拒绝协商，**不再回复**，`onchainos agent mark-failed <jobId> --provider <服务商agentId>`，回到推荐列表（`onchainos agent recommend <jobId> --current`），由用户选择下一个服务商
->      - `[NEGOTIATE_PROPOSE]` → 异常（服务商不应发 PROPOSE），xmtp_send 告知「PROPOSE 由用户发起，请回复 ACK/COUNTER/REJECT」
+>    - status=0（created）→ 按标记类型分派到对应 next-action 事件：
+>      - `[intent:ack]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_ack --role buyer --agentId <你的agentId>`
+>      - `[intent:counter]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_counter --role buyer --agentId <你的agentId>`
+>      - `[intent:reject]` → 服务商主动拒绝协商，**不再回复**，`onchainos agent mark-failed <jobId> --provider <服务商agentId>`，回到推荐列表（`onchainos agent recommend <jobId> --current`），由用户选择下一个服务商
+>      - `[intent:propose]` → 异常（服务商不应发 PROPOSE），xmtp_send 告知「PROPOSE 由用户发起，请回复 ACK/COUNTER/REJECT」
 > 4. **`[MAX_BUDGET_UPDATE]` 内部通知**（来源：user session via `xmtp_dispatch_session`）：content 以 `[MAX_BUDGET_UPDATE]` 前缀开头 → 提取 `paymentMostTokenAmount=<值>`，更新当前协商的 max_budget 上限。🛑 **ABSOLUTE PROHIBITION：不回复、不转发、不通知服务商、不 xmtp_send、不 xmtp_dispatch_user**——违反 = max_budget 泄露给服务商 = 谈判筹码丧失。静默更新后**立即结束 turn**。
 > 5. **兜底**（1-4 未命中，来源：peer）→ 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
 >    - status=1（accepted）→ 执行讨论模式（§3.5）
->    - status=0（open）且存在活跃 sub session（`session_status` 有值）→ 协商中的自然语言讨论，调 `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <你的agentId>` 拿剧本
->    - status=0（open）且无 sub session → `xmtp_dispatch_user` 转发服务商消息给用户
+>    - status=0（created）且存在活跃 sub session（`session_status` 有值）→ 协商中的自然语言讨论，调 `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <你的agentId>` 拿剧本
+>    - status=0（created）且无 sub session → `xmtp_dispatch_user` 转发服务商消息给用户
 >    - 其余（submitted / refused / disputed / 终态）→ 忽略，不回复，不转发
 
 ---
@@ -202,9 +202,9 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 
 > ⚠️ 以下铁律**必须遵守**（next-action 剧本中也会重复）：
 >
-> - 🛑 **[NEGOTIATE_CONFIRM] 永远是最后一步**：发之前 `save-agreed` + `set-payment-mode`（如需变更）必须已完成。先 CONFIRM 后 setPaymentMode = 数据完整性事故（已发生过）
-> - ❌ **禁止短路三步握手**：不要用自然语言（"请 apply / 条款已锁定 / 请接单"）替代 `[NEGOTIATE_CONFIRM]` 字面量——服务商只识别字面量
-> - ⚡ **`[NEGOTIATE_REJECT]` 终止协商**：任一方可随时发 `[NEGOTIATE_REJECT]`（含 jobId + reason）显式结束协商。收到后**不再回复**，用户立即切换下一个服务商
+> - 🛑 **[intent:confirm] 永远是最后一步**：发之前 `save-agreed` + `set-payment-mode`（如需变更）必须已完成。先 CONFIRM 后 setPaymentMode = 数据完整性事故（已发生过）
+> - ❌ **禁止短路三步握手**：不要用自然语言（"请 apply / 条款已锁定 / 请接单"）替代 `[intent:confirm]` 字面量——服务商只识别字面量
+> - ⚡ **`[intent:reject]` 终止协商**：任一方可随时发 `[intent:reject]`（含 jobId + reason）显式结束协商。收到后**不再回复**，用户立即切换下一个服务商
 > - ❌ **apply 是服务商动作**：buyer **绝不能**调 `onchainos agent apply`
 > - ❌ **最高预算硬上限**：服务商报价超过 `paymentMostTokenAmount` 时**必须拒绝**，不得同意
 > - ❌ **A2A 协商会话中禁止 x402**：无论服务商是否有 endpoint，协商会话中只能选 escrow。服务商提出 x402 时必须拒绝
@@ -297,7 +297,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 >
 > **Trigger**: 用户主动要求修改任务条款（预算/代币/服务商/最高预算）、停止任务、或发送非条款内容
 >
-> **前提**: 任务处于 **Open** 状态（Accepted 之前）。Accepted 后条款锁定，拒绝修改请求。
+> **前提**: 任务处于 **Created** 状态（Accepted 之前）。Accepted 后条款锁定，拒绝修改请求。
 
 ### 3.6.0 优先级规则
 
@@ -326,9 +326,9 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
    onchainos agent set-token-and-budget <jobId> --token-symbol <USDT|USDG> --budget <amount>
    ```
 4. 告知用户「交易已提交，等待上链确认」
-5. 上链成功后，子 session 收到 `task_token_budget_change` → 自动向当前服务商发新一轮 [NEGOTIATE_PROPOSE]
+5. 上链成功后，子 session 收到 `task_token_budget_change` → 自动向当前服务商发新一轮 [intent:propose]
 
-> ❌ **user session 禁止自己发 [NEGOTIATE_PROPOSE]**——PROPOSE 由子 session 收到系统通知后自动发送。user session 发 = 与子 session 重复 = 服务商收到两条 PROPOSE = 协商混乱
+> ❌ **user session 禁止自己发 [intent:propose]**——PROPOSE 由子 session 收到系统通知后自动发送。user session 发 = 与子 session 重复 = 服务商收到两条 PROPOSE = 协商混乱
 
 ### 3.6.4 修改服务商
 
@@ -343,7 +343,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
    - **escrow** → 调 `next-action --jobStatus switch_provider --provider <新agentId>` 拿剧本，按剧本建群 + 发协商询盘
    - **x402** → 复用 §3.4 x402 流程（从 Step 2 endpoint 验证开始）
    - ❌ 等待 `task_provider_change` 上链确认后才启动 = 新服务商流程被无意义阻塞 = 用户等待时间翻倍
-6. 子 session 收到 `task_provider_change` → 先查 `agent status <jobId>` 比对 providerAgentId 与本 session 服务商：**不一致才发 [NEGOTIATE_REJECT]**，一致则忽略（避免误关新服务商的 session）。静默处理，user session 不介入
+6. 子 session 收到 `task_provider_change` → 先查 `agent status <jobId>` 比对 providerAgentId 与本 session 服务商：**不一致才发 [intent:reject]**，一致则忽略（避免误关新服务商的 session）。静默处理，user session 不介入
 
 > ❌ **禁止**调 `mark-failed`——仅终止协商，不排除该服务商
 > ❌ **禁止**在已有的和其他服务商的会话中继续聊——旧会话的 REJECT 由子 session 自动发送

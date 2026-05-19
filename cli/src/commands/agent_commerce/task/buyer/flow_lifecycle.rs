@@ -32,7 +32,7 @@ pub(super) fn provider_applied(ctx: &FlowContext<'_>) -> String {
      onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
      ```\n\
      ⚠️ 参数是 `--provider-agent-id`，不是 `--agent-id`。\n\
-     🛑 **provider-agent-id 必须与服务商 a2a-agent-chat 消息的 sender.agentId 一致**——优先从本 turn 收到的服务商消息中提取 agentId，其次从 sub session 历史的 [NEGOTIATE_ACK] 中提取。不要用 common context 里的值（多任务场景可能串）。\n\
+     🛑 **provider-agent-id 必须与服务商 a2a-agent-chat 消息的 sender.agentId 一致**——优先从本 turn 收到的服务商消息中提取 agentId，其次从 sub session 历史的 [intent:ack] 中提取。不要用 common context 里的值（多任务场景可能串）。\n\
      ⚠️ **不要查询任务 API 验证服务商是否已 apply**——链上索引有延迟，`confirm-accept` 内部会做链上校验。\n\
      ❌ 禁止调 apply（apply 是服务商动作，用户永远不执行）\n\
      ❌ 禁止调 set-payment-mode（已在 negotiate_ack 事件中完成）\n\n\
@@ -111,7 +111,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      先调 `session_status` 拿到本 sub session 的 sessionKey（后续 Step 3 复用，同 turn 不再重复调）。\n\
      再调 `xmtp_get_conversation_history`（sessionKey = 上一步拿到的 sessionKey）拉取与服务商的聊天记录，完成两件事：\n\
      \x20\x20a) 从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 提取 `qualityStandards`（验收标准，按任务发布时为准）；如果字段为空则后续展示时省略该行。\n\
-     \x20\x20b) 找到服务商发送的**以 `[NEGOTIATE_DELIVER]` 前缀开头的消息**（从最新往前找，首个命中即为交付物消息），根据 `deliverableType` 字段判断类型：\n\n\
+     \x20\x20b) 找到服务商发送的**包含 `[intent:deliver]` 后缀标记的消息**（从最新往前找，首个命中即为交付物消息），根据 `deliverableType` 字段判断类型：\n\n\
      ━━━ 情况 A：deliverableType=file（消息包含 fileKey / digest / salt / nonce / secret 解密字段）━━━\n\n\
      调用 xmtp_file_download 工具下载文件：\n\
      \x20\x20参数：\n\
@@ -130,7 +130,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      ⚠️ 如果服务商消息除文件外还包含文字说明（如「这是交付物，请查收」），一并记录到 deliverableText。\n\
      交付物展示变量：deliverableType=file, localPath=<完整路径>, deliverableText=<文字说明，无则留空>\n\n\
      ━━━ 情况 B：deliverableType=text（`---` 分隔符之间的正文内容）━━━\n\n\
-     提取 `[NEGOTIATE_DELIVER]` 消息中 `---` 分隔符之间的文字内容，**完整保留原文**，不要截断或概括。\n\
+     提取 `[intent:deliver]` 消息中 `---` 分隔符之间的文字内容，**完整保留原文**，不要截断或概括。\n\
      交付物展示变量：deliverableType=text, deliverableText=<服务商发送的完整文字内容>\n\n\
      **Step 3 — 按支付方式分流：**\n\n\
      ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
@@ -278,7 +278,7 @@ pub(super) fn dispute_evidence(ctx: &FlowContext<'_>) -> String {
      ==== 协商 / 交付聊天记录（从 xmtp_get_conversation_history 拉取） ====\n\
      [时间] 服务商(<agentId>): ...\n\
      [时间] 用户(<agentId>): ...\n\
-     ...（按时间顺序，关键节点：报价 / NEGOTIATE_PROPOSE / NEGOTIATE_ACK / NEGOTIATE_CONFIRM / 交付物消息）\n\n\
+     ...（按时间顺序，关键节点：报价 / [intent:propose] / [intent:ack] / [intent:confirm] / 交付物消息）\n\n\
      ==== 用户证据摘要 ====\n\
      <用户原话摘要>\n\
      ```\n\n\
@@ -858,10 +858,10 @@ pub(super) fn task_token_budget_change(ctx: &FlowContext<'_>) -> String {
      【sub session 动作（🛑 四步严格顺序，每步 MUST 等上一步 tool_result 返回后再执行下一步）】\n\n\
      **Step 0 — 🛑 MUST 检查本 session 是否仍活跃（跳过 = 向已终止的服务商发无效消息）：**\n\
      回顾本 session 上下文：如果满足以下**任一条件**，本 session 已终止，**忽略本事件，结束 turn**：\n\
-     \x20\x20- 你曾发送或收到 `[NEGOTIATE_REJECT]`（协商已终止）\n\
+     \x20\x20- 你曾发送或收到 `[intent:reject]`（协商已终止）\n\
      \x20\x20- 你曾调用 `mark-failed` 标记过当前服务商（服务商已被标记失败）\n\
      \x20\x20- 服务商已超过 24h 未回复（协商已冷却）\n\
-     如果上下文不足以判断 → 调 `xmtp_get_conversation_history` 检查最近消息，含 [NEGOTIATE_REJECT] 则终止。\n\
+     如果上下文不足以判断 → 调 `xmtp_get_conversation_history` 检查最近消息，含 [intent:reject] 则终止。\n\
      ⚠️ 只有确认本 session 仍活跃（协商进行中）才继续 Step 1。\n\n\
      **Step 1 — 🛑 MUST 查询最新任务详情（禁止用缓存/旧值）：**\n\
      ```bash\n\
@@ -872,21 +872,21 @@ pub(super) fn task_token_budget_change(ctx: &FlowContext<'_>) -> String {
      **Step 2 — 🛑 MUST 获取 sessionKey（路径 4 两步必做之一）：**\n\
      调用 `session_status` 工具拿当前 sub session 的 `sessionKey`。\n\
      ❌ 跳过此步 = xmtp_send 缺 sessionKey = 消息发不出去 = 服务商永远收不到新条款\n\n\
-     **Step 3 — 🛑 MUST 向服务商发送新一轮 [NEGOTIATE_PROPOSE]（不可跳过、不可延迟）：**\n\
+     **Step 3 — 🛑 MUST 向服务商发送新一轮 [intent:propose]（不可跳过、不可延迟）：**\n\
      使用 Step 1 拿到的最新 tokenSymbol 和 tokenAmount 构造新的 PROPOSE 消息。\n\
      paymentMode 固定为 escrow（条款变更仅适用于担保支付场景）。\n\n\
      调用 xmtp_send（sessionKey = Step 2 拿到的值）：\n\
      \x20\x20content:\n\
-     \x20\x20[NEGOTIATE_PROPOSE]\n\
      \x20\x20jobId: {job_id}\n\
      \x20\x20paymentMode: escrow\n\
      \x20\x20tokenSymbol: <Step 1 最新 tokenSymbol>\n\
-     \x20\x20tokenAmount: <Step 1 最新 tokenAmount>\n\n\
+     \x20\x20tokenAmount: <Step 1 最新 tokenAmount>\n\
+     \x20\x20[intent:propose]\n\n\
      ⚠️ 这是新一轮协商，COUNTER 计数器归零。\n\
      ❌ 跳过 Step 3 = 服务商不知道条款已变 = 协商基于旧条款继续 = 最终 accept 参数不一致\n\
      ❌ 禁止 xmtp_dispatch_user（用户在 user session 已知晓变更）\n\
      ❌ 禁止调用 set-token-and-budget / set-provider / set-max-budget（user session 已执行）\n\n\
-     → **结束本轮 turn**，等待服务商回复（[NEGOTIATE_ACK] / [NEGOTIATE_COUNTER] / [NEGOTIATE_REJECT]）。\n"
+     → **结束本轮 turn**，等待服务商回复（[intent:ack] / [intent:counter] / [intent:reject]）。\n"
     )
 }
 
@@ -903,7 +903,7 @@ pub(super) fn task_provider_change(ctx: &FlowContext<'_>) -> String {
      - 如果你是 **sub session（与某服务商的协商会话）**→ 先执行 Step 0 活跃检查，再执行后续步骤\n\n\
      【sub session 动作（🛑 四步严格顺序，MUST 全部执行）】\n\n\
      **Step 0 — 🛑 MUST 检查本 session 是否仍活跃：**\n\
-     回顾本 session 上下文：如果你在本 session 中已发送或收到 `[NEGOTIATE_REJECT]`（协商已终止），\n\
+     回顾本 session 上下文：如果你在本 session 中已发送或收到含 `[intent:reject]` 的消息（协商已终止），\n\
      **忽略本事件，结束 turn**——已终止的协商不需要再发 REJECT。\n\
      只有确认本 session 仍活跃（协商进行中）才继续 Step 1。\n\n\
      **Step 1 — 🛑 MUST 查询任务详情，比对 provider 是否变更（跳过 = 可能误关新服务商的 session）：**\n\
@@ -918,14 +918,14 @@ pub(super) fn task_provider_change(ctx: &FlowContext<'_>) -> String {
      **Step 2 — 🛑 MUST 获取 sessionKey（路径 4 两步必做之一）：**\n\
      调用 `session_status` 工具拿当前 sub session 的 `sessionKey`。\n\
      ❌ 跳过此步 = xmtp_send 缺 sessionKey = REJECT 发不出去\n\n\
-     **Step 3 — 🛑 MUST 向当前 session 的服务商发送 [NEGOTIATE_REJECT]（不可跳过）：**\n\
+     **Step 3 — 🛑 MUST 向当前 session 的服务商发送 [intent:reject]（不可跳过）：**\n\
      本任务的 provider 已在链上变更为其他服务商，当前会话的协商即刻终止。\n\
      ❌ 不发 REJECT = 旧服务商不知道被换掉 = 继续等待/发消息 = 协商永远挂起\n\n\
      调用 xmtp_send（sessionKey = Step 2 拿到的值）：\n\
      \x20\x20content:\n\
-     \x20\x20[NEGOTIATE_REJECT]\n\
      \x20\x20jobId: {job_id}\n\
-     \x20\x20reason: 用户已更换服务商\n\n\
+     \x20\x20reason: 用户已更换服务商\n\
+     \x20\x20[intent:reject]\n\n\
      ❌ 禁止 xmtp_dispatch_user（用户在 user session 已知晓变更）\n\
      ❌ 禁止调用 set-token-and-budget / set-provider / set-max-budget（user session 已执行）\n\
      ❌ 禁止调用 mark-failed（仅终止协商，不排除该服务商）\n\

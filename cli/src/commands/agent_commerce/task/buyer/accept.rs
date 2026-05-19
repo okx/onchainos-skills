@@ -110,9 +110,9 @@ pub async fn handle_set_payment_mode(
     let task_status = common::state_machine::Status::from_int(
         task_resp["status"].as_i64().unwrap_or(-1) as i32,
     );
-    if task_status != common::state_machine::Status::Open {
+    if task_status != common::state_machine::Status::Created {
         bail!(
-            "当前任务状态为 {:?}，只有 open 状态才允许设置支付方式",
+            "当前任务状态为 {:?}，只有 created 状态才允许设置支付方式",
             task_status
         );
     }

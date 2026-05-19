@@ -52,15 +52,15 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
     format!("\
              🛑 **硬约束 — 三步握手是让服务商 apply 的唯一合法路径**\n\n\
              你想让服务商进入 apply 阶段（escrow），**必须**完整发完三步握手：\n\
-             \x20\x201) `[NEGOTIATE_PROPOSE]`（你 → 服务商，结构化提案）\n\
-             \x20\x202) 等服务商回 `[NEGOTIATE_ACK]`（字段全等）或 `[NEGOTIATE_COUNTER]`（继续谈）或 `[NEGOTIATE_REJECT]`（服务商拒绝）\n\
-             \x20\x203) 你回 `[NEGOTIATE_CONFIRM]`（原样回传 ACK 字段，服务商见到这个标记才会 apply）\n\
-             \x20\x20⚡ 任一方可随时发 `[NEGOTIATE_REJECT]` 终止协商（含 jobId + reason），收到后**不再回复**，立即切换下一个服务商。\n\n\
+             \x20\x201) `[intent:propose]`（你 → 服务商，结构化提案）\n\
+             \x20\x202) 等服务商回 `[intent:ack]`（字段全等）或 `[intent:counter]`（继续谈）或 `[intent:reject]`（服务商拒绝）\n\
+             \x20\x203) 你回 `[intent:confirm]`（原样回传 ACK 字段，服务商见到这个标记才会 apply）\n\
+             \x20\x20⚡ 任一方可随时发 `[intent:reject]` 终止协商（含 jobId + reason），收到后**不再回复**，立即切换下一个服务商。\n\n\
              ❌ **禁止用自然语言绕过握手**——不要发以下这种消息：\n\
              \x20\x20• 「协商条款已锁定 / 条款已敲定 / 无需额外提案 / 请你直接 apply / 请直接接单」\n\
-             \x20\x20• 「最终确认：任务/价格/支付方式 ...」之类的纯文字总结，没带 [NEGOTIATE_PROPOSE] / [NEGOTIATE_CONFIRM] 标记\n\
-             \x20\x20• 任何形式的「替代握手」短路——服务商 flow 里把 `[NEGOTIATE_CONFIRM]` 字面量当作 apply 唯一触发器，你发自然语言『请 apply』根本不会被识别，服务商只能继续等 [NEGOTIATE_PROPOSE]\n\n\
-             正确做法：协商达成一致后，**严格用** `[NEGOTIATE_PROPOSE]` 模板（见下方 B-Step 2 Step 4），让握手机器解析跑通。**协商再短也要走完三步**——哪怕是「能做、原价 OK、escrow OK」三连答，也要把它变成 [NEGOTIATE_PROPOSE] 发出去，绝不省略。\n\n\
+             \x20\x20• 「最终确认：任务/价格/支付方式 ...」之类的纯文字总结，没带 [intent:propose] / [intent:confirm] 标记\n\
+             \x20\x20• 任何形式的「替代握手」短路——服务商 flow 里把 `[intent:confirm]` 字面量当作 apply 唯一触发器，你发自然语言『请 apply』根本不会被识别，服务商只能继续等 [intent:propose]\n\n\
+             正确做法：协商达成一致后，**严格用** `[intent:propose]` 模板（见下方 B-Step 2 Step 4），让握手机器解析跑通。**协商再短也要走完三步**——哪怕是「能做、原价 OK、escrow OK」三连答，也要把它变成 [intent:propose] 发出去，绝不省略。\n\n\
              ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
              **B-Step 0 — 防重复检查（🛑 硬门禁）：**\n\
              调 `session_status` 检查当前 job 是否已有 sub session（即是否已建群）。\n\
@@ -80,17 +80,17 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20- paymentMode：支付方式（**A2A 协商会话中固定为 escrow**——x402 走 recommend 自动路由，不进协商）\n\
              \x20\x20- tokenSymbol：支付代币\n\
              \x20\x20- tokenAmount：支付金额\n\n\
-             ⏱ 超时规则：每轮等待服务商回复最多 5 分钟。超时未回复 → 先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商超时，5 分钟未回复）给服务商，再 `{fallback_cmd}` 切换下一个服务商（**禁止 xmtp_delete_conversation 删群**）。超时后若再收到该服务商的 a2a-agent-chat 消息，**不回复、不处理**，直接忽略。\n\n\
-             ⚠️ **协商消息格式铁律**：所有协商阶段的结构化消息（PROPOSE / CONFIRM / REJECT）**必须以对应前缀标记开头**，\n\
-             content 第一行必须是 `[NEGOTIATE_PROPOSE]` / `[NEGOTIATE_CONFIRM]` / `[NEGOTIATE_REJECT]`，**严禁用自然语言替代**。\n\
-             服务商 Agent 通过前缀做机器解析，缺少前缀会导致协商流程卡死。\n\n\
+             ⏱ 超时规则：每轮等待服务商回复最多 5 分钟。超时未回复 → 先 xmtp_send 发 `[intent:reject]`（reason: 协商超时，5 分钟未回复）给服务商，再 `{fallback_cmd}` 切换下一个服务商（**禁止 xmtp_delete_conversation 删群**）。超时后若再收到该服务商的 a2a-agent-chat 消息，**不回复、不处理**，直接忽略。\n\n\
+             ⚠️ **协商消息格式铁律**：所有协商阶段的结构化消息（PROPOSE / CONFIRM / REJECT）**必须以对应 `[intent:*]` 后缀标记结尾**，\n\
+             content 最后一行必须是 `[intent:propose]` / `[intent:confirm]` / `[intent:reject]`，**严禁用自然语言替代**。\n\
+             服务商 Agent 通过后缀做机器解析，缺少后缀会导致协商流程卡死。\n\n\
              📌 **你有完整的协商权 —— 不要机械接受服务商任何报价**。看 context 里的【任务详情】+【服务商 profile / service-list / 历史 securityRate / feedback】，自己判断：\n\
              \x20\x20• 服务商给的价格相对任务工作量是否合理；超过你预算上限就不要勉强答应\n\
              \x20\x20• 服务商 profile / service-list 同类服务单价 vs 当前报价（服务商自己挂的价就是参考锚）\n\
              \x20\x20• A2A 协商路径 paymentMode 固定为 escrow（资金有担保保障）\n\
              \x20\x20• 多个推荐服务商的话，不要勉强跟某一个谈拢；不合适直接 5 分钟超时切下一个\n\n\
              🛑🛑🛑 **ABSOLUTE PROHIBITION — 铁律：协商全程禁止向服务商透露最高预算（max_budget / paymentMostTokenAmount）。**\n\
-             任何发给服务商的消息（自然语言、[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]）中都**绝对不能**包含 max_budget 数值。\n\
+             任何发给服务商的消息（自然语言、[intent:propose]、[intent:confirm]）中都**绝对不能**包含 max_budget 数值。\n\
              泄露最高预算 = 服务商直接报上限价 = 用户丧失全部议价能力。\n\
              ❌ 绝对禁止在 xmtp_send 中提及「最高预算」「上限」「max budget」「最多能出」等字眼或对应数值\n\
              ❌ 绝对禁止把 paymentMostTokenAmount 字段值写入任何发给服务商的消息\n\n\
@@ -113,63 +113,63 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20| budget < 报价 ≤ max_budget | → 进 Step 3 自然语言还价 | 有谈判空间，自主砍价 |\n\
              \x20\x20| > max_budget | → **自动 REJECT + 切换**（见下方） | 超出硬上限，不可接受 |\n\n\
              \x20\x20**报价 > max_budget 的强制动作（全自动执行，不询问用户，不 xmtp_dispatch_user）**：\n\
-             \x20\x20a) xmtp_send 发送 `[NEGOTIATE_REJECT]`：\n\
+             \x20\x20a) xmtp_send 发送 `[intent:reject]`：\n\
              \x20\x20\x20\x20content=\n\
-             \x20\x20\x20\x20[NEGOTIATE_REJECT]\n\
              \x20\x20\x20\x20jobId: {job_id}\n\
              \x20\x20\x20\x20reason: 报价超出最高预算\n\
+             \x20\x20\x20\x20[intent:reject]\n\
              \x20\x20b) `{fallback_cmd}` 切换下一个服务商\n\
              \x20\x20c) 回到 Step 2 路由判断\n\n\
              3. （sub session 内）双方就价格/条件进行自然语言调整（可能多轮，每轮 5 分钟超时，服务商 COUNTER 上限 3 次）\n\
              \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
              \x20\x20⚠️ **不要机械接受服务商加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少。`budget < 服务商价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；服务商价 ≤ budget 直接接受。\n\
              ⚠️ **币种可协商**：tokenSymbol 允许双方协商变更（如 USDT ↔ USDG），但须双方明确同意。协商初始币种从 `onchainos agent common context` 获取。\n\n\
-             ⚠️ 任一步骤服务商 5 分钟未回复 → 视为协商超时，先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商超时）给服务商，再 `{fallback_cmd}` 切换下一个服务商（**不删群**）。超时后再收到该服务商消息一律忽略、不回复。\n\n\
-             4. 达成初步一致后，调用 xmtp_send 发送 **[NEGOTIATE_PROPOSE]** 结构化提案（必须严格使用此格式，服务商 Agent 会机器解析）：\n\
+             ⚠️ 任一步骤服务商 5 分钟未回复 → 视为协商超时，先 xmtp_send 发 `[intent:reject]`（reason: 协商超时）给服务商，再 `{fallback_cmd}` 切换下一个服务商（**不删群**）。超时后再收到该服务商消息一律忽略、不回复。\n\n\
+             4. 达成初步一致后，调用 xmtp_send 发送 **[intent:propose]** 结构化提案（必须严格使用此格式，服务商 Agent 会机器解析）：\n\
              \n\
              📋 **填字段前必做的口头记录自检（防止『记忆穿越』）**：\n\
-             \x20\x20在写 [NEGOTIATE_PROPOSE] 任何字段前，**逐字段从最近一条往前回看本 sub session 的所有 xmtp_send 内容**，找到**最后一次双方明确同意的值**：\n\
+             \x20\x20在写 [intent:propose] 任何字段前，**逐字段从最近一条往前回看本 sub session 的所有 xmtp_send 内容**，找到**最后一次双方明确同意的值**：\n\
              \x20\x20- tokenAmount：以**最后一次自然语言达成的价格**为准（不是任务原始预算、不是 recommend 列表里的标价、不是中间任意一轮的报价）\n\
              \x20\x20- paymentMode：同样取最后一次共识\n\
-             \x20\x20- 任一字段在对话里没有明确共识 → **不要发 [NEGOTIATE_PROPOSE]**，先 xmtp_send 自然语言再确认一次\n\
+             \x20\x20- 任一字段在对话里没有明确共识 → **不要发 [intent:propose]**，先 xmtp_send 自然语言再确认一次\n\
              \x20\x20⚠️ 不要凭印象直接填——你的训练数据里没有本次会话的记忆，唯一可靠来源是回看本 sub session 的消息历史。\n\n\
              \x20\x20content=\n\
-             [NEGOTIATE_PROPOSE]\n\
              jobId: {job_id}\n\
              paymentMode: escrow\n\
              tokenSymbol: <USDT|USDG>\n\
-             tokenAmount: <金额>\n\n\
-             5. **等待服务商回复 [NEGOTIATE_ACK] 或 [NEGOTIATE_COUNTER]**（5 分钟超时）：\n\n\
-             \x20\x20▸ 收到 **[NEGOTIATE_ACK]** → 逐字段校验服务商回传的值与你发送的 PROPOSE 完全一致：\n\
+             tokenAmount: <金额>\n\
+             [intent:propose]\n\n\
+             5. **等待服务商回复 [intent:ack] 或 [intent:counter]**（5 分钟超时）：\n\n\
+             \x20\x20▸ 收到 **[intent:ack]** → 逐字段校验服务商回传的值与你发送的 PROPOSE 完全一致：\n\
              \x20\x20\x20\x20- 全部一致 → ✅ **立即执行 Step 6**（不发任何消息，直接跑 bash 命令）：\n\
-             \x20\x20\x20\x20\x20\x20🚫 **此处禁止 xmtp_send**——不发 [NEGOTIATE_CONFIRM]、不发自然语言、不发任何消息。\n\
-             \x20\x20\x20\x20\x20\x20[NEGOTIATE_CONFIRM] 必须等 Step 6 的 set-payment-mode 上链确认（`job_payment_mode_changed` 事件）后才发。\n\
+             \x20\x20\x20\x20\x20\x20🚫 **此处禁止 xmtp_send**——不发 [intent:confirm]、不发自然语言、不发任何消息。\n\
+             \x20\x20\x20\x20\x20\x20[intent:confirm] 必须等 Step 6 的 set-payment-mode 上链确认（`job_payment_mode_changed` 事件）后才发。\n\
              \x20\x20\x20\x20\x20\x20→ **现在**跳到下方 Step 6，执行 save-agreed + set-payment-mode。\n\
-             \x20\x20\x20\x20- 任一字段不一致 → 视为篡改，调 xmtp_send 告知服务商字段不一致并重新发送 [NEGOTIATE_PROPOSE]\n\n\
-             \x20\x20▸ 收到 **[NEGOTIATE_COUNTER]** → **先计数**：回看本 sub session 历史，统计服务商已发送的 `[NEGOTIATE_COUNTER]` 总次数（含本次）。\n\
-             \x20\x20\x20\x20🔢 **COUNTER 轮次上限 = 3 次**：如果本次是第 3 次（含）以上 COUNTER，**不处理 COUNTER 内容**，直接 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商轮次超限，已达 3 次 COUNTER），然后 `{fallback_cmd}` 切换下一个服务商。\n\
+             \x20\x20\x20\x20- 任一字段不一致 → 视为篡改，调 xmtp_send 告知服务商字段不一致并重新发送 [intent:propose]\n\n\
+             \x20\x20▸ 收到 **[intent:counter]** → **先计数**：回看本 sub session 历史，统计服务商已发送的 `[intent:counter]` 总次数（含本次）。\n\
+             \x20\x20\x20\x20🔢 **COUNTER 轮次上限 = 3 次**：如果本次是第 3 次（含）以上 COUNTER，**不处理 COUNTER 内容**，直接 xmtp_send 发 `[intent:reject]`（reason: 协商轮次超限，已达 3 次 COUNTER），然后 `{fallback_cmd}` 切换下一个服务商。\n\
              \x20\x20\x20\x20未超限 → 继续下方价值判断：\n\n\
              \x20\x20\x20\x20服务商提出反提案，**带价值判断决定接不接，不要机械接受**：\n\
-             \x20\x20\x20\x20⚠️ **第 0 步：先回看 sub session 历史，确认你刚才发的 [NEGOTIATE_PROPOSE] 是否填错了**：\n\
+             \x20\x20\x20\x20⚠️ **第 0 步：先回看 sub session 历史，确认你刚才发的 [intent:propose] 是否填错了**：\n\
              \x20\x20\x20\x20\x20\x20· 回看自然语言协商最后一次明确同意的金额 / paymentMode\n\
-             \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**等于**自然语言里你最后同意的那个数 → **是你 PROPOSE 写错了，不是服务商加价**：直接用 COUNTER 的金额重发新 [NEGOTIATE_PROPOSE]，**不要再讨价还价**也不要嘴硬说『我们之前是 X』，直接修正即可\n\
+             \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**等于**自然语言里你最后同意的那个数 → **是你 PROPOSE 写错了，不是服务商加价**：直接用 COUNTER 的金额重发新 [intent:propose]，**不要再讨价还价**也不要嘴硬说『我们之前是 X』，直接修正即可\n\
              \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**高于**自然语言里你最后同意的数 → 才是服务商加价，按下方决策矩阵处理\n\n\
              \x20\x20\x20\x20- 检查 tokenSymbol 改动：服务商提出不同币种时评估是否可接受（须双方明确同意）\n\
              \x20\x20\x20\x20- 评估 tokenAmount（**max_budget 优先，不是百分比**）：\n\
-             \x20\x20\x20\x20\x20\x20· COUNTER 价 ≤ 任务 budget（原预算）→ 可接受，用 COUNTER 值发新 [NEGOTIATE_PROPOSE]\n\
-             \x20\x20\x20\x20\x20\x20· budget < COUNTER 价 ≤ max_budget（最高预算）→ 可接受，或继续还价取折中（带理由发新 [NEGOTIATE_PROPOSE]）\n\
-             \x20\x20\x20\x20\x20\x20· COUNTER 价 > max_budget → 调 xmtp_send 发送 `[NEGOTIATE_REJECT]` 结束协商，然后**立即** `{fallback_cmd}` 切换下一个服务商：\n\
+             \x20\x20\x20\x20\x20\x20· COUNTER 价 ≤ 任务 budget（原预算）→ 可接受，用 COUNTER 值发新 [intent:propose]\n\
+             \x20\x20\x20\x20\x20\x20· budget < COUNTER 价 ≤ max_budget（最高预算）→ 可接受，或继续还价取折中（带理由发新 [intent:propose]）\n\
+             \x20\x20\x20\x20\x20\x20· COUNTER 价 > max_budget → 调 xmtp_send 发送 `[intent:reject]` 结束协商，然后**立即** `{fallback_cmd}` 切换下一个服务商：\n\
              \x20\x20\x20\x20\x20\x20\x20\x20content=\n\
-             \x20\x20\x20\x20\x20\x20\x20\x20[NEGOTIATE_REJECT]\n\
              \x20\x20\x20\x20\x20\x20\x20\x20jobId: {job_id}\n\
              \x20\x20\x20\x20\x20\x20\x20\x20reason: 报价超出最高预算\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20[intent:reject]\n\
              \x20\x20\x20\x20\x20\x20· max_budget 不知道 → 调 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 取 `paymentMostTokenAmount` 字段\n\
              \x20\x20\x20\x20- paymentMode 固定为 escrow，不接受其他支付方式\n\
-             \x20\x20\x20\x20- 全部可接受 → 用 COUNTER 中的值发新的 [NEGOTIATE_PROPOSE]，回到 Step 5 等 ACK\n\n\
-             \x20\x20▸ 收到 **[NEGOTIATE_REJECT]** → 服务商主动拒绝协商。**不再回复**，立即 `{fallback_cmd}` 切换下一个服务商。\n\n\
-             \x20\x20▸ 收到的回复**不含** [NEGOTIATE_ACK] / [NEGOTIATE_COUNTER] / [NEGOTIATE_REJECT] 标记 → 视为自然语言讨论，继续协商，重新回到 Step 4\n\n\
-             6. **收到 [NEGOTIATE_ACK] 全等 → 落盘 + setPaymentMode → 最后才发 [NEGOTIATE_CONFIRM]**：\n\n\
-             🛑 **顺序铁律（[NEGOTIATE_CONFIRM] 是服务商 apply 的唯一触发器，必须 paymentMode 在链上就位后才发，否则服务商 apply 会基于错的支付状态）**：\n\n\
+             \x20\x20\x20\x20- 全部可接受 → 用 COUNTER 中的值发新的 [intent:propose]，回到 Step 5 等 ACK\n\n\
+             \x20\x20▸ 收到 **[intent:reject]** → 服务商主动拒绝协商。**不再回复**，立即 `{fallback_cmd}` 切换下一个服务商。\n\n\
+             \x20\x20▸ 收到的回复**不含** [intent:ack] / [intent:counter] / [intent:reject] 标记 → 视为自然语言讨论，继续协商，重新回到 Step 4\n\n\
+             6. **收到 [intent:ack] 全等 → 落盘 + setPaymentMode → 最后才发 [intent:confirm]**：\n\n\
+             🛑 **顺序铁律（[intent:confirm] 是服务商 apply 的唯一触发器，必须 paymentMode 在链上就位后才发，否则服务商 apply 会基于错的支付状态）**：\n\n\
              **Step 6.1 — save-agreed 落盘**（无条件第一步）：\n\
              ```bash\n\
              onchainos agent save-agreed {job_id} --provider <当前协商的providerAgentId> --token-symbol <协商币种> --token-amount <协商价格> --agent-id {agent_id}\n\
@@ -182,13 +182,13 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\
              此命令执行 setPaymentMode → 签名 → 广播，然后返回 exit code 2 (confirming)。\n\
-             ⚠️ **绝对不要**在此 turn 内 xmtp_send [NEGOTIATE_CONFIRM]——服务商见 [NEGOTIATE_CONFIRM] 会立刻 apply，但链上 paymentMode 还在 mempool / 没确认，apply 会失败或行为错位。[NEGOTIATE_CONFIRM] 必须等 `job_payment_mode_changed` 事件确认 paymentMode 上链后再发。\n\n\
+             ⚠️ **绝对不要**在此 turn 内 xmtp_send [intent:confirm]——服务商见 [intent:confirm] 会立刻 apply，但链上 paymentMode 还在 mempool / 没确认，apply 会失败或行为错位。[intent:confirm] 必须等 `job_payment_mode_changed` 事件确认 paymentMode 上链后再发。\n\n\
              **Step 6.3 — 结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
-             （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给服务商。服务商此时见 CONFIRM → apply（escrow），链上 paymentMode 已就位。\n\n\
+             （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [intent:confirm] 给服务商。服务商此时见 CONFIRM → apply（escrow），链上 paymentMode 已就位。\n\n\
              ━━━━━━━━━ 协商失败 / 切换服务商 ━━━━━━━━━\n\n\
-             当前服务商超时未回复（5 分钟）/ COUNTER 轮次超限（≥3 次）/ 收到 `[NEGOTIATE_REJECT]` / 协商失败 → 先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason 填超时/超限/失败原因）给服务商，再切换：\n\
+             当前服务商超时未回复（5 分钟）/ COUNTER 轮次超限（≥3 次）/ 收到 `[intent:reject]` / 协商失败 → 先 xmtp_send 发 `[intent:reject]`（reason 填超时/超限/失败原因）给服务商，再切换：\n\
              \x20\x20{fallback_lines}\n\
-             ⚠️ **切换时必须先发 [NEGOTIATE_REJECT] 再切走**（让服务商有明确终止信号），但**禁止 xmtp_delete_conversation 删群**。切走后再收到该服务商消息一律忽略、不回复。\n\
+             ⚠️ **切换时必须先发 [intent:reject] 再切走**（让服务商有明确终止信号），但**禁止 xmtp_delete_conversation 删群**。切走后再收到该服务商消息一律忽略、不回复。\n\
              当前页无剩余服务商且翻页也无结果 → 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定服务商 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
@@ -316,7 +316,7 @@ pub(super) fn switch_provider(ctx: &FlowContext<'_>) -> String {
          【服务商变更】set-provider 已提交，立即启动新服务商流程（不等 task_provider_change 上链确认）\n\
          【角色】用户（User Agent） | 【执行环境】user session\n\n\
          🛑 **本事件禁止调用的 CLI**：save-agreed / set-payment-mode / confirm-accept / apply / complete / reject——此时尚未与新服务商协商，这些命令全部非法。\n\n\
-         ⚠️ 旧服务商的 sub session 会在收到 `task_provider_change` 上链事件后自动发 [NEGOTIATE_REJECT]，无需你干预。\n\n\
+         ⚠️ 旧服务商的 sub session 会在收到 `task_provider_change` 上链事件后自动发 [intent:reject]，无需你干预。\n\n\
          【你的下一步动作（严格顺序）】\n\n\
          {d_steps}\n\n\
          {negotiate}\n")
@@ -421,7 +421,7 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     "【当前状态】job_payment_mode_changed（支付模式切换已上链）\n\
      【角色】用户（User Agent）\n\n\
      🛑 **必须通知用户支付模式变更结果。**\n\n\
-     🛑 **本事件允许的动作白名单**：escrow 路径仅 xmtp_send [NEGOTIATE_CONFIRM] + xmtp_dispatch_user 通知用户；x402 路径仅 x402-check + task-402-pay + xmtp_dispatch_user。\n\
+     🛑 **本事件允许的动作白名单**：escrow 路径仅 xmtp_send [intent:confirm] + xmtp_dispatch_user 通知用户；x402 路径仅 x402-check + task-402-pay + xmtp_dispatch_user。\n\
      ❌ 禁止再调 set-payment-mode（paymentMode 已在链上就位，重复调用会导致状态污染）\n\
      ❌ 禁止调 save-agreed（已在 negotiate_ack 事件中完成）\n\
      ❌ 禁止调 apply（apply 是服务商动作，用户永远不执行）\n\
@@ -431,18 +431,18 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      **Step 1 — 从系统通知 envelope 中读取 `paymentMode` 字段：**\n\
      paymentMode 值映射：1=escrow, 3=x402。\n\
      ⚠️ 直接使用 envelope 中的 paymentMode，不需要额外查询 API。\n\n\
-     ━━━━━━━━━ escrow（paymentMode=1）— 发 [NEGOTIATE_CONFIRM] 触发服务商 apply ━━━━━━━━━\n\n\
-     **Step 3 — 发 [NEGOTIATE_CONFIRM]（服务商 apply 的唯一合法触发器）**：\n\
-     链上 paymentMode 已就位，现在可以安全发 [NEGOTIATE_CONFIRM] 让服务商 apply。\n\
-     从你之前发的 [NEGOTIATE_PROPOSE] / 收到的 [NEGOTIATE_ACK] **原样取所有字段**（paymentMode / tokenSymbol / tokenAmount）回看 sub session 历史复制即可：\n\n\
+     ━━━━━━━━━ escrow（paymentMode=1）— 发 [intent:confirm] 触发服务商 apply ━━━━━━━━━\n\n\
+     **Step 3 — 发 [intent:confirm]（服务商 apply 的唯一合法触发器）**：\n\
+     链上 paymentMode 已就位，现在可以安全发 [intent:confirm] 让服务商 apply。\n\
+     从你之前发的 [intent:propose] / 收到的 [intent:ack] **原样取所有字段**（paymentMode / tokenSymbol / tokenAmount）回看 sub session 历史复制即可：\n\n\
      调用 xmtp_send：\n\
      \x20\x20content=\n\
-     \x20\x20[NEGOTIATE_CONFIRM]\n\
      \x20\x20jobId: {job_id}\n\
      \x20\x20paymentMode: escrow\n\
-     \x20\x20tokenSymbol: <与 [NEGOTIATE_ACK] 完全相同>\n\
-     \x20\x20tokenAmount: <与 [NEGOTIATE_ACK] 完全相同>\n\n\
-     ⚠️ **严禁**用自然语言「请你 apply / 请接单」绕过——服务商 flow.rs 把 `[NEGOTIATE_CONFIRM]` 字面量当 apply 唯一触发器，自然语言指令**根本不会被识别**。\n\
+     \x20\x20tokenSymbol: <与 [intent:ack] 完全相同>\n\
+     \x20\x20tokenAmount: <与 [intent:ack] 完全相同>\n\
+     \x20\x20[intent:confirm]\n\n\
+     ⚠️ **严禁**用自然语言「请你 apply / 请接单」绕过——服务商 flow.rs 把 `[intent:confirm]` 字面量当 apply 唯一触发器，自然语言指令**根本不会被识别**。\n\
      ⚠️ apply 是服务商动作，用户不执行 apply。\n\n\
      **Step 4 — 通知用户：**\n\
      调用 xmtp_dispatch_user：\n\
@@ -493,20 +493,20 @@ pub(super) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      提取关键字段：budget、paymentMostTokenAmount（max_budget）、tokenSymbol、description。\n\n\
      **Step 2 — 评估服务商回复内容：**\n\n\
      🛑 **铁律：回复服务商的任何消息中绝对禁止透露 max_budget（最高预算）数值**——泄露 = 服务商直接报上限价 = 用户丧失全部议价能力。\n\
-     🚫 **协商自治红线**：除下方「报价 > max_budget」自动 REJECT 路径外，**禁止**调 `xmtp_prompt_user` / `pending-decisions add` 让用户做协商决策。协商由 sub session 自主完成——按决策矩阵评估后直接回复服务商（自然语言讨论 / [NEGOTIATE_PROPOSE]），不得把报价转发给用户问「是否接受」。\n\n\
+     🚫 **协商自治红线**：除下方「报价 > max_budget」自动 REJECT 路径外，**禁止**调 `xmtp_prompt_user` / `pending-decisions add` 让用户做协商决策。协商由 sub session 自主完成——按决策矩阵评估后直接回复服务商（自然语言讨论 / [intent:propose]），不得把报价转发给用户问「是否接受」。\n\n\
      从服务商消息中提取报价信息（如有）：金额、币种、支付方式偏好、交付时间。\n\n\
      🔴 **报价评估决策矩阵**（如服务商给出了明确价格）：\n\
      \x20\x20| 服务商报价 | 动作 |\n\
      \x20\x20|---|---|\n\
-     \x20\x20| ≤ budget | 价格可接受，确认其他条款后进入 [NEGOTIATE_PROPOSE] |\n\
+     \x20\x20| ≤ budget | 价格可接受，确认其他条款后进入 [intent:propose] |\n\
      \x20\x20| budget < 报价 ≤ max_budget | 有谈判空间，自主还价 |\n\
      \x20\x20| > max_budget | **自动 REJECT + 切换**（见下方） |\n\n\
      **报价 > max_budget 的强制动作**：\n\
-     \x20\x20a) xmtp_send 发 `[NEGOTIATE_REJECT]`：\n\
+     \x20\x20a) xmtp_send 发 `[intent:reject]`：\n\
      \x20\x20\x20\x20content=\n\
-     \x20\x20\x20\x20[NEGOTIATE_REJECT]\n\
      \x20\x20\x20\x20jobId: {job_id}\n\
      \x20\x20\x20\x20reason: 报价超出最高预算\n\
+     \x20\x20\x20\x20[intent:reject]\n\
      \x20\x20b) `onchainos agent mark-failed {job_id} --provider <当前服务商agentId>`\n\
      \x20\x20c) 调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；调 `xmtp_prompt_user` 让用户决定下一步：\n\
      \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] 用户选择查看推荐服务商 → relay「查看推荐」；选择指定服务商并提供 agentId → relay「指定服务商 agentId=X」；选择关闭 → relay「关闭任务」\n\
@@ -515,18 +515,18 @@ pub(super) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后：A → `recommend`；B → `next-action --provider <agentId>`；C → `close`。\n\n\
      **Step 3 — 回复服务商（取决于 Step 2 评估）：**\n\n\
      ▸ **服务商还在讨论阶段（未给出明确价格或在询问细节）** → xmtp_send 自然语言回复，继续讨论。\n\n\
-     ▸ **双方就 tokenAmount / tokenSymbol / paymentMode 达成一致** → 发送 [NEGOTIATE_PROPOSE]：\n\
+     ▸ **双方就 tokenAmount / tokenSymbol / paymentMode 达成一致** → 发送 [intent:propose]：\n\
      \x20\x20📋 **填字段前必做自检**：逐字段回看 sub session 历史找**最后一次双方明确同意的值**。\n\
      \x20\x20content=\n\
-     \x20\x20[NEGOTIATE_PROPOSE]\n\
      \x20\x20jobId: {job_id}\n\
      \x20\x20paymentMode: escrow\n\
      \x20\x20tokenSymbol: <USDT|USDG>\n\
-     \x20\x20tokenAmount: <金额>\n\n\
+     \x20\x20tokenAmount: <金额>\n\
+     \x20\x20[intent:propose]\n\n\
      ⚠️ **A2A 协商会话中 paymentMode 固定 escrow**。\n\
-     ⚠️ **禁止用自然语言替代 [NEGOTIATE_PROPOSE]**——服务商 Agent 只识别结构化标记，自然语言「请 apply / 条款已锁定」不会被解析。\n\
+     ⚠️ **禁止用自然语言替代 [intent:propose]**——服务商 Agent 只识别结构化标记，自然语言「请 apply / 条款已锁定」不会被解析。\n\
      ⚠️ **同 turn 只发一条 xmtp_send**。\n\
-     🚫 🛑 **CRITICAL — 本事件绝对禁止调用 save-agreed / set-payment-mode / confirm-accept**——这些只在后续 negotiate_ack 事件中才能执行。服务商自然语言说「我接受」「同意」「OK」「没问题」**不是** `[NEGOTIATE_ACK]`——只有 content 以字面量 `[NEGOTIATE_ACK]` 方括号开头才算。在用户发出 [NEGOTIATE_PROPOSE] 之前，服务商不可能回 [NEGOTIATE_ACK]。违反 = 跳过三步握手 = 任务永久卡死。\n\
+     🚫 🛑 **CRITICAL — 本事件绝对禁止调用 save-agreed / set-payment-mode / confirm-accept**——这些只在后续 negotiate_ack 事件中才能执行。服务商自然语言说「我接受」「同意」「OK」「没问题」**不是** `[intent:ack]`——只有 content 以字面量 `[intent:ack]` 方括号开头才算。在用户发出 [intent:propose] 之前，服务商不可能回 [intent:ack]。违反 = 跳过三步握手 = 任务永久卡死。\n\
      → **结束本轮 turn**，等待服务商回复。\n"
     )
 }
@@ -537,14 +537,14 @@ pub(super) fn negotiate_ack(ctx: &FlowContext<'_>) -> String {
     let title_query_hint = ctx.title_query_hint;
 
     format!(
-    "【协商中继】negotiate_ack（服务商接受 PROPOSE，回 [NEGOTIATE_ACK]）\n\
+    "【协商中继】negotiate_ack（服务商接受 PROPOSE，回 [intent:ack]）\n\
      【角色】用户（User Agent）\n\n\
-     服务商回复了 [NEGOTIATE_ACK]——表示接受你的 [NEGOTIATE_PROPOSE] 条款。\n\n\
+     服务商回复了 [intent:ack]——表示接受你的 [intent:propose] 条款。\n\n\
      {title_query_hint}\
      【你的下一步动作（严格顺序）】\n\n\
      **Step 1 — 逐字段校验 ACK 与你发的 PROPOSE 一致：**\n\
      回看 sub session 历史，对比服务商 ACK 中的 paymentMode / tokenSymbol / tokenAmount 与你最近的 PROPOSE。\n\
-     - **任一字段不一致** → 视为篡改，xmtp_send 告知服务商字段不一致并重发 [NEGOTIATE_PROPOSE]，结束 turn。\n\
+     - **任一字段不一致** → 视为篡改，xmtp_send 告知服务商字段不一致并重发 [intent:propose]，结束 turn。\n\
      - **全部一致** → 继续 Step 2。\n\n\
      🛑 **本事件允许的 CLI 命令白名单**：save-agreed → set-payment-mode，**仅此两个、顺序固定**。\n\
      ❌ 禁止调 confirm-accept（服务商尚未 apply）\n\
@@ -561,9 +561,9 @@ pub(super) fn negotiate_ack(ctx: &FlowContext<'_>) -> String {
      onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <ACK中的tokenSymbol> --token-amount <ACK中的tokenAmount>\n\
      ```\n\
      此命令返回 exit code 2 (confirming)。\n\n\
-     🛑 **铁律：本 turn 绝对禁止 xmtp_send [NEGOTIATE_CONFIRM]**——这是最常见的死锁触发器。\n\
+     🛑 **铁律：本 turn 绝对禁止 xmtp_send [intent:confirm]**——这是最常见的死锁触发器。\n\
      链上 paymentMode 还在 mempool，服务商见 CONFIRM 会立刻 apply，但 paymentMode 没确认，apply 会失败。\n\
-     [NEGOTIATE_CONFIRM] **只能**在收到 `job_payment_mode_changed` 系统事件后才能发送，没有任何例外。\n\n\
+     [intent:confirm] **只能**在收到 `job_payment_mode_changed` 系统事件后才能发送，没有任何例外。\n\n\
      → **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n"
     )
 }
@@ -574,28 +574,28 @@ pub(super) fn negotiate_counter(ctx: &FlowContext<'_>) -> String {
     let title_query_hint = ctx.title_query_hint;
 
     format!(
-    "【协商中继】negotiate_counter（服务商发送反提案 [NEGOTIATE_COUNTER]）\n\
+    "【协商中继】negotiate_counter（服务商发送反提案 [intent:counter]）\n\
      【角色】用户（User Agent）\n\n\
-     服务商不接受你的 PROPOSE，发了 [NEGOTIATE_COUNTER] 反提案。\n\n\
-     🛑 **本事件禁止调用 save-agreed / set-payment-mode / confirm-accept / apply**——COUNTER 意味着条款未达成一致，只能发新 [NEGOTIATE_PROPOSE] 或 [NEGOTIATE_REJECT]。\n\
+     服务商不接受你的 PROPOSE，发了 [intent:counter] 反提案。\n\n\
+     🛑 **本事件禁止调用 save-agreed / set-payment-mode / confirm-accept / apply**——COUNTER 意味着条款未达成一致，只能发新 [intent:propose] 或 [intent:reject]。\n\
      🛑 **铁律：回复服务商的任何消息中绝对禁止透露 max_budget（最高预算）数值**——泄露 = 服务商直接报上限价 = 用户丧失全部议价能力。\n\n\
      {title_query_hint}\
      【你的下一步动作（严格顺序）】\n\n\
      **Step 1 — 轮次计数：**\n\
-     回看 sub session 历史，统计服务商已发送的 `[NEGOTIATE_COUNTER]` 总次数（含本次）。\n\
+     回看 sub session 历史，统计服务商已发送的 `[intent:counter]` 总次数（含本次）。\n\
      🔢 **COUNTER 轮次上限 = 3 次**：\n\
      - 本次是第 3 次（含）以上 COUNTER → **不处理 COUNTER 内容**，直接 xmtp_send 发：\n\
      \x20\x20content=\n\
-     \x20\x20[NEGOTIATE_REJECT]\n\
      \x20\x20jobId: {job_id}\n\
      \x20\x20reason: 协商轮次超限，已达 3 次 COUNTER\n\
+     \x20\x20[intent:reject]\n\
      \x20\x20然后 `onchainos agent mark-failed {job_id} --provider <当前服务商agentId>`，\n\
      \x20\x20调 xmtp_prompt_user 让用户决定下一步（同 negotiate_reply 超预算处理：A.查看推荐 / B.指定服务商 / C.关闭任务）。\n\
      \x20\x20→ **结束本轮 turn**，等用户 relay。\n\n\
      - 未超限 → 继续 Step 2。\n\n\
      **Step 2 — PROPOSE 笔误自检（优先级最高）：**\n\
-     ⚠️ **先回看 sub session 历史，确认你上次发的 [NEGOTIATE_PROPOSE] 是否填错了**：\n\
-     \x20\x20- COUNTER 金额 **等于** 自然语言里你最后同意的数 → **是你 PROPOSE 写错了**：直接用 COUNTER 值重发 [NEGOTIATE_PROPOSE]，不要再讨价还价。\n\
+     ⚠️ **先回看 sub session 历史，确认你上次发的 [intent:propose] 是否填错了**：\n\
+     \x20\x20- COUNTER 金额 **等于** 自然语言里你最后同意的数 → **是你 PROPOSE 写错了**：直接用 COUNTER 值重发 [intent:propose]，不要再讨价还价。\n\
      \x20\x20- COUNTER 金额 **高于** 自然语言里你最后同意的数 → 才是服务商加价，继续 Step 3。\n\n\
      **Step 3 — 评估 COUNTER 条款：**\n\
      获取 max_budget：\n\
@@ -605,19 +605,19 @@ pub(super) fn negotiate_counter(ctx: &FlowContext<'_>) -> String {
      提取 `paymentMostTokenAmount`。\n\n\
      \x20\x20| COUNTER 报价 | 动作 |\n\
      \x20\x20|---|---|\n\
-     \x20\x20| ≤ budget | 可接受，用 COUNTER 值发新 [NEGOTIATE_PROPOSE] |\n\
-     \x20\x20| budget < 报价 ≤ max_budget | 可接受或继续还价，发新 [NEGOTIATE_PROPOSE] |\n\
-     \x20\x20| > max_budget | xmtp_send `[NEGOTIATE_REJECT]`，mark-failed，xmtp_prompt_user 让用户决定下一步（同 negotiate_reply 的超预算处理） |\n\n\
+     \x20\x20| ≤ budget | 可接受，用 COUNTER 值发新 [intent:propose] |\n\
+     \x20\x20| budget < 报价 ≤ max_budget | 可接受或继续还价，发新 [intent:propose] |\n\
+     \x20\x20| > max_budget | xmtp_send `[intent:reject]`，mark-failed，xmtp_prompt_user 让用户决定下一步（同 negotiate_reply 的超预算处理） |\n\n\
      - 检查 tokenSymbol 改动：服务商提出不同币种时评估是否可接受\n\
      - paymentMode 固定 escrow，不接受其他支付方式\n\n\
-     **Step 4 — 发送新 [NEGOTIATE_PROPOSE]（如决定接受或还价）：**\n\
+     **Step 4 — 发送新 [intent:propose]（如决定接受或还价）：**\n\
      \x20\x20content=\n\
-     \x20\x20[NEGOTIATE_PROPOSE]\n\
      \x20\x20jobId: {job_id}\n\
      \x20\x20paymentMode: escrow\n\
      \x20\x20tokenSymbol: <USDT|USDG>\n\
-     \x20\x20tokenAmount: <金额>\n\n\
-     ⚠️ **禁止用自然语言替代 [NEGOTIATE_PROPOSE]**——服务商 Agent 只识别结构化标记。\n\
-     → **结束本轮 turn**，等待服务商回复 [NEGOTIATE_ACK] / [NEGOTIATE_COUNTER] / [NEGOTIATE_REJECT]。\n"
+     \x20\x20tokenAmount: <金额>\n\
+     \x20\x20[intent:propose]\n\n\
+     ⚠️ **禁止用自然语言替代 [intent:propose]**——服务商 Agent 只识别结构化标记。\n\
+     → **结束本轮 turn**，等待服务商回复 [intent:ack] / [intent:counter] / [intent:reject]。\n"
     )
 }

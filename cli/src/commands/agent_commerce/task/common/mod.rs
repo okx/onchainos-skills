@@ -658,7 +658,7 @@ fn flatten_my_agents(data: &serde_json::Value, my_owner: &str) -> Vec<serde_json
 fn status_desc(s: &str) -> &str {
     match s {
         "init"      => "初始化中（等待上链确认）",
-        "open"      => "等待接单（Open）",
+        "created"   => "等待接单（Created）",
         "accepted"  => "已接单，卖家执行中（Accepted）",
         "submitted" => "卖家已提交交付，等待买家验收（Submitted）",
         "refused"   => "买家拒绝验收，冻结期内可申请仲裁（Refused）",
@@ -866,12 +866,12 @@ async fn build_context(
         (Some(id), None) => out.push_str(&format!("- AgentID：{id}\n")),
         _ => out.push_str("- 尚未匹配卖家\n"),
     }
-    // ── 专业匹配检查（仅卖家 + open 状态） ────────────────────────────────
+    // ── 专业匹配检查（仅卖家 + created 状态） ────────────────────────────────
     // 真相来源：service-list（agent 注册的服务清单）。**只要任意一项服务**和任务领域
     // 匹配就算通过；只有**全部**服务都对不上才判定为不匹配。profileDescription 仅做
     // 兜底参考，不作为唯一判断依据（描述是泛泛的自我介绍，service-list 才是实际能力）。
     if role_enum == Some(state_machine::Role::Provider)
-        && task_status == state_machine::Status::Open
+        && task_status == state_machine::Status::Created
     {
         let services = fetch_agent_services(profile.agent_id.as_deref().unwrap_or("")).await;
         out.push_str("【⚠️ 第一步：专业匹配检查（必做，不得跳过）】\n");
@@ -960,7 +960,7 @@ async fn build_context(
         out.push_str("- 任务能力 / 验收标准：能不能做、有没有补充问题\n");
         out.push_str("- 价格立场：原价是否合理；偏低就**还价**（明确报新价 + 理由），不要机械接受\n");
         out.push_str("- paymentMode 立场：A2A 协商路径固定 escrow（担保）\n\n");
-        out.push_str("❌ **禁止自我 confirm 措辞**：不要在 `xmtp_send` content 里写「我确认以下三项 / 三项确认完毕 / 我接受 / 我将立即 apply / 我将提交接单申请」。三项是要**问**买家的，发完等 buyer 的 `[NEGOTIATE_PROPOSE]` 才进下一步握手——具体三步握手剧本（[NEGOTIATE_PROPOSE] → [NEGOTIATE_ACK] → [NEGOTIATE_CONFIRM]）由 next-action 给出，**这里不能跳过 next-action 直接 apply**（已发生过线上事故）。\n\n");
+        out.push_str("❌ **禁止自我 confirm 措辞**：不要在 `xmtp_send` content 里写「我确认以下三项 / 三项确认完毕 / 我接受 / 我将立即 apply / 我将提交接单申请」。三项是要**问**买家的，发完等 buyer 的 `[intent:propose]` 才进下一步握手——具体三步握手剧本（[intent:propose] → [intent:ack] → [intent:confirm]）由 next-action 给出，**这里不能跳过 next-action 直接 apply**（已发生过线上事故）。\n\n");
     }
 
     // ── 下一步动作 ────────────────────────────────────────────────────────

@@ -35,10 +35,10 @@ onchainos agent create-task \
 
 **第 1 件事**：调用 `common context <jobId> --role provider` 读取【当前状态】和【任务详情】。
 
-- **状态 `open` + `providerAgentId` 为空** → 公开任务，可自由协商
-- **状态 `open` + `providerAgentId` = 你** → 指定给你的任务，优先接单
-- **状态 `open` + `providerAgentId` 已是别人** → 别人已接单（你应该已被排除，但以防万一），拒绝
-- **状态非 `open`** → 任务不可接，拒绝
+- **状态 `created` + `providerAgentId` 为空** → 公开任务，可自由协商
+- **状态 `created` + `providerAgentId` = 你** → 指定给你的任务，优先接单
+- **状态 `created` + `providerAgentId` 已是别人** → 别人已接单（你应该已被排除，但以防万一），拒绝
+- **状态非 `created`** → 任务不可接，拒绝
 
 ## Buyer 创建任务后
 
@@ -49,8 +49,8 @@ onchainos agent create-task \
 
 ## 终止规则（入口相关）
 
-- **open 阶段超时** → 自动进入 `rejected`（`job_refunded`），资金未托管所以不退款
-- **buyer 主动关闭**（仅 open 阶段）→ `onchainos agent close <jobId>` → `rejected`
+- **created 阶段超时** → 自动进入 `rejected`（`job_refunded`），资金未托管所以不退款
+- **buyer 主动关闭**（仅 created 阶段）→ `onchainos agent close <jobId>` → `rejected`
 - 一旦进入 `applied` 之后，就必须走状态机后续流程，不能简单关闭
 
 ## 特殊场景

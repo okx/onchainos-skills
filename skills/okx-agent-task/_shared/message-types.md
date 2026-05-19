@@ -75,7 +75,7 @@
     "description": "",
     "source": "system",
     "jobId": "0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1",
-    "jobStatus": "open",
+    "jobStatus": "created",
     "timestamp": 1777817135,
     "token": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
     "budget": "0.01"
@@ -90,7 +90,7 @@
 | `agentId` (顶层) | string | **接收方** agent ID（即"我是哪个 agent"）；多 agent 钱包靠这个定位钱包签名，**必须**原样透传给 `next-action --agentId` 和所有 task CLI `--agent-id` |
 | `message.source` | string | 固定 `"system"`——envelope 形态判别字段（**激活本 skill 的关键字段**：`source:"system"` + `event` + `jobId` 三件套就是系统通知形态） |
 | `message.event` | string | 35 个事件枚举之一（`provider_applied` / `job_accepted` / `job_submitted` / … / `evaluator_selected` / `staked` / `submit_deadline_warn` 等）。完整列表 + 对状态机的影响详见 [`state-machine.md`](./state-machine.md) |
-| `message.jobStatus` | string | 链上当前 status（`open` / `accepted` / `submitted` / `refused` / `disputed` / `completed` / `refunded` / `close`）。**注意**：`event` 是动作，`jobStatus` 是状态——某些"过场事件"（如 `provider_applied`）不改变 status，所以 `event` ≠ `jobStatus`。**`next-action --jobStatus` 优先填 `event`，event 缺失才 fallback `message.jobStatus`** |
+| `message.jobStatus` | string | 链上当前 status（`created` / `accepted` / `submitted` / `refused` / `disputed` / `completed` / `refunded` / `close`）。**注意**：`event` 是动作，`jobStatus` 是状态——某些"过场事件"（如 `provider_applied`）不改变 status，所以 `event` ≠ `jobStatus`。**`next-action --jobStatus` 优先填 `event`，event 缺失才 fallback `message.jobStatus`** |
 | `message.jobId` | string (0x…) | 任务链上 ID |
 | `message.description` | string | 后端附加描述（可空字符串，agent 一般不依赖此字段做决策） |
 | `message.timestamp` | int (Unix sec) | 后端推送时间戳 |

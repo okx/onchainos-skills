@@ -12,7 +12,7 @@
 
 ## 状态节点 × 支付方式对照
 
-### `confirm-accept`（open → accepted）
+### `confirm-accept`（created → accepted）
 
 | 模式 | 前置条件 | 买家 CLI | 链上副作用 |
 |---|---|---|---|

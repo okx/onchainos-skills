@@ -14,7 +14,7 @@
 //!
 //! 2. **Peer-facing** (`xmtp_send` content,给服务商 sub agent)
 //!    agent-to-agent 协议消息。命名后缀 `_to_seller`。
-//!    规则:可以含协议字面量(`[NEGOTIATE_*]` 等);
+//!    规则:可以含协议字面量(`[intent:*]` 等);
 //!    **禁止指挥对方调 CLI**(对方有自己的 flow.rs,会按链事件自决,你下指令是越权)。
 //!
 //! 字段值占位符用 `<...>` 包,agent 拿 `common context` / 上下文填充。
