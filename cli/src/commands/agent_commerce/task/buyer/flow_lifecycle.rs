@@ -367,7 +367,10 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
     format!(
     "【当前状态】job_completed（任务支付链路完成）\n\
      【角色】用户（User Agent）\n\n\
-     🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
+     🛑🛑🛑 **ABSOLUTE REQUIREMENT — buyer 收到 job_completed 后必须调 `xmtp_dispatch_user` 通知用户**。\n\
+     job_completed 是**双方收**事件（buyer + provider 都收到），buyer 必须处理。\n\
+     禁止在 sub session 中直接输出文字回复（见硬规则 10）——文字回复 = 用户看不到 = 任务完成了但用户不知道。\n\
+     🔴 真实事故：模型误以为 job_completed 只发给 provider，跳过了 xmtp_dispatch_user，用户未收到任务完成通知。\n\n\
      **Step 1 — 获取任务信息和支付方式：**\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\

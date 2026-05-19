@@ -103,7 +103,6 @@
 | 现象 | 真实状态 | 处理 |
 |---|---|---|
 | `apply` 上链后 status 仍是 `created` | apply 是过场事件，**不改 status** | 等买家 `confirm-accept` 触发 `job_accepted`，那时才进 `accepted` |
-| `complete` 后 buyer 没收到任何系统通知 | `job_completed` 链事件只发 provider | buyer 通过任务详情自查 status 即可 |
 | vote-commit 后没收到 reveal_started | reveal 阶段由 commit 窗口关闭后才启动（commit + reveal 合计 24h） | 静默等待，不要 retry commit |
 | 收到 `provider_applied` 但 buyer 没收到 | 后端规则：`provider_applied` 系统通知**只发卖家** | buyer 通过 inbound a2a-agent-chat（卖家发的"已 apply"消息）得知，立即调 `confirm-accept`（详见 SKILL.md 第 6 节 反幻觉 Buyer 例外） |
 | `dispute_approved` 之后 status 还是 `refused` | dispute approve 是过场事件（仲裁阶段 1，未真正 disputed） | 等阶段 2 `dispute confirm` + `job_disputed` 通知 |
