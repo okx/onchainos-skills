@@ -1,9 +1,9 @@
 /// Token Research
 ///
-/// Step 1: delegates to token::fetch_report() — the PRD §3.1 composite command
+/// Step 1: delegates to token::fetch_report() — the composite command
 ///   (token info + price-info + advanced-info + security scan in one call)
-///   PRD: single sub-call failure → field null, rest continues
-///   PRD: all Step 1 calls fail    → return error
+///   single sub-call failure → field null, rest continues
+///   all Step 1 calls fail    → return error
 /// Step 2 (parallel): holders + cluster overview + top traders + signal list
 ///   cluster-overview may 500 for brand-new tokens → treated as null, skipped gracefully
 /// Step 3 (parallel, conditional): launchpad enrichment only when protocolId non-empty
@@ -27,8 +27,8 @@ pub(crate) async fn fetch_and_assemble(
     let report = token::fetch_report(client, address, chain_index).await?;
 
     // Extract individual values for Step 3 condition check and assemble()
-    let info     = report["info"].clone();
-    let price    = report["priceInfo"].clone();
+    let info = report["info"].clone();
+    let price = report["priceInfo"].clone();
     let advanced = report["advancedInfo"].clone();
     let security = report["security"].clone();
 
@@ -45,32 +45,54 @@ pub(crate) async fn fetch_and_assemble(
         ),
         token::fetch_top_trader(&mut c2, address, chain_index, None, Some("20"), None),
         signal::fetch_list(
-            &mut c3, chain_index,
-            None, None, None, None, None,
+            &mut c3,
+            chain_index,
+            None,
+            None,
+            None,
+            None,
+            None,
             Some(addr),
-            None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         ),
     );
-    let holders    = ok_or_null(holders);
-    let cluster    = ok_or_null(cluster);
+    let holders = ok_or_null(holders);
+    let cluster = ok_or_null(cluster);
     let top_traders = ok_or_null(top_traders);
-    let signals    = ok_or_null(signals);
+    let signals = ok_or_null(signals);
 
     // ── Step 3: launchpad supplement (parallel, conditional) ─────────
     let launchpad = if is_launchpad_token(&advanced) {
         let (mut c4, mut c5, mut c6) = (client.clone(), client.clone(), client.clone());
         let (details, dev_info, bundle_info, similar) = tokio::join!(
             memepump::fetch_by_address(
-                client, "/api/v6/dex/market/memepump/tokenDetails", address, chain_index,
+                client,
+                "/api/v6/dex/market/memepump/tokenDetails",
+                address,
+                chain_index,
             ),
             memepump::fetch_by_address(
-                &mut c4, "/api/v6/dex/market/memepump/tokenDevInfo", address, chain_index,
+                &mut c4,
+                "/api/v6/dex/market/memepump/tokenDevInfo",
+                address,
+                chain_index,
             ),
             memepump::fetch_by_address(
-                &mut c5, "/api/v6/dex/market/memepump/tokenBundleInfo", address, chain_index,
+                &mut c5,
+                "/api/v6/dex/market/memepump/tokenBundleInfo",
+                address,
+                chain_index,
             ),
             memepump::fetch_by_address(
-                &mut c6, "/api/v6/dex/market/memepump/similarToken", address, chain_index,
+                &mut c6,
+                "/api/v6/dex/market/memepump/similarToken",
+                address,
+                chain_index,
             ),
         );
         json!({
@@ -175,10 +197,10 @@ pub async fn run(
     Ok(())
 }
 
-/// Pure assembly function — applies all PRD logic on pre-fetched data.
+/// Pure assembly function — applies all aggregation logic on pre-fetched data.
 /// Testable without any HTTP calls.
 ///
-/// PRD rules applied here:
+/// Rules applied here:
 /// - all Step 1 fields null → propagate error (全部失败 → 返回错误)
 /// - individual nulls → preserved in output (单个失败 → 对应字段 null)
 /// - launchpad: null when Step 3 was skipped; object when it ran
@@ -199,7 +221,7 @@ pub(crate) fn assemble(
     // Step 3 (pre-computed: null when skipped)
     launchpad: Value,
 ) -> Result<Value> {
-    // PRD: all Step 1 core calls failed → return error.
+    // All Step 1 core calls failed → return error.
     //
     // Note: unreachable via fetch_and_assemble — token::fetch_report already
     // bails with the same all-fail error, so by the time we get here all four
@@ -284,7 +306,7 @@ mod tests {
         )
     }
 
-    // ── PRD: all Step 1 fail → error ─────────────────────────────────
+    // ── all Step 1 fail → error ──────────────────────────────────────
 
     #[test]
     fn all_step1_null_returns_error() {
@@ -301,7 +323,7 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("501"));
     }
 
-    // ── PRD: single Step 1 fail → field null, rest present ───────────
+    // ── single Step 1 fail → field null, rest present ────────────────
 
     #[test]
     fn info_null_others_present_returns_ok() {
@@ -329,8 +351,7 @@ mod tests {
 
     #[test]
     fn null_fields_preserved_in_core_output() {
-        let out = full_assemble(null(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out = full_assemble(null(), some_data(), some_data(), some_data(), null()).unwrap();
         assert!(out["core"]["info"].is_null());
         assert!(!out["core"]["price"].is_null());
     }
@@ -342,12 +363,12 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ── PRD: Step 3 conditional on protocolId ─────────────────────────
+    // ── Step 3 conditional on protocolId ──────────────────────────────
 
     #[test]
     fn launchpad_null_when_step3_skipped() {
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out =
+            full_assemble(some_data(), some_data(), some_data(), some_data(), null()).unwrap();
         assert!(out["launchpad"].is_null());
     }
 
@@ -359,8 +380,14 @@ mod tests {
             "bundleInfo":   {"bundleRate": "5%"},
             "similarTokens": [],
         });
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), lp.clone())
-            .unwrap();
+        let out = full_assemble(
+            some_data(),
+            some_data(),
+            some_data(),
+            some_data(),
+            lp.clone(),
+        )
+        .unwrap();
         assert_eq!(out["launchpad"]["devInfo"]["rugCount"], 0);
     }
 
@@ -372,27 +399,27 @@ mod tests {
         assert!(out["launchpad"].is_null());
     }
 
-    // ── Output structure matches PRD spec ─────────────────────────────
+    // ── Output structure ──────────────────────────────────────────────
 
     #[test]
     fn output_has_workflow_discriminator() {
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out =
+            full_assemble(some_data(), some_data(), some_data(), some_data(), null()).unwrap();
         assert_eq!(out["workflow"], "token-research");
     }
 
     #[test]
     fn output_has_address_and_chain() {
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out =
+            full_assemble(some_data(), some_data(), some_data(), some_data(), null()).unwrap();
         assert_eq!(out["address"], "0xTOKEN");
         assert_eq!(out["chain"], "501");
     }
 
     #[test]
     fn core_has_all_required_fields() {
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out =
+            full_assemble(some_data(), some_data(), some_data(), some_data(), null()).unwrap();
         assert!(!out["core"]["info"].is_null());
         assert!(!out["core"]["price"].is_null());
         assert!(!out["core"]["contract"].is_null());
@@ -401,8 +428,8 @@ mod tests {
 
     #[test]
     fn structure_has_all_required_fields() {
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out =
+            full_assemble(some_data(), some_data(), some_data(), some_data(), null()).unwrap();
         let s = &out["structure"];
         assert!(!s["holders"].is_null());
         assert!(!s["cluster"].is_null());
@@ -414,9 +441,16 @@ mod tests {
     fn cluster_null_in_structure_preserved() {
         // cluster-overview 500 on new token → null passed in
         let result = assemble(
-            "0xNEW", "501",
-            some_data(), some_data(), some_data(), some_data(),
-            some_data(), null(), some_data(), some_data(), // cluster = null
+            "0xNEW",
+            "501",
+            some_data(),
+            some_data(),
+            some_data(),
+            some_data(),
+            some_data(),
+            null(),
+            some_data(),
+            some_data(), // cluster = null
             null(),
         );
         let out = result.unwrap();

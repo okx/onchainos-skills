@@ -305,9 +305,8 @@ pub(super) fn score_to_stars_decimal(score: u64) -> f64 {
 ///   - top-level `average` → 1-decimal stars
 ///   - `items[*].score`     → integer stars
 ///   - `list[*].score`      → integer stars (alternate field name; backend
-///                            is inconsistent across endpoints — see
-///                            `agent-list` which uses `list` — so accept
-///                            either; only one will actually be present)
+///     is inconsistent across endpoints — see `agent-list` which uses `list`,
+///     so accept either; only one will actually be present)
 pub(super) fn convert_feedback_list_scores(v: &mut Value) {
     if let Value::Object(map) = v {
         if let Some(score) = map.get("average").and_then(Value::as_u64) {

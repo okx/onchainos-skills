@@ -93,5 +93,5 @@ Time    Token   Action  Amount
 
 ## Actions
 
-- → "watch [address]" — Wallet Monitor (`workflows/wallet-monitor.md`)
-- → "research [token_they_hold]" — Token Research (`workflows/token-research.md`)
+- → "watch [address]" — Wallet Monitor (`wallet-monitor.md`)
+- → "research [token_they_hold]" — Token Research (`token-research.md`)

@@ -103,7 +103,8 @@ pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
             exclude_risk,
         } => {
             output::success(
-                fetch_token_balances(&mut client, &address, &tokens, exclude_risk.as_deref()).await?,
+                fetch_token_balances(&mut client, &address, &tokens, exclude_risk.as_deref())
+                    .await?,
             );
         }
     }

@@ -315,6 +315,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
     match cmd {
         Commands::Market { command } => format!("market {}", market_sub(command)),
         Commands::Signal { command } => format!("signal {}", signal_sub(command)),
+        Commands::Social { command } => format!("social {}", social_sub(command)),
         Commands::Memepump { command } => format!("memepump {}", memepump_sub(command)),
         Commands::Token { command } => format!("token {}", token_sub(command)),
         Commands::Swap { command } => format!("swap {}", swap_sub(command)),
@@ -326,8 +327,10 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
+        Commands::Competition { command } => format!("competition {}", competition_sub(command)),
         Commands::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
+        Commands::Strategy { command } => format!("strategy {}", strategy_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
@@ -404,9 +407,9 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::NextAction { .. } => "next-action".into(),
         AgentCommand::FileUpload { .. } => "file-upload".into(),
         AgentCommand::FileDownload { .. } => "file-download".into(),
-        AgentCommand::SensitiveWords { .. } => "sensitive-words".into(),
+        AgentCommand::SensitiveWords => "sensitive-words".into(),
         AgentCommand::MessageEligible { .. } => "message-eligible".into(),
-        AgentCommand::SystemConfig { .. } => "system-config".into(),
+        AgentCommand::SystemConfig => "system-config".into(),
         AgentCommand::Heartbeat { .. } => "heartbeat".into(),
         AgentCommand::WakeupNotify { .. } => "wakeup-notify".into(),
         AgentCommand::SaveAgreed { .. } => "save-agreed".into(),
@@ -416,13 +419,13 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
     }
 }
 
-use crate::commands::agentic_wallet::payment::PaymentCommand;
+use crate::commands::payment::PaymentCommand;
 use crate::commands::agentic_wallet::wallet::WalletCommand;
 use crate::commands::{
-    defi::DefiCommand, gateway::GatewayCommand, leaderboard::LeaderboardCommand,
-    market::MarketCommand, memepump::MemepumpCommand, portfolio::PortfolioCommand,
-    security::SecurityCommand, signal::SignalCommand, swap::SwapCommand, token::TokenCommand,
-    tracker::TrackerCommand,
+    competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
+    leaderboard::LeaderboardCommand, market::MarketCommand, memepump::MemepumpCommand,
+    portfolio::PortfolioCommand, security::SecurityCommand, signal::SignalCommand,
+    social::SocialCommand, swap::SwapCommand, token::TokenCommand, tracker::TrackerCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -443,6 +446,30 @@ fn signal_sub(c: &SignalCommand) -> &'static str {
     match c {
         SignalCommand::Chains => "chains",
         SignalCommand::List { .. } => "list",
+    }
+}
+
+fn social_sub(c: &SocialCommand) -> &'static str {
+    match c {
+        SocialCommand::NewsLatest { .. } => "news-latest",
+        SocialCommand::NewsBySymbol { .. } => "news-by-symbol",
+        SocialCommand::NewsSearch { .. } => "news-search",
+        SocialCommand::NewsDetail { .. } => "news-detail",
+        SocialCommand::NewsPlatforms => "news-platforms",
+        SocialCommand::SentimentRanking { .. } => "sentiment-ranking",
+        SocialCommand::SentimentSymbol { .. } => "sentiment-symbol",
+        SocialCommand::VibeTimeline { .. } => "vibe-timeline",
+        SocialCommand::VibeTopKols { .. } => "vibe-top-kols",
+    }
+}
+
+fn strategy_sub(c: &crate::commands::strategy::StrategyCommand) -> &'static str {
+    use crate::commands::strategy::StrategyCommand;
+    match c {
+        StrategyCommand::CreateLimit(_) => "create-limit",
+        StrategyCommand::Cancel(_) => "cancel",
+        StrategyCommand::List(_) => "list",
+        StrategyCommand::Resume(_) => "resume",
     }
 }
 
@@ -543,13 +570,16 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Switch { .. } => "switch",
         WalletCommand::Status => "status",
         WalletCommand::Addresses { .. } => "addresses",
+        WalletCommand::Qrcode { .. } => "qrcode",
         WalletCommand::Logout => "logout",
         WalletCommand::Chains => "chains",
+        WalletCommand::Geoblock => "geoblock",
         WalletCommand::Balance { .. } => "balance",
         WalletCommand::Send { .. } => "send",
         WalletCommand::History { .. } => "history",
         WalletCommand::ContractCall { .. } => "contract-call",
         WalletCommand::SignMessage { .. } => "sign-message",
+        WalletCommand::GasStation { .. } => "gas-station",
         WalletCommand::ReportPluginInfo { .. } => "report-plugin-info",
     }
 }
@@ -564,18 +594,32 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
     }
 }
 
-fn payment_sub(c: &PaymentCommand) -> &'static str {
+fn payment_sub(c: &PaymentCommand) -> String {
+    use crate::commands::payment::{DefaultAction, SessionCommand};
     match c {
-        PaymentCommand::X402Pay { .. } => "x402-pay",
-        PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
+        PaymentCommand::X402Pay { .. } => "pay".to_string(),
+        PaymentCommand::Eip3009Sign { .. } => "pay-local".to_string(),
+        PaymentCommand::Default { action } => match action {
+            DefaultAction::Set { .. } => "default-set".to_string(),
+            DefaultAction::Get => "default-get".to_string(),
+            DefaultAction::Unset => "default-unset".to_string(),
+        },
+        PaymentCommand::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
+        PaymentCommand::MppCharge { .. } => "charge".to_string(),
+        PaymentCommand::Session { command } => match command {
+            SessionCommand::Open { .. } => "session open".to_string(),
+            SessionCommand::Voucher { .. } => "session voucher".to_string(),
+            SessionCommand::TopUp { .. } => "session topup".to_string(),
+            SessionCommand::Close { .. } => "session close".to_string(),
+        },
     }
 }
 
 fn a2a_pay_sub(c: &crate::commands::payment::a2a_pay::A2aPayCommand) -> &'static str {
     use crate::commands::payment::a2a_pay::A2aPayCommand;
     match c {
-        A2aPayCommand::Create { .. } => "create",
-        A2aPayCommand::Pay { .. } => "pay",
+        A2aPayCommand::Create(_) => "create",
+        A2aPayCommand::Pay(_) => "pay",
         A2aPayCommand::Status { .. } => "status",
     }
 }
@@ -611,6 +655,17 @@ fn defi_sub(c: &DefiCommand) -> &'static str {
         DefiCommand::Collect { .. } => "collect",
         DefiCommand::Positions { .. } => "positions",
         DefiCommand::PositionDetail { .. } => "position-detail",
+    }
+}
+
+fn competition_sub(c: &CompetitionCommand) -> &'static str {
+    match c {
+        CompetitionCommand::List { .. } => "list",
+        CompetitionCommand::Detail { .. } => "detail",
+        CompetitionCommand::Rank { .. } => "rank",
+        CompetitionCommand::UserStatus { .. } => "user-status",
+        CompetitionCommand::Join { .. } => "join",
+        CompetitionCommand::Claim { .. } => "claim",
     }
 }
 

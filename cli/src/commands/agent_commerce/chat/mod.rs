@@ -225,7 +225,7 @@ async fn cmd_download(
 pub async fn fetch_sensitive_words(client: &ApiClient) -> Result<Value> {
     let headers = [("User-Agent", "onchainos-cli")];
     let resp = client
-        .get_with_headers_raw(SENSITIVE_WORDS_PATH, &[], Some(&headers))
+        .get_with_headers_response(SENSITIVE_WORDS_PATH, &[], Some(&headers))
         .await?;
     crate::client::handle_agent_commerce_response(resp).await
 }
@@ -256,7 +256,7 @@ pub async fn fetch_message_eligible(
 ) -> Result<Value> {
     let headers = agent_commerce_headers(agent_id);
     let resp = client
-        .get_with_headers_raw(
+        .get_with_headers_response(
             MESSAGE_ELIGIBLE_PATH,
             &[
                 ("clientAgentId", client_agent_id),
@@ -371,7 +371,7 @@ async fn handle_message_eligible_response(resp: reqwest::Response) -> Result<Val
 pub async fn fetch_system_config(client: &ApiClient) -> Result<Value> {
     let headers = [("User-Agent", "onchainos-cli")];
     let resp = client
-        .get_with_headers_raw(SYSTEM_CONFIG_PATH, &[], Some(&headers))
+        .get_with_headers_response(SYSTEM_CONFIG_PATH, &[], Some(&headers))
         .await?;
     crate::client::handle_agent_commerce_response(resp).await
 }
