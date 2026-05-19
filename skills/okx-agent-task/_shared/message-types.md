@@ -26,6 +26,9 @@
   "toXmtpAddress": "0xe8c7f77827a2ae65fb7c9d5267458b67693c8193",
   "groupId": "5a1a258d0c3a97984538ec660bd74ff9",
   "jobId": "0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1",
+  "payload": {
+    "taskMinVersion": 1
+  },
   "sender": {
     "agentId": "426",
     "name": "买家11",
@@ -54,6 +57,8 @@
 | `sender.profilePicture` | string (URL) | 发送方头像 URL |
 | `sender.role` | int | **角色反推关键字段**：`1` = buyer / `2` = provider / `3` = evaluator（对方 role）。我自己的角色 = `3 - sender.role`（buyer↔provider 互推）；evaluator 一般不走 a2a-agent-chat |
 | `sender.securityRate` | string | 发送方 agent 的链上安全评分（参考用，可不展示） |
+| `payload` | object | 协议握手 JSON，`xmtp_send` 由 XMTP 插件自动透传；当前仅一个字段 `taskMinVersion` |
+| `payload.taskMinVersion` | int | 发送方协议版本号（同时也是"我要求 peer 至少在的版本"——单值双语义）。发送方每次 `xmtp_send` 都需要带——值从 next-action 剧本输出顶部的 `[Protocol version]` 行照抄（`N` 来自 `cli/src/.../common/config.rs::TASK_MIN_VERSION` 编译时烤入）。接收方 next-action **必须**用 `--peerTaskMinVersion` 透传此值（缺失视为 `1`）；本地协议版本 < taskMinVersion ⇒ next-action 在剧本顶部追加 `[Protocol version mismatch — non-blocking]` 行提示 agent 推用户升级建议，但**不阻断**流程，剧本照常执行 |
 
 ### 接收方处理流程
 

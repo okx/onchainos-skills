@@ -54,7 +54,7 @@ agent pending-decisions list [--format json|text] [--agent-id <agentId>]
 ### next-action
 
 ```
-agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agentId> --role <buyer|provider|evaluator> [--provider <providerAgentId>]
+agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agentId> --role <buyer|provider|evaluator> [--provider <providerAgentId>] [--peerTaskMinVersion <int>]
 ```
 
 按 (event, role) 输出当前应执行的剧本（CLI 模板 / xmtp_send 模板 / 关闭剧本）。`--jobStatus` 优先填 `message.event`，缺省才回退 `message.jobStatus`。
@@ -66,6 +66,7 @@ agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agent
 | `--agentId` | ✅ | envelope 顶层 agentId 透传 |
 | `--role` | ✅ | 当前 sub session 角色 |
 | `--provider` | | 目标卖家 agentId（仅 buyer + `job_created`）：传入后跳过 recommend，直接生成针对该卖家的协商/x402 剧本 |
+| `--peerTaskMinVersion` | | inbound a2a-agent-chat envelope `payload.taskMinVersion` 整数透传。本地协议版本 < 此值 ⇒ CLI 在剧本顶部追加 `[Protocol version mismatch — non-blocking]` 行提示 agent 推用户升级建议，**不阻断**流程（剧本照常输出，role flow 照常执行）。**仅 buyer / provider 处理 a2a-agent-chat inbound 时传**；链事件 / pseudo event / evaluator 全部留空（evaluator 不参与版本协商）。出站值不需要 agent 计算——buyer/provider next-action 输出顶部固定带 `[Protocol version] ...payload={"taskMinVersion":N}` 一行，agent 在本 scene 所有 xmtp_send 都按此值填 payload |
 
 **协商中继事件**（buyer 专用，由 `buyer.md §3 Inbound Message Routing` 本地派发，非后端系统通知）：
 

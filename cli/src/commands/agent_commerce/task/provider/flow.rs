@@ -4,10 +4,9 @@
 //! 目的：把散落在 provider.md 里的 Scene 步骤集中到代码里，让 agent 只需
 //! `exec onchainos agent next-action ...` 拿提示词直接执行，不用推理整份文档。
 
+use crate::commands::agent_commerce::task::common::config::TASK_MIN_VERSION;
 use crate::commands::agent_commerce::task::common::pending::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
-
-const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` / `userContent:` templates below are samples — translate to the user's language before `xmtp_dispatch_user` / `xmtp_prompt_user`.\n\n";
 
 /// Provider 在某 status 下应该执行的下一步（用于 `agent common context` 输出末尾的菜单）。
 ///
@@ -68,6 +67,13 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 /// 解析成 `Event`，看不认识的字符串保留 `Event::Other(s)` 兜底。
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
+
+    // 输出顶部固定的两行前缀:翻译规则 + 协议版本握手。version_prefix 用 format! 注入 TASK_MIN_VERSION
+    // 当前值,常量 bump 后剧本自动更新。
+    let localization_prefix = "[Localization] All `content:` / `userContent:` templates below are samples — translate to the user's language before `xmtp_dispatch_user` / `xmtp_prompt_user`.\n\n";
+    let version_prefix = format!(
+        "[Protocol version] When calling `xmtp_send`, the `payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
+    );
 
     // 短 jobId,用在 xmtp_prompt_user 的 userContent 第一行 `[任务 <短ID> 你作为卖家]` 前缀,
     // 多 prompt 并发时给用户和 user agent 双重消歧锚。详见 SKILL.md Session 通信契约 5.
@@ -811,5 +817,5 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              3. 不要预测/假设其他通知\n"
         ),
     };
-    format!("{LOCALIZATION_PREFIX}{context_preamble}{body}")
+    format!("{localization_prefix}{version_prefix}{context_preamble}{body}")
 }

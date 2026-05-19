@@ -15,3 +15,15 @@
 /// - `false` = **释放** —— 各终态 arm 输出 "任务终态,可调 `xmtp_delete_conversation` 释放会话资源" 指令。
 ///   适用场景:大规模生产,会话过多导致前端 / IM 桥负担,需要主动清理。
 pub const KEEP_CONVERSATION_ON_TERMINAL: bool = true;
+
+/// 任务协议版本号 —— 双向同一个数,既是本地"我目前在哪个版本",也是
+/// "我要求 peer 至少在哪个版本"。
+///
+/// - **发送方**:每次 `xmtp_send` 把本值塞进 `payload.taskMinVersion`
+/// - **接收方**:next-action 用 `--peerTaskMinVersion` 拿到 peer 的值,
+///   判定 `本地 TASK_MIN_VERSION < peer.taskMinVersion` ⇒ 本地过期,
+///   输出 version_mismatch 剧本,提示用户 `onchainos upgrade`
+///
+/// Bump 规则:仅当任务协议(状态机 / envelope schema / payload schema)发生
+/// **破坏向后兼容**的变化时 +1;纯 bug fix / 文案微调不要动。
+pub const TASK_MIN_VERSION: u32 = 1;

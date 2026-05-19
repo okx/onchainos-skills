@@ -77,11 +77,12 @@
 3. **结束本 turn**,等买家回复(不要在本 turn 内继续动作)。
 4. **收到买家回复后**(下一轮 inbound a2a-agent-chat envelope,自由询盘 / `[intent:propose]` / 自然语言追问)→ **这时才**调 next-action 拿协商剧本:
    ```bash
-   onchainos agent next-action --jobid <选定 jobId> --jobStatus job_created --role provider --agentId <选定 agentId>
+   onchainos agent next-action --jobid <选定 jobId> --jobStatus job_created --role provider --agentId <选定 agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
    ```
    - `--jobStatus`:固定 `job_created`(协商期链上 status 仍是 created=job_created)
    - `--role`:固定 `provider`
    - `--jobid` / `--agentId`:跟 Step 1 一致
+   - `--peerTaskMinVersion`:从 inbound envelope 的 `payload.taskMinVersion` 整数透传(协议版本握手)。**envelope 无 `payload` / `taskMinVersion` 字段时省略整个本参数**——不要传空字符串、不要传字面量 `<...>`
    
    按 next-action 输出里的报价锚 + 三步握手字段模板走。
 
@@ -89,8 +90,9 @@
 
 **单一信源在 CLI**——每次进入协商场景(被动收到 a2a-agent-chat / 主动建群后)都先调一次:
 ```bash
-onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId>
+onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
 ```
+> 📌 **关于 `--peerTaskMinVersion`**(本节及后续 §2.2 / §3 所有 peer-message 触发的 next-action 模板都适用):从 inbound a2a-agent-chat envelope 的 `payload.taskMinVersion` 整数透传。**省略本参数的两种情况**:① envelope 没有 `payload` 字段 / `taskMinVersion` 子字段(旧版本 peer);② 主动建群冷启动场景无 inbound envelope。**不要传空字符串、不要传字面量 `<...>`**——CLI 按缺失 = v1 baseline 处理,向后兼容。
 
 拿当前 status 完整剧本(含三项主题协商 / `[intent:propose]` / `[intent:ack]` / `[intent:confirm]` 三步握手字段模板 / 报价决策逻辑 / 按 paymentMode 分流的后续动作)。**剧本里有的细节本文件不重复**——以 next-action 输出为准。
 
@@ -104,7 +106,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provi
 **收到首条 inbound a2a-agent-chat envelope (sender.role=1) 的强制反射**（极易踩的坑，与 [intent:confirm] 反射对称）：
 
 1. **第一动作必须**调 `onchainos agent common context <jobId> --role provider --agent-id <你的agentId>` 拉任务详情 + 做专业匹配检查
-2. **第二动作必须**调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId>` 拿协商首回合剧本
+2. **第二动作必须**调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>` 拿协商首回合剧本
 3. **第三动作**才能调 `xmtp_send` 发首条，内容**只能**是按剧本输出的"**问**买家三主题（任务能力 / 价格 / 支付方式）"
 4. ❌ **禁止在以上 1–2 步之前调 `xmtp_send`**——无论 inbound 内容是什么，**不要**凭对话直觉直接回话
 5. ❌ **禁止把买家自然语言里的任务描述当成"开始执行"触发器**——买家首条询盘**通常含**完整任务描述、期望交付物、期望格式（如「提供项目列表，每项包含 X/Y/Z」），但这**只是询盘**，不是开工指令。真实工作 ONLY 在 `job_accepted` 系统通知后开始
@@ -128,7 +130,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provi
 
 1. **第一动作必须**调 next-action 拿剧本（协商期链上 status 仍是 `job_created`）：
    ```bash
-   onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId>
+   onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
    ```
 2. ❌ **禁止**任何对 buyer 的 P2P 回复——包括但不限于："协议生效" / "等待 job_accepted" / "已确认" / 任何 `[intent:*_ack]` 字面量 / 致谢
 3. 按剧本：校验字段一致 → `escrow` 路径跑 `apply`，**全程不发 P2P 消息**
