@@ -336,14 +336,13 @@ For commands requiring auth (sections B, D, E), check login state:
      > **Chinese**: "验证码已发送到 **{email}**，请查收邮件并告诉我验证码。"
      Once the user provides the code, run: `onchainos wallet verify <code>`.
      > AI should always infer `--locale` from conversation context and include it:
-     > - Chinese (简体/繁体, or user writes in Chinese) → `zh-CN`
-     > - Japanese (user writes in Japanese) → `ja-JP`
-     > - English or any other language → `en-US` (default)
+     > - Chinese (简体/繁体, or user writes in Chinese) → `zh_CN`
+     > - English or any other language → `en_US` (default)
      >
-     > If you cannot confidently determine the user's language, default to `en-US`.
+     > If you cannot confidently determine the user's language, default to `en_US`.
 
-   > **Fallback**: If the inferred locale is not in the supported set (`en-US`, `zh-CN`),
-   > the CLI silently falls back to `en-US` and emits a stderr warning. The login flow
+   > **Fallback**: If the inferred locale is not in the supported set (`en_US`, `zh_CN`),
+   > the CLI silently falls back to `en_US` and emits a stderr warning. The login flow
    > still succeeds. AI callers do not need to handle this case specially.
 3. If the user declines to provide an email:
    - **3a.** Display the following message to the user verbatim (translated to the user's language):

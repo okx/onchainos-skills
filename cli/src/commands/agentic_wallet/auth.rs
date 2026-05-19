@@ -350,14 +350,14 @@ pub(crate) fn format_api_error(e: anyhow::Error) -> anyhow::Error {
 ///
 /// Returns `(validated_locale, did_fallback)`:
 /// - If the input matches the whitelist (case-sensitive) -> pass through, `false`.
-/// - Otherwise -> fall back to `"en-US"`, `true`.
+/// - Otherwise -> fall back to `"en_US"`, `true`.
 ///
 /// Callers should emit a stderr warning when `did_fallback == true`.
 pub(crate) fn validate_locale(locale: &str) -> (&'static str, bool) {
     match locale {
-        "en-US" => ("en-US", false),
-        "zh-CN" => ("zh-CN", false),
-        _ => ("en-US", true),
+        "en_US" => ("en_US", false),
+        "zh_CN" => ("zh_CN", false),
+        _ => ("en_US", true),
     }
 }
 
@@ -382,7 +382,7 @@ pub(super) async fn cmd_login(
                 let (validated, did_fallback) = validate_locale(loc);
                 if did_fallback {
                     eprintln!(
-                        "locale '{}' not in supported list (en-US, zh-CN), falling back to en-US",
+                        "locale '{}' not in supported list (en_US, zh_CN), falling back to en_US",
                         loc,
                     );
                 }
@@ -1193,31 +1193,26 @@ mod tests {
 
     #[test]
     fn validate_locale_passes_en_us() {
-        assert_eq!(validate_locale("en-US"), ("en-US", false));
+        assert_eq!(validate_locale("en_US"), ("en_US", false));
     }
 
     #[test]
     fn validate_locale_passes_zh_cn() {
-        assert_eq!(validate_locale("zh-CN"), ("zh-CN", false));
+        assert_eq!(validate_locale("zh_CN"), ("zh_CN", false));
     }
 
     #[test]
-    fn validate_locale_falls_back_for_ja_jp() {
-        assert_eq!(validate_locale("ja_JP"), ("en-US", true));
-    }
-
-    #[test]
-    fn validate_locale_falls_back_for_underscore_en() {
-        assert_eq!(validate_locale("en_US"), ("en-US", true));
+    fn validate_locale_falls_back_for_hyphenated_en() {
+        assert_eq!(validate_locale("en-US"), ("en_US", true));
     }
 
     #[test]
     fn validate_locale_falls_back_for_arbitrary() {
-        assert_eq!(validate_locale("xx-YY"), ("en-US", true));
+        assert_eq!(validate_locale("xx-YY"), ("en_US", true));
     }
 
     #[test]
     fn validate_locale_falls_back_for_empty_string() {
-        assert_eq!(validate_locale(""), ("en-US", true));
+        assert_eq!(validate_locale(""), ("en_US", true));
     }
 }
