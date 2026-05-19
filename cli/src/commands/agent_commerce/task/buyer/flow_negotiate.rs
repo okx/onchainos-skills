@@ -528,7 +528,15 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      - replaySuccess=false → 调用 xmtp_dispatch_user 通知用户重放失败：\n\
      \x20\x20content:\n\
      {x402_replay_fail}\n\n\
-     → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n"
+     → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n\n\
+     🛑🛑🛑 **收到 `job_accepted` 后的铁律（MANDATORY）**：\n\
+     收到 `job_accepted` 系统事件后，**必须**调用：\n\
+     ```bash\n\
+     onchainos agent next-action --jobid {job_id} --jobStatus job_accepted --role buyer --agentId {agent_id}\n\
+     ```\n\
+     按返回的剧本执行（剧本会引导执行 `onchainos agent complete`）。\n\
+     ❌ **绝对禁止**重跑本 turn 的 `x402-check` / `task-402-pay` / `xmtp_dispatch_user`——这些已在本 turn 完成，重跑会导致重复支付或重复通知。\n\
+     ❌ **绝对禁止**跳过 `next-action` 自行决定下一步——`job_accepted` 剧本包含 `complete` 步骤，跳过 = 任务永久卡在 accepted 状态。\n"
     )
 }
 
