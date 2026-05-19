@@ -88,7 +88,7 @@
 | `xmtp_send` 之前没调 `session_status` | 缺 `sessionKey` 参数 | 严格两步：`session_status` → 拿 sessionKey → `xmtp_send`；同 turn 内 `session_status` 不重复调 |
 | `xmtp_file_upload` 文件路径不存在 | `--file` 参数指向用户机器上不存在的文件 | 让用户确认文件路径；不要瞎猜替代路径 |
 | `xmtp_file_download` `localPath` 不存在 | CLI 已尝试 3 次都失败，`info` 返回带 `downloadError` 字段 | **不要**用 `ls`/`find` 找替代文件（违反 Layer 0 安全门）；按"举证不全"投票（决策原则 #5） |
-| `[USER_DECISION_RELAY]` 前缀检测失败 | user agent 把"用户决定"写成"用户决策" / 用了 ASCII `:` 替代中文 `：` | 严格按 `[USER_DECISION_RELAY] 用户决策：<原话>` 22 字符前缀（含中文冒号） |
+| `[USER_DECISION_RELAY]` 前缀检测失败 | user agent 把"用户决定"写成"用户决策" / 用了 ASCII `:` 替代中文 `：` | 严格按 `[USER_DECISION_RELAY] decision: <原话>` 22 字符前缀（含中文冒号） |
 
 ## 7. 区域限制
 

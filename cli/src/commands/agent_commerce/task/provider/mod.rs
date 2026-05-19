@@ -58,7 +58,7 @@ pub enum ProviderCommand {
         job_id: String,
         #[arg(long, default_value = "")]
         file: String,
-        #[arg(long, default_value = "任务已完成，请验收")]
+        #[arg(long, default_value = "Task completed, please review")]
         message: String,
         /// 卖家 agentId（必填）。beta 后端拒空 agenticId header → 3001 auth fail；
         /// 任务详情里的 providerAgentId 字段可能为 null，不能依赖反查。

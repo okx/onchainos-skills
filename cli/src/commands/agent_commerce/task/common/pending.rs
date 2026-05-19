@@ -63,7 +63,7 @@ pub enum PendingDecisionsCommand {
     },
     /// 列出当前 pending（自动清理过期条目）。可按 --agent-id 过滤。
     /// `--format json` 输出 `{ ok, data: { pending: [...], count } }`，
-    /// `--format text` 输出人类可读列表，每行 `<idx>. [任务 <短ID> 你作为<角色>(#<agentId>)] <summary>`。
+    /// `--format text` 输出人类可读列表，每行 `<idx>. [Task <短ID> you as <role>(#<agentId>)] <summary>`。
     List {
         #[arg(long, default_value = "json")]
         format: String,
@@ -162,12 +162,12 @@ fn validate_role(role: &str) -> Result<()> {
     Ok(())
 }
 
-fn role_zh(role: &str) -> &'static str {
+fn role_label(role: &str) -> &'static str {
     match role {
-        "buyer" => "买家",
-        "provider" => "卖家",
-        "evaluator" => "仲裁者",
-        _ => "未知角色",
+        "buyer" => "buyer",
+        "provider" => "seller",
+        "evaluator" => "Evaluator Agent",
+        _ => "unknown role",
     }
 }
 
@@ -266,10 +266,10 @@ pub async fn run(cmd: PendingDecisionsCommand) -> Result<()> {
                     } else {
                         for (i, e) in filtered.iter().enumerate() {
                             println!(
-                                "{}. [任务 {} 你作为{}(#{})] {}",
+                                "{}. [Task {} you as {}(#{})] {}",
                                 i + 1,
                                 e.short_job_id,
-                                role_zh(&e.role),
+                                role_label(&e.role),
                                 e.agent_id,
                                 e.summary
                             );
@@ -333,7 +333,7 @@ mod tests {
             role: "buyer".to_string(),
             agent_id: "100".to_string(),
             summary: "测试摘要".to_string(),
-            user_content: "[任务 0x3938…cdef 你作为买家] 测试内容".to_string(),
+            user_content: "[Task 0x3938…cdef you as buyer] 测试内容".to_string(),
             created_at: 1700000000,
             expires_at: 1700086400,
         };
@@ -342,6 +342,6 @@ mod tests {
         assert!(json.contains("\"user_content\":"));
         let back: PendingEntry = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.agent_id, "100");
-        assert_eq!(back.user_content, "[任务 0x3938…cdef 你作为买家] 测试内容");
+        assert_eq!(back.user_content, "[Task 0x3938…cdef you as buyer] 测试内容");
     }
 }

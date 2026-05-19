@@ -41,7 +41,7 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
 /// 短 jobId 前缀让用户在多任务并发时一眼分清是哪个任务。
 pub fn job_refused_user_decision_prompt(short_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[任务 {short_id} 你作为卖家] 任务被买家拒绝。请选择:\n\
+        "\x20\x20\x20\x20[Task {short_id} you as seller] 任务被买家拒绝。请选择:\n\
          \x20\x20\x20\x201. 发起仲裁 → 回复『发起仲裁，理由是<理由>』\n\
          \x20\x20\x20\x202. 同意退款 → 回复『同意退款』"
     )
@@ -132,7 +132,7 @@ pub fn job_auto_completed_user_notify(job_id: &str) -> String {
 /// 用户回 `立即提交` → user-session 把决策 relay 回 sub,sub 跑交付流程;不回 → sub 等 submit_expired 触发退款。
 pub fn submit_deadline_warn_user_prompt(short_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[⏰ 截止警告 任务 {short_id} 你作为卖家] 提交交付物时限快到了。\n\
+        "\x20\x20\x20\x20[⏰ 截止警告 任务 {short_id} you as seller] 提交交付物时限快到了。\n\
          \x20\x20\x20\x20如果交付物已准备好,请回复『立即提交』,我会马上跑交付流程;\n\
          \x20\x20\x20\x20如果还没准备好,可以不回复——超时后买家可领取自动退款,担保资金原路返回买家,本任务作废。"
     )
@@ -152,7 +152,7 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
 /// `Event::JobDisputed` Step 1 给用户看的证据收集 prompt(`xmtp_prompt_user.userContent`)。
 pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[任务 {short_id} 你作为卖家] 仲裁已上链，需要在 1 小时内提交链下证据。请提供:\n\
+        "\x20\x20\x20\x20[Task {short_id} you as seller] 仲裁已上链，需要在 1 小时内提交链下证据。请提供:\n\
          \x20\x20\x20\x20- 文字摘要(必填):说明你已按验收标准完成的关键证据点\n\
          \x20\x20\x20\x20- 图片路径(可选):截图、设计稿、聊天记录等本地文件路径\n\
          \x20\x20\x20\x20回复格式示例:『证据：已按需求完成 X/Y/Z；图片：/path/to/screenshot.png』"

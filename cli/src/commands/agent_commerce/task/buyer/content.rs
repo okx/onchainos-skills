@@ -68,7 +68,7 @@ pub fn job_refused_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobDisputed` Step 1 给用户看的证据收集 prompt(`xmtp_prompt_user.userContent`)。
 pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[任务 {short_id} 你作为买家] 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
+        "\x20\x20\x20\x20[Task {short_id} you as buyer] 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
          \x20\x20\x20\x20- 文字摘要（必填）：说明交付物不达标的关键证据点\n\
          \x20\x20\x20\x20- 图片路径（可选）：截图、聊天记录等本地文件路径\n\
          \x20\x20\x20\x20回复格式示例：『证据：交付物缺少 X/Y/Z；图片：/path/to/screenshot.png』"
@@ -202,7 +202,7 @@ pub fn x402_replay_fail_payment_user_notify(job_id: &str) -> String {
 /// `Event::NegotiateReply` 报价超出 max_budget 时推给用户的决策 prompt。
 pub fn over_budget_user_prompt(short_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[任务 {short_id}] 卖家报价超出最高预算，协商已终止。请选择下一步：\n\
+        "\x20\x20\x20\x20[Task {short_id}] 卖家报价超出最高预算，协商已终止。请选择下一步：\n\
          \x20\x20\x20\x20\x20\x20A. 查看推荐卖家列表\n\
          \x20\x20\x20\x20\x20\x20B. 指定其他卖家（请提供 agentId）\n\
          \x20\x20\x20\x20\x20\x20C. 关闭任务"

@@ -31,7 +31,7 @@ fn designated_provider_d_steps(job_id: &str, agent_id: &str, dp_id: &str) -> Str
              \x20\x20**DX-Step 2 — 金额校验：**\n\
              \x20\x20比较 x402-check 的 `amountHuman` 与 services[0] 的 `feeAmount`：\n\
              \x20\x20- 不一致（差异 > 1%）→ 调用 xmtp_prompt_user 询问用户是否接受实际价格：\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「肯定/接受/accept/OK/同意 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 继续 DX-Step 3；用户语义「否定/拒绝/reject/decline/no 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 引导换卖家。⚠️ **路由 tag 协议**：`[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「肯定/接受/accept/OK/同意 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] user said: <用户回复原文，不解读、不翻译>\") relay 回 sub session 继续 DX-Step 3；用户语义「否定/拒绝/reject/decline/no 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] user said: <用户回复原文，不解读、不翻译>\") relay 回 sub session 引导换卖家。⚠️ **路由 tag 协议**：`[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20\x20\x20userContent: 任务 {job_id} 指定卖家（AgentID={dp_id}）实际收费 <amountHuman> <tokenSymbol>，与注册费用 <feeAmount> <feeTokenSymbol> 不一致，是否接受？\n\
              \x20\x20- 一致 → 继续 DX-Step 3。\n\n\
              \x20\x20**DX-Step 3 — 预算检查：**\n\
@@ -189,11 +189,11 @@ fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, d
              ⚠️ **切换时必须先发 [NEGOTIATE_REJECT] 再切走**（让卖家有明确终止信号），但**禁止 xmtp_delete_conversation 删群**。切走后再收到该卖家消息一律忽略、不回复。\n\
              当前页无剩余卖家且翻页也无结果 → 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
-             用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
-             用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
+             用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] decision: 指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
+             用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] decision: 转为公开任务\") relay 回 sub session 执行 set-public；\
+             用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] decision: 关闭任务\") relay 回 sub session 执行 close。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
-             \x20\x20userContent: [任务 {short_id} 你作为买家] 推荐卖家均不合适。请选择下一步：\n\
+             \x20\x20userContent: [Task {short_id} you as buyer] 推荐卖家均不合适。请选择下一步：\n\
              \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
              \x20\x20B. 转为公开任务 — 让更多卖家看到任务\n\
              \x20\x20C. 关闭任务 — 取消并退款\n\
@@ -289,7 +289,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_title: Option<&str>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
-    // 短 jobId,用在 xmtp_prompt_user 的 userContent 第一行 `[任务 <短ID> 你作为买家]` 前缀,
+    // 短 jobId,用在 xmtp_prompt_user 的 userContent 第一行 `[Task <短ID> you as buyer]` 前缀,
     // 多 prompt 并发时给用户和 user agent 双重消歧锚。详见 SKILL.md Session 通信契约 5.
     let short_id = short_job_id(job_id);
 
@@ -409,12 +409,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              **Step 2 — 展示列表给用户，让用户选择：**\n\
              调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；再调 `xmtp_prompt_user`：\n\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户选择某个卖家（给出 agentId 或序号）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：选择卖家 agentId=<用户选中的agentId>\") relay 回 sub session；\
-             用户要求翻页 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：翻页\") relay 回 sub session；\
-             用户选择转为公开任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
-             用户选择关闭任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
+             用户选择某个卖家（给出 agentId 或序号）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] decision: 选择卖家 agentId=<用户选中的agentId>\") relay 回 sub session；\
+             用户要求翻页 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] decision: 翻页\") relay 回 sub session；\
+             用户选择转为公开任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] decision: 转为公开任务\") relay 回 sub session 执行 set-public；\
+             用户选择关闭任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] decision: 关闭任务\") relay 回 sub session 执行 close。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\n\
-             \x20\x20userContent: [任务 {short_id} 你作为买家] 以下是推荐卖家列表：\n\
+             \x20\x20userContent: [Task {short_id} you as buyer] 以下是推荐卖家列表：\n\
              \x20\x20<将 recommend 输出的卖家列表完整粘贴，每个卖家一段：序号 / Agent Name / AgentID / 服务名称与描述 / 信用分 / 费用 / 支付方式>\n\
              \x20\x20---\n\
              \x20\x20请选择：\n\
@@ -599,13 +599,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
              调用 xmtp_prompt_user 把交付物和验收决策请求推给用户（sessionKey 复用 Step 2 已获取的值;调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`,见硬规则 7）：\n\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户语义「肯定/通过/approve/OK/同意/yes 等」→ **仅调** xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 approve_review 流程，你不要做其它事）；\
-             用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ **仅调** xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 reject_review 流程，你不要做其它事）。\
+             用户语义「肯定/通过/approve/OK/同意/yes 等」→ **仅调** xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] user said: <用户回复原文，不解读、不翻译>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 approve_review 流程，你不要做其它事）；\
+             用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ **仅调** xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] user said: <用户回复原文，包含原因>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 reject_review 流程，你不要做其它事）。\
              ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略 / 拆开**——sub 按 intent tag 分支，不再按文字匹配，避免多语言失配。\n\
              ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。禁止 user session agent 自己执行 task CLI。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
-             \x20\x20\x20\x20userContent（按 deliverableType 分,首行务必带 `[任务 {short_id} 你作为买家]` 前缀）：\n\n\
+             \x20\x20\x20\x20userContent（按 deliverableType 分,首行务必带 `[Task {short_id} you as buyer]` 前缀）：\n\n\
              \x20\x20\x20\x20▸ deliverableType=file：\n\
-             \x20\x20\x20\x20[任务 {short_id} 你作为买家] 卖家已提交交付物（文件），已下载到本地。\n\
+             \x20\x20\x20\x20[Task {short_id} you as buyer] 卖家已提交交付物（文件），已下载到本地。\n\
              \x20\x20\x20\x20📁 交付物文件路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/task预发.png，严禁只写文件名）\n\
              \x20\x20\x20\x20<如果 deliverableText 非空，追加：卖家说明：<deliverableText>>\n\
              \x20\x20\x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\
@@ -614,7 +614,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x201. 验收通过 → 回复「验收通过」\n\
              \x20\x20\x20\x202. 拒绝 → 回复「拒绝，原因是<原因>」\n\n\
              \x20\x20\x20\x20▸ deliverableType=text：\n\
-             \x20\x20\x20\x20[任务 {short_id} 你作为买家] 卖家已提交交付物（文字）。\n\
+             \x20\x20\x20\x20[Task {short_id} you as buyer] 卖家已提交交付物（文字）。\n\
              \x20\x20\x20\x20---交付物内容---\n\
              \x20\x20\x20\x20<deliverableText 完整原文，不截断不概括>\n\
              \x20\x20\x20\x20---交付物结束---\n\
@@ -698,10 +698,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              **Step 1 — 调用 xmtp_prompt_user 把证据决策请求推给用户：**\n\n\
              先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户提供证据后，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay 回 sub session 执行 dispute upload。⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。1 小时内必须提交。\n\
+             用户提供证据后，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: <用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay 回 sub session 执行 dispute upload。⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。1 小时内必须提交。\n\
              \x20\x20\x20\x20userContent:\n\
              {evidence_prompt}\n\n\
-             **Step 2 — 等用户回复 relay 回来**：收到 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：...` 后，调 `next-action --jobStatus dispute_evidence` 拿上传剧本（intent tag 已是路由确认；用户证据原文从 `用户证据：` 后面读）。\n\n\
+             **Step 2 — 等用户回复 relay 回来**：收到 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: ...` 后，调 `next-action --jobStatus dispute_evidence` 拿上传剧本（intent tag 已是路由确认；用户证据原文从 `user evidence: ` 后面读）。\n\n\
              ⚠️ 1 小时内必须提交证据，过期后失效。\n\n\
              跑完 Step 1-2 → **结束本轮 turn**，等用户回复。\n"
         )},
@@ -711,7 +711,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             "【当前动作】上传仲裁证据\n\
              【角色】买家（Client）\n\n\
              **Step 1 — 从 relay 提取证据内容：**\n\
-             已通过 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE]` 路由进来，从 `用户证据：` 后面提取：\n\
+             已通过 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE]` 路由进来，从 `user evidence: ` 后面提取：\n\
              - 文字摘要 → 用户提供的文字部分\n\
              - 图片路径（如果用户提供了）→ `--image` 参数\n\
              text 和 image **至少一项**。\n\n\
@@ -769,7 +769,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             "【当前动作】拒绝验收 — 执行 reject\n\
              【角色】买家（Client）\n\n\
              已通过 `[USER_DECISION_RELAY][intent:REJECT_REVIEW]` 路由进来，用户已拒绝交付物。\n\
-             从 relay 消息的 `用户原话：` 后面提取拒绝理由。\n\n\
+             从 relay 消息的 `user said: ` 后面提取拒绝理由。\n\n\
              **Step 1 — 清除 pending-decisions：**\n\
              ```bash\n\
              onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
@@ -943,18 +943,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\
              将 pending list 中**所有卖家**逐一列出，让用户挑选：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户语义「选某个序号 N」（如 \"1\"/\"序号 2\"/\"the third\"/\"select 3\" 等）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER index=<N> agentId=<对应agentId>] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，sub agent 用 tag 里的 agentId 执行 xmtp_start_conversation 建群；\
-             用户语义「全部跳过 / 都不要 / skip all / none of them 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SKIP_ALL_PROVIDERS] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，结束。\
+             用户语义「选某个序号 N」（如 \"1\"/\"序号 2\"/\"the third\"/\"select 3\" 等）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER index=<N> agentId=<对应agentId>] user said: <用户回复原文，不解读、不翻译>\") relay 回 sub session，sub agent 用 tag 里的 agentId 执行 xmtp_start_conversation 建群；\
+             用户语义「全部跳过 / 都不要 / skip all / none of them 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SKIP_ALL_PROVIDERS] user said: <用户回复原文，不解读、不翻译>\") relay 回 sub session，结束。\
              ⚠️ **路由 tag 协议**：`[intent:PICK_PROVIDER index=<N> agentId=<...>]` / `[intent:SKIP_ALL_PROVIDERS]` 必须**完全大写 ASCII** 原样塞入（intent 名 + 字段名 index/agentId 不变；只填值）；禁止翻译/改写。sub 按 intent tag 分支，从 tag 里直接读 index / agentId，**不读用户原话做匹配**。\n\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行建群或 task CLI。\n\
              \x20\x20userContent:\n\
-             \x20\x20[任务 {short_id} 你作为买家] 有以下卖家主动联系你，请选择一个开始协商：\n\
+             \x20\x20[Task {short_id} you as buyer] 有以下卖家主动联系你，请选择一个开始协商：\n\
              \x20\x20\n\
              \x20\x20[遍历 pending list 每个卖家，格式：]\n\
              \x20\x20<序号>. 卖家 AgentID：<agentId> | 名称：<name> | 信用分：<creditScore> | 完成任务数：<completedTaskCount>\n\
              \x20\x20\n\
              \x20\x20请回复卖家序号开始协商，或回复「全部跳过」。\n\n\
-             **Step 3 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由：**\n\n\
+             **Step 3 — 收到 `[USER_DECISION_RELAY][intent:CODE] user said: ...` 后按 intent code 路由：**\n\n\
              ━━━━━━━━━ 分支 A：`[intent:PICK_PROVIDER index=<N> agentId=<X>]` → 建立 session 后协商 ━━━━━━━━━\n\n\
              A-Step 1：从 intent tag 里直接读 `agentId=<X>`，调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
              \x20\x20参数：myAgentId={agent_id}，toAgentId=<tag 里的 agentId>，jobId={job_id}\n\
@@ -1279,13 +1279,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```\n\n\
              **Step 3 — 调用 xmtp_prompt_user 通知用户验收截止时间即将到期，请求决策：**\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户语义「肯定/通过/approve/OK/同意/yes 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 complete；\
-             用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session 执行 reject。\
+             用户语义「肯定/通过/approve/OK/同意/yes 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] user said: <用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 complete；\
+             用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] user said: <用户回复原文，包含原因>\") relay 回 sub session 执行 reject。\
              ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略**——sub 按 intent tag 分支，不按文字匹配。\n\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20userContent:\n\
              {review_deadline_prompt}\n\n\
-             **Step 4 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由：**\n\
+             **Step 4 — 收到 `[USER_DECISION_RELAY][intent:CODE] user said: ...` 后按 intent code 路由：**\n\
              先调 `pending-decisions remove`（硬规则 7）：\n\
              ```bash\n\
              onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
@@ -1295,7 +1295,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```bash\n\
              onchainos agent complete {job_id}\n\
              ```\n\
-             - `[intent:REJECT_REVIEW]`（reason 从 `用户原话：` 后面抽取）：\n\
+             - `[intent:REJECT_REVIEW]`（reason 从 `user said: ` 后面抽取）：\n\
              ```bash\n\
              onchainos agent reject {job_id} --reason \"<用户原话里的拒绝理由>\"\n\
              ```\n"

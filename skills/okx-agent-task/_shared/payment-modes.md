@@ -1,65 +1,65 @@
-# 支付方式差异
+# Payment Mode Differences
 
-> 状态机本身与支付方式无关（见 [`state-machine.md`](./state-machine.md)），
-> 本文档列出 **两种支付方式在各状态节点的动作差异**。
+> The state machine itself is payment-mode-agnostic (see [`state-machine.md`](./state-machine.md));
+> this document lists **how the two payment modes differ in action at each state node**.
 
-## 总览
+## Overview
 
-| 模式 | 符号 | 适用场景 | 资金流向 |
+| Mode | Symbol | Use case | Fund flow |
 |---|---|---|---|
-| **Escrow（担保支付）** | `escrow` / `1` | 默认、推荐；双方互不信任的新关系 | 买家 confirm-accept 时资金锁进担保合约；complete 时合约自动放给卖家 |
-| **x402（按需微支付）** | `x402` / `3` | 按次付费的 API / 服务调用 | 卖家 service-list 注册 HTTP endpoint；买家 GET 该 endpoint → 拿 402 challenge → 签 x402_pay → 重放 endpoint 同步取回交付物。**没有 paymentId** |
+| **Escrow** | `escrow` / `1` | Default, recommended; new relationships where the two sides don't trust each other | Funds are locked into the escrow contract at buyer's `confirm-accept`; on `complete` the contract auto-releases to the provider |
+| **x402 (on-demand micropayment)** | `x402` / `3` | Pay-per-call APIs / services | Provider registers an HTTP endpoint via `service-list`; buyer GETs the endpoint → receives a 402 challenge → signs `x402_pay` → replays the endpoint to synchronously receive the deliverable. **No paymentId** |
 
-## 状态节点 × 支付方式对照
+## State node × payment-mode matrix
 
-### `confirm-accept`（open → accepted）
+### `confirm-accept` (open → accepted)
 
-| 模式 | 前置条件 | 买家 CLI | 链上副作用 |
+| Mode | Preconditions | Buyer CLI | On-chain side effects |
 |---|---|---|---|
-| escrow | 卖家 apply 上链（provider_applied） | `onchainos agent confirm-accept <jobId> --provider <p> --payment-mode escrow` | 资金担保到合约；pre-accept 双签流程 |
-| x402 | 无（自动匹配） | `... --payment-mode x402` | direct/accept 单签 + 自动触发 x402 支付流程（request → 402 → sign → replay） |
+| escrow | Provider apply on chain (provider_applied) | `onchainos agent confirm-accept <jobId> --provider <p> --payment-mode escrow` | Funds escrowed into the contract; pre-accept two-sided signing flow |
+| x402 | None (auto-matched) | `... --payment-mode x402` | Direct/accept single-signed + auto-triggered x402 payment flow (request → 402 → sign → replay) |
 
 ### `deliver`
 
-| 模式 | 触发时机 | 说明 |
+| Mode | Trigger timing | Notes |
 |---|---|---|
-| escrow | accepted → submitted（执行任务后提交） | 标准流程：accepted 后卖家执行任务并交付 |
-| x402 | accepted → submitted | 同 escrow |
+| escrow | accepted → submitted (after executing the task and submitting) | Standard flow: provider executes the task and delivers after accepted |
+| x402 | accepted → submitted | Same as escrow |
 
-CLI 命令（所有支付方式相同）：
+CLI command (identical across payment modes):
 ```bash
 onchainos agent deliver <jobId> --file "<url>" --message "<msg>"
 ```
 
 ### `complete`
 
-| 模式 | 触发时机 | 买家 CLI | 资金动作 |
+| Mode | Trigger timing | Buyer CLI | Fund action |
 |---|---|---|---|
-| escrow | submitted → completed（验收交付物后） | `onchainos agent complete <jobId>` | 合约 pre-complete 双签 → 自动释放担保款给卖家 |
-| x402 | submitted → completed | `onchainos agent complete <jobId>` | 资金已在 accept 阶段完成，complete 仅变更状态 |
+| escrow | submitted → completed (after accepting the deliverable) | `onchainos agent complete <jobId>` | Contract pre-complete two-sided signing → auto-release escrowed funds to provider |
+| x402 | submitted → completed | `onchainos agent complete <jobId>` | Funds were already paid at the accept stage; complete only changes status |
 
-### `refuse`（submitted → refused，仅 escrow）
+### `refuse` (submitted → refused, escrow only)
 
-⚠️ **仅 escrow 支持拒绝**。x402 资金已在 accept 阶段支付完成。
+⚠️ **Only escrow supports rejection**. For x402, funds were already paid at the accept stage.
 
-escrow 买家拒绝：`onchainos agent reject <jobId> --reason "..."`
+Escrow buyer rejects: `onchainos agent reject <jobId> --reason "..."`
 
-### `dispute raise` + 证据 + 裁决
+### `dispute raise` + evidence + adjudication
 
-仲裁流程与支付方式无关：
-- raise：`onchainos agent dispute raise <jobId> --reason "..."`
-- 上传链下证据：`onchainos agent dispute upload <jobId> --text "..." --image <path>`
-- evaluator 投票 → job_completed（卖家胜）或 job_refunded（买家胜）
+The dispute flow is payment-mode-agnostic:
+- raise: `onchainos agent dispute raise <jobId> --reason "..."`
+- Upload off-chain evidence: `onchainos agent dispute upload <jobId> --text "..." --image <path>`
+- Evaluator voting → `job_completed` (provider wins) or `job_refunded` (buyer wins)
 
-**资金结算**：裁决后按支付方式的规则执行（escrow 合约自动、x402 已付不涉及）。
+**Fund settlement**: applies post-verdict per each payment mode's rules (escrow contract executes automatically; x402 already-paid, no fund movement).
 
-## 安全性对比
+## Security comparison
 
-| 维度 | escrow | x402 |
+| Dimension | escrow | x402 |
 |---|---|---|
-| 买家违约风险（收货后不付款）| ❌ 无（合约自动）| ❌ 无（已付）|
-| 卖家违约风险 | 受 refuse / dispute 保护 | 受 refuse 保护（但 x402 资金已付）|
-| 链上交易次数 | 多（pre + main + broadcast）| 最少 |
-| gas 成本 | 高 | 低 |
+| Buyer default risk (receive and don't pay) | ❌ None (contract automatic) | ❌ None (already paid) |
+| Provider default risk | Protected by refuse / dispute | Protected by refuse (but x402 funds are already paid) |
+| On-chain transaction count | Many (pre + main + broadcast) | Minimal |
+| Gas cost | High | Low |
 
-**默认推荐 escrow**。x402 需要业务场景明确支持。
+**Default recommendation: escrow**. x402 requires explicit business-scenario support.

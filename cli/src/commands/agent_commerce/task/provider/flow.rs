@@ -69,7 +69,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
-    // 短 jobId,用在 xmtp_prompt_user 的 userContent 第一行 `[任务 <短ID> 你作为卖家]` 前缀,
+    // 短 jobId,用在 xmtp_prompt_user 的 userContent 第一行 `[Task <短ID> you as seller]` 前缀,
     // 多 prompt 并发时给用户和 user agent 双重消歧锚。详见 SKILL.md Session 通信契约 5.
     let short_id = short_job_id(job_id);
 
@@ -190,7 +190,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              {deliver_file}\n\n\
              **A-Step 3 — `deliver` CLI 上链**（把 task 状态推到 submitted，让买家拿到 complete 入口）：\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"\" --message \"任务已完成，请验收\" --agent-id {agent_id}\n\
+             onchainos agent deliver {job_id} --file \"\" --message \"Task completed, please review\" --agent-id {agent_id}\n\
              ```\n\
              CLI 内部：POST submit API → 签名 uopHash → 广播上链。\n\n\
              **A-Step 4 — 跑完 A-Step 3 直接结束本轮 turn**(交付物已在 A-Step 2 送到买家;后续 `job_submitted` 通知到达时**只观察**,不再 xmtp_send / xmtp_dispatch_user / 任何过场消息)。\n\n\
@@ -227,13 +227,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
-             用户语义「发起仲裁/不接受/dispute/start arbitration/我做的没问题 等 + 给出理由」→ **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:START_DISPUTE] 用户原话：<用户回复原文，不解读、不翻译>；理由是：<从原话抽出的简洁理由>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 dispute_raise,你不要做其它事)；\
-             用户语义「同意退款/退款/agree refund/refund OK 等」→ **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:AGREE_REFUND] 用户原话：<用户回复原文，不解读、不翻译>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 agree_refund,你不要做其它事)。\
+             用户语义「发起仲裁/不接受/dispute/start arbitration/我做的没问题 等 + 给出理由」→ **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:START_DISPUTE] user said: <用户回复原文，不解读、不翻译>；理由是：<从原话抽出的简洁理由>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 dispute_raise,你不要做其它事)；\
+             用户语义「同意退款/退款/agree refund/refund OK 等」→ **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:AGREE_REFUND] user said: <用户回复原文，不解读、不翻译>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 agree_refund,你不要做其它事)。\
              ⚠️ **路由 tag 协议**：`[intent:START_DISPUTE]` / `[intent:AGREE_REFUND]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支。\n\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。**user session 唯一动作 = relay**:禁止自己执行 task CLI / 禁止 xmtp_send 给买家 / 禁止 xmtp_dispatch_user 多发通知——relay 一次就结束 turn。24h 内必须决策。\n\
              userContent:\n\
              {user_prompt}\n\n\
-             **Step 2 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由**：\n\
+             **Step 2 — 收到 `[USER_DECISION_RELAY][intent:CODE] user said: ...` 后按 intent code 路由**：\n\
              1) 调 `onchainos agent pending-decisions remove --job-id {job_id} --role provider --agent-id {agent_id}` 清掉本条 pending(规则 7)\n\
              2) 按 intent code 调 next-action：\n\
              \x20\x20• `[intent:START_DISPUTE]` → `onchainos agent next-action --jobid {job_id} --jobStatus dispute_raise --role provider --agentId {agent_id}`（reason 从 `理由是：` 后面抽取，传给阶段 1 dispute raise 的 `--reason`）\n\
@@ -388,13 +388,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
-             用户提供证据后 → **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 dispute upload,你不要做其它事)。\
+             用户提供证据后 → **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: <用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 dispute upload,你不要做其它事)。\
              ⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。\n\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。**user session 唯一动作 = relay**:禁止自己执行 task CLI / 禁止 xmtp_send 给买家 / 禁止 xmtp_dispatch_user 多发通知——relay 一次就结束 turn。1 小时内必须提交。\n\
              userContent:\n\
              {user_prompt}\n\n\
              **Step 2 — 等用户回复**:\n\
-             收到 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：...` 后（intent tag 已是路由确认；用户证据原文从 `用户证据：` 后面读）:\n\
+             收到 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: ...` 后（intent tag 已是路由确认；用户证据原文从 `user evidence: ` 后面读）:\n\
              1) 调 `onchainos agent pending-decisions remove --job-id {job_id} --role provider --agent-id {agent_id}` 清掉本条 pending(规则 7)\n\
              2) 调 `onchainos agent next-action --jobid {job_id} --jobStatus dispute_evidence --role provider --agentId {agent_id}` 拿上传剧本\n\n\
              ⚠️ 1 小时内必须提交证据，过期后失效。\n\n\
@@ -407,7 +407,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前动作】上传仲裁证据\n\
              【角色】卖家（Provider）\n\n\
              **Step 1 — 从 relay 提取证据内容：**\n\
-             已通过 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE]` 路由进来，从 `用户证据：` 后面提取：\n\
+             已通过 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE]` 路由进来，从 `user evidence: ` 后面提取：\n\
              - 文字摘要 → 用户提供的文字部分\n\
              - 图片路径（如果用户提供了）→ `--image` 参数\n\
              text 和 image **至少一项**。\n\n\
@@ -691,12 +691,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
-             用户语义「立即提交/我提交/submit now/I'll deliver/ready 等」→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_IMMEDIATELY] 用户原话：<用户回复原文，不解读、不翻译>\") 触发当前任务跑交付流程；用户不回复或回复别的 → 不 relay,等 submit_expired 自动退款。\
+             用户语义「立即提交/我提交/submit now/I'll deliver/ready 等」→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_IMMEDIATELY] user said: <用户回复原文，不解读、不翻译>\") 触发当前任务跑交付流程；用户不回复或回复别的 → 不 relay,等 submit_expired 自动退款。\
              ⚠️ **路由 tag 协议**：`[intent:SUBMIT_IMMEDIATELY]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写。\n\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。\n\
              userContent:\n\
              {user_prompt}\n\n\
-             **Step 2 — 收到 `[USER_DECISION_RELAY][intent:SUBMIT_IMMEDIATELY] 用户原话：...` 后**:\n\
+             **Step 2 — 收到 `[USER_DECISION_RELAY][intent:SUBMIT_IMMEDIATELY] user said: ...` 后**:\n\
              1) 调 `onchainos agent pending-decisions remove --job-id {job_id} --role provider --agent-id {agent_id}` 清掉本条 pending(规则 7)\n\
              2) 走交付流程(同 JobAccepted Step 2-3)：自主完成工作 → `xmtp_send` 把交付物发给买家(`{{send_to_peer}}` 模板) → 跑 `onchainos agent deliver` 上链\n\
              \x20\x20(如果想拿完整剧本,可调 `onchainos agent next-action --jobid {job_id} --jobStatus job_accepted --role provider --agentId {agent_id}`,但跳过其中的 Step 1 接单通知——用户已经知道接过单了)\n\n\

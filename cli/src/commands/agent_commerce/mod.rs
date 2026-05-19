@@ -258,7 +258,7 @@ pub enum AgentCommand {
     Deliver {
         job_id: String,
         #[arg(long, default_value = "")] file: String,
-        #[arg(long, default_value = "任务已完成，请验收")] message: String,
+        #[arg(long, default_value = "Task completed, please review")] message: String,
         /// 卖家 agentId（必填）。beta 后端拒空 agenticId header → 3001 auth fail。
         #[arg(long = "agent-id")] agent_id: String,
     },

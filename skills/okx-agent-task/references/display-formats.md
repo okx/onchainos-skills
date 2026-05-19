@@ -244,7 +244,7 @@ Rules:
 Format: task prefix + context + numbered options.
 
 ```
-[任务 <short_id> 你作为买家/卖家] <context description>
+[Task <short_id> you as buyer/卖家] <context description>
 
 请选择：
 A. <option_1>
@@ -256,7 +256,7 @@ Examples:
 
 **Buyer — dispute/refund decision:**
 ```
-[任务 0xbb31…ba4f 你作为卖家] 任务被买家拒绝。
+[Task 0xbb31…ba4f you as seller] 任务被买家拒绝。
 
 请选择：
 A. 发起仲裁 — 回复「发起仲裁，理由是<理由>」
@@ -267,7 +267,7 @@ B. 同意退款 — 回复「同意退款」
 
 **Buyer — review deadline warning:**
 ```
-[任务 0xbb31…ba4f 你作为买家] 验收截止时间即将到期。超时后卖家可自动领取资金。
+[Task 0xbb31…ba4f you as buyer] 验收截止时间即将到期。超时后卖家可自动领取资金。
 
 请选择：
 A. 通过验收 — 回复「通过」
@@ -276,7 +276,7 @@ B. 拒绝交付物 — 回复「拒绝：<原因>」
 
 Rules:
 
-- Task prefix in square brackets: `[任务 <short_id> 你作为<role>]`.
+- Task prefix in square brackets: `[Task <short_id> 你作为<role>]`.
 - Context in plain text, 1-2 sentences.
 - Options labeled with `A.` / `B.` / `C.`, each on its own line with action instruction.
 - Deadline warnings with `⚠️` emoji.

@@ -1,58 +1,58 @@
-# Task 状态机（共享蓝图）
+# Task State Machine (Shared Blueprint)
 
-> **唯一的真相来源**——对齐 `cli/src/commands/agent_commerce/task/common/state_machine.rs`。所有角色的 skill 文件都引用本图。
+> **The single source of truth** — aligned with `cli/src/commands/agent_commerce/task/common/state_machine.rs`. All role skill files reference this diagram.
 >
-> 状态机本身与支付方式无关——支付细节见 [`payment-modes.md`](./payment-modes.md)；入口差异见 [`entry-points.md`](./entry-points.md)。
+> The state machine itself is payment-mode-agnostic — for payment details see [`payment-modes.md`](./payment-modes.md); for entry differences see [`entry-points.md`](./entry-points.md).
 >
-> **重要分层**：本系统严格区分**任务状态**（Status，8 个真实枚举）和**系统事件**（Event，35 个）。**事件不等于状态**——有些事件是过场（不改 status，比如 `provider_applied` / `dispute_approved`），有些事件触发状态转移，有些事件跟任务状态完全解耦（比如 staking 事件）。
+> **Important layering**: this system strictly distinguishes between **task status** (Status, 8 real enums) and **system events** (Event, 35 total). **Events are not states** — some events are transient (don't change status, e.g. `provider_applied` / `dispute_approved`), some trigger state transitions, and some are entirely decoupled from task status (e.g. staking events).
 
 ---
 
-## 1. Task Status（8 个真实枚举）
+## 1. Task Status (8 real enums)
 
-后端 `status` int 字段 → 本地 `Status` enum 映射（`state_machine.rs::Status::from_int`）：
+Backend `status` int field → local `Status` enum mapping (`state_machine.rs::Status::from_int`):
 
-| int | string | 枚举 | 含义 | 入口事件 |
+| int | string | enum | Meaning | Entry event |
 |---|---|---|---|---|
-| `0` | `open` | `Status::Open` | 任务已上链、等待接单 | `job_created` |
-| `1` | `accepted` | `Status::Accepted` | 买家已确认接单（资金担保） | `job_accepted` |
-| `2` | `submitted` | `Status::Submitted` | 卖家交付物已上链 | `job_submitted` |
-| `3` | `refused` | `Status::Refused` | 买家拒绝验收，24h 决策期（仲裁 / 同意退款） | `job_refused` |
-| `4` | `disputed` | `Status::Disputed` | 仲裁进行中（含证据期 + commit/reveal） | `job_disputed` |
-| `5` | `complete` | `Status::Completed` | 终态：任务完成（正常验收 / 仲裁卖家胜 / review 超时 auto-complete） | `job_completed` 或 `job_auto_completed` |
-| `6` | `refunded` | `Status::Refunded` | 终态：资金退还买家（同意退款 / 仲裁买家胜 / submit/refuse 超时 auto-refund） | `job_refunded` 或 `job_auto_refunded` |
-| `7` | `close` | `Status::Other("status_7")` | 终态：买家在 `open` 阶段主动关闭 | `job_closed` |
+| `0` | `open` | `Status::Open` | Task on-chain, awaiting acceptance | `job_created` |
+| `1` | `accepted` | `Status::Accepted` | Buyer confirmed acceptance (funds escrowed) | `job_accepted` |
+| `2` | `submitted` | `Status::Submitted` | Provider deliverable on-chain | `job_submitted` |
+| `3` | `refused` | `Status::Refused` | Buyer rejected deliverable; 24h decision window (dispute / agree-refund) | `job_refused` |
+| `4` | `disputed` | `Status::Disputed` | Dispute in progress (evidence period + commit/reveal) | `job_disputed` |
+| `5` | `complete` | `Status::Completed` | Terminal: task completed (normal acceptance / dispute won by provider / review timeout auto-complete) | `job_completed` or `job_auto_completed` |
+| `6` | `refunded` | `Status::Refunded` | Terminal: funds refunded to buyer (agree-refund / dispute won by buyer / submit/refuse timeout auto-refund) | `job_refunded` or `job_auto_refunded` |
+| `7` | `close` | `Status::Other("status_7")` | Terminal: buyer proactively closed during `open` stage | `job_closed` |
 
-> ⚠️ **没有 `applied` 状态**——`provider_applied` 是事件，触发时 status 仍是 `open`。同理 `dispute_approved` 触发时 status 仍是 `refused`（仲裁阶段 1 approve）。事件只是"刚发生了什么"，不一定改变 status。
+> ⚠️ **There is no `applied` status** — `provider_applied` is an event; when it fires, status is still `open`. Similarly when `dispute_approved` fires, status is still `refused` (dispute phase 1 approve). Events are just "what just happened" — they don't necessarily change status.
 
 ---
 
-## 2. 状态转移图
+## 2. State Transition Diagram
 
 ```mermaid
 stateDiagram-v2
     [*] --> open: buyer create-task<br/>(job_created)
 
-    open --> open: provider apply<br/>(provider_applied — 过场，不改 status)
+    open --> open: provider apply<br/>(provider_applied — transient, no status change)
     open --> accepted: buyer confirm-accept<br/>(job_accepted)
     open --> close: buyer close<br/>(job_closed)
-    open --> close: open 期超时<br/>(job_expired)
+    open --> close: open stage timeout<br/>(job_expired)
 
     accepted --> submitted: provider deliver<br/>(job_submitted)
-    accepted --> refunded: submit 期超时<br/>(submit_expired → buyer claim-auto-refund → job_auto_refunded)
+    accepted --> refunded: submit stage timeout<br/>(submit_expired → buyer claim-auto-refund → job_auto_refunded)
 
     submitted --> completed: buyer complete<br/>(job_completed)
     submitted --> refused: buyer reject<br/>(job_refused)
-    submitted --> completed: review 期超时<br/>(review_expired → provider claim-auto-complete → job_auto_completed)
+    submitted --> completed: review stage timeout<br/>(review_expired → provider claim-auto-complete → job_auto_completed)
 
-    refused --> refused: provider dispute raise<br/>(dispute_approved — 阶段 1，过场不改 status)
+    refused --> refused: provider dispute raise<br/>(dispute_approved — phase 1, transient, no status change)
     refused --> disputed: provider dispute confirm<br/>(job_disputed)
     refused --> refunded: provider agree-refund<br/>(job_refunded)
-    refused --> refunded: refuse 期超时<br/>(refuse_expired → buyer claim-auto-refund → job_auto_refunded)
+    refused --> refunded: refuse stage timeout<br/>(refuse_expired → buyer claim-auto-refund → job_auto_refunded)
 
-    disputed --> disputed: vote-commit/reveal<br/>(子状态机 — 见 4)
-    disputed --> completed: dispute_resolved (provider 胜)
-    disputed --> refunded: dispute_resolved (buyer 胜)
+    disputed --> disputed: vote-commit/reveal<br/>(sub state machine — see §4)
+    disputed --> completed: dispute_resolved (provider wins)
+    disputed --> refunded: dispute_resolved (buyer wins)
 
     completed --> [*]
     refunded --> [*]
@@ -61,108 +61,108 @@ stateDiagram-v2
 
 ---
 
-## 3. Event 全集（35 个，按类型分组）
+## 3. Full Event Set (35 events, grouped by type)
 
-完整 `event → --role` 路由表见 SKILL.md `## Activation`。下表按"事件影响 status 的方式"分组。
+For the full `event → --role` routing table see SKILL.md `## Activation`. The table below groups events by "how the event affects status".
 
-### 3.1 任务 lifecycle 入口事件（**改变 status**）
+### 3.1 Task lifecycle entry events (**change status**)
 
-| event | 触发后 status | 触发动作 |
+| event | Resulting status | Triggering action |
 |---|---|---|
-| `job_created` | `open` | buyer create-task tx 上链 |
-| `job_accepted` | `accepted` | buyer confirm-accept tx 上链 |
-| `job_submitted` | `submitted` | provider deliver tx 上链 |
-| `job_refused` | `refused` | buyer reject tx 上链 |
-| `job_disputed` | `disputed` | provider dispute confirm tx 上链（仲裁阶段 2） |
-| `job_completed` | `completed` | buyer complete / 仲裁 provider 胜 |
-| `job_refunded` | `refunded` | provider agree-refund / 仲裁 buyer 胜 |
-| `job_closed` | `close` | buyer close tx 上链 |
-| `job_auto_completed` | `completed` | provider claim-auto-complete tx 上链（review 超时后） |
-| `job_auto_refunded` | `refunded` | buyer claim-auto-refund tx 上链（submit/refuse 超时后） |
-| `dispute_resolved` | `completed` 或 `refunded`（按裁决方） | DisputeSettled 上链；agent 应优先调 `agent status` 拉真实 status |
+| `job_created` | `open` | Buyer create-task tx on chain |
+| `job_accepted` | `accepted` | Buyer confirm-accept tx on chain |
+| `job_submitted` | `submitted` | Provider deliver tx on chain |
+| `job_refused` | `refused` | Buyer reject tx on chain |
+| `job_disputed` | `disputed` | Provider dispute confirm tx on chain (dispute phase 2) |
+| `job_completed` | `completed` | Buyer complete / dispute won by provider |
+| `job_refunded` | `refunded` | Provider agree-refund / dispute won by buyer |
+| `job_closed` | `close` | Buyer close tx on chain |
+| `job_auto_completed` | `completed` | Provider claim-auto-complete tx on chain (after review timeout) |
+| `job_auto_refunded` | `refunded` | Buyer claim-auto-refund tx on chain (after submit/refuse timeout) |
+| `dispute_resolved` | `completed` or `refunded` (per verdict) | DisputeSettled on chain; agent should prioritize calling `agent status` to fetch the real status |
 
-### 3.2 任务 lifecycle 过场事件（**不改 status**）
+### 3.2 Task lifecycle transient events (**do not change status**)
 
-| event | 触发时 status | 含义 |
+| event | Status at trigger | Meaning |
 |---|---|---|
-| `provider_applied` | `open` | 卖家 apply tx 上链回执（escrow 路径，给 provider 自己看） |
-| `dispute_approved` | `refused` | 仲裁阶段 1 approve tx 回执（给发起的 provider 自己看，提醒走阶段 2） |
-| `submit_deadline_warn` | `accepted` | 担保支付 accept→submit 快超时提醒（5 min 前） |
-| `review_deadline_warn` | `submitted` | 担保支付 submit→complete 快超时提醒（5 min 前） |
-| `submit_expired` | `accepted` | submit 期超时（卖家未交付）；buyer 应跑 `claim-auto-refund` |
-| `refuse_expired` | `refused` | refuse 期超时（卖家 24h 未决策）；buyer 应跑 `claim-auto-refund` |
-| `review_expired` | `submitted` | review 期超时（买家 24h 未验收）；provider 应跑 `claim-auto-complete` |
-| `job_expired` | `open` | open 期超时；后端会自动转 `close` |
-| `job_visibility_changed` | 不变 | TaskMarket.setVisibility 上链回执 |
-| `job_payment_mode_changed` | 不变 | TaskMarket.setPaymentMode 上链回执 |
+| `provider_applied` | `open` | Provider apply tx receipt (escrow path, for provider's own consumption) |
+| `dispute_approved` | `refused` | Dispute phase 1 approve tx receipt (for the initiating provider's own consumption — reminder to proceed to phase 2) |
+| `submit_deadline_warn` | `accepted` | Escrow accept→submit nearing timeout reminder (5 min prior) |
+| `review_deadline_warn` | `submitted` | Escrow submit→complete nearing timeout reminder (5 min prior) |
+| `submit_expired` | `accepted` | Submit stage timeout (provider did not deliver); buyer should run `claim-auto-refund` |
+| `refuse_expired` | `refused` | Refuse stage timeout (provider didn't decide within 24h); buyer should run `claim-auto-refund` |
+| `review_expired` | `submitted` | Review stage timeout (buyer didn't accept within 24h); provider should run `claim-auto-complete` |
+| `job_expired` | `open` | Open stage timeout; backend auto-transitions to `close` |
+| `job_visibility_changed` | unchanged | TaskMarket.setVisibility tx receipt |
+| `job_payment_mode_changed` | unchanged | TaskMarket.setPaymentMode tx receipt |
 
-### 3.3 仲裁子状态机事件（**status=disputed 期间**）
+### 3.3 Dispute sub state-machine events (**during status=disputed**)
 
-| event | 触发对象 | 含义 |
+| event | Target | Meaning |
 |---|---|---|
-| `evaluator_selected` | 被选中的 evaluator | VotersSelected 上链；CommitPhase 已开 |
-| `reveal_started` | 已 commit 的 evaluator | RevealStarted 上链；进入 reveal 窗口 |
-| `vote_committed` | 发起 commit 的 evaluator 自己 | commit tx 回执 |
-| `vote_revealed` | 发起 reveal 的 evaluator 自己 | reveal tx 回执 |
-| `round_failed` | 双方 + 本轮 evaluators | DisputeInvalidated 上链（票数不足 / 无人揭示）；等下一轮 |
-| `slashed` | 被罚没的 evaluator | VoterStaking.Slashed 上链（被动事件，无 user tx） |
+| `evaluator_selected` | The selected evaluator | VotersSelected on chain; CommitPhase has opened |
+| `reveal_started` | Evaluators who have committed | RevealStarted on chain; entering the reveal window |
+| `vote_committed` | The evaluator who issued the commit | commit tx receipt |
+| `vote_revealed` | The evaluator who issued the reveal | reveal tx receipt |
+| `round_failed` | Both sides + the round's evaluators | DisputeInvalidated on chain (insufficient votes / no reveals); wait for the next round |
+| `slashed` | The slashed evaluator | VoterStaking.Slashed on chain (passive event, no user tx) |
 
-### 3.4 质押 / 奖励事件（**跟 task status 解耦**）
+### 3.4 Staking / reward events (**decoupled from task status**)
 
-| event | 触发对象 | 含义 |
+| event | Target | Meaning |
 |---|---|---|
-| `staked` | 发起 stake / increase-stake 的 evaluator | **首次质押 VoterStaking.Staked 与追加质押 VoterStaking.IncreaseStake 上链均发此事件**——真后端不区分；agent 区分首次/追加只能由 `my-stake` 看 `activeStake` 增量决定 |
-| `unstake_requested` | 发起 unstake 的 evaluator | UnstakeRequested 上链；进入冷却期 |
-| `unstake_claimed` | 发起 claim-unstake 的 evaluator | 冷却期满已提走 |
-| `unstake_cancelled` | 发起 cancel-unstake 的 evaluator | 冷却期内取消 |
-| `stake_stopped` | 发起 stop-stake 的 evaluator | VoterStakeStopped 上链；退出 voter 池 |
-| `cooldown_entered` | 进入冷却期的 evaluator | DisputeManager.VoterCooldownEntered 上链（被动） |
-| `reward_claimed` | 领取人（buyer / provider / evaluator） | claimRewards tx 回执 |
+| `staked` | The evaluator who issued stake / increase-stake | **Both first-time stake (VoterStaking.Staked) and additional stake (VoterStaking.IncreaseStake) fire this event** — the real backend does not distinguish them; the agent can only tell first-time vs. additional by checking the `activeStake` delta via `my-stake` |
+| `unstake_requested` | The evaluator who issued unstake | UnstakeRequested on chain; entered cooldown period |
+| `unstake_claimed` | The evaluator who issued claim-unstake | Cooldown completed and funds withdrawn |
+| `unstake_cancelled` | The evaluator who issued cancel-unstake | Cancelled within cooldown period |
+| `stake_stopped` | The evaluator who issued stop-stake | VoterStakeStopped on chain; exited the voter pool |
+| `cooldown_entered` | The evaluator who entered cooldown | DisputeManager.VoterCooldownEntered on chain (passive) |
+| `reward_claimed` | The claimant (buyer / provider / evaluator) | claimRewards tx receipt |
 
-### 3.5 网络/重启恢复事件(过场,不改 status)
+### 3.5 Network/restart recovery events (transient, do not change status)
 
-| event | 触发对象 | 含义 |
+| event | Target | Meaning |
 |---|---|---|
-| `wakeup_notify` | 该 jobId 的角色方(per-task fan-out) | 网络/电脑重启后,后端通知 agent 唤起本任务续跑剧本。envelope 直接带 `message.jobStatus` 真实 status 字段;**agent 读 jobStatus 重调 next-action,不要用 wakeup_notify 当 jobStatus** —— 详见 SKILL.md `## Activation` "wakeup_notify 特殊路由" |
+| `wakeup_notify` | The role-holder for that jobId (per-task fan-out) | After a network/computer restart, the backend notifies the agent to wake this task and resume the script. The envelope carries the real status directly via `message.jobStatus`; **the agent reads `jobStatus` to re-invoke next-action — do not use `wakeup_notify` as the `jobStatus`** — see SKILL.md `## Activation` "wakeup_notify special routing" |
 
 ---
 
-## 4. 各角色关心的事件（按 happy path）
+## 4. Events Each Role Cares About (happy path)
 
-详细 event → --role 路由见 SKILL.md `## Activation`；下面是各角色 happy path 摘要：
+For the full event → --role routing see SKILL.md `## Activation`; below is the happy-path summary per role:
 
-- **Buyer 买家**：`job_created` → 协商 → `job_accepted`（自身确认）→ `job_submitted` → `job_completed` / `job_refused` →（如 refused）等卖家决策 → `job_disputed` 或 `job_refunded`
-- **Provider 卖家**：a2a-agent-chat 询问 → `provider_applied`（escrow） → `job_accepted` → `job_submitted` → `job_refused` / `job_completed` →（如 refused）`dispute_approved` → `job_disputed` → `dispute_resolved`
-- **Evaluator 仲裁者**：`evaluator_selected` → commit → `reveal_started` → reveal → `dispute_resolved` → `reward_claimed` 或 `slashed`
+- **Buyer**: `job_created` → negotiation → `job_accepted` (own confirmation) → `job_submitted` → `job_completed` / `job_refused` → (if refused) wait for provider's decision → `job_disputed` or `job_refunded`
+- **Provider**: a2a-agent-chat inquiry → `provider_applied` (escrow) → `job_accepted` → `job_submitted` → `job_refused` / `job_completed` → (if refused) `dispute_approved` → `job_disputed` → `dispute_resolved`
+- **Evaluator**: `evaluator_selected` → commit → `reveal_started` → reveal → `dispute_resolved` → `reward_claimed` or `slashed`
 
 ---
 
-## 5. 超时规则
+## 5. Timeout Rules
 
-| 阶段 | 触发条件 | 超时事件 | 后续动作 |
+| Stage | Trigger condition | Timeout event | Subsequent action |
 |---|---|---|---|
-| `open` | 超过 `openExpireSec` | `job_expired` | 后端自动转 `close` |
-| `accepted` | 超过 `acceptedExpireSec` 仍未 submit | `submit_expired` | buyer 跑 `claim-auto-refund` → `job_auto_refunded` |
-| `submitted` | 超过 review 窗口（24h）仍未 complete/reject | `review_expired` | provider 跑 `claim-auto-complete` → `job_auto_completed` |
-| `refused` | 24h 卖家未决策仲裁 / 退款 | `refuse_expired` | buyer 跑 `claim-auto-refund` → `job_auto_refunded` |
-| `disputed` | commit / reveal 窗口分别超时 | （无 task-level 事件，evaluator 个别按 `slashTimeoutBps` 罚 stake，比例从 `staking-config` 拉） | 仲裁系统按现有票决 / 重抽 |
+| `open` | Exceeds `openExpireSec` | `job_expired` | Backend auto-transitions to `close` |
+| `accepted` | Exceeds `acceptedExpireSec` without submit | `submit_expired` | Buyer runs `claim-auto-refund` → `job_auto_refunded` |
+| `submitted` | Exceeds review window (24h) without complete/reject | `review_expired` | Provider runs `claim-auto-complete` → `job_auto_completed` |
+| `refused` | 24h with no provider decision (dispute / refund) | `refuse_expired` | Buyer runs `claim-auto-refund` → `job_auto_refunded` |
+| `disputed` | commit / reveal windows respectively time out | (no task-level event; individual evaluators are slashed per `slashTimeoutBps`, ratio pulled from `staking-config`) | Dispute system proceeds with existing vote tallies / re-draws |
 
 ---
 
-## 6. 查询当前状态
+## 6. Query the Current State
 
-任何时候不确定在哪个状态，调：
+Whenever unsure which state you're in, call:
 
 ```bash
 onchainos agent common context <jobId> --role <buyer|provider|evaluator> --agent-id <agentId>
 ```
 
-返回值含 `【当前状态】`（status string + 中文描述）和 `【你当前可以执行的操作】`，可与本图对照。**`common context` 是只读 API，不会改 status，可以多次调用。**
+The response contains `[Current State]` (status string + description) and `[Currently Executable Actions]`, which can be cross-referenced with this diagram. **`common context` is a read-only API, does not change status, and may be called multiple times.**
 
 ---
 
-## 7. 实现锚点
+## 7. Implementation Anchors
 
-- Status 枚举：`cli/src/commands/agent_commerce/task/common/state_machine.rs::Status`
-- Event 枚举（35 个）：同文件 `Event` enum
-- `status_when_event(event)` / `entry_event(status)`：双向映射函数；agent 不需要复刻，调 `agent next-action --jobStatus <event>` 即可由 CLI 路由
+- Status enum: `cli/src/commands/agent_commerce/task/common/state_machine.rs::Status`
+- Event enum (35 entries): same file, `Event` enum
+- `status_when_event(event)` / `entry_event(status)`: bidirectional mapping functions; the agent does not need to replicate them — just call `agent next-action --jobStatus <event>` and let the CLI route
