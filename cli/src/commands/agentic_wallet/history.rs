@@ -54,22 +54,24 @@ pub(super) async fn cmd_history(
 
     let mut client = WalletApiClient::new()?;
 
-    if let Some(tx_hash_val) = tx_hash {
-        // ── Detail mode: --tx-hash present → /order/detail ──
-        let addr = address.unwrap_or("").to_string();
+    // Detail mode: any of --tx-hash / --order-id / --uop-hash present → /order/detail
+    // (backend `/order/detail` supports precise filter by any of these identifiers)
+    if tx_hash.is_some() || order_id.is_some() || uop_hash.is_some() {
         if chain_index.is_empty() {
-            bail!("--chain is required when --tx-hash is present");
-        }
-        if addr.is_empty() {
-            bail!("--address is required when --tx-hash is present");
+            bail!("--chain is required for order detail query");
         }
 
+        let addr = address.unwrap_or("");
         let mut query: Vec<(&str, &str)> = vec![
             ("accountId", &resolved_account_id),
-            ("txHash", tx_hash_val),
             ("chainIndex", &chain_index),
-            ("address", &addr),
         ];
+        if !addr.is_empty() {
+            query.push(("address", addr));
+        }
+        if let Some(v) = tx_hash {
+            query.push(("txHash", v));
+        }
         if let Some(v) = order_id {
             query.push(("orderId", v));
         }
@@ -89,7 +91,7 @@ pub(super) async fn cmd_history(
         let filtered = filter_detail_response(&data);
         output::success(filtered);
     } else {
-        // ── List mode: no --tx-hash → /order/list ──
+        // ── List mode: no identifier filter → /order/list ──
         let mut query: Vec<(&str, &str)> = vec![("accountId", &resolved_account_id)];
         if let Some(v) = begin {
             query.push(("begin", v));
@@ -105,12 +107,6 @@ pub(super) async fn cmd_history(
         }
         if !chain_index.is_empty() {
             query.push(("chainIndex", &chain_index));
-        }
-        if let Some(v) = order_id {
-            query.push(("orderId", v));
-        }
-        if let Some(v) = uop_hash {
-            query.push(("uopHash", v));
         }
 
         let data = client

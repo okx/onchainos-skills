@@ -101,5 +101,5 @@ Moves: {sym} {+/-x}%, {sym} {+/-x}%
 
 ## Actions
 
-- → "research [symbol]" — Token Research (`workflows/token-research.md`)
-- → "what is smart money buying" — Smart Money Signals (`workflows/smart-money-signals.md`)
+- → "research [symbol]" — Token Research (`token-research.md`)
+- → "what is smart money buying" — Smart Money Signals (`smart-money-signals.md`)

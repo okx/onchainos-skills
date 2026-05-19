@@ -296,7 +296,7 @@ async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<V
         .filter(|value| !value.is_empty())
         .unwrap_or(XLAYER_CHAIN_INDEX);
 
-    let query = vec![
+    let query = [
         (
             "communicationAddress".to_string(),
             communication_address.to_string(),

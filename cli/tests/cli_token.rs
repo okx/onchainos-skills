@@ -786,10 +786,14 @@ fn token_holders_with_limit() {
     // is actually being applied rather than silently returning an empty
     // list that vacuously satisfies the bound.
     let output = run_with_retry(&[
-        "token", "holders",
-        "--address", tokens::ETH_USDC,
-        "--chain", "ethereum",
-        "--limit", "3",
+        "token",
+        "holders",
+        "--address",
+        tokens::ETH_USDC,
+        "--chain",
+        "ethereum",
+        "--limit",
+        "3",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert_limit_non_empty(&data, 3, "holders");
@@ -799,10 +803,14 @@ fn token_holders_with_limit() {
 fn token_top_trader_with_limit() {
     // Wrapped SOL has many top traders on solana — strict assert.
     let output = run_with_retry(&[
-        "token", "top-trader",
-        "--address", tokens::SOL_WSOL,
-        "--chain", "solana",
-        "--limit", "3",
+        "token",
+        "top-trader",
+        "--address",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+        "--limit",
+        "3",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert_limit_non_empty(&data, 3, "top traders");
@@ -817,7 +825,12 @@ fn token_search_cursor_pagination() {
     // a terminal first page or a broken cursor becomes a test failure.
     const LIMIT: usize = 2;
     let page1 = run_with_retry(&[
-        "token", "search", "--query", "USDC", "--limit", &LIMIT.to_string(),
+        "token",
+        "search",
+        "--query",
+        "USDC",
+        "--limit",
+        &LIMIT.to_string(),
     ]);
     let items1 = extract_items(&assert_ok_and_extract_data(&page1));
     assert_eq!(
@@ -840,7 +853,14 @@ fn token_search_cursor_pagination() {
         .filter_map(|v| v.get("cursor").and_then(|c| c.as_str()).map(str::to_string))
         .collect();
     let page2 = run_with_retry(&[
-        "token", "search", "--query", "USDC", "--limit", &LIMIT.to_string(), "--cursor", cursor,
+        "token",
+        "search",
+        "--query",
+        "USDC",
+        "--limit",
+        &LIMIT.to_string(),
+        "--cursor",
+        cursor,
     ]);
     let items2 = extract_items(&assert_ok_and_extract_data(&page2));
     assert!(

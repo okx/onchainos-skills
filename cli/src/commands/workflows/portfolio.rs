@@ -36,9 +36,9 @@ pub(crate) async fn fetch_and_assemble(
         portfolio::fetch_total_value(&mut c1, address, chains_str, None, None),
         market::fetch_portfolio_overview(&mut c2, &primary_chain_index, address, "4"),
     );
-    let balances    = ok_or_null(balances);
+    let balances = ok_or_null(balances);
     let total_value = ok_or_null(total_value);
-    let overview    = ok_or_null(overview);
+    let overview = ok_or_null(overview);
 
     Ok(assemble(
         address,
@@ -83,8 +83,12 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn some_data() -> Value { json!({ "value": "9999" }) }
-    fn null() -> Value { Value::Null }
+    fn some_data() -> Value {
+        json!({ "value": "9999" })
+    }
+    fn null() -> Value {
+        Value::Null
+    }
 
     fn full_assemble(balances: Value, total_value: Value, overview: Value) -> Value {
         assemble("0xWALLET", "1,501", balances, total_value, overview)
@@ -113,7 +117,7 @@ mod tests {
         assert!(!out["overview"].is_null());
     }
 
-    // ── PRD: partial failures → null fields, rest continues ──────────
+    // ── partial failures → null fields, rest continues ───────────────
 
     #[test]
     fn balances_null_others_present() {

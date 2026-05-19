@@ -1,0 +1,53 @@
+{
+  "name": "onchainos-skills",
+  "version": "2.4.1",
+  "description": "Official OKX Onchain OS skills for AI coding assistants across wallet, market, trading, DeFi, payment, and on-chain transaction workflows.",
+  "author": {
+    "name": "OKX",
+    "url": "https://web3.okx.com/onchainos"
+  },
+  "homepage": "https://web3.okx.com/onchainos",
+  "repository": "https://github.com/okx/onchainos-skills",
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "okx",
+    "onchainos",
+    "web3",
+    "defi",
+    "dex",
+    "swap",
+    "bridge",
+    "wallet",
+    "security",
+    "token",
+    "market-data",
+    "onchain",
+    "mcp",
+    "trading"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OKX Onchain OS",
+    "shortDescription": "Built for AI. Ready for Web3.",
+    "longDescription": "Official OKX Onchain OS plugin for Codex, based on the upstream onchainos-skills repository. It brings Agentic Wallet, AI toolkit, trading, payments, token discovery, market data, smart-money signals, wallet and DeFi analysis, security checks, and transaction workflows into Codex through reusable skills.",
+    "developerName": "OKX",
+    "category": "Coding",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://web3.okx.com/onchainos",
+    "privacyPolicyURL": "https://web3.okx.com/help/okx-web3-ecosystem-privacy-policy",
+    "termsOfServiceURL": "https://web3.okx.com/help/okx-web3-ecosystem-terms-of-service",
+    "defaultPrompt": [
+      "Research this token with OKX Onchain OS skills.",
+      "Analyze this wallet's balances, PnL, and DeFi positions.",
+      "Plan a swap, payment, or transaction workflow with Onchain OS."
+    ],
+    "brandColor": "#bcff2f",
+    "composerIcon": "./assets/onchainos.svg",
+    "logo": "./assets/onchainos.svg",
+    "screenshots": []
+  }
+}

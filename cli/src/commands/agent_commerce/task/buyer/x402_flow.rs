@@ -149,7 +149,7 @@ fn select_best_scheme(accepts: &[serde_json::Value]) -> Result<(serde_json::Valu
 pub fn extract_x402_pricing(accepts: &[serde_json::Value]) -> Result<X402Pricing> {
     let (entry, scheme) = select_best_scheme(accepts)?;
 
-    let amount_minimal = crate::commands::agentic_wallet::payment::extract_amount(&entry)?;
+    let amount_minimal = crate::commands::payment::payment_flow::extract_amount(&entry)?;
 
     let asset = entry["asset"].as_str()
         .ok_or_else(|| anyhow!("accepts entry 缺少 asset"))?

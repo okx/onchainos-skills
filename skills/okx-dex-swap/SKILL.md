@@ -1,16 +1,31 @@
 ---
 name: okx-dex-swap
-description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', 'get swap calldata', 'build unsigned tx', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization."
+description: "NOTE (gating): route to okx-dapp-discovery (NOT this skill) when prompt names a specific DApp as the swap venue: Polymarket, Aave V3, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound V3, Pendle, Lido, ether.fi, GMX V2, Kamino, Orca, Meteora, Clanker, pump.fun, Uniswap. Examples that go to okx-dapp-discovery: 'swap on PancakeSwap', 'swap SOL for USDC on Raydium', 'use Hyperliquid to long ETH', '在 Curve 上换 USDT', 'swap on Uniswap'. okx-dapp-discovery installs the DApp's plugin and uses its native interface; this skill is for OKX-aggregated swaps without a named venue. Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', 'get swap calldata', 'build unsigned tx', or mentions swapping/trading/buying/selling/exchanging tokens across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any 20+ supported chains. Aggregates 500+ DEX sources for optimal routing/price. Supports slippage control, price impact protection, and cross-DEX route optimization."
 license: MIT
 metadata:
   author: okx
-  version: "1.3.0"
+  version: "1.3.2"
   homepage: "https://web3.okx.com"
 ---
 
 # Onchain OS DEX Swap
 
 6 commands for multi-chain swap aggregation — quote, approve, one-shot execute, and calldata-only swap.
+
+## Step 0 — DApp Re-Route Check (run before every other step)
+
+Before running any `onchainos swap` command, scan the **original user prompt** for a named DApp/protocol. If any of the names below appear (English or Chinese), STOP this skill and invoke `okx-dapp-discovery` with the user's original prompt instead — the DApp's own plugin is the correct executor.
+
+Trigger names: **Polymarket · Aave · Hyperliquid · PancakeSwap · Pancake · PCS · Morpho · Raydium · Curve · Compound · Pendle · Lido · ether.fi · GMX · Kamino · Orca · Meteora · Clanker · Uniswap · pump.fun**.
+
+Trigger protocol-native tokens (route to `okx-dapp-discovery` even without DApp name): **HYPE, HLP, CAKE, veCAKE, CRV, crvUSD, 3pool, COMP, Comet, RAY, Whirlpool, ETHFI, eETH, weETH, LDO, stETH, wstETH, GLP, esGMX, GHO, kToken, PT-* / YT-* / `PT <token>`, vePENDLE, $CLANKER**.
+
+Examples that MUST re-route (do not run `swap quote` / `swap execute` here):
+- "swap on PancakeSwap", "swap SOL for USDC on Raydium", "swap on Uniswap", "在 Curve 上把 USDC 换成 USDT", "在 Orca 上把 SOL 换成 USDC", "swap on PancakeSwap V2 with classic LP".
+
+Stay in this skill ONLY when the venue is **unspecified or aggregated**: "swap 1 ETH for USDC", "best route from SOL to USDC", "trade USDC for OKB", "convert tokens", "buy 0.5 ETH with my USDC".
+
+If you have already started running commands and only then realise the user named a DApp, halt mid-flow and invoke `okx-dapp-discovery` — do not finish the aggregated swap.
 
 ## Pre-flight Checks
 
@@ -44,7 +59,7 @@ metadata:
 | 2 | `onchainos swap liquidity --chain <chain>` | Get available liquidity sources on a chain |
 | 3 | `onchainos swap approve --token ... --amount ... --chain ...` | Get ERC-20 approval transaction data (advanced/manual use) |
 | 4 | `onchainos swap quote --from ... --to ... --readable-amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param**. |
-| 5 | `onchainos swap execute --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. |
+| 5 | `onchainos swap execute --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection] [--force]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. `--force` bypasses backend risk warning 81362 only after explicit user confirmation. |
 | 6 | `onchainos swap swap --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>]` | **Calldata only**: returns unsigned tx data. Does NOT sign or broadcast. |
 
 
@@ -69,42 +84,7 @@ Multiple search results → show name/symbol/CA/chain, ask user to confirm befor
 
 Follow the **Token Address Resolution** section above.
 
-### Step 2 — Pre-Swap Token Security Scan (Mandatory)
-
-Before quoting or executing a swap, **automatically** run `token-scan` on both the `--from` and `--to` tokens to detect risks. This step is mandatory and must not be skipped.
-
-> **⚠️ Native token handling**: Exclude native tokens (matching any address in the Native Token Addresses table above) — they have no contract address and cannot be scanned.
-> - If one token is native, scan only the non-native token — apply the action for the scanned token's position (buy/sell) as normal.
-> - If both tokens are native (match addresses in the Native Token Addresses table), skip token-scan entirely.
-
-```bash
-# Both non-native:
-onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<toTokenAddress>"
-# One native (e.g., selling ETH for PEPE): scan only the non-native token:
-onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"
-```
-
-> Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and display format.
-
-**Interpret each token's result using the `riskLevel` field from the API response:**
-
-| `riskLevel` | Buy Action (`--to` token) | Sell Action (`--from` token) |
-|---|---|---|
-| **CRITICAL** | **BLOCK** — Refuse to execute swap. Display triggered labels. | **WARN** — Display risk labels, allow sell to continue. |
-| **HIGH** | **PAUSE** — Display risk labels, ask user "Continue? (yes/no)". Only proceed on explicit "yes". | **WARN** — Display risk labels, allow sell to continue. |
-| **MEDIUM** | **WARN** — Display risk labels as info, continue without pause. | **WARN** — Display risk labels as info, continue without pause. |
-| **LOW** | Safe — proceed to Step 3. | Safe — proceed to Step 3. |
-
-> Buy side (`--to`) is stricter: `CRITICAL` blocks the swap, `HIGH` pauses for confirmation. Sell side (`--from`) only warns — allowing the user to exit risky positions.
->
-> **Multi-token action resolution**: Apply the action matrix independently for each token based on its role (buy/sell column), then enforce the most restrictive resulting action across all tokens. Precedence: `BLOCK > PAUSE > WARN > Safe`. Display risk results for all scanned tokens first. If any token triggers BLOCK, refuse the swap after showing all results and state which token triggered it (e.g., "Buy BLOCKED due to CRITICAL risk on `--to` token `<symbol>`").
-
-**Edge cases:**
-- `isChainSupported: false` → Skip detection for that token, warn "This chain does not support token security scanning", continue.
-- API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue (in swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior).
-- `riskLevel` missing, `null`, or unrecognized → Treat as `HIGH` (cautious default). Display: "⚠️ Risk level unavailable or unrecognized — treating as high risk." Apply HIGH-level actions.
-
-### Step 3 — Collect Missing Parameters
+### Step 2 — Collect Missing Parameters
 
 - **Chain**: missing → recommend XLayer (`--chain xlayer`, zero gas, fast confirmation).
 - **Amount**: extract human-readable amount from user's request; pass directly as `--readable-amount <amount>`. CLI fetches token decimals and converts to raw units automatically.
@@ -121,23 +101,22 @@ onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"
 | 3 | Stablecoin | USDC/USDT/DAI pairs | autoSlippage (ref 0.1%-0.3%) | `average` |
 | 4 | Large Trade | priceImpact >= 10% AND value >= $1,000 AND pair liquidity >= $10,000 | autoSlippage | `average` |
 
-### Step 4 — Quote
+### Step 3 — Quote
 
 ```bash
 onchainos swap quote --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain>
 ```
 
-Display: expected output, gas, price impact, routing path. If quote returns `taxRate`, display as supplementary info (the primary risk gate is Step 2's token-scan). Note: the CLI also blocks honeypot swaps internally at execute time via `toToken.isHoneyPot` (defense-in-depth, different data source from Step 2's `token-scan`). Perform MEV risk assessment (see **MEV Protection**).
+Display: expected output, gas, price impact, routing path. Check `isHoneyPot` and `taxRate` — surface to user. Perform MEV risk assessment (see **MEV Protection**).
+### Step 4 — User Confirmation
 
-### Step 5 — User Confirmation
-
-- Price impact >5% → warn prominently. (Token risk labels including honeypot already handled in Step 2.)
+- Price impact >5% → warn prominently. Honeypot (buy) → BLOCK.
 - If >10 seconds pass before user confirms, re-fetch quote. If price diff >= slippage → warn and ask for re-confirmation.
 
-### Step 6 — Execute
+### Step 5 — Execute
 
 ```bash
-onchainos swap execute --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection]
+onchainos swap execute --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection] [--force]
 ```
 
 CLI handles approve (if needed) + sign + broadcast internally.
@@ -159,16 +138,17 @@ If `swap execute` returns an error, it may be caused by a preceding approval tra
 
 2. **Inform the user**: e.g. "Swap failed, possibly due to a pending approval — waiting for on-chain confirmation before retrying."
 3. **Non-recoverable errors (82000, 51006)**: Token is dead, rugged, or has no liquidity — retrying may not help. Do **not** retry after 5 consecutive errors for the same (wallet, fromToken, toToken). Run `token advanced-info`; warn if `devRugPullTokenCount > 0` or `tokenTags` contains `lowLiquidity`.
-4. **All other errors**: Retry once. If retry also fails, surface the error directly.
+4. **Risk warning (81362)**: backend risk system flagged the broadcast as potentially dangerous (possible honeypot or poisoned contract). Do **not** auto-retry. Warn the user explicitly that forcing execution may cause fund loss; ask for confirmation. If the user explicitly confirms, re-run the **same** `swap execute` command with `--force` appended (this passes `skipWarning: true` to broadcast). Do NOT add `--force` without explicit user confirmation.
+5. **All other errors**: Retry once. If retry also fails, surface the error directly.
 
 #### Silent / Automated Mode
 
 Enabled only when the user has **explicitly authorized** automated execution. Three mandatory rules:
 1. **Explicit authorization**: User must clearly opt in. Never assume silent mode.
-2. **Risk gate pause**: BLOCK-level (`CRITICAL`) risks must halt and notify the user. PAUSE-level (`HIGH`) buy risks must also halt and wait for user confirmation, even in silent mode.
+2. **Risk gate pause**: BLOCK-level risks must halt and notify the user even in silent mode.
 3. **Execution log**: Log every silent transaction (timestamp, pair, amount, slippage, txHash, status). Present on request or at session end.
 
-### Step 7 — Report Result
+### Step 6 — Report Result
 
 IMPORTANT: Report as **broadcast successful**. Use wording like "Swap transaction broadcast — final on-chain result pending". Do NOT say "Swap complete" / "Swap successful" / "On-chain success" — broadcast does not guarantee the tx lands or succeeds on-chain. Tell the user to check the explorer link for final status.
 
@@ -181,28 +161,34 @@ Suggest follow-up: explorer link for `swapTxHash`, check new token price, or swa
 
 ## Risk Controls
 
-### Token Risk Labels (via `token-scan` — Step 2)
-
-Pre-swap `token-scan` returns a `riskLevel` field representing the overall token risk. See `skills/okx-security/references/risk-token-detection.md` for the full label catalog.
-
-| `riskLevel` | Buy | Sell | Description |
-|---|---|---|---|
-| CRITICAL | BLOCK | WARN (allow exit) | Honeypot, garbage airdrop, gas-mint scam, tax ≥ 50% |
-| HIGH | PAUSE — require yes/no | WARN | Low liquidity, dumping, rugpull gang, counterfeit, pump, wash trading, liquidity removal, not open-source, tax ≥21%-<50%, etc. |
-| MEDIUM | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax >0%-<21% |
-| LOW | PROCEED | PROCEED | No risk labels triggered |
-
 ### Other Risk Items
 
 | Risk Item | Buy | Sell | Notes |
 |---|---|---|---|
+| Honeypot (`isHoneyPot=true`) | BLOCK | WARN (allow exit) | Selling allowed for stop-loss scenarios |
+| High tax rate (>10%) | WARN | WARN | Display exact tax rate |
 | No quote available | CANNOT | CANNOT | Token may be unlisted or zero liquidity |
 | Black/flagged address | BLOCK | BLOCK | Address flagged by security services |
-| New token (<24h) | PAUSE | PROCEED | Extra caution on buy side — require explicit confirmation |
+| New token (<24h) | WARN | PROCEED | Extra caution on buy side — require explicit confirmation |
 | Insufficient liquidity | CANNOT | CANNOT | Liquidity too low to execute trade |
 | Token type not supported | CANNOT | CANNOT | Inform user, suggest alternative |
 
-**Legend**: BLOCK = halt, refuse execution · PAUSE = halt, require explicit yes/no · WARN = display warning, continue · CANNOT = operation impossible · PROCEED = allow with info
+**Legend**: BLOCK = halt, require explicit override · WARN = display warning, ask confirmation · CANNOT = operation impossible · PROCEED = allow with info
+
+### Fund-action Flag Gates
+
+Every flag that broadcasts a transaction or expands the agent's spending authority requires an explicit user-confirmation gate. Do NOT pass any of these flags without a clear user yes/no.
+
+| Flag | Effect | Required user gate |
+|---|---|---|
+| `--wallet <addr>` | All `swap execute` runs broadcast from this wallet. | The wallet must come from `wallet status` (logged-in account) or be explicitly typed by the user. Multi-account → ask user to choose. |
+| `--slippage <pct>` | Looser slippage = larger potential loss on price moves. | Default to autoSlippage; only override when user explicitly says "use X% slippage". |
+| `--mev-protection` / `--tips <sol>` | Enables MEV protection (cost may be higher). | Auto-set by chain threshold rule (see MEV Protection); user override allowed. |
+| `--gas-token-address` / `--relayer-id` / `--enable-gas-station` | Pays gas with a non-native token via Gas Station. | Use only after the user has been informed Gas Station is active or has explicitly opted in. See `okx-agentic-wallet` Gas Station flow for full lifecycle. |
+| `--force` | Bypasses backend risk warning 81362 (potential honeypot / poisoned contract). | After receiving 81362, **must explicitly tell user** the risk is "potential fund loss"; only re-run with `--force` if the user explicitly confirms (yes / continue). |
+| Silent / Automated mode | Skips per-step user yes/no. | Requires **prior explicit opt-in**. BLOCK-level risks still halt and notify. PAUSE-level (HIGH) buy risks still wait for yes/no even in silent mode. |
+
+**Rule**: when in doubt, ask. A delayed confirm is far better than a wrong broadcast.
 
 ### MEV Protection
 

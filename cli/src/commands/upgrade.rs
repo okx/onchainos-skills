@@ -2,12 +2,23 @@ use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 use crate::output;
 
 const REPO: &str = "okx/onchainos-skills";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Known locations where onchainos-skills may be installed as a git checkout.
+/// Paths are relative to the user's home directory.
+const SKILL_INSTALL_PATHS: &[&str] = &[
+    ".codex/onchainos-skills",
+    ".openclaw/onchainos-skills",
+    ".cursor/onchainos-skills",
+    ".config/opencode/onchainos-skills",
+];
 
 #[derive(clap::Args)]
 pub struct UpgradeArgs {
@@ -22,6 +33,10 @@ pub struct UpgradeArgs {
     /// Only check for a newer version, do not install
     #[arg(long)]
     pub check: bool,
+
+    /// Skip skill checkout updates (only refresh the CLI binary)
+    #[arg(long)]
+    pub skip_skills: bool,
 }
 
 // ── Version comparison ──────────────────────────────────────────────────
@@ -228,6 +243,104 @@ async fn download_and_install(client: &Client, version: &str) -> Result<()> {
     Ok(())
 }
 
+// ── Skill checkout updates ──────────────────────────────────────────────
+
+fn run_git(cwd: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
+    Command::new("git").arg("-C").arg(cwd).args(args).output()
+}
+
+fn remote_belongs_to_repo(path: &Path) -> bool {
+    match run_git(path, &["remote", "get-url", "origin"]) {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).contains("onchainos-skills")
+        }
+        _ => false,
+    }
+}
+
+/// Resolve the set of candidate skill checkout paths under $HOME.
+fn discover_skill_paths() -> Vec<PathBuf> {
+    let Some(home) = dirs::home_dir() else {
+        return vec![];
+    };
+    SKILL_INSTALL_PATHS
+        .iter()
+        .map(|rel| home.join(rel))
+        .filter(|p| p.exists())
+        .collect()
+}
+
+/// Update each detected skill checkout via `git pull --ff-only`. Returns one
+/// result per path describing the outcome.
+fn update_skill_checkouts() -> Vec<Value> {
+    let mut results = Vec::new();
+
+    if Command::new("git").arg("--version").output().is_err() {
+        for path in discover_skill_paths() {
+            results.push(json!({
+                "path": path.display().to_string(),
+                "status": "skipped",
+                "reason": "git not found on PATH",
+            }));
+        }
+        return results;
+    }
+
+    for path in discover_skill_paths() {
+        let path_str = path.display().to_string();
+
+        if !path.join(".git").exists() {
+            results.push(json!({
+                "path": path_str,
+                "status": "skipped",
+                "reason": "not a git checkout — update via your package manager",
+            }));
+            continue;
+        }
+
+        if !remote_belongs_to_repo(&path) {
+            results.push(json!({
+                "path": path_str,
+                "status": "skipped",
+                "reason": "remote 'origin' does not point to onchainos-skills",
+            }));
+            continue;
+        }
+
+        eprintln!("Updating skills at {}...", path_str);
+        match run_git(&path, &["pull", "--ff-only"]) {
+            Ok(out) if out.status.success() => {
+                results.push(json!({
+                    "path": path_str,
+                    "status": "updated",
+                }));
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                eprintln!(
+                    "Warning: git pull failed at {} — {}",
+                    path_str,
+                    if stderr.is_empty() { "non-zero exit" } else { &stderr }
+                );
+                results.push(json!({
+                    "path": path_str,
+                    "status": "failed",
+                    "reason": stderr,
+                }));
+            }
+            Err(e) => {
+                results.push(json!({
+                    "path": path_str,
+                    "status": "failed",
+                    "reason": e.to_string(),
+                }));
+            }
+        }
+    }
+
+    results
+}
+
 // ── Command entry point ─────────────────────────────────────────────────
 
 pub async fn execute(args: UpgradeArgs) -> Result<()> {
@@ -235,13 +348,13 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
 
     let current = CURRENT_VERSION;
 
-    let latest = if args.beta {
-        get_latest_with_beta(&client).await?
-    } else {
-        get_latest_stable(&client).await?
-    };
-
+    // --check requires the latest version; bail if unreachable.
     if args.check {
+        let latest = if args.beta {
+            get_latest_with_beta(&client).await?
+        } else {
+            get_latest_stable(&client).await?
+        };
         let update_available = semver_gt(&latest, current);
         output::success(json!({
             "currentVersion": current,
@@ -252,26 +365,60 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
         return Ok(());
     }
 
-    let needs_upgrade = args.force || semver_gt(&latest, current);
+    // For a full upgrade, try the GitHub API but degrade gracefully — skill
+    // checkouts can still fast-forward via their own git remotes even when
+    // api.github.com is unreachable.
+    let latest_result = if args.beta {
+        get_latest_with_beta(&client).await
+    } else {
+        get_latest_stable(&client).await
+    };
 
-    if !needs_upgrade {
-        output::success(json!({
-            "currentVersion": current,
-            "latestVersion": latest,
-            "status": "already_latest",
-        }));
-        return Ok(());
+    let (installed_version, binary_status) = match latest_result {
+        Ok(latest) => {
+            let needs_upgrade = args.force || semver_gt(&latest, current);
+            if needs_upgrade {
+                eprintln!("Upgrading onchainos: {} → {}", current, latest);
+                download_and_install(&client, &latest).await?;
+                (latest, "upgraded")
+            } else {
+                (latest, "already_latest")
+            }
+        }
+        Err(e) => {
+            if args.force {
+                return Err(e.context(
+                    "--force requires a reachable GitHub API to resolve the target version",
+                ));
+            }
+            eprintln!(
+                "Warning: could not check for CLI binary updates: {}",
+                e.root_cause()
+            );
+            eprintln!("Proceeding with skill checkout updates.");
+            (current.to_string(), "binary_check_failed")
+        }
+    };
+
+    let skills = if args.skip_skills {
+        Vec::new()
+    } else {
+        update_skill_checkouts()
+    };
+
+    let mut payload = json!({
+        "currentVersion": current,
+        "status": binary_status,
+        "skills": skills,
+    });
+    if binary_status != "binary_check_failed" {
+        payload["latestVersion"] = json!(installed_version);
     }
-
-    eprintln!("Upgrading onchainos: {} → {}", current, latest);
-
-    download_and_install(&client, &latest).await?;
-
-    output::success(json!({
-        "previousVersion": current,
-        "installedVersion": latest,
-        "status": "upgraded",
-    }));
+    if binary_status == "upgraded" {
+        payload["previousVersion"] = json!(current);
+        payload["installedVersion"] = json!(installed_version);
+    }
+    output::success(payload);
 
     Ok(())
 }
