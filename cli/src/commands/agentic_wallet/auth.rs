@@ -346,6 +346,21 @@ pub(crate) fn format_api_error(e: anyhow::Error) -> anyhow::Error {
 
 // ── Login ────────────────────────────────────────────────────────────
 
+/// Validate a user-supplied locale value against the OTP-email whitelist.
+///
+/// Returns `(validated_locale, did_fallback)`:
+/// - If the input matches the whitelist (case-sensitive) -> pass through, `false`.
+/// - Otherwise -> fall back to `"en-US"`, `true`.
+///
+/// Callers should emit a stderr warning when `did_fallback == true`.
+pub(crate) fn validate_locale(locale: &str) -> (&'static str, bool) {
+    match locale {
+        "en-US" => ("en-US", false),
+        "zh-CN" => ("zh-CN", false),
+        _ => ("en-US", true),
+    }
+}
+
 /// onchainos wallet login [email] [--locale <locale>] [--force]
 pub(super) async fn cmd_login(
     email: Option<&str>,
@@ -361,9 +376,24 @@ pub(super) async fn cmd_login(
             eprintln!("[DEBUG] cmd_login: email={email}, locale={locale:?}");
         }
 
+        // Validate locale before calling auth_init.
+        let validated_locale: Option<&str> = match locale {
+            Some(loc) => {
+                let (validated, did_fallback) = validate_locale(loc);
+                if did_fallback {
+                    eprintln!(
+                        "locale '{}' not in supported list (en-US, zh-CN), falling back to en-US",
+                        loc,
+                    );
+                }
+                Some(validated)
+            }
+            None => None,
+        };
+
         let mut client = WalletApiClient::new()?;
         let resp = client
-            .auth_init(email, locale)
+            .auth_init(email, validated_locale)
             .await
             .map_err(format_api_error)?;
 
@@ -1159,5 +1189,35 @@ mod tests {
         let short_b64 = base64::engine::general_purpose::STANDARD.encode(&[0u8; 30]);
         let key_b64 = base64::engine::general_purpose::STANDARD.encode(&[1u8; 32]);
         assert!(crate::crypto::hpke_decrypt_session_sk(&short_b64, &key_b64).is_err());
+    }
+
+    #[test]
+    fn validate_locale_passes_en_us() {
+        assert_eq!(validate_locale("en-US"), ("en-US", false));
+    }
+
+    #[test]
+    fn validate_locale_passes_zh_cn() {
+        assert_eq!(validate_locale("zh-CN"), ("zh-CN", false));
+    }
+
+    #[test]
+    fn validate_locale_falls_back_for_ja_jp() {
+        assert_eq!(validate_locale("ja_JP"), ("en-US", true));
+    }
+
+    #[test]
+    fn validate_locale_falls_back_for_underscore_en() {
+        assert_eq!(validate_locale("en_US"), ("en-US", true));
+    }
+
+    #[test]
+    fn validate_locale_falls_back_for_arbitrary() {
+        assert_eq!(validate_locale("xx-YY"), ("en-US", true));
+    }
+
+    #[test]
+    fn validate_locale_falls_back_for_empty_string() {
+        assert_eq!(validate_locale(""), ("en-US", true));
     }
 }

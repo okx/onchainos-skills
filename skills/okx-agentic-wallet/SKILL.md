@@ -341,6 +341,10 @@ For commands requiring auth (sections B, D, E), check login state:
      > - English or any other language → `en-US` (default)
      >
      > If you cannot confidently determine the user's language, default to `en-US`.
+
+   > **Fallback**: If the inferred locale is not in the supported set (`en-US`, `zh-CN`),
+   > the CLI silently falls back to `en-US` and emits a stderr warning. The login flow
+   > still succeeds. AI callers do not need to handle this case specially.
 3. If the user declines to provide an email:
    - **3a.** Display the following message to the user verbatim (translated to the user's language):
      > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/home/api-access-and-usage

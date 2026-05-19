@@ -8,7 +8,8 @@ pub enum WalletCommand {
     Login {
         /// Email address to receive OTP (optional — omit for AK login)
         email: Option<String>,
-        /// Locale (e.g. "en-US", "zh-CN"). Optional.
+        /// Locale for OTP email template. Supported: "en-US", "zh-CN".
+        /// Invalid values fall back to "en-US" with a stderr warning.
         #[arg(long)]
         locale: Option<String>,
         /// Force re-login, skip API Key switch confirmation
