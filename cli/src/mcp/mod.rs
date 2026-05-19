@@ -648,10 +648,6 @@ struct CompetitionRankParams {
 struct CompetitionUserStatusParams {
     /// Activity name from a previous `competition_list` / `competition_user_status` response (omit to check all activities including ended ones)
     activity_name: Option<String>,
-    /// Optional EVM wallet address. If omitted, the tool auto-resolves the EVM address of the currently selected account.
-    evm_wallet: Option<String>,
-    /// Optional SOL wallet address. If omitted, the tool auto-resolves the SOL address of the currently selected account.
-    sol_wallet: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -674,6 +670,16 @@ struct CompetitionClaimParams {
     evm_wallet: Option<String>,
     /// Optional SOL wallet address. If omitted, auto-resolves from the currently selected account.
     sol_wallet: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionSubmitContactParams {
+    /// Activity name from a prior `competition_claim` / `competition_user_status` response. Internal id is resolved server-side; do NOT pass numeric ids.
+    activity_name: String,
+    /// Contact method type — MUST be one of: `Telegram`, `WeChat`, `Email`, `Twitter`. The value is case-sensitive; the backend rejects anything else.
+    contact_type: String,
+    /// The contact value the user shared (max 256 chars). Examples: `@username` for Telegram/Twitter, the WeChat ID, or the full email address. Do NOT echo this value back to the user in the confirmation message.
+    contact_value: String,
 }
 
 // ── Gateway ────────────────────────────────────────────────────────────
@@ -2587,20 +2593,20 @@ After this returns, follow okx-growth-competition SKILL.md Step 5 fixed CASE 1 /
             Ok(id) => id,
             Err(e) => return err(e),
         };
-        let wallet = match competition::resolve_or_validate_wallet_for_activity(
+        let identity = match competition::resolve_competition_identity(
             &mut client,
             &resolved_id,
             p.wallet.as_deref(),
         )
         .await
         {
-            Ok(addr) => addr,
+            Ok(id) => id,
             Err(e) => return err(e),
         };
         match competition::rank_for_mcp(
             &mut client,
             &resolved_id,
-            &wallet,
+            &identity,
             p.sort_type.unwrap_or(1),
             p.limit.unwrap_or(20),
         )
@@ -2620,8 +2626,8 @@ After this returns, follow okx-growth-competition SKILL.md Step 5 fixed CASE 1 /
         Parameters(p): Parameters<CompetitionUserStatusParams>,
     ) -> Result<String, String> {
         let mut client = self.client.lock().await;
-        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
-            Ok(pair) => pair,
+        let account_id = match competition::load_selected_account_id() {
+            Ok(id) => id,
             Err(e) => return err(e),
         };
         let activity_id = match p.activity_name.as_deref() {
@@ -2634,8 +2640,7 @@ After this returns, follow okx-growth-competition SKILL.md Step 5 fixed CASE 1 /
         match competition::user_status_all_for_mcp(
             &mut client,
             activity_id.as_deref(),
-            &evm_wallet,
-            &sol_wallet,
+            &account_id,
         )
         .await
         {
@@ -2683,7 +2688,7 @@ On error code=11016 (Participation limit reached) → another account in the sam
 
     #[tool(
         name = "competition_claim",
-        description = "Atomic competition reward claim: fetch calldata → sign with TEE session → broadcast on-chain → return txHash array. Requires wallet login. Pass activity_name from a prior competition_list / competition_user_status result; internal ids are resolved server-side. Do NOT chain `gateway_broadcast` after this — the on-chain submission already happened inside this tool."
+        description = "Atomic competition reward claim: fetch calldata → sign with TEE session → broadcast on-chain → return txHash array. Requires wallet login. Pass activity_name from a prior competition_list / competition_user_status result; internal ids are resolved server-side. Do NOT chain `gateway_broadcast` after this — the on-chain submission already happened inside this tool. If the response includes `needContact: true`, follow the SKILL.md Step 6 contact-collection template after the success line — ask the user to share ONE contact method (Telegram / WeChat / Email / Twitter) and then call `competition_submit_contact` with the parsed contactType + contactValue."
     )]
     async fn competition_claim(
         &self,
@@ -2704,6 +2709,33 @@ On error code=11016 (Participation limit reached) → another account in the sam
             &activity_id,
             &evm_wallet,
             &sol_wallet,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_submit_contact",
+        description = "Submit a contact method (Telegram / WeChat / Email / Twitter) for a top-tier competition winner so the operations team can reach out about merchandise. Call this ONLY after a `competition_claim` that returned `needContact: true`, and only when the user has affirmatively shared a contact in the conversation. accountId + walletAddress are resolved server-side from the active account's joinedAddress. After this returns `submitted: true`, render the SKILL.md Step 6 contact-confirmation template (translated to the user's language) — do NOT echo the contact value back. contact_type MUST be the exact case-sensitive string `Telegram` / `WeChat` / `Email` / `Twitter`; the backend rejects other strings."
+    )]
+    async fn competition_submit_contact(
+        &self,
+        Parameters(p): Parameters<CompetitionSubmitContactParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let activity_id =
+            match competition::resolve_activity_id_by_name(&mut client, &p.activity_name).await {
+                Ok(id) => id,
+                Err(e) => return err(e),
+            };
+        match competition::submit_contact(
+            &mut client,
+            &activity_id,
+            &p.contact_type,
+            &p.contact_value,
         )
         .await
         {

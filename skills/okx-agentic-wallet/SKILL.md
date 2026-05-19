@@ -475,9 +475,9 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
 
 **Required sequence — follow exactly, no steps may be skipped or reordered:**
 
-**Step 1.** Call `onchainos wallet status` → extract the active account's EVM address and SOL address.
+**Step 1.** Confirm the user is logged in (so `accountId` is available locally). `onchainos wallet status` will surface it.
 
-**Step 2.** Call `onchainos competition user-status --evm-wallet <evm_addr> --sol-wallet <sol_addr>` (no `--activity-id`).
+**Step 2.** Call `onchainos competition user-status` (no `--activity-id`). The command uses the active session's `accountId` automatically — no wallet args needed.
 
 **Step 3.** Inspect results:
 - If **any** entry has `joinStatus=1` → output the warning below and **stop**. Do NOT output export instructions. Wait for explicit user confirmation before proceeding to Step 4.
