@@ -595,7 +595,9 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             investment_id,
             time_range,
         } => {
-            output::success(fetch_tvl_chart(&mut client, &investment_id, time_range.as_deref()).await?);
+            output::success(
+                fetch_tvl_chart(&mut client, &investment_id, time_range.as_deref()).await?,
+            );
         }
         DefiCommand::DepthPriceChart {
             investment_id,
@@ -699,7 +701,8 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             platform_id,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
-            let raw = fetch_position_detail(&mut client, &address, &chain_index, &platform_id).await?;
+            let raw =
+                fetch_position_detail(&mut client, &address, &chain_index, &platform_id).await?;
             output::success(raw);
         }
     }

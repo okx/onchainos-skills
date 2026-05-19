@@ -509,7 +509,7 @@ pub async fn handle_task_402_pay(
     token_amount: &str,
     from: Option<&str>,
 ) -> Result<()> {
-    use crate::commands::agentic_wallet::payment;
+    use crate::commands::payment::payment_flow;
     use super::x402_flow;
 
     let (account_id, address, agent_id) =
@@ -550,7 +550,7 @@ pub async fn handle_task_402_pay(
     // Step 1: x402_pay 签名
     eprintln!("[task-402-pay] Step 1: x402_pay 签名");
     eprintln!("[task-402-pay] accepts: {accepts}");
-    let proof = payment::x402_pay_from_accepts(accepts, from.map(|s| s.to_string())).await?;
+    let proof = payment_flow::x402_pay_from_accepts(accepts, from.map(|s| s.to_string())).await?;
     eprintln!("[task-402-pay] x402_pay 完成: signature={}", proof.signature);
 
     // Step 2: direct/accept 上链（容错：已 accepted 则跳过）

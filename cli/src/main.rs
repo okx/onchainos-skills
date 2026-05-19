@@ -12,9 +12,14 @@ mod home;
 mod keyring_store;
 mod mcp;
 mod output;
+mod payment_cache;
+mod payment_notify;
 mod wallet_api;
 mod wallet_store;
 mod watch;
+
+#[cfg(test)]
+mod test_helpers;
 
 use clap::{Parser, Subcommand};
 
@@ -48,6 +53,11 @@ pub enum Commands {
     Signal {
         #[command(subcommand)]
         command: commands::signal::SignalCommand,
+    },
+    /// Social signals: crypto news, market sentiment, vibe / KOL chatter
+    Social {
+        #[command(subcommand)]
+        command: commands::social::SocialCommand,
     },
     /// Meme / pump.fun token scanning and analysis
     Memepump {
@@ -101,10 +111,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::security::SecurityCommand,
     },
-    /// Payment protocols — auto-pay gated APIs (x402, etc.)
+    /// Payment protocols — auto-pay gated APIs and agent-to-agent payment links
     Payment {
         #[command(subcommand)]
-        command: commands::agentic_wallet::payment::PaymentCommand,
+        command: commands::payment::PaymentCommand,
+    },
+    /// Trading competition: list, join, rank, claim rewards (Agentic Wallet exclusive)
+    Competition {
+        #[command(subcommand)]
+        command: commands::competition::CompetitionCommand,
     },
     /// A2A Pay — Buyer ↔ Seller charge / escrow flow (Smart-Account backend)
     #[command(name = "a2a-pay")]
@@ -126,6 +141,11 @@ pub enum Commands {
     Defi {
         #[command(subcommand)]
         command: commands::defi::DefiCommand,
+    },
+    /// Limit-order strategy trading on Agentic Wallet (create-limit / cancel / list / resume)
+    Strategy {
+        #[command(subcommand)]
+        command: Box<commands::strategy::StrategyCommand>,
     },
     /// Multi-step workflow commands that chain API calls for complete operations
     Workflow {
@@ -172,8 +192,7 @@ async fn run() {
         cli.chain = Some("xlayer".to_string());
     }
 
-    // Propagate --base-url to env so WalletApiClient, ApiClient::new(None),
-    // and refresh_jwt_inline pick it up at runtime.
+    // Propagate --base-url to env so WalletApiClient and refresh_jwt_inline pick it up.
     if let Some(ref url) = cli.base_url {
         std::env::set_var("OKX_BASE_URL", url);
     }
@@ -199,6 +218,7 @@ async fn run() {
     let result = match cli.command {
         Commands::Market { command } => commands::market::execute(&ctx, *command).await,
         Commands::Signal { command } => commands::signal::execute(&ctx, command).await,
+        Commands::Social { command } => commands::social::execute(&ctx, command).await,
         Commands::Memepump { command } => commands::memepump::execute(&ctx, *command).await,
         Commands::Leaderboard { command } => commands::leaderboard::execute(&ctx, command).await,
         Commands::Tracker { command } => commands::tracker::execute(&ctx, command).await,
@@ -210,9 +230,11 @@ async fn run() {
         Commands::Mcp { .. } => unreachable!("handled above"),
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
-        Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
+        Commands::Payment { command } => commands::payment::execute(command).await,
+        Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
         Commands::A2aPay { command } => commands::payment::a2a_pay::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
+        Commands::Strategy { command } => commands::strategy::execute(&ctx, *command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
@@ -235,10 +257,16 @@ async fn run() {
                 output::confirming(&c.message, &c.next);
                 std::process::exit(2);
             }
-            Err(e) => {
-                output::error(&format!("{e:#}"));
-                std::process::exit(1);
-            }
+            Err(e) => match e.downcast::<output::CliSetupRequired>() {
+                Ok(s) => {
+                    output::setup_required(&s.error_code, &s.message, &s.data);
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    output::error(&format!("{e:#}"));
+                    std::process::exit(1);
+                }
+            },
         }
     }
 }

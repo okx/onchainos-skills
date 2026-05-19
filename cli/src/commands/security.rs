@@ -320,7 +320,10 @@ async fn run_batch_scan(ctx: &Context, token_pairs: Vec<(String, String)>) -> Re
             .collect();
         set.spawn(async move {
             let body = json!({ "source": "onchain_os_cli", "tokenList": token_list });
-            c.lock().await.post("/api/v6/security/token-scan", &body).await
+            c.lock()
+                .await
+                .post("/api/v6/security/token-scan", &body)
+                .await
         });
     }
 
