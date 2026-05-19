@@ -66,6 +66,7 @@ pub fn resolve_chain(name: &str) -> String {
         "arbitrum" | "arb" => "42161".to_string(),
         "base" => "8453".to_string(),
         "xlayer" | "okb" => "196".to_string(),
+        "xlayer_test" => "1952".to_string(),
         "avalanche" | "avax" => "43114".to_string(),
         "optimism" | "op" => "10".to_string(),
         "fantom" | "ftm" => "250".to_string(),
@@ -98,12 +99,23 @@ pub fn resolve_chains(names: &str) -> String {
         .join(",")
 }
 
-/// Determine chain family from chain index.
+/// Loose bucketing for display / formatting: Solana split out, everything
+/// else (incl. Tron / Sui / TON) falls into `"evm"`.
 pub fn chain_family(chain_index: &str) -> &str {
     match chain_index {
         "501" => "solana",
         _ => "evm",
     }
+}
+
+/// `true` for chains where batch unsignedInfo may collapse to a single tx
+/// (X Layer EIP-5792 smart-account semantics). Today: 196 / 1952.
+///
+/// Legal response length:
+/// - merging chain (this fn = true) → `1` or `request_len`
+/// - non-merging EVM                → exactly `request_len`
+pub fn merges_batch_unsignedinfo(chain_index: &str) -> bool {
+    matches!(chain_index, "196" | "1952")
 }
 
 /// Full display name for a given chainIndex, used in user-facing strings.
@@ -116,6 +128,7 @@ pub fn chain_display_name(chain_index: &str) -> &str {
         "137" => "Polygon",
         "195" => "Tron",
         "196" => "X Layer",
+        "1952" => "X Layer Testnet",
         "250" => "Fantom",
         "324" => "zkSync",
         "501" => "Solana",
@@ -138,7 +151,7 @@ pub fn native_token_symbol(chain_index: &str) -> &str {
         "56" => "BNB",
         "137" => "MATIC",
         "195" => "TRX",
-        "196" => "OKB",
+        "196" | "1952" => "OKB",
         "250" => "FTM",
         "43114" => "AVAX",
         "501" => "SOL",
@@ -215,5 +228,37 @@ mod tests {
         assert_eq!(resolve_chain("bsc"), "56");
         assert_eq!(resolve_chain("8453"), "8453"); // numeric passthrough
         assert_eq!(resolve_chain("unknown-chain"), "unknown-chain"); // passthrough
+    }
+
+    #[test]
+    fn merges_batch_unsignedinfo_only_xlayer() {
+        // Backend contract: only X Layer (mainnet + pre-prod testnet) merges
+        // batch unsignedInfo elements. Add new merging chains here as the
+        // backend onboards them — and update the cmd_execute_batch response
+        // length validator at the same time.
+        assert!(merges_batch_unsignedinfo("196"));
+        assert!(merges_batch_unsignedinfo("1952"));
+        // Every other EVM chain must NOT be on this list — they all return
+        // response.len() == request.len() unconditionally.
+        for ci in ["1", "10", "56", "137", "8453", "42161", "59144", "534352"] {
+            assert!(
+                !merges_batch_unsignedinfo(ci),
+                "chain {ci} must NOT be in the merging set"
+            );
+        }
+        // Non-EVM and unknown chains: not applicable, but defensively false.
+        assert!(!merges_batch_unsignedinfo("501"));
+        assert!(!merges_batch_unsignedinfo("99999"));
+        assert!(!merges_batch_unsignedinfo(""));
+    }
+
+    #[test]
+    fn chain_family_loose_bucketing_documents_drift_risk() {
+        // chain_family is loose — only Solana is split. Documenting current
+        // behavior so a change here is intentional, not accidental.
+        assert_eq!(chain_family("501"), "solana");
+        assert_eq!(chain_family("1"), "evm");
+        assert_eq!(chain_family("195"), "evm"); // Tron buckets to evm by default — loose bucketing only
+        assert_eq!(chain_family("unknown"), "evm");
     }
 }

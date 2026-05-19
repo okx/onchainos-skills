@@ -1,9 +1,9 @@
 /// Token Research
 ///
-/// Step 1: delegates to token::fetch_report() — the PRD §3.1 composite command
+/// Step 1: delegates to token::fetch_report() — the composite command
 ///   (token info + price-info + advanced-info + security scan in one call)
-///   PRD: single sub-call failure → field null, rest continues
-///   PRD: all Step 1 calls fail    → return error
+///   single sub-call failure → field null, rest continues
+///   all Step 1 calls fail    → return error
 /// Step 2 (parallel): holders + cluster overview + top traders + signal list
 ///   cluster-overview may 500 for brand-new tokens → treated as null, skipped gracefully
 /// Step 3 (parallel, conditional): launchpad enrichment only when protocolId non-empty
@@ -197,10 +197,10 @@ pub async fn run(
     Ok(())
 }
 
-/// Pure assembly function — applies all PRD logic on pre-fetched data.
+/// Pure assembly function — applies all aggregation logic on pre-fetched data.
 /// Testable without any HTTP calls.
 ///
-/// PRD rules applied here:
+/// Rules applied here:
 /// - all Step 1 fields null → propagate error (全部失败 → 返回错误)
 /// - individual nulls → preserved in output (单个失败 → 对应字段 null)
 /// - launchpad: null when Step 3 was skipped; object when it ran
@@ -221,7 +221,7 @@ pub(crate) fn assemble(
     // Step 3 (pre-computed: null when skipped)
     launchpad: Value,
 ) -> Result<Value> {
-    // PRD: all Step 1 core calls failed → return error.
+    // All Step 1 core calls failed → return error.
     //
     // Note: unreachable via fetch_and_assemble — token::fetch_report already
     // bails with the same all-fail error, so by the time we get here all four
@@ -306,7 +306,7 @@ mod tests {
         )
     }
 
-    // ── PRD: all Step 1 fail → error ─────────────────────────────────
+    // ── all Step 1 fail → error ──────────────────────────────────────
 
     #[test]
     fn all_step1_null_returns_error() {
@@ -323,7 +323,7 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("501"));
     }
 
-    // ── PRD: single Step 1 fail → field null, rest present ───────────
+    // ── single Step 1 fail → field null, rest present ────────────────
 
     #[test]
     fn info_null_others_present_returns_ok() {
@@ -363,7 +363,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ── PRD: Step 3 conditional on protocolId ─────────────────────────
+    // ── Step 3 conditional on protocolId ──────────────────────────────
 
     #[test]
     fn launchpad_null_when_step3_skipped() {
@@ -399,7 +399,7 @@ mod tests {
         assert!(out["launchpad"].is_null());
     }
 
-    // ── Output structure matches PRD spec ─────────────────────────────
+    // ── Output structure ──────────────────────────────────────────────
 
     #[test]
     fn output_has_workflow_discriminator() {

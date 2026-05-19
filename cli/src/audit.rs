@@ -315,6 +315,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
     match cmd {
         Commands::Market { command } => format!("market {}", market_sub(command)),
         Commands::Signal { command } => format!("signal {}", signal_sub(command)),
+        Commands::Social { command } => format!("social {}", social_sub(command)),
         Commands::Memepump { command } => format!("memepump {}", memepump_sub(command)),
         Commands::Token { command } => format!("token {}", token_sub(command)),
         Commands::Swap { command } => format!("swap {}", swap_sub(command)),
@@ -328,6 +329,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Competition { command } => format!("competition {}", competition_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
+        Commands::Strategy { command } => format!("strategy {}", strategy_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
@@ -341,7 +343,7 @@ use crate::commands::{
     competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
     leaderboard::LeaderboardCommand, market::MarketCommand, memepump::MemepumpCommand,
     portfolio::PortfolioCommand, security::SecurityCommand, signal::SignalCommand,
-    swap::SwapCommand, token::TokenCommand, tracker::TrackerCommand,
+    social::SocialCommand, swap::SwapCommand, token::TokenCommand, tracker::TrackerCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -362,6 +364,30 @@ fn signal_sub(c: &SignalCommand) -> &'static str {
     match c {
         SignalCommand::Chains => "chains",
         SignalCommand::List { .. } => "list",
+    }
+}
+
+fn social_sub(c: &SocialCommand) -> &'static str {
+    match c {
+        SocialCommand::NewsLatest { .. } => "news-latest",
+        SocialCommand::NewsBySymbol { .. } => "news-by-symbol",
+        SocialCommand::NewsSearch { .. } => "news-search",
+        SocialCommand::NewsDetail { .. } => "news-detail",
+        SocialCommand::NewsPlatforms => "news-platforms",
+        SocialCommand::SentimentRanking { .. } => "sentiment-ranking",
+        SocialCommand::SentimentSymbol { .. } => "sentiment-symbol",
+        SocialCommand::VibeTimeline { .. } => "vibe-timeline",
+        SocialCommand::VibeTopKols { .. } => "vibe-top-kols",
+    }
+}
+
+fn strategy_sub(c: &crate::commands::strategy::StrategyCommand) -> &'static str {
+    use crate::commands::strategy::StrategyCommand;
+    match c {
+        StrategyCommand::CreateLimit(_) => "create-limit",
+        StrategyCommand::Cancel(_) => "cancel",
+        StrategyCommand::List(_) => "list",
+        StrategyCommand::Resume(_) => "resume",
     }
 }
 
@@ -462,8 +488,10 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Switch { .. } => "switch",
         WalletCommand::Status => "status",
         WalletCommand::Addresses { .. } => "addresses",
+        WalletCommand::Qrcode { .. } => "qrcode",
         WalletCommand::Logout => "logout",
         WalletCommand::Chains => "chains",
+        WalletCommand::Geoblock => "geoblock",
         WalletCommand::Balance { .. } => "balance",
         WalletCommand::Send { .. } => "send",
         WalletCommand::History { .. } => "history",

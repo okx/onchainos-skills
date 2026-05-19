@@ -155,6 +155,22 @@ onchainos wallet chains
 
 > **Usage**: Use `showName` for user-facing display. Use `realChainIndex` for `--chain` parameters in wallet commands.
 
+### A8. `onchainos wallet qrcode --address <addr>`
+
+Render a Unicode-block QR code for the given address (or any string), encoded verbatim. No URI scheme is added — the QR payload is exactly the value passed via `--address`.
+
+```bash
+onchainos wallet qrcode --address 0x1234...abcd
+```
+
+**Parameters:**
+
+| Flag | Required | Description |
+|---|---|---|
+| `--address` | Yes | The address (or arbitrary string) to encode into the QR |
+
+**Output:** Plain Unicode-block art on stdout (no JSON wrapper). Render verbatim in a monospace block to preserve scanning fidelity.
+
 ---
 
 ## B. Balance Commands

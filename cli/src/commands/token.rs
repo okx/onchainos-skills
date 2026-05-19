@@ -286,7 +286,6 @@ pub enum TokenCommand {
 
     /// Composite: token info + price-info + advanced-info + security scan in one call.
     /// Equivalent to running all 4 sub-commands in parallel.
-    /// PRD Section 3.1: onchainos token report
     Report {
         /// Token contract address
         #[arg(long)]
@@ -1024,7 +1023,7 @@ async fn cluster_top_holders(
 }
 
 /// Composite command: runs token info + price-info + advanced-info + security scan.
-/// PRD Section 3.1 — `onchainos token report`
+/// `onchainos token report`
 /// Error handling: single sub-call failure → that field is null, rest continue.
 ///                 All sub-calls fail → returns error.
 pub async fn fetch_report(
@@ -1049,7 +1048,7 @@ pub async fn fetch_report(
     let advanced = advanced.ok();
     let security = security.ok();
 
-    // All failed → return error per PRD spec
+    // All failed → return error
     if info.is_none() && price.is_none() && advanced.is_none() && security.is_none() {
         anyhow::bail!(
             "token report: all sub-calls failed for address {} on chain {}",
