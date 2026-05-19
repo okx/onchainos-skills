@@ -341,10 +341,13 @@ pub(super) fn approve_review(ctx: &FlowContext<'_>) -> String {
      \x20\x203. POST /priapi/v1/aieco/task/{job_id}/complete（body: {{\"signature\": \"<sig>\"}}）→ 获取 uopData\n\
      \x20\x204. 签名 uopHash → 广播上链\n\
      \x20\x20→ 任务状态变为 Complete，资金从合约释放给服务商。\n\n\
-     🛑 **complete CLI 成功后禁止 xmtp_dispatch_user / xmtp_prompt_user 通知用户**——\n\
-     链上确认后会收到 `job_completed` 系统事件，由该事件的剧本统一发完成通知，\n\
-     此处提前发会导致用户收到重复卡片。记住 CLI 输出中的 txHash，后续 `job_completed` 剧本会用到。\n\n\
-     跑完 Step 1-2 → **结束本轮 turn**，等待 `job_completed` 系统通知。\n"
+     🛑 **complete CLI 成功 ≠ 任务结束**——`complete` 仅提交链上交易，**用户尚未被通知任务完成**。\n\
+     此处禁止 xmtp_dispatch_user / xmtp_prompt_user——链上确认后你会收到 `job_completed` 系统事件（`source:\"system\"`），\n\
+     由该事件的剧本统一通过 xmtp_dispatch_user 通知用户，此处提前发 = 重复卡片。\n\
+     记住 CLI 输出中的 txHash，`job_completed` 剧本会用到。\n\n\
+     跑完 Step 1-2 → **结束本轮 turn**。\n\
+     ⚠️ **你的工作没有完成**——`job_completed` 系统事件（`source:\"system\"`）到达后，你必须按 SKILL.md Activation 铁律处理，\n\
+     否则用户永远收不到「任务已完成」通知、不知道资金已释放。\n"
     )
 }
 
