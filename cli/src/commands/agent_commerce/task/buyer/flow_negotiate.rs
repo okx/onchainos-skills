@@ -32,7 +32,7 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, dp_id: &
              \x20\x20**DX-Step 2 — 金额校验：**\n\
              \x20\x20比较 x402-check 的 `amountHuman` 与 services[0] 的 `feeAmount`：\n\
              \x20\x20- 不一致（差异 > 1%）→ 调用 xmtp_prompt_user 询问用户是否接受实际价格：\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「肯定/接受/accept/OK/同意 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 继续 DX-Step 3；用户语义「否定/拒绝/reject/decline/no 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 引导换服务商。⚠️ **路由 tag 协议**：`[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「肯定/接受/accept/OK/同意 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 继续 DX-Step 3；用户语义「否定/拒绝/reject/decline/no 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 引导换服务商。⚠️ **路由 tag 协议**：`[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
              \x20\x20\x20\x20userContent: 任务 {job_id} 指定服务商（AgentID={dp_id}）实际收费 <amountHuman> <tokenSymbol>，与注册费用 <feeAmount> <feeTokenSymbol> 不一致，是否接受？\n\
              \x20\x20- 一致 → 继续 DX-Step 3。\n\n\
              \x20\x20**DX-Step 3 — 预算检查：**\n\
@@ -40,7 +40,8 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, dp_id: &
              \x20\x20比较 `amountHuman` 与 `paymentMostTokenAmount`（**不是 tokenAmount，tokenAmount 是基准预算**）：\n\
              \x20\x20- 超出 → 调用 xmtp_dispatch_user 通知用户费用超额，引导换服务商。结束 turn。\n\
              \x20\x20- 未超出 → 进入 **A-Step 3**（set-payment-mode + task-402-pay）。\n\n\
-             - **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。")
+             - **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。",
+             CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
 }
 
 /// 指定服务商 B-Step 协商协议（三步握手 + 建群 + 多轮协商 + 落盘 + fallback）
@@ -194,7 +195,7 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定服务商 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
              用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
              用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
+             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
              \x20\x20userContent: [任务 {short_id} 你作为用户] 推荐服务商均不合适。请选择下一步：\n\
              \x20\x20A. 指定服务商 — 请提供服务商 agentId\n\
              \x20\x20B. 转为公开任务 — 让更多服务商看到任务\n\
@@ -202,7 +203,8 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后继续执行。\n\n\
              【后续事件】\n\
              - x402 → set-payment-mode → job_payment_mode_changed → task-402-pay（签名 + direct/accept + endpoint 重放）→ job_accepted → complete\n\
-             - escrow → set-payment-mode → job_payment_mode_changed → 通知服务商 apply → 服务商 apply 上链 → 服务商 xmtp_send 通知用户 → 用户收到 a2a-agent-chat → confirm-accept → job_accepted\n")
+             - escrow → set-payment-mode → job_payment_mode_changed → 通知服务商 apply → 服务商 apply 上链 → 服务商 xmtp_send 通知用户 → 用户收到 a2a-agent-chat → confirm-accept → job_accepted\n",
+             CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
 }
 
 // ─── Event handler functions ─────────────────────────────────────────────
@@ -225,6 +227,12 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
         designated_provider_d_steps(job_id, agent_id, dp_id)
     } else {
         format!("\
+             **Step 0 — 幂等检查：查询是否已有此任务的待决事项：**\n\
+             ```bash\n\
+             onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+             ```\n\
+             如果返回列表中已存在 jobId={job_id} 且 role=buyer 的条目 → **说明已经通知过用户,本次是重复事件,直接结束 turn,不再通知。**\n\
+             如果不存在 → 继续 Step 1。\n\n\
              **Step 1 — 查询推荐服务商列表：**\n\
              ```bash\n\
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\
@@ -244,7 +252,7 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              用户要求翻页 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：翻页\") relay 回 sub session；\
              用户选择转为公开任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
              用户选择关闭任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\n\
+             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\n\
              \x20\x20userContent: [任务 {short_id} 你作为用户] 以下是推荐服务商列表：\n\
              \x20\x20<将 recommend 输出的服务商列表完整粘贴，每个服务商一段：序号 / Agent Name / AgentID / 服务名称与描述 / 信用分 / 费用 / 支付方式>\n\
              \x20\x20---\n\
@@ -267,7 +275,8 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              如果有结果 → 回到 Step 2 展示新列表给用户。\n\
              如果为空 → 通知用户无更多服务商，引导选择：指定服务商 agentId / 转为公开任务 / 关闭任务。\n\n\
              ▸ 用户选择转为公开任务 → `onchainos agent set-public {job_id}`\n\n\
-             ▸ 用户选择关闭任务 → `onchainos agent close {job_id}`")
+             ▸ 用户选择关闭任务 → `onchainos agent close {job_id}`",
+             CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
     };
 
     let mut output = format!(
@@ -337,6 +346,12 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      ❌ 禁止用文字回复代替 xmtp_prompt_user 工具调用（sub session 输出用户看不到）\n\
      ❌ 禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user（用户需要做服务商选择决策，dispatch_user 无法 relay）\n\n\
      【你的下一步动作（严格顺序）】\n\n\
+     **Step 0 — 幂等检查：查询是否已有此任务的待决事项：**\n\
+     ```bash\n\
+     onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+     ```\n\
+     如果返回列表中已存在 jobId={job_id} 且 role=buyer 的条目 → **说明已经通知过用户,本次是重复事件,直接结束 turn,不再通知。**\n\
+     如果不存在 → 继续 Step 1。\n\n\
      **Step 1 — 获取待沟通服务商列表：**\n\
      调用 xmtp_get_pending_list 工具获取待沟通服务商列表。\n\
      ⚠️ 调用前输出：`[buyer-xmtp] xmtp_get_pending_list`\n\
@@ -350,7 +365,7 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      用户语义「选某个序号 N」（如 \"1\"/\"序号 2\"/\"the third\"/\"select 3\" 等）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER index=<N> agentId=<对应agentId>] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，sub agent 用 tag 里的 agentId 执行 xmtp_start_conversation 建群；\
      用户语义「全部跳过 / 都不要 / skip all / none of them 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SKIP_ALL_PROVIDERS] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，结束。\
      ⚠️ **路由 tag 协议**：`[intent:PICK_PROVIDER index=<N> agentId=<...>]` / `[intent:SKIP_ALL_PROVIDERS]` 必须**完全大写 ASCII** 原样塞入（intent 名 + 字段名 index/agentId 不变；只填值）；禁止翻译/改写。sub 按 intent tag 分支，从 tag 里直接读 index / agentId，**不读用户原话做匹配**。\n\
-     ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行建群或 task CLI。\n\
+     ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行建群或 task CLI。{CONSTRAINT}\n\
      \x20\x20userContent:\n\
      \x20\x20[任务 {short_id} 你作为用户] 有以下服务商主动联系你，请选择一个开始协商：\n\
      \x20\x20\n\
@@ -379,8 +394,9 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      B-Step 3：如果列表不为空 → 回到 Step 2，展示剩余服务商让用户选择。\n\n\
      B-Step 4：如果列表为空 → 调用 xmtp_dispatch_user 通知用户：\n\
      \x20\x20content: {no_sellers}\n\n\
-     【循环结束条件】xmtp_get_pending_list 返回空列表 或 协商成功进入场景 6。\n"
-    )
+     【循环结束条件】xmtp_get_pending_list 返回空列表 或 协商成功进入场景 6。\n",
+     CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
+
 }
 
 pub(super) fn job_visibility_changed(ctx: &FlowContext<'_>) -> String {
@@ -509,7 +525,7 @@ pub(super) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20[intent:reject]\n\
      \x20\x20b) `onchainos agent mark-failed {job_id} --provider <当前服务商agentId>`\n\
      \x20\x20c) 调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；调 `xmtp_prompt_user` 让用户决定下一步：\n\
-     \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] 用户选择查看推荐服务商 → relay「查看推荐」；选择指定服务商并提供 agentId → relay「指定服务商 agentId=X」；选择关闭 → relay「关闭任务」\n\
+     \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] 用户选择查看推荐服务商 → relay「查看推荐」；选择指定服务商并提供 agentId → relay「指定服务商 agentId=X」；选择关闭 → relay「关闭任务」。{CONSTRAINT}\n\
      \x20\x20\x20\x20userContent:\n\
      {over_budget}\n\
      \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后：A → `recommend`；B → `next-action --provider <agentId>`；C → `close`。\n\n\
@@ -527,8 +543,8 @@ pub(super) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      ⚠️ **禁止用自然语言替代 [intent:propose]**——服务商 Agent 只识别结构化标记，自然语言「请 apply / 条款已锁定」不会被解析。\n\
      ⚠️ **同 turn 只发一条 xmtp_send**。\n\
      🚫 🛑 **CRITICAL — 本事件绝对禁止调用 save-agreed / set-payment-mode / confirm-accept**——这些只在后续 negotiate_ack 事件中才能执行。服务商自然语言说「我接受」「同意」「OK」「没问题」**不是** `[intent:ack]`——只有 content 以字面量 `[intent:ack]` 方括号开头才算。在用户发出 [intent:propose] 之前，服务商不可能回 [intent:ack]。违反 = 跳过三步握手 = 任务永久卡死。\n\
-     → **结束本轮 turn**，等待服务商回复。\n"
-    )
+     → **结束本轮 turn**，等待服务商回复。\n",
+     CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
 }
 
 pub(super) fn negotiate_ack(ctx: &FlowContext<'_>) -> String {

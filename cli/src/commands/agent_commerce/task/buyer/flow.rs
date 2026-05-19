@@ -13,6 +13,10 @@ use crate::commands::agent_commerce::task::common::state_machine::Status;
 
 const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` / `userContent:` templates below are samples — translate to the user's language before `xmtp_dispatch_user` / `xmtp_prompt_user`.\n\n";
 
+/// 注入每条 `xmtp_prompt_user` llmContent 末尾的 user-session 行为约束。
+/// 防止 user agent 在渲染 userContent 之外额外生成摘要/卡片/重复消息。
+pub(super) const PROMPT_USER_SESSION_CONSTRAINT: &str = "\n⚠️ **user session 唯一动作 = relay**：只渲染 userContent 给用户（原样，不改写、不追加、不生成额外摘要/卡片/解读），等用户真实输入后 relay 回 sub session——禁止自己执行 task CLI / 禁止 xmtp_send 给服务商 / 禁止 xmtp_dispatch_user 多发通知——relay 一次就结束 turn。";
+
 /// 跨所有事件处理函数共享的上下文参数包。
 pub(super) struct FlowContext<'a> {
     pub job_id: &'a str,

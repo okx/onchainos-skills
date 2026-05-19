@@ -105,6 +105,12 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      🛑 **escrow 严禁自动验收**：必须等用户通过 relay 做出决策，Agent 不得替用户决定——无论交付物质量如何、无论是否超时临近。\n\
      ⚠️ x402 模式：资金已支付，只需通知用户交付物内容，用户不能拒绝。\n\n\
      【你的下一步动作（严格顺序）】\n\n\
+     **Step 0 — 幂等检查：查询是否已有此任务的待决事项：**\n\
+     ```bash\n\
+     onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+     ```\n\
+     如果返回列表中已存在 jobId={job_id} 且 role=buyer 的条目 → **说明已经通知过用户,本次是重复事件,直接结束 turn,不再通知。**\n\
+     如果不存在 → 继续 Step 1。\n\n\
      **Step 1 — 查询任务详情，提取交付物和支付方式：**\n\
      ```bash\n\
      onchainos agent status {job_id}\n\
@@ -147,7 +153,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      用户语义「肯定/通过/approve/OK/同意/yes 等」→ **仅调** xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 approve_review 流程，你不要做其它事）；\
      用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ **仅调** xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 reject_review 流程，你不要做其它事）。\
      ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略 / 拆开**——sub 按 intent tag 分支，不再按文字匹配，避免多语言失配。\n\
-     ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
+     ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。⚠️ xmtp_dispatch_session 只调用**一次**。{CONSTRAINT}\n\
      \x20\x20\x20\x20userContent（按 deliverableType 分,首行务必带 `[任务 {short_id} 你作为用户]` 前缀）：\n\n\
      \x20\x20\x20\x20▸ deliverableType=file：\n\
      \x20\x20\x20\x20[任务 {short_id} 你作为用户] 服务商已提交交付物（文件），已下载到本地。\n\
@@ -200,8 +206,9 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      任务完整结束。\n\n\
      【后续事件】\n\
      - escrow: job_completed → 任务完成 / job_refused → 等待服务商决定仲裁或退款\n\
-     - x402: 流程已结束\n"
-    )
+     - x402: 流程已结束\n",
+     CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
+
 }
 
 // ─── 拒绝 / 仲裁 ──────────────────────────────────────────────────────
@@ -235,6 +242,7 @@ pub(super) fn job_refused(ctx: &FlowContext<'_>) -> String {
 
 pub(super) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
 
     let evidence_prompt = super::content::job_disputed_user_evidence_prompt(short_id);
@@ -249,19 +257,25 @@ pub(super) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      ❌ 禁止凭空编造证据摘要直接调 `dispute upload`——sub agent 不知道用户手上有什么证据\n\
      ❌ 禁止通过 xmtp_send 向服务商发送任何消息——仲裁期间双方通过链上证据交互\n\n\
      【你的下一步动作（严格顺序）】\n\n\
+     **Step 0 — 幂等检查：查询是否已有此任务的待决事项：**\n\
+     ```bash\n\
+     onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+     ```\n\
+     如果返回列表中已存在 jobId={job_id} 且 role=buyer 的条目 → **说明已经通知过用户,本次是重复事件,直接结束 turn,不再通知。**\n\
+     如果不存在 → 继续 Step 1。\n\n\
      **Step 1 — 调用 xmtp_prompt_user 把证据决策请求推给用户：**\n\n\
      先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\n\
      \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
      🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
      🛑 **禁止执行** onchainos agent 命令（complete/reject/dispute 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
      用户**真实回复到达后**（下一 turn）：\
-     用户提供证据后，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay 回 sub session 执行 dispute upload。⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。1 小时内必须提交。\n\
+     用户提供证据后，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay 回 sub session 执行 dispute upload。⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。1 小时内必须提交。{CONSTRAINT}\n\
      \x20\x20\x20\x20userContent:\n\
      {evidence_prompt}\n\n\
      **Step 2 — 等用户回复 relay 回来**：收到 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：...` 后，调 `next-action --jobStatus dispute_evidence` 拿上传剧本（intent tag 已是路由确认；用户证据原文从 `用户证据：` 后面读）。\n\n\
      ⚠️ 1 小时内必须提交证据，过期后失效。\n\n\
-     跑完 Step 1-2 → **结束本轮 turn**，等用户回复。\n"
-    )
+     跑完 Step 1-2 → **结束本轮 turn**，等用户回复。\n",
+     CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
 }
 
 pub(super) fn dispute_evidence(ctx: &FlowContext<'_>) -> String {
@@ -271,6 +285,10 @@ pub(super) fn dispute_evidence(ctx: &FlowContext<'_>) -> String {
     format!(
     "【当前动作】上传仲裁证据\n\
      【角色】用户（User Agent）\n\n\
+     **Step 0 — 清除 pending-decisions：**\n\
+     ```bash\n\
+     onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
+     ```\n\n\
      **Step 1 — 从 relay 提取证据内容：**\n\
      已通过 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE]` 路由进来，从 `用户证据：` 后面提取：\n\
      - 文字摘要 → 用户提供的文字部分\n\
@@ -591,7 +609,7 @@ pub(super) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
      用户语义「肯定/通过/approve/OK/同意/yes 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 complete；\
      用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session 执行 reject。\
      ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略**——sub 按 intent tag 分支，不按文字匹配。\n\
-     ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
+     ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。{CONSTRAINT}\n\
      \x20\x20userContent:\n\
      {review_deadline_prompt}\n\n\
      **Step 4 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由：**\n\
@@ -607,8 +625,8 @@ pub(super) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
      - `[intent:REJECT_REVIEW]`（reason 从 `用户原话：` 后面抽取）：\n\
      ```bash\n\
      onchainos agent reject {job_id} --reason \"<用户原话里的拒绝理由>\"\n\
-     ```\n"
-    )
+     ```\n",
+     CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
 }
 
 pub(super) fn review_expired(ctx: &FlowContext<'_>) -> String {
