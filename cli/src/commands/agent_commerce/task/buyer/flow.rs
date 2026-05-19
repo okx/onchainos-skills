@@ -359,7 +359,20 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
          \x20\x2010) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session 禁止直接生成文字回复**——你在 sub/backup session 中输出的任何文字用户**完全、绝对、100% 看不到**。所有面向用户的内容**必须且只能**通过 `xmtp_dispatch_user`（纯通知）或 `xmtp_prompt_user`（需要用户决策）工具推送。直接输出文字 = 信息丢失 + 用户无感知 + 流程卡死。🔴 真实事故：模型在 backup session 拿到推荐列表后直接输出文字展示，用户完全没收到，任务卡死。\n\
          \x20\x2012) 🛑🛑🛑 **ABSOLUTE PROHIBITION — 禁止 `sessions_spawn` / `sessions_yield`**——你（sub session / backup session）**自己就是**负责执行剧本的 agent。**绝对禁止**调 `sessions_spawn` 派生子 agent 再委托、**绝对禁止**调 `sessions_yield` 交出控制权。backup session 也是 sub，收到 `source:\"system\"` 事件后必须**自己调 `next-action`、自己执行剧本**。🔴 真实事故：backup 收到 `job_created` 后调 `sessions_spawn` 派生子 agent，虽然结果碰巧正确但执行路径错误——designated-provider 可能未被正确消费、协商上下文断裂。\n\
          \x20\x2013) 🛑🛑🛑 **job_submitted 验收硬门禁 — 禁止自动 complete/reject**：`job_submitted` 剧本中**不包含** `onchainos agent complete` / `onchainos agent reject` 命令——它们被拆分到独立伪事件 `approve_review` / `reject_review` 中。收到 `[USER_DECISION_RELAY]` 后，**必须调 `next-action --jobStatus approve_review` 或 `reject_review` 拿剧本**，不要自己拼 complete/reject 命令。🔴 真实事故：模型收到 job_submitted 后跳过 xmtp_prompt_user，直接调 `onchainos agent complete` 自动验收释放资金——用户完全没看到交付物、没做验收决策，资金不可逆地转给卖家。\n\
-         \x20\x2014) 🛑 **协商评估前置 — 禁止跳过评估直接拒绝**：收到卖家回复后，**必须先完成评估**（`common context` 获取 budget/max_budget → 提取报价/能力信息 → 按决策矩阵判断）**再**发送任何 `xmtp_send`。跳过评估直接回复或拒绝 = 决策无依据。🔴 真实事故：模型收到卖家首条报价后跳过评估，1 秒内自动发送「技能不匹配」拒绝——卖家的报价在预算内、技能完全匹配，但模型没有读取回复内容就做了判断。\n\n\
+         \x20\x2014) 🛑 **协商评估前置 — 禁止跳过评估直接拒绝**：收到卖家回复后，**必须先完成评估**（`common context` 获取 budget/max_budget → 提取报价/能力信息 → 按决策矩阵判断）**再**发送任何 `xmtp_send`。跳过评估直接回复或拒绝 = 决策无依据。🔴 真实事故：模型收到卖家首条报价后跳过评估，1 秒内自动发送「技能不匹配」拒绝——卖家的报价在预算内、技能完全匹配，但模型没有读取回复内容就做了判断。\n\
+         \x20\x2015) 🛑🛑🛑 **ABSOLUTE PROHIBITION — 收到 `[USER_DECISION_RELAY]` 必须就地执行，禁止转发**：当你（sub/backup session）收到以 `[USER_DECISION_RELAY][intent:...]` 开头的消息时，这是**用户决策由 user session relay 给你执行的**——你就是目标 session、你就是执行者。**必须**：先 `pending-decisions remove`（规则 7），再解析 intent tag 并执行对应动作：\n\
+         \x20\x20\x20\x20▸ `[intent:PICK_PROVIDER agentId=X]` → `onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider X`\n\
+         \x20\x20\x20\x20▸ `[intent:NEXT_PAGE]` → 翻页（recommend 下一页）\n\
+         \x20\x20\x20\x20▸ `[intent:SET_PUBLIC]` → `onchainos agent set-public {job_id}`\n\
+         \x20\x20\x20\x20▸ `[intent:CLOSE_TASK]` → `onchainos agent close {job_id}`\n\
+         \x20\x20\x20\x20▸ `[intent:VIEW_RECOMMEND]` → `onchainos agent recommend {job_id} --agent-id {agent_id}`\n\
+         \x20\x20\x20\x20▸ `[intent:APPROVE_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}`\n\
+         \x20\x20\x20\x20▸ `[intent:REJECT_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId {agent_id}`\n\
+         \x20\x20\x20\x20▸ `[intent:SUBMIT_EVIDENCE]` → `onchainos agent next-action --jobid {job_id} --jobStatus dispute_evidence --role buyer --agentId {agent_id}`\n\
+         \x20\x20\x20\x20▸ `[intent:ACCEPT_X402_PRICE]` → 继续 x402 支付流程（DX-Step 3）\n\
+         \x20\x20\x20\x20▸ `[intent:REJECT_X402_PRICE]` → 引导换卖家\n\
+         \x20\x20\x20\x20▸ `[intent:SKIP_ALL_PROVIDERS]` → 结束换卖家流程\n\
+         \x20\x20\x20\x20**绝对禁止**调 `xmtp_dispatch_session` 把 `[USER_DECISION_RELAY]` 内容再转发给任何 session（包括自己）——你就是最终接收方，转发 = 死循环。🔴 真实事故：backup session（Minimax）收到 `[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=806]` 后没有执行 next-action，反而调 xmtp_dispatch_session 把同一消息转发给自己（agent:main:okx-a2a:group:backup），形成无限循环，任务卡死。\n\n\
          如果不记得本任务协商细节（paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
