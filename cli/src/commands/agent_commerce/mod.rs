@@ -343,7 +343,7 @@ pub enum AgentCommand {
     #[command(name = "pending-decisions", subcommand)]
     PendingDecisions(task::common::pending::PendingDecisionsCommand),
 
-    // ── Task system (Evaluator / arbitrator) ─────────────────────────────────
+    // ── Task system (Evaluator Agent) ────────────────────────────────────────
     // 历史上有过 `Evaluator(EvaluatorCommand)` 包装，2026-05 与 buyer/provider 风格
     // 对齐展平到顶层。`agent evaluator <sub>` 形式不再支持，各命令对应关系见
     // `evaluator/mod.rs` 文件头注释。
@@ -720,7 +720,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::PendingDecisions(c) =>
             task::common::pending::run(c).await,
 
-        // ── Evaluator (arbitrator) flat dispatch ────────────────────
+        // ── Evaluator Agent flat dispatch ───────────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
             task::evaluator::info::handle_info(&mut c, &job_id, &agent_id, &round_num).await
