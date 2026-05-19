@@ -442,6 +442,18 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             enable_gas_station,
         } => {
             let chain = crate::chains::resolve_chain(&chain);
+            // Resolve `--contract-token` alias (`usdc`, `usdt`, ...) → CA and
+            // run the same chain-aware format check that swap uses, so a
+            // typo / symbol leak is rejected here (before any BE round-trip
+            // or auth refresh) rather than at the BE error layer.
+            let contract_token = match contract_token {
+                Some(ct) => Some(crate::token_alias::resolve_and_validate(
+                    &chain,
+                    &ct,
+                    "contract-token",
+                )?),
+                None => None,
+            };
             let raw_amt = resolve_send_amount(
                 amt.as_deref(),
                 readable_amount.as_deref(),
