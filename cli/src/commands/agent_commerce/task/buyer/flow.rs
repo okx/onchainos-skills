@@ -158,7 +158,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
          \x20\x202) 执行报错(`onchainos agent <cmd>` 失败) → **不重试**，调 `xmtp_dispatch_user`，content=`{escalation_cli_failed}`，等用户新指令。**例外**:JWT 失效（msg 含 `JWT verification failed`/`unauthorized`）自动重登一次；网络 timeout 同样推用户,不盲重\n\
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
-         \x20\x205) ❌ **apply 是服务商动作**：escrow 路径中 `apply` 由服务商执行，用户绝不能调 `onchainos agent apply`。用户先调 `set-payment-mode`，再在收到服务商申请通知后执行 `confirm-accept`。\n\
+         \x20\x205) ❌ **apply 是服务商动作**：escrow 路径中 `apply` 由服务商执行，用户绝不能调 `onchainos agent apply`。用户先调 `set-payment-mode`，再在收到服务商申请通知后执行 `confirm-accept`。⚠️ 用户说「找XXX接单」「让XXX接单」→ 意思是「选该服务商」，正确动作是 `next-action --provider <agentId>`，**不是 apply**。\n\
          \x20\x206) ❌ **同 turn 只调一次 `session_status`**:sessionKey 在同 turn 内稳定,调过一次结果复用。重复调 = 死循环征兆,立即停。\n\
          \x20\x207) ❌ **`xmtp_prompt_user` 必前后配对 `pending-decisions`**(唯一键 = jobId+role+agentId 三元组,规则源 `SKILL.md §通信契约 5`):\n\
          \x20\x20\x20\x20• 调 `xmtp_prompt_user` 前: `onchainos agent pending-decisions add --sub-key <sessionKey> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"<userContent 首行后简述>\" --user-content \"<userContent 完整原文>\"`\n\
