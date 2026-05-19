@@ -12,7 +12,7 @@
 //!    sub agent 翻成等价口语化表达(英文用户:「escrowed payment/x402, review window expired,
 //!    task completed」等)。禁用技术术语这条对所有语言生效,不止中文。
 //!
-//! 2. **Peer-facing** (`xmtp_send` content,给卖家 sub agent)
+//! 2. **Peer-facing** (`xmtp_send` content,给服务商 sub agent)
 //!    agent-to-agent 协议消息。命名后缀 `_to_seller`。
 //!    规则:可以含协议字面量(`[NEGOTIATE_*]` 等);
 //!    **禁止指挥对方调 CLI**(对方有自己的 flow.rs,会按链事件自决,你下指令是越权)。
@@ -35,10 +35,10 @@ pub fn job_accepted_escrow_user_notify(job_id: &str, title: &str) -> String {
         "\x20\x20[接单成功] 任务 {job_id} 已确认接单，进入执行阶段。\n\
          \x20\x20任务标题：{title}\n\
          \x20\x20任务描述：<description>\n\
-         \x20\x20卖家 AgentID：<providerAgentId>\n\
+         \x20\x20服务商 AgentID：<providerAgentId>\n\
          \x20\x20支付方式：担保\n\
          \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
-         \x20\x20等待卖家执行并提交交付物。"
+         \x20\x20等待服务商执行并提交交付物。"
     )
 }
 
@@ -57,8 +57,8 @@ pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
 /// `Event::JobRefused` Step 1 推给用户的拒绝上链成功通知。
 pub fn job_refused_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[拒绝已确认] 任务 **{title}**（{job_id}）的交付物已拒绝，等待卖家处理。\n\
-         \x20\x20\x20\x20卖家将在 24 小时内选择：发起仲裁 或 同意退款。\n\
+        "\x20\x20\x20\x20[拒绝已确认] 任务 **{title}**（{job_id}）的交付物已拒绝，等待服务商处理。\n\
+         \x20\x20\x20\x20服务商将在 24 小时内选择：发起仲裁 或 同意退款。\n\
          \x20\x20\x20\x20超时未操作将自动退款至您的钱包。"
     )
 }
@@ -68,7 +68,7 @@ pub fn job_refused_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobDisputed` Step 1 给用户看的证据收集 prompt(`xmtp_prompt_user.userContent`)。
 pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[任务 {short_id} 你作为买家] 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
+        "\x20\x20\x20\x20[任务 {short_id} 你作为用户] 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
          \x20\x20\x20\x20- 文字摘要（必填）：说明交付物不达标的关键证据点\n\
          \x20\x20\x20\x20- 图片路径（可选）：截图、聊天记录等本地文件路径\n\
          \x20\x20\x20\x20回复格式示例：『证据：交付物缺少 X/Y/Z；图片：/path/to/screenshot.png』"
@@ -80,7 +80,7 @@ pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
 /// `Event::JobCompleted` 分支 A（escrow）推给用户的任务完成通知。
 pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[任务完成] **{title}**（{job_id}）已验收通过，资金已释放给卖家。\n\
+        "\x20\x20\x20\x20[任务完成] **{title}**（{job_id}）已验收通过，资金已释放给服务商。\n\
          \x20\x20\x20\x20  - 支出：**<tokenAmount> <tokenSymbol>**\n\
          \x20\x20\x20\x20  - 支付方式：**担保**\n\
          \x20\x20\x20\x20  - 链上凭证：<txHash>（来自 complete CLI 输出）\n\
@@ -97,27 +97,27 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
          \x20\x20\x20\x20  - 支出：**<tokenAmount> <tokenSymbol>**\n\
          \x20\x20\x20\x20  - 支付方式：**x402**\n\
          \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
-         \x20\x20\x20\x20如需评价卖家，请回复「评价」。"
+         \x20\x20\x20\x20如需评价服务商，请回复「评价」。"
     )
 }
 
 // ── Event::DisputeResolved ─────────────────────────────────────────
 
-/// `Event::DisputeResolved` 买家胜诉推给用户的通知。
+/// `Event::DisputeResolved` 用户胜诉推给用户的通知。
 pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[仲裁胜诉] **{title}**（{job_id}）仲裁完成，**买方胜诉**。\n\
+        "\x20\x20\x20\x20[仲裁胜诉] **{title}**（{job_id}）仲裁完成，**用户方胜诉**。\n\
          \x20\x20\x20\x20  - 退款：**<tokenAmount> <tokenSymbol>**\n\
-         \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复「评价」。"
+         \x20\x20\x20\x20本任务流程结束。如需评价服务商，请回复「评价」。"
     )
 }
 
-/// `Event::DisputeResolved` 买家败诉推给用户的通知。
+/// `Event::DisputeResolved` 用户败诉推给用户的通知。
 pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[仲裁败诉] **{title}**（{job_id}）仲裁完成，**卖方胜诉**。\n\
-         \x20\x20\x20\x20  - 损失：**<tokenAmount> <tokenSymbol>**（资金已释放给卖家）\n\
-         \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复「评价」。"
+        "\x20\x20\x20\x20[仲裁败诉] **{title}**（{job_id}）仲裁完成，**服务商方胜诉**。\n\
+         \x20\x20\x20\x20  - 损失：**<tokenAmount> <tokenSymbol>**（资金已释放给服务商）\n\
+         \x20\x20\x20\x20本任务流程结束。如需评价服务商，请回复「评价」。"
     )
 }
 
@@ -159,7 +159,7 @@ pub fn job_closed_user_notify(job_id: &str, title: &str) -> String {
 
 /// `Event::JobVisibilityChanged` visibility=0 → 公开通知。
 pub fn visibility_public_user_notify(job_id: &str, title: &str) -> String {
-    format!("[可见性变更] **{title}**（{job_id}）已切换为**公开（public）**，等待卖家主动联系。")
+    format!("[可见性变更] **{title}**（{job_id}）已切换为**公开（public）**，等待服务商主动联系。")
 }
 
 /// `Event::JobVisibilityChanged` visibility=1 → 私有通知。
@@ -171,14 +171,14 @@ pub fn visibility_private_user_notify(job_id: &str, title: &str) -> String {
 
 /// `Event::JobPaymentModeChanged` escrow 分支 Step 4 推给用户的通知。
 pub fn payment_mode_escrow_user_notify(job_id: &str, title: &str) -> String {
-    format!("**{title}**（{job_id}）更新支付方式成功，设置卖家 **<providerName>**（<providerAgentId>）接单中...")
+    format!("**{title}**（{job_id}）更新支付方式成功，设置服务商 **<providerName>**（<providerAgentId>）接单中...")
 }
 
 /// `Event::JobPaymentModeChanged` x402 分支 — 重放成功时推给用户的交付物通知。
 pub fn x402_deliverable_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20[x402 交付物已获取] 任务 {job_id} endpoint 重放成功。\n\
-         \x20\x20卖家 AgentID：<providerAgentId>\n\
+         \x20\x20服务商 AgentID：<providerAgentId>\n\
          \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
          \x20\x20---交付物内容---\n\
          \x20\x20<replayBody 完整内容，JSON 则格式化输出>\n\
@@ -202,9 +202,9 @@ pub fn x402_replay_fail_payment_user_notify(job_id: &str) -> String {
 /// `Event::NegotiateReply` 报价超出 max_budget 时推给用户的决策 prompt。
 pub fn over_budget_user_prompt(short_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[任务 {short_id}] 卖家报价超出最高预算，协商已终止。请选择下一步：\n\
-         \x20\x20\x20\x20\x20\x20A. 查看推荐卖家列表\n\
-         \x20\x20\x20\x20\x20\x20B. 指定其他卖家（请提供 agentId）\n\
+        "\x20\x20\x20\x20[任务 {short_id}] 服务商报价超出最高预算，协商已终止。请选择下一步：\n\
+         \x20\x20\x20\x20\x20\x20A. 查看推荐服务商列表\n\
+         \x20\x20\x20\x20\x20\x20B. 指定其他服务商（请提供 agentId）\n\
          \x20\x20\x20\x20\x20\x20C. 关闭任务"
     )
 }
@@ -218,21 +218,21 @@ pub fn close_user_notify(job_id: &str) -> String {
 
 /// 转为公开任务后推给用户的通知。
 pub fn set_public_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} 已转为公开任务，等待卖家主动申请。")
+    format!("任务 {job_id} 已转为公开任务，等待服务商主动申请。")
 }
 
 // ── Event::SubmitExpired ───────────────────────────────────────────
 
-/// `Event::SubmitExpired` 推给用户的卖家提交超时通知。
+/// `Event::SubmitExpired` 推给用户的服务商提交超时通知。
 pub fn submit_expired_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} 的卖家未在截止时间前提交交付物，已自动申请退款，资金将退回你的账户。")
+    format!("任务 {job_id} 的服务商未在截止时间前提交交付物，已自动申请退款，资金将退回你的账户。")
 }
 
 // ── Event::RefuseExpired ───────────────────────────────────────────
 
-/// `Event::RefuseExpired` 推给用户的卖家仲裁超时通知。
+/// `Event::RefuseExpired` 推给用户的服务商仲裁超时通知。
 pub fn refuse_expired_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} 的卖家在你拒绝交付物后未及时发起仲裁，已自动申请退款，资金将退回你的账户。")
+    format!("任务 {job_id} 的服务商在你拒绝交付物后未及时发起仲裁，已自动申请退款，资金将退回你的账户。")
 }
 
 // ── Event::ReviewDeadlineWarn ──────────────────────────────────────
@@ -241,7 +241,7 @@ pub fn refuse_expired_user_notify(job_id: &str) -> String {
 pub fn review_deadline_warn_user_prompt(job_id: &str) -> String {
     format!(
         "\x20\x20[验收截止提醒] 任务 {job_id} 的验收截止时间即将到期。\n\
-         \x20\x20超时后卖家可自动领取资金。\n\
+         \x20\x20超时后服务商可自动领取资金。\n\
          \x20\x20请尽快决定：\n\
          \x20\x20A. 通过验收 — 回复「通过」\n\
          \x20\x20B. 拒绝交付物 — 回复「拒绝」并说明原因"
@@ -254,8 +254,8 @@ pub fn review_deadline_warn_user_prompt(job_id: &str) -> String {
 pub fn review_expired_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20[验收超时] 任务 {job_id} 的验收窗口已过期，你未在截止时间前做出验收决定。\n\
-         \x20\x20卖家现在可自动领取资金。\n\
-         \x20\x20等待卖家操作中..."
+         \x20\x20服务商现在可自动领取资金。\n\
+         \x20\x20等待服务商操作中..."
     )
 }
 
@@ -264,7 +264,7 @@ pub fn review_expired_user_notify(job_id: &str) -> String {
 /// `Event::JobAutoCompleted` 推给用户的自动完成通知。
 pub fn job_auto_completed_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20[任务自动完成] **{title}**（{job_id}）因**验收超时**，资金已自动释放给卖家。\n\
+        "\x20\x20[任务自动完成] **{title}**（{job_id}）因**验收超时**，资金已自动释放给服务商。\n\
          \x20\x20本任务流程结束。"
     )
 }
@@ -283,11 +283,11 @@ pub fn wakeup_resume_user_notify(job_id: &str) -> String {
     format!("任务 {job_id} 已恢复，请继续之前的决策")
 }
 
-// ── provider_conversation 无更多卖家 ──────────────────────────────
+// ── provider_conversation 无更多服务商 ──────────────────────────────
 
-/// `provider_conversation` B-Step 4 无更多待沟通卖家时推给用户的通知。
+/// `provider_conversation` B-Step 4 无更多待沟通服务商时推给用户的通知。
 pub fn no_more_sellers_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} 当前没有更多待沟通卖家，建议等待新卖家联系或调整任务描述。")
+    format!("任务 {job_id} 当前没有更多待沟通服务商，建议等待新服务商联系或调整任务描述。")
 }
 
 // ── Escalation（preamble 异常升级）─────────────────────────────────

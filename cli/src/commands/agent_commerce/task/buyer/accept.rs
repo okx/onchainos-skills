@@ -1,8 +1,8 @@
 //! 确认接单 + Fund
 //!
-//! 买家动作：
+//! 用户动作：
 //! - set-payment-mode: 设置支付方式（独立命令，单签上链 → 等待 job_payment_mode_changed）
-//! - confirm-accept: 确认接受卖家（setPaymentMode 已完成后执行）
+//! - confirm-accept: 确认接受服务商（setPaymentMode 已完成后执行）
 //!    - escrow:      providerConfirmStatus → sign_escrow → accept → broadcast
 //!    - x402:        不走此命令（用 task-402-pay）
 //! - direct-accept: x402 阶段 2b
@@ -243,7 +243,7 @@ pub async fn handle_set_payment_mode(
     Ok(())
 }
 
-/// confirm-accept — 确认接受卖家（setPaymentMode 已通过 set-payment-mode 独立执行）
+/// confirm-accept — 确认接受服务商（setPaymentMode 已通过 set-payment-mode 独立执行）
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
@@ -309,7 +309,7 @@ async fn confirm_accept_escrow(
 ) -> Result<()> {
     let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), "escrow")?;
 
-    // providerConfirmStatus 确认卖家已 apply 并获取 escrow 参数
+    // providerConfirmStatus 确认服务商已 apply 并获取 escrow 参数
     let confirm_resp = fetch_provider_confirm_status(
         client, job_id, provider, &symbol, &amount, agent_id,
     ).await?;
@@ -357,7 +357,7 @@ async fn confirm_accept_escrow(
     let hook = json_str(escrow, "hook")?;
     let hook_data = json_str(escrow, "hookData")?;
     let salt = json_str(escrow, "salt")?;
-    println!("✓ providerConfirmStatus: 卖家已 apply，escrow 参数已获取");
+    println!("✓ providerConfirmStatus: 服务商已 apply，escrow 参数已获取");
 
     // sign_escrow — TEE 签名 EIP-3009 ReceiveWithAuthorization
     eprintln!("[debug] sign_escrow 入参:");
@@ -440,7 +440,7 @@ async fn confirm_accept_escrow(
         ]),
         None,
     );
-    println!("✓ 已接受卖家 {provider}（担保支付），资金已托管");
+    println!("✓ 已接受服务商 {provider}（担保支付），资金已托管");
     println!("  txHash: {tx_hash}");
     Ok(())
 }

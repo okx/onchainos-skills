@@ -1,6 +1,6 @@
 //! x402 支付流程
 //!
-//! 买家 accept 后调用 x402 完成支付。通过子进程调用 `onchainos payment x402-pay`
+//! 用户 accept 后调用 x402 完成支付。通过子进程调用 `onchainos payment x402-pay`
 //! 复用 agentic_wallet 中的签名逻辑，本模块负责：
 //! - 请求 Provider endpoint → 解码 HTTP 402
 //! - 调用 CLI 签名

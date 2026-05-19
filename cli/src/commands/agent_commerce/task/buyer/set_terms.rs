@@ -1,7 +1,7 @@
-//! 买家条款变更（仅 Open 状态）
+//! 用户条款变更（仅 Open 状态）
 //!
 //! - `set-token-and-budget` — 修改支付代币及支付金额（上链，等 task_token_budget_change 通知）
-//! - `set-provider`         — 修改卖家（上链，不等确认直接继续）
+//! - `set-provider`         — 修改服务商（上链，不等确认直接继续）
 //! - `set-max-budget`       — 修改最高预算（不上链，接口成功即完成）
 
 use anyhow::Result;
@@ -61,7 +61,7 @@ pub async fn handle_set_token_and_budget(
     Ok(())
 }
 
-/// set-provider — 修改卖家
+/// set-provider — 修改服务商
 ///
 /// POST /priapi/v1/aieco/task/{jobId}/setProviderAndAgentId
 /// Request:  { "providerAgentId": "<agentId>", "sessionCert": "..." }
@@ -102,7 +102,7 @@ pub async fn handle_set_provider(
         None,
     );
 
-    println!("✓ 卖家变更已提交（不等上链确认，立即启动新卖家流程）");
+    println!("✓ 服务商变更已提交（不等上链确认，立即启动新服务商流程）");
     println!("  providerAgentId: {provider_agent_id}");
     println!("  txHash: {tx_hash}");
     println!();

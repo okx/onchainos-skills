@@ -1,9 +1,9 @@
 //! 协商状态管理
 //!
-//! 本地持久化推荐列表 + 当前协商索引，供 Agent 遍历卖家列表时使用。
+//! 本地持久化推荐列表 + 当前协商索引，供 Agent 遍历服务商列表时使用。
 //!
 //! 状态文件：~/.onchainos/task/{jobId}/negotiate-state.json
-//! 清理时机：买家执行 confirm-accept 成功后
+//! 清理时机：用户执行 confirm-accept 成功后
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::audit;
 
-/// 推荐卖家信息（从 /match 接口返回的子集）
+/// 推荐服务商信息（从 /match 接口返回的子集）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderInfo {
@@ -56,7 +56,7 @@ pub struct ServiceInfo {
     pub fee_token: String,
 }
 
-/// 某个卖家的协商确定条款
+/// 某个服务商的协商确定条款
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgreedTerms {
@@ -74,7 +74,7 @@ pub struct NegotiateState {
     pub providers: Vec<ProviderInfo>,
     pub current_index: usize,
     pub created_at: String,
-    /// 按 provider_agent_id 存储各卖家的协商结果（支持同时与多个卖家协商）
+    /// 按 provider_agent_id 存储各服务商的协商结果（支持同时与多个服务商协商）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub agreed: HashMap<String, AgreedTerms>,
     /// 当前页码（0-based）
@@ -260,7 +260,7 @@ pub fn load_agreed(job_id: &str, provider_agent_id: Option<&str>) -> Result<Opti
     Ok(state.agreed.get(&key).map(|t| (t.token_symbol.clone(), t.token_amount.clone())))
 }
 
-/// 保存指定卖家（create-task --provider 指定，job_created 跳过 recommend）
+/// 保存指定服务商（create-task --provider 指定，job_created 跳过 recommend）
 pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result<()> {
     let dir = state_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
@@ -270,14 +270,14 @@ pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result
     Ok(())
 }
 
-/// 检查指定卖家文件是否存在（不消费）
+/// 检查指定服务商文件是否存在（不消费）
 pub fn has_designated_provider(job_id: &str) -> bool {
     state_dir(job_id)
         .map(|d| d.join("designated-provider.json").exists())
         .unwrap_or(false)
 }
 
-/// 读取并删除指定卖家文件（consume-on-read：job_created 只触发一次，读完即清）
+/// 读取并删除指定服务商文件（consume-on-read：job_created 只触发一次，读完即清）
 pub fn take_designated_provider(job_id: &str) -> Result<Option<String>> {
     let path = state_dir(job_id)?.join("designated-provider.json");
     if !path.exists() {

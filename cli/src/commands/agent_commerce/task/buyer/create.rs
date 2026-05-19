@@ -1,9 +1,9 @@
 //! 发布任务（自定义签名流程）
 //!
-//! 买家动作：发布任务 — onchainos agent create-task
+//! 用户动作：发布任务 — onchainos agent create-task
 //!
 //! 身份校验：通过调用身份模块 CLI（`onchainos agent get`）检查当前用户
-//! 是否拥有买家身份（role=1），再执行任务发布流程。
+//! 是否拥有用户身份（role=1），再执行任务发布流程。
 
 use anyhow::{bail, Result};
 use std::time::Duration;
@@ -169,7 +169,7 @@ pub(crate) async fn resolve_buyer_agent() -> Result<(String, String)> {
 
     let buyer = agents.iter()
         .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))
-        .ok_or_else(|| anyhow::anyhow!("当前账户没有买家（requestor）身份，请先执行 onchainos agent create --role requestor 注册"))?;
+        .ok_or_else(|| anyhow::anyhow!("当前账户没有用户（requestor）身份，请先执行 onchainos agent create --role requestor 注册"))?;
 
     let agent_id = buyer["agentId"].as_str()
         .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
@@ -190,7 +190,7 @@ pub async fn handle_create(
         .map_err(|e| anyhow::anyhow!("登录态已失效，请先执行 onchainos wallet login: {e}"))?;
 
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
-    eprintln!("[task-create] 买家身份校验通过 (agentId: {buyer_agent_id})");
+    eprintln!("[task-create] 用户身份校验通过 (agentId: {buyer_agent_id})");
 
     common::ensure_sufficient_balance(params.budget, &validated.currency).await?;
 
@@ -250,11 +250,11 @@ pub async fn handle_create(
     println!("  jobId:  {job_id}");
     println!("  txHash: {tx_hash}");
     if let Some(ref provider_id) = params.provider {
-        println!("  指定卖家: {provider_id}（跳过 recommend，直接路由）");
+        println!("  指定服务商: {provider_id}（跳过 recommend，直接路由）");
     }
     println!();
     if params.provider.is_some() {
-        println!("下一步: 等待 job_created 通知，将自动查询指定卖家服务并路由");
+        println!("下一步: 等待 job_created 通知，将自动查询指定服务商服务并路由");
     } else {
         println!("下一步: onchainos agent recommend {job_id}");
     }
