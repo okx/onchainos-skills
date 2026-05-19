@@ -29,7 +29,7 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
              \x20\x20```\n\
              \x20\x20- `valid=false` → 调用 xmtp_prompt_user 通知用户 endpoint 不合法，引导用户选择下一步（需要用户决策）：\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户选择指定其他服务商并提供 agentId → relay「指定服务商 agentId=X」；选择转为公开任务 → relay「转为公开任务」；选择关闭 → relay「关闭任务」。{CONSTRAINT}\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「选 A / 指定服务商」并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户提供的agentId>] 用户原话：<用户回复原文>\") relay 回 sub session；用户语义「选 B / 公开」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文>\") relay；用户语义「选 C / 关闭」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\") relay。⚠️ 路由 tag 协议：intent 名完全大写 ASCII 原样塞入；禁止翻译/改写。⚠️ relay 必须使用 xmtp_dispatch_session。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
              \x20\x20\x20\x20userContent: [任务 {short_id} 你作为用户] 指定服务商（AgentID={dp_id}）的 x402 endpoint 不合法，无法使用。请选择下一步：\n\
              \x20\x20\x20\x20A. 指定其他服务商 — 请提供服务商 agentId\n\
              \x20\x20\x20\x20B. 转为公开任务 — 让更多服务商看到任务\n\
@@ -45,7 +45,7 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20先调 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 获取 `paymentMostTokenAmount`（最高预算/价格上限）。\n\
              \x20\x20比较 `amountHuman` 与 `paymentMostTokenAmount`（**不是 tokenAmount，tokenAmount 是基准预算**）：\n\
              \x20\x20- 超出 → 调用 xmtp_prompt_user 通知用户费用超出最高预算，引导用户选择下一步（需要用户决策）：\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户选择指定其他服务商并提供 agentId → relay「指定服务商 agentId=X」；选择转为公开任务 → relay「转为公开任务」；选择关闭 → relay「关闭任务」。{CONSTRAINT}\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「选 A / 指定服务商」并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户提供的agentId>] 用户原话：<用户回复原文>\") relay 回 sub session；用户语义「选 B / 公开」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文>\") relay；用户语义「选 C / 关闭」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\") relay。⚠️ 路由 tag 协议：intent 名完全大写 ASCII 原样塞入；禁止翻译/改写。⚠️ relay 必须使用 xmtp_dispatch_session。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
              \x20\x20\x20\x20userContent: [任务 {short_id} 你作为用户] 指定服务商（AgentID={dp_id}）的 x402 实际费用 <amountHuman> <tokenSymbol> 超出你的最高预算，无法使用。请选择下一步：\n\
              \x20\x20\x20\x20A. 指定其他服务商 — 请提供服务商 agentId\n\
              \x20\x20\x20\x20B. 转为公开任务 — 让更多服务商看到任务\n\
@@ -204,9 +204,10 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              ⚠️ **切换时必须先发 [intent:reject] 再切走**（让服务商有明确终止信号），但**禁止 xmtp_delete_conversation 删群**。切走后再收到该服务商消息一律忽略、不回复。\n\
              当前页无剩余服务商且翻页也无结果 → 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定服务商 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
-             用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
-             用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
+             用户语义「选 A / 指定服务商」并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户提供的agentId>] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
+             用户语义「选 B / 公开 / public」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 set-public；\
+             用户语义「选 C / 关闭 / close」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 close。\
+             ⚠️ **路由 tag 协议**：`[intent:PICK_PROVIDER agentId=<...>]` / `[intent:SET_PUBLIC]` / `[intent:CLOSE_TASK]` 必须**完全大写 ASCII** 原样塞入；禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
              \x20\x20userContent: [任务 {short_id} 你作为用户] 推荐服务商均不合适。请选择下一步：\n\
              \x20\x20A. 指定服务商 — 请提供服务商 agentId\n\
@@ -260,10 +261,12 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              **Step 2 — 展示列表给用户，让用户选择：**\n\
              调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；再调 `xmtp_prompt_user`：\n\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户选择某个服务商（给出 agentId 或序号）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：选择服务商 agentId=<用户选中的agentId>\") relay 回 sub session；\
-             用户要求翻页 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：翻页\") relay 回 sub session；\
-             用户选择转为公开任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
-             用户选择关闭任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
+             用户语义「选某个服务商」（如 \"864\"/\"选择 864\"/\"选择服务商 864\"/\"4\"/\"序号 4\"/\"第4个\" 等，给出 AgentID 或序号）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户选中的agentId>] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session；\
+             用户语义「翻页 / 下一页 / more / next」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:NEXT_PAGE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session；\
+             用户语义「公开 / 转公开 / public」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 set-public；\
+             用户语义「关闭 / 取消 / close」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 close。\
+             ⚠️ **路由 tag 协议**：`[intent:PICK_PROVIDER agentId=<...>]` / `[intent:NEXT_PAGE]` / `[intent:SET_PUBLIC]` / `[intent:CLOSE_TASK]` 必须**完全大写 ASCII** 原样塞入（intent 名 + 字段名不变；只填值）；禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。\
+             ⚠️ 如果用户给的是序号（如 \"4\"），**必须从 userContent 列表中查找对应的 AgentID** 填入 `agentId=` 字段——sub 只读 tag 里的 agentId，不识别序号。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\n\
              \x20\x20userContent: [任务 {short_id} 你作为用户] 以下是推荐服务商列表：\n\
              \x20\x20<将 recommend 输出的服务商列表完整粘贴，每个服务商一段：序号 / Agent Name / AgentID / 服务名称与描述 / 信用分 / 费用 / 支付方式>\n\
@@ -286,7 +289,7 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              ```\n\
              如果有结果 → 回到 Step 2 展示新列表给用户。\n\
              如果为空 → 调用 xmtp_prompt_user 通知用户无更多服务商，引导选择（需要用户决策，不能用 xmtp_dispatch_user）：\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户选择指定服务商并提供 agentId → relay「指定服务商 agentId=X」；选择转为公开任务 → relay「转为公开任务」；选择关闭 → relay「关闭任务」。{CONSTRAINT}\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「选 A / 指定服务商」并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户提供的agentId>] 用户原话：<用户回复原文>\") relay 回 sub session；用户语义「选 B / 公开」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文>\") relay；用户语义「选 C / 关闭」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\") relay。⚠️ 路由 tag 协议同上。⚠️ relay 必须使用 xmtp_dispatch_session。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
              \x20\x20\x20\x20userContent: [任务 {short_id} 你作为用户] 没有更多推荐服务商了。请选择下一步：\n\
              \x20\x20\x20\x20A. 指定服务商 — 请提供服务商 agentId\n\
              \x20\x20\x20\x20B. 转为公开任务 — 让更多服务商看到任务\n\
@@ -542,7 +545,7 @@ pub(super) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20[intent:reject]\n\
      \x20\x20b) `onchainos agent mark-failed {job_id} --provider <当前服务商agentId>`\n\
      \x20\x20c) 调 `session_status` 拿 sessionKey；调 `pending-decisions add`（见硬规则 7）；调 `xmtp_prompt_user` 让用户决定下一步：\n\
-     \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] 用户选择查看推荐服务商 → relay「查看推荐」；选择指定服务商并提供 agentId → relay「指定服务商 agentId=X」；选择关闭 → relay「关闭任务」。{CONSTRAINT}\n\
+     \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] 用户语义「选 A / 查看推荐」→ 调用 xmtp_dispatch_session(sessionKey=\"<sessionKey>\", content=\"[USER_DECISION_RELAY][intent:VIEW_RECOMMEND] 用户原话：<用户回复原文>\") relay；用户语义「选 B / 指定服务商」并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<sessionKey>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户提供的agentId>] 用户原话：<用户回复原文>\") relay；用户语义「选 C / 关闭」→ 调用 xmtp_dispatch_session(sessionKey=\"<sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\") relay。⚠️ 路由 tag 协议：intent 名完全大写 ASCII 原样塞入；禁止翻译/改写。⚠️ relay 必须使用 xmtp_dispatch_session。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
      \x20\x20\x20\x20userContent:\n\
      {over_budget}\n\
      \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后：A → `recommend`；B → `next-action --provider <agentId>`；C → `close`。\n\n\
