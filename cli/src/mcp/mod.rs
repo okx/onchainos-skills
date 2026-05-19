@@ -2201,8 +2201,16 @@ impl McpServer {
                 return err(e);
             }
         }
-        let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, &p.from);
-        let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, &p.to);
+        let from_token =
+            match crate::token_alias::resolve_and_validate(&from_chain_index, &p.from, "from") {
+                Ok(v) => v,
+                Err(e) => return err(e),
+            };
+        let to_token =
+            match crate::token_alias::resolve_and_validate(&to_chain_index, &p.to, "to") {
+                Ok(v) => v,
+                Err(e) => return err(e),
+            };
         let sort = p.sort.as_deref();
         // Hold a single guard across resolve_amount_arg + fetch_quote so the
         // pair runs as one atomic unit on the shared ApiClient.

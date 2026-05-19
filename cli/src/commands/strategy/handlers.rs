@@ -9,6 +9,7 @@ use crate::client::ApiClient;
 use crate::commands::token;
 use crate::commands::Context;
 use crate::output;
+use crate::token_alias;
 
 use super::api;
 use super::session;
@@ -188,6 +189,14 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
         );
     }
 
+    // Alias → CA + chain-aware format check (shared with swap / wallet send).
+    // Catches `--to-token usdc` / `--from-token aaa` before they leak to BE.
+    // `label` is bare (no `--` prefix) — validate_address_for_chain adds it.
+    let from_token =
+        token_alias::resolve_and_validate(&resolved_chain, &args.from_token, "from-token")?;
+    let to_token =
+        token_alias::resolve_and_validate(&resolved_chain, &args.to_token, "to-token")?;
+
     let dir = args.direction;
 
     let trigger_price_num: f64 = args.trigger_price.parse().map_err(|e| {
@@ -196,8 +205,8 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
 
     // Buy compares against to-token price, sell against from-token.
     let price_query_token = match dir {
-        direction::BUY => &args.to_token,
-        direction::SELL => &args.from_token,
+        direction::BUY => &to_token,
+        direction::SELL => &from_token,
         _ => unreachable!("clap restricts --direction to buy/sell"),
     };
     let current_price_num: f64 = match args.current_price.as_deref() {
@@ -217,19 +226,19 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
 
     // Raw amount used only in signMsg "From Amount(precision adjusted)";
     // rule.fromAmount stays human-readable (BE contract 2026-05-07).
-    let from_decimals = fetch_token_decimals(&mut client, &args.from_token, &resolved_chain)
+    let from_decimals = fetch_token_decimals(&mut client, &from_token, &resolved_chain)
         .await
         .with_context(|| {
             format!(
                 "fetch decimals for fromToken `{}` on chain `{}`",
-                args.from_token, resolved_chain
+                from_token, resolved_chain
             )
         })?;
     let from_amount_raw = trader_mode::shift_value(&args.amount, from_decimals)?;
 
     let rule = Rule {
-        from_token_address: args.from_token.clone(),
-        to_token_address: args.to_token.clone(),
+        from_token_address: from_token.clone(),
+        to_token_address: to_token.clone(),
         from_amount: args.amount.clone(),
         trigger_price: Some(args.trigger_price.clone()),
     };
@@ -258,8 +267,8 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     let intent_str = trader_mode::build_intent(BuildIntentArgs {
         chain_id: chain_id_long,
         recipient: &user_wallet_address,
-        from_token: &args.from_token,
-        to_token: &args.to_token,
+        from_token: &from_token,
+        to_token: &to_token,
         from_amount_raw: &from_amount_raw,
         created_at: &created_at,
         expired_at: &expired_at,

@@ -574,8 +574,8 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             if let Some(addr) = receive_address.as_deref() {
                 validate_receive_address(addr, &to_idx)?;
             }
-            let from_token = crate::commands::swap::resolve_token_address(&from_idx, &from);
-            let to_token = crate::commands::swap::resolve_token_address(&to_idx, &to);
+            let from_token = crate::token_alias::resolve_and_validate(&from_idx, &from, "from")?;
+            let to_token = crate::token_alias::resolve_and_validate(&to_idx, &to, "to")?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
                 amount.as_deref(),
@@ -615,7 +615,8 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
         } => {
             let chain_idx = crate::chains::resolve_chain(&chain).to_string();
             crate::chains::ensure_supported_chain(&chain_idx, &chain)?;
-            let resolved_token = crate::commands::swap::resolve_token_address(&chain_idx, &token);
+            let resolved_token =
+                crate::token_alias::resolve_and_validate(&chain_idx, &token, "token")?;
             output::success(
                 fetch_approve_tx(
                     &mut client,
@@ -649,8 +650,8 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             let to_idx = crate::chains::resolve_chain(&to_chain).to_string();
             crate::chains::ensure_supported_chain(&from_idx, &from_chain)?;
             crate::chains::ensure_supported_chain(&to_idx, &to_chain)?;
-            let from_token = crate::commands::swap::resolve_token_address(&from_idx, &from);
-            let to_token = crate::commands::swap::resolve_token_address(&to_idx, &to);
+            let from_token = crate::token_alias::resolve_and_validate(&from_idx, &from, "from")?;
+            let to_token = crate::token_alias::resolve_and_validate(&to_idx, &to, "to")?;
             if let Some(ref addr) = receive_address {
                 validate_receive_address(addr, &to_idx)?;
             }
@@ -813,8 +814,8 @@ async fn cmd_execute(
     crate::chains::ensure_supported_chain(&from_idx, from_chain)?;
     crate::chains::ensure_supported_chain(&to_idx, to_chain)?;
 
-    let from_token = crate::commands::swap::resolve_token_address(&from_idx, from);
-    let to_token = crate::commands::swap::resolve_token_address(&to_idx, to);
+    let from_token = crate::token_alias::resolve_and_validate(&from_idx, from, "from")?;
+    let to_token = crate::token_alias::resolve_and_validate(&to_idx, to, "to")?;
     if let Some(addr) = receive_address {
         validate_receive_address(addr, &to_idx)?;
     }
