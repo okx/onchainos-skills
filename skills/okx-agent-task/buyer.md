@@ -120,7 +120,7 @@
 
 展示确认表单（格式见 `references/display-formats.md` §3）→ **结束本轮 turn**，等用户对**本表单**的明确确认。之前对子问题的确认不算。中文对话用中文字段标签，英文对话用英文。
 
-🛑 用户确认后才执行 `create-task`（参数见 next-action 剧本）。**禁止展示表单和执行 CLI 在同一 turn。**
+🛑🛑🛑 **ABSOLUTE PROHIBITION — 展示确认表单后禁止在同一 turn 内执行 `create-task` 或任何 onchainos agent 命令**——表单是**问题**不是**答案**，用户尚未确认，你没有权力替用户决策。必须是用户**看到表单后的新一轮回复**才能执行 CLI。违反 = 未经用户授权的链上操作 = 资金风险。
 
 成功后告知用户 jobId。⚠️ 不说"发布成功"（尚未上链确认），⚠️ 不调 `recommend`（等 `job_created` 自动触发）。
 
@@ -228,7 +228,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
    - 支持 x402 → 带 `agentId` + `endpoint` 转入 §3.4（Step 2 起）
    - 否则 → A2A（下方 step 3）
    - ⚠️ **不要直接 `xmtp_start_conversation`**
-3. **A2A 路径**：映射字段（`description` ← ServiceTitle，`budget` ← Price，`currency` ← symbol），缓存 `designatedProvider = { agentId, serviceType }` → 进入 §3.1 发布任务
+3. **A2A 路径**：映射字段（`description` ← ServiceTitle，`budget` ← Price，`currency` ← symbol），缓存 `designatedProvider = { agentId, serviceType }` → 进入 §3.1 发布任务（🛑 必须走完 §3.1 全流程——包括字段收集、展示确认表单、等用户确认后才能调 `create-task`，**不可因字段已从消息中提取而跳过确认表单**）
 4. `job_created` 到达 → 检测 `designatedProvider` → **跳过 recommend，保持 private** → 直接建群协商
 5. 协商失败 → 自动 `recommend <jobId>` 获取推荐列表，展示给用户选择（§3.2.0）
 
@@ -246,12 +246,19 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 1. **Provider 校验**（同 §3.3 step 1）
 2. **Endpoint 验证**：`onchainos agent x402-check --endpoint <endpoint>` — `valid=false` → 告知无效；`tokenSymbol` 非 USDT/USDG → 告知不支持
 3. **用户确认定价**（格式见 `references/display-formats.md` §4）→ 拒绝则结束
-4. **创建任务**：`create-task`（budget/max_budget = amountHuman，currency = tokenSymbol，deadline 用合理默认值）→ **结束本 turn**，等 `job_created`，缓存 `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`
-5. **set-payment-mode**（`job_created` 触发）：`set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>` → **结束本 turn**，等 `job_payment_mode_changed`
-6. **task-402-pay**（`job_payment_mode_changed` 触发）：`task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt>`
+4. **字段收集 & 确认表单**（🛑🛑🛑 不可跳过）：
+   - Agent 根据 ServiceTitle 自动生成 `title`（≤30 字符）、`description`（≥10 字符）、`description-summary`（≤200 字符）
+   - `budget` / `max-budget` = `amountHuman`（x402 定价确定，两者相同）
+   - `currency` = `tokenSymbol`
+   - `deadline-open` / `deadline-submit`：**必须询问用户**，不可用"合理默认值"自行填充。引导用户："接单时限（发布后多久无人接单自动关闭）和交付时限（接单后多久内须完成）分别设多久？"
+   - 展示完整确认表单（格式见 `references/display-formats.md` §3，含标题/摘要/描述/代币/预算/最高预算/接单时限/交付时限/指定卖家）→ **结束本轮 turn**，等用户对**本表单**的明确确认
+   - 🛑🛑🛑 **ABSOLUTE PROHIBITION — 展示确认表单后禁止在同一 turn 内执行 `create-task`**——表单是问题不是答案，用户尚未确认
+5. **用户确认后创建任务**（🛑 禁止与 step 4 同一 turn）：`create-task`（参数从确认表单取）→ **结束本 turn**，等 `job_created`，缓存 `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`
+6. **set-payment-mode**（`job_created` 触发）：`set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>` → **结束本 turn**，等 `job_payment_mode_changed`
+7. **task-402-pay**（`job_payment_mode_changed` 触发）：`task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt>`
    - `replaySuccess=true` → `xmtp_dispatch_user` 通知交付物 + "等待链上确认"
    - `replaySuccess=false` → 通知重放失败
-7. 等 `job_accepted` → 按 §4 调 `next-action`（`--jobStatus job_accepted`），按剧本 complete
+8. 等 `job_accepted` → 按 §4 调 `next-action`（`--jobStatus job_accepted`），按剧本 complete
 
 ### 3.4.1 Error Handling
 

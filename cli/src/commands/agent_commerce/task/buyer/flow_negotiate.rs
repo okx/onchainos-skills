@@ -36,7 +36,8 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, dp_id: &
              \x20\x20\x20\x20userContent: 任务 {job_id} 指定服务商（AgentID={dp_id}）实际收费 <amountHuman> <tokenSymbol>，与注册费用 <feeAmount> <feeTokenSymbol> 不一致，是否接受？\n\
              \x20\x20- 一致 → 继续 DX-Step 3。\n\n\
              \x20\x20**DX-Step 3 — 预算检查：**\n\
-             \x20\x20比较 `amountHuman` 与任务最高预算（tokenAmount）：\n\
+             \x20\x20先调 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 获取 `paymentMostTokenAmount`（最高预算/价格上限）。\n\
+             \x20\x20比较 `amountHuman` 与 `paymentMostTokenAmount`（**不是 tokenAmount，tokenAmount 是基准预算**）：\n\
              \x20\x20- 超出 → 调用 xmtp_dispatch_user 通知用户费用超额，引导换服务商。结束 turn。\n\
              \x20\x20- 未超出 → 进入 **A-Step 3**（set-payment-mode + task-402-pay）。\n\n\
              - **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。")
