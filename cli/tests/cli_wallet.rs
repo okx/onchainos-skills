@@ -200,5 +200,5 @@ fn wallet_login_empty_email_fails() {
         .args(["wallet", "login", ""])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("email is required"));
+        .stdout(predicates::str::contains("email is required"));
 }
