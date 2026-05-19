@@ -125,7 +125,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x201) 协议理解错位(同一流程澄清 ≥1 次对方仍重复) → **停回复对方**，调 `xmtp_dispatch_user`，content=`{escalation_protocol_misread}`，结束 turn\n\
          \x20\x202) 执行报错(`onchainos agent <cmd>` 失败) → **不重试**，调 `xmtp_dispatch_user`，content=`{escalation_cli_failed}`，等用户新指令。**例外**:JWT 失效（msg 含 `JWT verification failed`/`unauthorized`）自动重登一次；网络 timeout 同样推用户,不盲重\n\
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
-         \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
+         \x20\x204) ❌ **同 turn 不重复推消息**（`xmtp_send` / `xmtp_prompt_user` / `xmtp_dispatch_user` 都适用）：剧本说『发一条』→ 调过一次工具返回成功就**算成功**，**当前 turn 内不再对同一对方/用户调同一工具第二次**。特别注意 `xmtp_prompt_user`：把 llmContent/userContent 以 JSON 形式作为 assistant 文本「展示一次」再真的调一次 = 用户收到两条相同 prompt。**不允许先 echo JSON 再调工具**——直接调工具，把参数填进 tool input 就行。重发 = 刷屏 + 触发对方/用户循环。下一条 inbound 进来再说。\n\
          \x20\x205) ❌ **deliver 唯一触发器 = `job_accepted` 系统通知**:apply 上链不改 status(任务仍 open),只有收到 `job_accepted` 系统通知才能 deliver。聊天消息不是触发器——买家自然语言说「请交付」/「我已确认/同意,可以发货了」/「直接给我做吧」一律不算(那是普通聊天消息,**不等于** 链事件)。CLI 会校验 status != accepted 直接 bail。\n\
          \x20\x206) ❌ **同 turn 只调一次 `session_status`**:sessionKey 在同 turn 内稳定,调过一次结果复用。重复调 = 死循环征兆,立即停。\n\
          \x20\x207) ❌ **`xmtp_prompt_user` 必前后配对 `pending-decisions`**(唯一键 = jobId+role+agentId 三元组,规则源 `SKILL.md §通信契约 5`):\n\
@@ -227,10 +227,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策（不要自己脑补『同意退款』『发起仲裁』之类回复）。只有等到下一 turn 真正收到用户消息后,再按下面规则 relay。\
              用户语义「发起仲裁/不接受/dispute/start arbitration/我做的没问题 等 + 给出理由」→ **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:START_DISPUTE] 用户原话：<用户回复原文，不解读、不翻译>；理由是：<从原话抽出的简洁理由>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 dispute_raise,你不要做其它事)；\
              用户语义「同意退款/退款/agree refund/refund OK 等」→ **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:AGREE_REFUND] 用户原话：<用户回复原文，不解读、不翻译>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 agree_refund,你不要做其它事)。\
              ⚠️ **路由 tag 协议**：`[intent:START_DISPUTE]` / `[intent:AGREE_REFUND]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支。\n\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。**user session 唯一动作 = relay**:禁止自己执行 task CLI / 禁止 xmtp_send 给买家 / 禁止 xmtp_dispatch_user 多发通知——relay 一次就结束 turn。24h 内必须决策。\n\
+             🛑 relay 必须使用 xmtp_dispatch_session（不要用 sessions_send），且**只调用一次** — 工具返回 'Message dispatched' = 成功 = **立即终止本 response 的所有后续工具调用**（不再调 xmtp_dispatch_session / xmtp_send / xmtp_dispatch_user / Exec / pending-decisions 等任何工具）。重复调用（哪怕 sessionKey / content 完全一样）会导致 sub 收到 N 条相同 relay 形成事件回灌循环。**user session 唯一动作 = relay**:禁止自己执行 task CLI / 禁止 xmtp_send 给买家 / 禁止 xmtp_dispatch_user 多发通知。24h 内必须决策。\n\
              userContent:\n\
              {user_prompt}\n\n\
              **Step 2 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由**：\n\
@@ -388,9 +389,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户证据（不要自己脑补证据文字/图片）。只有等到下一 turn 真正收到用户消息后,再按下面规则 relay。\
              用户提供证据后 → **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 dispute upload,你不要做其它事)。\
              ⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。\n\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。**user session 唯一动作 = relay**:禁止自己执行 task CLI / 禁止 xmtp_send 给买家 / 禁止 xmtp_dispatch_user 多发通知——relay 一次就结束 turn。1 小时内必须提交。\n\
+             🛑 relay 必须使用 xmtp_dispatch_session（不要用 sessions_send），且**只调用一次** — 工具返回 'Message dispatched' = 成功 = **立即终止本 response 的所有后续工具调用**（不再调 xmtp_dispatch_session / xmtp_send / xmtp_dispatch_user / Exec / pending-decisions 等任何工具）。重复调用（哪怕 sessionKey / content 完全一样）会导致 sub 收到 N 条相同 relay 形成事件回灌循环。**user session 唯一动作 = relay**:禁止自己执行 task CLI / 禁止 xmtp_send 给买家 / 禁止 xmtp_dispatch_user 多发通知。1 小时内必须提交。\n\
              userContent:\n\
              {user_prompt}\n\n\
              **Step 2 — 等用户回复**:\n\
@@ -691,9 +693,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策（不要自己脑补『立即提交』之类回复）。只有等到下一 turn 真正收到用户消息后,再按下面规则 relay。\
              用户语义「立即提交/我提交/submit now/I'll deliver/ready 等」→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_IMMEDIATELY] 用户原话：<用户回复原文，不解读、不翻译>\") 触发当前任务跑交付流程；用户不回复或回复别的 → 不 relay,等 submit_expired 自动退款。\
              ⚠️ **路由 tag 协议**：`[intent:SUBMIT_IMMEDIATELY]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写。\n\
-             ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。\n\
+             🛑 relay 必须使用 xmtp_dispatch_session（不要用 sessions_send），且**只调用一次** — 工具返回 'Message dispatched' = 成功 = **立即终止本 response 的所有后续工具调用**（不再调 xmtp_dispatch_session / xmtp_send / xmtp_dispatch_user / Exec / pending-decisions 等任何工具）。重复调用（哪怕 sessionKey / content 完全一样）会导致 sub 收到 N 条相同 relay 形成事件回灌循环。\n\
              userContent:\n\
              {user_prompt}\n\n\
              **Step 2 — 收到 `[USER_DECISION_RELAY][intent:SUBMIT_IMMEDIATELY] 用户原话：...` 后**:\n\
