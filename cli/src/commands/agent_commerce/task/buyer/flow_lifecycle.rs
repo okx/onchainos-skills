@@ -859,12 +859,17 @@ onchainos agent create-task \\
 🚫 **create-task 只接受以上参数。没有 --content / --period / --visibility / --amount / --token / --payment-mode 参数。** `--provider` 传入时 CLI 自动设置 visibility=1（PRIVATE）和 providerAgentId，无需额外参数。
 ⚠️ **支付方式不在创建阶段设置**——paymentMode 由后续流程决定：A2A 协商路径固定 escrow，指定服务商且有 endpoint 时走 x402。如果用户在发布任务时提到了支付方式偏好，**不要传 --payment-mode**，告知用户：「支付方式将在与服务商对接时自动确定。」
 
-成功后告知用户：
-- 未指定 --provider → 「任务已提交，jobId: <jobId>，等待上链确认（约数秒）。确认后系统将自动联系推荐服务商开始协商。」
-- 指定了 --provider → 「任务已提交，jobId: <jobId>，等待上链确认（约数秒）。确认后将直接与指定服务商 <agentId> 对接。」
+成功后调 `xmtp_dispatch_user` 通知用户：
+- 未指定 --provider → content: 「任务已提交，jobId: <jobId>，等待上链确认（约数秒）。确认后系统将自动联系推荐服务商开始协商。」
+- 指定了 --provider → content: 「任务已提交，jobId: <jobId>，等待上链确认（约数秒）。确认后将直接与指定服务商 <agentId> 对接。」
 
-⚠️ 不要说「发布成功」——此时尚未上链确认。上链确认由 job_created 消息触发。
-⚠️ 不要调 recommend——推荐在 job_created 收到后自动执行（指定服务商时会跳过 recommend）。
+═══════════════════════════════════════════════════════════════
+🛑🛑🛑 STOP — create-task 调完后 **必须立即结束本 turn**
+═══════════════════════════════════════════════════════════════
+❌ **禁止说「任务已发布」「发布成功」**——create-task 只是提交交易，尚未上链确认。
+❌ **禁止调 `recommend`**——推荐服务商列表由 backup session 收到 `job_created` 系统通知后自动触发，不在本 turn 执行。
+❌ **禁止调任何 onchainos agent 命令**——本 turn 到此结束，后续一切动作等链上事件驱动。
+═══════════════════════════════════════════════════════════════
 ".to_string()
 }
 

@@ -11,7 +11,7 @@
 use super::flow::FlowContext;
 
 /// 指定服务商 D-Step 路由（service-list 查询 → x402 或 A2A 分支入口）
-pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, dp_id: &str) -> String {
+pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
     format!("\
              🎯 **指定服务商**: {dp_id}\n\
              ⚠️ 指定服务商的持久化文件已由 CLI 在生成本提示词时自动删除（consume-on-read），无需手动清理。\n\n\
@@ -28,7 +28,13 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, dp_id: &
              \x20\x20```bash\n\
              \x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
              \x20\x20```\n\
-             \x20\x20- `valid=false` → 调用 xmtp_dispatch_user 通知用户 endpoint 不合法，引导用户换一个服务商。结束 turn。\n\n\
+             \x20\x20- `valid=false` → 调用 xmtp_prompt_user 通知用户 endpoint 不合法，引导用户选择下一步（需要用户决策）：\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户选择指定其他服务商并提供 agentId → relay「指定服务商 agentId=X」；选择转为公开任务 → relay「转为公开任务」；选择关闭 → relay「关闭任务」。{CONSTRAINT}\n\
+             \x20\x20\x20\x20userContent: [任务 {short_id} 你作为用户] 指定服务商（AgentID={dp_id}）的 x402 endpoint 不合法，无法使用。请选择下一步：\n\
+             \x20\x20\x20\x20A. 指定其他服务商 — 请提供服务商 agentId\n\
+             \x20\x20\x20\x20B. 转为公开任务 — 让更多服务商看到任务\n\
+             \x20\x20\x20\x20C. 关闭任务\n\
+             \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复。\n\n\
              \x20\x20**DX-Step 2 — 金额校验：**\n\
              \x20\x20比较 x402-check 的 `amountHuman` 与 services[0] 的 `feeAmount`：\n\
              \x20\x20- 不一致（差异 > 1%）→ 调用 xmtp_prompt_user 询问用户是否接受实际价格：\n\
@@ -38,7 +44,13 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, dp_id: &
              \x20\x20**DX-Step 3 — 预算检查：**\n\
              \x20\x20先调 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 获取 `paymentMostTokenAmount`（最高预算/价格上限）。\n\
              \x20\x20比较 `amountHuman` 与 `paymentMostTokenAmount`（**不是 tokenAmount，tokenAmount 是基准预算**）：\n\
-             \x20\x20- 超出 → 调用 xmtp_dispatch_user 通知用户费用超额，引导换服务商。结束 turn。\n\
+             \x20\x20- 超出 → 调用 xmtp_prompt_user 通知用户费用超出最高预算，引导用户选择下一步（需要用户决策）：\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户选择指定其他服务商并提供 agentId → relay「指定服务商 agentId=X」；选择转为公开任务 → relay「转为公开任务」；选择关闭 → relay「关闭任务」。{CONSTRAINT}\n\
+             \x20\x20\x20\x20userContent: [任务 {short_id} 你作为用户] 指定服务商（AgentID={dp_id}）的 x402 实际费用 <amountHuman> <tokenSymbol> 超出你的最高预算，无法使用。请选择下一步：\n\
+             \x20\x20\x20\x20A. 指定其他服务商 — 请提供服务商 agentId\n\
+             \x20\x20\x20\x20B. 转为公开任务 — 让更多服务商看到任务\n\
+             \x20\x20\x20\x20C. 关闭任务\n\
+             \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复。\n\
              \x20\x20- 未超出 → 进入 **A-Step 3**（set-payment-mode + task-402-pay）。\n\n\
              - **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。",
              CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
@@ -224,7 +236,7 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
     let created_notify = super::content::job_created_user_notify(job_id, &notify_text);
 
     let routing_section = if let Some(dp_id) = &designated_provider {
-        designated_provider_d_steps(job_id, agent_id, dp_id)
+        designated_provider_d_steps(job_id, agent_id, short_id, dp_id)
     } else {
         format!("\
              **Step 0 — 幂等检查：查询是否已有此任务的待决事项：**\n\
@@ -273,7 +285,12 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              onchainos agent recommend {job_id} --next-page\n\
              ```\n\
              如果有结果 → 回到 Step 2 展示新列表给用户。\n\
-             如果为空 → 通知用户无更多服务商，引导选择：指定服务商 agentId / 转为公开任务 / 关闭任务。\n\n\
+             如果为空 → 调用 xmtp_prompt_user 通知用户无更多服务商，引导选择（需要用户决策，不能用 xmtp_dispatch_user）：\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户选择指定服务商并提供 agentId → relay「指定服务商 agentId=X」；选择转为公开任务 → relay「转为公开任务」；选择关闭 → relay「关闭任务」。{CONSTRAINT}\n\
+             \x20\x20\x20\x20userContent: [任务 {short_id} 你作为用户] 没有更多推荐服务商了。请选择下一步：\n\
+             \x20\x20\x20\x20A. 指定服务商 — 请提供服务商 agentId\n\
+             \x20\x20\x20\x20B. 转为公开任务 — 让更多服务商看到任务\n\
+             \x20\x20\x20\x20C. 关闭任务\n\n\
              ▸ 用户选择转为公开任务 → `onchainos agent set-public {job_id}`\n\n\
              ▸ 用户选择关闭任务 → `onchainos agent close {job_id}`",
              CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
@@ -319,7 +336,7 @@ pub(super) fn switch_provider(ctx: &FlowContext<'_>) -> String {
         }
     };
 
-    let d_steps = designated_provider_d_steps(job_id, agent_id, &dp_id);
+    let d_steps = designated_provider_d_steps(job_id, agent_id, short_id, &dp_id);
     let negotiate = designated_provider_negotiate(job_id, agent_id, short_id, &dp_id);
     format!("\
          【服务商变更】set-provider 已提交，立即启动新服务商流程（不等 task_provider_change 上链确认）\n\
