@@ -96,7 +96,12 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     format!(
     "【当前状态】job_submitted（服务商已提交交付物）\n\
      【角色】用户（User Agent）\n\n\
-     🛑 **必须用 `xmtp_prompt_user` 推送验收决策到 user session**——sub session 不面向用户，直接输出文字 = 用户看不到交付物 + 任务卡死。禁止用 `xmtp_dispatch_user` 代替（纯通知无法 relay）。\n\
+     🛑🛑🛑 **ABSOLUTE REQUIREMENT — escrow 模式必须用 `xmtp_prompt_user`（不是 `xmtp_dispatch_user`）推送验收决策到 user session**。\n\
+     `xmtp_dispatch_user` 是纯通知，用户回复无法 relay 回 sub session → 验收流程卡死。\n\
+     `xmtp_prompt_user` 才能携带 llmContent + userContent，让 user session 把用户验收决策 relay 回来。\n\
+     🔴 真实事故：Minimax 模型收到 job_submitted 后调了 xmtp_dispatch_user 发了一句「卖家已提交交付物，等待你的验收」——用户看不到交付物内容、无法 relay 验收决策，任务卡死。\n\n\
+     🛑🛑🛑 **即使本 turn 内已处理过服务商的 a2a-agent-chat 交付消息（如调了 xmtp_file_download 下载文件），收到 job_submitted 仍必须完整执行下方所有 Step**。\n\
+     a2a-agent-chat 处理（下载文件）≠ 验收流程——验收必须由 job_submitted 剧本驱动，交付物内容（文件路径/文字）必须放进 userContent 给用户看。\n\n\
      🛑 **escrow 严禁自动验收**：必须等用户通过 relay 做出决策，Agent 不得替用户决定——无论交付物质量如何、无论是否超时临近。\n\
      ⚠️ x402 模式：资金已支付，只需通知用户交付物内容，用户不能拒绝。\n\n\
      【你的下一步动作（严格顺序）】\n\n\
