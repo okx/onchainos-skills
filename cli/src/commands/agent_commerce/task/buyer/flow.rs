@@ -198,9 +198,10 @@ fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, d
              🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
              🛑 **禁止执行** onchainos agent 命令（close/set-public/recommend 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
              用户**真实回复到达后**（下一 turn）：\
-             用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
-             用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
-             用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
+             用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户提供的agentId>] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
+             用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文>\") relay 回 sub session 执行 set-public；\
+             用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\") relay 回 sub session 执行 close。\
+             ⚠️ **路由 tag 协议**：`[intent:PICK_PROVIDER agentId=<X>]` / `[intent:SET_PUBLIC]` / `[intent:CLOSE_TASK]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不按文字匹配。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
              \x20\x20userContent: [任务 {short_id} 你作为买家] 推荐卖家均不合适。请选择下一步：\n\
              \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
@@ -421,10 +422,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
              🛑 **禁止执行** onchainos agent 命令（recommend/set-public/close 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
              用户**真实回复到达后**（下一 turn）：\
-             用户选择某个卖家（给出 agentId 或序号）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：选择卖家 agentId=<用户选中的agentId>\") relay 回 sub session；\
-             用户要求翻页 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：翻页\") relay 回 sub session；\
-             用户选择转为公开任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
-             用户选择关闭任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
+             用户选择某个卖家（给出序号如「1」「第二个」或直接给 agentId）→ 从 Step 2 展示的列表中查出对应的 agentId（🛑 序号→agentId 转换由你完成，禁止将序号原样填入 agentId 字段）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<查出的agentId>] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session；\
+             用户要求翻页 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:NEXT_PAGE] 用户原话：<用户回复原文>\") relay 回 sub session；\
+             用户选择转为公开任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文>\") relay 回 sub session 执行 set-public；\
+             用户选择关闭任务 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\") relay 回 sub session 执行 close。\
+             ⚠️ **路由 tag 协议**：`[intent:PICK_PROVIDER agentId=<X>]` / `[intent:NEXT_PAGE]` / `[intent:SET_PUBLIC]` / `[intent:CLOSE_TASK]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不按文字匹配。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。\n\n\
              \x20\x20userContent: [任务 {short_id} 你作为买家] 以下是推荐卖家列表：\n\
              \x20\x20<将 recommend 输出的卖家列表完整粘贴，每个卖家一段：序号 / Agent Name / AgentID / 服务名称与描述 / 信用分 / 费用 / 支付方式>\n\
@@ -435,20 +437,25 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20• 转为公开任务 — 回复「公开」\n\
              \x20\x20• 关闭任务 — 回复「关闭」\n\n\
              → **结束本轮 turn**，等用户回复 relay 回来。\n\n\
-             **Step 3 — 收到用户 relay 后处理：**\n\n\
-             ▸ 用户选择了某个卖家（agentId=X）→ 调用 `next-action --provider X` 进入指定卖家流程：\n\
+             **Step 3 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由：**\n\n\
+             先调 `pending-decisions remove`（硬规则 7）：\n\
              ```bash\n\
-             onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <用户选中的agentId>\n\
+             onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
+             ```\n\
+             然后按 intent code 执行：\n\
+             - `[intent:PICK_PROVIDER agentId=<X>]`：从 tag 里读 agentId，调用 `next-action --provider X` 进入指定卖家流程：\n\
+             ```bash\n\
+             onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <tag里的agentId>\n\
              ```\n\
              按输出的剧本执行（内部自动查 service-list 路由 x402 或 A2A）。\n\n\
-             ▸ 用户要求翻页 → 执行：\n\
+             - `[intent:NEXT_PAGE]`：翻页\n\
              ```bash\n\
              onchainos agent recommend {job_id} --next-page\n\
              ```\n\
              如果有结果 → 回到 Step 2 展示新列表给用户。\n\
              如果为空 → 通知用户无更多卖家，引导选择：指定卖家 agentId / 转为公开任务 / 关闭任务。\n\n\
-             ▸ 用户选择转为公开任务 → `onchainos agent set-public {job_id}`\n\n\
-             ▸ 用户选择关闭任务 → `onchainos agent close {job_id}`")
+             - `[intent:SET_PUBLIC]`：`onchainos agent set-public {job_id}`\n\n\
+             - `[intent:CLOSE_TASK]`：`onchainos agent close {job_id}`")
         };
 
         let mut output = format!(
@@ -1116,10 +1123,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] \
              🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
              🛑 **禁止执行** onchainos agent 命令（recommend/close 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
-             用户**真实回复到达后**（下一 turn）：用户选择查看推荐卖家 → relay「查看推荐」；选择指定卖家并提供 agentId → relay「指定卖家 agentId=X」；选择关闭 → relay「关闭任务」。⚠️ relay 必须使用 xmtp_dispatch_session。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
+             用户**真实回复到达后**（下一 turn）：\
+             用户选择 A 查看推荐卖家 → 调用 xmtp_dispatch_session(sessionKey=\"<sessionKey>\", content=\"[USER_DECISION_RELAY][intent:VIEW_RECOMMEND] 用户原话：<用户回复原文>\")；\
+             用户选择 B 指定卖家并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<sessionKey>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户提供的agentId>] 用户原话：<用户回复原文>\")；\
+             用户选择 C 关闭 → 调用 xmtp_dispatch_session(sessionKey=\"<sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\")。\
+             ⚠️ **路由 tag 协议**：`[intent:VIEW_RECOMMEND]` / `[intent:PICK_PROVIDER agentId=<X>]` / `[intent:CLOSE_TASK]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写。⚠️ relay 必须使用 xmtp_dispatch_session。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
              \x20\x20\x20\x20userContent:\n\
              {over_budget}\n\
-             \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后：A → `recommend`；B → `next-action --provider <agentId>`；C → `close`。\n\n\
+             \x20\x20\x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后按 intent code 路由：\n\
+             \x20\x20\x20\x20- `[intent:VIEW_RECOMMEND]` → `onchainos agent recommend {job_id}`\n\
+             \x20\x20\x20\x20- `[intent:PICK_PROVIDER agentId=<X>]` → `onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <tag里的agentId>`\n\
+             \x20\x20\x20\x20- `[intent:CLOSE_TASK]` → `onchainos agent close {job_id}`\n\n\
              **Step 3 — 回复卖家（取决于 Step 2 评估）：**\n\n\
              ▸ **卖家还在讨论阶段（未给出明确价格或在询问细节）** → xmtp_send 自然语言回复，继续讨论。\n\n\
              ▸ **双方就 tokenAmount / tokenSymbol / paymentMode 达成一致** → 发送 [NEGOTIATE_PROPOSE]：\n\
