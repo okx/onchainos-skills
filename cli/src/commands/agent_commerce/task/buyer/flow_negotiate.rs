@@ -490,8 +490,6 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
 
     let payment_escrow_notify = super::content::payment_mode_escrow_user_notify(job_id, title_display);
     let x402_paying = super::content::x402_paying_user_notify(job_id, title_display);
-    let x402_deliverable = super::content::x402_deliverable_user_notify(job_id);
-    let x402_replay_fail = super::content::x402_replay_fail_payment_user_notify(job_id);
     format!(
     "[Current state] job_payment_mode_changed (payment-mode switch is on-chain)\n\
      [Role] User (User Agent)\n\n\
@@ -544,14 +542,12 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
      ```\n\
      Internally executes: x402_pay signing -> direct/accept on-chain -> assemble payment header -> replay endpoint.\n\
-     Output: {{ replaySuccess, replayStatus, replayBody, signature, authorization, sessionCert, txHash }}\n\n\
+     Output: {{ replaySuccess, replayStatus, replayBody, signature, authorization, sessionCert, txHash, userNotify }}\n\n\
      **x402 stage 2 Step 3 - check replay result and notify the user:**\n\
-     - replaySuccess=true -> the deliverable is in replayBody. **Immediately** call xmtp_dispatch_user to send it to the user:\n\
-     \x20\x20content:\n\
-     {x402_deliverable}\n\n\
-     - replaySuccess=false -> call xmtp_dispatch_user to tell the user the replay failed:\n\
-     \x20\x20content:\n\
-     {x402_replay_fail}\n\n\
+     🛑 **MANDATORY -- use the `userNotify` field from CLI output directly**: task-402-pay has pre-formatted the deliverable/error into the `userNotify` field.\n\
+     **Immediately** call xmtp_dispatch_user with content = the `userNotify` field value (pass through as-is; do not rewrite, summarize, or omit deliverable content).\n\
+     ❌ Do not compose your own notification instead of `userNotify` -- self-composed notifications lose the deliverable content (replayBody) and the user cannot see the actual data the ASP returned.\n\
+     🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data the ASP returned.\n\n\
      -> **end this turn** and wait for the `job_accepted` system notification.\n\n\
      🛑🛑🛑 **Iron rule (MANDATORY) after receiving `job_accepted`**:\n\
      After the `job_accepted` system event arrives, you **must** call:\n\

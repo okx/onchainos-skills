@@ -91,7 +91,16 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      {accepted_x402_fail}\n\n\
      [Follow-up events]\n\
      - replaySuccess=true / default: job_completed → final confirmation\n\
-     - replaySuccess=false: wait for user instructions (retry or close task)\n"
+     - replaySuccess=false: wait for user instructions (retry or close task)\n\n\
+     🛑🛑🛑 **job_completed MANDATORY rule**:\n\
+     After complete is settled on-chain, a `job_completed` system event will arrive.\n\
+     Upon receiving `job_completed`, you **MUST** call:\n\
+     ```bash\n\
+     onchainos agent next-action --jobid {job_id} --jobStatus job_completed --role buyer --agentId {agent_id}\n\
+     ```\n\
+     Follow the returned playbook (it will guide you to notify the user that the job is complete).\n\
+     ❌ **NEVER** ignore the `job_completed` event -- ignoring it = user never learns the job is done.\n\
+     ❌ **NEVER** skip `next-action` and compose the completion notice yourself -- the playbook contains the full summary.\n"
     )
 }
 

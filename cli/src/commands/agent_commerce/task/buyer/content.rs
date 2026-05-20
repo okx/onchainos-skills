@@ -199,28 +199,6 @@ pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
     )
 }
 
-/// `Event::JobPaymentModeChanged` x402 分支 — 重放成功时推给用户的交付物通知。
-pub fn x402_deliverable_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20[x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
-         \x20\x20ASP agentId: <providerAgentId>\n\
-         \x20\x20Amount: <tokenAmount> <tokenSymbol>\n\
-         \x20\x20---Deliverable---\n\
-         \x20\x20<replayBody full content, formatted if JSON>\n\
-         \x20\x20---End of deliverable---\n\
-         \x20\x20Waiting for on-chain confirmation. The job will auto-complete once confirmed."
-    )
-}
-
-/// `Event::JobPaymentModeChanged` x402 分支 — 重放失败时推给用户的通知。
-pub fn x402_replay_fail_payment_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20[x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
-         \x20\x20HTTP status: <replayStatus>\n\
-         \x20\x20Error: <replayBody>\n\
-         \x20\x20Auto-complete will not run after `job_accepted`. Please give a new instruction; the agent will not auto-retry."
-    )
-}
 
 // ── Event::NegotiateReply (over budget) ────────────────────────────
 
