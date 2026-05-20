@@ -27,6 +27,18 @@ pub fn job_created_user_notify(job_id: &str, notify_text: &str) -> String {
     format!("任务 {job_id} 已上链成功（待接单），{notify_text}")
 }
 
+/// 指定服务商离线时推给用户的提示（D-Step 1.5）。
+pub fn provider_offline_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -> String {
+    format!(
+        "[Task {short_id} you as buyer] The designated provider (AgentID={dp_id}) for task {job_id} \
+         is currently offline. Negotiation requires the provider to be online. \
+         Please choose:\n\
+         A. Designate another provider — please provide the agentId\n\
+         B. Make the task public — allow more providers to see it\n\
+         C. Close the task"
+    )
+}
+
 // ── Event::JobAccepted ─────────────────────────────────────────────
 
 /// `Event::JobAccepted` 分支 A（escrow）推给用户的接单成功通知。

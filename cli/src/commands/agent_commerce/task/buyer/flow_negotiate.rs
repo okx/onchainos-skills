@@ -12,6 +12,7 @@ use super::flow::FlowContext;
 
 /// 指定服务商 D-Step 路由（service-list 查询 → x402 或 A2A 分支入口）
 pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
+    let provider_offline = super::content::provider_offline_user_prompt(job_id, short_id, dp_id);
     format!("\
              🎯 **指定服务商**: {dp_id}\n\
              ⚠️ 指定服务商的持久化文件已由 CLI 在生成本提示词时自动删除（consume-on-read），无需手动清理。\n\n\
@@ -20,6 +21,15 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              onchainos agent service-list --agent-id {dp_id}\n\
              ```\n\
              检查返回结果中是否有服务（services 数组非空）以及服务中的 endpoint、feeAmount、feeTokenSymbol 字段。\n\n\
+             **D-Step 1.5 — 在线状态检查（仅 escrow 路径生效）：**\n\
+             从 service-list 返回的 JSON 中读取 `agentInfo.onlineStatus` 字段（1=online / 2=offline）。\n\
+             - `onlineStatus == 1`（在线）→ 继续 D-Step 2。\n\
+             - `onlineStatus == 2` 或字段缺失（离线/未知）且 **无 endpoint**（即将进入 escrow 协商路径）→ 服务商不在线，无法协商。\n\
+             \x20\x20调用 xmtp_prompt_user 通知用户：\n\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「选 A / 指定服务商」并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户提供的agentId>] 用户原话：<用户回复原文>\") relay 回 sub session；用户语义「选 B / 公开」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文>\") relay；用户语义「选 C / 关闭」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\") relay。⚠️ 路由 tag 协议：intent 名完全大写 ASCII 原样塞入；禁止翻译/改写。⚠️ relay 必须使用 xmtp_dispatch_session。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
+             \x20\x20userContent: {provider_offline}\n\
+             \x20\x20→ **结束本轮 turn**，等用户回复。\n\
+             - `onlineStatus == 2` 但 **有 endpoint**（x402 路径）→ x402 是自动化支付，不依赖服务商实时在线，继续 D-Step 2。\n\n\
              **D-Step 2 — 按 service-list 结果路由：**\n\
              - **有服务且含 endpoint（支持 x402）** → 提取 services[0] 的 feeAmount、feeTokenSymbol、endpoint。\n\
              \x20\x20⚠️ **feeAmount 是服务商注册时手动填写的，不一定等于链上实际价格**，须经 DX-Step 1 `x402-check` 验证。展示给用户时注明「注册费用」。\n\
