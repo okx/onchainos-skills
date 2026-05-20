@@ -201,45 +201,46 @@ pub async fn handle_set_payment_mode(
         );
     }
 
-    let (msg, next) = if let Some(resolved) = x402_resolved {
+    if let Some(resolved) = x402_resolved {
         if already_set {
             println!("✓ 支付方式已是 x402，跳过上链，直接进入 task-402-pay");
-            (
-                format!(
-                    "paymentMode 已是 x402。endpoint={}, fee={} {}",
-                    resolved.endpoint, resolved.fee_amount, resolved.fee_token_symbol,
-                ),
-                "直接执行 task-402-pay（x402_pay 签名 + direct/accept + endpoint 重放）".to_string(),
-            )
+            crate::output::success(serde_json::json!({
+                "alreadySet": true,
+                "paymentMode": "x402",
+                "endpoint": resolved.endpoint,
+                "feeAmount": resolved.fee_amount.to_string(),
+                "feeTokenSymbol": resolved.fee_token_symbol,
+                "next": "直接执行 task-402-pay（x402_pay 签名 + direct/accept + endpoint 重放）",
+            }));
         } else {
             let mode_int = payment_mode.as_int();
             println!("✓ 支付方式已设置: x402 ({mode_int})，等待链上确认...");
-            (
-                format!(
+            crate::output::confirming(
+                &format!(
                     "x402 setPaymentMode 完成。endpoint={}, fee={} {}",
                     resolved.endpoint, resolved.fee_amount, resolved.fee_token_symbol,
                 ),
-                "等待 job_payment_mode_changed 系统通知 → Agent 执行 task-402-pay（x402_pay 签名 + direct/accept + endpoint 重放）".to_string(),
-            )
+                "等待 job_payment_mode_changed 系统通知 → Agent 执行 task-402-pay（x402_pay 签名 + direct/accept + endpoint 重放）",
+            );
         }
     } else {
         let mode_str = payment_mode.as_str();
         if already_set {
             println!("✓ 支付方式已是 {mode_str}，跳过上链");
-            (
-                format!("paymentMode 已是 {mode_str}。"),
-                format!("直接执行 onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
-            )
+            crate::output::success(serde_json::json!({
+                "alreadySet": true,
+                "paymentMode": mode_str,
+                "next": format!("直接执行 onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
+            }));
         } else {
             let mode_int = payment_mode.as_int();
             println!("✓ 支付方式已设置: {mode_str} ({mode_int})，等待链上确认...");
-            (
-                format!("setPaymentMode({mode_str}) 完成。"),
-                format!("等待 job_payment_mode_changed 系统通知 → onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
-            )
+            crate::output::confirming(
+                &format!("setPaymentMode({mode_str}) 完成。"),
+                &format!("等待 job_payment_mode_changed 系统通知 → onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
+            );
         }
-    };
-    crate::output::confirming(&msg, &next);
+    }
     Ok(())
 }
 

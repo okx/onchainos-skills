@@ -79,6 +79,10 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ```\n\
      （内部：POST /priapi/v1/aieco/task/{job_id}/direct/complete → 获取 calldata → 签名 uopHash → 广播上链）\n\n\
      ⚠️ **不要通知用户**——交付物已在 task-402-pay 后发送过，最终汇总由 job_completed 事件负责。\n\n\
+     ⚠️ **complete 失败兜底**：如果 `onchainos agent complete` 返回错误（CLI 输出含 `\"ok\": false` 或 stderr 报错），\n\
+     调用 xmtp_dispatch_user 通知用户并提供重试命令：\n\
+     \x20\x20content: 任务 complete 执行失败，请稍后重试。重试命令：onchainos agent complete {job_id}\n\
+     → **结束本轮 turn**，等待用户重试或 wakeup_notify 事件。\n\n\
      **B-分支 2：replaySuccess=false（仅在上下文中明确找到 replaySuccess=false 时走此分支）**\n\n\
      ⚠️ **不要执行 complete**——用户未收到交付物。\n\n\
      **B-Step 2 — 通知用户重放失败：**\n\
@@ -821,10 +825,20 @@ Step 3 — 身份 & 余额检查
 2. 有 buyer → 告知用户使用哪个账户
 3. 无 buyer → 引导注册 `onchainos agent register`
 4. 余额不足 → 警告但不阻断创建
-5. 执行 `skills/okx-agent-chat/after-agent-list-changed.md` 检查通信服务可用性
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step 4 — 展示确认表单（格式见 `skills/okx-agent-task/references/display-formats.md` §3）
+Step 4 — 🛑 通信服务可用性检查（不可跳过）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🛑 **MANDATORY — 必须在展示确认表单之前完成此步骤**。
+任务创建后的所有协商、通知、验收都依赖通信服务，通信不可用 = 任务创建后立即卡死。
+
+1. **阅读** `skills/okx-agent-chat/after-agent-list-changed.md` 的**完整内容**
+2. **完整执行** after-agent-list-changed.md 内的流程（从 Step 0 开始，按决策树逐步走完）
+3. 执行完毕后继续 Step 5
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Step 5 — 展示确认表单（格式见 `skills/okx-agent-task/references/display-formats.md` §3）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 | 字段 | 值 |
@@ -847,7 +861,7 @@ Step 4 — 展示确认表单（格式见 `skills/okx-agent-task/references/disp
 🛑 之前对话中用户对子问题（如代币确认）的「确认」不算对表单的确认，必须是用户看到表单后的新回复。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step 5 — 用户对表单确认后调 CLI（🛑 禁止与 Step 4 同一轮执行）
+Step 6 — 用户对表单确认后调 CLI（🛑 禁止与 Step 5 同一轮执行）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ```bash
@@ -930,6 +944,22 @@ pub(super) fn task_token_budget_change(ctx: &FlowContext<'_>) -> String {
 
 pub(super) fn task_provider_change(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+
+    let has_dp = super::negotiate::has_designated_provider(job_id);
+
+    let backup_instruction = if has_dp {
+        format!(
+            "- 如果你是 **backup session** → user session 已通过 `set-provider` 写入了新服务商信息。\n\
+             \x20\x20**🛑 MUST 立即执行以下命令启动新服务商流程**：\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id}\n\
+             \x20\x20```\n\
+             \x20\x20按返回的剧本执行（D-Steps → 协商/x402）。\n\
+             \x20\x20❌ 禁止忽略本事件 ❌ 禁止跳过 next-action 自行决定下一步\n")
+    } else {
+        "- 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n".to_string()
+    };
 
     format!(
     "【系统通知】task_provider_change（服务商变更已上链）\n\
@@ -937,7 +967,7 @@ pub(super) fn task_provider_change(ctx: &FlowContext<'_>) -> String {
      ⚠️ 本事件由 user session 调用 `set-provider` 触发。provider 已在链上更新。\n\n\
      【接收场景判断——🛑 MANDATORY，判断错误 = 流程卡死】\n\
      本事件会广播到所有用户侧子 session。\n\
-     - 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n\
+     {backup_instruction}\
      - 如果你是 **sub session（与某服务商的协商会话）**→ 先执行 Step 0 活跃检查，再执行后续步骤\n\n\
      【sub session 动作（🛑 四步严格顺序，MUST 全部执行）】\n\n\
      **Step 0 — 🛑 MUST 检查本 session 是否仍活跃：**\n\

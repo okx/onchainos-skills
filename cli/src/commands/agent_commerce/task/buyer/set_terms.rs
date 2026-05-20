@@ -88,6 +88,8 @@ pub async fn handle_set_provider(
         job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
 
+    super::negotiate::save_designated_provider(job_id, provider_agent_id)?;
+
     audit::log(
         "cli",
         "buyer/provider_change_submitted",

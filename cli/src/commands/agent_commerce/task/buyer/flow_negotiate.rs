@@ -60,8 +60,13 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20```bash\n\
              \x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <x402-check 返回的 tokenSymbol> --token-amount <x402-check 返回的 amountHuman> --endpoint <endpoint>\n\
              \x20\x20```\n\
-             \x20\x20⚠️ tokenSymbol 和 tokenAmount 使用 **x402-check 返回的实际值**（不是任务创建时的原始预算）。\n\
-             \x20\x20→ **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知（届时按 Activation 铁律处理，剧本会引导执行 task-402-pay）。\n\n\
+             \x20\x20⚠️ tokenSymbol 和 tokenAmount 使用 **x402-check 返回的实际值**（不是任务创建时的原始预算）。\n\n\
+             \x20\x20**A-Step 3 结果分支（🛑 MANDATORY — 判断错误 = 流程卡死）：**\n\
+             \x20\x20检查 set-payment-mode 的 CLI 输出（JSON）：\n\
+             \x20\x20- 输出含 `\"alreadySet\": true`（paymentMode 已在链上就位，跳过了上链）→ **不等 `job_payment_mode_changed`**，\n\
+             \x20\x20\x20\x20链上不会触发事件。**立即在本 turn 内执行 job_payment_mode_changed 的 x402 流程**：\n\
+             \x20\x20\x20\x20调用 `onchainos agent next-action --jobid {job_id} --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}`，按返回剧本执行（task-402-pay）。\n\
+             \x20\x20- 输出含 `\"confirming\": true`（正常上链中）→ **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
              - **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。",
              CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
 }
@@ -204,9 +209,14 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              ```bash\n\
              onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\
-             此命令执行 setPaymentMode → 签名 → 广播，然后返回 exit code 2 (confirming)。\n\
-             ⚠️ **绝对不要**在此 turn 内 xmtp_send [intent:confirm]——服务商见 [intent:confirm] 会立刻 apply，但链上 paymentMode 还在 mempool / 没确认，apply 会失败或行为错位。[intent:confirm] 必须等 `job_payment_mode_changed` 事件确认 paymentMode 上链后再发。\n\n\
-             **Step 6.3 — 结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
+             **Step 6.2 结果分支（🛑 MANDATORY — 判断错误 = 流程卡死）：**\n\
+             检查 set-payment-mode 的 CLI 输出（JSON）：\n\
+             - 输出含 `\"alreadySet\": true`（paymentMode 已在链上就位，跳过了上链）→ **不等 `job_payment_mode_changed`**，\n\
+             \x20\x20链上不会触发事件。**立即在本 turn 内执行 job_payment_mode_changed 的 escrow 流程**：\n\
+             \x20\x20调用 `onchainos agent next-action --jobid {job_id} --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}`，按返回剧本执行（xmtp_send [intent:confirm]）。\n\
+             - 输出含 `\"confirming\": true`（正常上链中）→ 继续 Step 6.3。\n\
+             ⚠️ **绝对不要**在上链中（confirming）时 xmtp_send [intent:confirm]——服务商见 [intent:confirm] 会立刻 apply，但链上 paymentMode 还在 mempool / 没确认，apply 会失败或行为错位。[intent:confirm] 必须等 `job_payment_mode_changed` 事件确认 paymentMode 上链后再发。\n\n\
+             **Step 6.3 — 仅 confirming 时执行：结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
              （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [intent:confirm] 给服务商。服务商此时见 CONFIRM → apply（escrow），链上 paymentMode 已就位。\n\n\
              ━━━━━━━━━ 协商失败 / 切换服务商 ━━━━━━━━━\n\n\
              当前服务商超时未回复（5 分钟）/ COUNTER 轮次超限（≥3 次）/ 收到 `[intent:reject]` / 协商失败 → 先 xmtp_send 发 `[intent:reject]`（reason 填超时/超限/失败原因）给服务商，再切换：\n\
