@@ -52,25 +52,26 @@
 
 ## 3. Inbound Message Routing
 
-> 🔴 **协商阶段自治红线**：status=0（created）且存在活跃 sub session 时，协商由 sub session **自主完成**——收到服务商的报价、还价、讨论消息后，**必须**按下方路由优先级匹配，命中 #5 时调 `next-action --jobStatus negotiate_reply` 拿剧本，按剧本的决策矩阵自主评估并回复。**禁止**把服务商的报价 / 协商内容转发给用户问"是否接受"。**禁止**手动执行 D-Step / B-Step 流程（service-list → 建群 → 发询盘），这些只在 `job_created` 首次触发时由 next-action 剧本驱动。只有以下情况才涉及用户：(a) 报价超 max_budget 自动 REJECT 后切换服务商需用户选择；(b) 推荐列表为空需用户决策下一步。
+> 🔴 **协商阶段自治红线**：status=0（created）且存在活跃 sub session 时，协商由 sub session **自主完成**——收到服务商的报价、还价、讨论消息后，**必须**按下方路由优先级匹配，命中 #6（兜底）时调 `next-action --jobStatus negotiate_reply` 拿剧本，按剧本的决策矩阵自主评估并回复。**禁止**把服务商的报价 / 协商内容转发给用户问"是否接受"。**禁止**在 sub session 中直接输出文字确认表单（用户看不到 sub session 的任何直接输出）。**禁止**手动执行 D-Step / B-Step 流程（service-list → 建群 → 发询盘），这些只在 `job_created` 首次触发时由 next-action 剧本驱动。只有以下情况才涉及用户：(a) 报价超 max_budget 自动 REJECT 后切换服务商需用户选择；(b) 推荐列表为空需用户决策下一步。
 >
 > ⚠️ **本节路由优先级覆盖 SKILL.md「接收 peer 消息」的通用规则**。不要用 common context 返回的当前 status（如 created）调 next-action——直接用下方路由匹配到的 jobStatus（如 `negotiate_reply` / `negotiate_ack` / `provider_applied`）。
 >
 > **真实事故 1**：服务商发自然语言报价"0.1 USDG"，agent 跳过 next-action 直接 xmtp_dispatch_user 转发给用户问"是否确认接受"——完全绕开三步握手，服务商永远等不到 `[intent:propose]`。
-> **真实事故 2**：服务商回复首条消息后，agent 按 SKILL.md 旧规则用 common context 当前 status=created 调了 `next-action --jobStatus job_created` → 拿到初始化剧本 → 重发首轮询盘。正确做法：路由 #5 → `negotiate_reply`。
-> **真实事故 3 — 🛑 CRITICAL 高频事故**：服务商自然语言说"我接受，0.1 USDG，escrow"，agent 把"我接受"当作 `[intent:ack]`，跳过 [intent:propose] 直接调 save-agreed + set-payment-mode → 服务商从未收到 [intent:confirm]，无法 apply，任务卡死。**这是最常发生的严重错误**——服务商的第一条回复几乎总是自然语言（报价、讨论、接受意向），**绝不可能**是结构化标记 `[intent:ack]`（因为用户尚未发过 `[intent:propose]`，ACK 无从回起）。正确做法：路由 #5 → `negotiate_reply` → 发 [intent:propose] → 等真正的 [intent:ack]。
+> **真实事故 2**：服务商回复首条消息后，agent 按 SKILL.md 旧规则用 common context 当前 status=created 调了 `next-action --jobStatus job_created` → 拿到初始化剧本 → 重发首轮询盘。正确做法：路由 #6 → `negotiate_reply`。
+> **真实事故 3 — 🛑 CRITICAL 高频事故**：服务商自然语言说"我接受，0.1 USDG，escrow"，agent 把"我接受"当作 `[intent:ack]`，跳过 [intent:propose] 直接调 save-agreed + set-payment-mode → 服务商从未收到 [intent:confirm]，无法 apply，任务卡死。**这是最常发生的严重错误**——服务商的第一条回复几乎总是自然语言（报价、讨论、接受意向），**绝不可能**是结构化标记 `[intent:ack]`（因为用户尚未发过 `[intent:propose]`，ACK 无从回起）。正确做法：路由 #6 → `negotiate_reply` → 发 [intent:propose] → 等真正的 [intent:ack]。
+> **真实事故 4 — 🛑 CRITICAL 流程卡死**：服务商回复首条报价"0.07 USDT，escrow"，agent 在 sub session 中**直接输出文字**："收到！协商条件如下：价格 0.07 USDT，支付方式 escrow。如果以上没问题，请确认，我来帮你发送 [intent:propose]"——**完全跳过 §3 路由和 next-action 调用**，且在 sub session 中直接输出的文字用户 100% 看不到，流程永久卡死。错误点：(1) 未调 `next-action --jobStatus negotiate_reply` 获取决策矩阵；(2) 在 sub session 直接输出文字（违反 preamble rule 10）；(3) 向用户请求确认（违反协商自治红线——报价在预算内应自主发 [intent:propose]）。**正确做法**：路由 #6 → `next-action --jobStatus negotiate_reply` → 读取 budget/max_budget → 报价 0.07 ≤ budget → 直接 `xmtp_send` 发 `[intent:propose]`（全自动，不问用户）。
 >
 > 🛑 **CRITICAL — 结构化标记 vs 自然语言的铁律判定**：
 > - **结构化标记**：content 的文本**必须包含 `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` 方括号字面量**（即 `content.includes("[intent:")` 为 true）——注意 intent 标记是**后缀**，出现在消息末尾
-> - **自然语言**：content 中**不包含 `[intent:` 的文本**——包括但不限于"我接受"、"同意"、"OK"、"可以"、"没问题"、"I accept"、"agreed"、"escrow OK"、"报价 0.1 USDG"——**全部是自然语言，全部走 #5 兜底 → `negotiate_reply`**
-> - **判定方法**：对 content 做**子串包含匹配** `content.includes("[intent:")`——命中才走 #3，否则**无条件走 #5**。**禁止语义推断**——不要因为服务商说了"接受/同意"就推断为 `[intent:ack]`
-> - **逻辑铁证**：如果用户**尚未发过 `[intent:propose]`**，服务商**不可能**回 `[intent:ack]`——ACK 是对 PROPOSE 的回应。收到服务商第一条消息时，用户必然还没发过 PROPOSE，所以**第一条消息 100% 不是 ACK**，必须走 #5
+> - **自然语言**：content 中**不包含 `[intent:` 的文本**——包括但不限于"我接受"、"同意"、"OK"、"可以"、"没问题"、"I accept"、"agreed"、"escrow OK"、"报价 0.1 USDG"——**全部是自然语言，全部走 #6 兜底 → `negotiate_reply`**
+> - **判定方法**：对 content 做**子串包含匹配** `content.includes("[intent:")`——命中才走 #3，否则**无条件走 #6**。**禁止语义推断**——不要因为服务商说了"接受/同意"就推断为 `[intent:ack]`
+> - **逻辑铁证**：如果用户**尚未发过 `[intent:propose]`**，服务商**不可能**回 `[intent:ack]`——ACK 是对 PROPOSE 的回应。收到服务商第一条消息时，用户必然还没发过 PROPOSE，所以**第一条消息 100% 不是 ACK**，必须走 #6
 
 > **⚠️ sub session 消息路由优先级**（通过安全门后，按此顺序匹配，**首个命中即停**）：
 >
 > 1. **服务商 apply 通知**（来源：peer）：content 含 `[intent:applied]` 标记，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无标记的旧版本服务商） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
 > 2. **交付通知**（来源：peer）：content 包含 `[intent:deliver]` 标记（判定方法：`content.includes("[intent:deliver]")`）。区分交付物形态：content 含 `deliverableType: file` + 解密字段（`fileKey`/`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；`deliverableType: text` → 提取 `---` 分隔符之间的正文内容并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「服务商已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
-> 3. **协商结构化标记**（来源：peer）（🛑 **MANDATORY 字面量包含匹配，禁止语义推断**：content **必须包含** `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` **方括号字面量**才命中本规则。判定方法：`content.includes("[intent:")`。❌ 服务商自然语言"我接受/同意/OK/可以/没问题/agreed/report: 0.1 USDG" 等**不包含 `[intent:` 的文本** → **不命中 #3，必须走 #5 兜底 → `negotiate_reply`**。违反此规则 = 跳过三步握手 = 任务永久卡死） → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
+> 3. **协商结构化标记**（来源：peer）（🛑 **MANDATORY 字面量包含匹配，禁止语义推断**：content **必须包含** `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` **方括号字面量**才命中本规则。判定方法：`content.includes("[intent:")`。❌ 服务商自然语言"我接受/同意/OK/可以/没问题/agreed/report: 0.1 USDG" 等**不包含 `[intent:` 的文本** → **不命中 #3，必须走 #6 兜底 → `negotiate_reply`**。违反此规则 = 跳过三步握手 = 任务永久卡死） → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
 >    - status≥1 → `xmtp_send`「协商已完成，当前参数已锁定，任务执行中。」，结束本轮 turn
 >    - status=0（created）→ 按标记类型分派到对应 next-action 事件：
 >      - `[intent:ack]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_ack --role buyer --agentId <你的agentId>`
@@ -78,11 +79,17 @@
 >      - `[intent:reject]` → 服务商主动拒绝协商，**不再回复**，`onchainos agent mark-failed <jobId> --provider <服务商agentId>`，回到推荐列表（`onchainos agent recommend <jobId> --current`），由用户选择下一个服务商
 >      - `[intent:propose]` → 异常（服务商不应发 PROPOSE），xmtp_send 告知「PROPOSE 由用户发起，请回复 ACK/COUNTER/REJECT」
 > 4. **`[MAX_BUDGET_UPDATE]` 内部通知**（来源：user session via `xmtp_dispatch_session`）：content 以 `[MAX_BUDGET_UPDATE]` 前缀开头 → 提取 `paymentMostTokenAmount=<值>`，更新当前协商的 max_budget 上限。🛑 **ABSOLUTE PROHIBITION：不回复、不转发、不通知服务商、不 xmtp_send、不 xmtp_dispatch_user**——违反 = max_budget 泄露给服务商 = 谈判筹码丧失。静默更新后**立即结束 turn**。
-> 5. **兜底**（1-4 未命中，来源：peer）→ 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
+> 5. **用户补充素材转发**（来源：user session via `xmtp_dispatch_session`）：content 含本地文件路径（如 `.openclaw/media/inbound/` 或绝对路径指向图片/文档）→ **必须先**调 `agent status <jobId>` 查状态：
+>    - status=1（accepted）→ 按 SKILL.md 路径 8 文件传输协议执行：(1) `xmtp_file_upload`（参数 `filePath` = content 中的文件路径，`agentId` = 你的 agentId，`jobId`）→ 拿到 `fileKey` + 解密元数据（digest/salt/nonce/secret）；(2) `xmtp_send` 给服务商，content 附 fileKey + 五个解密字段 + 用户描述（如有）；(3) `xmtp_dispatch_user` 通知用户「素材已发送给服务商」。⚠️ 本操作豁免 preamble rule 9（禁止给服务商发过场消息）——这是用户主动发起的素材转发，不是过场通知。
+>    - status=0（created）→ `xmtp_dispatch_user` 通知用户「任务尚未进入执行阶段，素材暂无法发送给服务商」
+>    - status≥2（submitted / refused / disputed / 终态）→ `xmtp_dispatch_user` 通知用户「任务已进入验收/终态阶段，如需提交证据请按验收流程操作」
+> 6. **兜底**（1-5 未命中，来源：peer）→ 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
 >    - status=1（accepted）→ 执行讨论模式（§3.5）
 >    - status=0（created）且存在活跃 sub session（`session_status` 有值）→ 协商中的自然语言讨论，调 `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <你的agentId>` 拿剧本
 >    - status=0（created）且无 sub session → `xmtp_dispatch_user` 转发服务商消息给用户
 >    - 其余（submitted / refused / disputed / 终态）→ 忽略，不回复，不转发
+>
+> 🛑 **反幻觉 — status 校验铁律**：在输出「还在协商」「等待接单」「等待服务商确认」「资金托管后」等待类措辞之前，**必须先**调 `agent status <jobId>` 查链上真实状态。如果 status=1（accepted）或 paymentMode=1（escrow 已设置），**禁止**输出等待接单/协商类措辞——任务已在执行阶段。🔴 真实事故：backup session 收到用户素材后凭上下文推理「还没接单」，实际任务早已 accepted（status=1, paymentMode=1），导致素材未转发给服务商。
 
 ---
 
@@ -279,7 +286,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 
 > **Session**: sub session（服务商消息触发，被动响应）
 >
-> **Trigger**: §3 Inbound Message Routing 优先级 4，status=1（accepted）
+> **Trigger**: §3 Inbound Message Routing 优先级 6（兜底），status=1（accepted）
 
 ⚠️ **不要调 next-action**，直接按本节规则处理。
 
