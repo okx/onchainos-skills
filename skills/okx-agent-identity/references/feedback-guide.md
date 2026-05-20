@@ -34,23 +34,23 @@ Walk this ladder in order:
    - If the user has switched wallets since the cached id was first mentioned (any `okx-agentic-wallet wallet switch` / `wallet add` in between), **fall through to ladder 2** unconditionally — wallet switch invalidates the cache for `--creator-id` purposes even if the id technically still exists.
    When falling through, do NOT echo "I had #N cached but it doesn't belong to the current wallet" as the user-visible explanation by default — just run ladder 2 and surface the new candidate list. Surface the wallet-mismatch reason only if the user explicitly asks "why didn't you use #N?" or if ladder 2 yields 0 candidates and you need to explain why creating an agent under the current wallet is the next step.
 2. **Run `onchainos agent get`** (no `--agent-ids`). The response is a **double-layer envelope** (`cli-reference.md §3`): outer `list[*]` is an accountName wrapper (one per derived wallet the JWT caller has visibility into), agent rows live at `list[*].agentList[*]`. Since `--creator-id` must be held by the **same XLayer wallet that will sign this `feedback-submit` tx**, the candidate set is **NOT** all `agentList[*]` across all wrappers — narrow to the single wrapper where `wrapper.ownerAddress == <currently selected XLayer wallet address>`, then count agents in that wrapper's `agentList`:
-   - **0 agents under the current wallet** → STOP. Tell the user (in their language; ⛔ no CLI literal, no raw `role` word — Red lines 2 & 4): Chinese: "你当前钱包下还没注册 agent — 得先注册一个（买家 / 卖家 / 验证者都行）才能给别人打分。要现在就注册吗？" / English: "You don't have an agent under the current wallet yet — you'll need to register one first (any role: requester / provider / evaluator) before you can rate others. Want to register one now?" Offer to enter the registration flow. (Other wrappers may have agents — those belong to other derived wallets under the same email / JWT, and **cannot** sign this tx; do not list them as candidates.)
+   - **0 agents under the current wallet** → STOP. Tell the user (in their language; ⛔ no CLI literal, no raw `role` word — Red lines 2 & 4): Chinese: "你当前钱包下还没注册 agent — 得先注册一个（用户 / 服务提供商 / 仲裁者都行）才能给别人打分。要现在就注册吗？" / English: "You don't have an agent under the current wallet yet — you'll need to register one first (any role: User Agent / Agent Service Provider (ASP) / Evaluator Agent) before you can rate others. Want to register one now?" Offer to enter the registration flow. (Other wrappers may have agents — those belong to other related wallets under the same email / JWT, and **cannot** sign this tx; do not list them as candidates.)
    - **1 agent under the current wallet** → silently use its agentId as `--creator-id`; mention the choice in the confirmation (in the user's language): Chinese: "你的 agent #N <name> 会作为这条评价的发起人。" / English: "Your agent #N <name> will be the reviewer for this rating."
    - **Multiple agents under the current wallet** → ask the user which to use, using the numbered-options pattern (`SKILL.md §Choice prompts`) in the user's language. ⛔ Render role labels per `ux-lexicon.md §Role` asymmetric rule (Chinese localizes; English keeps ERC-8004 native term):
 
      Chinese:
      ```
      你要用哪个 agent 作为这条评价的发起人？
-       1. #88 买家  MyBuyer
-       2. #99 卖家  DeFi Analyzer
+       1. #88 用户  MyBuyer
+       2. #99 服务提供商  DeFi Analyzer
      回复对应数字。
      ```
 
      English:
      ```
      Which of your agents should be the reviewer?
-       1. #88 requester  MyBuyer
-       2. #99 provider   DeFi Analyzer
+       1. #88 User Agent  MyBuyer
+       2. #99 Agent Service Provider (ASP)  DeFi Analyzer
      Reply with the number.
      ```
 
@@ -97,14 +97,14 @@ Walk this ladder in order:
 
 > ⛔ `feedback-submit` is an on-chain write — the confirmation card is **mandatory** per `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)`. Auto-execute preferences, prior in-conversation confirmations of other writes, and "the user obviously wants this" do NOT bypass the gate. Render the card.
 
-Render a 2-column table (not a bash blob), in the user's language. Follow `display-formats.md` §Create/Update Diff style. ⛔ Do NOT mix languages within a single rendering (no `评分 / Rating` bilingual headers, no `服务方 (provider)` dual labels) — see `display-formats.md §Create variant` and `ux-lexicon.md §Role`.
+Render a 2-column table (not a bash blob), in the user's language. Follow `display-formats.md` §Create/Update Diff style. ⛔ Do NOT mix languages within a single rendering (no `评分 / Rating` bilingual headers, no `服务提供商 (provider)` dual labels) — see `display-formats.md §Create variant` and `ux-lexicon.md §Role`.
 
 Chinese variant:
 
 | 字段 | 值 |
 |---|---|
-| 发起人 | #88 买家 MyBuyer（你） |
-| 目标 | #42 卖家 DeFi Analyzer |
+| 发起人 | #88 用户 MyBuyer（你） |
+| 目标 | #42 服务提供商 DeFi Analyzer |
 | 评分 | ★ 4 |
 | 评价 | "交付及时、数据准确" |
 | 任务 ID | 0xabc…03e8 |
@@ -115,15 +115,15 @@ English variant:
 
 | Field | Value |
 |---|---|
-| Reviewer | #88 requester MyBuyer (you) |
-| Target | #42 provider DeFi Analyzer |
+| Reviewer | #88 User Agent MyBuyer (you) |
+| Target | #42 Agent Service Provider (ASP) DeFi Analyzer |
 | Rating | ★ 4 |
 | Comment | "Delivered on time, data accurate" |
 | Task ID | 0xabc…03e8 |
 
 > Reply "execute" to run.
 
-The rating row shows `★ N` where N is the integer 0–5. Never render `85 / 100` here. Role labels follow `ux-lexicon.md §Role` asymmetric rule (Chinese localizes 买家 / 卖家 / 验证者; English keeps `requester` / `provider` / `evaluator`).
+The rating row shows `★ N` where N is the integer 0–5. Never render `85 / 100` here. Role labels follow `ux-lexicon.md §Role` — both languages localize: Chinese `用户 / 服务提供商 / 仲裁者`; English `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render raw ERC-8004 enum (`requester` / `provider` / `evaluator`) or legacy CN nouns (`买家 / 卖家 / 服务方 / 验证者`).
 
 **Do NOT show the bash command in the confirmation card.** Render it only if the user explicitly asks "把命令给我看".
 

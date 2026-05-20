@@ -23,9 +23,9 @@ For **Pattern A (long form inline)** contexts — Q&A prompts that teach the use
 
 The canonical worked examples in §2 / §4 / §6 below **show the Pattern B footnote rendered** to be faithful end-to-end renders. If the user has already seen the gloss earlier in the conversation (via Pattern A or a previous Pattern B render), subsequent responses MAY omit the footnote.
 
-**⛔ URL literals are doc-only.** Any `https://...` value that still appears anywhere in this file's templates (e.g. inside an example service row, a Picture cell, a service-list endpoint column) is **illustrative for the doc reader only**, NOT a renderable default. When generating user-facing output:
+**⛔ URL literals are doc-only.** Any `https://...` value that still appears anywhere in this file's templates (e.g. inside an example service row, a `头像` / `Profile photo` cell, a service-list endpoint column) is **illustrative for the doc reader only**, NOT a renderable default. When generating user-facing output:
 - Render whatever **the user actually supplied** for `endpoint` / `picture` (or, for backend-returned cards like `agent get` / `service-list`, the **backend-returned URL verbatim**) — never a literal `https://api.example.com/...` / `https://cdn.example.com/...` / `https://img.example.com/...` from this doc.
-- If the value is missing or empty, follow that row's documented fallback (`默认` / `default` for Picture; `—` for an A2A endpoint cell; etc.) — **never** fall back to a doc URL.
+- If the value is missing or empty, follow that row's documented fallback (`默认` / `default` for `头像` / `Profile photo`; `—` for an A2A endpoint cell; etc.) — **never** fall back to a doc URL.
 - This mirrors the `field-specs.md §endpoint` Render constraint. Pasting a sample domain into the user's confirmation card is the **same IM-linkify failure mode** — Lark / 飞书 / Slack will turn it into a clickable link to a domain that doesn't exist, and users have clicked through. Do not do it.
 
 **`#<id>` placeholder rule.** All `#<id>` / `#<N>` / `#<target>` in these templates are placeholders — substitute with the actual numeric agent id. **The legitimate sources of `#<id>` depend on which command produced the response**:
@@ -35,15 +35,15 @@ The canonical worked examples in §2 / §4 / §6 below **show the Pattern B foot
 - **`agent feedback-submit`:** the CLI returns `{txHash}` only — no agent id at all. The `#<target>` placeholder in the post-success line refers to the *target* agent being rated, which the user explicitly supplied as `--agent-id`. Use that value.
 
 If `#<id>` is not available by the rules above (notably: `feedback-submit` agent id of caller's own, or `create` with `txHash`-only CLI return — see `cli-reference.md` §1 return schema), do **NOT** render a bare `#` with nothing after it. Options, in order of preference:
-1. **Omit the `#<id> ` substring entirely** from the line — render the fallback wording defined in the relevant role file's §Post-success (e.g., the current requester fallback `买家身份注册完成 — 想发任务直接跟我说"发布一个 ... 的任务"…` / `Requester identity is live — say "publish a task for X" …`; see `role-requester.md` §Post-success fallback lines for the canonical wording).
+1. **Omit the `#<id> ` substring entirely** from the line — render the fallback wording defined in the relevant role file's §Post-success (e.g., the current requester fallback `用户身份注册完成 — 想发任务直接跟我说"发布一个 ... 的任务"…` / `User Agent identity is live — say "publish a task for X" …`; see `role-requester.md` §Post-success fallback lines for the canonical wording).
 2. If no fallback is documented for this context, omit and use neutral wording that doesn't need the id — e.g. "身份已注册，agent id 待后续接口返回" / "Agent created; agent id will be available once the hash→info endpoint ships."
 3. Never invent an id. Never render `# `, `#<id>`, or `#?` to the user. Never reuse an id from the pre-check list for a `create` post-success line.
 
-**Picture row rule.** In any card that has a `头像` / `Picture` row (confirmation card, detail card, diff card), the value column must be one of:
+**`头像` / `Profile photo` row rule.** In any card that has a `头像` / `Profile photo` row (confirmation card, detail card, diff card), the value column must be one of:
 1. The **actual URL verbatim** — when the user supplied a link directly or when `agent upload` returned a URL. Render whatever URL the user / backend produced; **do NOT** substitute any literal `https://…` from this doc as a default. (Per the rendering ban in `field-specs.md §Picture` and the doc-level rule below, this section deliberately does NOT include a sample URL.)
 2. The literal string `默认` (Chinese) / `default` (English) — when the user chose to skip and backend will assign a default.
 
-Never use placeholder / filler phrases like `已上传` / `uploaded` / `已加好` / `CDN` / `图片已保存`. These leak implementation detail and force the user to click through an extra step to see what avatar is actually set. The URL goes directly in the cell. Diff cards showing a picture change render the old URL in the `当前值` / `Current` column and the new URL in the `新值` / `New` column, both verbatim.
+Never use placeholder / filler phrases like `已上传` / `uploaded` / `已加好` / `CDN` / `图片已保存`. These leak implementation detail and force the user to click through an extra step to see what profile photo is actually set. The URL goes directly in the cell. Diff cards showing a profile-photo change render the old URL in the `当前值` / `Current` column and the new URL in the `新值` / `New` column, both verbatim.
 
 **Description row rule.** In any card that has a `描述` / `Description` row (confirmation card, detail card, diff card), the value column must be one of:
 1. The **actual user-supplied / backend-returned text verbatim** — when the field is non-empty. Render in the user's language; do not paraphrase or summarize.
@@ -67,14 +67,14 @@ Chinese variant:
 
 | Agent ID | 名字 | 角色 | 状态 | 评分 |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | 服务方 | 已上架 | ★ 4.6 (18) |
-| #58 | MyBuyer | 买家 | 已上架 | — |
+| #42 | DeFi Analyzer | 服务提供商 | 已上架 | ★ 4.6 (18) |
+| #58 | MyBuyer | 用户 | 已上架 | — |
 
 > 钱包 wallet-2（0xfa4…0fa4）
 
 | Agent ID | 名字 | 角色 | 状态 | 评分 |
 |---|---|---|---|---|
-| #99 | Solidity Auditor | 验证者 | 已下架 | ★ 4.4 (7) |
+| #99 | Solidity Auditor | 仲裁者 | 已下架 | ★ 4.4 (7) |
 
 > 共 N 个钱包、合计 M 个 agent。查看详情请说 "详情 #42"。
 
@@ -84,14 +84,14 @@ English variant:
 
 | Agent ID | Name | Role | Status | Rating |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | provider | active | ★ 4.6 (18) |
-| #58 | MyBuyer | requester | active | — |
+| #42 | DeFi Analyzer | Agent Service Provider (ASP) | active | ★ 4.6 (18) |
+| #58 | MyBuyer | User Agent | active | — |
 
 > Wallet wallet-2 (0xfa4…0fa4)
 
 | Agent ID | Name | Role | Status | Rating |
 |---|---|---|---|---|
-| #99 | Solidity Auditor | evaluator | inactive | ★ 4.4 (7) |
+| #99 | Solidity Auditor | Evaluator Agent | inactive | ★ 4.4 (7) |
 
 > Total N wallets, M agents in all. Say "detail #42" to drill in.
 
@@ -103,7 +103,7 @@ Rules:
 - Five columns per agent table, exactly. The first column header (`Agent ID`) stays in English because "Agent ID" reads as a technical token; the other four adapt to user language (`名字 / 角色 / 状态 / 评分` ↔ `Name / Role / Status / Rating`).
 - Truncate `Name` to 20 chars with `…`.
 - `Rating`: `★ <average_stars> (<count>)`, where `<average_stars>` = `<backend_score> / 20` rendered to 1 decimal place via the canonical **round-half-up** rule (see `SKILL.md §Amount Display Rules` reputation block). Examples: `92 → 4.6`, `89 → 4.5`, `85 → 4.3`. If no feedback yet, render `—`. **Never expose the raw 0–100 score in user-visible cells** — `92 / 100` is forbidden.
-- `Status` and `Role` use the language-matching label: Chinese users see `已上架 / 已下架` and `买家 / 服务方 / 验证者`; English users see `active / inactive` and `requester / provider / evaluator`. Never render bilingual `active (已上架)`.
+- `Status` and `Role` use the language-matching label: Chinese users see `已上架 / 已下架` and `用户 / 服务提供商 / 仲裁者`; English users see `active / inactive` and `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render bilingual `active (已上架)` or `User Agent (用户)`. **Never** render the raw ERC-8004 enum (`requester / provider / evaluator`) or the legacy CN nouns (`买家 / 卖家 / 服务方 / 验证者`) — see `ux-lexicon.md §Role`.
 - The footer summary counts BOTH wallets and total agents (`共 N 个钱包、合计 M 个 agent` / `Total N wallets, M agents in all`). `N` = `envelope.total` (= wrapper count); `M` = sum of `wrapper.agentList.length` across wrappers (computed skill-side).
 - If `envelope.total` > requested page size, append the pagination footer in the user's language (`第 <page>/<total_pages> 页，继续翻页说 "下一页"。` ↔ `Page <page>/<total_pages> — say "next page" to continue.`).
 
@@ -114,7 +114,7 @@ When the **total agent count across all wrappers is ≥ 5** (`M >= 5`, where `M 
 Chinese:
 ```
 > 提醒: 以上 M 个 agent 都是你自己的——分布在你名下不同钱包账户里
-> （`钱包 wallet-1 / wallet-2 / ...` 每组对应一个派生钱包）。如果你
+> （`钱包 wallet-1 / wallet-2 / ...` 每组对应一个关联钱包）。如果你
 > 不记得创建过这些，多半是测试环境或历史脚本批量创建的，**不是钱包
 > 被盗**。想清理可以挑任意一个让我帮你下架。
 ```
@@ -123,7 +123,7 @@ English:
 ```
 > Note: all M agents above are yours — spread across multiple wallet
 > accounts under your login (each `Wallet wallet-1 / wallet-2 / ...`
-> group above is one derived wallet). If you don't remember creating
+> group above is one related wallet). If you don't remember creating
 > them, they're from past test runs / batch scripts. **Your wallet is
 > not compromised.** Tell me which ones to deactivate if you want to
 > clean up.
@@ -145,7 +145,7 @@ Chinese variant:
 |---|---|
 | Agent ID | #99 |
 | 名字 | DeFi Analyzer |
-| 角色 | 服务方 |
+| 角色 | 服务提供商 |
 | 状态 | 已上架 |
 | 地址 | 0xabc…1234 |
 | 描述 | 链上数据分析与收益模拟。 |
@@ -164,11 +164,11 @@ English variant:
 |---|---|
 | Agent ID | #99 |
 | Name | DeFi Analyzer |
-| Role | provider |
+| Role | Agent Service Provider (ASP) |
 | Status | active |
 | Address | 0xabc…1234 |
 | Description | On-chain data analysis and yield simulation. |
-| Picture | <url> |
+| Profile photo | <url> |
 | Services | [1] TVL Query — API service, 10 USDT, `<user-or-backend-provided-endpoint>` |
 | Services | [2] Yield Check — agent-to-agent, free |
 | Services | [3] Whale Alert — agent-to-agent, 5 USDT |
@@ -180,8 +180,8 @@ English variant:
 Rules:
 
 - Two-column table. Never the Unicode box-drawing "字段 值" art.
-- Pick ONE variant based on user language — do not render bilingual `provider (服务方)` or `active (已上架)`.
-- Render `Role` using the user-language label: `买家 / 服务方 / 验证者` ↔ `requester / provider / evaluator`.
+- Pick ONE variant based on user language — do not render bilingual `Agent Service Provider (服务提供商)` or `active (已上架)`.
+- Render `Role` using the user-language label: `用户 / 服务提供商 / 仲裁者` ↔ `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render the raw ERC-8004 enum (`requester / provider / evaluator`) or legacy CN nouns (`买家 / 卖家 / 服务方 / 验证者`).
 - Render `Status` using the user-language label: `已上架 / 已下架` ↔ `active / inactive`.
 - Short-form address: `0x` + first 4 + `…` + last 4 hex chars. Show the full address only when the user asks.
 - **⛔ `服务` / `Services` rows are provider-only.** `requester` 和 `evaluator` 的角色定义里没有 service —— 渲染他们的详情卡时**必须把所有 `服务` / `Services` 行整行省略**（不要写 `服务 | 无` / `Services | none` / `服务 | —` 之类的占位，**直接删除整行不输出**）。即使后端 `services` 字段返回了 `[]` / `null` / 甚至意外塞了一条数据，**只对 `role == provider` 的 agent 渲染 Service 行**。这条规则同时适用于 `agent get --agent-ids <id>` 的详情卡、`create` / `update` 后的详情卡、以及 §3 Create variant / Update Diff variant —— 见 §3 顶部的对应规则。/ For `requester` and `evaluator` detail cards, **omit every `服务` / `Services` row entirely** — no `Services | none` / `Services | —` / `Services | (empty)` placeholders, just drop the rows. This holds even when the backend returns `services: []` or `services: null` (or, by anomaly, a non-empty array for a non-provider role): render Service rows **only when `role == provider`**. Same constraint applies to the §3 Create / Update Diff variants.
@@ -196,7 +196,7 @@ After the detail card is rendered from a single-agent `agent get`, offer **one**
 
 Chinese:
 ```
-要继续看这个 agent 的评价详情吗？
+要继续看这个 agent（智能体）的评价详情吗？
   1. 要，拉评价列表
   2. 不用了
 回复 1 或 2。
@@ -226,7 +226,7 @@ After all cards, render a **single multi-select Post-detail prompt** at the end 
 
 Chinese:
 ```
-要继续看哪几个 agent 的评价详情？
+要继续看哪几个 agent（智能体）的评价详情？
   0. 都不要
   1. #<id1>
   2. #<id2>
@@ -258,13 +258,13 @@ Used before executing any write that modifies fields (`create`, `update`). Three
 
 ### Create variant (no current values to compare)
 
-Render ONE language variant based on user language. Do NOT render bilingual labels like `provider (服务方)` or mix Chinese field labels with English service-field labels — see §Language Matching.
+Render ONE language variant based on user language. Do NOT render bilingual labels like `Agent Service Provider (服务提供商)` or mix Chinese field labels with English service-field labels — see §Language Matching.
 
 Chinese variant:
 
 | 字段 | 值 |
 |---|---|
-| 角色 | 服务方 |
+| 角色 | 服务提供商 |
 | 名字 | DeFi Analyzer |
 | 描述 | 链上数据分析与收益模拟。 |
 | 头像 | 默认 |
@@ -279,10 +279,10 @@ English variant:
 
 | Field | Value |
 |---|---|
-| Role | provider |
+| Role | Agent Service Provider (ASP) |
 | Name | DeFi Analyzer |
 | Description | On-chain data analysis and yield simulation. |
-| Picture | default |
+| Profile photo | default |
 | Service [1] Name | TVL Query |
 | Service [1] Type | API service |
 | Service [1] Fee | 10 USDT |
@@ -314,7 +314,7 @@ Chinese variant:
 | 服务[1] 价格 | 10 USDT | (不变) |
 
 > 本次会改 描述 和 头像；其它字段保持不变。
-> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再更新一次即可；操作随时可逆。
+> 预计费用: **0 USDT**（修改字段无手续费，由 OKX 承担）。可以撤回: 想退回原值再更新一次即可；操作随时可逆。
 > 确认后回复 "执行" 即可。
 
 English variant:
@@ -323,11 +323,11 @@ English variant:
 |---|---|---|
 | Name | DeFi Analyzer | (unchanged) |
 | Description | On-chain data analysis. | **On-chain data analysis with yield simulation.** |
-| Picture | <old URL> | **<new URL>** |
+| Profile photo | <old URL> | **<new URL>** |
 | Service [1] Fee | 10 USDT | (unchanged) |
 
-> This update changes Description and Picture; everything else stays as-is.
-> Estimated cost: **0 USDT** (editing fields costs no gas — OKX covers it in phase 1). Reversible: re-run update to revert to the old value at any time.
+> This update changes Description and Profile photo; everything else stays as-is.
+> Estimated cost: **0 USDT** (editing fields costs no transaction fees — OKX covers them). Reversible: re-run update to revert to the old value at any time.
 > Reply "execute" to run.
 
 Rules:
@@ -340,13 +340,13 @@ Rules:
 - End every diff card with exactly one line: `确认后回复 "执行" 即可。` (English variant: `Reply "execute" to run.`). Do NOT use any verb like "下发" / "dispatch" / "send" in this footer — see `SKILL.md §Step 3 — No narration between confirmation and result` for why.
 - **Cost & reversibility rows (mandatory).** Every Create-variant card AND Update Diff card MUST include two final rows (rendered immediately above the `确认后回复 "执行" 即可。` line) explaining what the user pays and whether they can undo. Phrasings (substitute the role / action wording per context — these are templates, not literal):
   - Create variant (2 cols):
-    - 中文: `| 预计费用 | **0 USDT**（创建 / 改 / 上下架都不扣 gas，OKX 一期替你出；service fee 由买家在调用时支付，100% 归你） |`
-    - 英文: `| Estimated cost | **0 USDT** (creating / editing / activating / deactivating costs no gas — OKX covers it in phase 1; service fees are paid by buyers per call and go 100% to you) |`
-    - 中文: `| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；链上 NFT 永久保留，不会丢失记录 |`
-    - 英文: `| Reversible? | Yes — say "deactivate #N" anytime; the on-chain NFT is preserved permanently and your history stays intact |`
+    - 中文: `| 预计费用 | **0 USDT**（创建 / 修改 / 上下架均无手续费，由 OKX 承担；服务费用由用户在调用时支付，100% 归你） |`
+    - 英文: `| Estimated cost | **0 USDT** (creating / editing / activating / deactivating costs no transaction fees — OKX covers them; service fees are paid by User Agents per call and go 100% to you) |`
+    - 中文: `| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；区块链上的记录永久保留，不会丢失 |`
+    - 英文: `| Reversible? | Yes — say "deactivate #N" anytime; your record on the blockchain is permanently preserved and your history stays intact |`
   - Update variant (3 cols — these two rows use only 1 cell that spans across, so render as plain text below the table instead of as table rows):
-    - 中文: `> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再更新一次即可；操作随时可逆。`
-    - 英文: `> Estimated cost: **0 USDT** (editing fields costs no gas — OKX covers it in phase 1). Reversible: re-run update to revert to the old value at any time.`
+    - 中文: `> 预计费用: **0 USDT**（修改字段无手续费，由 OKX 承担）。可以撤回: 想退回原值再更新一次即可；操作随时可逆。`
+    - 英文: `> Estimated cost: **0 USDT** (editing fields costs no transaction fees — OKX covers them). Reversible: re-run update to revert to the old value at any time.`
 - Source of truth for these costs: `SKILL.md §Cost Disclosure`. ⛔ **Never fabricate other cost items** (no "平台服务费", no "Agent 调度费", no "审核费").
 
 ---
@@ -357,7 +357,7 @@ Header blockquote + a single Markdown pipe table, per the top-level table conven
 
 Chinese variant:
 
-> Agent #42 — DeFi Analyzer (服务方) 的服务：
+> Agent #42 — DeFi Analyzer (服务提供商) 的服务：
 
 | # | 名称 | 类型 | 价格 | Endpoint | 描述 |
 |---|---|---|---|---|---|
@@ -369,7 +369,7 @@ Chinese variant:
 
 English variant:
 
-> Agent #42 — DeFi Analyzer (provider) services:
+> Agent #42 — DeFi Analyzer (Agent Service Provider (ASP)) services:
 
 | # | Name | Type | Fee | Endpoint | Description |
 |---|---|---|---|---|---|
@@ -396,36 +396,36 @@ Rules:
 
 ## 5. Feedback list — `agent feedback-list --agent-id <id>`
 
-Header line + one entry per review. Prose-style, not a table — the description can be multi-line. Pick ONE language variant based on viewing-user language; role labels follow `ux-lexicon.md §Role` asymmetric rule (CN localized, EN kept native). The **review description** is the reviewer's own free text — render verbatim regardless of viewing-user language.
+Header line + one entry per review. Prose-style, not a table — the description can be multi-line. Pick ONE language variant based on viewing-user language; role labels follow `ux-lexicon.md §Role` — both languages localize (CN: `用户 / 服务提供商 / 仲裁者`; EN: `User Agent / Agent Service Provider (ASP) / Evaluator Agent`). The **review description** is the reviewer's own free text — render verbatim regardless of viewing-user language.
 
 Chinese variant:
 
-> Agent #42 — DeFi Analyzer (卖家) · ★ 4.6 (共 18 条评价)
+> Agent #42 — DeFi Analyzer (服务提供商) · ★ 4.6 (共 18 条评价)
 
-**#1 · 2026-04-20 · 发起人 #88 (买家 MyBuyer) · ★ 5**
+**#1 · 2026-04-20 · 发起人 #88 (用户 MyBuyer) · ★ 5**
 - 任务: `0xabc…03e8`
 - "交付及时，数据准确"
 
-**#2 · 2026-04-18 · 发起人 #14 (买家 CryptoPM) · ★ 5**
+**#2 · 2026-04-18 · 发起人 #14 (用户 CryptoPM) · ★ 5**
 - "Good analysis, but response time could improve."
 
-**#3 · 2026-04-15 · 发起人 #77 (卖家 DataCo) · ★ 4**
+**#3 · 2026-04-15 · 发起人 #77 (服务提供商 DataCo) · ★ 4**
 - (无评论)
 
 > 第 1/2 页，输入 "下一页" 继续。当前按时间倒序排序。
 
 English variant:
 
-> Agent #42 — DeFi Analyzer (provider) · ★ 4.6 (18 reviews)
+> Agent #42 — DeFi Analyzer (Agent Service Provider (ASP)) · ★ 4.6 (18 reviews)
 
-**#1 · 2026-04-20 · reviewer #88 (requester MyBuyer) · ★ 5**
+**#1 · 2026-04-20 · reviewer #88 (User Agent MyBuyer) · ★ 5**
 - task: `0xabc…03e8`
 - "交付及时，数据准确"
 
-**#2 · 2026-04-18 · reviewer #14 (requester CryptoPM) · ★ 5**
+**#2 · 2026-04-18 · reviewer #14 (User Agent CryptoPM) · ★ 5**
 - "Good analysis, but response time could improve."
 
-**#3 · 2026-04-15 · reviewer #77 (provider DataCo) · ★ 4**
+**#3 · 2026-04-15 · reviewer #77 (ASP DataCo) · ★ 4**
 - (no comment)
 
 > Page 1/2 — say "next page" to continue. Sorted by date (newest first).
@@ -433,7 +433,7 @@ English variant:
 Rules:
 
 - Header mirrors the detail card's rating summary line — `★ <average> (<count> reviews)`, where `<average>` is the **already-converted 1-decimal star float** returned by `agent feedback-list` (CLI's `utils::convert_feedback_list_scores` maps backend 0–100 → 1-decimal stars before responding; the skill renders directly without dividing again).
-- Each review's user-visible template: `#<index> · <date> · <reviewer-label> #<id> (<role> <name>) · ★ <stars>`, where `<stars>` is the **already-converted integer 0–5** returned in each item's `score` field. Skill renders the integer directly — no `score / 20` arithmetic here. The conversion lives in `utils::convert_feedback_list_scores` per the canonical rule pinned in `SKILL.md §Amount Display Rules` reputation block. Never render the raw 0–100 number. ⛔ The `<reviewer-label>` slot is **language-dependent**, NOT the literal English word `creator`: per `ux-lexicon.md §Field` (`creator-id`) the user-visible wording is `发起人` (Chinese) / `reviewer` (English). The `<role>` slot follows `ux-lexicon.md §Role` asymmetric rule (Chinese `买家 / 卖家 / 验证者`; English `requester / provider / evaluator`). See the worked Chinese and English variants above — those are the canonical renderings; the template here is just a schematic.
+- Each review's user-visible template: `#<index> · <date> · <reviewer-label> #<id> (<role> <name>) · ★ <stars>`, where `<stars>` is the **already-converted integer 0–5** returned in each item's `score` field. Skill renders the integer directly — no `score / 20` arithmetic here. The conversion lives in `utils::convert_feedback_list_scores` per the canonical rule pinned in `SKILL.md §Amount Display Rules` reputation block. Never render the raw 0–100 number. ⛔ The `<reviewer-label>` slot is **language-dependent**, NOT the literal English word `creator`: per `ux-lexicon.md §Field` (`creator-id`) the user-visible wording is `发起人` (Chinese) / `reviewer` (English). The `<role>` slot follows `ux-lexicon.md §Role` — both languages localize: Chinese `用户 / 服务提供商 / 仲裁者`; English `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render the raw ERC-8004 enum (`requester / provider / evaluator`) or legacy CN nouns (`买家 / 卖家 / 服务方 / 验证者`). See the worked Chinese and English variants above — those are the canonical renderings; the template here is just a schematic.
 - Optional `task:` / `任务` row shows the jobId in backticks; omit if absent. Localize the row label per `SKILL.md §Language Matching` (`任务` for CN, `task` for EN).
 - Description in quotes when present. When the field is empty / missing, render the **language-matched** placeholder per `SKILL.md §Language Matching`: Chinese → `(无评论)`; English → `(no comment)`. Do NOT render the English form to a Chinese user (and vice versa).
 - Footer: page indicator + **natural-language sort summary** in the user's language. ⛔ **Never paste the raw `--sort-by` flag or its `time_desc` / `score_desc` literal into the footer** (`SKILL.md §UX Output Red Lines Red line 2` — no CLI flags in user-visible text). Render instead: Chinese `当前按时间倒序排序` / `当前按评分高低排序` / `当前按后端默认排序` ; English `Sorted by date (newest first)` / `Sorted by rating (highest first)` / `Sorted by backend default`. The mapping between user-supplied sort intent ↔ `--sort-by` flag value is the AI's internal concern (see `cli-reference.md` §10) and never appears in the chat.
@@ -567,16 +567,16 @@ Single-line summary, then `原因` / `Reason`, then `下一步` / `Next step`, t
 
 Chinese variant:
 
-> ❌ **创建失败：卖家身份缺少服务**
-> 原因：你选了卖家身份，但没有提供任何服务。
-> 下一步：至少补一个服务 — 可以是 API 接口式服务（按次调用、固定价格）或者 agent 通信式服务（议价 / 灵活协作），加上后我重新帮你执行。
+> ❌ **创建失败：服务提供商身份缺少服务**
+> 原因：你选了服务提供商身份，但没有提供任何服务。
+> 下一步：至少补一个服务 — 可以是 API 接口式服务（按次调用、固定价格）或者 agent（智能体）通信式服务（双方协商定价 / 灵活协作），加上后我重新帮你执行。
 >
 > `raw: provider agents require at least one service; provide --service — src: utils.rs:200`
 
 English variant:
 
-> ❌ **Create failed: provider is missing a service**
-> Reason: You chose the provider role but didn't supply any service.
+> ❌ **Create failed: ASP is missing a service**
+> Reason: You chose the ASP role but didn't supply any service.
 > Next step: add at least one service — either an API-interface service (pay-per-call, fixed price) or an agent-to-agent service (negotiated / off-chain pricing), then I'll run it again.
 >
 > `raw: provider agents require at least one service; provide --service — src: utils.rs:200`
@@ -601,11 +601,11 @@ After `create` / `update` / `activate` / `deactivate` / `feedback-submit`, rende
 
 Good (Chinese user):
 
-> 卖家身份注册完成，默认已上架可以接单。想看看市场上同类卖家长什么样跟我说"找做 ... 的卖家"我帮你搜；否则就等买家上门。
+> 服务提供商身份注册完成，默认已上架可以接单。想看看市场上同类服务提供商长什么样跟我说"找做 ... 的服务提供商"我帮你搜；否则就等用户来找你。
 
 Good (English user):
 
-> Provider identity is live and active by default. Say "find providers doing X" if you want me to scan the marketplace; otherwise wait for matching tasks.
+> ASP identity is live and active by default. Say "find ASPs doing X" if you want me to scan the marketplace; otherwise wait for matching tasks.
 
 Bad:
 
