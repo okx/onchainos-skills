@@ -14,7 +14,7 @@
 //!
 //! 2. **Peer-facing** (`xmtp_send` content,给买家 sub agent)
 //!    agent-to-agent 协议消息。命名后缀 `_to_buyer`。
-//!    规则:可以含协议字面量(`[NEGOTIATE_*]` / `fileKey`/`digest` 等);
+//!    规则:可以含协议字面量(`[intent:*]` / `fileKey`/`digest` 等);
 //!    **禁止指挥对方调 CLI**(对方有自己的 flow.rs,会按链事件自决,你下指令是越权)。
 //!
 //! 字段值占位符用 `<...>` 包,agent 拿 `common context` / 上下文填充。
@@ -164,12 +164,12 @@ pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
 /// **不指挥**对方 CLI——买家 sub agent 收到后会自己按 `Event::JobSubmitted` 剧本走。
 pub fn deliver_text_to_buyer(job_id: &str) -> String {
     format!(
-        "[NEGOTIATE_DELIVER]\n\
-         jobId: {job_id}\n\
+        "jobId: {job_id}\n\
          deliverableType: text\n\
          ---\n\
          <这里贴交付内容文本>\n\
-         ---"
+         ---\n\
+         [intent:deliver]"
     )
 }
 
@@ -180,15 +180,15 @@ pub fn deliver_text_to_buyer(job_id: &str) -> String {
 /// **不指挥**对方 CLI。
 pub fn deliver_file_to_buyer(job_id: &str) -> String {
     format!(
-        "[NEGOTIATE_DELIVER]\n\
-         jobId: {job_id}\n\
+        "jobId: {job_id}\n\
          deliverableType: file\n\
          fileKey: <A-Step 1 返回的 fileKey 完整字符串>\n\
          digest: <A-Step 1 返回的 digest>\n\
          salt: <A-Step 1 返回的 salt>\n\
          nonce: <A-Step 1 返回的 nonce>\n\
          secret: <A-Step 1 返回的 secret>\n\
-         filename: <A-Step 1 返回的 filename>"
+         filename: <A-Step 1 返回的 filename>\n\
+         [intent:deliver]"
     )
 }
 

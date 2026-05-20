@@ -12,7 +12,7 @@
 
 ## Required Skills
 
-okx-dex-token, okx-security, okx-dex-swap, okx-dex-signal, okx-dex-trenches
+okx-dex-token, okx-security, okx-dex-signal, okx-dex-trenches
 
 ## Input
 
@@ -138,4 +138,4 @@ Bundle: {x}%  |  Dev Other Projects: {n} (Survival: {x}%)
 
 - → "show cluster list" / "show co-invested wallets" — show cluster details
 - → "show dev projects" — show dev project history
-- → "watch this token" — Wallet Monitor (`workflows/wallet-monitor.md`)
+- → "watch this token" — Wallet Monitor (`wallet-monitor.md`)

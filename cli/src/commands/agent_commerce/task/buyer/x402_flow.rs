@@ -1,6 +1,6 @@
 //! x402 支付流程
 //!
-//! 买家 accept 后调用 x402 完成支付。通过子进程调用 `onchainos payment x402-pay`
+//! 用户 accept 后调用 x402 完成支付。通过子进程调用 `onchainos payment x402-pay`
 //! 复用 agentic_wallet 中的签名逻辑，本模块负责：
 //! - 请求 Provider endpoint → 解码 HTTP 402
 //! - 调用 CLI 签名
@@ -149,7 +149,7 @@ fn select_best_scheme(accepts: &[serde_json::Value]) -> Result<(serde_json::Valu
 pub fn extract_x402_pricing(accepts: &[serde_json::Value]) -> Result<X402Pricing> {
     let (entry, scheme) = select_best_scheme(accepts)?;
 
-    let amount_minimal = crate::commands::agentic_wallet::payment::extract_amount(&entry)?;
+    let amount_minimal = crate::commands::payment::payment_flow::extract_amount(&entry)?;
 
     let asset = entry["asset"].as_str()
         .ok_or_else(|| anyhow!("accepts entry 缺少 asset"))?

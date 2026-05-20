@@ -1,6 +1,6 @@
 //! 关单
 //!
-//! 买家动作：关单 — onchainos agent close
+//! 用户动作：关单 — onchainos agent close
 //! 附带：领取仲裁奖金 (onchainos agent arbitration-claim)
 
 use anyhow::Result;

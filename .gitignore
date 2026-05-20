@@ -46,6 +46,7 @@ yarn-error.log*
 # Claude Code
 **/settings.local.json
 .mcp.json
+CLAUDE.local.md
 
 # AI Assistant directories (auto-generated)
 .cursor
@@ -57,8 +58,8 @@ yarn-error.log*
 # Superpowers generated docs (local only)
 docs/superpowers/
 
-# Zigbuild cache (pack-agent-task.sh 跨编译 Linux 时的 zig 中间产物,
-# 在 macOS TCC 沙箱下重定向到项目目录;详见 tools/okx-agent-task/pack-agent-task.sh)
+reports
+
 .zigbuild-cache/
 
 # Test artifacts (local only)
@@ -69,5 +70,5 @@ test-cases.json
 
 evals/
 
-# Skill quality workspace (local only)
+# Agent task workspace (local only)
 skills/okx-agent-task-workspace/

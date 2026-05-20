@@ -14,7 +14,7 @@
 //! 四条硬门（与 / AND）：
 //! 1. `taskStatus` 不能是终态 — 6 Completed / 7 Close / 8 Expired / 9 Rejected
 //! 2. 入参 `round_num` 必须等于 `currentRound`（envelope 滞后于真实链上轮次 = stale）
-//! 3. `disputeStatus` 必须是 3 (CommitPhase)（commit 窗口已关 / 未开 → 投了就罚）
+//! 3. `disputeRoundStatus` 必须是 1 (CommitPhase)（commit 窗口已关 / 未开 → 投了就罚）
 //! 4. `selectedVoter` 必须非空（本账户不是本轮选中陪审）
 //!
 //! [`precheck_round_gate`] 自己负责诊断输出 + 稳定标记行：
@@ -26,11 +26,11 @@ use serde::de::IgnoredAny;
 use serde::Deserialize;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::state_machine::{DisputeStatus, Status};
+use crate::commands::agent_commerce::task::common::state_machine::{DisputeRoundStatus, Status};
 
 /// `dispute/status` 接口的原始响应承载体。
 ///
-/// 命名上故意 `Response` 后缀和 [`crate::commands::agent_commerce::task::common::state_machine::DisputeStatus`]
+/// 命名上故意 `Response` 后缀和 [`crate::commands::agent_commerce::task::common::state_machine::DisputeRoundStatus`]
 /// 枚举区分开——一个是 HTTP DTO，一个是仲裁子状态机阶段枚举（响应里的
 /// `dispute_round_status: i32` 字段才映射到那个枚举）。
 /// **可空字段说明**：后端在任务终态 / 无 active dispute 时返回
@@ -55,7 +55,7 @@ pub struct DisputeStatusResponse {
     /// 仲裁子状态机当前阶段（state_machine::DisputeStatus）。任务终态 / 无 dispute 时为 null。
     /// `rename` + `alias` 兼容后端两种 JSON key：`disputeStatus` / `disputeRoundStatus`，
     /// 哪个不同步都不破。
-    #[serde(rename = "disputeStatus", alias = "disputeRoundStatus", default)]
+    #[serde(default)]
     pub dispute_round_status: Option<i32>,
 }
 
@@ -84,7 +84,7 @@ pub async fn precheck_round_gate(
     // 两个枚举都对 unknown 值做了容错（Status::Other / DisputeStatus::Other）。
     // disputeStatus 字段后端在终态 / 无 dispute 时返 null，所以 dispute_status 整个是 Option。
     let task_status = Status::from_int(s.task_status);
-    let dispute_status = s.dispute_round_status.map(DisputeStatus::from_int);
+    let dispute_round_status = s.dispute_round_status.map(DisputeRoundStatus::from_int);
 
     // Option 字段打印：None 显示成 "null"，避免读者把缺省 0 误判成 round 0 / NONE 状态。
     let fmt_opt = |n: Option<i64>| n.map(|v| v.to_string()).unwrap_or_else(|| "null".into());
@@ -94,9 +94,9 @@ pub async fn precheck_round_gate(
     println!("  currentRound : {}", fmt_opt(s.current_round));
     println!("  taskStatus   : {} ({})", s.task_status, task_status.as_str());
     println!(
-        "  disputeStatus: {} ({})",
+        "  dispute_round_status: {} ({})",
         fmt_opt_i32(s.dispute_round_status),
-        dispute_status.as_ref().map(DisputeStatus::as_str).unwrap_or("null"),
+        dispute_round_status.as_ref().map(DisputeRoundStatus::as_str).unwrap_or("null"),
     );
     println!(
         "  selectedVoter: {}",
@@ -119,7 +119,7 @@ pub async fn precheck_round_gate(
     } else {
         match round_num.parse::<i64>() {
             Err(e) => Some(format!("--round-num cannot be parsed as integer: {round_num:?} ({e})")),
-            Ok(req_round) => match (s.current_round, dispute_status.as_ref()) {
+            Ok(req_round) => match (s.current_round, dispute_round_status.as_ref()) {
                 (None, _) => Some(
                     "currentRound=null — no active dispute (task not in dispute / already ended / backend has not advanced round)".into(),
                 ),
@@ -129,11 +129,11 @@ pub async fn precheck_round_gate(
                 (Some(_), None) => Some(
                     "disputeStatus=null — dispute sub-state-machine not started / already settled (commit window guaranteed closed)".into(),
                 ),
-                (Some(_), Some(ds)) if *ds != DisputeStatus::CommitPhase => Some(format!(
+                (Some(_), Some(ds)) if *ds != DisputeRoundStatus::CommitPhase => Some(format!(
                     "disputeStatus={} ({}) is not {} — commit window not open / already closed",
                     fmt_opt_i32(s.dispute_round_status),
                     ds.as_str(),
-                    DisputeStatus::CommitPhase.as_str(),
+                    DisputeRoundStatus::CommitPhase.as_str(),
                 )),
                 (Some(_), Some(_)) if s.selected_voter.is_none() => {
                     Some("selectedVoter=null — this account is not the selected juror for the current round".into())

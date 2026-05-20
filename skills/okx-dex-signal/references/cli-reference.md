@@ -42,7 +42,6 @@ onchainos tracker activities --tracker-type <type> [options]
 | `realizedPnlUsd` | String | Realized PnL of the trading token (USD) |
 | `tradeType` | String | Trade direction: `1`=buy, `2`=sell |
 | `tradeTime` | String | Transaction time (Unix milliseconds) |
-| `trackerType` | Array\<String\> | Tracker type tags for this trade; values: `"1"`=smart_money, `"2"`=kol, `"3"`=multi_address. May be empty `[]` if the API does not populate the field for this trade. |
 
 **Examples**:
 

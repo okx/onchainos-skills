@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use reqwest::Client;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
 use crate::doh::DohManager;
@@ -72,6 +72,30 @@ where
             other
         ))),
     }
+}
+
+fn nullable_bool<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Value::deserialize(deserializer)?;
+    match v {
+        Value::Null => Ok(false),
+        Value::Bool(b) => Ok(b),
+        other => Err(serde::de::Error::custom(format!(
+            "expected bool or null, got {}",
+            other
+        ))),
+    }
+}
+
+fn nullable_vec<'de, D, T>(deserializer: D) -> std::result::Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let v: Option<Vec<T>> = Option::deserialize(deserializer)?;
+    Ok(v.unwrap_or_default())
 }
 
 /// Build a URL-encoded query string from key-value pairs, filtering out empty values.
@@ -153,9 +177,24 @@ pub struct AkInitResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RefreshAccountItem {
+    pub account_id: String,
+    pub account_name: String,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default)]
+    pub addresses: Vec<VerifyAddressInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RefreshResponse {
     pub refresh_token: String,
     pub access_token: String,
+    #[serde(default)]
+    pub chain_updated: bool,
+    #[serde(default)]
+    pub all_account_address_list: Vec<RefreshAccountItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,6 +235,194 @@ struct AddressListData {
     accounts: Vec<AddressListAccountItem>,
 }
 
+/// Gas Station status enum (mirrors the backend `gasStationStatus` field; see review.md Section 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GasStationStatus {
+    /// Native-token transfer or unsupported chain — Gas Station is not used for this tx.
+    NotApplicable,
+    /// DB has no record + chain not delegated — user must pick a token to enable for the first time.
+    FirstTimePrompt,
+    /// Chain not delegated — sign 712 + 7702 auth to perform the first-time upgrade.
+    PendingUpgrade,
+    /// DB disabled + chain already delegated — flip the DB flag only; no on-chain action.
+    ReenableOnly,
+    /// DB enabled + chain already delegated — steady-state path; check whether `hash` is empty to decide if the default token covers this tx.
+    ReadyToUse,
+    /// None of the Gas Station stablecoins has enough balance to cover the gas fee.
+    InsufficientAll,
+    /// A pending Gas Station transaction is blocking this one.
+    HasPendingTx,
+    /// Enum value is unknown or empty — compatibility fallback for older backends.
+    Unknown,
+}
+
+impl GasStationStatus {
+    /// Keep as an infallible convenience parser for backward-compat; new code should prefer
+    /// `FromStr` (`s.parse::<GasStationStatus>()` — which also never fails, just maps unknown
+    /// values to `Unknown`).
+    pub fn parse(s: &str) -> Self {
+        s.parse().unwrap_or(Self::Unknown)
+    }
+
+    /// Canonical wire-format string for this variant. Inverse of `FromStr` for known values;
+    /// `Unknown` renders as the empty string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::NotApplicable => "NOT_APPLICABLE",
+            Self::FirstTimePrompt => "FIRST_TIME_PROMPT",
+            Self::PendingUpgrade => "PENDING_UPGRADE",
+            Self::ReenableOnly => "REENABLE_ONLY",
+            Self::ReadyToUse => "READY_TO_USE",
+            Self::InsufficientAll => "INSUFFICIENT_ALL",
+            Self::HasPendingTx => "HAS_PENDING_TX",
+            Self::Unknown => "",
+        }
+    }
+}
+
+impl std::str::FromStr for GasStationStatus {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s {
+            "NOT_APPLICABLE" => Self::NotApplicable,
+            "FIRST_TIME_PROMPT" => Self::FirstTimePrompt,
+            "PENDING_UPGRADE" => Self::PendingUpgrade,
+            "REENABLE_ONLY" => Self::ReenableOnly,
+            "READY_TO_USE" => Self::ReadyToUse,
+            "INSUFFICIENT_ALL" => Self::InsufficientAll,
+            "HAS_PENDING_TX" => Self::HasPendingTx,
+            _ => Self::Unknown,
+        })
+    }
+}
+
+impl std::fmt::Display for GasStationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Batch broadcast element. Same shape as the single-tx
+/// `broadcast_transaction` body.
+#[derive(Default, Debug, Clone)]
+pub struct BatchBroadcastElement {
+    pub account_id: String,
+    pub address: String,
+    pub chain_index: String,
+    /// Serialized JSON, built per-element in `batch_sign_and_broadcast`.
+    pub extra_data: String,
+}
+
+/// Batch unsignedInfo element. Same shape as the single-tx
+/// `pre_transaction_unsigned_info` body.
+#[derive(Default, Debug, Clone)]
+pub struct BatchUnsignedInfoElement {
+    pub chain_path: String,
+    pub chain_index: u64,
+    pub from_addr: String,
+    pub to_addr: String,
+    pub amount: String,
+    pub contract_addr: Option<String>,
+    pub session_cert: String,
+    pub input_data: Option<String>,
+    pub unsigned_tx: Option<String>,
+    pub gas_limit: Option<String>,
+    pub aa_dex_token_addr: Option<String>,
+    pub aa_dex_token_amount: Option<String>,
+    pub transaction_type: Option<String>,
+}
+
+/// Backend cap on batch size (both unsignedInfo + broadcast).
+pub const BATCH_MAX: usize = 5;
+
+/// Parse `data` from `batch/supportChainIndexList` into chainIndex strings.
+/// Accepts string (`"1"`) and numeric (`1`) elements to survive type drift.
+fn parse_supported_chain_list(data: &Value) -> Result<Vec<String>> {
+    let arr = data
+        .as_array()
+        .context("batch supportChainIndexList: expected data to be an array")?;
+    let mut chains = Vec::with_capacity(arr.len());
+    for v in arr {
+        let s = if let Some(s) = v.as_str() {
+            s.to_string()
+        } else if let Some(n) = v.as_i64() {
+            n.to_string()
+        } else {
+            anyhow::bail!("batch supportChainIndexList: unexpected element {v:?}");
+        };
+        chains.push(s);
+    }
+    Ok(chains)
+}
+
+/// Enforce 1..=BATCH_MAX. `api` is the caller's endpoint name for error tag.
+pub fn validate_batch_size(api: &str, len: usize) -> Result<()> {
+    if len == 0 {
+        anyhow::bail!("{api}: empty request array");
+    }
+    if len > BATCH_MAX {
+        anyhow::bail!("{api}: backend allows up to {BATCH_MAX} elements, got {len}");
+    }
+    Ok(())
+}
+
+/// JSON body for POST `.../batch/unsignedInfo`. Omits empty optional fields.
+pub fn build_batch_unsignedinfo_body(elements: &[BatchUnsignedInfoElement]) -> Value {
+    let arr: Vec<Value> = elements
+        .iter()
+        .map(|e| {
+            let mut obj = json!({
+                "chainPath": e.chain_path,
+                "chainIndex": e.chain_index,
+                "fromAddr": e.from_addr,
+                "toAddr": e.to_addr,
+                "amount": e.amount,
+                "sessionCert": e.session_cert,
+            });
+            if let Some(ca) = &e.contract_addr {
+                obj["contractAddr"] = Value::String(ca.clone());
+            }
+            if let Some(d) = &e.input_data {
+                obj["inputData"] = Value::String(d.clone());
+            }
+            if let Some(t) = &e.unsigned_tx {
+                obj["unsignedTx"] = Value::String(t.clone());
+            }
+            if let Some(g) = &e.gas_limit {
+                obj["gasLimit"] = Value::String(g.clone());
+            }
+            if let Some(a) = &e.aa_dex_token_addr {
+                obj["aaDexTokenAddr"] = Value::String(a.clone());
+            }
+            if let Some(a) = &e.aa_dex_token_amount {
+                obj["aaDexTokenAmount"] = Value::String(a.clone());
+            }
+            if let Some(tt) = &e.transaction_type {
+                obj["transactionType"] = Value::String(tt.clone());
+            }
+            obj
+        })
+        .collect();
+    Value::Array(arr)
+}
+
+/// JSON body for POST `.../batch-broadcast-transaction`.
+pub fn build_batch_broadcast_body(elements: &[BatchBroadcastElement]) -> Value {
+    let arr: Vec<Value> = elements
+        .iter()
+        .map(|e| {
+            json!({
+                "accountId": e.account_id,
+                "address": e.address,
+                "chainIndex": e.chain_index,
+                "extraData": e.extra_data,
+            })
+        })
+        .collect();
+    Value::Array(arr)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnsignedInfoResponse {
@@ -223,6 +450,130 @@ pub struct UnsignedInfoResponse {
     pub encoding: String,
     #[serde(default, deserialize_with = "nullable_string")]
     pub jito_unsigned_tx: String,
+    /// 712 message hash returned by backend (e.g. contract-call flows).
+    /// When non-empty, the client must compute sessionSignature via
+    /// `ed25519_sign_encoded`.
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub eip712_message_hash: String,
+    // ── Gas Station fields ──
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub gas_station_used: bool,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub gas_station_first_time_prompt: bool,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge_symbol: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge_fee_token_address: String,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub need_update7702: bool,
+    #[serde(default, deserialize_with = "nullable_vec")]
+    pub gas_station_token_list: Vec<GasStationToken>,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub has_pending_tx: bool,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub insufficient_all: bool,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub auto_selected_token: bool,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub gas_station_disabled: bool,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub gas_station_status: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub contract_nonce: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub eoa_nonce: String,
+    #[serde(default)]
+    pub user712_data: Value,
+    #[serde(default)]
+    pub user7702_data: Value,
+    /// User's default gas token address on this chain (Phase 1 response; may be empty).
+    /// CLI matches it against `gas_station_token_list`: hit + sufficient -> Scene B (auto
+    /// Phase 2); otherwise -> Scene C (user picks a token).
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub default_gas_token_address: String,
+}
+
+impl UnsignedInfoResponse {
+    /// Parse the backend's `gasStationStatus` string into the enum.
+    pub fn gs_status(&self) -> GasStationStatus {
+        GasStationStatus::parse(&self.gas_station_status)
+    }
+
+    /// Find the entry in `gas_station_token_list` whose `fee_token_address` matches
+    /// `default_gas_token_address` AND has `sufficient=true`. Returns a reference on hit so
+    /// the CLI can run Scene B auto Phase 2 with that token.
+    pub fn match_default_sufficient_token(&self) -> Option<&GasStationToken> {
+        if self.default_gas_token_address.is_empty() {
+            return None;
+        }
+        self.gas_station_token_list.iter().find(|t| {
+            t.sufficient
+                && t.fee_token_address.eq_ignore_ascii_case(&self.default_gas_token_address)
+        })
+    }
+
+    /// When there is no default token but `gas_station_token_list` has exactly one
+    /// `sufficient=true` entry, return it. Used as Scene B's "unambiguous fallback": the
+    /// user has no other choice, so a manual pick would produce the same result. Skipping
+    /// the Confirming round trip also lets downstream callers that don't understand
+    /// `CliConfirming` (e.g. third-party plugins) complete successfully.
+    ///
+    /// Callers should only invoke this when `default_gas_token_address` is empty (see
+    /// `auto_pick_gas_token`). Returns `None` (continue to Scene C and ask the user) when:
+    ///   - 0 sufficient entries (already handled as insufficient_all upstream)
+    ///   - 2+ sufficient entries (user must choose; we won't decide for them)
+    pub fn only_sufficient_token(&self) -> Option<&GasStationToken> {
+        let mut iter = self.gas_station_token_list.iter().filter(|t| t.sufficient);
+        let first = iter.next()?;
+        if iter.next().is_none() {
+            Some(first)
+        } else {
+            None
+        }
+    }
+
+    /// Unified entry point for Scene B auto token selection. Auto-selects in two
+    /// unambiguous cases:
+    ///   1. A default is set AND it hits the token list AND is sufficient (original Scene B).
+    ///   2. **No default** AND exactly one sufficient token (plugin-compat fallback; no
+    ///      default = no user preference).
+    ///
+    /// Explicitly excludes Scene 2a (default present but insufficient) — when a default is
+    /// set, it represents an explicit user preference. Even if only one alternative is
+    /// sufficient, route to Scene C so the user is told "your default is short, can we use
+    /// XXX instead?"; do not silently override the preference.
+    pub fn auto_pick_gas_token(&self) -> Option<&GasStationToken> {
+        if self.default_gas_token_address.is_empty() {
+            // No default → no user preference; safely auto-pick when there's exactly one option.
+            self.only_sufficient_token()
+        } else {
+            // Default set → either hit & sufficient (Scene B), or route to Scene C (never silent override).
+            self.match_default_sufficient_token()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GasStationToken {
+    #[serde(default)]
+    pub fee_coin_id: u64,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub symbol: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub fee_token_address: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub balance: String,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub sufficient: bool,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub relayer_id: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub context: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,13 +601,11 @@ impl WalletApiClient {
             .or_else(|| base_url_override.map(|s| s.to_string()))
             .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
-        let custom = std::env::var("OKX_BASE_URL").is_ok()
-            || option_env!("OKX_BASE_URL").is_some();
+        let custom = std::env::var("OKX_BASE_URL").is_ok() || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
         doh.prepare();
 
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(30));
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(30));
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
@@ -272,8 +621,7 @@ impl WalletApiClient {
     }
 
     fn rebuild_http_client(&mut self) -> Result<()> {
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(30));
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(30));
         if let Some((host, addr)) = self.doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
@@ -285,7 +633,8 @@ impl WalletApiClient {
     }
 
     fn effective_base_url(&self) -> String {
-        self.doh.proxy_base_url()
+        self.doh
+            .proxy_base_url()
             .unwrap_or_else(|| self.base_url.clone())
     }
 
@@ -320,7 +669,43 @@ impl WalletApiClient {
                         self.rebuild_http_client()?;
                         return self.post_public(path, body).await;
                     }
-                    return Err(e).context("Network unavailable — check your connection and try again");
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
+    }
+
+    /// GET with NO headers at all (truly anonymous). For endpoints whose gateway
+    /// auth is gated by the presence of any `OK-ACCESS-*` / `Ok-Access-*` header —
+    /// passing those headers triggers `10008 Invalid access token` even when the
+    /// controller is NO_CHECK. Currently used by `/priapi/v5/wallet/agentic/geoblock/check`.
+    /// Reuses the WalletApiClient HTTP + DoH setup for DNS-restricted regions.
+    pub fn get_no_okheaders<'a>(
+        &'a mut self,
+        path: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let effective = self.effective_base_url();
+            let url = format!("{}{}", effective.trim_end_matches('/'), path);
+
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][get_no_okheaders] url_path={}", &url);
+            }
+
+            let resp = match self.http.get(&url).send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self.get_no_okheaders(path).await;
+                    }
+                    return Err(e).context(
+                        "Network unavailable — check your connection and try again",
+                    );
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
@@ -330,7 +715,12 @@ impl WalletApiClient {
     }
 
     /// Retries once after DoH failover.
-    pub async fn post_authed(&mut self, path: &str, access_token: &str, body: &Value) -> Result<Value> {
+    pub async fn post_authed(
+        &mut self,
+        path: &str,
+        access_token: &str,
+        body: &Value,
+    ) -> Result<Value> {
         self.post_authed_with_headers(path, access_token, body, None)
             .await
     }
@@ -375,9 +765,12 @@ impl WalletApiClient {
                 Err(e) if e.is_connect() || e.is_timeout() => {
                     if self.doh.handle_failure().await {
                         self.rebuild_http_client()?;
-                        return self.post_authed_with_headers(path, access_token, body, extra_headers).await;
+                        return self
+                            .post_authed_with_headers(path, access_token, body, extra_headers)
+                            .await;
                     }
-                    return Err(e).context("Network unavailable — check your connection and try again");
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
@@ -504,16 +897,14 @@ impl WalletApiClient {
 
     async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
+        let raw_text = resp.text().await.context("failed to read response body")?;
+
         if status.as_u16() >= 500 {
-            bail!("Wallet API server error (HTTP {})", status.as_u16());
+            bail!("Wallet API server error (HTTP {}): {}", status.as_u16(), &raw_text);
         }
 
-        let raw = resp
-            .text()
-            .await
-            .context("failed to read wallet API response body")?;
-        let body: Value = serde_json::from_str(&raw).with_context(|| {
-            let preview = if raw.len() <= 500 { &raw } else { &raw[..500] };
+        let body: Value = serde_json::from_str(&raw_text).with_context(|| {
+            let preview = if raw_text.len() <= 500 { raw_text.clone() } else { raw_text[..500].to_string() };
             format!(
                 "failed to parse wallet API response as JSON (HTTP {}): {}",
                 status.as_u16(),
@@ -533,7 +924,7 @@ impl WalletApiClient {
                 Value::Number(n) => n.to_string(),
                 other => other.to_string(),
             };
-            let msg = body["msg"]
+            let msg_raw = body["msg"]
                 .as_str()
                 .or_else(|| body["errorMessage"].as_str())
                 .or_else(|| body["error_message"].as_str())
@@ -545,6 +936,7 @@ impl WalletApiClient {
                     let s = body.to_string();
                     if s.len() <= 200 { s } else { format!("{}…", &s[..200]) }
                 });
+            let msg = crate::client::augment_auth_error_msg(&code_str, &msg_raw);
             return Err(ApiCodeError {
                 code: code_str,
                 msg,
@@ -637,7 +1029,8 @@ impl WalletApiClient {
                             .get_authed_with_headers(path, access_token, query, extra_headers)
                             .await;
                     }
-                    return Err(e).context("Network unavailable — check your connection and try again");
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
@@ -857,6 +1250,30 @@ impl WalletApiClient {
         .await
     }
 
+    /// POST /priapi/v5/wallet/agentic/token/get-token-info
+    ///
+    /// Fetch token metadata (decimal/name/symbol/...) via the wallet-side endpoint.
+    /// Use this instead of the DEX `token/basic-info` for chains not covered by DEX
+    /// (e.g. Tempo). `source = 0` (web3).
+    pub async fn get_token_info(
+        &mut self,
+        access_token: &str,
+        chain_index: u64,
+        token_address: &str,
+    ) -> Result<Value> {
+        let body = json!({
+            "chainIndex": chain_index,
+            "tokenAddress": token_address,
+            "source": 0,
+        });
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/token/get-token-info",
+            access_token,
+            &body,
+        )
+        .await
+    }
+
     /// POST /priapi/v5/wallet/agentic/pre-transaction/unsignedInfo
     #[allow(clippy::too_many_arguments)]
     pub async fn pre_transaction_unsigned_info(
@@ -876,6 +1293,10 @@ impl WalletApiClient {
         aa_dex_token_amount: Option<&str>,
         jito_unsigned_tx: Option<&str>,
         trace_headers: Option<&[(&str, &str)]>,
+        // Gas Station params
+        enable_gas_station: Option<bool>,
+        gas_token_address: Option<&str>,
+        relayer_id: Option<&str>,
     ) -> Result<UnsignedInfoResponse> {
         let mut body = json!({
             "chainPath": chain_path,
@@ -906,6 +1327,16 @@ impl WalletApiClient {
         if let Some(jito_tx) = jito_unsigned_tx {
             body["jitoUnsignedTx"] = Value::String(jito_tx.to_string());
         }
+        // Gas Station params
+        if let Some(true) = enable_gas_station {
+            body["enableGasStation"] = json!(true);
+        }
+        if let Some(addr) = gas_token_address {
+            body["gasTokenAddress"] = Value::String(addr.to_string());
+        }
+        if let Some(rid) = relayer_id {
+            body["relayerId"] = Value::String(rid.to_string());
+        }
         let data = self
             .post_authed_with_headers(
                 "/priapi/v5/wallet/agentic/pre-transaction/unsignedInfo",
@@ -921,6 +1352,68 @@ impl WalletApiClient {
         let resp: UnsignedInfoResponse = serde_json::from_value(item.clone())
             .context("unsignedInfo: failed to parse response")?;
         Ok(resp)
+    }
+
+    /// POST /priapi/v5/wallet/agentic/pre-transaction/batch/unsignedInfo
+    ///
+    /// Gate on [`Self::batch_support_chain_index_list`] before calling —
+    /// unsupported chains should never reach here.
+    pub async fn batch_pre_transaction_unsigned_info(
+        &mut self,
+        access_token: &str,
+        elements: &[BatchUnsignedInfoElement],
+        trace_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Vec<UnsignedInfoResponse>> {
+        validate_batch_size("batch unsignedInfo", elements.len())?;
+        let body = build_batch_unsignedinfo_body(elements);
+        let data = self
+            .post_authed_with_headers(
+                "/priapi/v5/wallet/agentic/pre-transaction/batch/unsignedInfo",
+                access_token,
+                &body,
+                trace_headers,
+            )
+            .await?;
+        let arr = data
+            .as_array()
+            .context("batch unsignedInfo: expected data to be an array")?;
+        // Response.len may be < request.len on merging chains (X Layer EIP-5792).
+        if arr.is_empty() {
+            anyhow::bail!("batch unsignedInfo: response data array is empty");
+        }
+        if arr.len() > elements.len() {
+            anyhow::bail!(
+                "batch unsignedInfo: response length {} exceeds request length {}",
+                arr.len(),
+                elements.len()
+            );
+        }
+        arr.iter()
+            .enumerate()
+            .map(|(i, item)| {
+                serde_json::from_value::<UnsignedInfoResponse>(item.clone())
+                    .with_context(|| format!("batch unsignedInfo: failed to parse element {i}"))
+            })
+            .collect()
+    }
+
+    /// POST /priapi/v5/wallet/agentic/pre-transaction/batch/supportChainIndexList
+    ///
+    /// Returns chainIndex values where batch unsignedInfo is supported.
+    /// Use instead of any static EVM allowlist.
+    pub async fn batch_support_chain_index_list(
+        &mut self,
+        access_token: &str,
+    ) -> Result<Vec<String>> {
+        let body = json!({});
+        let data = self
+            .post_authed(
+                "/priapi/v5/wallet/agentic/pre-transaction/batch/supportChainIndexList",
+                access_token,
+                &body,
+            )
+            .await?;
+        parse_supported_chain_list(&data)
     }
 
     /// POST /priapi/v5/wallet/agentic/pre-transaction/report-plugin-info
@@ -971,6 +1464,95 @@ impl WalletApiClient {
         let resp: BroadcastResponse =
             serde_json::from_value(item.clone()).context("broadcast: failed to parse response")?;
         Ok(resp)
+    }
+
+    /// POST /priapi/v5/wallet/agentic/pre-transaction/batch-broadcast-transaction
+    ///
+    /// Response order matches request order. Uses no-retry — broadcast may
+    /// have reached the server, retry could double-spend.
+    pub async fn batch_broadcast_transaction(
+        &mut self,
+        access_token: &str,
+        elements: &[BatchBroadcastElement],
+        trace_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Vec<BroadcastResponse>> {
+        validate_batch_size("batch broadcast", elements.len())?;
+        let body = build_batch_broadcast_body(elements);
+        let data = self
+            .post_authed_no_retry_with_headers(
+                "/priapi/v5/wallet/agentic/pre-transaction/batch-broadcast-transaction",
+                access_token,
+                &body,
+                trace_headers,
+            )
+            .await?;
+        let arr = data
+            .as_array()
+            .context("batch broadcast: expected data to be an array")?;
+        if arr.len() != elements.len() {
+            anyhow::bail!(
+                "batch broadcast: response length {} does not match request length {}",
+                arr.len(),
+                elements.len()
+            );
+        }
+        arr.iter()
+            .enumerate()
+            .map(|(i, item)| {
+                serde_json::from_value::<BroadcastResponse>(item.clone())
+                    .with_context(|| format!("batch broadcast: failed to parse element {i}"))
+            })
+            .collect()
+    }
+
+    // ── Gas Station management APIs ────────────────────────────────
+
+    /// POST /priapi/v5/wallet/agentic/gas-station/update-default-token
+    pub async fn gas_station_update_default_token(
+        &mut self,
+        access_token: &str,
+        chain_index: &str,
+        gas_token_address: &str,
+        from_addr: &str,
+    ) -> Result<Value> {
+        let body = json!({
+            "chainIndex": chain_index,
+            "gasTokenAddress": gas_token_address,
+            "fromAddr": from_addr,
+        });
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/gas-station/update-default-token",
+            access_token,
+            &body,
+        )
+        .await
+    }
+
+    /// POST /priapi/v5/wallet/agentic/gas-station/update
+    /// Flip Gas Station DB flag (enabled=true / false), no on-chain action.
+    /// `from_addr` is required by backend when `enabled=true`; disable (`enabled=false`)
+    /// does not need it. On-chain 7702 delegation is preserved on disable; re-enable
+    /// requires 7702 already present (backend returns msg in body if not).
+    pub async fn gas_station_update(
+        &mut self,
+        access_token: &str,
+        chain_index: &str,
+        enable: bool,
+        from_addr: Option<&str>,
+    ) -> Result<Value> {
+        let mut body = json!({
+            "chainIndex": chain_index,
+            "enabled": enable,
+        });
+        if let Some(addr) = from_addr {
+            body["fromAddr"] = Value::String(addr.to_string());
+        }
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/gas-station/update",
+            access_token,
+            &body,
+        )
+        .await
     }
 }
 
@@ -1027,6 +1609,54 @@ mod tests {
         let resp: RefreshResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.refresh_token, "new_rt");
         assert_eq!(resp.access_token, "new_at");
+        assert!(!resp.chain_updated);
+        assert!(resp.all_account_address_list.is_empty());
+    }
+
+    #[test]
+    fn parse_refresh_response_with_chain_updated() {
+        let json = r#"{
+            "refreshToken": "rt2",
+            "accessToken": "at2",
+            "chainUpdated": true,
+            "allAccountAddressList": [
+                {
+                    "accountId": "acc-1",
+                    "accountName": "Wallet 1",
+                    "isDefault": true,
+                    "addresses": [
+                        {"chainIndex": 4217, "address": "0xabc", "chainName": "tempo", "addressType": "eoa", "chainPath": "m/44/60/0/0"},
+                        {"chainIndex": "1",  "address": "0xdef", "chainName": "eth",   "addressType": "eoa", "chainPath": "m/44/60/0/0"}
+                    ]
+                },
+                {
+                    "accountId": "acc-2",
+                    "accountName": "Wallet 2",
+                    "isDefault": false,
+                    "addresses": []
+                }
+            ]
+        }"#;
+        let resp: RefreshResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.refresh_token, "rt2");
+        assert_eq!(resp.access_token, "at2");
+        assert!(resp.chain_updated);
+        assert_eq!(resp.all_account_address_list.len(), 2);
+
+        let acc1 = &resp.all_account_address_list[0];
+        assert_eq!(acc1.account_id, "acc-1");
+        assert_eq!(acc1.account_name, "Wallet 1");
+        assert!(acc1.is_default);
+        assert_eq!(acc1.addresses.len(), 2);
+        // int chainIndex → String via string_or_number
+        assert_eq!(acc1.addresses[0].chain_index, "4217");
+        assert_eq!(acc1.addresses[0].chain_name, "tempo");
+        // string chainIndex passes through
+        assert_eq!(acc1.addresses[1].chain_index, "1");
+
+        let acc2 = &resp.all_account_address_list[1];
+        assert!(!acc2.is_default);
+        assert!(acc2.addresses.is_empty());
     }
 
     #[test]
@@ -1382,5 +2012,371 @@ mod tests {
         // json Content-Type 必须已被移除，不能同时出现
         assert!(!req.to_lowercase().contains("content-type: application/json"),
             "application/json content-type should have been stripped:\n{req}");
+    }
+
+    // ── Gas Station routing: GasStationStatus::parse ───────────────
+
+    #[test]
+    fn gas_station_status_parses_all_known_values() {
+        assert_eq!(GasStationStatus::parse("NOT_APPLICABLE"), GasStationStatus::NotApplicable);
+        assert_eq!(GasStationStatus::parse("FIRST_TIME_PROMPT"), GasStationStatus::FirstTimePrompt);
+        assert_eq!(GasStationStatus::parse("PENDING_UPGRADE"), GasStationStatus::PendingUpgrade);
+        assert_eq!(GasStationStatus::parse("REENABLE_ONLY"), GasStationStatus::ReenableOnly);
+        assert_eq!(GasStationStatus::parse("READY_TO_USE"), GasStationStatus::ReadyToUse);
+        assert_eq!(GasStationStatus::parse("INSUFFICIENT_ALL"), GasStationStatus::InsufficientAll);
+        assert_eq!(GasStationStatus::parse("HAS_PENDING_TX"), GasStationStatus::HasPendingTx);
+    }
+
+    #[test]
+    fn gas_station_status_unknown_values_map_to_unknown() {
+        assert_eq!(GasStationStatus::parse(""), GasStationStatus::Unknown);
+        assert_eq!(GasStationStatus::parse("not_applicable"), GasStationStatus::Unknown); // case-sensitive
+        assert_eq!(GasStationStatus::parse("UNKNOWN"), GasStationStatus::Unknown);
+        assert_eq!(GasStationStatus::parse("garbage"), GasStationStatus::Unknown);
+    }
+
+    #[test]
+    fn unsigned_gs_status_dispatches_to_enum() {
+        let json = r#"{"gasStationStatus": "READY_TO_USE"}"#;
+        let resp: UnsignedInfoResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.gs_status(), GasStationStatus::ReadyToUse);
+
+        let empty: UnsignedInfoResponse = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.gs_status(), GasStationStatus::Unknown);
+    }
+
+    // ── Gas Station routing: match_default_sufficient_token ────────
+
+    use crate::test_helpers::gas_station::{make_token, make_unsigned_with_tokens};
+
+    #[test]
+    fn match_default_returns_none_when_default_empty() {
+        let resp = make_unsigned_with_tokens("", vec![make_token("USDT", "0xaaa", true)]);
+        assert!(resp.match_default_sufficient_token().is_none());
+    }
+
+    #[test]
+    fn match_default_returns_some_on_hit_and_sufficient() {
+        let resp = make_unsigned_with_tokens(
+            "0xaaa",
+            vec![
+                make_token("USDT", "0xaaa", true),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        let matched = resp.match_default_sufficient_token().unwrap();
+        assert_eq!(matched.symbol, "USDT");
+    }
+
+    #[test]
+    fn match_default_is_case_insensitive_on_address() {
+        let resp = make_unsigned_with_tokens(
+            "0xAAA",
+            vec![make_token("USDT", "0xaaa", true)],
+        );
+        assert!(resp.match_default_sufficient_token().is_some());
+    }
+
+    #[test]
+    fn match_default_returns_none_when_default_hits_but_insufficient() {
+        let resp = make_unsigned_with_tokens(
+            "0xaaa",
+            vec![
+                make_token("USDT", "0xaaa", false),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        assert!(resp.match_default_sufficient_token().is_none());
+    }
+
+    #[test]
+    fn match_default_returns_none_when_default_not_in_list() {
+        let resp = make_unsigned_with_tokens(
+            "0xdeadbeef",
+            vec![make_token("USDT", "0xaaa", true)],
+        );
+        assert!(resp.match_default_sufficient_token().is_none());
+    }
+
+    // ── Gas Station routing: only_sufficient_token ─────────────────
+
+    #[test]
+    fn only_sufficient_returns_none_when_no_sufficient() {
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", false),
+                make_token("USDC", "0xbbb", false),
+            ],
+        );
+        assert!(resp.only_sufficient_token().is_none());
+    }
+
+    #[test]
+    fn only_sufficient_returns_the_single_sufficient_token() {
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", false),
+                make_token("USDC", "0xbbb", true),
+                make_token("USDG", "0xccc", false),
+            ],
+        );
+        let token = resp.only_sufficient_token().unwrap();
+        assert_eq!(token.symbol, "USDC");
+    }
+
+    #[test]
+    fn only_sufficient_returns_none_when_multiple_sufficient() {
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", true),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        assert!(resp.only_sufficient_token().is_none());
+    }
+
+    #[test]
+    fn only_sufficient_returns_none_on_empty_list() {
+        let resp = make_unsigned_with_tokens("", vec![]);
+        assert!(resp.only_sufficient_token().is_none());
+    }
+
+    // ── Gas Station routing: auto_pick_gas_token ───────────────────
+
+    #[test]
+    fn auto_pick_default_sufficient_scene_b() {
+        // Scene B classic: default present, hits list, sufficient.
+        let resp = make_unsigned_with_tokens(
+            "0xaaa",
+            vec![
+                make_token("USDT", "0xaaa", true),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        assert_eq!(resp.auto_pick_gas_token().unwrap().symbol, "USDT");
+    }
+
+    #[test]
+    fn auto_pick_no_default_single_sufficient_plugin_fallback() {
+        // Plugin-compat fallback: no default, exactly one sufficient.
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", false),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        assert_eq!(resp.auto_pick_gas_token().unwrap().symbol, "USDC");
+    }
+
+    #[test]
+    fn auto_pick_excludes_scene_2a_default_present_but_insufficient() {
+        // Critical invariant: default is set (user preference), default is short, but
+        // another token is sufficient — MUST return None so Scene C asks the user before
+        // silently overriding the user's pinned default.
+        let resp = make_unsigned_with_tokens(
+            "0xaaa",
+            vec![
+                make_token("USDT", "0xaaa", false), // default, insufficient
+                make_token("USDC", "0xbbb", true),  // alt, sufficient
+            ],
+        );
+        assert!(resp.auto_pick_gas_token().is_none());
+    }
+
+    #[test]
+    fn auto_pick_no_default_multiple_sufficient_scene_c() {
+        // Multiple sufficient + no default → Scene C (user picks).
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", true),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        assert!(resp.auto_pick_gas_token().is_none());
+    }
+
+    #[test]
+    fn auto_pick_none_when_default_not_in_list_even_if_others_sufficient() {
+        // Default points at a token not in list (unusual), one other is sufficient.
+        // Must still return None (Scene C) — the default being set is user preference.
+        let resp = make_unsigned_with_tokens(
+            "0xdeadbeef",
+            vec![make_token("USDC", "0xbbb", true)],
+        );
+        assert!(resp.auto_pick_gas_token().is_none());
+    }
+
+    #[test]
+    fn auto_pick_none_on_insufficient_all() {
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", false),
+                make_token("USDC", "0xbbb", false),
+            ],
+        );
+        assert!(resp.auto_pick_gas_token().is_none());
+    }
+
+    // ── batch endpoint helpers ────────────────────────────────────────
+
+    #[test]
+    fn batch_size_validate_zero_rejects() {
+        let err = validate_batch_size("batch unsignedInfo", 0).unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn batch_size_validate_within_cap_ok() {
+        assert!(validate_batch_size("batch unsignedInfo", 1).is_ok());
+        assert!(validate_batch_size("batch unsignedInfo", 5).is_ok());
+    }
+
+    #[test]
+    fn batch_size_validate_above_cap_rejects() {
+        let err = validate_batch_size("batch broadcast", 6).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("batch broadcast"));
+        assert!(msg.contains("5"));
+        assert!(msg.contains("6"));
+    }
+
+    #[test]
+    fn parse_supported_chain_list_accepts_string_elements() {
+        // Production response shape today: backend serializes chainIndex as strings.
+        let data = serde_json::json!(["196", "1", "137", "8453"]);
+        let out = parse_supported_chain_list(&data).expect("ok");
+        assert_eq!(out, vec!["196", "1", "137", "8453"]);
+    }
+
+    #[test]
+    fn parse_supported_chain_list_accepts_numeric_elements() {
+        // Defensive: should still parse if backend ever switches to integer
+        // serialization (chainIndex is a u64 in the DB, this is a likely drift).
+        let data = serde_json::json!([196, 1, 137, 8453]);
+        let out = parse_supported_chain_list(&data).expect("ok");
+        assert_eq!(out, vec!["196", "1", "137", "8453"]);
+    }
+
+    #[test]
+    fn parse_supported_chain_list_rejects_non_array_and_bad_elements() {
+        // Top-level non-array → error.
+        let data = serde_json::json!({"chains": ["1"]});
+        let err = parse_supported_chain_list(&data).unwrap_err();
+        assert!(err.to_string().contains("expected data to be an array"));
+
+        // Element of unexpected type (object) → error.
+        let data = serde_json::json!([{"chainIndex": "1"}]);
+        let err = parse_supported_chain_list(&data).unwrap_err();
+        assert!(err.to_string().contains("unexpected element"));
+    }
+
+    fn sample_unsignedinfo_elem(with_optionals: bool) -> BatchUnsignedInfoElement {
+        BatchUnsignedInfoElement {
+            chain_path: "m/44/60".into(),
+            chain_index: 10,
+            from_addr: "0xfrom".into(),
+            to_addr: "0xto".into(),
+            amount: "0".into(),
+            session_cert: "cert".into(),
+            contract_addr: if with_optionals { Some("0xca".into()) } else { None },
+            input_data: if with_optionals { Some("0xdata".into()) } else { None },
+            unsigned_tx: None,
+            gas_limit: if with_optionals { Some("300000".into()) } else { None },
+            aa_dex_token_addr: if with_optionals { Some("0xaa".into()) } else { None },
+            aa_dex_token_amount: if with_optionals { Some("1000".into()) } else { None },
+            transaction_type: if with_optionals { Some("dex".into()) } else { None },
+        }
+    }
+
+    #[test]
+    fn build_unsignedinfo_body_required_fields_only() {
+        let elements = vec![sample_unsignedinfo_elem(false)];
+        let body = build_batch_unsignedinfo_body(&elements);
+        let arr = body.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        let obj = arr[0].as_object().unwrap();
+        // Required fields are always present.
+        assert_eq!(obj["chainPath"], "m/44/60");
+        assert_eq!(obj["chainIndex"], 10);
+        assert_eq!(obj["fromAddr"], "0xfrom");
+        assert_eq!(obj["toAddr"], "0xto");
+        assert_eq!(obj["amount"], "0");
+        assert_eq!(obj["sessionCert"], "cert");
+        // Optional fields are omitted when None — backend treats absent as "no value".
+        for k in [
+            "contractAddr", "inputData", "unsignedTx", "gasLimit",
+            "aaDexTokenAddr", "aaDexTokenAmount", "transactionType",
+        ] {
+            assert!(!obj.contains_key(k), "key {k} should be omitted when None");
+        }
+    }
+
+    #[test]
+    fn build_unsignedinfo_body_emits_optional_fields() {
+        let elements = vec![sample_unsignedinfo_elem(true)];
+        let body = build_batch_unsignedinfo_body(&elements);
+        let obj = body.as_array().unwrap()[0].as_object().unwrap();
+        assert_eq!(obj["contractAddr"], "0xca");
+        assert_eq!(obj["inputData"], "0xdata");
+        assert_eq!(obj["gasLimit"], "300000");
+        assert_eq!(obj["aaDexTokenAddr"], "0xaa");
+        assert_eq!(obj["aaDexTokenAmount"], "1000");
+        assert_eq!(obj["transactionType"], "dex");
+    }
+
+    #[test]
+    fn build_unsignedinfo_body_preserves_order() {
+        // Element order is significant — backend uses it as the [revoke?, approve, swap]
+        // sequence. Verify the body array order matches input order.
+        let mut a = sample_unsignedinfo_elem(false);
+        a.to_addr = "0xA".into();
+        let mut b = sample_unsignedinfo_elem(false);
+        b.to_addr = "0xB".into();
+        let mut c = sample_unsignedinfo_elem(false);
+        c.to_addr = "0xC".into();
+        let body = build_batch_unsignedinfo_body(&[a, b, c]);
+        let arr = body.as_array().unwrap();
+        assert_eq!(arr[0]["toAddr"], "0xA");
+        assert_eq!(arr[1]["toAddr"], "0xB");
+        assert_eq!(arr[2]["toAddr"], "0xC");
+    }
+
+    #[test]
+    fn build_broadcast_body_shape() {
+        let elements = vec![
+            BatchBroadcastElement {
+                account_id: "acc-1".into(),
+                address: "0xabc".into(),
+                chain_index: "10".into(),
+                extra_data: "{\"k\":\"v\"}".into(),
+            },
+            BatchBroadcastElement {
+                account_id: "acc-1".into(),
+                address: "0xabc".into(),
+                chain_index: "10".into(),
+                extra_data: "{\"k\":\"v2\"}".into(),
+            },
+        ];
+        let body = build_batch_broadcast_body(&elements);
+        let arr = body.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        let obj = arr[0].as_object().unwrap();
+        // accountId / address / chainIndex / extraData are required; nothing else allowed.
+        let keys: std::collections::BTreeSet<&str> = obj.keys().map(|s| s.as_str()).collect();
+        assert_eq!(
+            keys,
+            ["accountId", "address", "chainIndex", "extraData"]
+                .into_iter()
+                .collect()
+        );
+        // extraData is passed through as-is (caller serializes the inner object).
+        assert_eq!(arr[0]["extraData"], "{\"k\":\"v\"}");
+        assert_eq!(arr[1]["extraData"], "{\"k\":\"v2\"}");
     }
 }

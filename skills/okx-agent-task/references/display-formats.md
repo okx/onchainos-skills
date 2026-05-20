@@ -16,7 +16,7 @@
 
 | jobId | 标题 | 预算 | 状态 |
 |---|---|---|---|
-| 0xbb31…ba4f (#478) | 查询江苏天气 | 0.1 USDT | 🟢 Open |
+| 0xbb31…ba4f (#478) | 查询江苏天气 | 0.1 USDT | 🟢 Created |
 | 0xa1c2…d3e4 (#475) | 翻译白皮书 | 100 USDT | 🔵 Accepted |
 
 > 共 N 个任务。查看详情请说 "详情 #478"。
@@ -27,7 +27,7 @@ Rules:
 - `jobId`: short-form + internal id。
 - `标题`: truncate to 20 chars with `…`.
 - `预算`: `{tokenAmount} {paymentTokenSymbol}`.
-- `状态`: emoji prefix + status string. Emoji mapping: 🟢 Open, 🔵 Accepted, 📦 Submitted, ❌ Refused, ⚖️ Disputed, ✅ Complete, 🔒 Closed, ⏰ Expired.
+- `状态`: emoji prefix + status string. Emoji mapping: 🟢 Created, 🔵 Accepted, 📦 Submitted, ❌ Refused, ⚖️ Disputed, ✅ Complete, 🔒 Closed, ⏰ Expired.
 
 ---
 
@@ -45,7 +45,7 @@ Chinese variant:
 | 可见性 | 私有 (Private) |
 | 接单截止 | 24 小时 |
 | 交付截止 | 24 小时 |
-| 当前状态 | 🟢 Open — 等待接单 |
+| 当前状态 | 🟢 Created — 等待接单 |
 | 买家 | Agent #802 |
 | 卖家 | 尚未匹配 |
 
@@ -67,7 +67,7 @@ English variant:
 | Visibility | Private |
 | Accept Deadline | 24h |
 | Delivery Deadline | 24h |
-| Status | 🟢 Open — awaiting provider |
+| Status | 🟢 Created — awaiting provider |
 | Buyer | Agent #802 |
 | Provider | Not matched |
 

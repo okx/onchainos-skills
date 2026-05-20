@@ -14,16 +14,16 @@ Backend `status` int field → local `Status` enum mapping (`state_machine.rs::S
 
 | int | string | enum | Meaning | Entry event |
 |---|---|---|---|---|
-| `0` | `open` | `Status::Open` | Task on-chain, awaiting acceptance | `job_created` |
+| `0` | `created` | `Status::Created` | Task on-chain, awaiting acceptance | `job_created` |
 | `1` | `accepted` | `Status::Accepted` | Buyer confirmed acceptance (funds escrowed) | `job_accepted` |
 | `2` | `submitted` | `Status::Submitted` | Provider deliverable on-chain | `job_submitted` |
 | `3` | `refused` | `Status::Refused` | Buyer rejected deliverable; 24h decision window (dispute / agree-refund) | `job_refused` |
 | `4` | `disputed` | `Status::Disputed` | Dispute in progress (evidence period + commit/reveal) | `job_disputed` |
 | `5` | `complete` | `Status::Completed` | Terminal: task completed (normal acceptance / dispute won by provider / review timeout auto-complete) | `job_completed` or `job_auto_completed` |
 | `6` | `refunded` | `Status::Refunded` | Terminal: funds refunded to buyer (agree-refund / dispute won by buyer / submit/refuse timeout auto-refund) | `job_refunded` or `job_auto_refunded` |
-| `7` | `close` | `Status::Other("status_7")` | Terminal: buyer proactively closed during `open` stage | `job_closed` |
+| `7` | `close` | `Status::Other("status_7")` | Terminal: buyer proactively closed during `created` stage | `job_closed` |
 
-> ⚠️ **There is no `applied` status** — `provider_applied` is an event; when it fires, status is still `open`. Similarly when `dispute_approved` fires, status is still `refused` (dispute phase 1 approve). Events are just "what just happened" — they don't necessarily change status.
+> ⚠️ **There is no `applied` status** — `provider_applied` is an event; when it fires, status is still `created`. Similarly when `dispute_approved` fires, status is still `refused` (dispute phase 1 approve). Events are just "what just happened" — they don't necessarily change status.
 
 ---
 
@@ -31,12 +31,12 @@ Backend `status` int field → local `Status` enum mapping (`state_machine.rs::S
 
 ```mermaid
 stateDiagram-v2
-    [*] --> open: buyer create-task<br/>(job_created)
+    [*] --> created: buyer create-task<br/>(job_created)
 
-    open --> open: provider apply<br/>(provider_applied — transient, no status change)
-    open --> accepted: buyer confirm-accept<br/>(job_accepted)
-    open --> close: buyer close<br/>(job_closed)
-    open --> close: open stage timeout<br/>(job_expired)
+    created --> created: provider apply<br/>(provider_applied — transient, no status change)
+    created --> accepted: buyer confirm-accept<br/>(job_accepted)
+    created --> close: buyer close<br/>(job_closed)
+    created --> close: created stage timeout<br/>(job_expired)
 
     accepted --> submitted: provider deliver<br/>(job_submitted)
     accepted --> refunded: submit stage timeout<br/>(submit_expired → buyer claim-auto-refund → job_auto_refunded)
@@ -69,7 +69,7 @@ For the full `event → --role` routing table see SKILL.md `## Activation`. The 
 
 | event | Resulting status | Triggering action |
 |---|---|---|
-| `job_created` | `open` | Buyer create-task tx on chain |
+| `job_created` | `created` | Buyer create-task tx on chain |
 | `job_accepted` | `accepted` | Buyer confirm-accept tx on chain |
 | `job_submitted` | `submitted` | Provider deliver tx on chain |
 | `job_refused` | `refused` | Buyer reject tx on chain |
@@ -85,14 +85,14 @@ For the full `event → --role` routing table see SKILL.md `## Activation`. The 
 
 | event | Status at trigger | Meaning |
 |---|---|---|
-| `provider_applied` | `open` | Provider apply tx receipt (escrow path, for provider's own consumption) |
+| `provider_applied` | `created` | Provider apply tx receipt (escrow path, for provider's own consumption) |
 | `dispute_approved` | `refused` | Dispute phase 1 approve tx receipt (for the initiating provider's own consumption — reminder to proceed to phase 2) |
 | `submit_deadline_warn` | `accepted` | Escrow accept→submit nearing timeout reminder (5 min prior) |
 | `review_deadline_warn` | `submitted` | Escrow submit→complete nearing timeout reminder (5 min prior) |
 | `submit_expired` | `accepted` | Submit stage timeout (provider did not deliver); buyer should run `claim-auto-refund` |
 | `refuse_expired` | `refused` | Refuse stage timeout (provider didn't decide within 24h); buyer should run `claim-auto-refund` |
 | `review_expired` | `submitted` | Review stage timeout (buyer didn't accept within 24h); provider should run `claim-auto-complete` |
-| `job_expired` | `open` | Open stage timeout; backend auto-transitions to `close` |
+| `job_expired` | `created` | Open stage timeout; backend auto-transitions to `close` |
 | `job_visibility_changed` | unchanged | TaskMarket.setVisibility tx receipt |
 | `job_payment_mode_changed` | unchanged | TaskMarket.setPaymentMode tx receipt |
 
@@ -141,7 +141,7 @@ For the full event → --role routing see SKILL.md `## Activation`; below is the
 
 | Stage | Trigger condition | Timeout event | Subsequent action |
 |---|---|---|---|
-| `open` | Exceeds `openExpireSec` | `job_expired` | Backend auto-transitions to `close` |
+| `created` | Exceeds `openExpireSec` | `job_expired` | Backend auto-transitions to `close` |
 | `accepted` | Exceeds `acceptedExpireSec` without submit | `submit_expired` | Buyer runs `claim-auto-refund` → `job_auto_refunded` |
 | `submitted` | Exceeds review window (24h) without complete/reject | `review_expired` | Provider runs `claim-auto-complete` → `job_auto_completed` |
 | `refused` | 24h with no provider decision (dispute / refund) | `refuse_expired` | Buyer runs `claim-auto-refund` → `job_auto_refunded` |

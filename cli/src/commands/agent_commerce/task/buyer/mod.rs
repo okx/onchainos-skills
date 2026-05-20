@@ -1,8 +1,8 @@
 //! Client 端任务命令 — 枚举定义 + 路由分发
 //!
-//! 按买家动作划分文件：
+//! 按用户动作划分文件：
 //! - `create.rs`       — 发布任务（场景1）
-//! - `recommend.rs`    — 获取推荐卖家（场景1）
+//! - `recommend.rs`    — 获取推荐服务商（场景1）
 //! - `negotiate.rs`    — 协商（场景2，Agent 子 session）
 //! - `accept.rs`       — 确认接单 + Fund（场景3）
 //! - `complete.rs`     — 确认完成（场景5）
@@ -21,6 +21,8 @@ mod complete;
 mod content;
 mod create;
 pub mod flow;
+mod flow_lifecycle;
+mod flow_negotiate;
 pub(crate) mod negotiate;
 mod query;
 mod recommend;
@@ -56,7 +58,7 @@ pub enum TaskCommand {
         deadline_submit: String,
         #[arg(long)]
         title: Option<String>,
-        /// 指定卖家 agentId（跳过 recommend，直接与该卖家协商或 x402 接单）
+        /// 指定服务商 agentId（跳过 recommend，直接与该服务商协商或 x402 接单）
         #[arg(long)]
         provider: Option<String>,
     },
@@ -232,7 +234,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
 
     match cmd {
-        // ── 买家动作 ─────────────────────────────────────────────
+        // ── 用户动作 ─────────────────────────────────────────────
         TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,

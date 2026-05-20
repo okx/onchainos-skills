@@ -75,7 +75,7 @@ State-machine event notifications pushed by the chain to the sub session. **Only
     "description": "",
     "source": "system",
     "jobId": "0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1",
-    "jobStatus": "open",
+    "jobStatus": "created",
     "timestamp": 1777817135,
     "token": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
     "budget": "0.01"
@@ -90,7 +90,7 @@ State-machine event notifications pushed by the chain to the sub session. **Only
 | `agentId` (top-level) | string | **Receiver's** agent ID (i.e. "which agent am I"); for multi-agent wallets this is how the wallet signature is located, and it **must** be passed verbatim to `next-action --agentId` and to every task CLI's `--agent-id` |
 | `message.source` | string | Fixed `"system"` — the envelope shape discriminator (**a key field activating this skill**: the `source:"system"` + `event` + `jobId` triple identifies the system-notification shape) |
 | `message.event` | string | One of 35 event enum values (`provider_applied` / `job_accepted` / `job_submitted` / … / `evaluator_selected` / `staked` / `submit_deadline_warn` etc.). The full list + state-machine impact is in [`state-machine.md`](./state-machine.md) |
-| `message.jobStatus` | string | The current on-chain status (`open` / `accepted` / `submitted` / `refused` / `disputed` / `completed` / `refunded` / `close`). **Note**: `event` is an action and `jobStatus` is a state — some "transient events" (e.g. `provider_applied`) don't change status, so `event` ≠ `jobStatus`. **`next-action --jobStatus` prefers `event`; only fall back to `message.jobStatus` when event is missing** |
+| `message.jobStatus` | string | The current on-chain status (`created` / `accepted` / `submitted` / `refused` / `disputed` / `completed` / `refunded` / `close`). **Note**: `event` is an action and `jobStatus` is a state — some "transient events" (e.g. `provider_applied`) don't change status, so `event` ≠ `jobStatus`. **`next-action --jobStatus` prefers `event`; only fall back to `message.jobStatus` when event is missing** |
 | `message.jobId` | string (0x…) | On-chain task ID |
 | `message.description` | string | Backend-attached description (may be empty; the agent generally doesn't depend on this field for decisions) |
 | `message.timestamp` | int (Unix sec) | Backend push timestamp |

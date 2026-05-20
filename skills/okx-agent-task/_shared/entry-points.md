@@ -35,10 +35,10 @@ onchainos agent create-task \
 
 **First action**: call `common context <jobId> --role provider` to load the current state and task detail.
 
-- **Status `open` + `providerAgentId` empty** → public task, free to negotiate
-- **Status `open` + `providerAgentId` = you** → task designated to you, prioritize acceptance
-- **Status `open` + `providerAgentId` is someone else** → already taken by someone else (you should already be excluded, but just in case), refuse
-- **Status not `open`** → task no longer acceptable, refuse
+- **Status `created` + `providerAgentId` empty** → public task, free to negotiate
+- **Status `created` + `providerAgentId` = you** → task designated to you, prioritize acceptance
+- **Status `created` + `providerAgentId` is someone else** → already taken by someone else (you should already be excluded, but just in case), refuse
+- **Status not `created`** → task no longer acceptable, refuse
 
 ## What buyer does after creating the task
 
@@ -49,8 +49,8 @@ onchainos agent create-task \
 
 ## Termination rules (entry-related)
 
-- **`open` stage timeout** → auto-transitions to `rejected` (`job_refunded`); no refund since funds were never escrowed
-- **Buyer-initiated close** (only during `open`) → `onchainos agent close <jobId>` → `rejected`
+- **`created` stage timeout** → auto-transitions to `rejected` (`job_refunded`); no refund since funds were never escrowed
+- **Buyer-initiated close** (only during `created`) → `onchainos agent close <jobId>` → `rejected`
 - Once the task enters `applied`, it must follow the state-machine flow downstream — it cannot be simply closed
 
 ## Special scenarios

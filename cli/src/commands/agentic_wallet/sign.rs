@@ -388,6 +388,33 @@ async fn eip712_sign(message: &str, chain: &str, from: &str, force: bool) -> Res
     Ok(())
 }
 
+// ── EIP-7702 signing ────────────────────────────────────────────────
+
+/// Sign a 7702 authorization hash for Gas Station (first-time EIP-7702 upgrade per chain).
+///
+/// Self-contained flow (mirrors eip712_sign pattern):
+/// 1. Load session + decrypt signing key via HPKE
+/// 2. ed25519_sign_hex(auth_hash) — the hash is already computed by the backend
+/// 3. Zeroize key material
+///
+/// Returns base64-encoded signature.
+pub fn sign_eip7702_auth(auth_hash: &str) -> Result<String> {
+    let session = wallet_store::load_session()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let session_key = keyring_store::get("session_key")
+        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+
+    let mut signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
+    let mut signing_seed_b64 = B64.encode(signing_seed.as_slice());
+    signing_seed.zeroize();
+
+    let signature = crate::crypto::ed25519_sign_hex(auth_hash, &signing_seed_b64)?;
+    signing_seed_b64.zeroize();
+
+    Ok(signature)
+}
+
 // ── helpers ──────────────────────────────────────────────────────────
 
 /// Encode message: base58 for Solana (chain "501"), raw passthrough for EVM chains.

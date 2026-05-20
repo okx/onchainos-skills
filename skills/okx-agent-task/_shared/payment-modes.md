@@ -12,7 +12,7 @@
 
 ## State node × payment-mode matrix
 
-### `confirm-accept` (open → accepted)
+### `confirm-accept` (created → accepted)
 
 | Mode | Preconditions | Buyer CLI | On-chain side effects |
 |---|---|---|---|

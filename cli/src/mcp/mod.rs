@@ -13,8 +13,8 @@ use tokio::sync::Mutex;
 
 use crate::client::ApiClient;
 use crate::commands::{
-    cross_chain, defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token,
-    tracker, workflows,
+    competition, cross_chain, defi, gateway, leaderboard, market, memepump, portfolio, signal,
+    social, swap, token, tracker, workflows,
 };
 
 // ── DeFi ──────────────────────────────────────────────────────────────
@@ -248,6 +248,22 @@ struct DefiCollectParams {
     token_id: Option<String>,
     /// Principal order index (for UNLOCKED_PRINCIPAL)
     principal_index: Option<String>,
+}
+
+// ── Gas Station ──────────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct GasStationUpdateDefaultTokenParams {
+    /// Chain name or ID (e.g. "ethereum", "1")
+    chain: String,
+    /// Gas token contract address to set as default (e.g. USDT/USDC/USDG address)
+    gas_token_address: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct GasStationDisableParams {
+    /// Chain name or ID (e.g. "ethereum", "1")
+    chain: String,
 }
 
 // ── Token ──────────────────────────────────────────────────────────────
@@ -588,6 +604,78 @@ struct ClusterTopHoldersParams {
     range_filter: String,
 }
 
+// ── Competition ─────────────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionListParams {
+    /// Page size (default 10)
+    page_size: Option<u32>,
+    /// Page number starting from 1 (default 1)
+    page_num: Option<u32>,
+    /// Status filter: 0=active, 1=ended, 2=all (omit for all)
+    status: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionIdParams {
+    /// Activity identifier: either the numeric id from a prior `competition_list`
+    /// response (e.g. "110"), or the activity `name` / `shortName` string (e.g.
+    /// "Agentic Trading Contest" or "agentic5"). The handler auto-resolves names
+    /// to ids via a list lookup, so callers can use whichever they have at hand.
+    activity_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionRankParams {
+    /// Activity identifier: either the numeric id from a prior `competition_list`
+    /// response, or the activity `name` / `shortName`. Auto-resolved server-side.
+    activity_id: String,
+    /// Optional wallet address. Omit to auto-resolve from the active account
+    /// based on the activity's chain (fetched from `competition_detail.chainId`).
+    /// Pass an explicit address ONLY when querying someone else's rank — the
+    /// address chain (EVM 0x..., else Solana) must match the activity chain;
+    /// mismatched addresses are rejected, not silently coerced.
+    wallet: Option<String>,
+    /// Sort type: 1=PnL% (realized ROI), 7=PnL (realized profit). Default 1. The exact values
+    /// for a given competition are returned by `competition_detail` under
+    /// `tabConfigs[].rankFieldConfig[].sortValueMap.descend` — read that array first to know
+    /// which leaderboards this activity exposes; future activities may add more values.
+    sort_type: Option<i32>,
+    /// Max leaderboard entries (default 20, max 100)
+    limit: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionUserStatusParams {
+    /// Activity name from a previous `competition_list` / `competition_user_status` response (omit to check all activities including ended ones)
+    activity_name: Option<String>,
+    /// Optional EVM wallet address. If omitted, the tool auto-resolves the EVM address of the currently selected account.
+    evm_wallet: Option<String>,
+    /// Optional SOL wallet address. If omitted, the tool auto-resolves the SOL address of the currently selected account.
+    sol_wallet: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionJoinParams {
+    /// Activity name from a previous `competition_list` response (the `name` field). Internal id is resolved server-side; do NOT pass numeric ids.
+    activity_name: String,
+    /// Optional EVM wallet address to register. If omitted, auto-resolves from the currently selected account.
+    evm_wallet: Option<String>,
+    /// Optional SOL wallet address to register. If omitted, auto-resolves from the currently selected account.
+    sol_wallet: Option<String>,
+    /// Chain ID of the competition chain (e.g. "1" for Ethereum, "501" for Solana)
+    chain_index: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionClaimParams {
+    /// Activity name from a previous `competition_list` / `competition_user_status` response. Internal id is resolved server-side; do NOT pass numeric ids.
+    activity_name: String,
+    /// Optional EVM wallet address. If omitted, auto-resolves from the currently selected account.
+    evm_wallet: Option<String>,
+    /// Optional SOL wallet address. If omitted, auto-resolves from the currently selected account.
+    sol_wallet: Option<String>,
+}
+
 // ── Gateway ────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct GatewayGasLimitParams {
@@ -697,7 +785,8 @@ struct CrossChainQuoteParams {
     to_chain: String,
     /// Human-readable amount (e.g. "10" for 10 USDC)
     readable_amount: String,
-    /// Receive address on destination chain (optional, defaults to user wallet)
+    /// Destination receive address. Required for heterogeneous bridges
+    /// (EVM ⇌ non-EVM, e.g. EVM → Solana); family must match `to_chain`.
     receive_address: Option<String>,
     /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
     sort: Option<String>,
@@ -705,8 +794,29 @@ struct CrossChainQuoteParams {
 
 #[derive(Deserialize, JsonSchema)]
 struct CrossChainStatusParams {
-    /// Order ID returned by cross-chain execute
-    order_id: String,
+    /// Source chain transaction hash returned by cross-chain execute. Provide this
+    /// OR `order_id` (mutually exclusive).
+    tx_hash: Option<String>,
+    /// Order id from a prior cross_chain_execute (e.g. swapOrderId,
+    /// approveOrderId). Use this OR `tx_hash`. Resolved internally to a tx hash
+    /// via the authenticated wallet `/order/detail` endpoint (login required).
+    order_id: Option<String>,
+    /// Bridge id (required by server — returns 50014 if absent). Get it from the
+    /// `bridgeId` field of the prior `cross_chain_execute` / `cross_chain_quote`
+    /// result, or from `cross_chain_bridges`.
+    bridge_id: String,
+    /// Source chain name or chainIndex (e.g. "ethereum" or "1"). Required —
+    /// server returns 50014 (chainIndex) without it.
+    from_chain: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CrossChainBridgesParams {
+    /// Source chain (independently optional). See tool description for the
+    /// four combinations of from_chain / to_chain.
+    from_chain: Option<String>,
+    /// Destination chain (independently optional).
+    to_chain: Option<String>,
 }
 
 #[derive(Clone)]
@@ -738,12 +848,82 @@ impl ServerHandler for McpServer {
 }
 
 fn ok(data: Value) -> Result<String, String> {
-    Ok(serde_json::to_string_pretty(&data)
+    let events = crate::payment_notify::drain_events();
+    let payload = if events.is_empty() {
+        data
+    } else {
+        serde_json::json!({ "data": data, "notifications": events })
+    };
+    Ok(serde_json::to_string_pretty(&payload)
         .unwrap_or_else(|e| format!("failed to serialize response: {e}")))
 }
 
+/// For competition MCP tools: if the AI did not pass `evm_wallet` / `sol_wallet`,
+/// auto-resolve them from the locally logged-in account. The competition skill
+/// has no `wallet_status` MCP tool to chain to, so we read the wallet store
+/// directly here. Unlike the CLI flow (where users explicitly pass addresses),
+/// the MCP-facing tools should "just work" with the active account.
+fn resolve_competition_addresses(
+    evm: &Option<String>,
+    sol: &Option<String>,
+) -> anyhow::Result<(String, String)> {
+    if let (Some(e), Some(s)) = (evm.as_ref(), sol.as_ref()) {
+        return Ok((e.clone(), s.clone()));
+    }
+    let (default_evm, default_sol) = competition::resolve_default_addresses()?;
+    Ok((
+        evm.clone().unwrap_or(default_evm),
+        sol.clone().unwrap_or(default_sol),
+    ))
+}
+
+/// For competition_detail / competition_rank: the AI may pass either the
+/// numeric activity id (from a prior `competition_list` response) or the
+/// activity name / shortName, since other competition tools (join / claim /
+/// user_status) accept names. We accept both here for consistency: if the
+/// input parses as a number we use it directly; otherwise we resolve via
+/// `competition::resolve_activity_id_by_name`. This avoids the wasted
+/// "first call fails with bad request, retry with id" pattern.
+async fn resolve_activity_identifier(
+    client: &mut ApiClient,
+    raw: &str,
+) -> anyhow::Result<String> {
+    if raw.parse::<u64>().is_ok() {
+        return Ok(raw.to_string());
+    }
+    competition::resolve_activity_id_by_name(client, raw).await
+}
+
 fn err(e: anyhow::Error) -> Result<String, String> {
-    Err(format!("{e:#}"))
+    // Always drain so events don't leak into the next tool call.
+    let events = crate::payment_notify::drain_events();
+
+    // `CliConfirming` carries structured `message` / `next` fields; surface
+    // them as a JSON payload so the agent can parse them (matches the CLI
+    // `output::confirming` shape). Empty strings are omitted so first-charge
+    // confirmations (which rely on the notifications array for semantics)
+    // stay tidy.
+    if let Some(c) = e.downcast_ref::<crate::output::CliConfirming>() {
+        let mut payload = serde_json::json!({ "confirming": true });
+        if !c.message.is_empty() {
+            payload["message"] = serde_json::Value::String(c.message.clone());
+        }
+        if !c.next.is_empty() {
+            payload["next"] = serde_json::Value::String(c.next.clone());
+        }
+        if !events.is_empty() {
+            payload["notifications"] = serde_json::Value::Array(events);
+        }
+        return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
+    }
+
+    let base = format!("{e:#}");
+    if events.is_empty() {
+        Err(base)
+    } else {
+        let payload = serde_json::json!({ "error": base, "notifications": events });
+        Err(serde_json::to_string(&payload).unwrap_or(base))
+    }
 }
 
 #[tool_router]
@@ -831,7 +1011,9 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_price_info(&mut *self.client.lock().await, &p.address, &chain_index).await {
+        match token::fetch_price_info(&mut *self.client.lock().await, &p.address, &chain_index)
+            .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -869,7 +1051,8 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match market::fetch_prices(&mut *self.client.lock().await, &p.tokens, &default_chain).await {
+        match market::fetch_prices(&mut *self.client.lock().await, &p.tokens, &default_chain).await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -890,7 +1073,15 @@ impl McpServer {
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         let bar = p.bar.as_deref().unwrap_or("1H");
         let limit = p.limit.unwrap_or(100);
-        match market::fetch_kline(&mut *self.client.lock().await, &p.address, &chain_index, bar, limit).await {
+        match market::fetch_kline(
+            &mut *self.client.lock().await,
+            &p.address,
+            &chain_index,
+            bar,
+            limit,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1142,6 +1333,149 @@ impl McpServer {
         }
     }
 
+    // ── Social: news / sentiment / vibe ───────────────────────────────
+
+    #[tool(
+        name = "social_news_latest",
+        description = "Latest crypto news feed (across all coins by default). Optional filters: token_symbols (comma-separated, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), importance ('1'=High/'2'=Medium/'3'=Low), platform, language ('en_US' default / 'zh_CN'). Pagination via limit range [1, 50] + cursor. detail_level='2' includes full article body."
+    )]
+    async fn social_news_latest(
+        &self,
+        Parameters(p): Parameters<social::SocialNewsLatestParams>,
+    ) -> Result<String, String> {
+        match social::fetch_news_latest(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_news_by_symbol",
+        description = "News filtered by coin symbol(s). token_symbols required (comma-separated, max 20). sort_by: '1'=Latest (default), '2'=Hot. sentiment: '1'=Bullish/'2'=Bearish/'3'=Neutral. importance: '1'=High/'2'=Medium/'3'=Low. begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback). limit range [1, 50]."
+    )]
+    async fn social_news_by_symbol(
+        &self,
+        Parameters(p): Parameters<social::SocialNewsBySymbolParams>,
+    ) -> Result<String, String> {
+        match social::fetch_news_by_symbol(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_news_search",
+        description = "Full-text crypto news search. keyword required. Optional sort_by ('1'=Latest/'2'=Hot), sentiment, importance, platform, token_symbols (additional filter, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), detail_level, limit range [1, 50], cursor, language."
+    )]
+    async fn social_news_search(
+        &self,
+        Parameters(p): Parameters<social::SocialNewsSearchParams>,
+    ) -> Result<String, String> {
+        match social::fetch_news_search(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_news_detail",
+        description = "Get the full body of a single news article by id. article_id is required and comes from the `articles[].id` field of any news listing endpoint. Use this when a list call returned only summaries (detail_level='1')."
+    )]
+    async fn social_news_detail(
+        &self,
+        Parameters(p): Parameters<social::SocialNewsDetailParams>,
+    ) -> Result<String, String> {
+        match social::fetch_news_detail(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_news_platforms",
+        description = "List available news source platforms. Use the returned identifiers as the `platform` filter on social_news_latest / social_news_by_symbol / social_news_search."
+    )]
+    async fn social_news_platforms(&self) -> Result<String, String> {
+        match social::fetch_news_platforms(&mut *self.client.lock().await).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_sentiment_ranking",
+        description = "Top coins ranked by social activity (mention count) over a window. time_frame: '1'=1h (default), '2'=4h, '3'=24h. sort_by: '1'=Hot (only value supported). limit range [1, 50], default '10'."
+    )]
+    async fn social_sentiment_ranking(
+        &self,
+        Parameters(p): Parameters<social::SocialSentimentRankingParams>,
+    ) -> Result<String, String> {
+        match social::fetch_sentiment_ranking(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_sentiment_symbol",
+        description = "Aggregated social sentiment for one or more coins. token_symbols required (comma-separated, max 20). time_frame: '1'=1h (default) / '2'=4h / '3'=24h. Snapshot mode by default; pass trend_points (1–50) to switch to time-bucketed trend mode."
+    )]
+    async fn social_sentiment_symbol(
+        &self,
+        Parameters(p): Parameters<social::SocialSentimentSymbolParams>,
+    ) -> Result<String, String> {
+        match social::fetch_sentiment_symbol(&mut *self.client.lock().await, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_vibe_timeline",
+        description = "Token vibe (hotness) summary + time-bucketed timeline + sample KOLs per bucket. Keyed by chain + token_address (NOT symbol — resolve to a contract address first). time_frame: '1'=24h (default) / '2'=72h / '3'=7d / '4'=30d. Tweet bodies are stripped from the response (compliance red line)."
+    )]
+    async fn social_vibe_timeline(
+        &self,
+        Parameters(p): Parameters<social::SocialVibeTimelineParams>,
+    ) -> Result<String, String> {
+        let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
+        match social::fetch_vibe_timeline(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.token_address,
+            p.time_frame.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "social_vibe_top_kols",
+        description = "Top KOLs discussing a token (capped at upstream TOP50). sort_by: '1'=Engagement (default) / '2'=Mentions / '3'=Impressions. time_frame: '1'/'2'/'3'/'4'. Keyed by chain + token_address. Tweet bodies stripped (compliance); tweet URLs and KOL identity fields pass through."
+    )]
+    async fn social_vibe_top_kols(
+        &self,
+        Parameters(p): Parameters<social::SocialVibeTopKolsParams>,
+    ) -> Result<String, String> {
+        let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
+        match social::fetch_vibe_top_kols(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.token_address,
+            p.sort_by.as_deref(),
+            p.time_frame.as_deref(),
+            p.limit.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
     #[tool(
         name = "swap_chains",
         description = "Get supported chains for DEX aggregator swaps"
@@ -1215,7 +1549,14 @@ impl McpServer {
         Parameters(p): Parameters<SwapApproveParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match swap::fetch_approve(&mut *self.client.lock().await, &chain_index, &p.token, &p.amount).await {
+        match swap::fetch_approve(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.token,
+            &p.amount,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1370,8 +1711,15 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let amount = p.amount.as_deref().unwrap_or("0");
-        match gateway::fetch_simulate(&mut *self.client.lock().await, &chain_index, &p.from, &p.to, amount, &p.data)
-            .await
+        match gateway::fetch_simulate(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.from,
+            &p.to,
+            amount,
+            &p.data,
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1408,7 +1756,14 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let oid = p.order_id.as_deref();
-        match gateway::fetch_orders(&mut *self.client.lock().await, &chain_index, &p.address, oid).await {
+        match gateway::fetch_orders(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.address,
+            oid,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1429,7 +1784,8 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_liquidity(&mut *self.client.lock().await, &p.address, &chain_index).await {
+        match token::fetch_liquidity(&mut *self.client.lock().await, &p.address, &chain_index).await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1462,7 +1818,9 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_advanced_info(&mut *self.client.lock().await, &p.address, &chain_index).await {
+        match token::fetch_advanced_info(&mut *self.client.lock().await, &p.address, &chain_index)
+            .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1519,8 +1877,13 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let time_frame = p.time_frame.as_deref().unwrap_or("4");
-        match market::fetch_portfolio_overview(&mut *self.client.lock().await, &chain_index, &p.address, time_frame)
-            .await
+        match market::fetch_portfolio_overview(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.address,
+            time_frame,
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1586,8 +1949,13 @@ impl McpServer {
         Parameters(p): Parameters<PortfolioPnlTokenPnlParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match market::fetch_portfolio_token_pnl(&mut *self.client.lock().await, &chain_index, &p.address, &p.token)
-            .await
+        match market::fetch_portfolio_token_pnl(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.address,
+            &p.token,
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1775,11 +2143,22 @@ impl McpServer {
     // ── Cross-Chain ────────────────────────────────────────────────────
 
     #[tool(
-        name = "cross_chain_chains",
-        description = "Get supported chain pairs for cross-chain bridge swaps"
+        name = "cross_chain_tokens",
+        description = "List bridgeable tokens (/supported/tokens). Both from_chain and to_chain are independently optional: omit both for the full catalog, pass from_chain only for tokens on that source chain, pass to_chain only for tokens that can reach that destination, pass both for tokens on the specific from→to route. Returns chainIndex / tokenContractAddress / tokenSymbol / decimals."
     )]
-    async fn cross_chain_chains(&self) -> Result<String, String> {
-        match cross_chain::fetch_chain_pairs(&mut *self.client.lock().await).await {
+    async fn cross_chain_tokens(
+        &self,
+        Parameters(p): Parameters<CrossChainBridgesParams>,
+    ) -> Result<String, String> {
+        let from_idx = p.from_chain.as_deref().map(crate::chains::resolve_chain);
+        let to_idx = p.to_chain.as_deref().map(crate::chains::resolve_chain);
+        match cross_chain::fetch_supported_tokens(
+            &mut *self.client.lock().await,
+            from_idx.as_deref(),
+            to_idx.as_deref(),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1787,10 +2166,21 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_bridges",
-        description = "Get available bridge protocols for cross-chain swaps"
+        description = "List bridge protocols (/supported/bridges). Both from_chain and to_chain are independently optional: omit both for the full catalog, pass from_chain only for bridges on that source chain, pass to_chain only for bridges able to reach that destination, pass both for bridges that connect the specific chain pair. Returns bridgeId / bridgeName / supportedChains[]."
     )]
-    async fn cross_chain_bridges(&self) -> Result<String, String> {
-        match cross_chain::fetch_bridges(&mut *self.client.lock().await).await {
+    async fn cross_chain_bridges(
+        &self,
+        Parameters(p): Parameters<CrossChainBridgesParams>,
+    ) -> Result<String, String> {
+        let from_idx = p.from_chain.as_deref().map(crate::chains::resolve_chain);
+        let to_idx = p.to_chain.as_deref().map(crate::chains::resolve_chain);
+        match cross_chain::fetch_supported_bridges(
+            &mut *self.client.lock().await,
+            from_idx.as_deref(),
+            to_idx.as_deref(),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1798,7 +2188,7 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_quote",
-        description = "Get cross-chain bridge quote: routes, fees, estimated time, minimum received"
+        description = "Get cross-chain bridge quote (/quote). Returns routerList[] with bridgeId, needApprove, minimumReceived, estimateTime, crossChainFee."
     )]
     async fn cross_chain_quote(
         &self,
@@ -1806,20 +2196,44 @@ impl McpServer {
     ) -> Result<String, String> {
         let from_chain_index = crate::chains::resolve_chain(&p.from_chain);
         let to_chain_index = crate::chains::resolve_chain(&p.to_chain);
-        let from_token =
-            crate::commands::swap::resolve_token_address(&from_chain_index, &p.from);
-        let to_token =
-            crate::commands::swap::resolve_token_address(&to_chain_index, &p.to);
-        let sort = p.sort.as_deref().unwrap_or("0");
+        if let Some(addr) = p.receive_address.as_deref() {
+            if let Err(e) = cross_chain::validate_receive_address(addr, &to_chain_index) {
+                return err(e);
+            }
+        }
+        let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, &p.from);
+        let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, &p.to);
+        let sort = p.sort.as_deref();
+        // Hold a single guard across resolve_amount_arg + fetch_quote so the
+        // pair runs as one atomic unit on the shared ApiClient.
+        let mut client = self.client.lock().await;
+        let raw_amount = match crate::commands::swap::resolve_amount_arg(
+            &mut client,
+            None,
+            Some(&p.readable_amount),
+            &from_token,
+            &from_chain_index,
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
         match cross_chain::fetch_quote(
-            &mut *self.client.lock().await,
+            &mut client,
             &from_chain_index,
             &to_chain_index,
             &from_token,
             &to_token,
-            &p.readable_amount,
-            p.receive_address.as_deref(),
+            &raw_amount,
+            "0.01",
+            None,
+            false,
+            None,
             sort,
+            None,
+            None,
+            p.receive_address.as_deref(),
         )
         .await
         {
@@ -1830,13 +2244,36 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_status",
-        description = "Query cross-chain order status by order ID"
+        description = "Query cross-chain status by source chain transaction hash (/status). `bridge_id` is REQUIRED — server returns 50014 without it. Returns SUCCESS / PENDING / NOT_FOUND."
     )]
     async fn cross_chain_status(
         &self,
         Parameters(p): Parameters<CrossChainStatusParams>,
     ) -> Result<String, String> {
-        match cross_chain::fetch_order_details(&mut *self.client.lock().await, &p.order_id).await {
+        let chain_idx = crate::chains::resolve_chain(&p.from_chain).to_string();
+        let tx_hash = match (p.tx_hash, p.order_id) {
+            (Some(h), None) => h,
+            (None, Some(oid)) => match cross_chain::resolve_order_id_to_tx_hash(&oid, &chain_idx)
+                .await
+            {
+                Ok(h) => h,
+                Err(e) => return err(e),
+            },
+            (Some(_), Some(_)) => {
+                return Err("provide tx_hash OR order_id, not both".to_string());
+            }
+            (None, None) => {
+                return Err("one of tx_hash or order_id is required".to_string());
+            }
+        };
+        match cross_chain::fetch_status(
+            &mut *self.client.lock().await,
+            &tx_hash,
+            Some(&chain_idx),
+            Some(&p.bridge_id),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1873,7 +2310,16 @@ impl McpServer {
         description = "List top DeFi products by APY across all chains (no filters, paginated)"
     )]
     async fn defi_list(&self, Parameters(p): Parameters<DefiListParams>) -> Result<String, String> {
-        match defi::fetch_search(&mut *self.client.lock().await, None, None, None, None, p.page_num).await {
+        match defi::fetch_search(
+            &mut *self.client.lock().await,
+            None,
+            None,
+            None,
+            None,
+            p.page_num,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1927,7 +2373,12 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiRateChartParams>,
     ) -> Result<String, String> {
-        match defi::fetch_rate_chart(&mut *self.client.lock().await, &p.investment_id, p.time_range.as_deref()).await
+        match defi::fetch_rate_chart(
+            &mut *self.client.lock().await,
+            &p.investment_id,
+            p.time_range.as_deref(),
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1942,7 +2393,13 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiTvlChartParams>,
     ) -> Result<String, String> {
-        match defi::fetch_tvl_chart(&mut *self.client.lock().await, &p.investment_id, p.time_range.as_deref()).await {
+        match defi::fetch_tvl_chart(
+            &mut *self.client.lock().await,
+            &p.investment_id,
+            p.time_range.as_deref(),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1994,8 +2451,13 @@ impl McpServer {
         Parameters(p): Parameters<DefiPositionDetailParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match defi::fetch_position_detail(&mut *self.client.lock().await, &p.address, &chain_index, &p.platform_id)
-            .await
+        match defi::fetch_position_detail(
+            &mut *self.client.lock().await,
+            &p.address,
+            &chain_index,
+            &p.platform_id,
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -2060,6 +2522,189 @@ impl McpServer {
     }
 
     #[tool(
+        name = "competition_list",
+        description = "List Agentic Wallet exclusive trading competitions. After this returns, follow okx-growth-competition SKILL.md Step 1 fixed table template structure (5 columns: Name / Chain / Time / Total Prize Pool / Details), rendered in the user's language (English canonical, or Chinese using 活动名称 / 活动链 / 时间 / 总奖池 / 详情链接). NEVER add an ID column or show activityId. Chain cell MUST hardcode 'Solana, {chainName}' prefix when chainName is not Solana."
+    )]
+    async fn competition_list(
+        &self,
+        Parameters(p): Parameters<CompetitionListParams>,
+    ) -> Result<String, String> {
+        match competition::list_for_mcp(
+            &mut *self.client.lock().await,
+            p.page_size.unwrap_or(10),
+            p.page_num.unwrap_or(1),
+            p.status,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_detail",
+        description = "Get trading competition details: rules, prize pool distribution, participation requirements, timeline. The activity_id parameter accepts EITHER the numeric id from a prior competition_list response OR the activity name / shortName — both are auto-resolved server-side. After this returns, follow okx-growth-competition SKILL.md Step 2 fixed display template structure, rendered in the user's language. Required structure: a Basic-info block (English 'Basic info:' / Chinese '基本信息：') with the chain line using hardcoded 'Solana, {chainName}' prefix, plus a Reward-categories numbered list (1./2./3./4.) with rank-breakdown tables for sections 1 and 2. Sections 3 (Participation Reward / 参与奖) and 4 (Skill Quality Award / Skill 质量奖) have specific required content — preserve meaning in any language. NEVER show activityId or other internal numeric ids to the user."
+    )]
+    async fn competition_detail(
+        &self,
+        Parameters(p): Parameters<CompetitionIdParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let resolved_id = match resolve_activity_identifier(&mut client, &p.activity_id).await {
+            Ok(id) => id,
+            Err(e) => return err(e),
+        };
+        match competition::detail_for_mcp(&mut client, &resolved_id).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_rank",
+        description = "Get one leaderboard for a trading competition: top-N entries plus the user's own rank, estimated reward, and gap to next tier. \
+The activity_id parameter accepts EITHER the numeric id from a prior competition_list response OR the activity name / shortName — both are auto-resolved server-side. \
+A competition can have multiple leaderboards (PnL%, PnL, ...) — this tool returns ONE per call, scoped by `sort_type`. \
+Before answering 'what's my rank?' style questions, call `competition_detail` first, enumerate \
+`tabConfigs[].rankFieldConfig[].sortValueMap.descend`, then call this tool ONCE PER sort_type so you cover every leaderboard. \
+After this returns, follow okx-growth-competition SKILL.md Step 5 fixed CASE 1 / CASE 2 / CASE 3 template structure, rendered in the user's language — never invent a freeform table layout, never collapse multi-leaderboard sections into one."
+    )]
+    async fn competition_rank(
+        &self,
+        Parameters(p): Parameters<CompetitionRankParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let resolved_id = match resolve_activity_identifier(&mut client, &p.activity_id).await {
+            Ok(id) => id,
+            Err(e) => return err(e),
+        };
+        let wallet = match competition::resolve_or_validate_wallet_for_activity(
+            &mut client,
+            &resolved_id,
+            p.wallet.as_deref(),
+        )
+        .await
+        {
+            Ok(addr) => addr,
+            Err(e) => return err(e),
+        };
+        match competition::rank_for_mcp(
+            &mut client,
+            &resolved_id,
+            &wallet,
+            p.sort_type.unwrap_or(1),
+            p.limit.unwrap_or(20),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_user_status",
+        description = "Check user's competition participation status and reward eligibility (joinStatus, rewardStatus). Omit activity_name to check all activities including ended ones. Identify competitions by activity name in subsequent tool calls — internal numeric ids are intentionally not exposed."
+    )]
+    async fn competition_user_status(
+        &self,
+        Parameters(p): Parameters<CompetitionUserStatusParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
+            Ok(pair) => pair,
+            Err(e) => return err(e),
+        };
+        let activity_id = match p.activity_name.as_deref() {
+            Some(name) => match competition::resolve_activity_id_by_name(&mut client, name).await {
+                Ok(id) => Some(id),
+                Err(e) => return err(e),
+            },
+            None => None,
+        };
+        match competition::user_status_all_for_mcp(
+            &mut client,
+            activity_id.as_deref(),
+            &evm_wallet,
+            &sol_wallet,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_join",
+        description = "Register user for a trading competition. Requires wallet login. Pass activity_name from a prior competition_list result; internal ids are resolved server-side. \
+BEFORE calling this tool, you MUST first call competition_user_status for the same activity to read the current account's joinStatus: \
+- joinStatus=1 → current account already registered, do NOT call this tool, render Scenario A template from SKILL.md Step 3 instead. \
+- joinStatus=0 → safe to call. \
+After this returns `joined: true`, render the SKILL.md Step 3 'Successful registration' fixed template structure (lead phrase + dual-chain sentence + ranking note + closing question + bracketed disclaimer on its own line) in the user's language. \
+On error code=11016 (Participation limit reached) → another account in the same login is registered; render Scenario B template (find the registered account by iterating other accounts in wallet_store and calling competition_user_status until one returns joinStatus=1)."
+    )]
+    async fn competition_join(
+        &self,
+        Parameters(p): Parameters<CompetitionJoinParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
+            Ok(pair) => pair,
+            Err(e) => return err(e),
+        };
+        let activity_id =
+            match competition::resolve_activity_id_by_name(&mut client, &p.activity_name).await {
+                Ok(id) => id,
+                Err(e) => return err(e),
+            };
+        match competition::join(
+            &mut client,
+            &activity_id,
+            &evm_wallet,
+            &sol_wallet,
+            &p.chain_index,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_claim",
+        description = "Atomic competition reward claim: fetch calldata → sign with TEE session → broadcast on-chain → return txHash array. Requires wallet login. Pass activity_name from a prior competition_list / competition_user_status result; internal ids are resolved server-side. Do NOT chain `gateway_broadcast` after this — the on-chain submission already happened inside this tool."
+    )]
+    async fn competition_claim(
+        &self,
+        Parameters(p): Parameters<CompetitionClaimParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
+            Ok(pair) => pair,
+            Err(e) => return err(e),
+        };
+        let activity_id =
+            match competition::resolve_activity_id_by_name(&mut client, &p.activity_name).await {
+                Ok(id) => id,
+                Err(e) => return err(e),
+            };
+        match competition::claim_and_submit(
+            &mut client,
+            &activity_id,
+            &evm_wallet,
+            &sol_wallet,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
         name = "defi_collect",
         description = "One-step DeFi reward claim. Internally handles: position-detail lookup, reward check, expectOutputList construction, calldata generation. Skips if no rewards available."
     )]
@@ -2079,6 +2724,53 @@ impl McpServer {
         )
         .await
         {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── Gas Station ─────────────────────────────────────────────────
+
+    #[tool(
+        name = "gas_station_update_default_token",
+        description = "Update the default Gas Token for Gas Station on a specific chain. Gas Station allows paying gas fees with stablecoins (USDT/USDC/USDG) via a third-party Relayer."
+    )]
+    async fn gas_station_update_default_token(
+        &self,
+        Parameters(p): Parameters<GasStationUpdateDefaultTokenParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update_default_token(&p.chain, &p.gas_token_address).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "gas_station_enable",
+        description = "Enable Gas Station for a specific chain (DB flag only, no on-chain action). Requires that 7702 delegation already exists on-chain (set earlier via the first-time Gas Station flow). If the chain was never delegated, backend returns a msg in the response body explaining that a first-time enable via wallet send is required."
+    )]
+    async fn gas_station_enable(
+        &self,
+        Parameters(p): Parameters<GasStationDisableParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update(&p.chain, true).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "gas_station_disable",
+        description = "Disable Gas Station for a specific chain (DB flag only, no on-chain action). The 7702 delegation on-chain is preserved, so re-enabling later does not require a new upgrade. To switch default gas token, use gas_station_update_default_token instead."
+    )]
+    async fn gas_station_disable(
+        &self,
+        Parameters(p): Parameters<GasStationDisableParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update(&p.chain, false).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -2109,9 +2801,10 @@ impl McpServer {
 
         // Symbol/name search path — return candidates for user selection
         if p.address.is_none() {
-            let query = p.query.as_deref().ok_or_else(|| {
-                "Either 'address' or 'query' is required".to_string()
-            })?;
+            let query = p
+                .query
+                .as_deref()
+                .ok_or_else(|| "Either 'address' or 'query' is required".to_string())?;
             return match workflows::token_research::search_and_select(
                 &mut *self.client.lock().await,
                 query,
@@ -2125,7 +2818,10 @@ impl McpServer {
         }
 
         // Direct address path — full workflow
-        let address = p.address.as_deref().unwrap();
+        let address = p
+            .address
+            .as_deref()
+            .expect("address is Some after is_none() early-return guard above");
         match workflows::token_research::fetch_and_assemble(
             &mut *self.client.lock().await,
             address,
@@ -2237,9 +2933,8 @@ impl McpServer {
         // sent names ("ethereum,solana") or indices — matches CLI output shape.
         // `fetch_and_assemble` derives `primary_chain_index` internally so the
         // MCP and CLI entry points cannot drift.
-        let chains_str = crate::chains::resolve_chains(
-            &p.chains.unwrap_or_else(|| "1,501".to_string()),
-        );
+        let chains_str =
+            crate::chains::resolve_chains(&p.chains.unwrap_or_else(|| "1,501".to_string()));
         match workflows::portfolio::fetch_and_assemble(
             &mut *self.client.lock().await,
             &p.address,

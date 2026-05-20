@@ -141,6 +141,20 @@ pub enum SwapCommand {
         /// Enable MEV protection
         #[arg(long, default_value_t = false)]
         mev_protection: bool,
+        /// Gas token contract address for Gas Station payment (from tokenList).
+        /// Applied to both approve and swap transactions when set.
+        #[arg(long)]
+        gas_token_address: Option<String>,
+        /// Relayer ID for Gas Station (from tokenList). Must be paired with --gas-token-address.
+        #[arg(long)]
+        relayer_id: Option<String>,
+        /// Enable Gas Station first-time activation or re-enable. Pins --gas-token-address as default.
+        #[arg(long, default_value_t = false)]
+        enable_gas_station: bool,
+        /// Force execution: skip backend risk warning 81362 (skipWarning=true on broadcast).
+        /// Use only after explicit user confirmation.
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 }
 
@@ -166,7 +180,15 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             )
             .await?;
             output::success(
-                fetch_quote(&mut client, &chain_index, &from, &to, &raw_amount, &swap_mode).await?,
+                fetch_quote(
+                    &mut client,
+                    &chain_index,
+                    &from,
+                    &to,
+                    &raw_amount,
+                    &swap_mode,
+                )
+                .await?,
             );
         }
         SwapCommand::Swap {
@@ -226,8 +248,14 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_check_approvals(&mut client, &chain_index, &address, &token, spender.as_deref())
-                    .await?,
+                fetch_check_approvals(
+                    &mut client,
+                    &chain_index,
+                    &address,
+                    &token,
+                    spender.as_deref(),
+                )
+                .await?,
             );
         }
         SwapCommand::Chains => {
@@ -251,6 +279,10 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             tips,
             max_auto_slippage,
             mev_protection,
+            gas_token_address,
+            relayer_id,
+            enable_gas_station,
+            force,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
@@ -275,6 +307,10 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
                 tips.as_deref(),
                 max_auto_slippage.as_deref(),
                 mev_protection,
+                gas_token_address.as_deref(),
+                relayer_id.as_deref(),
+                enable_gas_station,
+                force,
             )
             .await?;
         }
@@ -378,6 +414,14 @@ static TOKEN_MAP: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::new(|
             ("usdt", "0x779ded0c9e1022225f8e0630b35a9b54be713736"),
             ("weth", "0x5a77f1443d16ee5761d310e38b62f77f726bc71c"),
             ("wokb", "0xe538905cf8410324e03a5a23c1c177a474d59b2b"),
+        ])),
+        // X Layer Testnet (1952)
+        ("1952", HashMap::from([
+            ("okb", "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+            ("native", "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+            ("usdc", "0xcb8bf24c6ce16ad21d707c9505421a17f2bec79d"),
+            ("usdt", "0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c"),
+            ("usdg", "0xa78e2baabaf5c4f36b7fc394725deb68d332eec1"),
         ])),
         // Linea (59144)
         ("59144", HashMap::from([
@@ -538,7 +582,7 @@ pub(crate) fn readable_to_minimal_str(amount: &str, decimal: u32) -> Result<Stri
 
 /// Resolve the effective raw amount from either --amount (raw) or --readable-amount (human-readable).
 /// If --readable-amount is given, fetches token decimals via token info and converts.
-async fn resolve_amount_arg(
+pub(crate) async fn resolve_amount_arg(
     client: &mut ApiClient,
     amount: Option<&str>,
     readable_amount: Option<&str>,
@@ -716,10 +760,7 @@ fn validate_tips(tips: &str) -> Result<()> {
         .parse()
         .map_err(|_| anyhow::anyhow!("--tips must be a number in SOL, got \"{}\"", tips))?;
     if val < 1e-10 {
-        bail!(
-            "--tips must be at least 0.0000000001 SOL, got \"{}\"",
-            tips
-        );
+        bail!("--tips must be at least 0.0000000001 SOL, got \"{}\"", tips);
     }
     if val > 2.0 {
         bail!("--tips must be at most 2 SOL, got \"{}\"", tips);
@@ -1059,8 +1100,12 @@ async fn wallet_contract_call(
     aa_dex_token_amount: Option<&str>,
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
+    force: bool,
 ) -> Result<Value> {
-    let tx_hash = crate::commands::agentic_wallet::transfer::execute_contract_call(
+    let resp = crate::commands::agentic_wallet::transfer::execute_contract_call(
         to,
         chain,
         amt,
@@ -1072,11 +1117,16 @@ async fn wallet_contract_call(
         aa_dex_token_amount,
         mev_protection,
         jito_unsigned_tx,
-        false, // force
-        None,  // tx_source: not cross-chain
+        force,
+        None, // tx_source: not cross-chain
+        gas_token_address,
+        relayer_id,
+        enable_gas_station,
+        Some("dex"), // agent_biz_type: swap flow
+        None,        // agent_skill_name
     )
     .await?;
-    Ok(json!({ "txHash": tx_hash }))
+    Ok(json!({ "txHash": resp.tx_hash, "orderId": resp.order_id }))
 }
 
 /// Extract txHash from `wallet contract-call` output data.
@@ -1085,6 +1135,17 @@ fn extract_tx_hash(data: &Value) -> Result<String> {
         .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow::anyhow!("missing txHash in contract-call output"))
+}
+
+/// Extract (txHash, orderId) from `wallet contract-call` output data. orderId
+/// may be empty for non-Gas-Station broadcasts; only txHash is required.
+fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
+    let tx_hash = data["txHash"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("missing txHash in contract-call output"))?;
+    let order_id = data["orderId"].as_str().unwrap_or("").to_string();
+    Ok((tx_hash, order_id))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1101,6 +1162,10 @@ async fn cmd_execute(
     tips: Option<&str>,
     max_auto_slippage: Option<&str>,
     mev_protection: bool,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
+    force: bool,
 ) -> Result<()> {
     use crate::chains;
 
@@ -1112,6 +1177,38 @@ async fn cmd_execute(
     validate_swap_params(&chain_index, &from_token, &to_token)?;
     let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
 
+    // Routing:
+    //   non-native + no Gas Station params + chain in support list  → batch path
+    //   any condition fails                                         → single-tx path
+    let batch_supported = !is_from_native
+        && !enable_gas_station
+        && gas_token_address.is_none()
+        && relayer_id.is_none()
+        && is_chain_batch_supported(&chain_index).await;
+    if batch_supported {
+        return cmd_execute_batch(
+            client,
+            &from_token,
+            &to_token,
+            amount,
+            &chain_index,
+            wallet_address,
+            slippage,
+            gas_level,
+            swap_mode,
+            tips,
+            max_auto_slippage,
+            mev_protection,
+            force,
+        )
+        .await;
+    }
+
+    // Gas Station `enableGasStation=true` must only fire on the FIRST gas-consuming
+    // tx of this flow (revoke / approve / swap, whichever runs first). After that,
+    // the account is activated — subsequent txs only need gasTokenAddress + relayerId.
+    let mut gs_enable_remaining = enable_gas_station;
+
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][cmd_execute] from_token={}, to_token={}, amount={}, chain={} (chain_index={}, family={}), wallet={}, slippage={:?}, gas_level={}, swap_mode={}, tips={:?}, max_auto_slippage={:?}, mev_protection={}",
@@ -1121,6 +1218,7 @@ async fn cmd_execute(
 
     // ── 1. Approve (EVM + non-native only) ──────────────────────────
     let mut approve_tx_hash: Option<String> = None;
+    let mut approve_order_id: Option<String> = None;
 
     if family == "evm" && !is_from_native {
         // Fetch approve-transaction first to get dexContractAddress (spender) and calldata
@@ -1157,25 +1255,25 @@ async fn cmd_execute(
             .and_then(|t| t["spendable"].as_str())
             .unwrap_or("0");
 
+        let (needs_approve, needs_revoke) =
+            classify_approve_action(&chain_index, &from_token, spendable, amount);
+
         if cfg!(feature = "debug-log") {
             eprintln!(
-                "[DEBUG][cmd_execute] spendable={}, amount={}, needs_approve={}",
-                spendable,
-                amount,
-                is_allowance_insufficient(spendable, amount)
+                "[DEBUG][cmd_execute] spendable={}, amount={}, needs_approve={}, needs_revoke={}",
+                spendable, amount, needs_approve, needs_revoke
             );
         }
 
-        if is_allowance_insufficient(spendable, amount) {
-            // USDT pattern: non-zero but insufficient → revoke first
-            let spendable_nonzero = spendable != "0" && !spendable.is_empty();
-            if spendable_nonzero {
+        if needs_approve {
+            if needs_revoke {
                 if cfg!(feature = "debug-log") {
                     eprintln!("[swap execute] revoking stale approval (USDT pattern)...");
                 }
                 let revoke_data = fetch_approve(client, &chain_index, &from_token, "0").await?;
                 let revoke_calldata = extract_approve_calldata(&revoke_data)?;
 
+                let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
                 let result = wallet_contract_call(
                     &from_token,
                     &chain_index,
@@ -1187,16 +1285,24 @@ async fn cmd_execute(
                     None,
                     false,
                     None,
+                    gas_token_address,
+                    relayer_id,
+                    gs_enable_this_call,
+                    force,
                 )
                 .await?;
-                // We don't need the revoke txHash in output, just ensure it succeeded
-                extract_tx_hash(&result)?;
+                let revoke_tx_hash = extract_tx_hash(&result)?;
+                // Approve must wait for revoke to confirm — sending approve
+                // before the revoke is mined leaves the original allowance
+                // in place and the swap will revert.
+                wait_tx_onchain(client, &revoke_tx_hash, &chain_index).await?;
             }
 
             if cfg!(feature = "debug-log") {
                 eprintln!("[swap execute] approving token...");
             }
             // Reuse the approve calldata already fetched above
+            let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
             let result = wallet_contract_call(
                 &from_token,
                 &chain_index,
@@ -1208,9 +1314,20 @@ async fn cmd_execute(
                 None,
                 false,
                 None,
+                gas_token_address,
+                relayer_id,
+                gs_enable_this_call,
+                force,
             )
             .await?;
-            approve_tx_hash = Some(extract_tx_hash(&result)?);
+            let (tx_hash, order_id) = extract_tx_hash_and_order_id(&result)?;
+            // Swap must see the approve on-chain before fetching the swap tx —
+            // otherwise the router quote will reject the route.
+            wait_tx_onchain(client, &tx_hash, &chain_index).await?;
+            approve_tx_hash = Some(tx_hash);
+            if !order_id.is_empty() {
+                approve_order_id = Some(order_id);
+            }
         }
     }
 
@@ -1244,16 +1361,24 @@ async fn cmd_execute(
     let tx = &swap_result["tx"];
 
     // ── 5. Sign & broadcast swap tx via wallet contract-call ─────────
-    let swap_tx_hash = if family == "solana" {
+    let (swap_tx_hash, swap_order_id) = if family == "solana" {
         let unsigned_tx = tx["data"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing tx.data (unsigned tx) in swap response"))?;
         let to_addr = tx["to"].as_str().unwrap_or("");
 
-        // Jito MEV protection
-        let jito_tx = swap_result["jitoCalldata"].as_str();
+        // Jito MEV protection: `/swap` returns jitoCalldata nested inside
+        // tx.signatureData[0] as a JSON string, not at the top level.
+        let jito_tx_owned: Option<String> = tx["signatureData"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+            .and_then(|v| v["jitoCalldata"].as_str().map(str::to_string));
+        let jito_tx = jito_tx_owned.as_deref();
         let effective_mev = jito_tx.is_some() || mev_protection;
 
+        let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
         let result = wallet_contract_call(
             to_addr,
             &chain_index,
@@ -1265,9 +1390,13 @@ async fn cmd_execute(
             None,
             effective_mev,
             jito_tx,
+            gas_token_address,
+            relayer_id,
+            gs_enable_this_call,
+            force,
         )
         .await?;
-        extract_tx_hash(&result)?
+        extract_tx_hash_and_order_id(&result)?
     } else {
         let to_addr = tx["to"]
             .as_str()
@@ -1280,9 +1409,9 @@ async fn cmd_execute(
         // Gas limit from swap response
         let gas_limit_str = tx["gas"].as_str();
 
-        // XLayer AA DEX params
+        // XLayer AA DEX params (mainnet 196 + testnet 1952)
         let from_token_amount;
-        let (aa_addr, aa_amount) = if chain_index == "196" {
+        let (aa_addr, aa_amount) = if chain_index == "196" || chain_index == "1952" {
             from_token_amount = swap_result["routerResult"]["fromTokenAmount"]
                 .as_str()
                 .unwrap_or(amount)
@@ -1292,6 +1421,7 @@ async fn cmd_execute(
             (None, None)
         };
 
+        let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
         let result = wallet_contract_call(
             to_addr,
             &chain_index,
@@ -1303,9 +1433,13 @@ async fn cmd_execute(
             aa_amount,
             mev_protection,
             None,
+            gas_token_address,
+            relayer_id,
+            gs_enable_this_call,
+            force,
         )
         .await?;
-        extract_tx_hash(&result)?
+        extract_tx_hash_and_order_id(&result)?
     };
 
     // ── 6. Output ────────────────────────────────────────────────────
@@ -1316,7 +1450,7 @@ async fn cmd_execute(
         );
     }
     let router_result = &swap_result["routerResult"];
-    output::success(json!({
+    let mut out = json!({
         "approveTxHash": approve_tx_hash,
         "swapTxHash": swap_tx_hash,
         "fromToken": router_result["fromToken"],
@@ -1325,12 +1459,286 @@ async fn cmd_execute(
         "toAmount": router_result["toTokenAmount"],
         "priceImpact": router_result["priceImpactPercent"],
         "gasUsed": router_result["estimateGasFee"],
-    }));
+    });
+    // Only emit orderId fields when Gas Station was actually used (non-empty).
+    // Normal (native-gas) swaps return empty orderId and shouldn't pollute output.
+    if let Some(ref oid) = approve_order_id {
+        out["approveOrderId"] = json!(oid);
+    }
+    if !swap_order_id.is_empty() {
+        out["swapOrderId"] = json!(swap_order_id);
+    }
+    output::success(out);
 
     Ok(())
 }
 
+// ── Batch unsignedInfo + broadcast ───────────────────────────────────
+// Build [revoke?, approve?, swap], one batch unsignedInfo call, sign
+// locally, dispatch via batch broadcast (or single broadcast if backend
+// merged to len=1 — XLayer EIP-5792).
+
+/// Returns `false` on any failure so the caller falls through to single-tx.
+async fn is_chain_batch_supported(chain_index: &str) -> bool {
+    let access_token = match crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await
+    {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let mut client = match crate::wallet_api::WalletApiClient::new() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match client.batch_support_chain_index_list(&access_token).await {
+        // chain_index in list → supports batch
+        // not in list or request error → not supported (fall through to single-tx)
+        Ok(list) => list.iter().any(|c| c == chain_index),
+        Err(_) => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_execute_batch(
+    client: &mut ApiClient,
+    from_token: &str,
+    to_token: &str,
+    amount: &str,
+    chain_index: &str,
+    wallet_address: &str,
+    slippage: Option<&str>,
+    gas_level: &str,
+    swap_mode: &str,
+    tips: Option<&str>,
+    max_auto_slippage: Option<&str>,
+    mev_protection: bool,
+    force: bool,
+) -> Result<()> {
+    use crate::commands::agentic_wallet::transfer::{batch_sign_and_broadcast, BatchTxParams};
+
+    // 1. Approve check (gates revoke / approve / swap construction).
+    let approve_data = fetch_approve(client, chain_index, from_token, amount).await?;
+    let approve_obj = unwrap_api_array(&approve_data);
+    let approve_calldata = approve_obj["data"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("missing 'data' field in approve response"))?;
+    let dex_contract_address = approve_obj["dexContractAddress"]
+        .as_str()
+        .map(|s| s.to_string());
+
+    let approvals = fetch_check_approvals(
+        client,
+        chain_index,
+        wallet_address,
+        from_token,
+        dex_contract_address.as_deref(),
+    )
+    .await?;
+    let spendable = approvals
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|r| r["tokens"].as_array())
+        .and_then(|tokens| tokens.first())
+        .and_then(|t| t["spendable"].as_str())
+        .unwrap_or("0")
+        .to_string();
+
+    let (needs_approve, needs_revoke) =
+        classify_approve_action(chain_index, from_token, &spendable, amount);
+
+    // 2. Fetch swap calldata.
+    let swap_data = fetch_swap(
+        client,
+        chain_index,
+        from_token,
+        to_token,
+        amount,
+        slippage,
+        wallet_address,
+        swap_mode,
+        gas_level,
+        tips,
+        max_auto_slippage,
+    )
+    .await?;
+    let swap_result = unwrap_api_array(&swap_data);
+    if swap_result.is_null() {
+        bail!("swap API returned empty result");
+    }
+    let swap_tx = &swap_result["tx"];
+    let swap_to = swap_tx["to"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing tx.to in swap response"))?
+        .to_string();
+    let swap_input_data = swap_tx["data"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing tx.data in swap response"))?
+        .to_string();
+    let swap_value_wei = swap_tx["value"].as_str().unwrap_or("0").to_string();
+    let swap_gas_limit = swap_tx["gas"].as_str().map(|s| s.to_string());
+
+    // XLayer (196) AA DEX params, mirrored from the single-tx path.
+    let (aa_addr, aa_amount) = if chain_index == "196" {
+        let amt = swap_result["routerResult"]["fromTokenAmount"]
+            .as_str()
+            .unwrap_or(amount)
+            .to_string();
+        (Some(from_token.to_string()), Some(amt))
+    } else {
+        (None, None)
+    };
+
+    // Layer 4 fallback:
+    //   allowance >= amount (no approve, no revoke needed) → single-tx broadcast (skip batch)
+    //   allowance insufficient                             → continue to batch construction
+    if !needs_approve && !needs_revoke {
+        let result = wallet_contract_call(
+            &swap_to,
+            chain_index,
+            &swap_value_wei,
+            Some(&swap_input_data),
+            None, // unsigned_tx (Solana only)
+            swap_gas_limit.as_deref(),
+            aa_addr.as_deref(),
+            aa_amount.as_deref(),
+            mev_protection,
+            None,  // jito_unsigned_tx
+            None,  // gas_token_address (no GS in batch)
+            None,  // relayer_id
+            false, // enable_gas_station
+            force,
+        )
+        .await?;
+        let swap_tx_hash = extract_tx_hash(&result)?;
+        let router_result = &swap_result["routerResult"];
+        let out = json!({
+            "approveTxHash": Value::Null,
+            "swapTxHash": swap_tx_hash,
+            "fromToken": router_result["fromToken"],
+            "toToken": router_result["toToken"],
+            "fromAmount": router_result["fromTokenAmount"],
+            "toAmount": router_result["toTokenAmount"],
+            "priceImpact": router_result["priceImpactPercent"],
+            "gasUsed": router_result["estimateGasFee"],
+        });
+        output::success(out);
+        return Ok(());
+    }
+
+    // Build elements: [revoke?, approve, swap].
+    let mut tx_params: Vec<BatchTxParams> = Vec::new();
+    if needs_revoke {
+        let revoke_data = fetch_approve(client, chain_index, from_token, "0").await?;
+        let revoke_calldata = extract_approve_calldata(&revoke_data)?;
+        tx_params.push(BatchTxParams {
+            to_addr: from_token.to_string(),
+            value: "0".to_string(),
+            contract_addr: Some(from_token.to_string()),
+            input_data: Some(revoke_calldata),
+            ..Default::default()
+        });
+    }
+    tx_params.push(BatchTxParams {
+        to_addr: from_token.to_string(),
+        value: "0".to_string(),
+        contract_addr: Some(from_token.to_string()),
+        input_data: Some(approve_calldata),
+        ..Default::default()
+    });
+    tx_params.push(BatchTxParams {
+        to_addr: swap_to.clone(),
+        value: swap_value_wei,
+        // Swap router must appear in unsignedInfo's contractAddr field
+        // (same as single-tx execute_contract_call).
+        contract_addr: Some(swap_to),
+        input_data: Some(swap_input_data),
+        gas_limit: swap_gas_limit,
+        aa_dex_token_addr: aa_addr,
+        aa_dex_token_amount: aa_amount,
+    });
+
+    let responses = batch_sign_and_broadcast(
+        chain_index,
+        Some(wallet_address),
+        &tx_params,
+        true,        // is_contract_call
+        mev_protection,
+        force,
+        None,        // tx_source — backend coerces with parseInt; omit to match single-tx path
+        Some("dex"), // agent_biz_type
+        Some("okx-dex-swap-batch"),
+    )
+    .await?;
+
+    // Response length contract:
+    //   merging chain (X Layer 196/1952) → response.len ∈ {1, request_len}
+    //   non-merging EVM                  → response.len == request_len
+    //   anything else                    → bail
+    let merging_chain = crate::chains::merges_batch_unsignedinfo(chain_index);
+    let length_ok = if merging_chain {
+        responses.len() == 1 || responses.len() == tx_params.len()
+    } else {
+        responses.len() == tx_params.len()
+    };
+    if !length_ok {
+        bail!(
+            "batch broadcast on chain {chain_index}: response length {} not in expected set \
+             (request length {}, merging chain={merging_chain})",
+            responses.len(),
+            tx_params.len(),
+        );
+    }
+
+    let hashes: Vec<String> = responses.iter().map(|r| r.tx_hash.clone()).collect();
+    let (approve_tx_hash, swap_tx_hash) = extract_batch_hashes(&hashes, needs_approve, needs_revoke);
+    if cfg!(feature = "debug-log") && needs_revoke && responses.len() >= 2 {
+        eprintln!(
+            "[DEBUG][cmd_execute_batch] revoke txHash={} (silent)",
+            responses[0].tx_hash
+        );
+    }
+
+    let router_result = &swap_result["routerResult"];
+    let out = json!({
+        "approveTxHash": approve_tx_hash,
+        "swapTxHash": swap_tx_hash,
+        "fromToken": router_result["fromToken"],
+        "toToken": router_result["toToken"],
+        "fromAmount": router_result["fromTokenAmount"],
+        "toAmount": router_result["toTokenAmount"],
+        "priceImpact": router_result["priceImpactPercent"],
+        "gasUsed": router_result["estimateGasFee"],
+    });
+    output::success(out);
+    Ok(())
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/// Map batch hashes (input order `[revoke?, approve, swap]`) to
+/// `(approveTxHash, swapTxHash)`. `len==1` = X Layer merge (only swap hash
+/// survives). Caller must pre-validate `hashes.len()`.
+pub(crate) fn extract_batch_hashes(
+    hashes: &[String],
+    needs_approve: bool,
+    needs_revoke: bool,
+) -> (Option<String>, String) {
+    debug_assert!(!hashes.is_empty(), "responses must be non-empty");
+    // len == 1 → X Layer merge: approve folded into swap, only swap hash exists.
+    if hashes.len() == 1 {
+        return (None, hashes[0].clone());
+    }
+    // len > 1 → no merge: swap is always last; approve sits at idx 1 (with revoke
+    // at idx 0) or idx 0 (no revoke); surfaced only when needs_approve.
+    let swap = hashes.last().expect("non-empty").clone();
+    let approve = if needs_approve {
+        let idx = if needs_revoke { 1 } else { 0 };
+        Some(hashes[idx].clone())
+    } else {
+        None
+    };
+    (approve, swap)
+}
 
 /// If the API returns an array, extract the first element; otherwise return as-is.
 fn unwrap_api_array(data: &Value) -> Value {
@@ -1353,7 +1761,113 @@ fn extract_approve_calldata(approve_data: &Value) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("missing 'data' field in approve response"))
 }
 
+/// Tokens that require revoke-to-zero before re-approval (USDT-pattern
+/// `approve` race-condition guard). Keyed by `chain_index`; values are
+/// lowercase token addresses.
+static REVOKE_REQUIRED_TOKENS: LazyLock<HashMap<&str, &[&str]>> = LazyLock::new(|| {
+    HashMap::from([(
+        // Ethereum
+        "1",
+        &[
+            "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "0x5a98fcbea516cf06857215779fd812ca3bef1b32",
+            "0x1776e1f26f98b1a5df9cd347953a26dd3cb46671",
+            "0xd3e4ba569045546d09cf021ecc5dfe42b1d7f6e4",
+        ][..],
+    )])
+});
+
+/// True if `(chain_index, token)` is a known USDT-pattern token and the caller
+/// must revoke before re-approving.
+fn token_requires_revoke(chain_index: &str, token: &str) -> bool {
+    let token_lc = token.to_lowercase();
+    REVOKE_REQUIRED_TOKENS
+        .get(chain_index)
+        .is_some_and(|addrs| addrs.iter().any(|a| a.to_lowercase() == token_lc))
+}
+
+/// Per-chain confirmation timeout for [`wait_tx_onchain`]. Picked to cover a
+/// typical block time with a small buffer; falls back to a generous default
+/// for unknown chains so the poller still bounds.
+fn tx_confirmation_timeout(chain_index: &str) -> std::time::Duration {
+    use std::time::Duration;
+    match chain_index {
+        // ETH, Linea
+        "1" | "59144" => Duration::from_secs(20),
+        _ => Duration::from_secs(10),
+    }
+}
+
+/// Poll the public DEX tx-history endpoint until the tx confirms on-chain
+/// (`txStatus == "success"`) or the per-chain timeout elapses.
+///
+/// GET `/api/v6/dex/post-transaction/transaction-detail-by-txhash`
+async fn wait_tx_onchain(client: &mut ApiClient, tx_hash: &str, chain_index: &str) -> Result<()> {
+    use std::time::{Duration, Instant};
+
+    let timeout = tx_confirmation_timeout(chain_index);
+    let poll_interval = Duration::from_secs(1);
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        let result = client
+            .get(
+                "/api/v6/dex/post-transaction/transaction-detail-by-txhash",
+                &[("chainIndex", chain_index), ("txHash", tx_hash)],
+            )
+            .await;
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][wait_tx_onchain] tx={} chain={} response={:?}",
+                tx_hash, chain_index, result
+            );
+        }
+
+        if let Ok(data) = result {
+            let detail = unwrap_api_array(&data);
+            let status = detail["txStatus"].as_str().unwrap_or("");
+            if status.eq_ignore_ascii_case("success") {
+                return Ok(());
+            }
+            if status.eq_ignore_ascii_case("fail") {
+                bail!("tx {} failed on-chain (chain={})", tx_hash, chain_index);
+            }
+        }
+
+        if Instant::now() >= deadline {
+            bail!(
+                "tx {} not confirmed on-chain within {}s (chain={})",
+                tx_hash,
+                timeout.as_secs(),
+                chain_index
+            );
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
+}
+
 /// Compare allowance (spendable) against required amount.
+/// Single source of truth for approve / revoke gating. Used by both single-tx
+/// and batch swap paths to guarantee identical decisions for identical inputs.
+///
+/// Returns `(needs_approve, needs_revoke)`:
+///   spendable >= amount                                      → (false, false)
+///   spendable == 0                                           → (true,  false)
+///   0 < spendable < amount, non-USDT-pattern token           → (true,  false)
+///   0 < spendable < amount, USDT-pattern token (whitelist)   → (true,  true)
+pub(crate) fn classify_approve_action(
+    chain_index: &str,
+    token: &str,
+    spendable: &str,
+    amount: &str,
+) -> (bool, bool) {
+    let needs_approve = is_allowance_insufficient(spendable, amount);
+    let spendable_nonzero = spendable != "0" && !spendable.is_empty();
+    let needs_revoke =
+        needs_approve && spendable_nonzero && token_requires_revoke(chain_index, token);
+    (needs_approve, needs_revoke)
+}
+
 /// Both are decimal strings in minimal units. Returns true if allowance < amount.
 pub(crate) fn is_allowance_insufficient(spendable: &str, amount: &str) -> bool {
     // If spendable is very long (uint256 max approval = 78 digits), treat as sufficient.
@@ -1385,6 +1899,23 @@ mod tests {
     }
 
     #[test]
+    fn classify_approve_action_truth_table() {
+        const USDT_ETH: &str = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+        const USDC_ETH: &str = "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48";
+
+        // spendable >= amount → no approve / no revoke (Layer 4 case)
+        assert_eq!(classify_approve_action("1", USDT_ETH, "1000000", "500000"), (false, false));
+        // spendable == 0 → approve only (no revoke even for USDT)
+        assert_eq!(classify_approve_action("1", USDT_ETH, "0", "1000000"), (true, false));
+        // 0 < spendable < amount, USDT-pattern token → revoke + approve
+        assert_eq!(classify_approve_action("1", USDT_ETH, "100", "1000000"), (true, true));
+        // 0 < spendable < amount, non-USDT-pattern token (USDC) → approve only
+        assert_eq!(classify_approve_action("1", USDC_ETH, "100", "1000000"), (true, false));
+        // 0 < spendable < amount, USDT but on chain without entry → approve only
+        assert_eq!(classify_approve_action("56", USDT_ETH, "100", "1000000"), (true, false));
+    }
+
+    #[test]
     fn test_readable_to_minimal_str() {
         // USDC: 6 decimals
         assert_eq!(readable_to_minimal_str("0.1", 6).unwrap(), "100000");
@@ -1403,10 +1934,10 @@ mod tests {
         );
         // SOL: 9 decimals
         assert_eq!(readable_to_minimal_str("1", 9).unwrap(), "1000000000");
-        // 超出精度且非零 → error
+        // Excess fractional digits with non-zero content → error
         assert!(readable_to_minimal_str("0.1234567", 6).is_err());
         assert!(readable_to_minimal_str("1.00000002", 2).is_err());
-        // 超出精度但全是零 → ok
+        // Excess fractional digits that are all zero → ok
         assert_eq!(readable_to_minimal_str("1.000", 2).unwrap(), "100");
         assert_eq!(readable_to_minimal_str("0.1230000", 6).unwrap(), "123000");
     }
@@ -1862,5 +2393,101 @@ mod tests {
         assert!(err.to_string().contains("--gas-limit"));
         let err2 = validate_non_negative_integer("-1", "aa-dex-token-amount").unwrap_err();
         assert!(err2.to_string().contains("--aa-dex-token-amount"));
+    }
+
+    // ── extract_tx_hash_and_order_id (Gas Station orderId propagation) ──
+
+    #[test]
+    fn extract_tx_hash_and_order_id_both_present() {
+        let data = json!({ "txHash": "0xabc", "orderId": "ord_123" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "0xabc");
+        assert_eq!(order_id, "ord_123");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_order_id_optional() {
+        // Non-Gas-Station path: orderId is absent → defaults to empty string, no error.
+        let data = json!({ "txHash": "0xabc" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "0xabc");
+        assert_eq!(order_id, "");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_order_id_empty_string() {
+        // Backend may return empty orderId explicitly for non-GS broadcasts.
+        let data = json!({ "txHash": "0xabc", "orderId": "" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "0xabc");
+        assert_eq!(order_id, "");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_empty_tx_hash_still_ok() {
+        // GS async: txHash is empty string but present; orderId carries the state.
+        let data = json!({ "txHash": "", "orderId": "ord_async" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "");
+        assert_eq!(order_id, "ord_async");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_errors_when_tx_hash_missing() {
+        let data = json!({ "orderId": "ord_123" });
+        assert!(extract_tx_hash_and_order_id(&data).is_err());
+    }
+
+    // ── extract_batch_hashes (input order: [revoke?, approve, swap]) ──
+
+    #[test]
+    fn batch_hashes_full_merge_xlayer_5792() {
+        // XLayer / smart-account: backend collapses [approve, swap] into one tx.
+        let hashes = vec!["0xmerged".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, false);
+        assert_eq!(approve, None);
+        assert_eq!(swap, "0xmerged");
+    }
+
+    #[test]
+    fn batch_hashes_full_merge_with_revoke() {
+        // [revoke, approve, swap] collapsed into one tx.
+        let hashes = vec!["0xmerged".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, true);
+        assert_eq!(approve, None);
+        assert_eq!(swap, "0xmerged");
+    }
+
+    #[test]
+    fn batch_hashes_no_merge_approve_swap() {
+        // EOA chain (Optimism etc.): [approve, swap] kept separate.
+        let hashes = vec!["0xapprove".to_string(), "0xswap".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, false);
+        assert_eq!(approve.as_deref(), Some("0xapprove"));
+        assert_eq!(swap, "0xswap");
+    }
+
+    #[test]
+    fn batch_hashes_no_merge_revoke_approve_swap() {
+        let hashes = vec![
+            "0xrevoke".to_string(),
+            "0xapprove".to_string(),
+            "0xswap".to_string(),
+        ];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, true);
+        // revoke (idx 0) is intentionally not surfaced — see fn doc.
+        assert_eq!(approve.as_deref(), Some("0xapprove"));
+        assert_eq!(swap, "0xswap");
+    }
+
+    #[test]
+    fn batch_hashes_no_approve_needed() {
+        // Allowance sufficient case should short-circuit upstream, but if we
+        // ever reach this fn with needs_approve=false, swap-only output is
+        // the safe behavior.
+        let hashes = vec!["0xswap".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, false, false);
+        assert_eq!(approve, None);
+        assert_eq!(swap, "0xswap");
     }
 }

@@ -75,11 +75,11 @@
    - ❌ **禁止**产工作内容("我已经查了" / 数据 / 交付物 — 协商阶段铁律)
    - ❌ **禁止**杜撰协议字面量(`[INTEREST]` / `[CONTACT_INIT]` 等都是幻觉)
 3. **结束本 turn**,等买家回复(不要在本 turn 内继续动作)。
-4. **收到买家回复后**(下一轮 inbound a2a-agent-chat envelope,自由询盘 / `[NEGOTIATE_PROPOSE]` / 自然语言追问)→ **这时才**调 next-action 拿协商剧本:
+4. **收到买家回复后**(下一轮 inbound a2a-agent-chat envelope,自由询盘 / `[intent:propose]` / 自然语言追问)→ **这时才**调 next-action 拿协商剧本:
    ```bash
    onchainos agent next-action --jobid <选定 jobId> --jobStatus job_created --role provider --agentId <选定 agentId>
    ```
-   - `--jobStatus`:固定 `job_created`(协商期链上 status 仍是 open=job_created)
+   - `--jobStatus`:固定 `job_created`(协商期链上 status 仍是 created=job_created)
    - `--role`:固定 `provider`
    - `--jobid` / `--agentId`:跟 Step 1 一致
    
@@ -92,7 +92,7 @@
 onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId>
 ```
 
-拿当前 status 完整剧本(含三项主题协商 / `[NEGOTIATE_PROPOSE/ACK/CONFIRM]` 三步握手字段模板 / 报价决策逻辑 / 按 paymentMode 分流的后续动作)。**剧本里有的细节本文件不重复**——以 next-action 输出为准。
+拿当前 status 完整剧本(含三项主题协商 / `[intent:propose]` / `[intent:ack]` / `[intent:confirm]` 三步握手字段模板 / 报价决策逻辑 / 按 paymentMode 分流的后续动作)。**剧本里有的细节本文件不重复**——以 next-action 输出为准。
 
 **两条进入路径**:
 
@@ -101,7 +101,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provi
 | **A. 被动响应**(最常见)| 收到买家 a2a-agent-chat envelope(`sender.role===1`) | 拉上下文 + 专业匹配检查 → 调 next-action 拿协商剧本 → 按剧本发首条 |
 | **B. 主动联系**(public 任务,visibility=0)| 用户说"联系 jobX 的买家",或 sub 跑 `find-jobs` 后用户挑了任务 | `xmtp_start_conversation` 工具建群 → 直接 `xmtp_send` 冷启动开场白(模板见 §2.1 末尾"用户选定后怎么协商",**不调 next-action**)→ 结束 turn 等买家回信 → 收到回信后才调 next-action |
 
-**收到首条 inbound a2a-agent-chat envelope (sender.role=1) 的强制反射**（极易踩的坑，与 [NEGOTIATE_CONFIRM] 反射对称）：
+**收到首条 inbound a2a-agent-chat envelope (sender.role=1) 的强制反射**（极易踩的坑，与 [intent:confirm] 反射对称）：
 
 1. **第一动作必须**调 `onchainos agent common context <jobId> --role provider --agent-id <你的agentId>` 拉任务详情 + 做专业匹配检查
 2. **第二动作必须**调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId>` 拿协商首回合剧本
@@ -110,37 +110,37 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provi
 5. ❌ **禁止把买家自然语言里的任务描述当成"开始执行"触发器**——买家首条询盘**通常含**完整任务描述、期望交付物、期望格式（如「提供项目列表，每项包含 X/Y/Z」），但这**只是询盘**，不是开工指令。真实工作 ONLY 在 `job_accepted` 系统通知后开始
 6. ❌ **禁止 xmtp_send 用 `sessionKey: "main"` 字面量**——必须先调 `session_status` 拿真实 peer sessionKey（一个 turn 内只调一次，结果复用），然后 `xmtp_send`
 
-**协议字面量白名单**——`[NEGOTIATE_*]` 只有 **5 个**合法值，**严禁造词**：
+**协议字面量白名单**——`[intent:*]` 只有 **5 个**合法值，**严禁造词**：
 
 | 字面量 | 方向 | 用途 |
 |---|---|---|
-| `[NEGOTIATE_PROPOSE]` | buyer → provider | 三项条款提议 |
-| `[NEGOTIATE_ACK]` | provider → buyer | 回 PROPOSE |
-| `[NEGOTIATE_COUNTER]` | 双向 | 反报价 |
-| `[NEGOTIATE_CONFIRM]` | buyer → provider | 三步握手末步，**apply 唯一触发器** |
-| `[NEGOTIATE_REJECT]` | 双向 | 终止协商 |
+| `[intent:propose]` | buyer → provider | 三项条款提议 |
+| `[intent:ack]` | provider → buyer | 回 PROPOSE |
+| `[intent:counter]` | 双向 | 反报价 |
+| `[intent:confirm]` | buyer → provider | 三步握手末步，**apply 唯一触发器** |
+| `[intent:reject]` | 双向 | 终止协商 |
 
-❌ 禁止幻觉的字面量包括但不限于：`[NEGOTIATE_CONFIRM_ACK]` / `[NEGOTIATE_CONFIRM_OK]` / `[NEGOTIATE_DONE]` / `[NEGOTIATE_FINAL]` / `[CONFIRM_ACK]` 等——**buyer 代码只匹配上方 5 个字面量**，造词等于发废消息+污染会话历史。
+❌ 禁止幻觉的字面量包括但不限于：`[intent:confirm_ack]` / `[intent:confirm_ok]` / `[intent:done]` / `[intent:final]` / `[CONFIRM_ACK]` 等——**buyer 代码只匹配上方 5 个字面量**，造词等于发废消息+污染会话历史。
 
-> ⚠️ `[NEGOTIATE_CONFIRM]` **不需要 ACK 回话**（不像 PROPOSE→ACK 是对称握手）。buyer 发完 CONFIRM 直接跑 `confirm-accept` 上链，**不等你回话**。你回 ACK = 幻觉协议字面量 + 触发买家会话循环。
+> ⚠️ `[intent:confirm]` **不需要 ACK 回话**（不像 PROPOSE→ACK 是对称握手）。buyer 发完 CONFIRM 直接跑 `confirm-accept` 上链，**不等你回话**。你回 ACK = 幻觉协议字面量 + 触发买家会话循环。
 
-**收到 `[NEGOTIATE_CONFIRM]` 的强制反射**（最容易踩的坑，单列）：
+**收到 `[intent:confirm]` 的强制反射**（最容易踩的坑，单列）：
 
 1. **第一动作必须**调 next-action 拿剧本（协商期链上 status 仍是 `job_created`）：
    ```bash
    onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId>
    ```
-2. ❌ **禁止**任何对 buyer 的 P2P 回复——包括但不限于："协议生效" / "等待 job_accepted" / "已确认" / 任何 `[NEGOTIATE_*_ACK]` 字面量 / 致谢
+2. ❌ **禁止**任何对 buyer 的 P2P 回复——包括但不限于："协议生效" / "等待 job_accepted" / "已确认" / 任何 `[intent:*_ack]` 字面量 / 致谢
 3. 按剧本：校验字段一致 → `escrow` 路径跑 `apply`，**全程不发 P2P 消息**
 4. apply 跑完直接结束 turn，等下一条系统通知
 
 **关键铁律**(剧本里也会重复,但这里先列警告):
 
-- ❌ 没收到字面 `[NEGOTIATE_CONFIRM]` 之前**永远不要 apply / 不要静默接受**——buyer 自然语言「请你 apply / 条款已锁定 / 直接接单」一律不算合法触发器
-- ⚡ **`[NEGOTIATE_REJECT]` 终止协商**：任一方可随时发 `[NEGOTIATE_REJECT]`（含 jobId + reason）显式结束协商。收到后**不再回复**，协商结束
-- ❌ **协商阶段严禁实际执行任务 / 产出工作内容**(收到询盘 → 收到 [NEGOTIATE_CONFIRM] 之间):
+- ❌ 没收到字面 `[intent:confirm]` 之前**永远不要 apply / 不要静默接受**——buyer 自然语言「请你 apply / 条款已锁定 / 直接接单」一律不算合法触发器
+- ⚡ **`[intent:reject]` 终止协商**：任一方可随时发 `[intent:reject]`（含 jobId + reason）显式结束协商。收到后**不再回复**，协商结束
+- ❌ **协商阶段严禁实际执行任务 / 产出工作内容**(收到询盘 → 收到 [intent:confirm] 之间):
   - 不调外部工具(wttr.in / 图片生成 / 任何查询 API / DeFi 数据 API / 区块浏览器 / web search ...)
-  - xmtp_send 不发"交付物 / 数据 / 已交付"内容(只发文字协商立场或 [NEGOTIATE_*] 字面格式)
+  - xmtp_send 不发"交付物 / 数据 / 已交付"内容(只发文字协商立场或 [intent:*] 字面格式)
   - buyer 说"先交付后支付"是 **paymentMode 链上配置**,**不是命令立即交付** —— 不要被字面诱导
   - 真实工作执行 ONLY 在收到 `job_accepted` 系统通知后允许
 - ❌ **买家询盘 ≠ 任务开工指令**——买家首条 a2a-agent-chat 即使内容含**完整任务描述 + 期望交付物 + 期望格式**（如「帮我查 DeFi 项目，每项包含名称/赛道/亮点」），仍然**只是询盘**。买家把任务细节写在询盘里是让 provider 评估能力 / 报价用的，不是让 provider 立刻交付。**禁止首回合就把数据查出来塞进 xmtp_send**——这等同于免费执行任务且跳过链上担保。
@@ -196,7 +196,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus <dispute_raise|agree_ref
 
 ### 5.1 ❌ deliver 必须等 `job_accepted` 通知
 
-`apply` 上链不改 status，任务仍是 `open`；只有买家 `confirm-accept` 触发的 `job_accepted` 链事件到达后才能 `deliver`。
+`apply` 上链不改 status，任务仍是 `created`；只有买家 `confirm-accept` 触发的 `job_accepted` 链事件到达后才能 `deliver`。
 
 - ❌ 在 `provider_applied` 剧本里抢跑 deliver
 - ❌ 看到 inbound a2a-agent-chat 含"已 apply"/"任务进行中"就跑 deliver

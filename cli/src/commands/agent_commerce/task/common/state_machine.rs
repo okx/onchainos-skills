@@ -1,14 +1,14 @@
 //! 任务系统状态机 single source of truth。
 //!
 //! 把散落在 `available_actions` / `provider/flow.rs` / `buyer/flow.rs` /
-//! `evaluator/flow.rs` 里的字符串 `"open"` / `"provider_applied"` 收拢到这里，
+//! `evaluator/flow.rs` 里的字符串 `"created"` / `"provider_applied"` 收拢到这里，
 //! 提供 `Status` / `Event` / `Role` enum 加上 status<->event 互转，
 //! 让所有 match 都走 enum，杜绝字符串拼写漂移。
 //!
 //! 设计上**事件视图**与**状态视图**互通：
 //! - `entry_event(status)` —— 把任务推进到此 status 的入口事件
 //! - `status_when_event(event)` —— 事件触发时任务处于哪个 status（包括 `provider_applied`
-//!   这种"过场事件"——发生在 open 状态下，不改变 status）
+//!   这种"过场事件"——发生在 created 状态下，不改变 status）
 
 // ─── Role ───────────────────────────────────────────────────────────────
 
@@ -44,12 +44,12 @@ impl Role {
 /// 本地用 [`Status::from_int`] 派生。
 ///
 /// 对齐后端 `TaskStatusEnum`：
-/// INIT=-1, OPEN=0, ACCEPTED=1, SUBMITTED=2, REFUSED=3, DISPUTED=4,
+/// INIT=-1, CREATED=0, ACCEPTED=1, SUBMITTED=2, REFUSED=3, DISPUTED=4,
 /// ADMINSTOPPED=5, COMPLETE=6, CLOSE=7, EXPIRED=8, REJECTED=9
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Init,         // -1
-    Open,         // 0
+    Created,      // 0（后端原值 OPEN，改名避免与"公开"歧义）
     Accepted,     // 1
     Submitted,    // 2
     Refused,      // 3
@@ -68,7 +68,7 @@ impl Status {
     pub fn parse(s: &str) -> Self {
         match s {
             "init"                               => Status::Init,
-            "open"                               => Status::Open,
+            "created" | "open"                   => Status::Created,
             "accepted"                           => Status::Accepted,
             "submitted"                          => Status::Submitted,
             "refused"                            => Status::Refused,
@@ -85,7 +85,7 @@ impl Status {
     pub fn as_str(&self) -> &str {
         match self {
             Status::Init         => "init",
-            Status::Open         => "open",
+            Status::Created      => "created",
             Status::Accepted     => "accepted",
             Status::Submitted    => "submitted",
             Status::Refused      => "refused",
@@ -100,12 +100,12 @@ impl Status {
     }
 
     /// 后端 `TaskStatusEnum` int 映射：
-    /// -1=INIT / 0=OPEN / 1=ACCEPTED / 2=SUBMITTED / 3=REFUSED / 4=DISPUTED /
+    /// -1=INIT / 0=CREATED / 1=ACCEPTED / 2=SUBMITTED / 3=REFUSED / 4=DISPUTED /
     /// 5=ADMINSTOPPED / 6=COMPLETE / 7=CLOSE / 8=EXPIRED / 9=REJECTED。
     pub fn from_int(n: i32) -> Self {
         match n {
             -1 => Status::Init,
-             0 => Status::Open,
+             0 => Status::Created,
              1 => Status::Accepted,
              2 => Status::Submitted,
              3 => Status::Refused,
@@ -129,59 +129,49 @@ impl Status {
     }
 }
 
-// ─── DisputeStatus ──────────────────────────────────────────────────────
+// ─── DisputeRoundStatus ─────────────────────────────────────────────────
 
-/// 仲裁子状态机当前阶段，由 `GET /priapi/v1/aieco/task/{jobId}/dispute/status`
-/// 的 `disputeStatus: int` 字段携带（与任务主状态 [`Status`] 正交——一个 Disputed
-/// 任务在仲裁子流程里可能依次穿过 VoterSelection / CommitPhase / RevealPhase /
-/// Settlement / Completed 这条链）。
+/// 仲裁单轮（round）子状态机当前阶段，由 `GET /priapi/v1/aieco/task/{jobId}/dispute/status`
+/// 的 `disputeRoundStatus: int` 字段携带（与任务主状态 [`Status`] 正交——一个 Disputed
+/// 任务在仲裁子流程里可能依次穿过 CommitPhase / RevealPhase / Completed 这条链，
+/// 或在本轮票数不足时落到 Invalidated 等下一轮重抽）。
 ///
-/// 对齐后端 `DisputeStatusEnum`：
-/// NONE=0, PREPARATION=1, VOTER_SELECTION=2, COMMIT_PHASE=3, REVEAL_PHASE=4,
-/// SETTLEMENT=5, COMPLETED=6, REJECTED=7, DISPUTE_INVALIDATED=8
+/// 对齐后端 `RoundStatusEnum`：
+/// INIT=0, COMMIT_PHASE=1, REVEAL_PHASE=2, COMPLETED=3, REJECTED=4, INVALIDATED=5
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DisputeStatus {
-    None,                // 0 — 任务无 active dispute
-    Preparation,         // 1 — dispute 已 raise，等取证 / 进选评审
-    VoterSelection,      // 2 — VRF 选评审中
-    CommitPhase,         // 3 — commit 窗口
-    RevealPhase,         // 4 — reveal 窗口
-    Settlement,          // 5 — 计票 + 派奖 / 罚没结算中
-    Completed,           // 6 — 仲裁结算 client 胜（Approve 多）
-    Rejected,            // 7 — 仲裁结算 provider 胜（Reject 多）
-    DisputeInvalidated,  // 8 — 本轮失效（票数不足 / 无人 reveal），等下一轮重抽
+pub enum DisputeRoundStatus {
+    Init,         // 0 — 初始化（本轮已开始，等进入 commit 窗口）
+    CommitPhase,  // 1 — commit 阶段
+    RevealPhase,  // 2 — reveal 阶段
+    Completed,    // 3 — 轮次完成（仲裁出结果）
+    Rejected,     // 4 — 轮次驳回
+    Invalidated,  // 5 — 本轮失效（票数不足 / 无人 reveal），等下一轮重抽
     /// 后端返回的、当前枚举不认识的状态码（容错保留原值）
     Other(i32),
 }
 
-impl DisputeStatus {
+impl DisputeRoundStatus {
     pub fn from_int(n: i32) -> Self {
         match n {
-            0 => DisputeStatus::None,
-            1 => DisputeStatus::Preparation,
-            2 => DisputeStatus::VoterSelection,
-            3 => DisputeStatus::CommitPhase,
-            4 => DisputeStatus::RevealPhase,
-            5 => DisputeStatus::Settlement,
-            6 => DisputeStatus::Completed,
-            7 => DisputeStatus::Rejected,
-            8 => DisputeStatus::DisputeInvalidated,
-            other => DisputeStatus::Other(other),
+            0 => DisputeRoundStatus::Init,
+            1 => DisputeRoundStatus::CommitPhase,
+            2 => DisputeRoundStatus::RevealPhase,
+            3 => DisputeRoundStatus::Completed,
+            4 => DisputeRoundStatus::Rejected,
+            5 => DisputeRoundStatus::Invalidated,
+            other => DisputeRoundStatus::Other(other),
         }
     }
 
     pub fn as_str(&self) -> &str {
         match self {
-            DisputeStatus::None                => "none",
-            DisputeStatus::Preparation         => "preparation",
-            DisputeStatus::VoterSelection      => "voter_selection",
-            DisputeStatus::CommitPhase         => "commit_phase",
-            DisputeStatus::RevealPhase         => "reveal_phase",
-            DisputeStatus::Settlement          => "settlement",
-            DisputeStatus::Completed           => "completed",
-            DisputeStatus::Rejected            => "rejected",
-            DisputeStatus::DisputeInvalidated  => "dispute_invalidated",
-            DisputeStatus::Other(_)            => "unknown",
+            DisputeRoundStatus::Init         => "init",
+            DisputeRoundStatus::CommitPhase  => "commit_phase",
+            DisputeRoundStatus::RevealPhase  => "reveal_phase",
+            DisputeRoundStatus::Completed    => "completed",
+            DisputeRoundStatus::Rejected     => "rejected",
+            DisputeRoundStatus::Invalidated  => "invalidated",
+            DisputeRoundStatus::Other(_)     => "unknown",
         }
     }
 }
@@ -193,9 +183,9 @@ impl DisputeStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     // ── 任务主流程 ────────────────────────────────────────────────────
-    /// 任务创建上链（status 进入 open；通知 buyer）
+    /// 任务创建上链（status 进入 created；通知 buyer）
     JobCreated,
-    /// 卖家 apply 上链（status 仍是 open，过场事件；通知刚 apply 的 provider）
+    /// 卖家 apply 上链（status 仍是 created，过场事件；通知刚 apply 的 provider）
     ProviderApplied,
     /// 买家 confirm-accept 上链（status 进入 accepted；通知 provider）
     JobAccepted,
@@ -275,7 +265,7 @@ pub enum Event {
     /// DisputeManager.VoterCooldownEntered 上链（被动进入冷却期；通知 evaluator）
     CooldownEntered,
 
-    // ── 买家条款变更上链回执(不改 status,仍 open) ──────────────────
+    // ── 买家条款变更上链回执(不改 status,仍 created) ──────────────────
     /// setTokenAndBudget tx 上链成功(通知 buyer 侧所有子 session;无子 session 时通知 backup)
     TaskTokenBudgetChange,
     /// setProviderAndAgentId tx 上链成功(通知 buyer 侧所有子 session;无子 session 时通知 backup)
@@ -286,11 +276,11 @@ pub enum Event {
     SwitchProvider,
 
     // ── 协商中继事件(buyer 本地派发,不改 status) ────────────────────
-    /// 卖家自然语言回复(不含 [NEGOTIATE_*] 标记),buyer.md Route 4 → negotiate_reply
+    /// 卖家自然语言回复(不含 [intent:*] 标记),buyer.md Route 4 → negotiate_reply
     NegotiateReply,
-    /// 卖家回 [NEGOTIATE_ACK](接受 PROPOSE),buyer.md Route 3 → negotiate_ack
+    /// 卖家回 [intent:ack](接受 PROPOSE),buyer.md Route 3 → negotiate_ack
     NegotiateAck,
-    /// 卖家回 [NEGOTIATE_COUNTER](反提案),buyer.md Route 3 → negotiate_counter
+    /// 卖家回 [intent:counter](反提案),buyer.md Route 3 → negotiate_counter
     NegotiateCounter,
 
     // ── 网络/重启恢复事件(过场,不改 status) ─────────────────────────
@@ -442,7 +432,7 @@ impl Event {
 
 /// 事件触发时任务处于哪个 status。
 ///
-/// `provider_applied` 不改变 status —— 它发生在 open 状态下；
+/// `provider_applied` 不改变 status —— 它发生在 created 状态下；
 /// `dispute_resolved` 取决于裁决方（buyer-wins → refunded；seller-wins → completed），
 /// 单从 event 不能确定，这里默认返回 `Completed`，调用方应优先调 `agent status` 拉取真实 status。
 pub fn status_when_event(e: &Event) -> Status {
@@ -451,7 +441,7 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::JobCreated | Event::ProviderApplied
         | Event::TaskTokenBudgetChange | Event::TaskProviderChange
         | Event::SwitchProvider
-        | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Open,
+        | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
         Event::JobRefused | Event::RefuseExpired                             => Status::Refused,
@@ -478,8 +468,8 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::ReviewDeadlineWarn                                           => Status::Submitted,
         Event::JobExpired                                                   => Status::Expired,
         Event::JobClosed                                                    => Status::Close,
-        // visibility/paymentMode 是过场事件，不改 status；非 open 状态不允许操作，所以期望 Open
-        Event::JobVisibilityChanged | Event::JobPaymentModeChanged         => Status::Open,
+        // visibility/paymentMode 是过场事件，不改 status；非 created 状态不允许操作，所以期望 Created
+        Event::JobVisibilityChanged | Event::JobPaymentModeChanged         => Status::Created,
         // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
         Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
@@ -499,7 +489,7 @@ pub fn status_when_event(e: &Event) -> Status {
 pub fn entry_event(s: &Status) -> Option<Event> {
     match s {
         Status::Init         => None,
-        Status::Open         => Some(Event::JobCreated),
+        Status::Created         => Some(Event::JobCreated),
         Status::Accepted     => Some(Event::JobAccepted),
         Status::Submitted    => Some(Event::JobSubmitted),
         Status::Refused      => Some(Event::JobRefused),
@@ -535,7 +525,7 @@ mod tests {
         // Status::AdminStopped 无客户端入口事件（entry_event 返回 None），跳过。
         // Status::Completed → JobCompleted；Status::Rejected → JobRefunded（buyer-wins / 退款）
         for s in [
-            Status::Open, Status::Accepted, Status::Submitted, Status::Refused,
+            Status::Created, Status::Accepted, Status::Submitted, Status::Refused,
             Status::Disputed, Status::Completed, Status::Close, Status::Expired,
             Status::Rejected,
         ] {
@@ -547,13 +537,14 @@ mod tests {
     #[test]
     fn parse_status_or_event_handles_both() {
         assert_eq!(parse_status_or_event("provider_applied"), Event::ProviderApplied);
-        assert_eq!(parse_status_or_event("open"), Event::JobCreated);
+        assert_eq!(parse_status_or_event("created"), Event::JobCreated);
+        assert_eq!(parse_status_or_event("open"), Event::JobCreated); // 后端兼容
         assert_eq!(parse_status_or_event("submitted"), Event::JobSubmitted);
     }
 
     #[test]
-    fn provider_applied_keeps_status_open() {
+    fn provider_applied_keeps_status_created() {
         // 过场事件不改 status
-        assert_eq!(status_when_event(&Event::ProviderApplied), Status::Open);
+        assert_eq!(status_when_event(&Event::ProviderApplied), Status::Created);
     }
 }

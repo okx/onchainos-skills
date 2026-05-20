@@ -62,7 +62,7 @@ Outputs the script the agent should currently execute (CLI templates / xmtp_send
 | Parameter | Required | Description |
 |---|---|---|
 | `--jobid` | ✅ | Task ID |
-| `--jobStatus` | ✅ | Event name (`provider_applied` etc.) or status name (`open` etc.) |
+| `--jobStatus` | ✅ | Event name (`provider_applied` etc.) or status name (`created` etc.) |
 | `--agentId` | ✅ | Pass through the envelope's top-level agentId |
 | `--role` | ✅ | Role of the current sub session |
 | `--provider` | | Target provider agentId (only used with buyer + `job_created`): when supplied, recommend is skipped and a script targeting this provider is generated for negotiation / x402 acceptance |
@@ -71,9 +71,9 @@ Outputs the script the agent should currently execute (CLI templates / xmtp_send
 
 | `--jobStatus` value | Trigger scenario | Script content |
 |---|---|---|
-| `negotiate_reply` | Provider's natural-language reply (no `[NEGOTIATE_*]` marker), §3 route #5 with status=0 and an active sub session | Evaluate quote → counter / accept / REJECT + switch |
-| `negotiate_ack` | Provider replies with `[NEGOTIATE_ACK]`, §3 route #3 | Validate field consistency → save-agreed → set-payment-mode → wait for job_payment_mode_changed |
-| `negotiate_counter` | Provider replies with `[NEGOTIATE_COUNTER]`, §3 route #3 | Round count → typo self-check → evaluate terms → new PROPOSE or REJECT |
+| `negotiate_reply` | Provider's natural-language reply (no `[intent:*]` marker), §3 route #5 with status=0 and an active sub session | Evaluate quote → counter / accept / REJECT + switch |
+| `negotiate_ack` | Provider replies with `[intent:ack]`, §3 route #3 | Validate field consistency → save-agreed → set-payment-mode → wait for job_payment_mode_changed |
+| `negotiate_counter` | Provider replies with `[intent:counter]`, §3 route #3 | Round count → typo self-check → evaluate terms → new PROPOSE or REJECT |
 
 ---
 
@@ -145,7 +145,7 @@ Fetch the latest task status + negotiation parameters (`GET /aieco/task/{jobId}`
 agent tasks [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 ```
 
-List tasks I published / accepted (`GET /aieco/task/list`). `--status` accepts: `open` / `accepted` / `submitted` / `refused` / `disputed` / `complete` / `refunded` / `close`.
+List tasks I published / accepted (`GET /aieco/task/list`). `--status` accepts: `created` (or legacy `open`) / `accepted` / `submitted` / `refused` / `disputed` / `complete` / `refunded` / `close`.
 
 ### confirm-accept
 
@@ -190,7 +190,7 @@ Buyer rejects the deliverable (status: submitted → refused). After receiving `
 agent close <jobId>
 ```
 
-Buyer closes the task in `open` status (funds not yet deposited → direct close).
+Buyer closes the task in `created` status (funds not yet deposited → direct close).
 
 ### set-public
 
@@ -214,7 +214,7 @@ After `submit_expired` / `refuse_expired`, buyer proactively reclaims escrowed f
 agent set-token-and-budget <jobId> --token-symbol <USDT|USDG> --budget <amount> [--agent-id <id>]
 ```
 
-Change payment token and budget amount (on chain). Only available in Open state. After the on-chain success, the sub session receives a `task_token_budget_change` system event and automatically sends a new `[NEGOTIATE_PROPOSE]` to the current provider.
+Change payment token and budget amount (on chain). Only available in Open state. After the on-chain success, the sub session receives a `task_token_budget_change` system event and automatically sends a new `[intent:propose]` to the current provider.
 
 | Parameter | Required | Description |
 |---|---|---|
@@ -229,7 +229,7 @@ Change payment token and budget amount (on chain). Only available in Open state.
 agent set-provider <jobId> --provider-agent-id <agentId> [--agent-id <id>]
 ```
 
-Switch provider (on chain). Only available in Open state. After the user session runs this, **without waiting for on-chain confirmation** it immediately kicks off the new provider flow; the sub session sends `[NEGOTIATE_REJECT]` to the old provider after receiving `task_provider_change`.
+Switch provider (on chain). Only available in Open state. After the user session runs this, **without waiting for on-chain confirmation** it immediately kicks off the new provider flow; the sub session sends `[intent:reject]` to the old provider after receiving `task_provider_change`.
 
 | Parameter | Required | Description |
 |---|---|---|
@@ -285,7 +285,7 @@ agent apply <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id
 | `--token-symbol` | **Required**; reverse-lookup from the task detail's tokenAddress (USDT / USDG); do not assume USDT |
 | `--agent-id` | **Required** |
 
-⚠️ apply on-chain does NOT change status — the task is still `open`; only after the buyer's `confirm-accept` triggers `job_accepted` can the provider deliver.
+⚠️ apply on-chain does NOT change status — the task is still `created`; only after the buyer's `confirm-accept` triggers `job_accepted` can the provider deliver.
 
 ### save-agreed
 
