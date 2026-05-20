@@ -510,6 +510,15 @@ pub enum AgentCommand {
         /// Target provider agentId (for job_created: skip recommend, go straight to this provider)
         #[arg(long)]
         provider: Option<String>,
+        /// Peer's required minimum task-system version, extracted from inbound
+        /// `xmtp_send` envelope's `payload.taskMinVersion`. If present and
+        /// greater than this binary's `TASK_MIN_VERSION`, next-action prepends
+        /// a `[Protocol version mismatch — non-blocking]` directive that tells the agent
+        /// to push an upgrade prompt to the user, **without** halting the flow
+        /// — the scene below still runs normally. Omit for chain-event /
+        /// pseudo events that don't originate from a peer envelope.
+        #[arg(long = "peerTaskMinVersion", alias = "peer-task-min-version")]
+        peer_task_min_version: Option<u32>,
     },
 
     // Chat
@@ -776,12 +785,40 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title, provider } => {
+        AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title, provider, peer_task_min_version } => {
             eprintln!(
-                "[next-action] received system notification: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
+                "[next-action] received system notification: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
                 title = job_title.as_deref().unwrap_or("(none)"),
-                provider = provider.as_deref().unwrap_or("(none)")
+                provider = provider.as_deref().unwrap_or("(none)"),
+                peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
             );
+
+            // 版本握手:peer 要求的最低版本高于本地 TASK_MIN_VERSION 时,只在剧本顶部追加一条
+            // 提示行(让 agent 推给用户升级建议),**不阻断流程** —— role flow 继续按当前协议执行,
+            // 实际兼容性问题(若有)由后续 CLI / 业务层报错时再升级处理。
+            let version_notice: Option<String> = if let Some(peer_min) = peer_task_min_version {
+                let local = task::common::config::TASK_MIN_VERSION;
+                if local < peer_min {
+                    if task::common::version_notice::should_show() {
+                        eprintln!(
+                            "[next-action] version notice (non-blocking): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
+                        );
+                        task::common::version_notice::mark_shown();
+                        Some("Before executing the scene below, call `xmtp_dispatch_user` to notify the user (recommend upgrade but do **not** halt the flow). The `content:` template below is a sample — translate it to the user's language before sending:\n\
+                             content: Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.\n\
+                             Then proceed to the scene below normally.\n\n".to_string())
+                    } else {
+                        eprintln!(
+                            "[next-action] version notice suppressed (last shown within 48h): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
+                        );
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
             // --provider 传入时写 designated-provider 文件，让 generate_next_action 走指定卖家路径
             if let Some(ref pid) = provider {
@@ -881,6 +918,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };
+            if let Some(notice) = &version_notice {
+                print!("{notice}");
+            }
             println!("{prompt}");
             Ok(())
         }

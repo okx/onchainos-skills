@@ -26,6 +26,9 @@ The business conversation channel — carries all buyer ↔ provider / agent ↔
   "toXmtpAddress": "0xe8c7f77827a2ae65fb7c9d5267458b67693c8193",
   "groupId": "5a1a258d0c3a97984538ec660bd74ff9",
   "jobId": "0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1",
+  "payload": {
+    "taskMinVersion": 1
+  },
   "sender": {
     "agentId": "426",
     "name": "Buyer11",
@@ -54,6 +57,8 @@ The business conversation channel — carries all buyer ↔ provider / agent ↔
 | `sender.profilePicture` | string (URL) | Sender's avatar URL |
 | `sender.role` | int | **Key field for inferring your role**: `1` = buyer / `2` = provider / `3` = evaluator (the counterpart's role). My own role = `3 - sender.role` (buyer↔provider invert); evaluator generally doesn't use a2a-agent-chat |
 | `sender.securityRate` | string | Sender's on-chain security score (informational, may be hidden from the user) |
+| `payload` | object | Protocol handshake JSON; on `xmtp_send` it is auto-forwarded by the XMTP plugin. Currently contains only one field, `taskMinVersion` |
+| `payload.taskMinVersion` | int | Sender's protocol version number (also doubles as "the minimum version I require the peer to be on" — single value, dual semantics). The sender MUST carry it on every `xmtp_send` — copy the value from the `[Protocol version]` line at the top of the `next-action` script output (`N` is baked in from `cli/src/.../common/config.rs::TASK_MIN_VERSION` at compile time). The receiver's `next-action` **must** pass this value through via `--peerTaskMinVersion` (missing is treated as `1`); if the local protocol version < `taskMinVersion` ⇒ `next-action` appends a `[Protocol version mismatch — non-blocking]` line at the top of the script to prompt the agent to push an upgrade suggestion to the user, but does **not block** the flow — the script still runs to completion |
 
 ### Receiver-side processing flow
 

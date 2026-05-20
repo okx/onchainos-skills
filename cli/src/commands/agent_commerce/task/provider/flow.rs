@@ -6,10 +6,9 @@
 //! `exec onchainos agent next-action ...` to fetch the prompt and execute it directly,
 //! without having to reason over the entire document.
 
+use crate::commands::agent_commerce::task::common::config::TASK_MIN_VERSION;
 use crate::commands::agent_commerce::task::common::pending::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
-
-const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` / `userContent:` templates below are samples — translate to the user's language before `xmtp_dispatch_user` / `xmtp_prompt_user`.\n\n";
 
 /// The next step the ASP should take under a given status (used at the tail of
 /// `agent common context` as a menu).
@@ -73,6 +72,14 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 /// into an `Event`; unrecognized strings fall through as `Event::Other(s)`.
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
+
+    // Two fixed prefix lines at the top of the output: localization rule + protocol
+    // version handshake. version_prefix uses format! to inject the current
+    // TASK_MIN_VERSION constant so the script auto-updates when the constant bumps.
+    let localization_prefix = "[Localization] All `content:` / `userContent:` templates below are samples — translate to the user's language before `xmtp_dispatch_user` / `xmtp_prompt_user`.\n\n";
+    let version_prefix = format!(
+        "[Protocol version] When calling `xmtp_send`, the `payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
+    );
 
     // Short jobId, used as the `[Task <shortID> you as seller]` prefix on the first
     // line of `xmtp_prompt_user` userContent. When multiple prompts run concurrently
@@ -407,6 +414,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <full sessionKey returned by session_status>][job: {job_id}][role: provider] \
              🛑 After rendering userContent **you MUST end this turn and wait for real user input** — [USER_DECISION_REQUEST] is a **question**, not an **answer**; do NOT fabricate user evidence in the same turn (do not hallucinate evidence text / images). Only after the user's actual message arrives in the next turn, relay according to the rule below. \
+             🛑🛑 **Evidence ≠ historical messages**: the `reason` the user gave when they originally raised the dispute (e.g. the XXX in `raise dispute, reason is XXX`) is **NOT evidence** — it is the `reason` field of the START_DISPUTE step, already consumed on-chain via `dispute_raise`. **Do NOT** extract content from conversation history / any old message / any prior `[USER_DECISION_RELAY]` and relay it as evidence. Evidence MUST be a **new** message the user writes **after seeing this evidence prompt** (explaining what happened / screenshots / deliverable links, etc.). If the user's next reply looks identical or very similar to the prior dispute reason (e.g. they just type `333` again), **first call `xmtp_dispatch_user` to confirm with the user**: \"Are you submitting this as arbitration evidence? Would you like to add factual context / screenshots?\" — only relay after confirmation. \
              After the user provides evidence → **only call** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: <full original content from the user — text + image paths, no interpretation, no translation>\") to relay back to the Session that sub_key belongs to, **and stop there** (the Session that sub_key belongs to will run dispute upload on its own after receiving it; do not do anything else). \
              ⚠️ **Routing tag protocol**: `[intent:SUBMIT_EVIDENCE]` MUST be inserted verbatim in **fully uppercase ASCII**; do NOT translate / rewrite / omit.\n\
              🛑 Relay MUST use xmtp_dispatch_session (NOT sessions_send), and **call it exactly once** — when the tool returns 'Message dispatched' = success = **immediately terminate all subsequent tool calls in this response** (no more xmtp_dispatch_session / xmtp_send / xmtp_dispatch_user / Exec / pending-decisions etc.). Repeated calls (even with identical sessionKey / content) cause sub to receive N identical relays, triggering an event-recursion loop. **The user session's ONLY action = relay**: do NOT run task CLI yourself / do NOT xmtp_send the User Agent / do NOT xmtp_dispatch_user repeatedly. Must submit within 1 hour.\n\
@@ -827,5 +835,5 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              3. Do NOT predict / assume other notifications\n"
         ),
     };
-    format!("{LOCALIZATION_PREFIX}{context_preamble}{body}")
+    format!("{localization_prefix}{version_prefix}{context_preamble}{body}")
 }

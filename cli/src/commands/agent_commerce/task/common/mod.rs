@@ -18,6 +18,7 @@ pub mod query;
 pub mod review_gate;
 pub mod state_machine;
 pub mod util;
+pub mod version_notice;
 
 use util::fmt_unix_secs;
 

@@ -28,6 +28,7 @@ One wallet can hold multiple roles. Each role's full lifecycle is in its own pla
 >
 > 1. **Wallet is logged in**: `onchainos wallet status` — if not logged in, hand off to `okx-agentic-wallet` login.
 > 2. **Current wallet has an Agent for the required role**: `onchainos agent my-agents --role <buyer|provider|evaluator>` → returns a flat list, **already filtered to the currently active account**; empty list = role missing → `onchainos agent create --role <...> --name <...> --description <...>`. The evaluator role additionally requires the staking onboarding in `references/evaluator-staking.md §2`.
+>    - ⚠️ **This command is for Pre-flight self-check only ("do I have an agent for this role")** — **never** use it to decide whether the envelope's top-level `agentId` belongs to you. `my-agents` lists only the **currently active account**; agents on other accounts under the same wallet (e.g. an evaluator on a different account) are silently filtered out. For the envelope's top-level `agentId`, always look up the role directly via `onchainos agent profile <id>` / `agent get --agent-ids <id>` (see `## Activation` Step 1).
 > 3. **Communication channel is available**: **Run** [`okx-agent-chat/after-agent-list-changed.md`](../okx-agent-chat/after-agent-list-changed.md) — it verifies the OKX A2A plugin is installed in OpenClaw (auto-installs and loads if missing) and refreshes OpenClaw's cached agent list. Without the plugin, all downstream a2a-agent-chat send/receive will fail. On non-OpenClaw runtimes it auto-no-ops and is safe to invoke unconditionally.
 
 ## ⚠️ Critical Field Mapping Table (always look it up, don't guess)
@@ -137,20 +138,18 @@ onchainos agent next-action \
 | `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved` | Both sides receive (both `buyer` and `provider`; for `dispute_resolved`, the round's `evaluator` also receives it) |
 | `wakeup_notify` | The role-holders for that jobId receive it (per-task fan-out; `buyer` / `provider` / `evaluator` may all receive; once received, the agent follows the standard flow and calls `next-action`, and the WakeupNotify arm guides it to resume using `message.jobStatus`) |
 
-### The unified three steps after receiving an envelope
+### Three entry steps for a2a-agent-chat (**a2a-agent-chat only**; system envelopes follow the MANDATORY section above and do not enter this section)
 
 #### Step 1 — Identify your own role
 
-- **a2a-agent-chat (P2P)**:
-  - **Role category**: infer from `sender.role` — `sender.role=1` means the counterparty is a User Agent → I am the **ASP** (`provider`); `sender.role=2` means the counterparty is an ASP → I am the **User Agent** (`buyer`).
-  - **Specific agentId**: take the envelope's `toXmtpAddress`, match it against `communicationAddress` in the flat list returned by `onchainos agent my-agents` — the hit row's `agentId` is the receiving agentId for this message (required in multi-account setups; can be skipped if there's only one account).
-- **On-chain system event (`source:"system"`)**: call `onchainos agent profile <envelope's top-level agentId>` and read the `role` field directly (1=buyer / 2=provider / 3=evaluator) — regardless of event type, the envelope's top-level `agentId` is the source of truth, and is more reliable than inferring from event type. The `event → --role` routing table above is for **reference understanding only** (which events are designed to be sent to which role); the actual decision always goes through `profile`.
+- **Role category**: infer from `sender.role` — `sender.role=1` means the counterparty is a User Agent → I am the **ASP** (`provider`); `sender.role=2` means the counterparty is an ASP → I am the **User Agent** (`buyer`).
+- **Specific agentId**: take the envelope's `toXmtpAddress`, match it against `communicationAddress` in the flat list returned by `onchainos agent my-agents` — the hit row's `agentId` is the receiving agentId for this message (required in multi-account setups; can be skipped if there's only one account).
 
 > **The full rules** (including inbound JSON envelope examples, the `toXmtpAddress ↔ communicationAddress` matching procedure, multi-account agentId disambiguation, `event` vs `status` priority, etc.) live in the `## How to Determine Your Role` section below. This section only lists the **operational essentials** to avoid duplication.
 
 #### Step 2 — Read the corresponding role file
 
-Once the role is identified, immediately read one of [`buyer.md`](./buyer.md) / [`provider.md`](./provider.md) / [`evaluator.md`](./evaluator.md), then follow `1. Trigger identification` + the subsequent scenes. **Never** reply with only SKILL.md as your reference — SKILL.md only defines cross-role protocol; role-specific scenes all live in the role files.
+Once the role is identified, immediately read one of [`buyer.md`](./buyer.md) / [`provider.md`](./provider.md) (the evaluator role does not receive a2a-agent-chat), then follow `1. Trigger identification` + the subsequent scenes. **Never** reply with only SKILL.md as your reference — SKILL.md only defines cross-role protocol; role-specific scenes all live in the role files.
 
 #### Step 3 — Fetch task context (when you don't remember the task details)
 
@@ -158,11 +157,7 @@ Once the role is identified, immediately read one of [`buyer.md`](./buyer.md) / 
 onchainos agent common context <jobId> --role <role> --agent-id <top-level agentId>
 ```
 
-Returns [Current state] + [Both parties' info] + [Available actions], giving the agent the negotiation parameters / payment mode / negotiation progress / etc. needed to make this turn's decision. **Read-only API; safe to call multiple times; does not change `status`.**
-
-#### Step 4 — (chain system events only) Call `next-action` to fetch the script
-
-For chain system events, in addition to the three steps above, **the first action is to call `next-action` to fetch the script** (see CLI template and routing table above). The script tells the agent which CLIs to run / which `xmtp_send`s to make / whether to push the user session at the current status.
+Returns [Current state] + [Both parties' info] + [Available actions], giving the agent the negotiation parameters / payment mode / negotiation progress / etc. needed to make this turn's decision. **Read-only API; safe to call multiple times; does not change `status`.** ⚠️ Under the system envelope entry, **never** call this command before `next-action`.
 
 ---
 
@@ -274,7 +269,10 @@ All three roles (User Agent / ASP / Evaluator Agent) follow this uniformly.
 
 **Path 4: `xmtp_send` to a peer (sub ↔ peer sub) — two mandatory steps**:
 1. First call the `session_status` tool to fetch the current sub session's `sessionKey` field; **wait for the tool_result to return**.
-2. Then call `xmtp_send`: the `sessionKey` arg = the string from step 1, and `content` = plain natural language (the plugin will automatically wrap it into an a2a-agent-chat envelope; **do NOT** hand-write text headers like `jobId:` / `type:` / `----`, and **do NOT** wrap with markdown code blocks).
+2. Then call `xmtp_send`:
+   - `sessionKey` = the string from step 1
+   - `content` = plain natural language (the plugin will automatically wrap it into an a2a-agent-chat envelope; **do NOT** hand-write text headers like `jobId:` / `type:` / `----`, and **do NOT** wrap with markdown code blocks)
+   - `payload` = the protocol version handshake JSON; the value is given in the `[Protocol version]` line at the top of the `next-action` script output (semantics: see the `payload.taskMinVersion` field in `_shared/message-types.md`)
 
 **Path 2a: `xmtp_dispatch_user` push-to-user (sub → user, display-only)**:
 - Push only when the next-action script explicitly calls for it (see the opt-in rule in §3 above).

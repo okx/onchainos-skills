@@ -70,6 +70,11 @@ pub async fn handle_info(
     }
 
     println!("{}", serde_json::to_string_pretty(&data)?);
+
+    println!();
+    println!("---");
+    println!();
+    print!("{}", super::flow::evaluator_selected_post_evidence_steps(job_id));
     Ok(())
 }
 
