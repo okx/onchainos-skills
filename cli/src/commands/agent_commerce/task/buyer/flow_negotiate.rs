@@ -581,7 +581,8 @@ pub(super) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      Extract the key fields: budget, paymentMostTokenAmount (max_budget), tokenSymbol, description.\n\n\
      **Step 2 - evaluate the ASP's reply:**\n\n\
      🛑 **Iron rule: any message replying to the ASP must NEVER reveal the max_budget value** - leaking = the ASP quotes the cap immediately = the user loses all bargaining power.\n\
-     🚫 **Negotiation-autonomy red line**: except for the \"quote > max_budget\" auto-REJECT path below, do NOT call `xmtp_prompt_user` / `pending-decisions add` to make the user decide on negotiation. Negotiation is autonomous in the sub session - evaluate via the decision matrix and reply directly to the ASP (natural-language discussion / [intent:propose]); do NOT forward the quote to the user asking \"do you accept?\".\n\n\
+     🚫 **Negotiation-autonomy red line**: except for the \"quote > max_budget\" auto-REJECT path below, do NOT call **any** user-facing tool (`xmtp_dispatch_user` / `xmtp_prompt_user` / `pending-decisions add`) to make the user decide on negotiation. Negotiation is autonomous in the sub session - evaluate via the decision matrix and reply directly to the ASP (natural-language discussion / [intent:propose]); do NOT forward the quote to the user asking \"do you accept?\" or \"please confirm\".\n\
+     🔴 Real incident: model correctly called next-action but then used `xmtp_dispatch_user` (instead of forbidden `xmtp_prompt_user`) to forward the quote to the user — `xmtp_dispatch_user` is equally forbidden for this purpose.\n\n\
      Extract quote info from the ASP's message if any: amount, token, payment-mode preference, delivery time.\n\n\
      🔴 **Quote evaluation decision matrix** (if the ASP gave an explicit price):\n\
      \x20\x20| ASP quote | Action |\n\
