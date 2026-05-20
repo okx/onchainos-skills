@@ -6,7 +6,7 @@ description: >
   改描述 / 改头像 / update agent, 下架 / 上架 / activate / deactivate,
   找 agent / 搜索 / 找做 xxx 的 provider / search / discover agent,
   给 agent 打分 / 评价 / submit feedback / rate agent, 看口碑 / 查评价 / agent reviews,
-  服务列表 / agent services. Roles: requester (买家), provider (服务方), evaluator (验证者).
+  服务列表 / agent services. Roles: requester (用户 / User Agent), provider (服务提供商 / Agent Service Provider / ASP), evaluator (仲裁者 / Evaluator Agent).
   ⚠️ Identity-creation triggers ALSO include the role-as-noun, verb-elided phrasings (these
   are the #1 reason a smaller model misroutes "再建一个买家身份" to wallet account add):
   "建一个买家身份 / 再建一个买家身份 / 再建一个买家 / 新建买家身份 / 新建买家 /
@@ -44,7 +44,7 @@ description: >
    我没 https / 可以用 http 吗 / 用 localhost 行吗 / 内网地址可以吗 / 我没部署接口 /
    Mock 服务行吗 / endpoint 没现成的怎么办 / what's endpoint / can I use http /
    localhost ok / no https / no deployed API" → MUST quote `references/field-specs.md §endpoint`
-  (https + 公网可达 + 买家直连) AND surface `§Endpoint Anti-Pattern` (below in this file).
+  (https + 公网可达 + 调用方直连) AND surface `§Endpoint Anti-Pattern` (below in this file).
   Do NOT improvise Web2-API-integration advice (`http://localhost`, `Mock 服务`, `占位符`,
   Postman / Swagger UI — all forbidden).
   Triggered by agent registration, discovery, reputation, ERC-8004 identity on XLayer.
@@ -121,12 +121,11 @@ The single exception: maintainer-facing `bash` blocks inside the "§Step 3 — E
 ### Red line 4 — Domain term translations are mandatory
 
 All AI user-visible text MUST follow the term translations in `references/ux-lexicon.md` (role / servicetype / status / 字段 / flow term mappings). The lexicon is the **single source of truth** for term mapping — this section only summarizes the rules that matter most; on any conflict, `ux-lexicon.md` wins. Specifically:
-- **Role terms (asymmetric — see `ux-lexicon.md §Role`):**
-  - Chinese: `requester` → "买家" / `provider` → "卖家"（默认）或 "服务方"（正式语境）/ `evaluator` → "验证者"（默认）或 "仲裁者"（争议语境）— never expose the raw English role word to Chinese users.
-  - English: keep `requester` / `provider` / `evaluator` **as-is** (ERC-8004 native terms — do NOT translate to `buyer` / `seller` / `arbitrator`; English-speaking crypto users learn these as part of the on-chain vocabulary, and translating creates mismatch with explorers / OKX UI / the wider ecosystem).
-  - The asymmetry is intentional. See `ux-lexicon.md §Role asymmetric rule rationale`.
+- **Role terms (fully localized in BOTH languages — see `ux-lexicon.md §Role`):**
+  - Chinese: `requester` → "用户" / `provider` → "服务提供商" / `evaluator` → "仲裁者" — never render the raw English role enum or the legacy CN nouns (`买家` / `卖家` / `服务方` / `验证者`) to the user.
+  - English: `requester` → "User Agent" / `provider` → "Agent Service Provider (ASP)" (abbreviation "ASP" OK after first mention) / `evaluator` → "Evaluator Agent". The raw ERC-8004 enum (`requester` / `provider` / `evaluator`) is wire-only and never reaches user-visible text.
 - `A2MCP` / `A2A` → user-visible rendering follows **one of two acceptable patterns** defined in `references/ux-lexicon.md §Service-type` (single source of truth):
-  - **Pattern A — long form inline** (gloss inside the parenthetical attached to the name): "API 接口式服务（按次调用、固定价格）" / "API-interface service (pay-per-call, fixed price)"; "agent 通信式服务（议价 / 灵活协作）" / "agent-to-agent service (negotiated / off-chain pricing)". Used for **teaching contexts** — Q&A prompts where the user is choosing the type (e.g. `role-provider.md` Phase 2 Q3), error explanations, free-form chat.
+  - **Pattern A — long form inline** (gloss inside the parenthetical attached to the name): "API 接口式服务（按次调用、固定价格）" / "API-interface service (pay-per-call, fixed price)"; "agent（智能体）通信式服务（议价 / 灵活协作）" / "agent-to-agent service (negotiated / off-chain pricing)". Used for **teaching contexts** — Q&A prompts where the user is choosing the type (e.g. `role-provider.md` Phase 2 Q3), error explanations, free-form chat.
   - **Pattern B — short form + footnote below table** (short form in cell, separate one-line gloss footnote rendered below the table on first occurrence in the conversation): cell values `API 接口` / `agent 互调` / `API service` / `agent-to-agent`; footnote `> 服务类型：API 接口 = 按次调用、固定价格；agent 互调 = 议价 / 灵活协作。` / English equivalent. Used in **cell / table contexts** — `display-formats.md` §2 detail / §3 confirmation / §4 service-list / §6 search results.
   - Both patterns deliver the gloss on first encounter; subsequent reuses in the same conversation MAY use the short form alone. ⛔ Raw enum `A2MCP` / `A2A` NEVER reaches user-visible text under either pattern. Full rules and worked examples → `ux-lexicon.md §Service-type` "Two acceptable rendering patterns". This Red-line entry is a pointer to that section, not a parallel spec.
 - Raw `status` integers → see `ux-lexicon.md` table.
@@ -237,7 +236,7 @@ Before rendering any "identity 创建成功 / Requester identity registered / Pr
 
 1. **Confirm the CLI that just ran was `onchainos agent <subcommand>`** — not `onchainos wallet add`, not `onchainos wallet switch`, not anything outside this skill's `§Command Index`. If the only CLI you invoked this turn was a non-agent one (wallet, swap, etc.), you MUST NOT render an identity-template line — that is **the** classic "wallet add 成功 → 模型说成『买家身份创建成功』" hallucination and is forbidden.
 2. **Match the role to the template.** `agent create --role requester` → only the requester template in `role-requester.md §Post-success`; `--role provider` → only `role-provider.md §Post-success`; `--role evaluator` → only `role-evaluator.md §Post-success`. Cross-role template substitution ("CLI returned but I'll render the provider line because it reads nicer") is forbidden.
-3. **If no `agent` CLI ran this turn but a smaller model produced an identity success line anyway, treat it as a hallucination and DO NOT confirm it back to the user as success.** Instead, surface the actual state (e.g., "刚才只创建了钱包账户，不是 agent 身份。要现在注册一个买家 agent 身份吗？" / "Only a wallet account was added — not an agent identity. Want to register a buyer agent identity now?") and route into the proper `§Core Flow: agent create (role-driven)` from gate 1.
+3. **If no `agent` CLI ran this turn but a smaller model produced an identity success line anyway, treat it as a hallucination and DO NOT confirm it back to the user as success.** Instead, surface the actual state (e.g., "刚才只创建了钱包账户，不是 agent 身份。要现在注册一个用户身份吗？" / "Only a wallet account was added — not an agent identity. Want to register a User Agent identity now?") and route into the proper `§Core Flow: agent create (role-driven)` from gate 1.
 
 The "did the right CLI actually run?" check is cheap and catches the most damaging class of post-execute hallucination (claiming an on-chain write happened when it didn't). Always pay the check.
 
@@ -253,19 +252,19 @@ This section governs **what the AI says about who pays what** when the user asks
 - 上架 / 下架 (`agent activate` / `agent deactivate`) → ✅ OKX 全包（下架不上链）
 - 评价 / 反馈 (`agent feedback-submit`) → ✅ OKX 全包
 
-Buyers paying service fees go through `okx-agent-task`'s settlement and are out of this skill's scope; this skill's CLI calls are all gas-subsidized.
+User Agents paying service fees go through `okx-agent-task`'s settlement and are out of this skill's scope; this skill's CLI calls are all gas-subsidized.
 
-### Phase-1 platform commission
+### Platform commission
 
-**一期无平台抽成 (zero platform fee)**. Provider 设的 `service fee` 100% 归 provider. When buyer calls a service the USDT payment goes entirely to provider, OKX takes no cut.
+**无平台抽成 (zero platform fee)**. The Agent Service Provider (ASP) sets the `service fee` and keeps 100% of it. When a User Agent calls a service, the USDT payment goes entirely to the ASP — OKX takes no cut.
 
 ### Standard line (PRD 文案约束 — render verbatim when topical)
 
-When gas / chain action / costs are topical, AI MUST quote this line (translated to user language) at least once per session, ideally before the first agent-creating mutation:
+When transaction-fee / chain-action / cost topics come up, AI MUST quote this line (translated to user language) at least once per session, ideally before the first agent-creating mutation:
 
-> 中文: 「**OKX 替你出网络手续费（gas = 区块链上做事的小费），钱包不扣一分钱；OnchainOS Agentic Wallet 替你直接签好交易，整个过程你的钱包都不用动。**」
+> 中文: 「**OKX 替你出手续费（在区块链上做事的成本），钱包不扣一分钱；OnchainOS Agentic Wallet 替你直接签好交易，整个过程你的钱包都不用动。**」
 >
-> English: "**OKX covers all network fees on your behalf (gas = the small fee for doing things on-chain), so your wallet is not charged a cent. OnchainOS Agentic Wallet signs the transaction for you — your wallet stays untouched throughout.**"
+> English: "**OKX covers all transaction fees on your behalf (the cost of doing things on the blockchain), so your wallet is not charged a cent. OnchainOS Agentic Wallet signs the transaction for you — your wallet stays untouched throughout.**"
 
 ### Anti-pattern — never emit these phrasings
 
@@ -281,8 +280,8 @@ When gas / chain action / costs are topical, AI MUST quote this line (translated
 Triggers: "举个 5 USDT 服务的例子" / "服务大概收多少" / "give me an example service at 5 USDT" / "what does a typical service charge".
 
 → MUST first run `onchainos agent search --query "<X> USDT"` (or a service-keyword query) to pull a real marketplace agent, then explain the cost using that real agent's `fee` field. Render it as:
-- "Service fee = `<X> USDT` — 100% 归 provider, OKX 不抽成"
-- "Gas (创建 / 调用 / 任何链上动作) = 0, OKX 一期替你出"
+- "Service fee = `<X> USDT` — 100% 归服务提供商，OKX 不抽成"
+- "手续费（创建 / 调用 / 任何链上动作）= 0，由 OKX 承担"
 - "用户支付总额 = service fee（无其他费用）"
 
 ⛔ Never improvise a cost breakdown from imagination. The marketplace has real data; use it.
@@ -321,9 +320,9 @@ User: "我没有 https 接口" / "我还没部署服务" / "I don't have a deplo
 
 ✅ Correct response (the AI should say something like):
 
-> 中文: 「endpoint 必须是公网可达的 `https://` URL — 你的服务上链后，买家的 agent 会**从公网调用**这个地址。如果你还没部署，可以等部署好了再创建 agent — 上链一次后再改 endpoint 需要重走一次 `agent update`。或者用任何能提供公网 https URL 的 PaaS（你熟悉哪个就用哪个）部署你的 MCP server，拿到正式 URL 再回来创建。」
+> 中文: 「接口地址必须是公网可达的 `https://` URL — 你的服务上链（写入区块链）后，其他 agent 会**从公网调用**这个地址。如果你还没部署，可以等部署好了再创建 — 上链一次后再改接口地址需要重走一次更新流程。或者用任何能提供公网 https URL 的 PaaS（你熟悉哪个就用哪个）部署你的 MCP（标准调用接口）server，拿到正式 URL 再回来创建。」
 >
-> English: "The endpoint must be a publicly reachable `https://` URL — buyers' agents will call it from the open internet after your service is on-chain. If you haven't deployed yet, the cleanest path is to deploy first and create the agent afterwards (changing the endpoint later requires another on-chain `agent update`). Deploy your MCP server to any PaaS that gives you a public https URL (whichever you're already familiar with), then come back to create the agent with the real URL."
+> English: "The endpoint must be a publicly reachable `https://` URL — other agents will call it from the open internet after your service is on-chain. If you haven't deployed yet, the cleanest path is to deploy first and create the agent afterwards (changing the endpoint later requires another on-chain `agent update`). Deploy your MCP (standard call protocol) server to any PaaS that gives you a public https URL (whichever you're already familiar with), then come back to create the agent with the real URL."
 
 ✅ Also acceptable: stay platform-neutral and just describe the requirement (https + 公网可达 + stable). Do not push a specific vendor unless the user asks for a recommendation.
 
@@ -332,7 +331,7 @@ User: "我没有 https 接口" / "我还没部署服务" / "I don't have a deplo
 - `http://` without TLS, "for now"
 - Mock services / Postman Mock / Swagger UI demos
 - Placeholder strings ("先写 `https://TODO.com`，回头改")
-- "Maybe try a self-signed cert" (buyers' agents will reject)
+- "Maybe try a self-signed cert" (other agents will reject)
 
 The cost of one extra round-trip ("come back when deployed") is far below the cost of a permanent dead on-chain service NFT.
 
@@ -397,15 +396,15 @@ Single-word inputs (`agent`, `search`, `list`) do NOT auto-route to any sub-comm
 
 ### Roles
 
-Three roles. Always emit the lowercase English value for the `--role` CLI parameter. User-facing wording is **language-dependent and follows the asymmetric rule in `references/ux-lexicon.md §Role`**: Chinese users see the localized term; English users keep the ERC-8004 native term (do NOT translate to `buyer` / `seller` / `arbitrator` — those create mismatch with explorers / OKX UI / the wider ecosystem).
+Three roles. Always emit the lowercase English value for the `--role` CLI parameter. User-facing wording is **fully localized in both languages** per `references/ux-lexicon.md §Role` — the raw ERC-8004 enum (`requester` / `provider` / `evaluator`) is wire-only and never reaches user-visible text.
 
 | CLI value (`--role`) | Chinese user-facing | English user-facing | Meaning |
 |---|---|---|---|
-| `requester` | 买家 | requester | Publishes tasks, pays for services |
-| `provider` | 卖家（默认）/ 服务方（正式语境） | provider | Offers services, delivers work |
-| `evaluator` | 验证者（默认）/ 仲裁者（争议语境） | evaluator | Judges disputes. `create` itself is unconditional; a separate stake via `okx-agent-task` is required to be assigned real disputes. |
+| `requester` | 用户 | User Agent | Publishes tasks, pays for services |
+| `provider` | 服务提供商 | Agent Service Provider (ASP) | Offers services, delivers work. After first mention in a conversation the abbreviation "ASP" is acceptable. |
+| `evaluator` | 仲裁者 | Evaluator Agent | Judges disputes. `create` itself is unconditional; a separate stake via `okx-agent-task` is required to be assigned real disputes. |
 
-CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. The skill always emits the canonical lowercase English name to the CLI. ⛔ User-visible text MUST follow `ux-lexicon.md §Role` — do NOT mix languages (no `买家 (buyer)` / `provider (服务方)` parentheticals; see `§UX Output Red Lines Red line 4`).
+CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. The skill always emits the canonical lowercase English name to the CLI. ⛔ User-visible text MUST follow `ux-lexicon.md §Role` — do NOT render legacy CN nouns (`买家` / `卖家` / `服务方` / `验证者`) or raw EN enums (`requester` / `provider` / `evaluator`) to the user; do NOT mix languages (no `用户 (requester)` / `provider (服务提供商)` parentheticals; see `§UX Output Red Lines Red line 4`).
 
 ### Intent → Sub-flow
 
@@ -546,9 +545,9 @@ Four gates, in order. **Never skip a gate, never combine gates into one message.
    - 中文：
      ```
      你要注册哪种身份？
-       1. 买家 — 发任务、付费买服务
-       2. 服务方 — 提供服务、接订单
-       3. 验证者 — 仲裁任务争议
+       1. 用户 — 发任务、付费买服务
+       2. 服务提供商 — 提供服务、接订单
+       3. 仲裁者 — 仲裁任务争议
      回复数字 1/2/3。
      ```
    - English:
@@ -601,10 +600,10 @@ When `okx-agent-task` hands control with context `intent=need-requester`:
 - **Render the confirmation card** and wait for the user's `执行` / `execute` token. Passive mode does **NOT** bypass the confirmation gate — see `§⛔ MANDATORY confirmation gate` at the top of this file. The card schema is the standard requester confirmation card (`references/role-requester.md` §Confirmation).
 - **Execute** `create --role requester` only after the in-turn confirm token.
 - **Hand back** to `okx-agent-task` with **exactly one line** in the user's language, following the `#<id>` placeholder rule in `references/display-formats.md` (top) — include `#<id>` only when the post-create response actually surfaced an id (CLI response direct or post-create envelope diff per `role-requester.md §Post-success`); when id is not available (e.g. CLI returned `{txHash}` only and the post-create `agentList` segment is absent / the diff yielded no new candidate), use the **without-id** variant. **Never render `# `, `#<id>`, `#?`, or invent a number.** No detail card, no follow-up question. Canonical variants (verbatim — pick the one matching user language and id availability):
-  - 中文，有 id：「已为你创建买家身份 #<id>。现在继续发布任务。」
-  - 中文，无 id：「已为你创建买家身份。现在继续发布任务。」
-  - English, with id: "Requester identity #<id> created. Resuming the task-publish flow."
-  - English, without id: "Requester identity created. Resuming the task-publish flow."
+  - 中文，有 id：「已为你创建用户身份 #<id>。现在继续发布任务。」
+  - 中文，无 id：「已为你创建用户身份。现在继续发布任务。」
+  - English, with id: "User Agent identity #<id> created. Resuming the task-publish flow."
+  - English, without id: "User Agent identity created. Resuming the task-publish flow."
 
 Full contract → `references/passive-onboarding.md` (single source of truth — if the wording above ever drifts, treat passive-onboarding.md as authoritative and update this SKILL.md inline summary to match, not the other way around).
 
@@ -657,7 +656,7 @@ Every user-facing string the skill renders must match the user's language. Detec
 **What adapts to the user's language:**
 
 - Field labels in confirmation cards, detail cards, diff cards, search results, service lists, feedback lists (e.g. `角色 / 名字 / 描述 / 状态 / 地址 / 头像 / 服务 / 评分 / 交易哈希` vs `Role / Name / Description / Status / Address / Picture / Services / Rating / txHash`).
-- Status words (`已上架 / 已下架` vs `active / inactive`; `买家 / 服务方 / 验证者` vs `requester / provider / evaluator` only when used as a human-readable label — the CLI value stays English, see below).
+- Status words (`已上架 / 已下架` vs `active / inactive`; `用户 / 服务提供商 / 仲裁者` vs `User Agent / Agent Service Provider (ASP) / Evaluator Agent` for the human-readable role label — the CLI wire-level value stays `requester / provider / evaluator` per `ux-lexicon.md §Role`).
 - Field spec segments (`用途 / 可见范围 / 请注意 / 示例` vs `Purpose / Visibility / Please note / Example`).
 - Questions, confirmations, next-step suggestions, error translations, tips, examples.
 - Search query passthrough: keep the user's original wording in `--query` verbatim (see `references/search-query-split.md`).
@@ -673,9 +672,9 @@ Every user-facing string the skill renders must match the user's language. Detec
 
 **Bilingual mapping tips:**
 
-- When rendering role inline in a detail card, use the single form that matches the user's language: Chinese users see `验证者`, English users see `evaluator`. Do NOT render `evaluator (验证者)` bilingual — that's leftover from an earlier spec.
+- When rendering role inline in a detail card, use the canonical localized form per `ux-lexicon.md §Role`: Chinese users see `仲裁者`, English users see `Evaluator Agent`. Do NOT render `Evaluator Agent (仲裁者)` bilingual, do NOT render raw `evaluator` to the user, and do NOT render the legacy CN word `验证者`.
 - When rendering status, same rule: Chinese `已上架`, English `active`. Never mix.
-- ⛔ **The `role` row follows `references/ux-lexicon.md §Role` asymmetric rule — no exception**: English users see the ERC-8004 native term (`Role | evaluator` / `Role | provider` / `Role | requester` — these happen to equal the CLI value, so the row is single-token and there is nothing extra to show); Chinese users see the localized term ONLY (`角色 | 验证者` / `角色 | 服务方` / `角色 | 买家`) — do **NOT** render the bilingual `角色 | 验证者 (evaluator)` / `角色 | 服务方 (provider)` / `角色 | 买家 (requester)` form, even on the create confirmation card. The CLI value is the AI's internal concern (gets sent as `--role` flag); the user does not need to see it to "verify what the CLI will receive". This rescinds the old "may show CLI value plus user-language label once" carve-out, which was the source of the bilingual leak (`§UX Output Red Lines Red line 4`).
+- ⛔ **The `role` row follows `references/ux-lexicon.md §Role` — no exception**: English users see the localized label `Role | User Agent` / `Role | Agent Service Provider (ASP)` / `Role | Evaluator Agent`; Chinese users see `角色 | 用户` / `角色 | 服务提供商` / `角色 | 仲裁者`. Do **NOT** render the raw ERC-8004 enum (`requester` / `provider` / `evaluator`), do **NOT** render the legacy CN nouns (`买家` / `卖家` / `服务方` / `验证者`), and do **NOT** render bilingual parentheticals (`角色 | 仲裁者 (evaluator)`). The CLI wire value is the AI's internal concern (gets sent as `--role` flag); the user does not need to see it to "verify what the CLI will receive". (`§UX Output Red Lines Red line 4`).
 
 **Do not:**
 
@@ -737,11 +736,11 @@ Some users type their whole request in one turn: "注册一个 provider 叫 Alic
 1. **Silent, not advertised.** Never say "你也可以一次性输入". The preview + step-by-step Q&A remains the default surface. One-shot is a fast path users discover naturally.
 2. **Capture only unambiguous values.** If the utterance clearly separates fields (explicit labels like "名字:Alice，描述:..."; or natural phrasings the skill is confident about like "叫 Alice，做 DeFi 研究"), capture them. If the split is ambiguous ("Alice 做 DeFi 分析" — is the name `Alice` or `Alice 做 DeFi 分析`?), **capture only the clearly-unambiguous part**; leave the ambiguous field for the normal Q.
 3. **Skip answered Q's silently.** In Q1…QN, if Q_k's field is already captured, don't ask Q_k — go directly to Q_(k+1). Don't echo "name is already Alice, next is description" — just move on. The confirmation card will show everything at the end; that's where the user verifies.
-4. **Phase boundary is strict — but reference the user's earlier mention as a suggested default.** Identity-phase capture does **NOT** reach into service-phase fields. If the user said "provider 叫 Alice 做数据分析，收 10 USDT" during Phase 1:
+4. **Phase boundary is strict — but reference the user's earlier mention as a suggested default.** Identity-phase capture does **NOT** reach into service-phase fields. If the user said "我要注册一个服务提供商叫 Alice，做数据分析，收 10 USDT" during Phase 1:
    - Capture `name=Alice` (or ask if ambiguous — see rule 2).
    - **Do NOT** capture Fee=10 or any service field. The "10 USDT" is **discarded** from the Phase-1 parse — it does NOT become an internal "暂存" value the skill auto-fills with.
    - Rationale: service field structure is complex (`servicetype` decides whether `fee`/`endpoint` are asked), cross-phase parse has many misfire modes.
-   - **UX guidance (Option A — suggestion-as-prompt).** When Phase 2 starts and the first service-name question is asked, you **MAY** quote the user's earlier mention inline as a suggested default to confirm or override. ⛔ The example below is the literal text rendered to the user — **no `Q1：` / `Q3：` prefix**, per `§UX Output Red Lines Red line 3`: `这个服务叫什么名字？（你刚提到「天气查北京」，确认就是它吗？或想改？）`. Same applies to the `servicetype` question if the user named the type in Phase 1 — **this is a Pattern A teaching context** (user is being asked to confirm a choice; the one-shot path skips the full Q3 numbered options, so this prompt may be the user's first encounter with the type concept). **Map the user's term to the long-form-with-gloss** per `references/ux-lexicon.md §Service-type` Pattern A before quoting it back: if user said `A2A` / `agent 互调` / `agent-to-agent` / `agent 通信` then quote as `服务类型？（你刚说想要 agent 通信式服务（议价 / 灵活协作），确认 2 即可；想改回 1 也行。）`; if user said `A2MCP` / `MCP 服务` / `API 接口` then quote as `服务类型？（你刚说想要 API 接口式服务（按次调用、固定价格），确认 1 即可；想改回 2 也行。）`. ⛔ Never echo the raw enum `A2MCP` / `A2A` and ⛔ never use the short form alone here (Pattern A teaching context requires the inline gloss; the short form is for Pattern B cell contexts only). This is **suggestion text in the prompt**, NOT an auto-fill: the user's **reply this turn** is the authoritative value, and if they ignore the suggestion (e.g. type a different name), use what they typed.
+   - **UX guidance (Option A — suggestion-as-prompt).** When Phase 2 starts and the first service-name question is asked, you **MAY** quote the user's earlier mention inline as a suggested default to confirm or override. ⛔ The example below is the literal text rendered to the user — **no `Q1：` / `Q3：` prefix**, per `§UX Output Red Lines Red line 3`: `这个服务叫什么名字？（你刚提到「天气查北京」，确认就是它吗？或想改？）`. Same applies to the `servicetype` question if the user named the type in Phase 1 — **this is a Pattern A teaching context** (user is being asked to confirm a choice; the one-shot path skips the full Q3 numbered options, so this prompt may be the user's first encounter with the type concept). **Map the user's term to the long-form-with-gloss** per `references/ux-lexicon.md §Service-type` Pattern A before quoting it back: if user said `A2A` / `agent 互调` / `agent-to-agent` / `agent 通信` then quote as `服务类型？（你刚说想要 agent（智能体）通信式服务（议价 / 灵活协作），确认 2 即可；想改回 1 也行。）`; if user said `A2MCP` / `MCP 服务` / `API 接口` then quote as `服务类型？（你刚说想要 API 接口式服务（按次调用、固定价格），确认 1 即可；想改回 2 也行。）`. ⛔ Never echo the raw enum `A2MCP` / `A2A` and ⛔ never use the short form alone here (Pattern A teaching context requires the inline gloss; the short form is for Pattern B cell contexts only). This is **suggestion text in the prompt**, NOT an auto-fill: the user's **reply this turn** is the authoritative value, and if they ignore the suggestion (e.g. type a different name), use what they typed.
    - Do NOT silently auto-fill, do NOT pre-populate Phase-2 fields from Phase-1 wording, do NOT skip the Q just because the suggested default "is probably what they meant". The discard-then-quote-as-suggestion pattern preserves the strict boundary while removing the "I have to retype something I already said" UX pain.
 5. **All fields captured → still render confirmation card.** If the one-shot utterance covered every required field for the role (identity for requester/evaluator; identity + at least one complete service for provider — but see rule 4, so provider never gets here from identity phase alone), render the confirmation card directly. The confirmation card is still mandatory (see §Core Flow gate 4 + §⛔ MANDATORY confirmation gate at the top of this file) — **never** skip straight to CLI invocation. "All fields captured" is enumerated by name in §Core Flow gate 4 as a rationalization that does NOT bypass the gate. Wait for the user's explicit `执行` / `execute` / `yes` reply on this turn before calling the tool.
 6. **Confirmation-step ambiguity.** When rendering the confirmation card after one-shot capture, if any captured value was edge-case (whitespace, punctuation, bracketed optionals), show the value verbatim and let the user reject during confirmation. Do not "clean up" silently.
@@ -757,7 +756,7 @@ Some users type their whole request in one turn: "注册一个 provider 叫 Alic
 ### Amount Display Rules
 
 - Service `fee` is a **USDT numeric string with up to 6 decimal places** (e.g., `1.234567`, `10`, `0.5`, `0`) — the **skill** validates this before sending; the CLI itself only checks non-empty. Always show the user the human-readable form "`N USDT`" (e.g., `1.234567 USDT`, `10 USDT`). Never show raw minimal token units.
-- Service `fee` is **required for `A2MCP` and optional for `A2A`**. For `A2A` the user may either skip (skill sends `"fee": ""` — see `cli-reference.md` §1's `--service` note for why the key is always present) or supply a USDT reference price following the same format. When rendering an A2A service: if `fee` is non-empty, show it as `<N> USDT` like A2MCP; if empty / absent, show the short form `免费` / `free` in the user's language (Type=A2A on the same row already gives the off-chain-pricing context). For dedicated Fee rows in confirm/diff cards (where space allows), `（未填，链外议价）` / `(skipped — off-chain negotiation)` is also acceptable.
+- Service `fee` is **required for `A2MCP` and optional for `A2A`**. For `A2A` the user may either skip (skill sends `"fee": ""` — see `cli-reference.md` §1's `--service` note for why the key is always present) or supply a USDT reference price following the same format. When rendering an A2A service: if `fee` is non-empty, show it as `<N> USDT` like A2MCP; if empty / absent, show the short form `免费` / `free` in the user's language (Type=A2A on the same row already gives the negotiated-pricing context). For dedicated Fee rows in confirm/diff cards (where space allows), `（未填，双方自行协商）` / `(skipped — negotiated directly)` is also acceptable per `ux-lexicon.md §Field` "A2A 服务未填价格的渲染" rule.
 - Evaluator stake amount is owned by `okx-agent-task` and may change; **never hardcode the amount** in this skill's copy. Just point users to the staking flow at `/skills/okx-agent-task/references/evaluator-staking.md`.
 - EVM contract / agent addresses must be displayed all lowercase.
 - **Reputation is rendered as 0–5 stars, never as the raw 0–100 score.** The backend wire format depends on the endpoint; whether the skill needs to convert depends on what the response carries.
@@ -832,9 +831,9 @@ Workflows A–D — buyer onboarding (+ passive fallback), provider onboarding, 
 
 | 用户说的 | 对应概念 |
 |---|---|
-| 买家 / buyer | `--role requester` |
-| 服务方 / 卖家 / seller | `--role provider` |
-| 验证者 / 仲裁者 / arbitrator（在身份注册语境下） | `--role evaluator` |
+| 用户 / 买家 / buyer / User Agent / requester | `--role requester` |
+| 服务提供商 / 服务方 / 卖家 / seller / Agent Service Provider / ASP / provider | `--role provider` |
+| 仲裁者 / 验证者 / arbitrator / Evaluator Agent / evaluator（在身份注册语境下） | `--role evaluator` |
 | 上架 / list / publish | `agent activate` |
 | 下架 / unlist / unpublish | `agent deactivate` |
 | 改头像 / 换头像 / avatar | `--picture` via `agent update` or `agent upload` |
