@@ -18,6 +18,8 @@
 > 🔴 真实事故 1：backup 收到 `job_created` 后调 `sessions_spawn` 委托给子 agent，designated-provider 消费上下文断裂、协商流程不可控。
 > 🔴 真实事故 2（2026-05-16，MiniMax）：backup 收到 `job_created`（"北京天气查询"）→ 第一个 tool call 是 `sessions_spawn` → 子 agent 没有 flow.rs 剧本 → 直接文字输出"协商已启动，等待结果" → 用户完全看不到 → recommend 未触发 → 任务永久卡死。**`sessions_spawn` 是 backup session 上最常见的致命错误**。
 
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — 系统事件必须调 `next-action`，禁止直接执行 CLI**：收到 `source: "system"` 的系统事件（`job_payment_mode_changed` / `job_accepted` / `job_submitted` / `job_created` / `job_disputed` / ...）后，**第一个动作必须是** `onchainos agent next-action --jobid <jobId> --jobStatus <event> --role buyer --agentId <agentId>`。**禁止**跳过 `next-action` 直接执行业务 CLI（`confirm-accept` / `complete` / `reject` / `set-payment-mode` / ...）——剧本包含前置条件检查、动作白名单和时序约束，跳过 = 执行错误命令 = 流程卡死或资金风险。
+
 任务状态机搬到了 CLI (`onchainos agent next-action`)——**不需要记忆每个状态的步骤**，收到任何系统通知（链事件 / user session 转来的用户决策）调 next-action，按输出执行即可。
 
 ---
