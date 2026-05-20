@@ -18,7 +18,9 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 > 🔴 Real incident 1: backup received `job_created`, then called `sessions_spawn` to delegate to a child agent — the designated-provider context was severed and the negotiation flow became uncontrollable.
 > 🔴 Real incident 2 (2026-05-16, MiniMax): backup received `job_created` ("Beijing weather query") → first tool call was `sessions_spawn` → the child agent had no flow.rs script → it just printed a text message "negotiation started, awaiting result" → the user never saw anything → `recommend` was never triggered → the task was permanently stuck. **`sessions_spawn` is the most common fatal mistake on a backup session.**
 
-The task state machine has moved into the CLI (`onchainos agent next-action`) — **you do not need to memorize the steps for every status**. On any system notification (chain event / user-decision relay from the user session), call `next-action` and execute its output.
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — 系统事件必须调 `next-action`，禁止直接执行 CLI**：收到 `source: "system"` 的系统事件（`job_payment_mode_changed` / `job_accepted` / `job_submitted` / `job_created` / `job_disputed` / ...）后，**第一个动作必须是** `onchainos agent next-action --jobid <jobId> --jobStatus <event> --role buyer --agentId <agentId>`。**禁止**跳过 `next-action` 直接执行业务 CLI（`confirm-accept` / `complete` / `reject` / `set-payment-mode` / ...）——剧本包含前置条件检查、动作白名单和时序约束，跳过 = 执行错误命令 = 流程卡死或资金风险。
+
+任务状态机搬到了 CLI (`onchainos agent next-action`)——**不需要记忆每个状态的步骤**，收到任何系统通知（链事件 / user session 转来的用户决策）调 next-action，按输出执行即可。
 
 ---
 
@@ -52,39 +54,44 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 
 ## 3. Inbound Message Routing
 
-> 🔴 **Negotiation-phase autonomy red line**: when status=0 (created) and an active sub session exists, negotiation is **carried out autonomously by the sub session** — upon receiving the provider's quote / counter / discussion message, you **must** match against the routing priorities below; when rule #5 hits, call `next-action --jobStatus negotiate_reply` to fetch the script, then autonomously evaluate and reply per the script's decision matrix. **Do NOT** forward the provider's quote / negotiation content to the user and ask "do you accept?". **Do NOT** manually execute D-Step / B-Step flows (service-list → create group → send inquiry); those are only triggered the first time by the `job_created` next-action script. Only the following cases involve the user: (a) a quote exceeds `max_budget` and is auto-REJECTed, then provider switching requires the user's choice; (b) the recommendation list is empty and the user must decide what to do next.
+> 🔴 **协商阶段自治红线**：status=0（created）且存在活跃 sub session 时，协商由 sub session **自主完成**——收到服务商的报价、还价、讨论消息后，**必须**按下方路由优先级匹配，命中 #6（兜底）时调 `next-action --jobStatus negotiate_reply` 拿剧本，按剧本的决策矩阵自主评估并回复。**禁止**把服务商的报价 / 协商内容转发给用户问"是否接受"。**禁止**在 sub session 中直接输出文字确认表单（用户看不到 sub session 的任何直接输出）。**禁止**手动执行 D-Step / B-Step 流程（service-list → 建群 → 发询盘），这些只在 `job_created` 首次触发时由 next-action 剧本驱动。只有以下情况才涉及用户：(a) 报价超 max_budget 自动 REJECT 后切换服务商需用户选择；(b) 推荐列表为空需用户决策下一步。
 >
 > ⚠️ **The routing priorities in this section override the generic "receiving peer message" rule in SKILL.md.** Do NOT use the current status from common context (e.g. `created`) to call `next-action` — directly use the `jobStatus` matched by the routing below (e.g. `negotiate_reply` / `negotiate_ack` / `provider_applied`).
 >
-> **Real incident 1**: the provider sent a natural-language quote "0.1 USDG", the agent skipped `next-action` and directly called `xmtp_dispatch_user` to forward the quote to the user asking "confirm acceptance?" — completely bypassing the three-step handshake; the provider never received `[intent:propose]`.
-> **Real incident 2**: after the provider's first reply, the agent followed the old SKILL.md rule and used the common-context current `status=created` to call `next-action --jobStatus job_created` → got the bootstrap script → resent the first inquiry. Correct: routing #5 → `negotiate_reply`.
-> **Real incident 3 — 🛑 CRITICAL, high-frequency incident**: the provider replied in natural language "I accept, 0.1 USDG, escrow", the agent treated "I accept" as `[intent:ack]`, skipped `[intent:propose]`, and called `save-agreed` + `set-payment-mode` directly → the provider never received `[intent:confirm]`, could not `apply`, and the task got stuck. **This is the most frequent serious error** — the provider's first reply is almost always natural language (a quote, discussion, or expression of interest), and **can never** be a structured marker `[intent:ack]` (because the user has not yet sent `[intent:propose]`, so an ACK has nothing to respond to). Correct: routing #5 → `negotiate_reply` → send `[intent:propose]` → wait for the real `[intent:ack]`.
+> **真实事故 1**：服务商发自然语言报价"0.1 USDG"，agent 跳过 next-action 直接 xmtp_dispatch_user 转发给用户问"是否确认接受"——完全绕开三步握手，服务商永远等不到 `[intent:propose]`。
+> **真实事故 2**：服务商回复首条消息后，agent 按 SKILL.md 旧规则用 common context 当前 status=created 调了 `next-action --jobStatus job_created` → 拿到初始化剧本 → 重发首轮询盘。正确做法：路由 #6 → `negotiate_reply`。
+> **真实事故 3 — 🛑 CRITICAL 高频事故**：服务商自然语言说"我接受，0.1 USDG，escrow"，agent 把"我接受"当作 `[intent:ack]`，跳过 [intent:propose] 直接调 save-agreed + set-payment-mode → 服务商从未收到 [intent:confirm]，无法 apply，任务卡死。**这是最常发生的严重错误**——服务商的第一条回复几乎总是自然语言（报价、讨论、接受意向），**绝不可能**是结构化标记 `[intent:ack]`（因为用户尚未发过 `[intent:propose]`，ACK 无从回起）。正确做法：路由 #6 → `negotiate_reply` → 发 [intent:propose] → 等真正的 [intent:ack]。
+> **真实事故 4 — 🛑 CRITICAL 流程卡死**：服务商回复首条报价"0.07 USDT，escrow"，agent 在 sub session 中**直接输出文字**："收到！协商条件如下：价格 0.07 USDT，支付方式 escrow。如果以上没问题，请确认，我来帮你发送 [intent:propose]"——**完全跳过 §3 路由和 next-action 调用**，且在 sub session 中直接输出的文字用户 100% 看不到，流程永久卡死。错误点：(1) 未调 `next-action --jobStatus negotiate_reply` 获取决策矩阵；(2) 在 sub session 直接输出文字（违反 preamble rule 10）；(3) 向用户请求确认（违反协商自治红线——报价在预算内应自主发 [intent:propose]）。**正确做法**：路由 #6 → `next-action --jobStatus negotiate_reply` → 读取 budget/max_budget → 报价 0.07 ≤ budget → 直接 `xmtp_send` 发 `[intent:propose]`（全自动，不问用户）。
 >
-> 🛑 **CRITICAL — iron rule for distinguishing structured markers vs. natural language**:
-> - **Structured marker**: the content's text **must contain the literal substring `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]`** (i.e. `content.includes("[intent:")` is true) — note that the intent marker is a **suffix**, appearing at the end of the message.
-> - **Natural language**: any content that **does not contain the substring `[intent:`** — including but not limited to "I accept", "agreed", "OK", "sure", "no problem", "我接受", "同意", "escrow OK", "quote: 0.1 USDG" — is **all natural language and all falls through to #5 → `negotiate_reply`**.
-> - **Decision method**: perform a **substring containment check** on the content — `content.includes("[intent:")`. Only when it matches do you go to #3; otherwise **unconditionally go to #5**. **Semantic inference is forbidden** — do NOT infer `[intent:ack]` just because the provider said "accept / agree".
-> - **Logical proof**: if the user **has not yet sent `[intent:propose]`**, the provider **cannot** reply with `[intent:ack]` — ACK is the response to PROPOSE. When you receive the provider's first message, the user has not yet sent PROPOSE, so **the first message is 100% not an ACK** and must go to #5.
+> 🛑 **CRITICAL — 结构化标记 vs 自然语言的铁律判定**：
+> - **结构化标记**：content 的文本**必须包含 `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` 方括号字面量**（即 `content.includes("[intent:")` 为 true）——注意 intent 标记是**后缀**，出现在消息末尾
+> - **自然语言**：content 中**不包含 `[intent:` 的文本**——包括但不限于"我接受"、"同意"、"OK"、"可以"、"没问题"、"I accept"、"agreed"、"escrow OK"、"报价 0.1 USDG"——**全部是自然语言，全部走 #6 兜底 → `negotiate_reply`**
+> - **判定方法**：对 content 做**子串包含匹配** `content.includes("[intent:")`——命中才走 #3，否则**无条件走 #6**。**禁止语义推断**——不要因为服务商说了"接受/同意"就推断为 `[intent:ack]`
+> - **逻辑铁证**：如果用户**尚未发过 `[intent:propose]`**，服务商**不可能**回 `[intent:ack]`——ACK 是对 PROPOSE 的回应。收到服务商第一条消息时，用户必然还没发过 PROPOSE，所以**第一条消息 100% 不是 ACK**，必须走 #6
 
 > 📌 **About `--peerTaskMinVersion` in the next-action templates below**: pass through the `payload.taskMinVersion` integer from the inbound a2a-agent-chat envelope; if the envelope **has no `payload` field** or no `taskMinVersion` sub-field (older peer / compatibility scenarios) → **omit the entire `--peerTaskMinVersion` parameter** (do NOT pass an empty string or the literal `<...>`). The CLI treats missing payload = v1 baseline (backward compatible).
 >
-> **⚠️ Sub-session message routing priorities** (after passing the security gate, match in this order; **first hit wins**):
+> 1. **服务商 apply 通知**（来源：peer）：content 含 `[intent:applied]` 标记，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无标记的旧版本服务商） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
+> 2. **交付通知**（来源：peer）：content 包含 `[intent:deliver]` 标记（判定方法：`content.includes("[intent:deliver]")`）。区分交付物形态：content 含 `deliverableType: file` + 解密字段（`fileKey`/`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；`deliverableType: text` → 提取 `---` 分隔符之间的正文内容并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「服务商已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
+> 3. **协商结构化标记**（来源：peer）（🛑 **MANDATORY 字面量包含匹配，禁止语义推断**：content **必须包含** `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` **方括号字面量**才命中本规则。判定方法：`content.includes("[intent:")`。❌ 服务商自然语言"我接受/同意/OK/可以/没问题/agreed/report: 0.1 USDG" 等**不包含 `[intent:` 的文本** → **不命中 #3，必须走 #6 兜底 → `negotiate_reply`**。违反此规则 = 跳过三步握手 = 任务永久卡死） → 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
+>    - status≥1 → `xmtp_send`「协商已完成，当前参数已锁定，任务执行中。」，结束本轮 turn
+>    - status=0（created）→ 按标记类型分派到对应 next-action 事件：
+>      - `[intent:ack]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_ack --role buyer --agentId <你的agentId>`
+>      - `[intent:counter]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_counter --role buyer --agentId <你的agentId>`
+>      - `[intent:reject]` → 服务商主动拒绝协商，**不再回复**，`onchainos agent mark-failed <jobId> --provider <服务商agentId>`，回到推荐列表（`onchainos agent recommend <jobId> --current`），由用户选择下一个服务商
+>      - `[intent:propose]` → 异常（服务商不应发 PROPOSE），xmtp_send 告知「PROPOSE 由用户发起，请回复 ACK/COUNTER/REJECT」
+> 4. **`[MAX_BUDGET_UPDATE]` 内部通知**（来源：user session via `xmtp_dispatch_session`）：content 以 `[MAX_BUDGET_UPDATE]` 前缀开头 → 提取 `paymentMostTokenAmount=<值>`，更新当前协商的 max_budget 上限。🛑 **ABSOLUTE PROHIBITION：不回复、不转发、不通知服务商、不 xmtp_send、不 xmtp_dispatch_user**——违反 = max_budget 泄露给服务商 = 谈判筹码丧失。静默更新后**立即结束 turn**。
+> 5. **用户补充素材转发**（来源：user session via `xmtp_dispatch_session`）：content 含本地文件路径（如 `.openclaw/media/inbound/` 或绝对路径指向图片/文档）→ **必须先**调 `agent status <jobId>` 查状态：
+>    - status=1（accepted）→ 按 SKILL.md 路径 8 文件传输协议执行：(1) `xmtp_file_upload`（参数 `filePath` = content 中的文件路径，`agentId` = 你的 agentId，`jobId`）→ 拿到 `fileKey` + 解密元数据（digest/salt/nonce/secret）；(2) `xmtp_send` 给服务商，content 附 fileKey + 五个解密字段 + 用户描述（如有）；(3) `xmtp_dispatch_user` 通知用户「素材已发送给服务商」。⚠️ 本操作豁免 preamble rule 9（禁止给服务商发过场消息）——这是用户主动发起的素材转发，不是过场通知。
+>    - status=0（created）→ `xmtp_dispatch_user` 通知用户「任务尚未进入执行阶段，素材暂无法发送给服务商」
+>    - status≥2（submitted / refused / disputed / 终态）→ `xmtp_dispatch_user` 通知用户「任务已进入验收/终态阶段，如需提交证据请按验收流程操作」
+> 6. **兜底**（1-5 未命中，来源：peer）→ 调 `agent status <jobId>` 查状态（如本 turn 已知 status 则复用，不重复调用）：
+>    - status=1（accepted）→ 执行讨论模式（§3.5）
+>    - status=0（created）且存在活跃 sub session（`session_status` 有值）→ 协商中的自然语言讨论，调 `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <你的agentId>` 拿剧本
+>    - status=0（created）且无 sub session → `xmtp_dispatch_user` 转发服务商消息给用户
+>    - 其余（submitted / refused / disputed / 终态）→ 忽略，不回复，不转发
 >
-> 1. **Provider apply notification** (source: peer): content contains the `[intent:applied]` marker, or semantically conveys "have completed on-chain apply" / "please run confirm-accept" (compatible with older providers without the marker) → **immediately** call `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>` to fetch the script, then execute `confirm-accept` per the script (⚠️ `confirm-accept`'s parameter is `--provider-agent-id`, NOT `--agent-id`. The buyer does NOT receive a `provider_applied` system notification; here it's triggered by a2a-agent-chat. **Do NOT query the task API to verify** — the on-chain index has lag; `confirm-accept` performs its own on-chain validation internally).
-> 2. **Delivery notification** (source: peer): content contains the `[intent:deliver]` marker (decision method: `content.includes("[intent:deliver]")`). Distinguish deliverable formats: content with `deliverableType: file` + decryption fields (`fileKey`/`digest`/`salt`/`nonce`/`secret`) → call `xmtp_file_download` to decrypt and download locally; `deliverableType: text` → extract the body content between the `---` separators and record it. **Only download / extract; do NOT show the deliverable body / summary / overview to the user** — call `xmtp_dispatch_user` and send only a brief notice: "The provider has sent the deliverable; waiting for on-chain submission confirmation before review." **Do NOT include the deliverable content in this notice.** The full content will be presented in the review decision card after the `job_submitted` system event arrives (this avoids the user seeing two cards and information fragmentation).
-> 3. **Structured negotiation markers** (source: peer) (🛑 **MANDATORY literal-substring matching; semantic inference is forbidden**: content **must contain** the literal `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` substring for this rule to hit. Decision method: `content.includes("[intent:")`. ❌ Provider natural language "I accept / agreed / OK / sure / no problem / agreed / report: 0.1 USDG" and other **text that does NOT contain `[intent:`** → **does NOT hit #3 and must fall through to #5 → `negotiate_reply`**. Violating this rule = skipping the three-step handshake = the task is permanently stuck) → call `agent status <jobId>` to fetch the status (if status is already known in this turn, reuse it; do NOT call again):
->    - status ≥ 1 → `xmtp_send` "Negotiation is complete; the current terms are locked; the task is executing." and end this turn.
->    - status = 0 (created) → dispatch to the corresponding next-action event by marker type:
->      - `[intent:ack]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_ack --role buyer --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>`
->      - `[intent:counter]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_counter --role buyer --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>`
->      - `[intent:reject]` → the provider has actively rejected negotiation; **do not reply**, run `onchainos agent mark-failed <jobId> --provider <provider agentId>`, return to the recommendation list (`onchainos agent recommend <jobId> --current`), and let the user pick the next provider.
->      - `[intent:propose]` → anomaly (the provider should not send PROPOSE); `xmtp_send` informing "PROPOSE is initiated by the user; please reply with ACK/COUNTER/REJECT".
-> 4. **`[MAX_BUDGET_UPDATE]` internal notification** (source: user session via `xmtp_dispatch_session`): content begins with the `[MAX_BUDGET_UPDATE]` prefix → extract `paymentMostTokenAmount=<value>` and update the current negotiation's `max_budget` cap. 🛑 **ABSOLUTE PROHIBITION: do not reply, do not forward, do not notify the provider, do not `xmtp_send`, do not `xmtp_dispatch_user`** — violating this = `max_budget` leaks to the provider = loss of bargaining leverage. After silently updating, **end the turn immediately**.
-> 5. **Fallback** (none of 1–4 hit, source: peer) → call `agent status <jobId>` to fetch the status (if status is already known in this turn, reuse it; do NOT call again):
->    - status = 1 (accepted) → execute the discussion mode (§3.5).
->    - status = 0 (created) AND an active sub session exists (`session_status` returns a value) → natural-language discussion during negotiation; call `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>` to fetch the script.
->    - status = 0 (created) AND no sub session → `xmtp_dispatch_user` to forward the provider's message to the user.
->    - others (submitted / refused / disputed / terminal states) → ignore; do not reply; do not forward.
+> 🛑 **反幻觉 — status 校验铁律**：在输出「还在协商」「等待接单」「等待服务商确认」「资金托管后」等待类措辞之前，**必须先**调 `agent status <jobId>` 查链上真实状态。如果 status=1（accepted）或 paymentMode=1（escrow 已设置），**禁止**输出等待接单/协商类措辞——任务已在执行阶段。🔴 真实事故：backup session 收到用户素材后凭上下文推理「还没接单」，实际任务早已 accepted（status=1, paymentMode=1），导致素材未转发给服务商。
 
 ---
 
@@ -281,7 +288,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 
 > **Session**: sub session (triggered by a provider message; reactive).
 >
-> **Trigger**: §3 Inbound Message Routing priority 4, status=1 (accepted).
+> **Trigger**: §3 Inbound Message Routing 优先级 6（兜底），status=1（accepted）
 
 ⚠️ **Do NOT call `next-action`**; just follow the rules in this section.
 
