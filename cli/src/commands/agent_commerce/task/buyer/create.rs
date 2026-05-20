@@ -1,9 +1,9 @@
-//! 发布任务（自定义签名流程）
+//! Publish a task (custom signing flow).
 //!
-//! 用户动作：发布任务 — onchainos agent create-task
+//! User action: publish a task — `onchainos agent create-task`.
 //!
-//! 身份校验：通过调用身份模块 CLI（`onchainos agent get`）检查当前用户
-//! 是否拥有用户身份（role=1），再执行任务发布流程。
+//! Identity check: invokes the identity-module CLI (`onchainos agent get`) to verify
+//! that the current user has a buyer identity (role=1) before running the publish flow.
 
 use anyhow::{bail, Result};
 use std::time::Duration;
@@ -16,7 +16,7 @@ use crate::commands::agent_commerce::task::common::{
 };
 use crate::commands::agent_commerce::task::signing;
 
-// ─── 常量 ────────────────────────────────────────────────────────────────
+// ─── Constants ───────────────────────────────────────────────────────────
 
 const MAX_BUDGET: f64 = 10_000_000.0;
 const MIN_DESCRIPTION_CHARS: usize = 20;
@@ -28,7 +28,7 @@ const ACCEPT_MAX: u64 = 180 * 86400;
 const SUBMIT_MIN: u64 = 60;
 const SUBMIT_MAX: u64 = 180 * 86400;
 
-// ─── 参数结构体 ──────────────────────────────────────────────────────────
+// ─── Parameter struct ────────────────────────────────────────────────────
 
 pub struct CreateTaskParams {
     pub description: String,
@@ -54,12 +54,12 @@ impl CreateTaskParams {
     fn validate(&self) -> Result<ValidatedParams> {
         let desc_len = self.description.chars().count();
         if desc_len < MIN_DESCRIPTION_CHARS {
-            bail!("描述太短，请补充需求细节（至少 {MIN_DESCRIPTION_CHARS} 字符，当前 {desc_len} 字符）");
+            bail!("description is too short; please add more detail (minimum {MIN_DESCRIPTION_CHARS} chars, currently {desc_len})");
         }
         if desc_len > MAX_DESCRIPTION_CHARS {
             bail!(
-                "任务描述不能超过 {MAX_DESCRIPTION_CHARS} 字符（当前 {desc_len} 字符），\
-                你可以让 AI 帮你提炼精简，或手动缩减描述内容后重试。"
+                "task description may not exceed {MAX_DESCRIPTION_CHARS} chars (currently {desc_len}); \
+                ask the AI to summarize, or shorten it manually and retry."
             );
         }
 
@@ -68,7 +68,7 @@ impl CreateTaskParams {
         validate_budget_decimals(self.budget)?;
 
         if self.max_budget < self.budget {
-            bail!("--max-budget ({}) 不能小于 --budget ({})", self.max_budget, self.budget);
+            bail!("--max-budget ({}) may not be less than --budget ({})", self.max_budget, self.budget);
         }
         validate_budget(self.max_budget)?;
         validate_budget_decimals(self.max_budget)?;
@@ -76,19 +76,19 @@ impl CreateTaskParams {
         let open_secs = parse_duration_secs(&self.deadline_open)
             .map_err(|e| anyhow::anyhow!("--deadline-open {e}"))?;
         if open_secs < ACCEPT_MIN {
-            bail!("--deadline-open 不能少于 10m（10 分钟），当前值 {}，允许范围 10m ~ 180d", self.deadline_open);
+            bail!("--deadline-open must be at least 10m (10 minutes); current value {}, allowed range 10m ~ 180d", self.deadline_open);
         }
         if open_secs > ACCEPT_MAX {
-            bail!("--deadline-open 不能超过 180d（6 个月），当前值 {}，允许范围 10m ~ 180d", self.deadline_open);
+            bail!("--deadline-open must not exceed 180d (6 months); current value {}, allowed range 10m ~ 180d", self.deadline_open);
         }
 
         let submit_secs = parse_duration_secs(&self.deadline_submit)
             .map_err(|e| anyhow::anyhow!("--deadline-submit {e}"))?;
         if submit_secs < SUBMIT_MIN {
-            bail!("--deadline-submit 不能少于 1m（1 分钟），当前值 {}，允许范围 1m ~ 180d", self.deadline_submit);
+            bail!("--deadline-submit must be at least 1m (1 minute); current value {}, allowed range 1m ~ 180d", self.deadline_submit);
         }
         if submit_secs > SUBMIT_MAX {
-            bail!("--deadline-submit 不能超过 180d（6 个月），当前值 {}，允许范围 1m ~ 180d", self.deadline_submit);
+            bail!("--deadline-submit must not exceed 180d (6 months); current value {}, allowed range 1m ~ 180d", self.deadline_submit);
         }
 
         let title = match &self.title {
@@ -106,7 +106,7 @@ impl CreateTaskParams {
     }
 }
 
-// ─── 校验函数 ────────────────────────────────────────────────────────────
+// ─── Validation helpers ─────────────────────────────────────────────────
 
 fn parse_duration_secs(s: &str) -> Result<u64> {
     let s = s.trim();
@@ -119,7 +119,7 @@ fn parse_duration_secs(s: &str) -> Result<u64> {
     } else if let Some(sec) = s.strip_suffix('s') {
         Ok(sec.parse::<u64>()?)
     } else {
-        bail!("请指定时间单位，例如 3d（天）、72h（小时）、30m（分钟）、3600s（秒）")
+        bail!("please specify a time unit, e.g. 3d (days), 72h (hours), 30m (minutes), 3600s (seconds)")
     }
 }
 
@@ -131,16 +131,16 @@ pub fn normalize_currency(currency: &str) -> Result<String> {
     match normalized.as_str() {
         "USDT" | "USDT0" => Ok("USDT".to_string()),
         "USDG" => Ok("USDG".to_string()),
-        _ => bail!("不支持的代币: {currency}，仅支持 USDT（USD₮0）和 USDG"),
+        _ => bail!("unsupported token: {currency}; only USDT (USD₮0) and USDG are supported"),
     }
 }
 
 fn validate_budget(budget: f64) -> Result<()> {
     if budget <= 0.0 {
-        bail!("预算金额必须大于 0");
+        bail!("budget must be greater than 0");
     }
     if budget > MAX_BUDGET {
-        bail!("单次任务预算不得超过 {} USDT/USDG", MAX_BUDGET as u64);
+        bail!("per-task budget may not exceed {} USDT/USDG", MAX_BUDGET as u64);
     }
     Ok(())
 }
@@ -151,7 +151,7 @@ fn validate_budget_decimals(budget: f64) -> Result<()> {
         let frac = s[dot_pos + 1..].trim_end_matches('0');
         if frac.len() > MAX_BUDGET_DECIMALS {
             bail!(
-                "预算精度限 {MAX_BUDGET_DECIMALS} 位小数，当前 {} 位",
+                "budget precision is limited to {MAX_BUDGET_DECIMALS} decimal places, currently {}",
                 frac.len()
             );
         }
@@ -159,7 +159,7 @@ fn validate_budget_decimals(budget: f64) -> Result<()> {
     Ok(())
 }
 
-// ─── 身份校验 ────────────────────────────────────────────────────────────
+// ─── Identity check ─────────────────────────────────────────────────────
 
 pub(crate) async fn resolve_buyer_agent() -> Result<(String, String)> {
     // fetch_my_agents() spawns `onchainos agent get` and filters to the current
@@ -169,16 +169,16 @@ pub(crate) async fn resolve_buyer_agent() -> Result<(String, String)> {
 
     let buyer = agents.iter()
         .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))
-        .ok_or_else(|| anyhow::anyhow!("当前账户没有用户（requestor）身份，请先执行 onchainos agent create --role requestor 注册"))?;
+        .ok_or_else(|| anyhow::anyhow!("the current account has no buyer (requestor) identity; run `onchainos agent create --role requestor` first"))?;
 
     let agent_id = buyer["agentId"].as_str()
-        .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
+        .ok_or_else(|| anyhow::anyhow!("agent is missing the agentId field"))?
         .to_string();
     let owner_address = buyer["ownerAddress"].as_str().unwrap_or("").to_string();
     Ok((agent_id, owner_address))
 }
 
-// ─── 创建任务 ────────────────────────────────────────────────────────────
+// ─── Create task ────────────────────────────────────────────────────────
 
 pub async fn handle_create(
     client: &mut TaskApiClient,
@@ -187,10 +187,10 @@ pub async fn handle_create(
     let validated = params.validate()?;
 
     ensure_tokens_refreshed().await
-        .map_err(|e| anyhow::anyhow!("登录态已失效，请先执行 onchainos wallet login: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
-    eprintln!("[task-create] 用户身份校验通过 (agentId: {buyer_agent_id})");
+    eprintln!("[task-create] buyer identity check passed (agentId: {buyer_agent_id})");
 
     common::ensure_sufficient_balance(params.budget, &validated.currency).await?;
 
@@ -218,7 +218,7 @@ pub async fn handle_create(
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
     let job_id = resp["jobId"].as_str().unwrap_or("?").to_string();
 
-    println!("✓ Calldata 已生成 (jobId: {job_id})");
+    println!("✓ Calldata generated (jobId: {job_id})");
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
@@ -246,17 +246,17 @@ pub async fn handle_create(
         None,
     );
 
-    println!("✓ 任务发布中（交易已广播，等待上链确认）");
+    println!("✓ Task publish in progress (transaction broadcast, awaiting on-chain confirmation)");
     println!("  jobId:  {job_id}");
     println!("  txHash: {tx_hash}");
     if let Some(ref provider_id) = params.provider {
-        println!("  指定服务商: {provider_id}（跳过 recommend，直接路由）");
+        println!("  Designated provider: {provider_id} (skip recommend, direct routing)");
     }
     println!();
     if params.provider.is_some() {
-        println!("下一步: 等待 job_created 通知，将自动查询指定服务商服务并路由");
+        println!("Next: wait for the job_created notification; the designated provider's service will be queried and routed automatically.");
     } else {
-        println!("下一步: onchainos agent recommend {job_id}");
+        println!("Next: onchainos agent recommend {job_id}");
     }
     Ok(())
 }

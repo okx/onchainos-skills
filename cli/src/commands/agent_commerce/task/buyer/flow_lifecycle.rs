@@ -1,6 +1,6 @@
-//! 任务执行 + 仲裁 + 终态的 prompt 生成函数
+//! Prompt generators for task execution + arbitration + terminal states.
 //!
-//! 从 `flow.rs` 拆分出来的生命周期事件：
+//! Lifecycle events split out from `flow.rs`:
 //! - provider_applied / job_accepted / job_submitted
 //! - job_refused / job_disputed / dispute_evidence / approve_review / reject_review
 //! - job_completed / dispute_resolved / job_refunded / job_auto_refunded / job_expired / job_closed
@@ -11,32 +11,32 @@
 
 use super::flow::FlowContext;
 
-// ─── 执行阶段 ─────────────────────────────────────────────────────────
+// --- Execution stage ----------------------------------------------------
 
 pub(super) fn provider_applied(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
     format!(
-    "【当前状态】provider_applied（服务商已链上申请接单）\n\
-     【角色】用户（User Agent）\n\n\
-     【你的下一步动作（严格顺序）】\n\n\
-     **Step 1 — 获取任务信息：**\n\
+    "[Current Status] provider_applied (ASP has submitted an on-chain apply)\n\
+     [Role] User (User Agent)\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 1 -- Fetch task info:**\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     提取：providerAgentId、paymentMode、tokenSymbol、tokenAmount。\n\
-     ⚠️ paymentMode 此时应为 escrow（1）。\n\n\
-     **Step 2 — 执行 confirm-accept（确认接单上链）：**\n\
+     Extract: providerAgentId, paymentMode, tokenSymbol, tokenAmount.\n\
+     ⚠️ paymentMode should be escrow (1) at this point.\n\n\
+     **Step 2 -- Run confirm-accept (settle the accept on-chain):**\n\
      ```bash\n\
      onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
      ```\n\
-     ⚠️ 参数是 `--provider-agent-id`，不是 `--agent-id`。\n\
-     🛑 **provider-agent-id 必须与服务商 a2a-agent-chat 消息的 sender.agentId 一致**——优先从本 turn 收到的服务商消息中提取 agentId，其次从 sub session 历史的 [intent:ack] 中提取。不要用 common context 里的值（多任务场景可能串）。\n\
-     ⚠️ **不要查询任务 API 验证服务商是否已 apply**——链上索引有延迟，`confirm-accept` 内部会做链上校验。\n\
-     ❌ 禁止调 apply（apply 是服务商动作，用户永远不执行）\n\
-     ❌ 禁止调 set-payment-mode（已在 negotiate_ack 事件中完成）\n\n\
-     → 执行后**结束本轮 turn**，等待 `job_accepted` 系统通知。\n"
+     ⚠️ The flag is `--provider-agent-id`, not `--agent-id`.\n\
+     🛑 **provider-agent-id MUST match the sender.agentId of the ASP's a2a-agent-chat message** -- take it from the ASP message received in this turn first, then fall back to the [intent:ack] entry in sub-session history. Do not use the value from common context (it can cross-pollute under multi-task scenarios).\n\
+     ⚠️ **Do not query the task API to verify whether the ASP has applied** -- on-chain indexing has a delay; `confirm-accept` performs the chain-side check internally.\n\
+     ❌ Do not call apply (apply is a provider action; the user never runs it).\n\
+     ❌ Do not call set-payment-mode (already done in the negotiate_ack event).\n\n\
+     → After running, **end this turn** and wait for the `job_accepted` system notification.\n"
     )
 }
 
@@ -49,49 +49,49 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
     let accepted_escrow_notify = super::content::job_accepted_escrow_user_notify(job_id, title_display);
     let accepted_x402_fail = super::content::job_accepted_x402_replay_fail_user_notify(job_id);
     format!(
-    "【当前状态】job_accepted（用户已确认接单，任务进入执行阶段）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
-     【你的下一步动作（严格顺序）】\n\n\
-     **Step 1 — 获取任务完整信息：**\n\
+    "[Current Status] job_accepted (user has confirmed accept; task enters execution stage)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 1 -- Fetch full task info:**\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     提取：{title_in_extract}description、providerAgentId、paymentMode（int：1=escrow, 3=x402）、tokenAmount、tokenSymbol。\n\n\
-     **Step 2 — 按支付方式分流：**\n\n\
-     ━━━━━━━━━ 分支 A：escrow（担保）━━━━━━━━━\n\n\
-     调用 xmtp_dispatch_user 通知用户接单成功：\n\
+     Extract: {title_in_extract}description, providerAgentId, paymentMode (int: 1=escrow, 3=x402), tokenAmount, tokenSymbol.\n\n\
+     **Step 2 -- Branch by payment mode:**\n\n\
+     --------- Branch A: escrow ---------\n\n\
+     Call xmtp_dispatch_user to notify the user that accept succeeded:\n\
      \x20\x20content:\n\
      {accepted_escrow_notify}\n\n\
-     【后续事件】\n\
-     - job_submitted → 验收交付物\n\n\
-     ━━━━━━━━━ 分支 B：x402 ━━━━━━━━━\n\n\
-     x402 模式下 accept 已完成上链（资金已支付），task-402-pay 在上一 turn（job_payment_mode_changed）中已执行。\n\n\
-     **B-Step 1 — 判断上一 turn task-402-pay 的 replaySuccess：**\n\
-     从本 sub session 上下文中查找 task-402-pay 的输出。\n\
-     ⚠️ 如果上下文中找不到（可能因上下文压缩丢失），**默认按 replaySuccess=true 处理**——\n\
-     x402 资金在 accept 阶段已支付，用户已在上一 turn 被通知交付结果（成功或失败），\n\
-     不执行 complete 会导致任务永久卡在 accepted 状态。\n\n\
-     **B-分支 1：replaySuccess=true（或上下文丢失按默认）**\n\n\
-     **B-Step 2 — 执行 complete（单签）：**\n\
+     [Follow-up events]\n\
+     - job_submitted → review the deliverable\n\n\
+     --------- Branch B: x402 ---------\n\n\
+     In x402 mode, accept has already been settled on-chain (funds paid); task-402-pay was executed in the previous turn (job_payment_mode_changed).\n\n\
+     **B-Step 1 -- Determine replaySuccess from the previous turn's task-402-pay:**\n\
+     Look up the task-402-pay output in this sub session context.\n\
+     ⚠️ If it cannot be found (e.g. lost due to context compaction), **default to replaySuccess=true** --\n\
+     x402 funds are paid during accept, the user was already notified of the delivery result (success or failure) in the previous turn,\n\
+     and skipping complete would leave the task stuck in accepted forever.\n\n\
+     **B-Branch 1: replaySuccess=true (or default when context is missing)**\n\n\
+     **B-Step 2 -- Run complete (single sign):**\n\
      ```bash\n\
      onchainos agent complete {job_id}\n\
      ```\n\
-     （内部：POST /priapi/v1/aieco/task/{job_id}/direct/complete → 获取 calldata → 签名 uopHash → 广播上链）\n\n\
-     ⚠️ **不要通知用户**——交付物已在 task-402-pay 后发送过，最终汇总由 job_completed 事件负责。\n\n\
-     ⚠️ **complete 失败兜底**：如果 `onchainos agent complete` 返回错误（CLI 输出含 `\"ok\": false` 或 stderr 报错），\n\
-     调用 xmtp_dispatch_user 通知用户并提供重试命令：\n\
-     \x20\x20content: 任务 complete 执行失败，请稍后重试。重试命令：onchainos agent complete {job_id}\n\
-     → **结束本轮 turn**，等待用户重试或 wakeup_notify 事件。\n\n\
-     **B-分支 2：replaySuccess=false（仅在上下文中明确找到 replaySuccess=false 时走此分支）**\n\n\
-     ⚠️ **不要执行 complete**——用户未收到交付物。\n\n\
-     **B-Step 2 — 通知用户重放失败：**\n\
-     调用 xmtp_dispatch_user：\n\
+     (Internally: POST /priapi/v1/aieco/task/{job_id}/direct/complete → get calldata → sign uopHash → broadcast on-chain.)\n\n\
+     ⚠️ **Do not notify the user** -- the deliverable was already sent after task-402-pay; the final summary is owned by the job_completed event.\n\n\
+     ⚠️ **complete failure fallback**: if `onchainos agent complete` returns an error (CLI output contains `\"ok\": false` or stderr error),\n\
+     call xmtp_dispatch_user to notify the user and provide a retry command:\n\
+     \x20\x20content: complete failed for this task; please retry later. Retry command: onchainos agent complete {job_id}\n\
+     → **End this turn** and wait for user retry or a wakeup_notify event.\n\n\
+     **B-Branch 2: replaySuccess=false (only take this branch when replaySuccess=false is explicitly found in context)**\n\n\
+     ⚠️ **Do not run complete** -- the user did not receive the deliverable.\n\n\
+     **B-Step 2 -- Notify the user of replay failure:**\n\
+     Call xmtp_dispatch_user:\n\
      \x20\x20content:\n\
      {accepted_x402_fail}\n\n\
-     【后续事件】\n\
-     - replaySuccess=true / 默认: job_completed → 最终确认\n\
-     - replaySuccess=false: 等待用户指示（可重试或关闭任务）\n"
+     [Follow-up events]\n\
+     - replaySuccess=true / default: job_completed → final confirmation\n\
+     - replaySuccess=false: wait for user instructions (retry or close task)\n"
     )
 }
 
@@ -102,69 +102,69 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let terminal_session_hint = ctx.terminal_session_hint;
 
     format!(
-    "【当前状态】job_submitted（服务商已提交交付物）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑🛑🛑 **ABSOLUTE REQUIREMENT — escrow 模式必须用 `xmtp_prompt_user`（不是 `xmtp_dispatch_user`）推送验收决策到 user session**。\n\
-     `xmtp_dispatch_user` 是纯通知，用户回复无法 relay 回 sub session → 验收流程卡死。\n\
-     `xmtp_prompt_user` 才能携带 llmContent + userContent，让 user session 把用户验收决策 relay 回来。\n\
-     🔴 真实事故：Minimax 模型收到 job_submitted 后调了 xmtp_dispatch_user 发了一句「卖家已提交交付物，等待你的验收」——用户看不到交付物内容、无法 relay 验收决策，任务卡死。\n\n\
-     🛑🛑🛑 **即使本 turn 内已处理过服务商的 a2a-agent-chat 交付消息（如调了 xmtp_file_download 下载文件），收到 job_submitted 仍必须完整执行下方所有 Step**。\n\
-     a2a-agent-chat 处理（下载文件）≠ 验收流程——验收必须由 job_submitted 剧本驱动，交付物内容（文件路径/文字）必须放进 userContent 给用户看。\n\n\
-     🛑 **escrow 严禁自动验收**：必须等用户通过 relay 做出决策，Agent 不得替用户决定——无论交付物质量如何、无论是否超时临近。\n\
-     ⚠️ x402 模式：资金已支付，只需通知用户交付物内容，用户不能拒绝。\n\n\
-     【你的下一步动作（严格顺序）】\n\n\
-     **Step 0 — 幂等检查：查询是否已有此任务的待决事项：**\n\
+    "[Current Status] job_submitted (ASP has submitted the deliverable)\n\
+     [Role] User (User Agent)\n\n\
+     🛑🛑🛑 **ABSOLUTE REQUIREMENT -- in escrow mode you MUST use `xmtp_prompt_user` (NOT `xmtp_dispatch_user`) to push the review decision to the user session**.\n\
+     `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → the review flow deadlocks.\n\
+     Only `xmtp_prompt_user` can carry llmContent + userContent so the user session can relay the review decision back.\n\
+     🔴 Real incident: a Minimax model received job_submitted, called xmtp_dispatch_user with \"the ASP has submitted; awaiting your review\" -- the user never saw the deliverable, could not relay a decision, and the task was stuck.\n\n\
+     🛑🛑🛑 **Even if you already processed the ASP's a2a-agent-chat deliverable message earlier in this turn (e.g. called xmtp_file_download), upon receiving job_submitted you MUST still execute every Step below in full**.\n\
+     Handling a2a-agent-chat (file download) != the review flow -- the review must be driven by the job_submitted playbook, and the deliverable content (file path / text) MUST be placed into userContent for the user to see.\n\n\
+     🛑 **In escrow mode auto-approval is strictly forbidden**: you must wait for the user's relayed decision; the agent must not decide on behalf of the user, regardless of deliverable quality or how close to deadline.\n\
+     ⚠️ In x402 mode: funds are already paid; just notify the user of the deliverable content, the user cannot reject.\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 0 -- Idempotency check: query whether a pending decision already exists for this task:**\n\
      ```bash\n\
      onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
      ```\n\
-     如果返回列表中已存在 jobId={job_id} 且 role=buyer 的条目 → **说明已经通知过用户,本次是重复事件,直接结束 turn,不再通知。**\n\
-     如果不存在 → 继续 Step 1。\n\n\
-     **Step 1 — 查询任务详情，提取交付物和支付方式：**\n\
+     If the returned list already contains an entry with jobId={job_id} and role=buyer → **the user has already been notified; this is a duplicate event, end the turn without re-notifying.**\n\
+     If not present → continue to Step 1.\n\n\
+     **Step 1 -- Query task details; extract deliverable and payment mode:**\n\
      ```bash\n\
      onchainos agent status {job_id}\n\
      ```\n\
-     提取 `paymentMode`（int：1=escrow, 3=x402）。\n\
-     ⚠️ status 接口不返回 deliverableUrl，该字段从 Step 2 聊天记录中提取。qualityStandards 从 `onchainos agent common context` 获取（按任务发布时为准）。\n\n\
-     **Step 2 — 获取交付物内容（区分文字 vs 文件）：**\n\
-     ⚠️ **交付物内容必须在本步骤提取并完整放入 Step 3 的 userContent**——之前收到服务商消息时只发了简短通知（「等待链上确认」），用户尚未看到交付物正文。**禁止省略、概括、或只写「已发送给你」**。\n\
-     先调 `session_status` 拿到本 sub session 的 sessionKey（后续 Step 3 复用，同 turn 不再重复调）。\n\
-     再调 `xmtp_get_conversation_history`（sessionKey = 上一步拿到的 sessionKey）拉取与服务商的聊天记录，完成两件事：\n\
-     \x20\x20a) 从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 提取 `qualityStandards`（验收标准，按任务发布时为准）；如果字段为空则后续展示时省略该行。\n\
-     \x20\x20b) 找到服务商发送的**包含 `[intent:deliver]` 后缀标记的消息**（从最新往前找，首个命中即为交付物消息），根据 `deliverableType` 字段判断类型：\n\n\
-     ━━━ 情况 A：deliverableType=file（消息包含 fileKey / digest / salt / nonce / secret 解密字段）━━━\n\n\
-     调用 xmtp_file_download 工具下载文件：\n\
-     \x20\x20参数：\n\
-     \x20\x20- fileKey：服务商上传时返回的 fileKey\n\
-     \x20\x20- agentId：{agent_id}（用户 agentId）\n\
-     \x20\x20- digest：SHA-256 digest（hex）\n\
-     \x20\x20- salt：加密 salt（base64）\n\
-     \x20\x20- nonce：加密 nonce（base64）\n\
-     \x20\x20- secret：加密 secret（base64）\n\
-     \x20\x20- filename：（可选）保存文件名\n\
-     ⚠️ 调用前输出：`[buyer-xmtp] xmtp_file_download: fileKey=<fileKey>, agentId={agent_id}`\n\
-     ⚠️ 调用后输出：`[buyer-xmtp] xmtp_file_download result: localPath=<返回的本地路径>`\n\n\
-     下载成功后记录 localPath，**必须是完整绝对路径**（如 /Users/xxx/Downloads/task预发.png）。\n\
-     ⚠️ **严禁只显示文件名**（如 cat-picture.png），用户无法定位文件。后续所有展示给用户的内容必须包含完整路径。\n\
-     如果下载失败 → 在展示中注明「文件下载失败，请联系服务商重新发送」。\n\
-     ⚠️ 如果服务商消息除文件外还包含文字说明（如「这是交付物，请查收」），一并记录到 deliverableText。\n\
-     交付物展示变量：deliverableType=file, localPath=<完整路径>, deliverableText=<文字说明，无则留空>\n\n\
-     ━━━ 情况 B：deliverableType=text（`---` 分隔符之间的正文内容）━━━\n\n\
-     提取 `[intent:deliver]` 消息中 `---` 分隔符之间的文字内容，**完整保留原文**，不要截断或概括。\n\
-     交付物展示变量：deliverableType=text, deliverableText=<服务商发送的完整文字内容>\n\n\
-     **Step 3 — 按支付方式分流：**\n\n\
-     ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
-     调用 xmtp_prompt_user 把交付物和验收决策请求推给用户（sessionKey 复用 Step 2 已获取的值;调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`,见硬规则 7）：\n\n\
-     \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-     🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
-     🛑 **禁止执行** onchainos agent 命令（complete/reject/status 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
-     用户**真实回复到达后**（下一 turn）：\
-     用户语义「肯定/通过/approve/OK/同意/yes 等」→ **仅调** xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 approve_review 流程，你不要做其它事）；\
-     用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ **仅调** xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 reject_review 流程，你不要做其它事）。\
-     ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略 / 拆开**——sub 按 intent tag 分支，不再按文字匹配，避免多语言失配。\n\
-     ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。⚠️ xmtp_dispatch_session 只调用**一次**。{CONSTRAINT}\n\
-     \x20\x20\x20\x20userContent (split by deliverableType; first line must include `[Job {short_id} — you are the User Agent]` prefix):\n\n\
+     Extract `paymentMode` (int: 1=escrow, 3=x402).\n\
+     ⚠️ The status endpoint does not return deliverableUrl; extract that field from the chat history in Step 2. Get qualityStandards from `onchainos agent common context` (the value at task creation time is authoritative).\n\n\
+     **Step 2 -- Fetch the deliverable content (distinguish text vs file):**\n\
+     ⚠️ **The deliverable content MUST be extracted in this step and placed in full into Step 3's userContent** -- the earlier ASP message only triggered a short notification (\"waiting for on-chain confirmation\") and the user has not seen the deliverable body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\
+     First call `session_status` to get the current sub session's sessionKey (reused later in Step 3; do not call it again in the same turn).\n\
+     Then call `xmtp_get_conversation_history` (sessionKey = the value obtained above) to pull the chat history with the ASP and do two things:\n\
+     \x20\x20a) From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards` (the review standard as of task creation); if empty, skip that line when rendering.\n\
+     \x20\x20b) Find the ASP message **carrying the `[intent:deliver]` suffix tag** (scan from newest to oldest; the first match is the deliverable message), and branch on the `deliverableType` field:\n\n\
+     --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret decryption fields) ---\n\n\
+     Call the xmtp_file_download tool:\n\
+     \x20\x20Parameters:\n\
+     \x20\x20- fileKey: fileKey returned by the ASP at upload\n\
+     \x20\x20- agentId: {agent_id} (user agentId)\n\
+     \x20\x20- digest: SHA-256 digest (hex)\n\
+     \x20\x20- salt: encryption salt (base64)\n\
+     \x20\x20- nonce: encryption nonce (base64)\n\
+     \x20\x20- secret: encryption secret (base64)\n\
+     \x20\x20- filename: (optional) save filename\n\
+     ⚠️ Before calling, print: `[buyer-xmtp] xmtp_file_download: fileKey=<fileKey>, agentId={agent_id}`\n\
+     ⚠️ After calling, print: `[buyer-xmtp] xmtp_file_download result: localPath=<returned local path>`\n\n\
+     On success, record localPath; **it MUST be a full absolute path** (e.g. /Users/xxx/Downloads/task-staging.png).\n\
+     ⚠️ **Never show only the filename** (e.g. cat-picture.png) -- the user cannot locate the file. Any later content shown to the user MUST include the full path.\n\
+     If download fails → note in the display: \"file download failed, please ask the ASP to resend\".\n\
+     ⚠️ If the ASP message contains text alongside the file (e.g. \"here is the deliverable, please check\"), capture it into deliverableText as well.\n\
+     Deliverable display variables: deliverableType=file, localPath=<full path>, deliverableText=<note text, empty if none>\n\n\
+     --- Case B: deliverableType=text (body content between `---` separators) ---\n\n\
+     Extract the text between `---` separators in the `[intent:deliver]` message; **keep the original wording in full**, do not truncate or summarize.\n\
+     Deliverable display variables: deliverableType=text, deliverableText=<full original text sent by the ASP>\n\n\
+     **Step 3 -- Branch by payment mode:**\n\n\
+     --------- Branch A: escrow -- user review decision required ---------\n\n\
+     Call xmtp_prompt_user to push the deliverable and the review decision request to the user (reuse the sessionKey from Step 2; **before** calling `xmtp_prompt_user`, call `pending-decisions add` -- see Hard Rule 7):\n\n\
+     \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] \
+     🛑 After presenting userContent, **you MUST end this turn and wait for real user input** -- [USER_DECISION_REQUEST] is a **question**, not an **answer**; do not fabricate a user decision in the same turn.\
+     🛑 **Do not run** onchainos agent commands (complete/reject/status or any task CLI) -- you only present and relay, never execute on-chain actions.\
+     **After the user's real reply arrives** (next turn):\
+     User intent \"yes/approve/OK/agree etc.\" → **only call** xmtp_dispatch_session(sessionKey=\"<full sessionKey from Step 2 session_status>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] user said: <verbatim user reply, no interpretation, no translation>\") to relay back to the sub session, **and stop there** (the sub session will run the approve_review flow itself; do nothing else);\
+     User intent \"no/reject/decline/no etc. + reason\" → **only call** xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] user said: <verbatim user reply, including reason>\") to relay back to the sub session, **and stop there** (the sub session will run the reject_review flow itself; do nothing else).\
+     ⚠️ **Routing tag protocol**: `[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` MUST be inserted **verbatim, fully uppercase ASCII** -- **no translation / rewrite / omission / splitting** -- the sub branches on the intent tag, no longer on text matching, to avoid multilingual mismatch.\n\
+     ⚠️ Relay MUST use the xmtp_dispatch_session tool (do not use sessions_send; it has session tree restrictions). ⚠️ xmtp_dispatch_session is called **exactly once**. {CONSTRAINT}\n\
+     \x20\x20\x20\x20userContent (split by deliverableType; first line must include `[Job {short_id} -- you are the User Agent]` prefix):\n\n\
      \x20\x20\x20\x20▸ deliverableType=file:\n\
-     \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (file); it has been downloaded locally.\n\
+     \x20\x20\x20\x20[Job {short_id} -- you are the User Agent] The ASP has submitted the deliverable (file); it has been downloaded locally.\n\
      \x20\x20\x20\x20📁 Deliverable file path: <localPath> (⚠️ must be full absolute path, e.g. /Users/xxx/Downloads/task.png; do not write filename only)\n\
      \x20\x20\x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
      \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
@@ -174,7 +174,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x201. Approve → reply \"approve\"\n\
      \x20\x20\x20\x202. Reject → reply \"reject, because <reason>\"\n\n\
      \x20\x20\x20\x20▸ deliverableType=text:\n\
-     \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
+     \x20\x20\x20\x20[Job {short_id} -- you are the User Agent] The ASP has submitted the deliverable (text).\n\
      \x20\x20\x20\x20---Deliverable---\n\
      \x20\x20\x20\x20<deliverableText full content, no truncation, no summarization>\n\
      \x20\x20\x20\x20---End of deliverable---\n\
@@ -184,46 +184,46 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20Choose:\n\
      \x20\x20\x20\x201. Approve → reply \"approve\"\n\
      \x20\x20\x20\x202. Reject → reply \"reject, because <reason>\"\n\n\
-     ═══════════════════════════════════════════════════════════════\n\
-     🛑🛑🛑 STOP — Step 3 xmtp_prompt_user 调完后 **必须结束本 turn**\n\
-     ═══════════════════════════════════════════════════════════════\n\
-     本剧本到此结束。后续 turn 收到 `[USER_DECISION_RELAY]` 后，\n\
-     按 intent 调 `next-action` 拿对应剧本：\n\
+     ===============================================================\n\
+     🛑🛑🛑 STOP -- after xmtp_prompt_user in Step 3 you **MUST end this turn**\n\
+     ===============================================================\n\
+     This playbook ends here. In a later turn, upon receiving `[USER_DECISION_RELAY]`,\n\
+     call `next-action` by intent to fetch the matching playbook:\n\
      ▸ `[intent:APPROVE_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}`\n\
      ▸ `[intent:REJECT_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId {agent_id}`\n\
-     ❌ 本 turn 内禁止调 `onchainos agent complete` / `onchainos agent reject`——这两个命令不在本剧本中。\n\
-     ═══════════════════════════════════════════════════════════════\n\n\
-     ━━━━━━━━━ 分支 B：x402 — 通知用户交付物内容（不可拒绝） ━━━━━━━━━\n\n\
-     ⚠️ x402 流程中资金已在 job_accepted 阶段支付，用户**不能拒绝交付物**，只需通知。\n\
+     ❌ Do NOT run `onchainos agent complete` / `onchainos agent reject` in this turn -- those commands are not part of this playbook.\n\
+     ===============================================================\n\n\
+     --------- Branch B: x402 -- notify the user (no rejection allowed) ---------\n\n\
+     ⚠️ In x402 funds are already paid in the job_accepted stage; the user **cannot reject the deliverable**, just notify.\n\
      \n\
-     **B-Step 1 — 调用 xmtp_dispatch_user 通知用户收到交付物（按 deliverableType 分）：**\n\n\
+     **B-Step 1 -- Call xmtp_dispatch_user to notify the user (split by deliverableType):**\n\n\
      \x20\x20▸ deliverableType=file:\n\
      \x20\x20content:\n\
-     \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
+     \x20\x20[Deliverable Received] Job `{job_id}` -- the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
      \x20\x20📁 Deliverable file path: <localPath> (⚠️ must be full absolute path, e.g. /Users/xxx/Downloads/task.png; do not write filename only)\n\
      \x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20Quality standards: <qualityStandards>\n\n\
      \x20\x20▸ deliverableType=text:\n\
      \x20\x20content:\n\
-     \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
+     \x20\x20[Deliverable Received] Job `{job_id}` -- the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
      \x20\x20---Deliverable---\n\
      \x20\x20<deliverableText full content, no truncation, no summarization>\n\
      \x20\x20---End of deliverable---\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20Quality standards: <qualityStandards>\n\n\
-     **B-Step 2 — 终态收尾（保留 sub session）：**\n\
+     **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价服务商，请回复「评价」。」\n\
-     任务完整结束。\n\n\
-     【后续事件】\n\
-     - escrow: job_completed → 任务完成 / job_refused → 等待服务商决定仲裁或退款\n\
-     - x402: 流程已结束\n",
+     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP, reply with 'rate'.\"\n\
+     Task fully complete.\n\n\
+     [Follow-up events]\n\
+     - escrow: job_completed → task complete / job_refused → wait for ASP to choose dispute or refund\n\
+     - x402: flow ends here\n",
      CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
 
 }
 
-// ─── 拒绝 / 仲裁 ──────────────────────────────────────────────────────
+// --- Rejection / arbitration -------------------------------------------
 
 pub(super) fn job_refused(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
@@ -232,23 +232,23 @@ pub(super) fn job_refused(ctx: &FlowContext<'_>) -> String {
 
     let refused_notify = super::content::job_refused_user_notify(job_id, title_display);
     format!(
-    "【当前状态】job_refused（用户拒绝交付物已上链，等待服务商决定）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **必须调用 `xmtp_dispatch_user` 通知用户拒绝已上链，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
-     【你的下一步动作（严格顺序）】\n\n\
+    "[Current Status] job_refused (user rejection settled on-chain; awaiting ASP decision)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user that rejection is settled; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 — 调用 xmtp_dispatch_user 通知用户拒绝已确认：**\n\n\
-     content：\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed:**\n\n\
+     content:\n\
      {refused_notify}\n\n\
-     **Step 2 — 静默等待服务商决策：**\n\n\
-     ⚠️ **不要通过 xmtp_send 向服务商发送任何消息**。服务商有 24h 决定：\n\
-     - 发起仲裁 → 你将收到 job_disputed\n\
-     - 同意退款 → 你将收到 job_refunded\n\
-     - 24h 超时 → 系统自动退款，你将收到 job_refunded\n\n\
-     跑完 Step 1 → **结束本轮 turn**，等待下一个系统事件。\n\n\
-     【后续事件】\n\
-     - job_disputed → 提交用户证据（Scene 6）\n\
-     - job_refunded → 退款完成\n"
+     **Step 2 -- Silently wait for the ASP's decision:**\n\n\
+     ⚠️ **Do not send any xmtp_send message to the ASP**. The ASP has 24h to decide:\n\
+     - Open a dispute → you will receive job_disputed\n\
+     - Agree to refund → you will receive job_refunded\n\
+     - 24h timeout → system auto-refunds, you will receive job_refunded\n\n\
+     After Step 1 → **end this turn** and wait for the next system event.\n\n\
+     [Follow-up events]\n\
+     - job_disputed → submit user evidence (Scene 6)\n\
+     - job_refunded → refund complete\n"
     )
 }
 
@@ -259,34 +259,34 @@ pub(super) fn job_disputed(ctx: &FlowContext<'_>) -> String {
 
     let evidence_prompt = super::content::job_disputed_user_evidence_prompt(short_id);
     format!(
-    "【当前状态】job_disputed（仲裁已发起，进入 1 小时证据准备期）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **CRITICAL — 本事件必须使用 `xmtp_prompt_user` 推送到 user session，禁止在 sub session 中直接输出文字回复。**\n\
-     sub session 不面向用户——在 sub session 中直接生成文字回复（哪怕内容正确）= 用户看不到 + relay 通道断裂 + 证据无法提交。\n\
-     唯一正确做法：调 `xmtp_prompt_user(llmContent=..., userContent=...)` 工具，把证据收集请求推到 user session。\n\
-     ❌ 禁止用文字回复代替 xmtp_prompt_user 工具调用\n\
-     ❌ 禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user（dispatch_user 是纯通知无法 relay，用户回复无法路由回 sub）\n\
-     ❌ 禁止凭空编造证据摘要直接调 `dispute upload`——sub agent 不知道用户手上有什么证据\n\
-     ❌ 禁止通过 xmtp_send 向服务商发送任何消息——仲裁期间双方通过链上证据交互\n\n\
-     【你的下一步动作（严格顺序）】\n\n\
-     **Step 0 — 幂等检查：查询是否已有此任务的待决事项：**\n\
+    "[Current Status] job_disputed (arbitration opened; 1-hour evidence preparation window)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **CRITICAL -- this event MUST use `xmtp_prompt_user` to push to the user session; do not produce a plain text reply inside the sub session.**\n\
+     The sub session is not user-facing -- generating a text reply in the sub session (even if the content is correct) = user does not see it + relay channel broken + evidence cannot be submitted.\n\
+     The only correct approach: call the `xmtp_prompt_user(llmContent=..., userContent=...)` tool to push the evidence-collection request into the user session.\n\
+     ❌ Do not substitute a text reply for the xmtp_prompt_user tool call.\n\
+     ❌ Do not substitute xmtp_dispatch_user for xmtp_prompt_user (dispatch_user is a pure notification and cannot relay; user replies cannot be routed back to the sub).\n\
+     ❌ Do not fabricate an evidence summary and call `dispute upload` directly -- the sub agent does not know what evidence the user has.\n\
+     ❌ Do not xmtp_send any message to the ASP -- during arbitration both sides interact via on-chain evidence.\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 0 -- Idempotency check: query whether a pending decision already exists for this task:**\n\
      ```bash\n\
      onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
      ```\n\
-     如果返回列表中已存在 jobId={job_id} 且 role=buyer 的条目 → **说明已经通知过用户,本次是重复事件,直接结束 turn,不再通知。**\n\
-     如果不存在 → 继续 Step 1。\n\n\
-     **Step 1 — 调用 xmtp_prompt_user 把证据决策请求推给用户：**\n\n\
-     先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\n\
-     \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-     🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
-     🛑 **禁止执行** onchainos agent 命令（complete/reject/dispute 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
-     用户**真实回复到达后**（下一 turn）：\
-     用户提供证据后，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay 回 sub session 执行 dispute upload。⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。1 小时内必须提交。{CONSTRAINT}\n\
+     If the returned list already contains an entry with jobId={job_id} and role=buyer → **the user has already been notified; this is a duplicate event, end the turn without re-notifying.**\n\
+     If not present → continue to Step 1.\n\n\
+     **Step 1 -- Call xmtp_prompt_user to push the evidence decision request to the user:**\n\n\
+     First call `session_status` to get the current sub session's sessionKey; **before** calling `xmtp_prompt_user`, call `pending-decisions add` (see Hard Rule 7).\n\n\
+     \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] \
+     🛑 After presenting userContent, **you MUST end this turn and wait for real user input** -- [USER_DECISION_REQUEST] is a **question**, not an **answer**; do not fabricate a user decision in the same turn.\
+     🛑 **Do not run** onchainos agent commands (complete/reject/dispute or any task CLI) -- you only present and relay, never execute on-chain actions.\
+     **After the user's real reply arrives** (next turn):\
+     Once the user provides evidence, call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: <full verbatim user content -- text + image paths -- no interpretation, no translation>\") to relay back to the sub session, which will run dispute upload. ⚠️ **Routing tag protocol**: `[intent:SUBMIT_EVIDENCE]` MUST be inserted **verbatim, fully uppercase ASCII**; no translation/rewrite/omission. ⚠️ Relay MUST use xmtp_dispatch_session (do not use sessions_send). ⚠️ xmtp_dispatch_session is called **exactly once**. Evidence MUST be submitted within 1 hour. {CONSTRAINT}\n\
      \x20\x20\x20\x20userContent:\n\
      {evidence_prompt}\n\n\
-     **Step 2 — 等用户回复 relay 回来**：收到 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：...` 后，调 `next-action --jobStatus dispute_evidence` 拿上传剧本（intent tag 已是路由确认；用户证据原文从 `用户证据：` 后面读）。\n\n\
-     ⚠️ 1 小时内必须提交证据，过期后失效。\n\n\
-     跑完 Step 1-2 → **结束本轮 turn**，等用户回复。\n",
+     **Step 2 -- Wait for the user reply to be relayed back**: upon receiving `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: ...`, call `next-action --jobStatus dispute_evidence` to fetch the upload playbook (the intent tag already confirms routing; read the user evidence body after `user evidence:`).\n\n\
+     ⚠️ Evidence MUST be submitted within 1 hour, otherwise it expires.\n\n\
+     After Step 1-2 → **end this turn** and wait for the user reply.\n",
      CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
 }
 
@@ -295,39 +295,39 @@ pub(super) fn dispute_evidence(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
 
     format!(
-    "【当前动作】上传仲裁证据\n\
-     【角色】用户（User Agent）\n\n\
-     **Step 0 — 清除 pending-decisions：**\n\
+    "[Current Action] Upload arbitration evidence\n\
+     [Role] User (User Agent)\n\n\
+     **Step 0 -- Clear pending-decisions:**\n\
      ```bash\n\
      onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\n\
-     **Step 1 — 从 relay 提取证据内容：**\n\
-     已通过 `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE]` 路由进来，从 `用户证据：` 后面提取：\n\
-     - 文字摘要 → 用户提供的文字部分\n\
-     - 图片路径（如果用户提供了）→ `--image` 参数\n\
-     text 和 image **至少一项**。\n\n\
-     **Step 2 — 拉本 sub session 协商 / 交付聊天记录，作为客观证据附在 text 头部：**\n\
-     调 `xmtp_get_conversation_history`（sessionKey = 本 sub session 的 sessionKey），拿到与服务商的全部 a2a-agent-chat 历史。\n\
-     把历史按下面这种**结构化分段**拼到 `--text` 字段最前面（仲裁员是 LLM，会通读 text 字段判断），后面再贴用户摘要：\n\n\
+     **Step 1 -- Extract evidence content from the relay:**\n\
+     Already routed in via `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE]`. Extract from the part after `user evidence:`:\n\
+     - text summary → the text the user provided\n\
+     - image path (if provided) → `--image` argument\n\
+     At least one of text and image is required.\n\n\
+     **Step 2 -- Pull the negotiation / delivery chat history of this sub session and prepend it to the text as objective evidence:**\n\
+     Call `xmtp_get_conversation_history` (sessionKey = this sub session's sessionKey) to get the full a2a-agent-chat history with the ASP.\n\
+     Stitch the history as a **structured section** at the top of the `--text` field (the arbiter is an LLM and reads through the text field), then append the user summary below:\n\n\
      ```\n\
-     ==== 协商 / 交付聊天记录（从 xmtp_get_conversation_history 拉取） ====\n\
-     [时间] 服务商(<agentId>): ...\n\
-     [时间] 用户(<agentId>): ...\n\
-     ...（按时间顺序，关键节点：报价 / [intent:propose] / [intent:ack] / [intent:confirm] / 交付物消息）\n\n\
-     ==== 用户证据摘要 ====\n\
-     <用户原话摘要>\n\
+     ==== Negotiation / delivery chat history (from xmtp_get_conversation_history) ====\n\
+     [time] ASP(<agentId>): ...\n\
+     [time] User(<agentId>): ...\n\
+     ... (chronological; key checkpoints: quote / [intent:propose] / [intent:ack] / [intent:confirm] / deliverable message)\n\n\
+     ==== User evidence summary ====\n\
+     <verbatim user summary>\n\
      ```\n\n\
-     ⚠️ **`--text` 上限 16 KB**——聊天记录过长就**只保留**关键节点（PROPOSE / ACK / CONFIRM / 交付物 / 双方关键争议点），开头标注「（已截取关键节点）」；不要随便丢前 N 条机械截断。\n\n\
-     **Step 3 — 调用 CLI 上传证据（链下 multipart）：**\n\
+     ⚠️ **`--text` is capped at 16 KB** -- if the chat history is long, **keep only** the key checkpoints (PROPOSE / ACK / CONFIRM / deliverable / both sides' key dispute points) and prepend \"(key checkpoints extracted)\"; do not blindly drop the first N entries.\n\n\
+     **Step 3 -- Call the CLI to upload evidence (off-chain multipart):**\n\
      ```bash\n\
-     onchainos agent dispute upload {job_id} --agent-id {agent_id} --text \"<聊天记录 + 用户摘要 拼接后的完整 text>\" --image <用户提供的图片路径或省略>\n\
+     onchainos agent dispute upload {job_id} --agent-id {agent_id} --text \"<chat history + user summary, concatenated>\" --image <user image path or omit>\n\
      ```\n\
-     text 和 image **至少一项**；图片可省略整个 `--image` 段，不要给空字符串。\n\n\
-     ⚠️ **不要通过 xmtp_send 向服务商发送任何消息**（如「证据已提交」），服务商通过链上事件得知。\n\n\
-     【后续事件】\n\
-     - job_completed → 仲裁服务商胜诉，任务完成\n\
-     - job_refunded → 仲裁用户胜诉，退款\n\n\
-     跑完 Step 1-3 → **结束本轮 turn，不要 xmtp_dispatch_user / xmtp_prompt_user 推 main**。\n"
+     At least one of text and image is required; to omit an image, drop the entire `--image` segment -- do not pass an empty string.\n\n\
+     ⚠️ **Do not xmtp_send any message to the ASP** (e.g. \"evidence submitted\"); the ASP learns via on-chain events.\n\n\
+     [Follow-up events]\n\
+     - job_completed → arbitration ruled for the ASP, task completes\n\
+     - job_refunded → arbitration ruled for the user, refund\n\n\
+     After Step 1-3 → **end this turn; do not push to main via xmtp_dispatch_user / xmtp_prompt_user**.\n"
     )
 }
 
@@ -336,30 +336,30 @@ pub(super) fn approve_review(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
 
     format!(
-    "【当前动作】验收通过 — 执行 complete 释放款项\n\
-     【角色】用户（User Agent）\n\n\
-     已通过 `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]` 路由进来，用户已确认验收通过。\n\n\
-     **Step 1 — 清除 pending-decisions：**\n\
+    "[Current Action] Approve review -- run complete to release funds\n\
+     [Role] User (User Agent)\n\n\
+     Routed in via `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]`; the user has approved the deliverable.\n\n\
+     **Step 1 -- Clear pending-decisions:**\n\
      ```bash\n\
      onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\n\
-     **Step 2 — 双签验收，释放款项：**\n\
+     **Step 2 -- Dual-signature approval, release funds:**\n\
      ```bash\n\
      onchainos agent complete {job_id}\n\
      ```\n\
-     内部流程：\n\
-     \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-complete（712 标准，非 uop）→ 获取 digest\n\
-     \x20\x202. ED25519 签名 digest → signature\n\
-     \x20\x203. POST /priapi/v1/aieco/task/{job_id}/complete（body: {{\"signature\": \"<sig>\"}}）→ 获取 uopData\n\
-     \x20\x204. 签名 uopHash → 广播上链\n\
-     \x20\x20→ 任务状态变为 Complete，资金从合约释放给服务商。\n\n\
-     🛑 **complete CLI 成功 ≠ 任务结束**——`complete` 仅提交链上交易，**用户尚未被通知任务完成**。\n\
-     此处禁止 xmtp_dispatch_user / xmtp_prompt_user——链上确认后你会收到 `job_completed` 系统事件（`source:\"system\"`），\n\
-     由该事件的剧本统一通过 xmtp_dispatch_user 通知用户，此处提前发 = 重复卡片。\n\
-     记住 CLI 输出中的 txHash，`job_completed` 剧本会用到。\n\n\
-     跑完 Step 1-2 → **结束本轮 turn**。\n\
-     ⚠️ **你的工作没有完成**——`job_completed` 系统事件（`source:\"system\"`）到达后，你必须按 SKILL.md Activation 铁律处理，\n\
-     否则用户永远收不到「任务已完成」通知、不知道资金已释放。\n"
+     Internal flow:\n\
+     \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-complete (EIP-712 standard, not uop) → get digest\n\
+     \x20\x202. ED25519 sign digest → signature\n\
+     \x20\x203. POST /priapi/v1/aieco/task/{job_id}/complete (body: {{\"signature\": \"<sig>\"}}) → get uopData\n\
+     \x20\x204. Sign uopHash → broadcast on-chain\n\
+     \x20\x20→ Task status becomes Complete; funds released from contract to the ASP.\n\n\
+     🛑 **CLI success of complete != task ended** -- `complete` only submits the on-chain transaction; **the user has not been notified that the task is complete**.\n\
+     Do not xmtp_dispatch_user / xmtp_prompt_user here -- after on-chain confirmation you will receive the `job_completed` system event (`source:\"system\"`),\n\
+     and that event's playbook is responsible for notifying the user via xmtp_dispatch_user. Notifying here = duplicate card.\n\
+     Remember the txHash from the CLI output; the `job_completed` playbook will use it.\n\n\
+     After Step 1-2 → **end this turn**.\n\
+     ⚠️ **Your work is not finished** -- when the `job_completed` system event (`source:\"system\"`) arrives, you MUST handle it per SKILL.md Activation rules,\n\
+     otherwise the user will never receive a \"task complete\" notification and will not know funds have been released.\n"
     )
 }
 
@@ -368,30 +368,30 @@ pub(super) fn reject_review(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
 
     format!(
-    "【当前动作】拒绝验收 — 执行 reject\n\
-     【角色】用户（User Agent）\n\n\
-     已通过 `[USER_DECISION_RELAY][intent:REJECT_REVIEW]` 路由进来，用户已拒绝交付物。\n\
-     从 relay 消息的 `用户原话：` 后面提取拒绝理由。\n\n\
-     **Step 1 — 清除 pending-decisions：**\n\
+    "[Current Action] Reject review -- run reject\n\
+     [Role] User (User Agent)\n\n\
+     Routed in via `[USER_DECISION_RELAY][intent:REJECT_REVIEW]`; the user has rejected the deliverable.\n\
+     Extract the rejection reason from the relay message after `user said:`.\n\n\
+     **Step 1 -- Clear pending-decisions:**\n\
      ```bash\n\
      onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\n\
-     **Step 2 — 双签拒绝：**\n\
+     **Step 2 -- Dual-signature rejection:**\n\
      ```bash\n\
-     onchainos agent reject {job_id} --reason \"<用户原话里的拒绝理由>\"\n\
+     onchainos agent reject {job_id} --reason \"<rejection reason from user's words>\"\n\
      ```\n\
-     内部流程：\n\
-     \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-refuse（712 标准，非 uop）→ 获取 digest\n\
-     \x20\x202. ED25519 签名 digest → signature\n\
-     \x20\x203. POST /priapi/v1/aieco/task/{job_id}/refuse（body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}）→ 获取 uopData\n\
-     \x20\x204. 签名 uopHash → 广播上链\n\
-     \x20\x20→ 任务状态变为 Refused，服务商 24h 内可发起仲裁。\n\n\
-     ⚠️ **不要通过 xmtp_send 向服务商发送任何消息**（如「已拒绝」），服务商通过链上事件得知。\n\n\
-     跑完 Step 1-2 → **结束本轮 turn**，等待 `job_refused` 系统通知。\n"
+     Internal flow:\n\
+     \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-refuse (EIP-712 standard, not uop) → get digest\n\
+     \x20\x202. ED25519 sign digest → signature\n\
+     \x20\x203. POST /priapi/v1/aieco/task/{job_id}/refuse (body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}) → get uopData\n\
+     \x20\x204. Sign uopHash → broadcast on-chain\n\
+     \x20\x20→ Task status becomes Refused; the ASP can open a dispute within 24h.\n\n\
+     ⚠️ **Do not xmtp_send any message to the ASP** (e.g. \"rejected\"); the ASP learns via on-chain events.\n\n\
+     After Step 1-2 → **end this turn** and wait for the `job_refused` system notification.\n"
     )
 }
 
-// ─── 终态 ─────────────────────────────────────────────────────────────
+// --- Terminal states ---------------------------------------------------
 
 pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
@@ -403,40 +403,40 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
     let completed_escrow_notify = super::content::job_completed_escrow_user_notify(job_id, title_display);
     let completed_x402_notify = super::content::job_completed_x402_user_notify(job_id, title_display);
     format!(
-    "【当前状态】job_completed（任务支付链路完成）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑🛑🛑 **ABSOLUTE REQUIREMENT — buyer 收到 job_completed 后必须调 `xmtp_dispatch_user` 通知用户**。\n\
-     job_completed 是**双方收**事件（buyer + provider 都收到），buyer 必须处理。\n\
-     禁止在 sub session 中直接输出文字回复（见硬规则 10）——文字回复 = 用户看不到 = 任务完成了但用户不知道。\n\
-     🔴 真实事故：模型误以为 job_completed 只发给 provider，跳过了 xmtp_dispatch_user，用户未收到任务完成通知。\n\n\
-     **Step 1 — 获取任务信息和支付方式：**\n\
+    "[Current Status] job_completed (task payment pipeline complete)\n\
+     [Role] User (User Agent)\n\n\
+     🛑🛑🛑 **ABSOLUTE REQUIREMENT -- on job_completed the buyer MUST call `xmtp_dispatch_user` to notify the user**.\n\
+     job_completed is a **dual-recipient event** (buyer + provider both receive it); the buyer MUST handle it.\n\
+     Do not produce a plain text reply inside the sub session (see Hard Rule 10) -- a text reply = the user does not see it = the task is complete but the user does not know.\n\
+     🔴 Real incident: a model assumed job_completed only went to the provider, skipped xmtp_dispatch_user, and the user never received a completion notification.\n\n\
+     **Step 1 -- Fetch task info and payment mode:**\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     提取：{title_in_extract}tokenAmount、tokenSymbol、paymentMode（int：1=escrow, 3=x402）。\n\n\
-     **Step 2 — 按支付方式分流：**\n\n\
-     ━━━━━━━━━ 分支 A：escrow（担保）— 流程结束 ━━━━━━━━━\n\n\
-     担保模式下 job_completed 意味着服务商已交付且用户已验收，资金从合约释放给服务商。\n\n\
-     **A-Step 1 — 🛑 MUST 调用 xmtp_dispatch_user 告知用户任务完成（禁止直接输出文字）：**\n\
-     ⚠️ txHash：从本 sub session 上下文中找到之前 `onchainos agent complete` CLI 输出的 txHash（格式 0x...）。\n\
-     如果上下文中没有（如 auto-complete 等非主动验收场景），省略链上凭证行即可。\n\
-     🛑 以下文本是 xmtp_dispatch_user 的 **content 参数值**，禁止直接作为文字回复输出。\n\
-     必须通过 xmtp_dispatch_user 工具发送：\n\
+     Extract: {title_in_extract}tokenAmount, tokenSymbol, paymentMode (int: 1=escrow, 3=x402).\n\n\
+     **Step 2 -- Branch by payment mode:**\n\n\
+     --------- Branch A: escrow -- flow ends ---------\n\n\
+     In escrow mode, job_completed means the ASP has delivered and the user has approved; funds are released from contract to the ASP.\n\n\
+     **A-Step 1 -- 🛑 MUST call xmtp_dispatch_user to tell the user the task is complete (do not produce a plain text reply):**\n\
+     ⚠️ txHash: find the txHash (format 0x...) from the earlier `onchainos agent complete` CLI output in this sub session context.\n\
+     If not in context (e.g. auto-complete or other non-active-approval scenarios), omit the on-chain receipt line.\n\
+     🛑 The text below is the **content argument value** for xmtp_dispatch_user; do not output it as a plain text reply.\n\
+     You MUST send it via the xmtp_dispatch_user tool:\n\
      {completed_escrow_notify}\n\n\
-     **A-Step 2 — 终态收尾（保留 sub session）：**\n\
+     **A-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价服务商，请回复「评价」。」\n\
-     任务完整结束。\n\n\
-     ━━━━━━━━━ 分支 B：x402 — 最终汇总 ━━━━━━━━━\n\n\
-     ⚠️ x402 模式下 job_completed 意味着支付链路（accept + complete）已完成上链。\n\
-     交付物已在 task-402-pay 阶段（A-Step 4）发送给用户，此处只做最终汇总。\n\n\
-     **B-Step 1 — 🛑 MUST 调用 xmtp_dispatch_user 发送最终汇总（禁止直接输出文字）：**\n\
-     🛑 以下文本是 xmtp_dispatch_user 的 **content 参数值**，禁止直接作为文字回复输出。\n\
-     必须通过 xmtp_dispatch_user 工具发送：\n\
+     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP, reply with 'rate'.\"\n\
+     Task fully complete.\n\n\
+     --------- Branch B: x402 -- final summary ---------\n\n\
+     ⚠️ In x402, job_completed means the payment pipeline (accept + complete) is settled on-chain.\n\
+     The deliverable was already sent to the user during task-402-pay (A-Step 4); this step only emits the final summary.\n\n\
+     **B-Step 1 -- 🛑 MUST call xmtp_dispatch_user to send the final summary (do not produce a plain text reply):**\n\
+     🛑 The text below is the **content argument value** for xmtp_dispatch_user; do not output it as a plain text reply.\n\
+     You MUST send it via the xmtp_dispatch_user tool:\n\
      {completed_x402_notify}\n\n\
-     **B-Step 2 — 终态收尾（保留 sub session）：**\n\
+     **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     任务完整结束。\n"
+     Task fully complete.\n"
     )
 }
 
@@ -450,34 +450,34 @@ pub(super) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     let dispute_won = super::content::dispute_won_user_notify(job_id, title_display);
     let dispute_lost = super::content::dispute_lost_user_notify(job_id, title_display);
     format!(
-    "【当前状态】dispute_resolved（仲裁已裁决）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **必须调用 `xmtp_dispatch_user` 通知用户仲裁结果，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
-     **Step 1 — 判定胜负**：从系统通知 envelope 里读 `message.jobStatus` 字段：\n\
-     - `jobStatus = \"rejected\"` → **用户胜诉**\n\
-     - `jobStatus = \"complete\"` → **用户败诉**\n\
-     - 其他值（如 `disputed`）→ 无法直接判定，执行 Step 1.5 查询任务详情\n\n\
-     **Step 1.5（仅 jobStatus 非 rejected/complete 时）— 查询任务详情获取实际状态：**\n\
+    "[Current Status] dispute_resolved (arbitration ruling issued)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user of the arbitration result; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     **Step 1 -- Decide winner**: read `message.jobStatus` from the system notification envelope:\n\
+     - `jobStatus = \"rejected\"` → **user wins**\n\
+     - `jobStatus = \"complete\"` → **user loses**\n\
+     - other values (e.g. `disputed`) → cannot decide directly; run Step 1.5 to query task details\n\n\
+     **Step 1.5 (only when jobStatus is not rejected/complete) -- Query task details for the actual status:**\n\
      ```bash\n\
      onchainos agent status {job_id}\n\
      ```\n\
-     从返回的 `jobStatus` 字段判断：`rejected` = 用户胜诉，`complete` = 用户败诉。\n\n\
-     **Step 2 — 获取任务信息：**\n\
+     Decide by the returned `jobStatus` field: `rejected` = user wins, `complete` = user loses.\n\n\
+     **Step 2 -- Fetch task info:**\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     提取 {title_in_extract}tokenAmount、tokenSymbol。\n\n\
-     **Step 3 — 调用 xmtp_dispatch_user 通知用户仲裁结果（按胜负分流）：**\n\n\
-     ━━━━━━━━━━━━━ 用户胜诉（jobStatus=rejected）━━━━━━━━━━━━━\n\
-     content：\n\
+     Extract {title_in_extract}tokenAmount, tokenSymbol.\n\n\
+     **Step 3 -- Call xmtp_dispatch_user to notify the user of the arbitration outcome (branch by winner):**\n\n\
+     -------------- User wins (jobStatus=rejected) --------------\n\
+     content:\n\
      {dispute_won}\n\n\
-     ━━━━━━━━━━━━━ 用户败诉（jobStatus=complete）━━━━━━━━━━━━━\n\
-     content：\n\
+     -------------- User loses (jobStatus=complete) --------------\n\
+     content:\n\
      {dispute_lost}\n\n\
-     **Step 4 — 终态收尾（保留 sub session）：**\n\
+     **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **不要自动评价**。\n\
-     仲裁流程完整结束。\n"
+     ⚠️ **Do not auto-rate**.\n\
+     Arbitration flow fully complete.\n"
     )
 }
 
@@ -487,16 +487,16 @@ pub(super) fn job_refunded(ctx: &FlowContext<'_>) -> String {
 
     let refunded_notify = super::content::job_refunded_user_notify(job_id);
     format!(
-    "【当前状态】job_refunded（资金已退还用户）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **必须调用 `xmtp_dispatch_user` 通知用户退款完成，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
-     【你的下一步动作（严格顺序）】\n\n\
-     **Step 1 — 调用 xmtp_dispatch_user 通知用户退款完成：**\n\n\
-     content：\n\
+    "[Current Status] job_refunded (funds refunded to the user)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user that the refund completed; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund completed:**\n\n\
+     content:\n\
      {refunded_notify}\n\n\
-     **Step 2 — 终态收尾（保留 sub session）：**\n\
+     **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     退款流程完整结束。\n"
+     Refund flow fully complete.\n"
     )
 }
 
@@ -508,17 +508,17 @@ pub(super) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
 
     let auto_refunded_notify = super::content::job_auto_refunded_user_notify(job_id, title_display);
     format!(
-    "【系统通知】job_auto_refunded（claimAutoRefund tx 回执）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **必须调用 `xmtp_dispatch_user` 通知用户退款到账，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
-     【你的下一步动作（严格顺序）】\n\n\
+    "[System Notification] job_auto_refunded (claimAutoRefund tx receipt)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the refund has arrived; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
-     content：\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund has arrived:**\n\n\
+     content:\n\
      {auto_refunded_notify}\n\n\
-     **Step 2 — 终态收尾（保留 sub session）：**\n\
+     **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     退款流程完整结束。\n"
+     Refund flow fully complete.\n"
     )
 }
 
@@ -527,12 +527,12 @@ pub(super) fn job_expired(ctx: &FlowContext<'_>) -> String {
 
     let expired_notify = super::content::job_expired_user_notify(job_id);
     format!(
-    "【当前状态】job_expired（任务超时，无人接单或服务商未提交）\n\
-     【角色】用户（User Agent）\n\n\
-     【你的下一步动作】\n\n\
-     **Step 1 — 调用 xmtp_dispatch_user 通知用户任务已超时：**\n\
+    "[Current Status] job_expired (task expired; no ASP accepted or no submission)\n\
+     [Role] User (User Agent)\n\n\
+     [Your next actions]\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the task expired:**\n\
      \x20\x20content: {expired_notify}\n\n\
-     本任务已到达终态，流程结束。\n"
+     This task reached a terminal state; the flow ends.\n"
     )
 }
 
@@ -544,34 +544,34 @@ pub(super) fn job_closed(ctx: &FlowContext<'_>) -> String {
 
     let closed_notify = super::content::job_closed_user_notify(job_id, title_display);
     format!(
-    "【当前状态】job_closed（close tx 结果通知）\n\
-     【角色】用户（User Agent）\n\n\
-     【你的下一步动作】\n\n\
+    "[Current Status] job_closed (close tx result notification)\n\
+     [Role] User (User Agent)\n\n\
+     [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user:**\n\
      \x20\x20content: {closed_notify}\n\n\
-     **终态收尾（保留 sub session）：**\n\
+     **Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     任务关闭流程结束。\n"
+     Close flow ends.\n"
     )
 }
 
-// ─── 超时 / 自动完成 ──────────────────────────────────────────────────
+// --- Timeouts / auto-completion ---------------------------------------
 
 pub(super) fn submit_expired(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
 
     let submit_expired = super::content::submit_expired_user_notify(job_id);
     format!(
-    "【系统通知】服务商提交交付物超时\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\
-     服务商未在规定期限内提交交付物，自动执行退款。\n\n\
-     **Step 1 — 立即领取自动退款（无需用户确认）：**\n\
+    "[System Notification] ASP failed to submit the deliverable in time\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\
+     The ASP did not submit the deliverable within the allowed window; auto-refund kicks in.\n\n\
+     **Step 1 -- Claim auto-refund immediately (no user confirmation needed):**\n\
      ```bash\n\
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
-     **Step 2 — 调用 xmtp_dispatch_user 通知用户：**\n\
+     **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
      content: \"{submit_expired}\"\n"
     )
 }
@@ -581,15 +581,15 @@ pub(super) fn refuse_expired(ctx: &FlowContext<'_>) -> String {
 
     let refuse_expired = super::content::refuse_expired_user_notify(job_id);
     format!(
-    "【系统通知】服务商仲裁超时\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **必须调用 `xmtp_dispatch_user` 通知用户，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\
-     你拒绝交付物后，服务商未在规定期限内发起仲裁，自动执行退款。\n\n\
-     **Step 1 — 立即领取自动退款（无需用户确认）：**\n\
+    "[System Notification] ASP arbitration window expired\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\
+     After your rejection, the ASP did not open a dispute in time; auto-refund kicks in.\n\n\
+     **Step 1 -- Claim auto-refund immediately (no user confirmation needed):**\n\
      ```bash\n\
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
-     **Step 2 — 调用 xmtp_dispatch_user 通知用户：**\n\
+     **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
      content: \"{refuse_expired}\"\n"
     )
 }
@@ -600,48 +600,48 @@ pub(super) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
 
     let review_deadline_prompt = super::content::review_deadline_warn_user_prompt(job_id);
     format!(
-    "【系统通知】review_deadline_warn（验收截止时间快到了）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **CRITICAL — 本事件必须使用 `xmtp_prompt_user` 推送到 user session，禁止在 sub session 中直接输出文字回复。**\n\
-     验收截止 = 用户资金安全红线——如果用户没收到此通知，超时后资金自动释放给服务商，不可逆。\n\
-     ❌ 禁止用文字回复代替 xmtp_prompt_user 工具调用\n\
-     ❌ 禁止用 xmtp_dispatch_user 代替 xmtp_prompt_user（用户需要做验收决策，dispatch_user 无法 relay）\n\n\
-     【你的下一步动作（严格顺序）】\n\n\
-     **Step 1 — 幂等检查：查询是否已有此任务的待决事项：**\n\
+    "[System Notification] review_deadline_warn (review deadline approaching)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **CRITICAL -- this event MUST use `xmtp_prompt_user` to push to the user session; do not produce a plain text reply inside the sub session.**\n\
+     Review deadline = user funds safety red line -- if the user is not notified, funds auto-release to the ASP on timeout, irreversibly.\n\
+     ❌ Do not substitute a text reply for the xmtp_prompt_user tool call.\n\
+     ❌ Do not substitute xmtp_dispatch_user for xmtp_prompt_user (the user must make a review decision; dispatch_user cannot relay).\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 1 -- Idempotency check: query whether a pending decision already exists for this task:**\n\
      ```bash\n\
      onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
      ```\n\
-     如果返回列表中已存在 jobId={job_id} 且 role=buyer 的条目 → **说明已经通知过用户,本次是重复事件,直接结束 turn,不再通知。**\n\
-     如果不存在 → 继续 Step 2。\n\n\
-     **Step 2 — 获取 sessionKey 并注册 pending-decision（硬规则 7）：**\n\
-     先调 `session_status` 拿到 sessionKey，然后：\n\
+     If the returned list already contains an entry with jobId={job_id} and role=buyer → **the user has already been notified; this is a duplicate event, end the turn without re-notifying.**\n\
+     If not present → continue to Step 2.\n\n\
+     **Step 2 -- Get the sessionKey and register the pending-decision (Hard Rule 7):**\n\
+     First call `session_status` to get the sessionKey, then:\n\
      ```bash\n\
-     onchainos agent pending-decisions add --sub-key <sessionKey> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"验收截止时间即将到期\" --user-content \"[验收截止提醒] 任务 {job_id} 的验收截止时间即将到期。超时后服务商可自动领取资金。请尽快决定：A. 通过验收 B. 拒绝交付物\"\n\
+     onchainos agent pending-decisions add --sub-key <sessionKey> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"review deadline approaching\" --user-content \"[Review deadline reminder] The review deadline for task {job_id} is approaching. Once it expires, the ASP can auto-claim the funds. Please decide soon: A. Approve B. Reject the deliverable\"\n\
      ```\n\n\
-     **Step 3 — 调用 xmtp_prompt_user 通知用户验收截止时间即将到期，请求决策：**\n\
-     \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-     🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户决策。\
-     🛑 **禁止执行** onchainos agent 命令（complete/reject/status 等一切 task CLI）——你只负责展示和 relay，不负责执行链上动作。\
-     用户**真实回复到达后**（下一 turn）：\
-     用户语义「肯定/通过/approve/OK/同意/yes 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 执行 complete；\
-     用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session 执行 reject。\
-     ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略**——sub 按 intent tag 分支，不按文字匹配。\n\
-     ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。⚠️ xmtp_dispatch_session 只调用**一次**。{CONSTRAINT}\n\
+     **Step 3 -- Call xmtp_prompt_user to notify the user the review deadline is approaching and request a decision:**\n\
+     \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] \
+     🛑 After presenting userContent, **you MUST end this turn and wait for real user input** -- [USER_DECISION_REQUEST] is a **question**, not an **answer**; do not fabricate a user decision in the same turn.\
+     🛑 **Do not run** onchainos agent commands (complete/reject/status or any task CLI) -- you only present and relay, never execute on-chain actions.\
+     **After the user's real reply arrives** (next turn):\
+     User intent \"yes/approve/OK/agree etc.\" → call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] user said: <verbatim user reply, no interpretation, no translation>\") to relay back to the sub session, which runs complete;\
+     User intent \"no/reject/decline/no etc. + reason\" → call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] user said: <verbatim user reply, including reason>\") to relay back to the sub session, which runs reject.\
+     ⚠️ **Routing tag protocol**: `[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` MUST be inserted **verbatim, fully uppercase ASCII**, **no translation / rewrite / omission** -- the sub branches on the intent tag, not on text matching.\n\
+     ⚠️ Relay MUST use xmtp_dispatch_session (do not use sessions_send). ⚠️ xmtp_dispatch_session is called **exactly once**. {CONSTRAINT}\n\
      \x20\x20userContent:\n\
      {review_deadline_prompt}\n\n\
-     **Step 4 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由：**\n\
-     先调 `pending-decisions remove`（硬规则 7）：\n\
+     **Step 4 -- Upon receiving `[USER_DECISION_RELAY][intent:CODE] user said: ...`, route by intent code:**\n\
+     First call `pending-decisions remove` (Hard Rule 7):\n\
      ```bash\n\
      onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     然后按 intent code 执行：\n\
-     - `[intent:APPROVE_REVIEW]`：\n\
+     Then execute by intent code:\n\
+     - `[intent:APPROVE_REVIEW]`:\n\
      ```bash\n\
      onchainos agent complete {job_id}\n\
      ```\n\
-     - `[intent:REJECT_REVIEW]`（reason 从 `用户原话：` 后面抽取）：\n\
+     - `[intent:REJECT_REVIEW]` (extract reason from the part after `user said:`):\n\
      ```bash\n\
-     onchainos agent reject {job_id} --reason \"<用户原话里的拒绝理由>\"\n\
+     onchainos agent reject {job_id} --reason \"<rejection reason from user's words>\"\n\
      ```\n",
      CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
 }
@@ -651,14 +651,14 @@ pub(super) fn review_expired(ctx: &FlowContext<'_>) -> String {
 
     let review_expired = super::content::review_expired_user_notify(job_id);
     format!(
-    "【系统通知】review_expired（review 窗口超时，task 仍是 submitted）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **必须调用 `xmtp_dispatch_user` 通知用户验收超时，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
-     【你的下一步动作】\n\n\
-     **Step 1 — 调用 xmtp_dispatch_user 通知用户验收窗口已过期：**\n\
+    "[System Notification] review_expired (review window expired; task is still submitted)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the review window expired; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     [Your next actions]\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the review window expired:**\n\
      \x20\x20content:\n\
      {review_expired}\n\n\
-     **Step 2** — 等待 `job_auto_completed` 系统通知到达后做收尾。\n"
+     **Step 2** -- Wait for the `job_auto_completed` system notification and then wrap up.\n"
     )
 }
 
@@ -670,33 +670,33 @@ pub(super) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
 
     let auto_completed_notify = super::content::job_auto_completed_user_notify(job_id, title_display);
     format!(
-    "【系统通知】job_auto_completed（claimAutoComplete tx 回执）\n\
-     【角色】用户（User Agent）\n\n\
-     🛑 **必须调用 `xmtp_dispatch_user` 通知用户任务已自动完成，禁止在 sub session 中直接输出文字回复**（见硬规则 10）。\n\n\
-     【你的下一步动作】\n\n\
+    "[System Notification] job_auto_completed (claimAutoComplete tx receipt)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the task auto-completed; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 — 调用 xmtp_dispatch_user 通知用户任务已自动完成：**\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed:**\n\
      \x20\x20content:\n\
      {auto_completed_notify}\n\n\
      {terminal_session_hint}\n"
     )
 }
 
-// ─── 用户操作伪事件 ───────────────────────────────────────────────────
+// --- User-action pseudo events ----------------------------------------
 
 pub(super) fn close_task(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
 
     let close_notify = super::content::close_user_notify(job_id);
     format!(
-    "【当前动作】关闭任务\n\
-     【角色】用户（User Agent）\n\n\
-     **Step 1 — 关闭任务（仅 Open 状态有效）：**\n\
+    "[Current Action] Close task\n\
+     [Role] User (User Agent)\n\n\
+     **Step 1 -- Close the task (only valid in Open state):**\n\
      ```bash\n\
      onchainos agent close {job_id}\n\
      ```\n\n\
-     **Step 2 — 通知用户：**\n\
-     调用 xmtp_dispatch_user：\n\
+     **Step 2 -- Notify the user:**\n\
+     Call xmtp_dispatch_user:\n\
      content: \"{close_notify}\"\n"
     )
 }
@@ -706,31 +706,31 @@ pub(super) fn set_public(ctx: &FlowContext<'_>) -> String {
 
     let set_public_notify = super::content::set_public_user_notify(job_id);
     format!(
-    "【当前动作】转为公开任务\n\
-     【角色】用户（User Agent）\n\n\
-     **Step 1 — 转为公开任务：**\n\
+    "[Current Action] Convert to public task\n\
+     [Role] User (User Agent)\n\n\
+     **Step 1 -- Convert to public task:**\n\
      ```bash\n\
      onchainos agent set-public {job_id}\n\
      ```\n\n\
-     **Step 2 — 通知用户：**\n\
-     调用 xmtp_dispatch_user：\n\
+     **Step 2 -- Notify the user:**\n\
+     Call xmtp_dispatch_user:\n\
      content: \"{set_public_notify}\"\n"
     )
 }
 
-// ─── 其他事件 ─────────────────────────────────────────────────────────
+// --- Other events ------------------------------------------------------
 
 pub(super) fn submit_deadline_warn() -> String {
-    "【系统通知】submit_deadline_warn（provider 端截止提醒）\n\
-     【角色】用户（User Agent）\n\n\
-     【建议】静默观察即可，等 provider 提交交付物（job_submitted 通知）后再处理。\n".to_string()
+    "[System Notification] submit_deadline_warn (provider-side deadline reminder)\n\
+     [Role] User (User Agent)\n\n\
+     [Advice] Stay silent and observe; wait for the provider to submit the deliverable (job_submitted notification) before acting.\n".to_string()
 }
 
 pub(super) fn evaluator_events(event_str: &str) -> String {
     format!(
-    "【系统通知】{event_str}（仲裁内部事件，evaluator 处理）\n\
-     【角色】用户（User Agent）\n\n\
-     【建议】静默观察即可。等 `dispute_resolved` 通知到达后再 next-action 处理收尾。\n"
+    "[System Notification] {event_str} (internal arbitration event, handled by evaluator)\n\
+     [Role] User (User Agent)\n\n\
+     [Advice] Stay silent and observe. After `dispute_resolved` arrives, call next-action to wrap up.\n"
     )
 }
 
@@ -741,11 +741,11 @@ pub(super) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
 
     let reward_claimed = super::content::reward_claimed_user_notify(job_id, title_display);
     format!(
-    "【系统通知】reward_claimed（claimRewards tx 回执）\n\
-     【角色】用户（User Agent）\n\n\
-     【你的下一步动作】\n\n\
+    "[System Notification] reward_claimed (claimRewards tx receipt)\n\
+     [Role] User (User Agent)\n\n\
+     [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 — 调用 xmtp_dispatch_user 通知用户奖励已到账：**\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the reward has arrived:**\n\
      \x20\x20content: {reward_claimed}\n"
     )
 }
@@ -756,119 +756,119 @@ pub(super) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
 
     let wakeup_resume = super::content::wakeup_resume_user_notify(job_id);
     format!(
-    "【系统通知】wakeup_notify（网络/电脑重启后任务唤醒）\n\
-     【角色】用户（User Agent）\n\n\
-     ⚠️ 这是 wake-up 心跳事件,**不是**业务驱动事件。真实业务状态在 envelope.message.jobStatus 字段。\n\
-     你不应该用 `wakeup_notify` 作为 --jobStatus 跑剧本——本剧本只是引导。\n\n\
-     【你的下一步动作（严格顺序）】\n\n\
-     **Step 1 — 从 envelope 读真实 status**:\n\
-     从触发本 turn 的 wakeup_notify envelope 里读 `message.jobStatus` 字段（如 `accepted` / `submitted` / `refused` / `disputed` / `completed` / `rejected` 等真实 status string）。\n\n\
-     **Step 2 — 用真实 status 重调 next-action 拿当前剧本**:\n\
+    "[System Notification] wakeup_notify (task wake-up after network / machine restart)\n\
+     [Role] User (User Agent)\n\n\
+     ⚠️ This is a wake-up heartbeat event, **not** a business-driven event. The real business status lives in envelope.message.jobStatus.\n\
+     You should not run a playbook with `wakeup_notify` as --jobStatus -- this playbook is only a guide.\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 1 -- Read the real status from the envelope**:\n\
+     From the wakeup_notify envelope that triggered this turn, read `message.jobStatus` (e.g. `accepted` / `submitted` / `refused` / `disputed` / `completed` / `rejected` and other real status strings).\n\n\
+     **Step 2 -- Re-call next-action with the real status to fetch the current playbook**:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --jobStatus <message.jobStatus 字段值> --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --jobid {job_id} --jobStatus <value of message.jobStatus> --role buyer --agentId {agent_id}\n\
      ```\n\
-     按返回剧本走当前 status 应做动作。\n\n\
-     **Step 3 — 幂等性自查（避免重复 prompt 用户）**:\n\
-     如果 Step 2 拿到的剧本含 `xmtp_prompt_user` 步骤,**先**调:\n\
+     Follow the returned playbook for what to do at the current status.\n\n\
+     **Step 3 -- Idempotency self-check (avoid re-prompting the user)**:\n\
+     If the playbook from Step 2 contains an `xmtp_prompt_user` step, **first** call:\n\
      ```bash\n\
      onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
      ```\n\
-     - 该 jobId 已有 pending 条目（断线前已 prompt 过）→ **跳过本次 xmtp_prompt_user 重发**,改成 `xmtp_dispatch_user` 通知「{wakeup_resume}」\n\
-     - 无 pending 条目（首次或之前已 RELAY 关闭）→ 按 Step 2 剧本正常执行(包括 pending-decisions add + xmtp_prompt_user)\n\n\
-     ⚠️ **不要** xmtp_send 给服务商「我重新上线了」之类的过场——对方不关心你的连接状态。\n\
-     ⚠️ Step 2 拿到的剧本如果是被动等待类（如 status=accepted 等服务商交付）,只输出「任务恢复」通知后结束 turn,不主动跑业务动作。\n"
+     - This jobId already has a pending entry (already prompted before disconnect) → **skip the re-prompt**; instead call `xmtp_dispatch_user` with \"{wakeup_resume}\"\n\
+     - No pending entry (first time, or already RELAYed and closed) → run the Step 2 playbook normally (including pending-decisions add + xmtp_prompt_user)\n\n\
+     ⚠️ **Do not** xmtp_send the ASP \"I'm back online\" or similar small talk -- they do not care about your connection state.\n\
+     ⚠️ If the Step 2 playbook is passive (e.g. status=accepted waiting for ASP delivery), just emit a \"task resumed\" notification and end the turn; do not proactively run business actions.\n"
     )
 }
 
 pub(super) fn create_task() -> String {
     "\
-🔒 **前置检查**：你是否已读过 `skills/okx-agent-task/SKILL.md` 和 `skills/okx-agent-task/buyer.md`？\n\
-如果没有 → **立即停止执行本剧本**，先按 CLAUDE.md 路由规则加载 SKILL.md → 确认角色为 buyer → 读 buyer.md → 再回到此处。\n\
-跳过 skill 加载 = 不了解工具白名单/通信协议/安全门 = 后续流程（job_created 事件处理、协商、接单）必然出错。\n\n\
-【当前操作】发布任务（create_task）
-【角色】用户（User Agent）
-【会话类型】user session（直接与用户对话）
+🔒 **Pre-flight check**: have you read `skills/okx-agent-task/SKILL.md` and `skills/okx-agent-task/buyer.md`?\n\
+If not → **stop executing this playbook immediately**; first load SKILL.md per the CLAUDE.md routing rules → confirm role is buyer → read buyer.md → then come back here.\n\
+Skipping skill loading = not knowing the tool whitelist / communication protocol / security gates = downstream steps (job_created event handling, negotiation, accept) will fail.\n\n\
+[Current Operation] Publish task (create_task)
+[Role] User (User Agent)
+[Session Type] user session (talking directly to the user)
 
-🛑 **禁止跳步**：必须完成全部字段收集 → 展示确认表单 → 用户明确确认后，才能调 CLI。
+🛑 **No skipping**: you MUST finish collecting all fields → show the confirmation form → wait for an explicit user confirmation before calling the CLI.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step 1 — 字段收集（通过对话逐步收集，**全部就绪才进 Step 2**）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+================================================
+Step 1 -- Field collection (collect progressively in conversation; **only enter Step 2 when all fields are ready**)
+================================================
 
-| 字段 | CLI 参数 | 约束 | 收集方式 |
+| Field | CLI flag | Constraint | How to collect |
 |---|---|---|---|
-| 描述 | --description | 10–2000 字符 | 整合用户原话。<10 → 「描述越详细，匹配到的 Provider 越准确。能补充一下具体需求吗？」 |
-| 标题 | --title | ≤30 字符 | Agent 总结，生成后**必须计数**，>30 缩短 |
-| 摘要 | --description-summary | ≤200 字符 | Agent 总结，生成后**必须计数**，>200 缩短 |
-| 支付代币 | --currency | 仅 USDT / USDG | ⚠️ 见下方代币规则 |
-| 预算 | --budget | 数字; ≤5 位小数; max 10,000,000 | 提取数字 |
-| 最高预算 | --max-budget | **Required**; ≥ budget; ≤5 位小数; max 10,000,000 | ⚠️ **必须明确询问用户**，不可自动填充或猜测。这是协商价格上限，服务商报价不得超过此值 |
-| 接单时限 | --deadline-open | 10 min – 6 months; 格式 `<n>h` / `<n>m` | **必须询问用户**。发布后多久无人接单则自动关闭 |
-| 交付时限 | --deadline-submit | 1 min – 6 months; 格式 `<n>h` / `<n>m` | **必须询问用户**。接单后多久内须完成交付 |
-| 指定服务商 | --provider | 可选；服务商 agentId | 用户主动提到指定服务商时提取 agentId。**不主动询问**——用户没提就不传 |
+| Description | --description | 10-2000 chars | Consolidate the user's words. If <10 → \"A more detailed description helps match a better Provider. Could you add more specifics?\" |
+| Title | --title | <=30 chars | Agent-generated; **must count chars after generating**, shorten if >30 |
+| Summary | --description-summary | <=200 chars | Agent-generated; **must count chars after generating**, shorten if >200 |
+| Payment token | --currency | Only USDT / USDG | ⚠️ See token rules below |
+| Budget | --budget | number; <=5 decimal places; max 10,000,000 | Extract the number |
+| Max budget | --max-budget | **Required**; >= budget; <=5 decimal places; max 10,000,000 | ⚠️ **You MUST ask the user explicitly**, do not auto-fill or guess. This is the negotiation price cap; the ASP's quote cannot exceed it |
+| Open deadline | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long the task stays open before auto-closing if no ASP accepts |
+| Submit deadline | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long after acceptance the ASP must deliver |
+| Designated provider | --provider | optional; provider agentId | If the user names a specific provider, extract the agentId. **Do not ask proactively** -- if the user does not bring it up, omit it |
 
-🛑 **代币规则（最高优先级）**：
-- 用户明确写 \"USDT\" 或 \"USDG\" → 直接用，无需确认
-- 用户使用模糊表达（\"U\" / \"u\" / \"刀\" / \"美元\" / \"美金\" / \"dollar\" / \"USD\" / \"100U\" / \"50u\"）→ **必须先问「请确认支付代币：USDT 还是 USDG？」**，等用户明确回复后才填入
-- **禁止默认 USDT**，展示 \"100 USDT\" 当用户只说 \"100U\" 是违规
+🛑 **Token rules (top priority)**:
+- User writes \"USDT\" or \"USDG\" explicitly → use it directly, no confirmation
+- User uses fuzzy expressions (\"U\" / \"u\" / \"buck\" / \"dollar\" / \"USD\" / \"100U\" / \"50u\") → **you MUST first ask \"Please confirm the payment token: USDT or USDG?\"**, fill it in only after the user replies explicitly
+- **Do not default to USDT**: rendering \"100 USDT\" when the user only said \"100U\" is a violation
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step 2 — 校验（字段全部收集后、展示表单前）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+================================================
+Step 2 -- Validation (after all fields collected, before showing the form)
+================================================
 
-1. 代币 ≠ USDT 且 ≠ USDG → 「目前只支持 USDT 和 USDG，请选择其中一个。」
-2. **预算与最高预算币种一致性**：用户在描述预算和最高预算时如果提到了不同币种（如「预算 10 USDT，最高 20 USDG」）→ **阻断**，「预算和最高预算必须使用同一种代币，请确认你要使用 USDT 还是 USDG？」。任务只有一个 --currency 参数，两者必须统一。
-3. 描述 < 10 字符 → 引导补充
-4. max_budget < budget → 「最高预算不能小于预算。」
-5. max_budget 未填 → 「请设置最高预算（协商价格上限），服务商报价不得超过此值。」
-6. budget > 10,000,000 或小数位 > 5 → 提示限制
+1. Token is neither USDT nor USDG → \"Only USDT and USDG are supported. Please choose one.\"
+2. **Currency consistency between budget and max budget**: if the user mentions different tokens for budget and max budget (e.g. \"budget 10 USDT, max 20 USDG\") → **block**, \"Budget and max budget must use the same token. Please confirm: USDT or USDG?\". The task has a single --currency, the two must match.
+3. Description < 10 chars → ask the user to expand
+4. max_budget < budget → \"Max budget cannot be less than the budget.\"
+5. max_budget missing → \"Please set the max budget (the negotiation price cap); the ASP's quote cannot exceed it.\"
+6. budget > 10,000,000 or > 5 decimal places → tell the user the limits
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step 3 — 身份 & 余额检查
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+================================================
+Step 3 -- Identity & balance check
+================================================
 
-1. `onchainos agent get` 检查当前账户是否有 buyer 身份（role=1）
-2. 有 buyer → 告知用户使用哪个账户
-3. 无 buyer → 引导注册 `onchainos agent register`
-4. 余额不足 → 警告但不阻断创建
+1. `onchainos agent get` to check whether the current account has buyer identity (role=1)
+2. Has buyer → tell the user which account is being used
+3. No buyer → guide registration via `onchainos agent register`
+4. Insufficient balance → warn but do not block creation
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step 4 — 🛑 通信服务可用性检查（不可跳过）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+================================================
+Step 4 -- 🛑 Communication availability check (must not be skipped)
+================================================
 
-🛑 **MANDATORY — 必须在展示确认表单之前完成此步骤**。
-任务创建后的所有协商、通知、验收都依赖通信服务，通信不可用 = 任务创建后立即卡死。
+🛑 **MANDATORY -- complete this before showing the confirmation form**.
+All post-creation negotiation, notifications, and review depend on the messaging service; messaging down = task created and immediately stuck.
 
-1. **阅读** `skills/okx-agent-chat/after-agent-list-changed.md` 的**完整内容**
-2. **完整执行** after-agent-list-changed.md 内的流程（从 Step 0 开始，按决策树逐步走完）
-3. 执行完毕后继续 Step 5
+1. **Read** the **entire content** of `skills/okx-agent-chat/after-agent-list-changed.md`
+2. **Fully execute** the flow inside after-agent-list-changed.md (start from Step 0; walk the decision tree to completion)
+3. After it finishes, proceed to Step 5
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step 5 — 展示确认表单（格式见 `skills/okx-agent-task/references/display-formats.md` §3）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+================================================
+Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/references/display-formats.md` Section 3)
+================================================
 
-| 字段 | 值 |
+| Field | Value |
 |---|---|
-| 标题 | <agent 总结> |
-| 摘要 | <agent 总结，≤200 字符> |
-| 描述 | <完整内容>（≤200 字符时放表格内；>200 字符时表格写 `见下方`，在表格下方用 prose 展示完整内容） |
-| 支付代币 | <USDT 或 USDG> |
-| 预算 | <数字> |
-| 最高预算 | <数字>（协商价格上限） |
-| 接单时限 | <Nh>（发布后 N 小时无人接单自动关闭） |
-| 交付时限 | <Nh>（接单后 N 小时内须完成交付） |
-| 指定服务商 | <agentId>（🛑 仅用户主动指定时才展示此行；**未指定则整行不展示**——禁止写「无」「无（公开任务）」等占位。任务默认私有，未指定服务商 ≠ 公开任务） |
+| Title | <agent summary> |
+| Summary | <agent summary, <=200 chars> |
+| Description | <full content> (if <=200 chars, put it in the table; if >200, write `see below` in the table and render the full content as prose below) |
+| Payment token | <USDT or USDG> |
+| Budget | <number> |
+| Max budget | <number> (negotiation price cap) |
+| Open deadline | <Nh> (auto-closes after N hours if no ASP accepts) |
+| Submit deadline | <Nh> (deliverable must be submitted within N hours of acceptance) |
+| Designated provider | <agentId> (🛑 only show this row if the user explicitly designated one; **otherwise omit the entire row** -- do not write \"none\" or \"none (public task)\" or any placeholder. Tasks default to private; \"no designated provider\" != \"public task\") |
 
-> 确认无误？确认后我立即上链创建任务。
+> Confirm? Once you confirm, I will submit the task on-chain immediately.
 
-⚠️ 中文对话用中文字段标签，英文对话用英文。
+⚠️ Use Chinese field labels for Chinese conversations, English labels for English conversations.
 
-→ **结束本轮 turn**，展示表单后必须停止，等待用户对**本表单**的明确确认回复。
-🛑 之前对话中用户对子问题（如代币确认）的「确认」不算对表单的确认，必须是用户看到表单后的新回复。
+→ **End this turn**; after showing the form you MUST stop and wait for the user's explicit confirmation of **this form**.
+🛑 The user's earlier confirmation on a sub-question (e.g. token confirmation) does NOT count as confirming the form; you must wait for a new reply after the form is shown.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step 6 — 用户对表单确认后调 CLI（🛑 禁止与 Step 5 同一轮执行）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+================================================
+Step 6 -- After user confirms the form, call the CLI (🛑 must NOT be in the same turn as Step 5)
+================================================
 
 ```bash
 onchainos agent create-task \\
@@ -878,73 +878,73 @@ onchainos agent create-task \\
   --budget <budget> --max-budget <max_budget> \\
   --currency <USDT|USDG> \\
   --deadline-open <deadline_open> --deadline-submit <deadline_submit> \\
-  [--provider <服务商agentId>]
+  [--provider <provider agentId>]
 ```
 
-⚠️ `--provider`（可选）：指定服务商 agentId。指定后 job_created 将跳过 recommend，直接查询该服务商的 service-list 按支付方式路由（x402 或 A2A 协商）。用户明确要求指定服务商时才传。
+⚠️ `--provider` (optional): designate a provider agentId. With it set, job_created skips recommend and routes directly via the provider's service-list by payment mode (x402 or A2A negotiation). Pass it only when the user explicitly designates a provider.
 
-🚫 **create-task 只接受以上参数。没有 --content / --period / --visibility / --amount / --token / --payment-mode 参数。** `--provider` 传入时 CLI 自动设置 visibility=1（PRIVATE）和 providerAgentId，无需额外参数。
-⚠️ **支付方式不在创建阶段设置**——paymentMode 由后续流程决定：A2A 协商路径固定 escrow，指定服务商且有 endpoint 时走 x402。如果用户在发布任务时提到了支付方式偏好，**不要传 --payment-mode**，告知用户：「支付方式将在与服务商对接时自动确定。」
+🚫 **create-task only accepts the flags above. There is no --content / --period / --visibility / --amount / --token / --payment-mode flag.** When `--provider` is passed, the CLI automatically sets visibility=1 (PRIVATE) and providerAgentId; no extra flags needed.
+⚠️ **Payment mode is not set at creation** -- paymentMode is decided downstream: the A2A negotiation path is always escrow; if a provider is designated and has an endpoint, x402 is used. If the user mentions a preferred payment mode at publication, **do not pass --payment-mode**; tell them: \"The payment mode will be determined automatically when negotiating with the provider.\"
 
-成功后调 `xmtp_dispatch_user` 通知用户：
-- 未指定 --provider → content: 「任务已提交，jobId: <jobId>，等待上链确认（约数秒）。确认后系统将自动联系推荐服务商开始协商。」
-- 指定了 --provider → content: 「任务已提交，jobId: <jobId>，等待上链确认（约数秒）。确认后将直接与指定服务商 <agentId> 对接。」
+After success, call `xmtp_dispatch_user` to notify the user:
+- No --provider → content: \"Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). Once confirmed, the system will auto-contact recommended providers to start negotiation.\"
+- With --provider → content: \"Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). Once confirmed, you will be connected directly with the designated provider <agentId>.\"
 
-═══════════════════════════════════════════════════════════════
-🛑🛑🛑 STOP — create-task 调完后 **必须立即结束本 turn**
-═══════════════════════════════════════════════════════════════
-❌ **禁止说「任务已发布」「发布成功」**——create-task 只是提交交易，尚未上链确认。
-❌ **禁止调 `recommend`**——推荐服务商列表由 backup session 收到 `job_created` 系统通知后自动触发，不在本 turn 执行。
-❌ **禁止调任何 onchainos agent 命令**——本 turn 到此结束，后续一切动作等链上事件驱动。
-═══════════════════════════════════════════════════════════════
+===============================================================
+🛑🛑🛑 STOP -- after create-task you **MUST end this turn immediately**
+===============================================================
+❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.
+❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.
+❌ **Do not call any onchainos agent commands** -- this turn ends here; all further actions are driven by on-chain events.
+===============================================================
 ".to_string()
 }
 
-// ─── 条款变更事件 ─────────────────────────────────────────────────────
+// --- Term-change events ------------------------------------------------
 
 pub(super) fn task_token_budget_change(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
 
     format!(
-    "【系统通知】task_token_budget_change（支付代币/金额变更已上链）\n\
-     【角色】用户（User Agent）\n\n\
-     ⚠️ 本事件由 user session 调用 `set-token-and-budget` 触发。条款已在链上更新。\n\n\
-     【接收场景判断——🛑 MANDATORY，判断错误 = 流程卡死】\n\
-     本事件会广播到所有用户侧子 session。\n\
-     - 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n\
-     - 如果你是 **sub session（与某服务商的协商会话）**→ 先执行 Step 0 活跃检查，再执行后续步骤\n\n\
-     【sub session 动作（🛑 四步严格顺序，每步 MUST 等上一步 tool_result 返回后再执行下一步）】\n\n\
-     **Step 0 — 🛑 MUST 检查本 session 是否仍活跃（跳过 = 向已终止的服务商发无效消息）：**\n\
-     回顾本 session 上下文：如果满足以下**任一条件**，本 session 已终止，**忽略本事件，结束 turn**：\n\
-     \x20\x20- 你曾发送或收到 `[intent:reject]`（协商已终止）\n\
-     \x20\x20- 你曾调用 `mark-failed` 标记过当前服务商（服务商已被标记失败）\n\
-     \x20\x20- 服务商已超过 24h 未回复（协商已冷却）\n\
-     如果上下文不足以判断 → 调 `xmtp_get_conversation_history` 检查最近消息，含 [intent:reject] 则终止。\n\
-     ⚠️ 只有确认本 session 仍活跃（协商进行中）才继续 Step 1。\n\n\
-     **Step 1 — 🛑 MUST 查询最新任务详情（禁止用缓存/旧值）：**\n\
+    "[System Notification] task_token_budget_change (payment token / amount change settled on-chain)\n\
+     [Role] User (User Agent)\n\n\
+     ⚠️ This event is triggered by the user session calling `set-token-and-budget`. The terms are now updated on-chain.\n\n\
+     [Receiving-scenario decision -- 🛑 MANDATORY; wrong decision = flow stuck]\n\
+     This event is broadcast to all user-side sub sessions.\n\
+     - If you are the **backup session** → **ignore this event, end the turn immediately, do not call any tool**\n\
+     - If you are a **sub session (a negotiation session with a specific provider)** → first run Step 0 liveness check, then continue\n\n\
+     [Sub-session action (🛑 four steps in strict order; each step MUST wait for the previous tool_result before continuing)]\n\n\
+     **Step 0 -- 🛑 MUST check whether this session is still active (skipping = sending invalid messages to a terminated provider):**\n\
+     Review this session's context: if **any** of the following holds, the session is terminated -- **ignore this event, end the turn**:\n\
+     \x20\x20- You have sent or received `[intent:reject]` (negotiation terminated)\n\
+     \x20\x20- You have called `mark-failed` against the current provider (provider marked failed)\n\
+     \x20\x20- The provider has not replied for over 24h (negotiation cooled down)\n\
+     If context is insufficient → call `xmtp_get_conversation_history` to check recent messages; if it contains [intent:reject], treat as terminated.\n\
+     ⚠️ Only continue to Step 1 when you have confirmed this session is still active (negotiation in progress).\n\n\
+     **Step 1 -- 🛑 MUST query the latest task details (do not use cached / stale values):**\n\
      ```bash\n\
      onchainos agent status {job_id}\n\
      ```\n\
-     从返回中提取最新的 tokenSymbol、tokenAmount（budget）。\n\
-     ❌ 跳过此步 = PROPOSE 发送旧金额 = 服务商收到过期条款 = 协商基于错误数据\n\n\
-     **Step 2 — 🛑 MUST 获取 sessionKey（路径 4 两步必做之一）：**\n\
-     调用 `session_status` 工具拿当前 sub session 的 `sessionKey`。\n\
-     ❌ 跳过此步 = xmtp_send 缺 sessionKey = 消息发不出去 = 服务商永远收不到新条款\n\n\
-     **Step 3 — 🛑 MUST 向服务商发送新一轮 [intent:propose]（不可跳过、不可延迟）：**\n\
-     使用 Step 1 拿到的最新 tokenSymbol 和 tokenAmount 构造新的 PROPOSE 消息。\n\
-     paymentMode 固定为 escrow（条款变更仅适用于担保支付场景）。\n\n\
-     调用 xmtp_send（sessionKey = Step 2 拿到的值）：\n\
+     Extract the latest tokenSymbol and tokenAmount (budget) from the response.\n\
+     ❌ Skipping this step = PROPOSE sent with stale amount = provider receives expired terms = negotiation based on wrong data\n\n\
+     **Step 2 -- 🛑 MUST get the sessionKey (one of the two mandatory steps for path 4):**\n\
+     Call the `session_status` tool to obtain the current sub session's `sessionKey`.\n\
+     ❌ Skipping this step = xmtp_send lacks sessionKey = message cannot be sent = provider never sees the new terms\n\n\
+     **Step 3 -- 🛑 MUST send a fresh round of [intent:propose] to the provider (do not skip, do not delay):**\n\
+     Use the latest tokenSymbol and tokenAmount from Step 1 to construct the new PROPOSE message.\n\
+     paymentMode is fixed to escrow (term changes only apply to escrow scenarios).\n\n\
+     Call xmtp_send (sessionKey = value from Step 2):\n\
      \x20\x20content:\n\
      \x20\x20jobId: {job_id}\n\
      \x20\x20paymentMode: escrow\n\
-     \x20\x20tokenSymbol: <Step 1 最新 tokenSymbol>\n\
-     \x20\x20tokenAmount: <Step 1 最新 tokenAmount>\n\
+     \x20\x20tokenSymbol: <latest tokenSymbol from Step 1>\n\
+     \x20\x20tokenAmount: <latest tokenAmount from Step 1>\n\
      \x20\x20[intent:propose]\n\n\
-     ⚠️ 这是新一轮协商，COUNTER 计数器归零。\n\
-     ❌ 跳过 Step 3 = 服务商不知道条款已变 = 协商基于旧条款继续 = 最终 accept 参数不一致\n\
-     ❌ 禁止 xmtp_dispatch_user（用户在 user session 已知晓变更）\n\
-     ❌ 禁止调用 set-token-and-budget / set-provider / set-max-budget（user session 已执行）\n\n\
-     → **结束本轮 turn**，等待服务商回复（[intent:ack] / [intent:counter] / [intent:reject]）。\n"
+     ⚠️ This is a new negotiation round; the COUNTER counter resets.\n\
+     ❌ Skipping Step 3 = provider does not know terms changed = negotiation continues on old terms = final accept parameters mismatch\n\
+     ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session)\n\
+     ❌ Do not call set-token-and-budget / set-provider / set-max-budget (the user session already did)\n\n\
+     → **End this turn** and wait for the provider's reply ([intent:ack] / [intent:counter] / [intent:reject]).\n"
     )
 }
 
@@ -956,66 +956,66 @@ pub(super) fn task_provider_change(ctx: &FlowContext<'_>) -> String {
 
     let backup_instruction = if has_dp {
         format!(
-            "- 如果你是 **backup session** → user session 已通过 `set-provider` 写入了新服务商信息。\n\
-             \x20\x20**🛑 MUST 立即执行以下命令启动新服务商流程**：\n\
+            "- If you are the **backup session** → the user session has written the new provider info via `set-provider`.\n\
+             \x20\x20**🛑 MUST run the following command immediately to kick off the new provider flow**:\n\
              \x20\x20```bash\n\
              \x20\x20onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id}\n\
              \x20\x20```\n\
-             \x20\x20按返回的剧本执行（D-Steps → 协商/x402）。\n\
-             \x20\x20❌ 禁止忽略本事件 ❌ 禁止跳过 next-action 自行决定下一步\n")
+             \x20\x20Follow the returned playbook (D-Steps → negotiation / x402).\n\
+             \x20\x20❌ Do not ignore this event ❌ Do not skip next-action and decide the next step yourself\n")
     } else {
-        "- 如果你是 **backup session** → **忽略本事件，立即结束 turn，不执行任何工具调用**\n".to_string()
+        "- If you are the **backup session** → **ignore this event, end the turn immediately, do not call any tool**\n".to_string()
     };
 
     format!(
-    "【系统通知】task_provider_change（服务商变更已上链）\n\
-     【角色】用户（User Agent）\n\n\
-     ⚠️ 本事件由 user session 调用 `set-provider` 触发。provider 已在链上更新。\n\n\
-     【接收场景判断——🛑 MANDATORY，判断错误 = 流程卡死】\n\
-     本事件会广播到所有用户侧子 session。\n\
+    "[System Notification] task_provider_change (provider change settled on-chain)\n\
+     [Role] User (User Agent)\n\n\
+     ⚠️ This event is triggered by the user session calling `set-provider`. The provider is now updated on-chain.\n\n\
+     [Receiving-scenario decision -- 🛑 MANDATORY; wrong decision = flow stuck]\n\
+     This event is broadcast to all user-side sub sessions.\n\
      {backup_instruction}\
-     - 如果你是 **sub session（与某服务商的协商会话）**→ 先执行 Step 0 活跃检查，再执行后续步骤\n\n\
-     【sub session 动作（🛑 四步严格顺序，MUST 全部执行）】\n\n\
-     **Step 0 — 🛑 MUST 检查本 session 是否仍活跃：**\n\
-     回顾本 session 上下文：如果你在本 session 中已发送或收到含 `[intent:reject]` 的消息（协商已终止），\n\
-     **忽略本事件，结束 turn**——已终止的协商不需要再发 REJECT。\n\
-     只有确认本 session 仍活跃（协商进行中）才继续 Step 1。\n\n\
-     **Step 1 — 🛑 MUST 查询任务详情，比对 provider 是否变更（跳过 = 可能误关新服务商的 session）：**\n\
+     - If you are a **sub session (a negotiation session with a specific provider)** → first run Step 0 liveness check, then continue\n\n\
+     [Sub-session action (🛑 four steps in strict order; MUST be fully executed)]\n\n\
+     **Step 0 -- 🛑 MUST check whether this session is still active:**\n\
+     Review this session's context: if you have sent or received a message containing `[intent:reject]` in this session (negotiation terminated),\n\
+     **ignore this event, end the turn** -- a terminated negotiation does not need another REJECT.\n\
+     Only continue to Step 1 when you have confirmed this session is still active (negotiation in progress).\n\n\
+     **Step 1 -- 🛑 MUST query task details to compare whether the provider has changed (skipping = may wrongly close the new provider's session):**\n\
      ```bash\n\
      onchainos agent status {job_id}\n\
      ```\n\
-     从返回中提取 `providerAgentId`（链上当前服务商），与**本 session 正在协商的服务商 agentId** 比对：\n\
-     \x20\x20- **一致**（本 session 的服务商就是链上最新 provider）→ 本 session 是新服务商的会话，**忽略本事件，结束 turn**，不发 REJECT\n\
-     \x20\x20- **不一致**（本 session 的服务商已被替换）→ 继续 Step 2 发 REJECT\n\
-     \x20\x20- **providerAgentId 为空或不存在** → 继续 Step 2 发 REJECT（保守处理）\n\
-     ❌ 跳过此步 = 无差别对所有 sub session 发 REJECT = 新服务商的 session 也被误关 = 协商中断\n\n\
-     **Step 2 — 🛑 MUST 获取 sessionKey（路径 4 两步必做之一）：**\n\
-     调用 `session_status` 工具拿当前 sub session 的 `sessionKey`。\n\
-     ❌ 跳过此步 = xmtp_send 缺 sessionKey = REJECT 发不出去\n\n\
-     **Step 3 — 🛑 MUST 向当前 session 的服务商发送 [intent:reject]（不可跳过）：**\n\
-     本任务的 provider 已在链上变更为其他服务商，当前会话的协商即刻终止。\n\
-     ❌ 不发 REJECT = 旧服务商不知道被换掉 = 继续等待/发消息 = 协商永远挂起\n\n\
-     调用 xmtp_send（sessionKey = Step 2 拿到的值）：\n\
+     Extract `providerAgentId` (the current on-chain provider) and compare it with **the provider agentId this session is negotiating with**:\n\
+     \x20\x20- **Match** (this session's provider IS the on-chain provider) → this session belongs to the new provider; **ignore this event, end the turn**, do not send REJECT\n\
+     \x20\x20- **Mismatch** (this session's provider has been replaced) → continue to Step 2 and send REJECT\n\
+     \x20\x20- **providerAgentId is empty or missing** → continue to Step 2 and send REJECT (conservative)\n\
+     ❌ Skipping this step = sending REJECT indiscriminately to all sub sessions = even the new provider's session gets closed = negotiation broken\n\n\
+     **Step 2 -- 🛑 MUST get the sessionKey (one of the two mandatory steps for path 4):**\n\
+     Call the `session_status` tool to obtain the current sub session's `sessionKey`.\n\
+     ❌ Skipping this step = xmtp_send lacks sessionKey = REJECT cannot be sent\n\n\
+     **Step 3 -- 🛑 MUST send [intent:reject] to this session's provider (do not skip):**\n\
+     This task's provider has changed on-chain to a different ASP; the current session's negotiation terminates immediately.\n\
+     ❌ Not sending REJECT = old provider does not know they were replaced = keeps waiting / messaging = negotiation hangs forever\n\n\
+     Call xmtp_send (sessionKey = value from Step 2):\n\
      \x20\x20content:\n\
      \x20\x20jobId: {job_id}\n\
-     \x20\x20reason: 用户已更换服务商\n\
+     \x20\x20reason: user has switched provider\n\
      \x20\x20[intent:reject]\n\n\
-     ❌ 禁止 xmtp_dispatch_user（用户在 user session 已知晓变更）\n\
-     ❌ 禁止调用 set-token-and-budget / set-provider / set-max-budget（user session 已执行）\n\
-     ❌ 禁止调用 mark-failed（仅终止协商，不排除该服务商）\n\
-     ❌ 禁止在 REJECT 后继续与该服务商对话（协商已终止，本 sub session 使命结束）\n\n\
-     → **结束本轮 turn**。新服务商的协商由 user session 发起，与本 sub session 无关。\n"
+     ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session)\n\
+     ❌ Do not call set-token-and-budget / set-provider / set-max-budget (the user session already did)\n\
+     ❌ Do not call mark-failed (it only ends the negotiation, it does not exclude that provider)\n\
+     ❌ Do not keep talking to that provider after REJECT (negotiation is terminated; this sub session's mission is over)\n\n\
+     → **End this turn**. The new provider's negotiation is initiated by the user session, unrelated to this sub session.\n"
     )
 }
 
-// ─── 兜底 ─────────────────────────────────────────────────────────────
+// --- Fallback ----------------------------------------------------------
 
 pub(super) fn staked_and_unknown(event_str: &str, job_id: &str) -> String {
     format!(
-    "【未知状态】{event_str}\n\
-     【建议】\n\
-     1. 调用 `onchainos agent common context {job_id} --role buyer` 查看完整上下文\n\
-     2. 如该状态不在预期流程内，等待用户指示\n\
-     3. 不要预测/假设其他通知\n"
+    "[Unknown Status] {event_str}\n\
+     [Advice]\n\
+     1. Call `onchainos agent common context {job_id} --role buyer` to view full context\n\
+     2. If this status is not part of the expected flow, wait for user instructions\n\
+     3. Do not predict / assume other notifications\n"
     )
 }

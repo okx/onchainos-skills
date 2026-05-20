@@ -1,15 +1,15 @@
-//! 确认接单 + Fund
+//! Confirm-accept + Fund.
 //!
-//! 用户动作：
-//! - set-payment-mode: 设置支付方式（独立命令，单签上链 → 等待 job_payment_mode_changed）
-//! - confirm-accept: 确认接受服务商（setPaymentMode 已完成后执行）
-//!    - escrow:      providerConfirmStatus → sign_escrow → accept → broadcast
-//!    - x402:        不走此命令（用 task-402-pay）
-//! - direct-accept: x402 阶段 2b
-//! - task-402-pay: x402 阶段 2（签名 + direct/accept + 重放 endpoint）
+//! User actions:
+//! - `set-payment-mode`: set the payment mode (standalone command; single-signature on-chain → wait for `job_payment_mode_changed`).
+//! - `confirm-accept`: confirm acceptance of the provider (run after `setPaymentMode`).
+//!    - escrow: providerConfirmStatus → sign_escrow → accept → broadcast.
+//!    - x402: do NOT use this command (use `task-402-pay` instead).
+//! - `direct-accept`: x402 phase 2b.
+//! - `task-402-pay`: x402 phase 2 (signing + direct/accept + endpoint replay).
 //!
-//! 接口文档：https://okg-block.sg.larksuite.com/wiki/UumqwSyM5i1AuakBNLClJo9igIb
-//! 支付设计：https://okg-block.sg.larksuite.com/docx/CwWbd6eCOopgq6x6VwTlWEivgrc
+//! API docs:    https://okg-block.sg.larksuite.com/wiki/UumqwSyM5i1AuakBNLClJo9igIb
+//! Payment design: https://okg-block.sg.larksuite.com/docx/CwWbd6eCOopgq6x6VwTlWEivgrc
 
 use anyhow::{bail, Context, Result};
 use std::time::Duration;
@@ -27,7 +27,7 @@ use crate::commands::agent_commerce::task::signing;
 use crate::commands::payment::a2a_pay;
 use super::negotiate;
 
-/// 查询代币信息用于金额校验（容错：失败不阻断主流程）
+/// Fetch token info for amount validation (best-effort: a lookup failure does not block the main flow).
 async fn resolve_token_for_validation(
     client: &mut TaskApiClient,
     symbol: &str,
@@ -35,11 +35,11 @@ async fn resolve_token_for_validation(
 ) -> Result<(String, String, u8)> {
     let (token_address, decimals) = fetch_token_detail(client, symbol, agent_id).await?;
     let decimals_u8 = u8::try_from(decimals)
-        .map_err(|_| anyhow::anyhow!("decimals {decimals} 超出 u8 范围"))?;
+        .map_err(|_| anyhow::anyhow!("decimals {decimals} is out of u8 range"))?;
     Ok((symbol.to_string(), token_address, decimals_u8))
 }
 
-/// 从 CLI flag / 本地协商记录解析 (symbol, amount)
+/// Resolve `(symbol, amount)` from CLI flags / local negotiation record.
 fn resolve_symbol_and_amount(
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
@@ -52,26 +52,26 @@ fn resolve_symbol_and_amount(
         Some(s) => s.to_string(),
         None => match &agreed {
             Some((sym, _)) => {
-                eprintln!("ℹ --token-symbol 未传入，使用本地协商记录: {sym}");
+                eprintln!("ℹ --token-symbol not provided; using locally saved negotiation record: {sym}");
                 sym.clone()
             }
-            None => bail!("{mode_label} 需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
+            None => bail!("{mode_label} requires --token-symbol, or run `save-agreed` first to persist the negotiation result"),
         },
     };
     let amount = match token_amount {
         Some(a) => a.to_string(),
         None => match &agreed {
             Some((_, amt)) => {
-                eprintln!("ℹ --token-amount 未传入，使用本地协商记录: {amt}");
+                eprintln!("ℹ --token-amount not provided; using locally saved negotiation record: {amt}");
                 amt.clone()
             }
-            None => bail!("{mode_label} 需要 --token-amount 或先执行 save-agreed 保存协商结果"),
+            None => bail!("{mode_label} requires --token-amount, or run `save-agreed` first to persist the negotiation result"),
         },
     };
     Ok((symbol, amount))
 }
 
-/// 查询 Provider 是否已 apply 及报价（escrow 参数）。
+/// Query whether the provider has already applied and fetch their quote (escrow parameters).
 async fn fetch_provider_confirm_status(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -87,13 +87,13 @@ async fn fetch_provider_confirm_status(
          &amount={amount}"
     );
     client.get_with_agent_id(&path, agent_id).await
-        .map_err(|e| anyhow::anyhow!("providerConfirmStatus 查询失败: {e}"))
+        .map_err(|e| anyhow::anyhow!("providerConfirmStatus query failed: {e}"))
 }
 
-/// set-payment-mode — 独立设置支付方式（从 confirm-accept 拆分）
+/// set-payment-mode — independently set the payment mode (split out of confirm-accept).
 ///
-/// 对所有支付方式统一执行：POST setPaymentMode → sign_uop → broadcast
-/// 然后返回 confirming（exit code 2），等待 job_payment_mode_changed 系统通知。
+/// Unified for all payment modes: POST setPaymentMode → sign_uop → broadcast,
+/// then return `confirming` (exit code 2) and wait for the `job_payment_mode_changed` system notification.
 pub async fn handle_set_payment_mode(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -105,19 +105,19 @@ pub async fn handle_set_payment_mode(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
-    // 前置检查：只有 open 状态才允许设置支付方式（复用 task_resp 避免后续重复请求）
+    // Pre-check: only `open` status allows setting the payment mode (reuse `task_resp` to avoid duplicate requests later).
     let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
     let task_status = common::state_machine::Status::from_int(
         task_resp["status"].as_i64().unwrap_or(-1) as i32,
     );
     if task_status != common::state_machine::Status::Created {
         bail!(
-            "当前任务状态为 {:?}，只有 created 状态才允许设置支付方式",
+            "current task status is {:?}; setting the payment mode is only allowed in `created` status",
             task_status
         );
     }
 
-    // 解析目标支付方式（复用 task_resp，省掉 resolve_payment_mode 的重复 API 请求）
+    // Resolve the target payment mode (reuse `task_resp` to save the duplicate API request inside `resolve_payment_mode`).
     let explicitly_provided = payment_mode.is_some();
     let payment_mode = match payment_mode {
         Some(m) => PaymentMode::from_str(m),
@@ -125,16 +125,16 @@ pub async fn handle_set_payment_mode(
             let current_int = task_resp["paymentMode"].as_i64().unwrap_or(0) as i32;
             let mode = PaymentMode::from_int(current_int);
             if mode == PaymentMode::None {
-                eprintln!("⚠ 任务 paymentMode={current_int}，无法识别支付方式，默认使用 escrow");
+                eprintln!("⚠ task paymentMode={current_int}; cannot recognize the payment mode, defaulting to escrow");
                 PaymentMode::Escrow
             } else {
-                eprintln!("ℹ --payment-mode 未传入，使用任务详情 paymentMode: {} ({current_int})", mode.as_str());
+                eprintln!("ℹ --payment-mode not provided; using task detail's paymentMode: {} ({current_int})", mode.as_str());
                 mode
             }
         }
     };
 
-    // 检查当前 paymentMode 是否已经是目标值（仅显式传入时判断）
+    // Check whether the current paymentMode is already the target (only when explicitly provided).
     let current_mode = PaymentMode::from_int(
         task_resp["paymentMode"].as_i64().unwrap_or(0) as i32,
     );
@@ -142,7 +142,7 @@ pub async fn handle_set_payment_mode(
         && current_mode == payment_mode
         && current_mode != PaymentMode::None;
 
-    // x402: 解析服务参数 + 余额预检
+    // x402: resolve service parameters + balance pre-check.
     let x402_resolved = if payment_mode == PaymentMode::X402 {
         let resolved = resolve_x402_params(job_id, None, endpoint, token_symbol, token_amount).await?;
         if resolved.fee_amount > 0.0 && !resolved.fee_token_symbol.is_empty() {
@@ -150,7 +150,7 @@ pub async fn handle_set_payment_mode(
         }
         Some(resolved)
     } else {
-        // 余额预检
+        // Balance pre-check.
         let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, None, "set-payment-mode")?;
         let amt: f64 = amt_str.parse().unwrap_or(0.0);
         if amt > 0.0 {
@@ -159,7 +159,7 @@ pub async fn handle_set_payment_mode(
         None
     };
 
-    // 如果 paymentMode 已经是目标值，跳过上链（链上不会触发 job_payment_mode_changed 事件）
+    // If paymentMode is already the target, skip the on-chain call (the chain would not emit `job_payment_mode_changed`).
     if !already_set {
         let mode_int = payment_mode.as_int();
         let resp = client.post_with_identity(
@@ -203,48 +203,48 @@ pub async fn handle_set_payment_mode(
 
     if let Some(resolved) = x402_resolved {
         if already_set {
-            println!("✓ 支付方式已是 x402，跳过上链，直接进入 task-402-pay");
+            println!("✓ Payment mode is already x402; skipping on-chain call, proceeding to task-402-pay.");
             crate::output::success(serde_json::json!({
                 "alreadySet": true,
                 "paymentMode": "x402",
                 "endpoint": resolved.endpoint,
                 "feeAmount": resolved.fee_amount.to_string(),
                 "feeTokenSymbol": resolved.fee_token_symbol,
-                "next": "直接执行 task-402-pay（x402_pay 签名 + direct/accept + endpoint 重放）",
+                "next": "Run task-402-pay directly (x402_pay signing + direct/accept + endpoint replay).",
             }));
         } else {
             let mode_int = payment_mode.as_int();
-            println!("✓ 支付方式已设置: x402 ({mode_int})，等待链上确认...");
+            println!("✓ Payment mode set: x402 ({mode_int}); awaiting on-chain confirmation...");
             crate::output::confirming(
                 &format!(
-                    "x402 setPaymentMode 完成。endpoint={}, fee={} {}",
+                    "x402 setPaymentMode complete. endpoint={}, fee={} {}",
                     resolved.endpoint, resolved.fee_amount, resolved.fee_token_symbol,
                 ),
-                "等待 job_payment_mode_changed 系统通知 → Agent 执行 task-402-pay（x402_pay 签名 + direct/accept + endpoint 重放）",
+                "Wait for the job_payment_mode_changed system notification → agent runs task-402-pay (x402_pay signing + direct/accept + endpoint replay).",
             );
         }
     } else {
         let mode_str = payment_mode.as_str();
         if already_set {
-            println!("✓ 支付方式已是 {mode_str}，跳过上链");
+            println!("✓ Payment mode is already {mode_str}; skipping on-chain call.");
             crate::output::success(serde_json::json!({
                 "alreadySet": true,
                 "paymentMode": mode_str,
-                "next": format!("直接执行 onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
+                "next": format!("Run onchainos agent confirm-accept {job_id} --payment-mode {mode_str} directly"),
             }));
         } else {
             let mode_int = payment_mode.as_int();
-            println!("✓ 支付方式已设置: {mode_str} ({mode_int})，等待链上确认...");
+            println!("✓ Payment mode set: {mode_str} ({mode_int}); awaiting on-chain confirmation...");
             crate::output::confirming(
-                &format!("setPaymentMode({mode_str}) 完成。"),
-                &format!("等待 job_payment_mode_changed 系统通知 → onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
+                &format!("setPaymentMode({mode_str}) complete."),
+                &format!("Wait for the job_payment_mode_changed system notification → onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
             );
         }
     }
     Ok(())
 }
 
-/// confirm-accept — 确认接受服务商（setPaymentMode 已通过 set-payment-mode 独立执行）
+/// confirm-accept — confirm acceptance of the provider (setPaymentMode must already have run via set-payment-mode).
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
@@ -257,46 +257,46 @@ pub async fn handle_confirm_accept(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
-    // 前置检查：setPaymentMode 是否已上链
+    // Pre-check: has setPaymentMode been confirmed on-chain?
     let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
     let payment_mode = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
     if payment_mode == PaymentMode::None {
         bail!(
-            "任务尚未设置支付方式（paymentMode=0），请先执行：\n  \
+            "task has no payment mode set yet (paymentMode=0); first run:\n  \
              onchainos agent set-payment-mode {job_id} --payment-mode <escrow|x402> --token-symbol <sym> --token-amount <amt>\n\
-             等待 job_payment_mode_changed 系统通知后再执行 confirm-accept"
+             then wait for the job_payment_mode_changed system notification and re-run confirm-accept"
         );
     }
 
     if payment_mode == PaymentMode::X402 {
-        bail!("x402 流程请用 onchainos agent set-payment-mode 设置支付方式，再用 onchainos agent task-402-pay 执行阶段 2");
+        bail!("for the x402 flow, use `onchainos agent set-payment-mode` to set the payment mode, then `onchainos agent task-402-pay` for phase 2");
     }
 
-    // escrow 是 confirm-accept 唯一合法路径
+    // escrow is the only legal path for confirm-accept.
     if payment_mode != PaymentMode::Escrow {
-        bail!("confirm-accept 仅支持 escrow 支付方式，当前 paymentMode={}。x402 请用 task-402-pay。", payment_mode.as_str());
+        bail!("confirm-accept only supports the escrow payment mode; current paymentMode={}. For x402, use task-402-pay.", payment_mode.as_str());
     }
 
-    // 余额预检
+    // Balance pre-check.
     let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), payment_mode.as_str())?;
     let amt: f64 = amt_str.parse().unwrap_or(0.0);
     if amt > 0.0 {
         common::ensure_sufficient_balance(amt, &sym).await?;
     }
 
-    eprintln!("[debug] payment_mode 最终值: '{}'", payment_mode.as_str());
+    eprintln!("[debug] final payment_mode: '{}'", payment_mode.as_str());
     confirm_accept_escrow(
         client, job_id, provider, token_symbol, token_amount,
         &account_id, &address, &agent_id,
     ).await?;
 
     if let Err(e) = negotiate::cleanup(job_id) {
-        eprintln!("⚠ 清理协商状态失败（可忽略）: {e}");
+        eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}");
     }
     Ok(())
 }
 
-/// escrow 担保支付：providerConfirmStatus → sign_escrow → accept → broadcast
+/// escrow path: providerConfirmStatus → sign_escrow → accept → broadcast.
 #[allow(clippy::too_many_arguments)]
 async fn confirm_accept_escrow(
     client: &mut TaskApiClient,
@@ -310,20 +310,20 @@ async fn confirm_accept_escrow(
 ) -> Result<()> {
     let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), "escrow")?;
 
-    // providerConfirmStatus 确认服务商已 apply 并获取 escrow 参数
+    // providerConfirmStatus confirms the provider has applied and returns the escrow parameters.
     let confirm_resp = fetch_provider_confirm_status(
         client, job_id, provider, &symbol, &amount, agent_id,
     ).await?;
     let amount_minimal = confirm_resp["amount"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("providerConfirmStatus 响应缺少 amount"))?
+        .ok_or_else(|| anyhow::anyhow!("providerConfirmStatus response missing `amount`"))?
         .to_string();
     let currency = confirm_resp["currency"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("providerConfirmStatus 响应缺少 currency"))?
+        .ok_or_else(|| anyhow::anyhow!("providerConfirmStatus response missing `currency`"))?
         .to_string();
 
-    // 校验 currency 与任务 tokenAddress 一致
+    // Validate `currency` matches the task's tokenAddress.
     let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
     let task_token_address = task_resp["tokenAddress"]
         .as_str()
@@ -331,13 +331,12 @@ async fn confirm_accept_escrow(
         .to_lowercase();
     if !task_token_address.is_empty() && currency.to_lowercase() != task_token_address {
         bail!(
-            "币种不匹配：providerConfirmStatus 返回 currency={currency}，\
-             但任务 tokenAddress={task_token_address}。\
-             请检查协商币种是否与任务发布币种一致（--token-symbol）"
+            "token mismatch: providerConfirmStatus returned currency={currency} but task tokenAddress={task_token_address}. \
+             Please check that the negotiated token matches the task's published token (--token-symbol)."
         );
     }
 
-    // 解析 escrow 参数
+    // Parse the escrow parameters.
     let escrow = &confirm_resp["escrow"];
     let escrow_contract = json_str(escrow, "escrowContract")?;
     let provider_addr = json_str(escrow, "provider")?;
@@ -350,7 +349,7 @@ async fn confirm_accept_escrow(
     let expired_at_raw = json_str(escrow, "expiredAt")?;
     let expired_at = if let Ok(ts) = expired_at_raw.parse::<i64>() {
         chrono::DateTime::from_timestamp(ts, 0)
-            .ok_or_else(|| anyhow::anyhow!("expiredAt unix 时间戳无效: {expired_at_raw}"))?
+            .ok_or_else(|| anyhow::anyhow!("expiredAt unix timestamp is invalid: {expired_at_raw}"))?
             .to_rfc3339()
     } else {
         expired_at_raw
@@ -358,10 +357,10 @@ async fn confirm_accept_escrow(
     let hook = json_str(escrow, "hook")?;
     let hook_data = json_str(escrow, "hookData")?;
     let salt = json_str(escrow, "salt")?;
-    println!("✓ providerConfirmStatus: 服务商已 apply，escrow 参数已获取");
+    println!("✓ providerConfirmStatus: provider has applied; escrow parameters fetched.");
 
-    // sign_escrow — TEE 签名 EIP-3009 ReceiveWithAuthorization
-    eprintln!("[debug] sign_escrow 入参:");
+    // sign_escrow — TEE signs the EIP-3009 ReceiveWithAuthorization.
+    eprintln!("[debug] sign_escrow inputs:");
     eprintln!("  chain_id: {XLAYER_CHAIN_ID}, provider: {provider_addr}, receiver: {receiver}");
     eprintln!("  arbitrator: {arbitrator}, currency: {currency}, escrow_contract: {escrow_contract}");
     eprintln!("  amount: {amount_minimal}, submit_window: {submit_window}, dispute_window: {dispute_window}");
@@ -384,11 +383,11 @@ async fn confirm_accept_escrow(
         salt,
         expired_at,
     }).await?;
-    eprintln!("[debug] sign_escrow 返回: signature={}, validAfter={}, validBefore={}",
+    eprintln!("[debug] sign_escrow returned: signature={}, validAfter={}, validBefore={}",
         sign_output.signature, sign_output.authorization.valid_after, sign_output.authorization.valid_before);
-    println!("✓ escrow payment签名完成");
+    println!("✓ escrow payment signing complete.");
 
-    // accept → calldata → 签名 → 广播
+    // accept → calldata → sign → broadcast.
     let body = serde_json::json!({
         "providerAddress": provider_addr,
         "providerAgentId": provider,
@@ -441,13 +440,13 @@ async fn confirm_accept_escrow(
         ]),
         None,
     );
-    println!("✓ 已接受服务商 {provider}（担保支付），资金已托管");
+    println!("✓ Provider {provider} accepted (escrow); funds are now in escrow.");
     println!("  txHash: {tx_hash}");
     Ok(())
 }
 
-/// direct-accept — x402 阶段 2b：收到 job_payment_mode_changed 后，Agent 完成 x402 endpoint 交互，
-/// 然后调此命令执行 direct/accept 上链。
+/// direct-accept — x402 phase 2b: after receiving `job_payment_mode_changed`, the agent completes the
+/// x402 endpoint interaction and then calls this command to run `direct/accept` on-chain.
 pub async fn handle_direct_accept(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -463,7 +462,7 @@ pub async fn handle_direct_accept(
         "tokenSymbol": token_symbol.unwrap_or(""),
         "tokenAmount": token_amount.unwrap_or(""),
     });
-    eprintln!("[debug] direct-accept 入参: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+    eprintln!("[debug] direct-accept inputs: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
 
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "direct/accept"),
@@ -491,14 +490,14 @@ pub async fn handle_direct_accept(
         ]),
         None,
     );
-    println!("✓ direct/accept 完成（x402），任务状态 → accepted");
+    println!("✓ direct/accept complete (x402); task status → accepted.");
     println!("  txHash: {tx_hash}");
-    println!("  等待 job_accepted 系统通知后执行 complete");
+    println!("  Wait for the job_accepted system notification before running complete.");
 
     Ok(())
 }
 
-/// task-402-pay — x402 阶段 2：签名 + direct/accept + 重放 endpoint。
+/// task-402-pay — x402 phase 2: signing + direct/accept + endpoint replay.
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_task_402_pay(
     client: &mut TaskApiClient,
@@ -516,15 +515,15 @@ pub async fn handle_task_402_pay(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
-    // Step 0: 金额校验 — 402 accepts 中的 amount 必须与业务协商金额一致
+    // Step 0: amount validation — the amount in `402 accepts` must match the business-negotiated amount.
     let accepts_vec: Vec<serde_json::Value> = serde_json::from_str(accepts)
-        .map_err(|e| anyhow::anyhow!("accepts JSON 解析失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("accepts JSON parse failed: {e}"))?;
     let pricing = x402_flow::extract_x402_pricing(&accepts_vec)?;
 
     let (_, token_address, decimals) = match resolve_token_for_validation(client, token_symbol, &agent_id).await {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[task-402-pay] ⚠ 代币信息查询失败，跳过金额校验: {e}");
+            eprintln!("[task-402-pay] ⚠ token-info lookup failed; skipping amount validation: {e}");
             (String::new(), String::new(), 0u8)
         }
     };
@@ -534,28 +533,28 @@ pub async fn handle_task_402_pay(
             && token_address.to_lowercase() != pricing.asset.to_lowercase()
         {
             bail!(
-                "x402 代币不匹配: 402 返回 asset={}, 期望 tokenAddress={} ({})",
+                "x402 token mismatch: 402 returned asset={}, expected tokenAddress={} ({})",
                 pricing.asset, token_address, token_symbol
             );
         }
         if !x402_flow::amounts_match(&pricing.amount_minimal, token_amount, decimals) {
             let expected_minimal = x402_flow::human_to_minimal(token_amount, decimals).unwrap_or_else(|_| "?".to_string());
             bail!(
-                "x402 金额不一致: 402 返回 {} (最小单位), 期望 {} {} ≈ {} (最小单位)",
+                "x402 amount mismatch: 402 returned {} (minimal units), expected {} {} ≈ {} (minimal units)",
                 pricing.amount_minimal, token_amount, token_symbol, expected_minimal
             );
         }
-        eprintln!("[task-402-pay] ✓ 金额校验通过: {} {} ≈ {} (最小单位)", token_amount, token_symbol, pricing.amount_minimal);
+        eprintln!("[task-402-pay] ✓ amount validation passed: {} {} ≈ {} (minimal units)", token_amount, token_symbol, pricing.amount_minimal);
     }
 
-    // Step 1: x402_pay 签名
-    eprintln!("[task-402-pay] Step 1: x402_pay 签名");
+    // Step 1: x402_pay signing.
+    eprintln!("[task-402-pay] Step 1: x402_pay signing");
     eprintln!("[task-402-pay] accepts: {accepts}");
     let proof = payment_flow::x402_pay_from_accepts(accepts, from.map(|s| s.to_string())).await?;
-    eprintln!("[task-402-pay] x402_pay 完成: signature={}", proof.signature);
+    eprintln!("[task-402-pay] x402_pay complete: signature={}", proof.signature);
 
-    // Step 2: direct/accept 上链（容错：已 accepted 则跳过）
-    eprintln!("[task-402-pay] Step 2: direct/accept 上链");
+    // Step 2: direct/accept on-chain (tolerant: if already accepted, skip).
+    eprintln!("[task-402-pay] Step 2: direct/accept on-chain");
 
     let body = serde_json::json!({
         "providerAgentId": provider,
@@ -577,36 +576,36 @@ pub async fn handle_task_402_pay(
 
     let tx_hash = match accept_result {
         Ok(hash) => {
-            eprintln!("[task-402-pay] direct/accept 广播完成: txHash={hash}");
+            eprintln!("[task-402-pay] direct/accept broadcast complete: txHash={hash}");
             hash
         }
         Err(e) => {
-            eprintln!("[task-402-pay] direct/accept 失败（可能已 accepted），跳过继续 replay: {e}");
+            eprintln!("[task-402-pay] direct/accept failed (possibly already accepted); skipping to replay: {e}");
             String::new()
         }
     };
 
-    // Step 3: GET endpoint → 402 → 组装 header → 重放
-    eprintln!("[task-402-pay] Step 3: GET endpoint {endpoint} → 获取完整 402 payload");
+    // Step 3: GET endpoint → 402 → assemble header → replay.
+    eprintln!("[task-402-pay] Step 3: GET endpoint {endpoint} → fetch the full 402 payload");
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
-        .context("构建 HTTP client 失败")?;
+        .context("failed to build HTTP client")?;
 
     let initial_resp = match http.get(endpoint).send().await {
         Ok(resp) => resp,
         Err(e) => {
-            eprintln!("[task-402-pay] GET endpoint 失败（签名+上链已完成）: {e}");
+            eprintln!("[task-402-pay] GET endpoint failed (signing + on-chain accept already done): {e}");
             crate::output::success(serde_json::json!({
                 "replaySuccess": false,
                 "replayStatus": 0,
-                "replayBody": { "error": format!("GET endpoint 失败: {e}") },
+                "replayBody": { "error": format!("GET endpoint failed: {e}") },
                 "signature": proof.signature,
                 "authorization": proof.authorization,
                 "sessionCert": proof.session_cert,
                 "txHash": tx_hash,
                 "endpoint": endpoint,
-                "retryHint": "签名和 direct/accept 已完成，可重试 GET endpoint → 402 → 组装 header → 重放",
+                "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
             }));
             return Ok(());
         }
@@ -618,7 +617,7 @@ pub async fn handle_task_402_pay(
         let body: serde_json::Value = serde_json::from_str(&raw_text)
             .unwrap_or_else(|_| serde_json::json!({ "raw": raw_text }));
         let success = (200..300).contains(&initial_status);
-        eprintln!("[task-402-pay] endpoint 返回 HTTP {initial_status}（非 402），直接作为结果");
+        eprintln!("[task-402-pay] endpoint returned HTTP {initial_status} (not 402); using as the result directly");
         crate::output::success(serde_json::json!({
             "replaySuccess": success,
             "replayStatus": initial_status,
@@ -635,17 +634,17 @@ pub async fn handle_task_402_pay(
     let resp_body_text = match initial_resp.text().await {
         Ok(text) => text,
         Err(e) => {
-            eprintln!("[task-402-pay] 读取 402 响应体失败（签名+上链已完成）: {e}");
+            eprintln!("[task-402-pay] failed to read 402 response body (signing + on-chain accept already done): {e}");
             crate::output::success(serde_json::json!({
                 "replaySuccess": false,
                 "replayStatus": 402,
-                "replayBody": { "error": format!("读取 402 响应体失败: {e}") },
+                "replayBody": { "error": format!("failed to read 402 response body: {e}") },
                 "signature": proof.signature,
                 "authorization": proof.authorization,
                 "sessionCert": proof.session_cert,
                 "txHash": tx_hash,
                 "endpoint": endpoint,
-                "retryHint": "签名和 direct/accept 已完成，可重试 GET endpoint → 402 → 组装 header → 重放",
+                "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
             }));
             return Ok(());
         }
@@ -653,22 +652,22 @@ pub async fn handle_task_402_pay(
     let x402_payload = match x402_flow::decode_402_response(&resp_headers, &resp_body_text) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[task-402-pay] 解码 402 响应失败（签名+上链已完成）: {e}");
+            eprintln!("[task-402-pay] failed to decode 402 response (signing + on-chain accept already done): {e}");
             crate::output::success(serde_json::json!({
                 "replaySuccess": false,
                 "replayStatus": 402,
-                "replayBody": { "error": format!("解码 402 响应失败: {e}"), "rawBody": resp_body_text },
+                "replayBody": { "error": format!("failed to decode 402 response: {e}"), "rawBody": resp_body_text },
                 "signature": proof.signature,
                 "authorization": proof.authorization,
                 "sessionCert": proof.session_cert,
                 "txHash": tx_hash,
                 "endpoint": endpoint,
-                "retryHint": "签名和 direct/accept 已完成，可重试 GET endpoint → 402 → 组装 header → 重放",
+                "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
             }));
             return Ok(());
         }
     };
-    eprintln!("[task-402-pay] 402 payload: x402Version={}, accepts={} 条, resource={}",
+    eprintln!("[task-402-pay] 402 payload: x402Version={}, accepts={} entries, resource={}",
         x402_payload.x402_version, x402_payload.accepts.len(),
         x402_payload.resource.is_some());
 
@@ -681,23 +680,23 @@ pub async fn handle_task_402_pay(
     let (header_name, header_value) = match x402_flow::assemble_payment_header(&x402_proof, &x402_payload) {
         Ok(hv) => hv,
         Err(e) => {
-            eprintln!("[task-402-pay] 组装 payment header 失败（签名+上链已完成）: {e}");
+            eprintln!("[task-402-pay] failed to assemble payment header (signing + on-chain accept already done): {e}");
             crate::output::success(serde_json::json!({
                 "replaySuccess": false,
                 "replayStatus": 402,
-                "replayBody": { "error": format!("组装 payment header 失败: {e}") },
+                "replayBody": { "error": format!("failed to assemble payment header: {e}") },
                 "signature": proof.signature,
                 "authorization": proof.authorization,
                 "sessionCert": proof.session_cert,
                 "txHash": tx_hash,
                 "endpoint": endpoint,
-                "retryHint": "签名和 direct/accept 已完成，可重试 GET endpoint → 402 → 组装 header → 重放",
+                "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
             }));
             return Ok(());
         }
     };
 
-    eprintln!("[task-402-pay] 重放 endpoint（{header_name}: ...）");
+    eprintln!("[task-402-pay] replaying endpoint ({header_name}: ...)");
     let replay_resp = http
         .get(endpoint)
         .header(&header_name, &header_value)
@@ -711,16 +710,16 @@ pub async fn handle_task_402_pay(
             let body: serde_json::Value = serde_json::from_str(&raw_text)
                 .unwrap_or_else(|_| serde_json::json!({ "raw": raw_text }));
             let success = (200..300).contains(&status);
-            eprintln!("[task-402-pay] replay 结果: HTTP {status}, success={success}");
+            eprintln!("[task-402-pay] replay result: HTTP {status}, success={success}");
             (success, status, body)
         }
         Err(e) => {
-            eprintln!("[task-402-pay] replay 请求失败: {e}");
+            eprintln!("[task-402-pay] replay request failed: {e}");
             (false, 0u16, serde_json::json!({ "error": e.to_string() }))
         }
     };
 
-    // Step 4: 输出完整结果
+    // Step 4: emit the complete result.
     audit::log(
         "cli",
         if replay_success { "buyer/task_402_pay_completed" } else { "buyer/task_402_pay_replay_failed" },
@@ -749,7 +748,7 @@ pub async fn handle_task_402_pay(
     Ok(())
 }
 
-/// x402-check — 验证 endpoint 是否是合法的 x402 服务，提取定价信息
+/// x402-check — validate whether the endpoint is a legitimate x402 service and extract pricing info.
 pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str, agent_id: Option<&str>) -> Result<()> {
     use super::x402_flow;
 
@@ -760,9 +759,9 @@ pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str, agent
             "valid": false,
             "statusCode": check.status_code,
             "reason": if check.status_code == 402 {
-                "402 响应中 accepts 为空，不是合法的 x402 服务".to_string()
+                "The 402 response's `accepts` is empty; not a valid x402 service.".to_string()
             } else {
-                format!("endpoint 返回 HTTP {}（非 402），不是合法的 x402 服务", check.status_code)
+                format!("Endpoint returned HTTP {} (not 402); not a valid x402 service.", check.status_code)
             },
         }));
         return Ok(());
@@ -797,7 +796,7 @@ pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str, agent
             data["decimals"] = serde_json::json!(r.decimals);
         }
         Err(e) => {
-            eprintln!("⚠ 代币解析失败（不影响有效性）: {e}");
+            eprintln!("⚠ token resolution failed (does not affect validity): {e}");
             data["tokenResolveError"] = serde_json::json!(e.to_string());
         }
     }

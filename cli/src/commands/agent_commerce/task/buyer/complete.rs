@@ -1,10 +1,10 @@
-//! 确认完成
+//! Confirm completion.
 //!
-//! 用户动作：确认完成 — onchainos agent complete
+//! User action: confirm completion — `onchainos agent complete`.
 //!
-//! 根据支付方式分流：
-//! - escrow: pre-complete(orderId,deadline) → 签 digest → complete(signatureData) → 签 uopHash → broadcast（释放担保款）
-//! - x402: /direct/complete 单签 → broadcast（资金已在 accept 阶段支付）
+//! Split by payment mode:
+//! - escrow: `pre-complete(orderId, deadline)` → sign digest → `complete(signatureData)` → sign uopHash → broadcast (release escrow).
+//! - x402: `/direct/complete` single-signature → broadcast (funds were already paid during accept).
 
 use anyhow::Result;
 use std::time::Duration;
@@ -14,7 +14,7 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::common::PaymentMode;
 use crate::commands::agent_commerce::task::signing;
 
-/// complete — 验收通过
+/// complete — review approved.
 pub async fn handle_complete(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -22,16 +22,16 @@ pub async fn handle_complete(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
-    // 查询任务详情获取 paymentMode
+    // Fetch task detail to obtain paymentMode.
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
     let task = &resp;
     let payment_mode = PaymentMode::from_int(task["paymentMode"].as_i64().unwrap_or(0) as i32);
 
     if payment_mode == PaymentMode::Escrow {
-        // ── 验收门禁：escrow 模式下必须经过 approve_review 伪事件 ────
+        // ── Review gate: in escrow mode, the approve_review pseudo event must have fired. ────
         crate::commands::agent_commerce::task::common::review_gate::check_and_consume(job_id)?;
 
-        // ── 担保：双签 pre-complete → complete ──────────────────────
+        // ── Escrow: dual-sign pre-complete → complete. ──────────────────────
         let result = signing::task_dual_sign_and_broadcast(
             client, job_id, "pre-complete", "complete",
             None,
@@ -51,10 +51,10 @@ pub async fn handle_complete(
             ]),
             None,
         );
-        println!("✓ 任务验收通过（担保），状态 → complete，款项已释放");
+        println!("✓ Task review approved (escrow); status → complete; funds released.");
         println!("  txHash: {}", result.tx_hash);
     } else {
-        // ── x402：/direct/complete 单签（资金已在 accept 阶段支付）────────
+        // ── x402: /direct/complete single-signature (funds were already paid during accept). ────
         let resp = client.post_with_identity(
             &client.endpoint(job_id, "direct/complete"),
             &serde_json::json!({}),
@@ -79,7 +79,7 @@ pub async fn handle_complete(
             ]),
             None,
         );
-        println!("✓ 任务 complete 完成（x402），状态 → complete");
+        println!("✓ Task complete done (x402); status → complete.");
         println!("  txHash: {tx_hash}");
     }
 

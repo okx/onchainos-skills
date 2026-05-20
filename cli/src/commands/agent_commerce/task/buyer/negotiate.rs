@@ -1,9 +1,10 @@
-//! 协商状态管理
+//! Negotiation state management.
 //!
-//! 本地持久化推荐列表 + 当前协商索引，供 Agent 遍历服务商列表时使用。
+//! Locally persisted recommendation list + the current negotiation index;
+//! used by the agent when iterating providers.
 //!
-//! 状态文件：~/.onchainos/task/{jobId}/negotiate-state.json
-//! 清理时机：用户执行 confirm-accept 成功后
+//! State file: `~/.onchainos/task/{jobId}/negotiate-state.json`.
+//! Cleanup: after the user successfully runs `confirm-accept`.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -12,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::audit;
 
-/// 推荐服务商信息（从 /match 接口返回的子集）
+/// Recommended provider info (a subset of the `/match` API response).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderInfo {
@@ -24,14 +25,14 @@ pub struct ProviderInfo {
     pub credit_score: i64,
     pub capability_summary: String,
     pub completed_task_count: i64,
-    /// true = x402 支付方式，false = escrow/direct
+    /// true = x402 payment mode; false = escrow/direct.
     #[serde(default)]
     pub support_a2mcp: bool,
     #[serde(default)]
     pub services: Vec<ServiceInfo>,
 }
 
-/// Provider 提供的服务信息（从 /match 接口 services[] 返回）
+/// Service info offered by a provider (returned from `/match`'s `services[]`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceInfo {
@@ -39,24 +40,24 @@ pub struct ServiceInfo {
     pub service_name: String,
     #[serde(default)]
     pub service_description: String,
-    /// 服务类型，如 "A2A"
+    /// Service type, e.g. "A2A".
     pub service_type: String,
-    /// 服务端点 URL
+    /// Service endpoint URL.
     pub endpoint: String,
     #[serde(default)]
     pub sort_order: i64,
-    /// 费用金额
+    /// Fee amount.
     #[serde(default)]
     pub fee_amount: f64,
-    /// 费用 token symbol（如 "USDT"）
+    /// Fee token symbol (e.g. "USDT").
     #[serde(default)]
     pub fee_token_symbol: String,
-    /// 费用 token 合约地址
+    /// Fee token contract address.
     #[serde(default)]
     pub fee_token: String,
 }
 
-/// 某个服务商的协商确定条款
+/// Negotiated terms agreed with a specific provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgreedTerms {
@@ -66,7 +67,7 @@ pub struct AgreedTerms {
     pub payment_most_token_amount: Option<String>,
 }
 
-/// 协商状态
+/// Negotiation state.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NegotiateState {
@@ -74,22 +75,22 @@ pub struct NegotiateState {
     pub providers: Vec<ProviderInfo>,
     pub current_index: usize,
     pub created_at: String,
-    /// 按 provider_agent_id 存储各服务商的协商结果（支持同时与多个服务商协商）
+    /// Negotiation results stored per `provider_agent_id` (supports negotiating with multiple providers concurrently).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub agreed: HashMap<String, AgreedTerms>,
-    /// 当前页码（0-based）
+    /// Current page (0-based).
     #[serde(default)]
     pub page: usize,
-    /// 协商失败的 provider agentId 列表（跨页保留，accept 成功时 cleanup 清除）
+    /// Provider agentIds that failed negotiation (kept across pages; cleared by cleanup on accept success).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed_providers: Vec<String>,
 }
 
-// ─── 路径 ────────────────────────────────────────────────────────────
+// ─── Paths ────────────────────────────────────────────────────────────
 
 fn state_dir(job_id: &str) -> Result<std::path::PathBuf> {
     let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?;
+        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
     Ok(home.join(".onchainos").join("task").join(job_id))
 }
 
@@ -97,11 +98,11 @@ fn state_path(job_id: &str) -> Result<std::path::PathBuf> {
     Ok(state_dir(job_id)?.join("negotiate-state.json"))
 }
 
-// ─── 公共函数 ────────────────────────────────────────────────────────
+// ─── Public functions ────────────────────────────────────────────────────────
 
-/// 保存推荐列表，index 重置为 0
+/// Save the recommendation list; index resets to 0.
 ///
-/// `page` 为当前页码（0-based）。会从已有状态合并 `failed_providers`。
+/// `page` is the current page (0-based). `failed_providers` is merged from any prior state.
 pub fn save(job_id: &str, providers: Vec<ProviderInfo>, page: usize) -> Result<()> {
     let dir = state_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
@@ -125,28 +126,28 @@ pub fn save(job_id: &str, providers: Vec<ProviderInfo>, page: usize) -> Result<(
     Ok(())
 }
 
-/// 读取当前状态
+/// Load the current state.
 pub fn load(job_id: &str) -> Result<NegotiateState> {
     let path = state_path(job_id)?;
     if !path.exists() {
-        bail!("未找到协商状态，请先执行 onchainos agent recommend {job_id}");
+        bail!("Negotiation state not found; run `onchainos agent recommend {job_id}` first");
     }
     let raw = std::fs::read_to_string(&path)?;
     let state: NegotiateState = serde_json::from_str(&raw)?;
     Ok(state)
 }
 
-/// 获取当前 index 的 provider（不推进）
+/// Return the provider at the current index (do not advance).
 pub fn current(job_id: &str) -> Result<Option<ProviderInfo>> {
     let state = load(job_id)?;
     Ok(state.providers.get(state.current_index).cloned())
 }
 
-/// 推进到下一个 provider 并返回；如果列表已遍历完返回 None
+/// Advance to the next provider and return it; returns `None` once the list is exhausted.
 pub fn next(job_id: &str) -> Result<Option<ProviderInfo>> {
     let mut state = load(job_id)?;
 
-    // 清除旧 provider 的协商结果（协商失败才会切换）
+    // Drop the prior provider's negotiation result (switching only happens on negotiation failure).
     if let Some(old) = state.providers.get(state.current_index) {
         state.agreed.remove(&old.provider_agent_id);
     }
@@ -159,10 +160,10 @@ pub fn next(job_id: &str) -> Result<Option<ProviderInfo>> {
     Ok(state.providers.get(state.current_index).cloned())
 }
 
-/// 保存协商确定的支付参数（协商完成时由 Agent 调用）
+/// Save the negotiated payment parameters (called by the agent after negotiation).
 ///
-/// 会查询任务详情获取 `paymentMostTokenAmount`（最高预算），
-/// 若协商金额超过最高预算则拒绝保存。
+/// Queries the task detail for `paymentMostTokenAmount` (the max budget);
+/// refuses to save if the negotiated amount exceeds the max budget.
 pub async fn save_agreed(
     client: &mut crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient,
     job_id: &str,
@@ -171,7 +172,7 @@ pub async fn save_agreed(
     token_amount: &str,
     agent_id: Option<&str>,
 ) -> Result<()> {
-    // 查询任务详情获取最高预算
+    // Query task detail to obtain the max budget.
     let agent_id = if let Some(id) = agent_id.filter(|s| !s.is_empty()) {
         id.to_string()
     } else {
@@ -190,7 +191,7 @@ pub async fn save_agreed(
             let max_budget: f64 = max_amount_str.parse().unwrap_or(0.0);
             if max_budget > 0.0 && agreed > max_budget {
                 bail!(
-                    "协商金额 {token_amount} {token_symbol} 超过任务最高预算 {max_amount_str} {token_symbol}，不能接受此报价"
+                    "negotiated amount {token_amount} {token_symbol} exceeds task max budget {max_amount_str} {token_symbol}; quote cannot be accepted"
                 );
             }
             Some(max_amount_str.to_string())
@@ -238,13 +239,14 @@ pub async fn save_agreed(
         ]),
         None,
     );
-    println!("✓ 协商结果已保存: provider={provider_agent_id}, {token_symbol} {token_amount} (job={job_id})");
+    println!("✓ Negotiation result saved: provider={provider_agent_id}, {token_symbol} {token_amount} (job={job_id})");
     Ok(())
 }
 
-/// 读取协商确定的支付参数，返回 (token_symbol, token_amount)
+/// Read the negotiated payment parameters; returns `(token_symbol, token_amount)`.
 ///
-/// provider_agent_id 为 Some 时精确匹配；为 None 时回退到 current_index 对应的 provider
+/// When `provider_agent_id` is `Some`, matches exactly; when `None`, falls back to
+/// the provider at `current_index`.
 pub fn load_agreed(job_id: &str, provider_agent_id: Option<&str>) -> Result<Option<(String, String)>> {
     let state = match load(job_id) {
         Ok(s) => s,
@@ -260,7 +262,7 @@ pub fn load_agreed(job_id: &str, provider_agent_id: Option<&str>) -> Result<Opti
     Ok(state.agreed.get(&key).map(|t| (t.token_symbol.clone(), t.token_amount.clone())))
 }
 
-/// 保存指定服务商（create-task --provider 指定，job_created 跳过 recommend）
+/// Save the designated provider (specified via `create-task --provider`; on `job_created` we skip `recommend`).
 pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result<()> {
     let dir = state_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
@@ -270,14 +272,14 @@ pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result
     Ok(())
 }
 
-/// 检查指定服务商文件是否存在（不消费）
+/// Check whether the designated-provider file exists (without consuming it).
 pub fn has_designated_provider(job_id: &str) -> bool {
     state_dir(job_id)
         .map(|d| d.join("designated-provider.json").exists())
         .unwrap_or(false)
 }
 
-/// 读取并删除指定服务商文件（consume-on-read：job_created 只触发一次，读完即清）
+/// Read and delete the designated-provider file (consume-on-read: `job_created` fires once, cleared after read).
 pub fn take_designated_provider(job_id: &str) -> Result<Option<String>> {
     let path = state_dir(job_id)?.join("designated-provider.json");
     if !path.exists() {
@@ -289,7 +291,7 @@ pub fn take_designated_provider(job_id: &str) -> Result<Option<String>> {
     Ok(v["agentId"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()))
 }
 
-/// 标记某个 provider 协商失败（后续 recommend 展示时过滤掉）
+/// Mark a provider as failed negotiation (filtered out of subsequent `recommend` displays).
 pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
     let mut state = match load(job_id) {
         Ok(s) => s,
@@ -324,18 +326,18 @@ pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
         ]),
         None,
     );
-    println!("✓ 已标记 provider {provider_agent_id} 为协商失败 (job={job_id})");
+    println!("✓ Marked provider {provider_agent_id} as failed negotiation (job={job_id})");
     Ok(())
 }
 
-/// 读取失败 provider 列表
+/// Load the failed-provider list.
 pub fn load_failed(job_id: &str) -> Vec<String> {
     load(job_id)
         .map(|s| s.failed_providers)
         .unwrap_or_default()
 }
 
-/// 清理状态文件（accept 成功后调用，同时清除 designated-provider.json）
+/// Clean up the state files (called after accept success; also removes `designated-provider.json`).
 pub fn cleanup(job_id: &str) -> Result<()> {
     let dir = state_dir(job_id)?;
     if dir.exists() {
