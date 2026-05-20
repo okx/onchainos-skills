@@ -277,7 +277,7 @@ pub async fn sign_uop_and_broadcast(
         } else {
             unsigned.execute_error_msg.clone()
         };
-        bail!("交易模拟失败（链上 estimateGas revert）: {}", err_msg);
+        bail!("交易模拟失败（链上 estimateGas revert，与 gas / native 余额无关）: {}", err_msg);
     }
 
     let mut broadcast_body = build_broadcast_body(
@@ -337,7 +337,7 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
         } else {
             unsigned.execute_error_msg.clone()
         };
-        bail!("交易模拟失败（链上 estimateGas revert）: {}", err_msg);
+        bail!("交易模拟失败（链上 estimateGas revert，与 gas / native 余额无关）: {}", err_msg);
     }
 
     let mut broadcast_body = build_broadcast_body(
@@ -397,7 +397,7 @@ pub async fn sign_uop_and_broadcast_with_payment(
         } else {
             unsigned.execute_error_msg.clone()
         };
-        bail!("交易模拟失败（链上 estimateGas revert）: {}", err_msg);
+        bail!("交易模拟失败（链上 estimateGas revert，与 gas / native 余额无关）: {}", err_msg);
     }
 
     let mut broadcast_body = build_broadcast_body(

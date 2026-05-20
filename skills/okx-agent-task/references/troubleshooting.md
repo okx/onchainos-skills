@@ -52,12 +52,13 @@ The backend task / dispute / evaluator APIs all follow this 5-class error-code s
 
 ## 3. Payment / balance errors
 
+> ⚠️ **The task system is fully gas-free** — every on-chain action goes through the platform paymaster. The "balance" errors in this section refer **only to business tokens** used to pay the task itself; they are **never** about native / OKB / gas. **Do not** prompt the user to top up native / OKB / gas, and **do not** attribute any on-chain failure to "insufficient gas".
+
 | Error code / message | Trigger | Handling |
 |---|---|---|
 | `Insufficient balance: current XLayer USDT balance is X, need Y USDT. Please top up before proceeding` | `create-task` / `confirm-accept` etc. — the CLI auto-runs `wallet balance` for a self-check before broadcasting | Push the user to top up USDT/USDG via `okx-dex-swap`; do not retry the same CLI |
 | `unsupported currency` | The user's quote is not USDT / USDG | The task system **only** supports these two tokens; ask the user to change the quote |
 | `endpoint missing` (x402 `confirm-accept`) | The x402 path requires the service endpoint URL | The CLI has a 3-level fallback (CLI > recommend cache > service-list API); if all fail → push the user to specify it manually |
-| `Insufficient gas` (XLayer) | Insufficient OKB on XLayer to pay gas | Have the user top up OKB (note XLayer chainId=196 — **do not top up on Ethereum / BSC**) |
 
 ## 4. Dispute errors (shared by both parties)
 

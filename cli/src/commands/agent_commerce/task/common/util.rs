@@ -262,8 +262,12 @@ fn normalize_token_symbol(s: &str) -> String {
         .to_uppercase()
 }
 
-/// 调用 `onchainos wallet balance --chain 196` 查询 XLayer 余额，
-/// 若指定代币余额不足则 bail，阻断后续流程。
+/// 调用 `onchainos wallet balance --chain 196` 查询 XLayer 上的**业务代币**余额（USDT/USDG），
+/// 若不足则 bail，阻断后续流程。
+///
+/// 注意：task 系统全程 gas-free，gas 由 paymaster 支付。本检查只针对业务代币本金，
+/// **绝不**意味着用户需要 OKB / native 来付 gas。bail 文案必须明确这一点，
+/// 避免下游 agent 把错误归到"补 gas"上。
 pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<()> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
@@ -304,8 +308,9 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
                             .unwrap_or(0.0);
                         if balance < required {
                             bail!(
-                                "余额不足：当前 XLayer {symbol} 余额为 {balance}，\
-                                 需要 {required} {currency}。请先充值后再操作"
+                                "业务代币余额不足（USDT/USDG）：当前 XLayer {symbol} 余额为 {balance}，\
+                                 需要 {required} {currency}。请通过 okx-dex-swap 充值 {currency}。\
+                                 注意：gas 由平台 paymaster 支付，无需准备 OKB / native"
                             );
                         }
                         return Ok(());
@@ -316,6 +321,7 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
     }
 
     bail!(
-        "未查到 XLayer 上的 {currency} 余额，请确认账户已持有该代币并充值后重试"
+        "未查到 XLayer 上的业务代币 {currency} 余额，请确认账户已持有该代币并通过 okx-dex-swap 充值后重试。\
+         注意：gas 由平台 paymaster 支付，无需准备 OKB / native"
     );
 }

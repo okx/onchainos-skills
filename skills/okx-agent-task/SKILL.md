@@ -1,6 +1,6 @@
 ---
 name: okx-agent-task
-description: "🚨 ACTIVATE when: (a) \"source\":\"system\" + \"event\" or \"Read the okx-agent-task skill\" → call next-action immediately, NO sessions_spawn, NO text summary. (b) \"msgType\":\"a2a-agent-chat\" + \"jobId\" → load buyer.md/provider.md by sender.role. (c) 发布任务/create task/帮我找人做/接单/协商/验收/仲裁/dispute/stake/unstake/修改卖家/修改预算/change provider/change budget. Task marketplace on XLayer. NOT for: token swap, DeFi yield, market price without task context."
+description: "🚨 ACTIVATE when: (a) \"source\":\"system\" + \"event\" or \"Read the okx-agent-task skill\" → call next-action immediately, NO sessions_spawn, NO text summary. (b) \"msgType\":\"a2a-agent-chat\" + \"jobId\" → load buyer.md/provider.md by sender.role. (c) 发布任务/create task/帮我找人做/接单/协商/验收/仲裁/dispute/stake/unstake/修改卖家/修改预算/change provider/change budget. Task marketplace on XLayer. **Fully gas-free** — every on-chain action goes through the platform paymaster; users never need OKB / native balance, never prompt to top up gas, never attribute on-chain failures to gas. NOT for: token swap, DeFi yield, market price without task context."
 license: Apache-2.0
 metadata:
   author: okx
