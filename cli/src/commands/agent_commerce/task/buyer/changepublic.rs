@@ -1,6 +1,6 @@
 //! 设为 Public
 //!
-//! 买家动作：设为 Public — onchainos agent set-public
+//! 用户动作：设为 Public — onchainos agent set-public
 
 use anyhow::Result;
 use std::time::Duration;
@@ -41,7 +41,7 @@ pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str, explici
         None,
     );
 
-    println!("✓ 任务已转为公开，其他卖家可以看到并报名");
+    println!("✓ 任务已转为公开，其他服务商可以看到并报名");
     println!("  txHash: {tx_hash}");
     Ok(())
 }

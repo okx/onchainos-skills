@@ -1,8 +1,8 @@
 //! 确认接单 + Fund
 //!
-//! 买家动作：
+//! 用户动作：
 //! - set-payment-mode: 设置支付方式（独立命令，单签上链 → 等待 job_payment_mode_changed）
-//! - confirm-accept: 确认接受卖家（setPaymentMode 已完成后执行）
+//! - confirm-accept: 确认接受服务商（setPaymentMode 已完成后执行）
 //!    - escrow:      providerConfirmStatus → sign_escrow → accept → broadcast
 //!    - x402:        不走此命令（用 task-402-pay）
 //! - direct-accept: x402 阶段 2b
@@ -110,9 +110,9 @@ pub async fn handle_set_payment_mode(
     let task_status = common::state_machine::Status::from_int(
         task_resp["status"].as_i64().unwrap_or(-1) as i32,
     );
-    if task_status != common::state_machine::Status::Open {
+    if task_status != common::state_machine::Status::Created {
         bail!(
-            "当前任务状态为 {:?}，只有 open 状态才允许设置支付方式",
+            "当前任务状态为 {:?}，只有 created 状态才允许设置支付方式",
             task_status
         );
     }
@@ -201,49 +201,50 @@ pub async fn handle_set_payment_mode(
         );
     }
 
-    let (msg, next) = if let Some(resolved) = x402_resolved {
+    if let Some(resolved) = x402_resolved {
         if already_set {
             println!("✓ 支付方式已是 x402，跳过上链，直接进入 task-402-pay");
-            (
-                format!(
-                    "paymentMode 已是 x402。endpoint={}, fee={} {}",
-                    resolved.endpoint, resolved.fee_amount, resolved.fee_token_symbol,
-                ),
-                "直接执行 task-402-pay（x402_pay 签名 + direct/accept + endpoint 重放）".to_string(),
-            )
+            crate::output::success(serde_json::json!({
+                "alreadySet": true,
+                "paymentMode": "x402",
+                "endpoint": resolved.endpoint,
+                "feeAmount": resolved.fee_amount.to_string(),
+                "feeTokenSymbol": resolved.fee_token_symbol,
+                "next": "直接执行 task-402-pay（x402_pay 签名 + direct/accept + endpoint 重放）",
+            }));
         } else {
             let mode_int = payment_mode.as_int();
             println!("✓ 支付方式已设置: x402 ({mode_int})，等待链上确认...");
-            (
-                format!(
+            crate::output::confirming(
+                &format!(
                     "x402 setPaymentMode 完成。endpoint={}, fee={} {}",
                     resolved.endpoint, resolved.fee_amount, resolved.fee_token_symbol,
                 ),
-                "等待 job_payment_mode_changed 系统通知 → Agent 执行 task-402-pay（x402_pay 签名 + direct/accept + endpoint 重放）".to_string(),
-            )
+                "等待 job_payment_mode_changed 系统通知 → Agent 执行 task-402-pay（x402_pay 签名 + direct/accept + endpoint 重放）",
+            );
         }
     } else {
         let mode_str = payment_mode.as_str();
         if already_set {
             println!("✓ 支付方式已是 {mode_str}，跳过上链");
-            (
-                format!("paymentMode 已是 {mode_str}。"),
-                format!("直接执行 onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
-            )
+            crate::output::success(serde_json::json!({
+                "alreadySet": true,
+                "paymentMode": mode_str,
+                "next": format!("直接执行 onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
+            }));
         } else {
             let mode_int = payment_mode.as_int();
             println!("✓ 支付方式已设置: {mode_str} ({mode_int})，等待链上确认...");
-            (
-                format!("setPaymentMode({mode_str}) 完成。"),
-                format!("等待 job_payment_mode_changed 系统通知 → onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
-            )
+            crate::output::confirming(
+                &format!("setPaymentMode({mode_str}) 完成。"),
+                &format!("等待 job_payment_mode_changed 系统通知 → onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
+            );
         }
-    };
-    crate::output::confirming(&msg, &next);
+    }
     Ok(())
 }
 
-/// confirm-accept — 确认接受卖家（setPaymentMode 已通过 set-payment-mode 独立执行）
+/// confirm-accept — 确认接受服务商（setPaymentMode 已通过 set-payment-mode 独立执行）
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
@@ -309,7 +310,7 @@ async fn confirm_accept_escrow(
 ) -> Result<()> {
     let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), "escrow")?;
 
-    // providerConfirmStatus 确认卖家已 apply 并获取 escrow 参数
+    // providerConfirmStatus 确认服务商已 apply 并获取 escrow 参数
     let confirm_resp = fetch_provider_confirm_status(
         client, job_id, provider, &symbol, &amount, agent_id,
     ).await?;
@@ -357,7 +358,7 @@ async fn confirm_accept_escrow(
     let hook = json_str(escrow, "hook")?;
     let hook_data = json_str(escrow, "hookData")?;
     let salt = json_str(escrow, "salt")?;
-    println!("✓ providerConfirmStatus: 卖家已 apply，escrow 参数已获取");
+    println!("✓ providerConfirmStatus: 服务商已 apply，escrow 参数已获取");
 
     // sign_escrow — TEE 签名 EIP-3009 ReceiveWithAuthorization
     eprintln!("[debug] sign_escrow 入参:");
@@ -440,7 +441,7 @@ async fn confirm_accept_escrow(
         ]),
         None,
     );
-    println!("✓ 已接受卖家 {provider}（担保支付），资金已托管");
+    println!("✓ 已接受服务商 {provider}（担保支付），资金已托管");
     println!("  txHash: {tx_hash}");
     Ok(())
 }

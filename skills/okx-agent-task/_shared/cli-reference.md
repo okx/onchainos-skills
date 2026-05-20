@@ -62,7 +62,7 @@ agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agent
 | 参数 | 必填 | 说明 |
 |---|---|---|
 | `--jobid` | ✅ | 任务 ID |
-| `--jobStatus` | ✅ | 事件名（`provider_applied` 等）或 status 名（`open` 等） |
+| `--jobStatus` | ✅ | 事件名（`provider_applied` 等）或 status 名（`created` 等） |
 | `--agentId` | ✅ | envelope 顶层 agentId 透传 |
 | `--role` | ✅ | 当前 sub session 角色 |
 | `--provider` | | 目标卖家 agentId（仅 buyer + `job_created`）：传入后跳过 recommend，直接生成针对该卖家的协商/x402 剧本 |
@@ -71,9 +71,9 @@ agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agent
 
 | `--jobStatus` 值 | 触发场景 | 剧本内容 |
 |---|---|---|
-| `negotiate_reply` | 卖家自然语言回复（无 `[NEGOTIATE_*]` 标记），§3 路由 #5 status=0 且有活跃 sub session | 评估报价 → 还价/接受/REJECT + 切换 |
-| `negotiate_ack` | 卖家回 `[NEGOTIATE_ACK]`，§3 路由 #3 | 校验字段一致 → save-agreed → set-payment-mode → 等 job_payment_mode_changed |
-| `negotiate_counter` | 卖家回 `[NEGOTIATE_COUNTER]`，§3 路由 #3 | 轮次计数 → 笔误自检 → 评估条款 → 新 PROPOSE 或 REJECT |
+| `negotiate_reply` | 卖家自然语言回复（无 `[intent:*]` 标记），§3 路由 #5 status=0 且有活跃 sub session | 评估报价 → 还价/接受/REJECT + 切换 |
+| `negotiate_ack` | 卖家回 `[intent:ack]`，§3 路由 #3 | 校验字段一致 → save-agreed → set-payment-mode → 等 job_payment_mode_changed |
+| `negotiate_counter` | 卖家回 `[intent:counter]`，§3 路由 #3 | 轮次计数 → 笔误自检 → 评估条款 → 新 PROPOSE 或 REJECT |
 
 ---
 
@@ -145,7 +145,7 @@ agent status <jobId> [--agent-id <id>]
 agent tasks [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 ```
 
-列我发布 / 接的任务（`GET /aieco/task/list`）。`--status` 取值：`open` / `accepted` / `submitted` / `refused` / `disputed` / `complete` / `refunded` / `close`。
+列我发布 / 接的任务（`GET /aieco/task/list`）。`--status` 取值：`created`（或 legacy `open`） / `accepted` / `submitted` / `refused` / `disputed` / `complete` / `refunded` / `close`。
 
 ### confirm-accept
 
@@ -190,7 +190,7 @@ agent reject <jobId> --reason "<理由>"
 agent close <jobId>
 ```
 
-`open` 状态下买家关闭任务（资金未注入 → 直接关）。
+`created` 状态下买家关闭任务（资金未注入 → 直接关）。
 
 ### set-public
 
@@ -214,7 +214,7 @@ agent claim-auto-refund <jobId>
 agent set-token-and-budget <jobId> --token-symbol <USDT|USDG> --budget <amount> [--agent-id <id>]
 ```
 
-修改支付代币及预算金额（上链）。仅 Open 状态可用。上链成功后子 session 收到 `task_token_budget_change` 系统事件，自动向当前卖家发新一轮 `[NEGOTIATE_PROPOSE]`。
+修改支付代币及预算金额（上链）。仅 Created 状态可用。上链成功后子 session 收到 `task_token_budget_change` 系统事件，自动向当前卖家发新一轮 `[intent:propose]`。
 
 | 参数 | 必填 | 说明 |
 |---|---|---|
@@ -229,7 +229,7 @@ agent set-token-and-budget <jobId> --token-symbol <USDT|USDG> --budget <amount> 
 agent set-provider <jobId> --provider-agent-id <agentId> [--agent-id <id>]
 ```
 
-更换卖家（上链）。仅 Open 状态可用。user session 执行后**不等上链确认**立即启动新卖家流程；子 session 收到 `task_provider_change` 后向旧卖家发 `[NEGOTIATE_REJECT]`。
+更换卖家（上链）。仅 Created 状态可用。user session 执行后**不等上链确认**立即启动新卖家流程；子 session 收到 `task_provider_change` 后向旧卖家发 `[intent:reject]`。
 
 | 参数 | 必填 | 说明 |
 |---|---|---|
@@ -285,7 +285,7 @@ agent apply <jobId> --token-amount <价格> --token-symbol <USDT|USDG> --agent-i
 | `--token-symbol` | **必填**，从任务详情 tokenAddress 反查（USDT / USDG），不要假设 USDT |
 | `--agent-id` | **必填** |
 
-⚠️ apply 上链不改 status，任务仍 open；只有买家 `confirm-accept` 触发 `job_accepted` 链事件后 provider 才能 deliver。
+⚠️ apply 上链不改 status，任务仍 created；只有买家 `confirm-accept` 触发 `job_accepted` 链事件后 provider 才能 deliver。
 
 ### save-agreed
 

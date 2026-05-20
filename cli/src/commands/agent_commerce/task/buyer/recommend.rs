@@ -1,6 +1,6 @@
-//! 获取推荐卖家
+//! 获取推荐服务商
 //!
-//! 买家动作：获取推荐卖家 — onchainos agent recommend
+//! 用户动作：获取推荐服务商 — onchainos agent recommend
 //!
 //! - 默认：调用 /match API 获取推荐列表并缓存到本地（index=0）
 //! - --next：从本地状态推进到下一个 provider 并返回
@@ -13,7 +13,7 @@ use super::negotiate;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// 查询推荐卖家（默认模式：调用 API + 缓存）
+/// 查询推荐服务商（默认模式：调用 API + 缓存）
 pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id: &str, page: usize) -> Result<()> {
     let resolved;
     let agent_id = if agent_id.is_empty() {
@@ -28,7 +28,7 @@ pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id
     };
 
     let url = client.endpoint(job_id, "match");
-    let body = serde_json::json!({ "pageNo": page + 1 });
+    let body = serde_json::json!({ "page": page + 1 });
     let resp = client.post_with_identity(&url, &body, agent_id).await?;
     let recs = resp["recommendations"].as_array()
         .cloned().unwrap_or_default();
@@ -71,20 +71,20 @@ pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id
 
     if visible.is_empty() {
         if !providers.is_empty() {
-            println!("当前页所有卖家均已协商失败，自动翻到下一页...");
+            println!("当前页所有服务商均已协商失败，自动翻到下一页...");
             return Box::pin(handle_recommend(client, job_id, agent_id, page + 1)).await;
         }
-        println!("推荐卖家列表为空，无匹配卖家。");
+        println!("推荐服务商列表为空，无匹配服务商。");
         print_empty_guidance(job_id);
         return Ok(());
     }
 
-    println!("推荐卖家列表（第 {} 页，共 {} 个可选）：", page + 1, visible.len());
+    println!("推荐服务商列表（第 {} 页，共 {} 个可选）：", page + 1, visible.len());
     for (i, p) in visible.iter().enumerate() {
         print_provider(i, p);
     }
     println!();
-    println!("请选择一个卖家（输入序号对应的 AgentID），或输入 `onchainos agent recommend {} --next-page` 查看下一页。", job_id);
+    println!("请选择一个服务商（输入序号对应的 AgentID），或输入 `onchainos agent recommend {} --next-page` 查看下一页。", job_id);
 
     Ok(())
 }
@@ -98,10 +98,10 @@ pub fn handle_recommend_current(job_id: &str) -> Result<()> {
         .collect();
 
     if visible.is_empty() {
-        println!("当前页推荐列表已无可选卖家（{} 个已失败）", failed.len());
+        println!("当前页推荐列表已无可选服务商（{} 个已失败）", failed.len());
         print_empty_guidance(job_id);
     } else {
-        println!("当前页可选卖家（第 {} 页，共 {} 个）：", state.page + 1, visible.len());
+        println!("当前页可选服务商（第 {} 页，共 {} 个）：", state.page + 1, visible.len());
         for (i, p) in visible.iter().enumerate() {
             print_provider(i, p);
         }
@@ -114,13 +114,13 @@ pub fn handle_recommend_next(job_id: &str) -> Result<()> {
     match negotiate::next(job_id)? {
         Some(p) => {
             let state = negotiate::load(job_id)?;
-            println!("切换到下一个卖家（index={}，共 {} 个）：", state.current_index, state.providers.len());
+            println!("切换到下一个服务商（index={}，共 {} 个）：", state.current_index, state.providers.len());
             print_provider(state.current_index, &p);
             print_routing_guide(&p, job_id);
         }
         None => {
             let state = negotiate::load(job_id)?;
-            println!("推荐列表已全部遍历（{}/{}），无更多卖家", state.current_index, state.providers.len());
+            println!("推荐列表已全部遍历（{}/{}），无更多服务商", state.current_index, state.providers.len());
             print_empty_guidance(job_id);
         }
     }
@@ -155,7 +155,7 @@ fn print_routing_guide(p: &negotiate::ProviderInfo, job_id: &str) {
         println!("  → onchainos agent confirm-accept {job_id} --provider {} --payment-mode x402 --token-symbol {symbol} --token-amount {fee} --endpoint {endpoint}", p.provider_agent_id);
     } else {
         println!("  💬 路由: A2A（需协商）");
-        println!("  → 先调 xmtp_start_conversation 与卖家 {} 建群，再通过 xmtp_send 协商任务详情 / 价格 / 支付方式，等待 provider_applied", p.provider_agent_id);
+        println!("  → 先调 xmtp_start_conversation 与服务商 {} 建群，再通过 xmtp_send 协商任务详情 / 价格 / 支付方式，等待 provider_applied", p.provider_agent_id);
     }
     println!();
 }
@@ -183,7 +183,7 @@ fn print_provider(index: usize, p: &negotiate::ProviderInfo) {
 
 fn print_empty_guidance(job_id: &str) {
     println!("请选择下一步操作：");
-    println!("  A. 指定卖家      → 提供卖家 agentId，将与其建群协商");
+    println!("  A. 指定服务商      → 提供服务商 agentId，将与其建群协商");
     println!("  B. 转为公开任务  → onchainos agent set-public {job_id}");
     println!("  C. 关闭任务      → onchainos agent close {job_id}");
 }

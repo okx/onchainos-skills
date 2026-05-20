@@ -7,7 +7,7 @@ use anyhow::Result;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_BUYER, XLAYER_CHAIN_ID};
 
-/// 生成付款单（Provider 在 provider_applied 后发送给买家）
+/// 生成付款单（Provider 在 provider_applied 后发送给用户）
 pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
     let agent_id = common_query::resolve_agent_id(agent_id, AGENT_ROLE_BUYER).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;

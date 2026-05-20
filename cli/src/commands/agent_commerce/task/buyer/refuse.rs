@@ -1,6 +1,6 @@
 //! 拒绝交付物
 //!
-//! 买家动作：拒绝交付物 — onchainos agent reject
+//! 用户动作：拒绝交付物 — onchainos agent reject
 //!
 //! 流程：pre-refuse(orderId,deadline) → 签 digest → refuse(signatureData+reason) → 签 uopHash → broadcast
 
@@ -41,7 +41,7 @@ pub async fn handle_reject(
     );
 
     println!("✓ 已拒绝验收（原因：{reason}），状态 → refused");
-    println!("  卖家有 24 小时内可申请仲裁");
+    println!("  服务商有 24 小时内可申请仲裁");
     println!("  txHash: {}", result.tx_hash);
     Ok(())
 }

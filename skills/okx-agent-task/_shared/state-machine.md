@@ -14,16 +14,16 @@
 
 | int | string | 枚举 | 含义 | 入口事件 |
 |---|---|---|---|---|
-| `0` | `open` | `Status::Open` | 任务已上链、等待接单 | `job_created` |
+| `0` | `created` | `Status::Created` | 任务已上链、等待接单 | `job_created` |
 | `1` | `accepted` | `Status::Accepted` | 买家已确认接单（资金担保） | `job_accepted` |
 | `2` | `submitted` | `Status::Submitted` | 卖家交付物已上链 | `job_submitted` |
 | `3` | `refused` | `Status::Refused` | 买家拒绝验收，24h 决策期（仲裁 / 同意退款） | `job_refused` |
 | `4` | `disputed` | `Status::Disputed` | 仲裁进行中（含证据期 + commit/reveal） | `job_disputed` |
 | `5` | `complete` | `Status::Completed` | 终态：任务完成（正常验收 / 仲裁卖家胜 / review 超时 auto-complete） | `job_completed` 或 `job_auto_completed` |
 | `6` | `refunded` | `Status::Refunded` | 终态：资金退还买家（同意退款 / 仲裁买家胜 / submit/refuse 超时 auto-refund） | `job_refunded` 或 `job_auto_refunded` |
-| `7` | `close` | `Status::Other("status_7")` | 终态：买家在 `open` 阶段主动关闭 | `job_closed` |
+| `7` | `close` | `Status::Other("status_7")` | 终态：买家在 `created` 阶段主动关闭 | `job_closed` |
 
-> ⚠️ **没有 `applied` 状态**——`provider_applied` 是事件，触发时 status 仍是 `open`。同理 `dispute_approved` 触发时 status 仍是 `refused`（仲裁阶段 1 approve）。事件只是"刚发生了什么"，不一定改变 status。
+> ⚠️ **没有 `applied` 状态**——`provider_applied` 是事件，触发时 status 仍是 `created`。同理 `dispute_approved` 触发时 status 仍是 `refused`（仲裁阶段 1 approve）。事件只是"刚发生了什么"，不一定改变 status。
 
 ---
 
@@ -31,12 +31,12 @@
 
 ```mermaid
 stateDiagram-v2
-    [*] --> open: buyer create-task<br/>(job_created)
+    [*] --> created: buyer create-task<br/>(job_created)
 
-    open --> open: provider apply<br/>(provider_applied — 过场，不改 status)
-    open --> accepted: buyer confirm-accept<br/>(job_accepted)
-    open --> close: buyer close<br/>(job_closed)
-    open --> close: open 期超时<br/>(job_expired)
+    created --> created: provider apply<br/>(provider_applied — 过场，不改 status)
+    created --> accepted: buyer confirm-accept<br/>(job_accepted)
+    created --> close: buyer close<br/>(job_closed)
+    created --> close: created 期超时<br/>(job_expired)
 
     accepted --> submitted: provider deliver<br/>(job_submitted)
     accepted --> refunded: submit 期超时<br/>(submit_expired → buyer claim-auto-refund → job_auto_refunded)
@@ -69,7 +69,7 @@ stateDiagram-v2
 
 | event | 触发后 status | 触发动作 |
 |---|---|---|
-| `job_created` | `open` | buyer create-task tx 上链 |
+| `job_created` | `created` | buyer create-task tx 上链 |
 | `job_accepted` | `accepted` | buyer confirm-accept tx 上链 |
 | `job_submitted` | `submitted` | provider deliver tx 上链 |
 | `job_refused` | `refused` | buyer reject tx 上链 |
@@ -85,14 +85,14 @@ stateDiagram-v2
 
 | event | 触发时 status | 含义 |
 |---|---|---|
-| `provider_applied` | `open` | 卖家 apply tx 上链回执（escrow 路径，给 provider 自己看） |
+| `provider_applied` | `created` | 卖家 apply tx 上链回执（escrow 路径，给 provider 自己看） |
 | `dispute_approved` | `refused` | 仲裁阶段 1 approve tx 回执（给发起的 provider 自己看，提醒走阶段 2） |
 | `submit_deadline_warn` | `accepted` | 担保支付 accept→submit 快超时提醒（5 min 前） |
 | `review_deadline_warn` | `submitted` | 担保支付 submit→complete 快超时提醒（5 min 前） |
 | `submit_expired` | `accepted` | submit 期超时（卖家未交付）；buyer 应跑 `claim-auto-refund` |
 | `refuse_expired` | `refused` | refuse 期超时（卖家 24h 未决策）；buyer 应跑 `claim-auto-refund` |
 | `review_expired` | `submitted` | review 期超时（买家 24h 未验收）；provider 应跑 `claim-auto-complete` |
-| `job_expired` | `open` | open 期超时；后端会自动转 `close` |
+| `job_expired` | `created` | created 期超时；后端会自动转 `close` |
 | `job_visibility_changed` | 不变 | TaskMarket.setVisibility 上链回执 |
 | `job_payment_mode_changed` | 不变 | TaskMarket.setPaymentMode 上链回执 |
 
@@ -141,7 +141,7 @@ stateDiagram-v2
 
 | 阶段 | 触发条件 | 超时事件 | 后续动作 |
 |---|---|---|---|
-| `open` | 超过 `openExpireSec` | `job_expired` | 后端自动转 `close` |
+| `created` | 超过 `openExpireSec` | `job_expired` | 后端自动转 `close` |
 | `accepted` | 超过 `acceptedExpireSec` 仍未 submit | `submit_expired` | buyer 跑 `claim-auto-refund` → `job_auto_refunded` |
 | `submitted` | 超过 review 窗口（24h）仍未 complete/reject | `review_expired` | provider 跑 `claim-auto-complete` → `job_auto_completed` |
 | `refused` | 24h 卖家未决策仲裁 / 退款 | `refuse_expired` | buyer 跑 `claim-auto-refund` → `job_auto_refunded` |
