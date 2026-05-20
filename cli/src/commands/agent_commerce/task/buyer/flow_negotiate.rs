@@ -479,6 +479,7 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     let title_query_hint = ctx.title_query_hint;
 
     let payment_escrow_notify = super::content::payment_mode_escrow_user_notify(job_id, title_display);
+    let x402_paying = super::content::x402_paying_user_notify(job_id, title_display);
     let x402_deliverable = super::content::x402_deliverable_user_notify(job_id);
     let x402_replay_fail = super::content::x402_replay_fail_payment_user_notify(job_id);
     format!(
@@ -525,6 +526,9 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
      ```\n\
      提取 `acceptsJson`、`tokenSymbol`（= feeTokenSymbol）、`amountHuman`（= feeAmount）。\n\n\
+     **x402 阶段 1.5 — 通知用户正在支付（在 task-402-pay 之前）：**\n\
+     调用 xmtp_dispatch_user：\n\
+     \x20\x20content: {x402_paying}\n\n\
      **x402 阶段 2 — 签名 + direct/accept + 重放 endpoint（原子命令）：**\n\
      ```bash\n\
      onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\

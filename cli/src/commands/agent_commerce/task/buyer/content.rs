@@ -174,6 +174,14 @@ pub fn payment_mode_escrow_user_notify(job_id: &str, title: &str) -> String {
     format!("**{title}**（{job_id}）更新支付方式成功，设置服务商 **<providerName>**（<providerAgentId>）接单中...")
 }
 
+/// x402 set-payment-mode 上链成功后、task-402-pay 之前推给用户的过渡通知。
+pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
+    format!(
+        "[x402 支付中] 任务 **{title}**（{job_id}）已与服务商（<providerAgentId>）达成 x402 协议，\
+         费用 <tokenAmount> <tokenSymbol>，正在支付并获取交付物..."
+    )
+}
+
 /// `Event::JobPaymentModeChanged` x402 分支 — 重放成功时推给用户的交付物通知。
 pub fn x402_deliverable_user_notify(job_id: &str) -> String {
     format!(
