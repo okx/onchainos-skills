@@ -74,7 +74,7 @@ fn staking_next_action(_job_id: &str, job_status: &str, _agent_id: &str) -> Opti
 fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Option<String> {
     let body = match job_status {
         "evaluator_selected" => format!(
-            "[Current Status] evaluator_selected (you've been selected as a juror this round; commit window is open)\n\n\
+            "[Current Status] evaluator_selected\n\n\
              **Step 1 — Routing check:**\n\n\
              ⚠️ Immediately after the calls in 1.1 / 1.2, print the entire returned `sessionKey` verbatim in this turn's output (no truncation, no abbreviation); subsequent comparison MUST be based on the two printed lines.\n\n\
              **1.1** Call `xmtp_start_evaluate_conversation` with `myAgentId=<envelope top-level agentId>`, `jobId={job_id}`. Print:\n\
@@ -89,47 +89,12 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              **Step 3 — Fetch evidence:**\n\
              ```bash\n\
              onchainos agent evidence-info <jobId> --agent-id <envelope top-level agentId> --round-num <envelope top-level roundNum>\n\
-             ```\n\
-             The CLI first calls `dispute/status` and verifies (AND) `taskStatus` not terminal / `--round-num` == on-chain `currentRound` / `disputeStatus = commit_phase` / this account hit `selectedVoter`. **Decide based only on the stable marker at the bottom of stdout**:\n\
-             - `selected: no` (accompanied by the preceding `reason: <...>` line — log it then **end this turn immediately**; no evidence JSON follows, no commit, no vote-record. The envelope is stale / round already re-rolled / window closed / this account not selected this round)\n\
-             - `selected: yes` → continue to parse the evidence JSON that follows\n\n\
+             ```\n\n\
              Evidence JSON top-level: `{{ title, description, provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`. `description` / `title` is the task's original definition; `texts[]` is text evidence; `images[]` is already downloaded — each item has `localPath` (absolute path; use it to open the image).\n\n\
              **Post-evidence hard constraints**:\n\
              - An image item with a `downloadError` field = that evidence is **considered missing**\n\
              - **Do not** scan local disk for replacement files; a missing `localPath` means the CLI already knows the image is unavailable\n\
-             - **Do not** retry `evidence-info` hoping it downloads next time (internally already retried 3 times) — proceed directly to Step 4 and mark this image as missing\n\n\
-             **Step 4 — Render the verdict per `references/evaluator-decision-rubric.md`:**\n\
-             - **Prerequisite — file readability check**: read `references/evaluator-decision-rubric.md`.\n\
-             \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Push the user via `xmtp_dispatch_user` then end the turn:\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
-             \x20\x20\x20\x20Arbitration aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
-             \x20\x20\x20\x20⚠️ commit window timeout will slash your stake — please restore the file as soon as possible.\n\n\
-             - Read success and evidence already output → produce the final `vote` and verdict per the rules therein.\n\
-             **Step 5 — Execute commit (also pass envelope top-level `agentId` to `--agent-id`):**\n\
-             ```bash\n\
-             onchainos agent vote-commit <jobId> --vote <0|1> --agent-id <envelope top-level agentId>\n\
-             ```\n\
-             ⚠️ **Only 0 (Approve / Client wins) or 1 (Reject / Provider wins) — skip is forbidden**.\n\
-             Retry up to 3 times on failure (CRITICAL — closing of the commit window triggers timeout slashing). `voter has already committed` counts as success — proceed to Step 5.5.\n\
-             Body only carries `vote`.\n\n\
-             **Step 5.5 — Persist verdict to disk (local audit redundancy; run after commit):**\n\
-             - Verdict generated per rubric §3 template → persist with `--verdict`:\n\
-             \x20\x20```bash\n\
-             \x20\x20onchainos agent vote-record <jobId> --agent-id <envelope top-level agentId> --verdict \"$(cat <<'EOF'\n\
-             \x20\x20<full markdown of verdict>\n\
-             \x20\x20EOF\n\
-             \x20\x20)\"\n\
-             \x20\x20```\n\
-             - User-customized rubric does not define §3 template, no verdict generated this round → omit `--verdict`; the CLI auto-writes a placeholder:\n\
-             \x20\x20```bash\n\
-             \x20\x20onchainos agent vote-record <jobId> --agent-id <envelope top-level agentId>\n\
-             \x20\x20```\n\
-             Failure: **do not retry, do not push user session, do not block** — go directly to Step 6 (vote is already on-chain; disk persistence is only local audit redundancy).\n\n\
-            **Step 6 — Output one log line then end this turn:**\n\n\
-             > Committed jobId=<jobId> vote=<0|1> autonomously per references/evaluator-decision-rubric.md.\n\n\
-             [Principle]\n\
-             - **Fully silent**: the user is only notified on subsequent settlement / slash / reward events\n"
+             - **Do not** retry `evidence-info` hoping it downloads next time (internally already retried 3 times) — mark this image as missing\n"
         ),
 
         "vote_committed" => "[Current Status] vote_committed\n\n\
@@ -196,4 +161,54 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
         _ => return None,
     };
     Some(body)
+}
+
+/// Step 4-6 of the `evaluator_selected` playbook, intended to be appended to
+/// `evidence-info` stdout instead of returned by `next-action`.
+///
+/// Rationale: when next-action's evaluator_selected body included the full
+/// vote-commit / vote-record CLI templates, a weak LLM could pattern-match the
+/// command line and skip Step 3 (evidence-info) + Step 4 (rubric read). By
+/// printing these steps only after evidence has actually been fetched, the LLM
+/// physically cannot see the vote-commit invocation template until it has
+/// pulled the evidence.
+pub fn evaluator_selected_post_evidence_steps(job_id: &str) -> String {
+    format!(
+        "**Step 4 — Render the verdict per `references/evaluator-decision-rubric.md`:**\n\
+         - **Prerequisite — file readability check**: read `references/evaluator-decision-rubric.md`.\n\
+         \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Push the user via `xmtp_dispatch_user` then end the turn:\n\n\
+         tool: xmtp_dispatch_user\n\
+         content:\n\
+         \x20\x20\x20\x20Arbitration aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
+         \x20\x20\x20\x20⚠️ commit window timeout will slash your stake — please restore the file as soon as possible.\n\n\
+         - Read success and evidence already output → produce the final `vote` and verdict per the rules therein.\n\n\
+         **Step 5 — Execute commit (also pass envelope top-level `agentId` to `--agent-id`):**\n\
+         ```bash\n\
+         onchainos agent vote-commit <jobId> --vote <0|1> --agent-id <envelope top-level agentId>\n\
+         ```\n\
+         ⚠️ **Only 0 (Approve / Client wins) or 1 (Reject / Provider wins) — skip is forbidden**.\n\
+         ⚠️ **The `<0|1>` value MUST come from Step 4** — it is the binary vote that Step 4 derived by applying `references/evaluator-decision-rubric.md` (whatever decision procedure that document defines) to the evidence. Do **not** commit a vote that bypassed Step 4 — guessing / pattern-matching / averaging a value here violates the rubric and produces an unfounded ruling.\n\
+         Retry up to 3 times on failure (CRITICAL — closing of the commit window triggers timeout slashing). `voter has already committed` counts as success — proceed to Step 5.5.\n\
+         Body only carries `vote`.\n\n\
+         **Step 5.5 — Persist verdict to disk (local audit redundancy; run after commit):**\n\
+         - Verdict generated per rubric §3 template → **flatten the entire verdict markdown into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; then pass via `--verdict`:\n\
+         \x20\x20```bash\n\
+         \x20\x20onchainos agent vote-record <jobId> --agent-id <envelope top-level agentId> --verdict \"Verdict\\n\\nJob ID: <jobId>\\nvote: <0|1>\\nFindings of fact: 1. ...\\nEvidence citations: ...\\nReasoning: ...\"\n\
+         \x20\x20```\n\
+         \x20\x20CLI un-escapes `\\n` → newline, `\\t` → tab, `\\r` → CR, `\\\\` → `\\`, `\\\"` → `\"` before writing to disk; `verdict.md` stays human-readable multi-line markdown for later audit.\n\
+         - **Character taboos inside the `--verdict` value** (otherwise the shell will corrupt the argument before the CLI even sees it):\n\
+         \x20\x20- `\"` (double quote) → escape as `\\\"`\n\
+         \x20\x20- `` ` `` (backtick) → either replace with `'` (single quote) or escape as `` \\` ``; an unescaped backtick triggers shell command substitution\n\
+         \x20\x20- `$` → escape as `\\$` to prevent shell variable expansion\n\
+         \x20\x20- Real newlines / tabs / CRs → **must** use `\\n` / `\\t` / `\\r` escapes; never embed a literal newline (the command will break across lines)\n\
+         - User-customized rubric does not define §3 template, no verdict generated this round → omit `--verdict`; the CLI auto-writes a placeholder:\n\
+         \x20\x20```bash\n\
+         \x20\x20onchainos agent vote-record <jobId> --agent-id <envelope top-level agentId>\n\
+         \x20\x20```\n\
+         Failure: **do not retry, do not push user session, do not block** — go directly to Step 6 (vote is already on-chain; disk persistence is only local audit redundancy).\n\n\
+         **Step 6 — Output one log line then end this turn:**\n\n\
+         > Committed jobId=<jobId> vote=<0|1>\n\n\
+         [Principle]\n\
+         - **Fully silent**: the user is only notified on subsequent settlement / slash / reward events\n"
+    )
 }
