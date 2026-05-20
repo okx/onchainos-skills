@@ -389,7 +389,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
-             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户证据（不要自己脑补证据文字/图片）。只有等到下一 turn 真正收到用户消息后,再按下面规则 relay。\
+             🛑 展示 userContent 后**必须结束本 turn 等用户真实输入**——[USER_DECISION_REQUEST] 是**问题**不是**答案**，禁止同 turn 内编造用户证据（不要自己脑补证据文字/图片）。只有等到**下一 turn**真正收到用户消息后,再按下面规则 relay。\
+             🛑🛑 **证据 ≠ 历史消息**：用户之前发起仲裁时给的「理由」（例如 `发起仲裁,理由是XXX` 里的 XXX）**不是证据**，是 START_DISPUTE 阶段的 reason 字段，已经在 dispute_raise 上链时用过了。**禁止**从对话历史 / 任何旧消息 / 任何旧 [USER_DECISION_RELAY] 里抽取内容当证据 relay。证据必须是用户在**看到本 evidence prompt 之后**写的新消息（说明事实经过 / 截图 / 交付物链接等）。如果用户的下一条回复看起来跟之前的 dispute reason 完全一样或非常相似（比如又写「333」），**先 xmtp_dispatch_user 让用户确认**「您这条是当作仲裁证据提交吗？需要补充事实说明 / 截图吗？」，确认后再 relay。\
              用户提供证据后 → **仅调** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] 用户证据：<用户提供的完整原文，文字 + 图片路径，不解读、不翻译>\") relay回sub_key所在的Session,**到此为止**(sub_key所在的Session收到后自己跑 dispute upload,你不要做其它事)。\
              ⚠️ **路由 tag 协议**：`[intent:SUBMIT_EVIDENCE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写/省略。\n\
              🛑 relay 必须使用 xmtp_dispatch_session（不要用 sessions_send），且**只调用一次** — 工具返回 'Message dispatched' = 成功 = **立即终止本 response 的所有后续工具调用**（不再调 xmtp_dispatch_session / xmtp_send / xmtp_dispatch_user / Exec / pending-decisions 等任何工具）。重复调用（哪怕 sessionKey / content 完全一样）会导致 sub 收到 N 条相同 relay 形成事件回灌循环。**user session 唯一动作 = relay**:禁止自己执行 task CLI / 禁止 xmtp_send 给买家 / 禁止 xmtp_dispatch_user 多发通知。1 小时内必须提交。\n\
