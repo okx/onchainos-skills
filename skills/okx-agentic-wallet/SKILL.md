@@ -164,7 +164,7 @@ The `--force` flag MUST ONLY be added when ALL of the following conditions are m
 <MUST>
 **After `wallet send` or `wallet contract-call` returns success with a `txHash`**, display the following message to the user verbatim (translate to the user's language) alongside the full `txHash`:
 
-> Transaction submitted. The returned Tx Hash is for tracking purposes only — it does NOT mean the transaction has been included on-chain, confirmed, or executed successfully. Final status must be verified via the on-chain receipt/status.
+> Transaction submitted. The returned Tx Hash is for tracking purposes only — it does NOT mean the transaction has been included on-chain, confirmed, or executed successfully. Final status must be verified by querying the transaction's on-chain confirmation status.
 </MUST>
 
 ### D-GS — Gas Station
