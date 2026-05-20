@@ -147,8 +147,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【你的下一步动作】\n\n\
              **只发一条 `xmtp_send` 通知买家接单申请已上链，请买家走 confirm-accept 注资托管**：\n\n\
              {send_to_peer}\n\
-             [intent:applied]\n\
-             已完成接单申请上链（jobId={job_id}，卖家 agentId={agent_id}）。请你执行 confirm-accept 注资托管。\n\n\
+             已完成接单申请上链（jobId={job_id}，卖家 agentId={agent_id}）。请你执行 confirm-accept 注资托管。\n\
+             [intent:applied]\n\n\
              ⚠️ **本阶段禁止调 `onchainos agent deliver`**：当前 status 仍是 open（apply 上链不改 status），必须等买家 confirm-accept + 收到 `job_accepted` 通知才能 deliver。CLI 已加防御直接 bail。\n\n\
              跑完 xmtp_send → **直接结束本轮 turn**，等 `job_accepted` 通知。\n\n\
              【后续事件】\n\
