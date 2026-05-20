@@ -426,11 +426,14 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
      **Step 2 -- Branch by payment mode:**\n\n\
      --------- Branch A: escrow -- flow ends ---------\n\n\
      In escrow mode, job_completed means the ASP has delivered and the user has approved; funds are released from contract to the ASP.\n\n\
-     **A-Step 1 -- 🛑 MUST call xmtp_dispatch_user to tell the user the task is complete (do not produce a plain text reply):**\n\
+     **A-Step 1 -- 🛑 MUST call `xmtp_dispatch_user` tool (do NOT produce a plain text reply):**\n\
+     🛑🛑🛑 You are in a **sub session (backup)**. Any text you output here is invisible to the user.\n\
+     The ONLY way to reach the user is the `xmtp_dispatch_user` tool call.\n\
+     ❌ Do NOT output the notification as text — it will be trapped in the backup session and the user will never see it.\n\
      ⚠️ txHash: find the txHash (format 0x...) from the earlier `onchainos agent complete` CLI output in this sub session context.\n\
      If not in context (e.g. auto-complete or other non-active-approval scenarios), omit the on-chain receipt line.\n\
-     🛑 The text below is the **content argument value** for xmtp_dispatch_user; do not output it as a plain text reply.\n\
-     You MUST send it via the xmtp_dispatch_user tool:\n\
+     ✅ Call xmtp_dispatch_user with the following content parameter (replace placeholders with real values):\n\
+     \x20\x20content:\n\
      {completed_escrow_notify}\n\n\
      **A-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
@@ -439,13 +442,17 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
      --------- Branch B: x402 -- final summary ---------\n\n\
      ⚠️ In x402, job_completed means the payment pipeline (accept + complete) is settled on-chain.\n\
      The deliverable was already sent to the user during task-402-pay (A-Step 4); this step only emits the final summary.\n\n\
-     **B-Step 1 -- 🛑 MUST call xmtp_dispatch_user to send the final summary (do not produce a plain text reply):**\n\
-     🛑 The text below is the **content argument value** for xmtp_dispatch_user; do not output it as a plain text reply.\n\
-     You MUST send it via the xmtp_dispatch_user tool:\n\
+     **B-Step 1 -- 🛑 MUST call `xmtp_dispatch_user` tool (do NOT produce a plain text reply):**\n\
+     🛑🛑🛑 You are in a **sub session (backup)**. Any text you output here is invisible to the user.\n\
+     The ONLY way to reach the user is the `xmtp_dispatch_user` tool call.\n\
+     ❌ Do NOT output the notification as text — it will be trapped in the backup session and the user will never see it.\n\
+     ✅ Call xmtp_dispatch_user with the following content parameter (replace placeholders with real values from Step 1):\n\
+     \x20\x20content:\n\
      {completed_x402_notify}\n\n\
      **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     Task fully complete.\n"
+     Task fully complete.\n\
+     🛑 Final check: if you did NOT call `xmtp_dispatch_user` in B-Step 1, go back and call it now. A text reply is NOT a substitute.\n"
     )
 }
 
