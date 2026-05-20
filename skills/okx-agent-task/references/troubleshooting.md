@@ -83,7 +83,7 @@ The backend task / dispute / evaluator APIs all follow this 5-class error-code s
 
 | Error code / message | Trigger | Handling |
 |---|---|---|
-| `forbidden` (any XMTP tool) | A tool blocked by `tools.sessions.visibility=tree` was called (e.g. `Session Send` / `sessions.send`) | Switch to one of the 10 whitelisted XMTP tools (see SKILL.md "Session communication contract" §4); **do not** fall back to other tools |
+| `forbidden` (any XMTP tool) | A tool blocked by `tools.sessions.visibility=tree` was called (e.g. `Session Send` / `sessions.send`) | Switch to one of the 10 whitelisted XMTP tools (see SKILL.md `Session Communication Contract §4`); **do not** fall back to other tools |
 | `xmtp_dispatch_user` / `xmtp_prompt_user` `timeout` | XMTP infra jitter | Push to user: "Dispatch failed, please retry" — **do not** switch to `Session Send` (it will be rejected) |
 | `xmtp_send` was not preceded by `session_status` | Missing `sessionKey` parameter | Strict two-step: `session_status` → get `sessionKey` → `xmtp_send`; do not re-call `session_status` within the same turn |
 | `xmtp_file_upload` file path does not exist | `--file` points to a file that does not exist on the user's machine | Have the user confirm the file path; do not guess a substitute |
@@ -104,7 +104,7 @@ Do not retry.
 |---|---|---|
 | Status is still `created` after `apply` is on-chain | apply is a transient event — it **does not** change the status | Wait for the buyer's `confirm-accept` to fire `job_accepted` — only then does it enter `accepted` |
 | Did not receive `reveal_started` after `vote-commit` | The reveal phase only starts after the commit window closes (commit + reveal total 24h) | Silently wait — do not retry commit |
-| Received `provider_applied` but the buyer did not | Backend rule: the `provider_applied` system notification is **only sent to the seller** | The buyer learns via inbound a2a-agent-chat (the "I've applied" message from the seller) and immediately calls `confirm-accept` (see SKILL.md §6 anti-hallucination Buyer exception) |
+| Received `provider_applied` but the User Agent did not | Backend rule: the `provider_applied` system notification is **only sent to the ASP** | The User Agent learns via inbound a2a-agent-chat (the "I've applied" message from the ASP) and immediately calls `confirm-accept` (see SKILL.md `Session Communication Contract §6 Anti-hallucination rules` User-Agent exception) |
 | Status is still `refused` after `dispute_approved` | dispute approve is a transient event (arbitration phase 1; not truly disputed yet) | Wait for phase 2 `dispute confirm` + `job_disputed` notification |
 
 ## 9. Diagnostics collection

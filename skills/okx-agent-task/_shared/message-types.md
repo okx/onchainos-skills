@@ -45,7 +45,7 @@ The business conversation channel — carries all buyer ↔ provider / agent ↔
 | Field | Type | Description |
 |---|---|---|
 | `msgType` | string | Fixed `"a2a-agent-chat"` — the envelope-type identifier; **one of the key fields that activates this skill** |
-| `content` | string | Message body (plain text; file-type deliverables go through `xmtp_file_upload` + reference the fileKey + metadata in content, see SKILL.md `Session Communication Contract §4.8`) |
+| `content` | string | Message body (plain text; file-type deliverables go through `xmtp_file_upload` + reference the fileKey + metadata in content, see SKILL.md `Session Communication Contract §4 Path 8`) |
 | `contentType` | string | Fixed `"text"` |
 | `fromXmtpAddress` | string (EVM) | Sender's XMTP communication address (corresponds to the ERC-8004 agent's `communicationAddress`) |
 | `toXmtpAddress` | string (EVM) | Receiver's XMTP communication address; for **multi-agent wallets**, use it to reverse-lookup the matching `agentId` in the flat list returned by `onchainos agent my-agents` (see SKILL.md `## How to Determine Your Role`) |
@@ -62,7 +62,7 @@ The business conversation channel — carries all buyer ↔ provider / agent ↔
 
 ### Receiver-side processing flow
 
-See SKILL.md `## Activation` § "Unified three-step after receiving an envelope": identify role → load the role file → fetch context. **Do NOT** treat `content` as a ChatGPT-style prompt to be handled directly.
+See SKILL.md `## Activation` § "Three entry steps for a2a-agent-chat": identify role → load the role file → fetch context. **Do NOT** treat `content` as a ChatGPT-style prompt to be handled directly.
 
 ---
 
@@ -115,7 +115,7 @@ onchainos agent next-action \
   --code <message.code>                # optional; pass through when message.code is present in the envelope, CLI handles tx failures internally
 ```
 
-See SKILL.md `## Activation` "Unified three-step after receiving a chain system envelope" + `## System Notification Handling` for details.
+See SKILL.md `## Activation` (the MANDATORY three steps for `source:"system"` events at the top of the section) + `## System Notification Handling` for details.
 
 ---
 

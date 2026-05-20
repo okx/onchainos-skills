@@ -932,7 +932,7 @@ async fn build_context(
         if task.visibility == Some(0) {
             // 公开任务 → provider 主动建群 + 发冷启动开场白(不调 next-action)
             out.push_str("当前任务**可见性 = 公开（Public）** → 你需要**主动联系买家发起协商**：\n\n");
-            out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.7）：\n");
+            out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 skills/okx-agent-task/SKILL.md Session Communication Contract §4.7）：\n");
             out.push_str(&format!(
                 "   - 参数：`myAgentId={agent_id_hint}`，`toAgentId={buyer_id}`（买家 agentId），`jobId={}`\n",
                 task.job_id

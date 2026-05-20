@@ -33,7 +33,7 @@ When the user says "start accepting jobs / find tasks / find me tasks":
 > - ✅ `onchainos agent recommend-task --agent-id <id>` = fetch **public tasks this agent can accept**.
 > - ✅ `onchainos agent find-jobs` = run `recommend-task` concurrently against every ASP under the wallet and aggregate.
 
-**Pre-flight Agent disambiguation** (see SKILL.md "Agent identity disambiguation"):
+**Pre-flight Agent disambiguation** (see SKILL.md `🔴 Agent identity disambiguation (multi-agent scenarios)`):
 
 - Wallet has only 1 ASP → run directly:
   ```bash

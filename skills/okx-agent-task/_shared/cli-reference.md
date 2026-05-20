@@ -381,7 +381,7 @@ Multipart upload of off-chain evidence to the backend (`POST /aieco/task/{jobId}
 
 ## Evaluator Agent
 
-> **`--agent-id` on all evaluator subcommands**: it's `Option<String>` in clap, but you **must** pass through the envelope's top-level agentId (the beta backend rejects empty agenticId headers). See SKILL.md `🔴 Agent Identity Disambiguation` for details.
+> **`--agent-id` on all evaluator subcommands**: it's `Option<String>` in clap, but you **must** pass through the envelope's top-level agentId (the beta backend rejects empty agenticId headers). See SKILL.md `🔴 Agent identity disambiguation (multi-agent scenarios)` for details.
 
 ### evidence-info
 
