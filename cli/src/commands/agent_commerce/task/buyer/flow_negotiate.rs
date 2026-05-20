@@ -412,7 +412,9 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      Call the xmtp_get_pending_list tool to fetch the pending-contact ASP list.\n\
      ⚠️ Before the call, print: `[buyer-xmtp] xmtp_get_pending_list`\n\
      ⚠️ After the call, print: `[buyer-xmtp] xmtp_get_pending_list result: <returned value>`\n\n\
-     If the result is an empty list -> call xmtp_dispatch_user to tell the user \"there are no ASPs to contact right now\" and finish.\n\n\
+     If the result is an empty list -> call xmtp_dispatch_user:\n\
+     \x20\x20content: There are no ASPs to contact right now. You can wait for new ASPs to reach out, or reply \"close\" to close the task.\n\
+     Then finish.\n\n\
      **Step 2 - call xmtp_prompt_user to show all pending ASPs and let the user choose:**\n\
      🛑 **You MUST wait for the user's choice**; you may not decide for them.\n\
      Call `session_status` first to get this sub session's sessionKey; **before** calling `xmtp_prompt_user`, call `pending-decisions add` (see hard rule 7).\n\
