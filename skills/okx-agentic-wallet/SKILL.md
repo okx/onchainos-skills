@@ -511,7 +511,6 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
   | EIP-7702 / 7702 授权 / 取消授权 | 不对用户暴露 | 内部技术术语，不向用户输出。用户问"撤销 7702"/"取消授权" → 统一用"关闭 Gas Station"回应 |
   | enable/disable Gas Station | 开启 / 关闭 Gas Station | 管理 Gas Station 状态的唯一用户可见术语 |
 - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
-- **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible.
 - **Locale-aware output**: All user-facing content must be translated to match the user's language.
 - **Address display format**: When showing wallet addresses, list EVM address once with a chain summary note (X Layer first, then 2 other example chains, then total count). Example: `EVM: 0x1234...abcd (Supports X Layer, Ethereum, Polygon and 16 EVM chains)`. Solana address on a separate line: `Solana: 5xYZ...`. Do NOT enumerate every EVM chain individually.
 </MUST>
