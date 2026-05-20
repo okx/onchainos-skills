@@ -349,7 +349,7 @@ pub(crate) fn validate_amount(amount: &str) -> Result<()> {
 
 /// Validate that `slippage` is a number strictly greater than 0 and at most 100.
 /// Accepts decimals like "0.5", "1", "99.9", "100". Rejects "0", negatives, >100, non-numeric.
-fn validate_slippage(slippage: &str) -> Result<()> {
+pub(crate) fn validate_slippage(slippage: &str) -> Result<()> {
     let slippage = slippage.trim();
     let val: f64 = slippage.parse().map_err(|_| {
         anyhow::anyhow!(

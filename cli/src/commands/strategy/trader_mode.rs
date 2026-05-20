@@ -104,7 +104,7 @@ pub fn shift_value(amount: &str, decimals: u32) -> Result<String> {
     }
     let trimmed_zeros = buf.trim_start_matches('0');
     if trimmed_zeros.is_empty() {
-        Ok("0".to_string())
+        bail!("amount must be > 0, got `{}`", trimmed);
     } else {
         Ok(trimmed_zeros.to_string())
     }
@@ -249,8 +249,15 @@ mod tests {
         assert_eq!(shift_value("100", 6).unwrap(), "100000000");
         assert_eq!(shift_value("12", 6).unwrap(), "12000000");        // 12 USDC → 12000000
         assert_eq!(shift_value("0.000001", 6).unwrap(), "1");        // smallest USDC unit
-        assert_eq!(shift_value("0", 6).unwrap(), "0");
         assert_eq!(shift_value(".5", 6).unwrap(), "500000");          // ".5" = "0.5"
+    }
+
+    #[test]
+    fn shift_value_rejects_zero() {
+        // After P0 amount fix: "0" / "0.000" / etc. now bail rather than producing "0".
+        assert!(shift_value("0", 6).is_err());
+        assert!(shift_value("0.0", 6).is_err());
+        assert!(shift_value("0.000000", 6).is_err());
     }
 
     #[test]

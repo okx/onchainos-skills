@@ -77,10 +77,6 @@ pub struct CreateLimitArgs {
     /// when omitted. Pass it to save one HTTP round-trip.
     #[arg(long)]
     pub current_price: Option<String>,
-
-    /// Order TTL in seconds (default 604800 = 7 days).
-    #[arg(long, default_value_t = DEFAULT_EXPIRES_SECS)]
-    pub expires_in: i64,
 }
 
 fn parse_direction_value(raw: &str) -> Result<i32, String> {
@@ -202,6 +198,12 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     let trigger_price_num: f64 = args.trigger_price.parse().map_err(|e| {
         anyhow!("--trigger-price `{}` is not a number: {e}", args.trigger_price)
     })?;
+    if trigger_price_num <= 0.0 || !trigger_price_num.is_finite() {
+        bail!(
+            "--trigger-price must be a positive finite number, got `{}`",
+            args.trigger_price
+        );
+    }
 
     // Buy compares against to-token price, sell against from-token.
     let price_query_token = match dir {
@@ -210,9 +212,15 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
         _ => unreachable!("clap restricts --direction to buy/sell"),
     };
     let current_price_num: f64 = match args.current_price.as_deref() {
-        Some(s) => s
-            .parse()
-            .map_err(|e| anyhow!("--current-price `{s}` is not a number: {e}"))?,
+        Some(s) => {
+            let v: f64 = s
+                .parse()
+                .map_err(|e| anyhow!("--current-price `{s}` is not a number: {e}"))?;
+            if v <= 0.0 || !v.is_finite() {
+                bail!("--current-price must be a positive finite number, got `{s}`");
+            }
+            v
+        }
         None => fetch_token_price(&mut client, price_query_token, &resolved_chain)
             .await
             .with_context(|| {
@@ -244,6 +252,7 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     };
 
     let slippage_raw = args.slippage.as_deref().unwrap_or(DEFAULT_SLIPPAGE_VALUE);
+    crate::commands::swap::validate_slippage(slippage_raw)?;
     let preset = build_default_preset(slippage_raw, args.mev_protection.to_opt_bool(), dir);
 
     // 2. Build the time fields of the intent: Created At / Expired At /
@@ -251,7 +260,7 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     let now = Utc::now();
     let now_ms = now.timestamp_millis();
     let created_at = now.to_rfc3339_opts(SecondsFormat::Millis, true);
-    let expire_time_ms = now_ms.saturating_add(args.expires_in.saturating_mul(1000));
+    let expire_time_ms = now_ms.saturating_add(DEFAULT_EXPIRES_SECS.saturating_mul(1000));
     let expired_at = chrono::DateTime::<Utc>::from_timestamp_millis(expire_time_ms)
         .ok_or_else(|| anyhow!("expire_time {expire_time_ms} ms out of chrono range"))?
         .to_rfc3339_opts(SecondsFormat::Millis, true);
@@ -428,6 +437,25 @@ pub async fn cancel(ctx: &Context, args: CancelArgs) -> Result<()> {
     Ok(())
 }
 
+/// BE expects orderId as Long (≤ 32 digits to stay clearly within i64); reject
+/// non-numeric strings early so BE doesn't have to.
+fn validate_order_id_numeric(id: &str, label: &str) -> Result<()> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        bail!("--{label} must not be empty");
+    }
+    if !trimmed.chars().all(|c| c.is_ascii_digit()) {
+        bail!("--{label} must be a numeric order id, got `{trimmed}`");
+    }
+    if trimmed.len() > 32 {
+        bail!(
+            "--{label} `{trimmed}` is too long ({} digits); order ids must be ≤ 32 digits",
+            trimmed.len()
+        );
+    }
+    Ok(())
+}
+
 fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq> {
     if args.all {
         return Ok(CancelReq {
@@ -445,6 +473,9 @@ fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq
         if parsed.is_empty() {
             bail!("--order-ids parsed into an empty list");
         }
+        for id in &parsed {
+            validate_order_id_numeric(id, "order-ids")?;
+        }
         return Ok(CancelReq {
             account_id: account_id.to_string(),
             order_ids: Some(parsed),
@@ -452,6 +483,7 @@ fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq
         });
     }
     if let Some(id) = args.order_id.as_ref() {
+        validate_order_id_numeric(id, "order-id")?;
         return Ok(CancelReq {
             account_id: account_id.to_string(),
             order_ids: Some(vec![id.clone()]),
@@ -693,10 +725,15 @@ pub async fn resume(ctx: &Context, args: ResumeArgs) -> Result<()> {
     let session = session::load()?;
 
     let order_ids = if let Some(ids) = args.order_ids.as_ref() {
-        ids.split(',')
+        let parsed: Vec<String> = ids
+            .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
+            .collect();
+        for id in &parsed {
+            validate_order_id_numeric(id, "order-ids")?;
+        }
+        parsed
     } else {
         discover_resumable(&mut client, &session).await?
     };
@@ -799,21 +836,44 @@ mod tests {
     #[test]
     fn build_cancel_single_id() {
         let mut a = cancel_args();
-        a.order_id = Some("ord-1".into());
+        a.order_id = Some("17296046425729984".into());
         let req = build_cancel_request("acc-1", &a).unwrap();
-        assert_eq!(req.order_ids.as_deref(), Some(&["ord-1".to_string()][..]));
+        assert_eq!(
+            req.order_ids.as_deref(),
+            Some(&["17296046425729984".to_string()][..])
+        );
         assert_eq!(req.cancel_all, Some(false));
     }
 
     #[test]
     fn build_cancel_csv_splits_and_trims() {
         let mut a = cancel_args();
-        a.order_ids = Some("a, b ,,c ".into());
+        a.order_ids = Some("17296046425729984, 17296046425729985 ,,17296046425729986 ".into());
         let req = build_cancel_request("acc-1", &a).unwrap();
         assert_eq!(
             req.order_ids.as_deref(),
-            Some(&["a".to_string(), "b".to_string(), "c".to_string()][..])
+            Some(
+                &[
+                    "17296046425729984".to_string(),
+                    "17296046425729985".to_string(),
+                    "17296046425729986".to_string(),
+                ][..]
+            )
         );
+    }
+
+    #[test]
+    fn build_cancel_rejects_non_numeric_id() {
+        let mut a = cancel_args();
+        a.order_id = Some("ord-1".into());
+        assert!(build_cancel_request("acc-1", &a).is_err());
+    }
+
+    #[test]
+    fn build_cancel_rejects_non_numeric_csv() {
+        let mut a = cancel_args();
+        a.order_ids = Some("17296046425729984,not-a-number".into());
+        assert!(build_cancel_request("acc-1", &a).is_err());
     }
 
     #[test]

@@ -342,8 +342,8 @@ pub enum CrossChainCommand {
         /// Raw amount in minimal units. Mutually exclusive with --readable-amount.
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
-        /// Slippage tolerance (decimal, 0.002–0.5). Default 0.01 (1%).
-        #[arg(long, default_value = "0.01")]
+        /// Slippage tolerance in **percent**, range (0, 100]. Default "1" (= 1%). CLI converts to BE decimal wire format internally.
+        #[arg(long, default_value = "1")]
         slippage: String,
         /// User wallet address. Required when --check-approve is set.
         #[arg(long)]
@@ -355,7 +355,7 @@ pub enum CrossChainCommand {
         #[arg(long)]
         bridge_id: Option<String>,
         /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
-        #[arg(long)]
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["0", "1", "2"]))]
         sort: Option<String>,
         /// Allowed bridges (comma-separated bridge ids)
         #[arg(long)]
@@ -380,10 +380,10 @@ pub enum CrossChainCommand {
         wallet: String,
         #[arg(long)]
         bridge_id: String,
-        /// Approve amount human-readable (e.g. "100" for 100 USDC, "0" to revoke).
-        /// /approve-tx accepts human-readable values, not raw.
+        /// Approve amount in **smallest token unit** (raw integer, e.g. "500000"
+        /// for 0.5 USDC at 6 decimals). Pass "0" to revoke (USDT pattern).
         #[arg(long)]
-        readable_amount: String,
+        amount: String,
         /// Skip server allowance check (default: skip; pass --check-allowance to enable)
         #[arg(long, default_value_t = false)]
         check_allowance: bool,
@@ -403,7 +403,8 @@ pub enum CrossChainCommand {
         readable_amount: Option<String>,
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
-        #[arg(long, default_value = "0.01")]
+        /// Slippage tolerance in **percent**, range (0, 100]. Default "1" (= 1%). CLI converts to BE decimal wire format internally.
+        #[arg(long, default_value = "1")]
         slippage: String,
         #[arg(long)]
         wallet: String,
@@ -414,7 +415,7 @@ pub enum CrossChainCommand {
         #[arg(long)]
         bridge_id: Option<String>,
         /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
-        #[arg(long)]
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["0", "1", "2"]))]
         sort: Option<String>,
         /// Allowed bridges (comma-separated bridge ids)
         #[arg(long)]
@@ -438,7 +439,8 @@ pub enum CrossChainCommand {
         readable_amount: Option<String>,
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
-        #[arg(long, default_value = "0.01")]
+        /// Slippage tolerance in **percent**, range (0, 100]. Default "1" (= 1%). CLI converts to BE decimal wire format internally.
+        #[arg(long, default_value = "1")]
         slippage: String,
         #[arg(long)]
         wallet: String,
@@ -453,7 +455,7 @@ pub enum CrossChainCommand {
         #[arg(long, conflicts_with = "bridge_id")]
         route_index: Option<usize>,
         /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
-        #[arg(long)]
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["0", "1", "2"]))]
         sort: Option<String>,
         /// Allowed bridges (comma-separated bridge ids)
         #[arg(long)]
@@ -576,6 +578,8 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             }
             let from_token = crate::token_alias::resolve_and_validate(&from_idx, &from, "from")?;
             let to_token = crate::token_alias::resolve_and_validate(&to_idx, &to, "to")?;
+            crate::commands::swap::validate_slippage(&slippage)?;
+            let slippage_decimal = cross_chain_slippage_percent_to_decimal(&slippage)?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
                 amount.as_deref(),
@@ -592,7 +596,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
                     &from_token,
                     &to_token,
                     &raw_amount,
-                    &slippage,
+                    &slippage_decimal,
                     wallet.as_deref(),
                     check_approve,
                     bridge_id.as_deref(),
@@ -610,13 +614,14 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             token,
             wallet,
             bridge_id,
-            readable_amount,
+            amount,
             check_allowance,
         } => {
             let chain_idx = crate::chains::resolve_chain(&chain).to_string();
             crate::chains::ensure_supported_chain(&chain_idx, &chain)?;
             let resolved_token =
                 crate::token_alias::resolve_and_validate(&chain_idx, &token, "token")?;
+            crate::commands::swap::validate_non_negative_integer(&amount, "amount")?;
             output::success(
                 fetch_approve_tx(
                     &mut client,
@@ -624,7 +629,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
                     &resolved_token,
                     &wallet,
                     &bridge_id,
-                    &readable_amount,
+                    &amount,
                     check_allowance,
                 )
                 .await?,
@@ -652,9 +657,12 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             crate::chains::ensure_supported_chain(&to_idx, &to_chain)?;
             let from_token = crate::token_alias::resolve_and_validate(&from_idx, &from, "from")?;
             let to_token = crate::token_alias::resolve_and_validate(&to_idx, &to, "to")?;
+            crate::token_alias::validate_address_for_chain(&from_idx, &wallet, "wallet")?;
             if let Some(ref addr) = receive_address {
                 validate_receive_address(addr, &to_idx)?;
             }
+            crate::commands::swap::validate_slippage(&slippage)?;
+            let slippage_decimal = cross_chain_slippage_percent_to_decimal(&slippage)?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
                 amount.as_deref(),
@@ -671,7 +679,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
                     &from_token,
                     &to_token,
                     &raw_amount,
-                    &slippage,
+                    &slippage_decimal,
                     &wallet,
                     receive_address.as_deref(),
                     bridge_id.as_deref(),
@@ -785,6 +793,17 @@ pub(crate) fn validate_receive_address(receive_address: &str, to_chain_index: &s
     }
 }
 
+/// Cross-chain BE expects slippage as a decimal (0.002–0.5). CLI input is
+/// percent (0, 100]; this helper does the ÷100 conversion before the wire
+/// layer. Caller must already have run `swap::validate_slippage(percent)?`.
+fn cross_chain_slippage_percent_to_decimal(percent: &str) -> Result<String> {
+    let p: f64 = percent
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--slippage `{percent}` is not a number"))?;
+    Ok(format!("{}", p / 100.0))
+}
+
 // ── Execute orchestration (4-step flow) ────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -816,9 +835,12 @@ async fn cmd_execute(
 
     let from_token = crate::token_alias::resolve_and_validate(&from_idx, from, "from")?;
     let to_token = crate::token_alias::resolve_and_validate(&to_idx, to, "to")?;
+    crate::token_alias::validate_address_for_chain(&from_idx, wallet, "wallet")?;
     if let Some(addr) = receive_address {
         validate_receive_address(addr, &to_idx)?;
     }
+    crate::commands::swap::validate_slippage(slippage)?;
+    let slippage_decimal = cross_chain_slippage_percent_to_decimal(slippage)?;
 
     let raw_amount = crate::commands::swap::resolve_amount_arg(
         client,
@@ -841,7 +863,7 @@ async fn cmd_execute(
         &from_token,
         &to_token,
         &raw_amount,
-        slippage,
+        &slippage_decimal,
         Some(wallet),
         true, // checkApprove=true so server fills needApprove from on-chain allowance
         bridge_id,
@@ -994,7 +1016,7 @@ async fn cmd_execute(
         &from_token,
         &to_token,
         &raw_amount,
-        slippage,
+        &slippage_decimal,
         wallet,
         receive_address,
         Some(&resolved_bridge_id),
