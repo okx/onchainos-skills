@@ -578,7 +578,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             }
             let from_token = crate::token_alias::resolve_and_validate(&from_idx, &from, "from")?;
             let to_token = crate::token_alias::resolve_and_validate(&to_idx, &to, "to")?;
-            crate::commands::swap::validate_slippage(&slippage)?;
+            crate::validators::validate_slippage(&slippage)?;
             let slippage_decimal = cross_chain_slippage_percent_to_decimal(&slippage)?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
@@ -621,7 +621,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             crate::chains::ensure_supported_chain(&chain_idx, &chain)?;
             let resolved_token =
                 crate::token_alias::resolve_and_validate(&chain_idx, &token, "token")?;
-            crate::commands::swap::validate_non_negative_integer(&amount, "amount")?;
+            crate::validators::validate_non_negative_integer(&amount, "amount")?;
             output::success(
                 fetch_approve_tx(
                     &mut client,
@@ -661,7 +661,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             if let Some(ref addr) = receive_address {
                 validate_receive_address(addr, &to_idx)?;
             }
-            crate::commands::swap::validate_slippage(&slippage)?;
+            crate::validators::validate_slippage(&slippage)?;
             let slippage_decimal = cross_chain_slippage_percent_to_decimal(&slippage)?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
@@ -839,7 +839,7 @@ async fn cmd_execute(
     if let Some(addr) = receive_address {
         validate_receive_address(addr, &to_idx)?;
     }
-    crate::commands::swap::validate_slippage(slippage)?;
+    crate::validators::validate_slippage(slippage)?;
     let slippage_decimal = cross_chain_slippage_percent_to_decimal(slippage)?;
 
     let raw_amount = crate::commands::swap::resolve_amount_arg(

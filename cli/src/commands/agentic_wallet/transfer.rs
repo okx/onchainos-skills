@@ -2,8 +2,8 @@ use anyhow::{bail, Context, Result};
 use base64::Engine;
 use serde_json::{json, Value};
 
-use crate::commands::swap::{validate_amount, validate_non_negative_integer};
 use crate::token_alias::validate_address_for_chain;
+use crate::validators::{validate_amount, validate_non_negative_integer};
 use crate::keyring_store;
 use crate::output;
 use crate::wallet_api::WalletApiClient;

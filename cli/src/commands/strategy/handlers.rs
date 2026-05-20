@@ -252,7 +252,7 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     };
 
     let slippage_raw = args.slippage.as_deref().unwrap_or(DEFAULT_SLIPPAGE_VALUE);
-    crate::commands::swap::validate_slippage(slippage_raw)?;
+    crate::validators::validate_slippage(slippage_raw)?;
     let preset = build_default_preset(slippage_raw, args.mev_protection.to_opt_bool(), dir);
 
     // 2. Build the time fields of the intent: Created At / Expired At /
@@ -437,25 +437,6 @@ pub async fn cancel(ctx: &Context, args: CancelArgs) -> Result<()> {
     Ok(())
 }
 
-/// BE expects orderId as Long (≤ 32 digits to stay clearly within i64); reject
-/// non-numeric strings early so BE doesn't have to.
-fn validate_order_id_numeric(id: &str, label: &str) -> Result<()> {
-    let trimmed = id.trim();
-    if trimmed.is_empty() {
-        bail!("--{label} must not be empty");
-    }
-    if !trimmed.chars().all(|c| c.is_ascii_digit()) {
-        bail!("--{label} must be a numeric order id, got `{trimmed}`");
-    }
-    if trimmed.len() > 32 {
-        bail!(
-            "--{label} `{trimmed}` is too long ({} digits); order ids must be ≤ 32 digits",
-            trimmed.len()
-        );
-    }
-    Ok(())
-}
-
 fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq> {
     if args.all {
         return Ok(CancelReq {
@@ -474,7 +455,7 @@ fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq
             bail!("--order-ids parsed into an empty list");
         }
         for id in &parsed {
-            validate_order_id_numeric(id, "order-ids")?;
+            crate::validators::validate_order_id_numeric(id, "order-ids")?;
         }
         return Ok(CancelReq {
             account_id: account_id.to_string(),
@@ -483,7 +464,7 @@ fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq
         });
     }
     if let Some(id) = args.order_id.as_ref() {
-        validate_order_id_numeric(id, "order-id")?;
+        crate::validators::validate_order_id_numeric(id, "order-id")?;
         return Ok(CancelReq {
             account_id: account_id.to_string(),
             order_ids: Some(vec![id.clone()]),
@@ -731,7 +712,7 @@ pub async fn resume(ctx: &Context, args: ResumeArgs) -> Result<()> {
             .filter(|s| !s.is_empty())
             .collect();
         for id in &parsed {
-            validate_order_id_numeric(id, "order-ids")?;
+            crate::validators::validate_order_id_numeric(id, "order-ids")?;
         }
         parsed
     } else {
