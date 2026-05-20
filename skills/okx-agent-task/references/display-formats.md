@@ -4,11 +4,11 @@
 
 **Table convention (matches `okx-agent-identity`):** every table in every output is a **Markdown pipe table** — header row of `|` cells + a separator row of `|---|`. Do not wrap tables in code blocks; do not use Unicode box-drawing characters (`┌ ├ │ └ ─`). They render as a single top line in most clients and look broken.
 
-**Truncation rule:** table cell values **≤ 200 characters**.超过 200 字符用 `…` 截断。长文本字段（描述、验收标准、交付物内容等）在表格外用 prose 格式完整展示（见各模板的 prose 区域）。
+**Truncation rule:** table cell values **≤ 200 characters**. Anything over 200 characters is truncated with `…`. Long-text fields (description, acceptance criteria, deliverable content, etc.) are rendered in full as prose outside the table (see the prose region of each template).
 
 **Language matching.** Field labels must match the user's language. Each section below shows Chinese-variant and English-variant; render one variant, not both.
 
-**Short jobId rule.** jobId 是 hex hash，在表格和通知中使用缩写形式：`0x` + 前 4 位 + `…` + 后 4 位（如 `0xbb31…ba4f`）。同时显示内部编号 `#N`（如有）。用户要求完整 hash 时才展示全文。
+**Short jobId rule.** `jobId` is a hex hash. In tables and notifications, render it in short form: `0x` + first 4 chars + `…` + last 4 chars (e.g. `0xbb31…ba4f`). Also show the internal sequence number `#N` (if any). Only render the full hash when the user explicitly asks for it.
 
 ---
 
@@ -24,10 +24,10 @@
 Rules:
 
 - Four columns, exactly.
-- `jobId`: short-form + internal id。
-- `标题`: truncate to 20 chars with `…`.
-- `预算`: `{tokenAmount} {paymentTokenSymbol}`.
-- `状态`: emoji prefix + status string. Emoji mapping: 🟢 Created, 🔵 Accepted, 📦 Submitted, ❌ Refused, ⚖️ Disputed, ✅ Complete, 🔒 Closed, ⏰ Expired.
+- `jobId`: short-form + internal id.
+- `标题` / `Title`: truncate to 20 chars with `…`.
+- `预算` / `Budget`: `{tokenAmount} {paymentTokenSymbol}`.
+- `状态` / `Status`: emoji prefix + status string. Emoji mapping: 🟢 Created, 🔵 Accepted, 📦 Submitted, ❌ Refused, ⚖️ Disputed, ✅ Complete, 🔒 Closed, ⏰ Expired.
 
 ---
 
@@ -79,12 +79,12 @@ Return temperature, humidity, wind, weather condition in Chinese.
 
 Rules:
 
-- Two-column table for all fields. 描述 ≤ 200 字符时放表格内；> 200 字符时表格该行写 `见下方`，在表格下方用 prose 完整展示。
-- `任务 ID`: short-form hash + internal id.
-- `支付方式`: render as user-language label — `担保支付 (Escrow)` / `x402`.
-- `可见性`: `公开 (Public)` / `私有 (Private)`.
-- `状态`: emoji + status string + one-line description.
-- `买家` / `卖家`: `Agent #<id>`, or `尚未匹配` / `Not matched`.
+- Two-column table for all fields. When the description is ≤ 200 chars, put it in the table; when > 200 chars, write `见下方` / `See below` in that row and render the full text as prose under the table.
+- `任务 ID` / `Task ID`: short-form hash + internal id.
+- `支付方式` / `Payment`: render as user-language label — `担保支付 (Escrow)` / `Escrow` / `x402`.
+- `可见性` / `Visibility`: `公开 (Public)` / `私有 (Private)` / `Public` / `Private`.
+- `状态` / `Status`: emoji + status string + one-line description.
+- `买家` / `卖家` / `Buyer` / `Provider`: `Agent #<id>`, or `尚未匹配` / `Not matched`.
 - If a field is absent, omit the row.
 
 ---
@@ -123,9 +123,9 @@ English variant:
 
 Rules:
 
-- 摘要始终放在表格内。
-- 描述 ≤ 200 字符时放表格内；> 200 字符时表格该行写 `见下方`，在表格下方用 prose 完整展示。
-- 不展示验收标准字段。
+- The summary always goes inside the table.
+- When the description is ≤ 200 chars, put it in the table; when > 200 chars, write `见下方` / `See below` in that row and render the full text as prose under the table.
+- Do not display the acceptance criteria field.
 - Chinese/English field labels match user language.
 - Footer must be a blockquote asking for confirmation.
 
@@ -207,7 +207,7 @@ Rules:
 Rules:
 
 - Table for short metadata (task ref, provider, file path / URL).
-- **交付内容** / **卖家说明** / **验收标准**: always in prose — full text, no truncation. Buyer needs complete content for verification.
+- **交付内容** / **卖家说明** / **验收标准** (Chinese variant) — **Deliverable Content** / **Provider Notes** / **Quality Standards** (English variant): always in prose — full text, no truncation. Buyer needs complete content for verification.
 - Wrap URLs in backticks.
 - Footer blockquote with acceptance prompt.
 
@@ -244,13 +244,16 @@ Rules:
 Format: task prefix + context + numbered options.
 
 ```
-[Task <short_id> you as buyer/卖家] <context description>
+[Task <short_id> you as <role>] <context description>
 
-请选择：
+<choose-prompt>:
 A. <option_1>
 B. <option_2>
-C. <option_3>（if applicable）
+C. <option_3> (if applicable)
 ```
+
+- `<role>` resolves to `buyer` / `seller` (English) or `买家` / `卖家` (Chinese).
+- `<choose-prompt>` resolves to `Please choose:` (English) or `请选择：` (Chinese).
 
 Examples:
 
@@ -276,7 +279,7 @@ B. 拒绝交付物 — 回复「拒绝：<原因>」
 
 Rules:
 
-- Task prefix in square brackets: `[Task <short_id> 你作为<role>]`.
+- Task prefix in square brackets: `[Task <short_id> you as <role>]` (English) or `[Task <short_id> 你作为<role>]` (Chinese).
 - Context in plain text, 1-2 sentences.
 - Options labeled with `A.` / `B.` / `C.`, each on its own line with action instruction.
 - Deadline warnings with `⚠️` emoji.
@@ -295,7 +298,7 @@ Rules:
 
 - Same format as `okx-agent-identity` §7.
 - First line: `❌` + bold summary.
-- `原因`: user-friendly translation.
-- `下一步`: concrete recovery action.
+- `原因` (Chinese) / `Reason` (English): user-friendly translation.
+- `下一步` (Chinese) / `Next step` (English): concrete recovery action.
 - Last line: raw CLI message in inline code — never translated.
 - Never auto-retry.
