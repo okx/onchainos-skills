@@ -181,6 +181,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              [Role] ASP (Agent Service Provider)\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
              **Step 1 — Use `xmtp_dispatch_user` to push the apply-accepted notification to the user**:\n\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              {user_notify}\n\n\
@@ -241,10 +242,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ Do NOT send `xmtp_send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\n\
              **Step 1 — Use `xmtp_prompt_user` to push the decision request to the user**:\n\n\
              First call `session_status` to get the current sessionKey (only once per turn — see hard rule 6); before calling `xmtp_prompt_user`, call `pending-decisions add` first (see hard rule 7).\n\
+             🌐 **Localize `userContent` first** — rewrite the user-facing `userContent` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Keep `llmContent` (the protocol header `[USER_DECISION_REQUEST]...` and the relay routing rules) intact — that part is consumed by the user-side LLM, not shown to the user. Do NOT pass the English `userContent` template verbatim to a non-English user.\n\
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <full sessionKey returned by session_status>][job: {job_id}][role: provider] \
              🛑 After rendering userContent **you MUST end this turn and wait for real user input** — [USER_DECISION_REQUEST] is a **question**, not an **answer**; do NOT fabricate the user's decision in the same turn (do not hallucinate replies like `agree to refund` / `raise dispute`). Only after the user's actual message arrives in the next turn, relay according to the rules below. \
+             🛑🛑🛑 **HARDSTOP — what counts as `user replied`**: the ONLY valid user reply is an **actual user message arriving as an inbound in a LATER turn's tool_result** (NOT this turn). After you call `xmtp_prompt_user` this turn, you MUST end the turn; the user has NOT spoken yet. Your own thinking / narration / paraphrasing the userContent options does NOT count as the user replying. **Specifically forbidden**: synthesizing `agree to refund` / `start dispute` from the option list; reusing the User Agent's prior chat messages or task title as a `user decision`. If in this turn there is no genuine user-input inbound, **relay is forbidden — full stop, no exceptions**. Violating this rule = on-chain dispute / refund executed without the user actually choosing = potential escrow loss. \
              User intent 「发起仲裁/不接受/dispute/start arbitration/我做的没问题 等 + 给出理由」 → **only call** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:START_DISPUTE] user said: <user reply verbatim, no interpretation, no translation>; reason: <a concise reason extracted from the original wording>\") to relay back to the Session that sub_key belongs to, **and stop there** (the Session that sub_key belongs to will run dispute_raise on its own after receiving it; do not do anything else); \
              User intent 「同意退款/退款/agree refund/refund OK 等」 → **only call** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:AGREE_REFUND] user said: <user reply verbatim, no interpretation, no translation>\") to relay back to the Session that sub_key belongs to, **and stop there** (the Session that sub_key belongs to will run agree_refund on its own after receiving it; do not do anything else). \
              ⚠️ **Routing tag protocol**: `[intent:START_DISPUTE]` / `[intent:AGREE_REFUND]` MUST be inserted verbatim in **fully uppercase ASCII**; do NOT translate / rewrite — sub branches by intent tag.\n\
@@ -326,6 +329,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              Extract title + tokenAmount + tokenSymbol + buyerAgentId (needed for the next step).\n\n\
              **Step 2 — Use `xmtp_dispatch_user` to notify the user of task completion + a light rating nudge**:\n\n\
              ⚠️ **Do NOT take over the rating flow** — scoring / review is handled by the `okx-agent-identity` skill. The content tail just needs a colloquial nudge; **do NOT write** skill names / event names / state names / CLI flags or other technical jargon (the user won't understand them).\n\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              {user_notify}\n\n\
@@ -361,6 +365,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **A-Step 3 — Use `xmtp_dispatch_user` to notify the user of the win + claim result**:\n\n\
              From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId.\n\
              ⚠️ content is the **chat the user will see** — plain natural language; **do NOT use** skill names / event names / state names / CLI flags or other technical jargon.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              content (choose based on whether A-Step 2 actually claimed):\n\
              \x20\x20Claimed:\n\
@@ -372,6 +377,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **B-Step 1 — Use `xmtp_dispatch_user` to notify the user of the loss**:\n\n\
              From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId.\n\
              ⚠️ Same as A-Step 3 — content plain natural language; no technical jargon.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              {dispute_lost}\n\n\
@@ -403,11 +409,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ Do NOT send `xmtp_send` `arbitration on-chain, preparing evidence` filler to the User Agent — both sides already receive the `job_disputed` system event.\n\n\
              **Step 1 — Use `xmtp_prompt_user` to push the evidence decision request to the user**:\n\n\
              First call `session_status` for the current sessionKey (only once per turn — see hard rule 6); before calling `xmtp_prompt_user`, call `pending-decisions add` first (see hard rule 7).\n\
+             🌐 **Localize `userContent` first** — rewrite the user-facing `userContent` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Keep `llmContent` (the protocol header `[USER_DECISION_REQUEST]...` and the relay routing rules) intact — that part is consumed by the user-side LLM, not shown to the user. Do NOT pass the English `userContent` template verbatim to a non-English user.\n\
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <full sessionKey returned by session_status>][job: {job_id}][role: provider] \
              🛑 After rendering userContent **you MUST end this turn and wait for real user input** — [USER_DECISION_REQUEST] is a **question**, not an **answer**; do NOT fabricate user evidence in the same turn (do not hallucinate evidence text / images). Only after the user's actual message arrives in the next turn, relay according to the rule below. \
-             After the user provides evidence → **only call** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: <full original content from the user — text + image paths, no interpretation, no translation>\") to relay back to the Session that sub_key belongs to, **and stop there** (the Session that sub_key belongs to will run dispute upload on its own after receiving it; do not do anything else). \
+             🛑🛑🛑 **HARDSTOP — what counts as `user provided evidence`**: the ONLY valid evidence is an **actual user message arriving as an inbound in a LATER turn's tool_result** (NOT this turn). After you call `xmtp_prompt_user` this turn, you MUST end the turn; the user has NOT spoken yet. Your own thinking / narration / paraphrasing the task title or description does NOT count as the user providing evidence. **Specifically forbidden**: generating `evidence` by rephrasing the task title (e.g. task title `查询河北天气` → fabricated evidence `证据：已按任务要求完成河北天气查询...`); reusing the User Agent's prior dispute reason (e.g. `理由是XXX` → `证据是XXX`); reusing any earlier chat message. The user has not spoken yet; you cannot speak for them. If in this turn there is no genuine user-input inbound containing evidence, **relay is forbidden — full stop, no exceptions**. Violating this rule = hallucinated evidence uploaded on-chain = arbitration verdict based on fabricated facts = potential escrow loss. \
+             After the user provides evidence (in a SUBSEQUENT turn) → **only call** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: <full original content from the user — text + image paths, no interpretation, no translation>\") to relay back to the Session that sub_key belongs to, **and stop there** (the Session that sub_key belongs to will run dispute upload on its own after receiving it; do not do anything else). \
              ⚠️ **Routing tag protocol**: `[intent:SUBMIT_EVIDENCE]` MUST be inserted verbatim in **fully uppercase ASCII**; do NOT translate / rewrite / omit.\n\
              🛑 Relay MUST use xmtp_dispatch_session (NOT sessions_send), and **call it exactly once** — when the tool returns 'Message dispatched' = success = **immediately terminate all subsequent tool calls in this response** (no more xmtp_dispatch_session / xmtp_send / xmtp_dispatch_user / Exec / pending-decisions etc.). Repeated calls (even with identical sessionKey / content) cause sub to receive N identical relays, triggering an event-recursion loop. **The user session's ONLY action = relay**: do NOT run task CLI yourself / do NOT xmtp_send the User Agent / do NOT xmtp_dispatch_user repeatedly. Must submit within 1 hour.\n\
              userContent:\n\
@@ -684,6 +692,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - `code` = 0 (success) → continue to Step 2.\n\n\
              **Step 2 — Use `xmtp_dispatch_user` to notify the user of fund arrival**:\n\n\
              From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              {user_notify}\n\n\
@@ -708,10 +717,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              Otherwise → continue to Step 1.\n\n\
              **Step 1 — Use `xmtp_prompt_user` to push the deadline warning + decision request to the user**:\n\n\
              First call `session_status` for the current sessionKey (only once per turn — see hard rule 6); before calling `xmtp_prompt_user`, call `pending-decisions add` first (see hard rule 7).\n\
+             🌐 **Localize `userContent` first** — rewrite the user-facing `userContent` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Keep `llmContent` (the protocol header `[USER_DECISION_REQUEST]...` and the relay routing rules) intact — that part is consumed by the user-side LLM, not shown to the user. Do NOT pass the English `userContent` template verbatim to a non-English user.\n\
              tool: xmtp_prompt_user\n\
              llmContent:\n\
              \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <full sessionKey returned by session_status>][job: {job_id}][role: provider] \
              🛑 After rendering userContent **you MUST end this turn and wait for real user input** — [USER_DECISION_REQUEST] is a **question**, not an **answer**; do NOT fabricate the user's decision in the same turn (do not hallucinate replies like `submit immediately`). Only after the user's actual message arrives in the next turn, relay according to the rule below. \
+             🛑🛑🛑 **HARDSTOP — what counts as `user replied`**: the ONLY valid user reply is an **actual user message arriving as an inbound in a LATER turn's tool_result** (NOT this turn). After you call `xmtp_prompt_user` this turn, you MUST end the turn; the user has NOT spoken yet. Your own thinking / narration / paraphrasing the userContent options does NOT count as the user replying. **Specifically forbidden**: synthesizing `submit immediately` from the option list; treating any earlier inbound or task title as a `user decision`. If in this turn there is no genuine user-input inbound, **relay is forbidden — full stop, no exceptions**. Violating this rule = delivery triggered without the user actually asking for it. \
              User intent 「立即提交/我提交/submit now/I'll deliver/ready 等」 → call xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_IMMEDIATELY] user said: <user reply verbatim, no interpretation, no translation>\") to trigger the current task's delivery flow; if the user doesn't reply or replies with something else → do NOT relay; let it time out via submit_expired into auto-refund. \
              ⚠️ **Routing tag protocol**: `[intent:SUBMIT_IMMEDIATELY]` MUST be inserted verbatim in **fully uppercase ASCII**; do NOT translate / rewrite.\n\
              🛑 Relay MUST use xmtp_dispatch_session (NOT sessions_send), and **call it exactly once** — when the tool returns 'Message dispatched' = success = **immediately terminate all subsequent tool calls in this response** (no more xmtp_dispatch_session / xmtp_send / xmtp_dispatch_user / Exec / pending-decisions etc.). Repeated calls (even with identical sessionKey / content) cause sub to receive N identical relays, triggering an event-recursion loop.\n\
