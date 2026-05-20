@@ -162,26 +162,28 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      用户语义「否定/拒绝/reject/decline/no 等 + 给出原因」→ **仅调** xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] 用户原话：<用户回复原文，包含原因>\") relay 回 sub session，**到此为止**（sub session 收到后自己跑 reject_review 流程，你不要做其它事）。\
      ⚠️ **路由 tag 协议**：`[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` 必须**完全大写 ASCII** 原样塞入，**禁止翻译 / 改写 / 省略 / 拆开**——sub 按 intent tag 分支，不再按文字匹配，避免多语言失配。\n\
      ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。⚠️ xmtp_dispatch_session 只调用**一次**。{CONSTRAINT}\n\
-     \x20\x20\x20\x20userContent（按 deliverableType 分,首行务必带 `[任务 {short_id} 你作为用户]` 前缀）：\n\n\
-     \x20\x20\x20\x20▸ deliverableType=file：\n\
-     \x20\x20\x20\x20[任务 {short_id} 你作为用户] 服务商已提交交付物（文件），已下载到本地。\n\
-     \x20\x20\x20\x20📁 交付物文件路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/task预发.png，严禁只写文件名）\n\
-     \x20\x20\x20\x20<如果 deliverableText 非空，追加：服务商说明：<deliverableText>>\n\
-     \x20\x20\x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\
-     \x20\x20\x20\x20支付方式：担保\n\
-     \x20\x20\x20\x20请选择：\n\
-     \x20\x20\x20\x201. 验收通过 → 回复「验收通过」\n\
-     \x20\x20\x20\x202. 拒绝 → 回复「拒绝，原因是<原因>」\n\n\
-     \x20\x20\x20\x20▸ deliverableType=text：\n\
-     \x20\x20\x20\x20[任务 {short_id} 你作为用户] 服务商已提交交付物（文字）。\n\
-     \x20\x20\x20\x20---交付物内容---\n\
-     \x20\x20\x20\x20<deliverableText 完整原文，不截断不概括>\n\
-     \x20\x20\x20\x20---交付物结束---\n\
-     \x20\x20\x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\
-     \x20\x20\x20\x20支付方式：担保\n\
-     \x20\x20\x20\x20请选择：\n\
-     \x20\x20\x20\x201. 验收通过 → 回复「验收通过」\n\
-     \x20\x20\x20\x202. 拒绝 → 回复「拒绝，原因是<原因>」\n\n\
+     \x20\x20\x20\x20userContent (split by deliverableType; first line must include `[Job {short_id} — you are the User Agent]` prefix):\n\n\
+     \x20\x20\x20\x20▸ deliverableType=file:\n\
+     \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (file); it has been downloaded locally.\n\
+     \x20\x20\x20\x20📁 Deliverable file path: <localPath> (⚠️ must be full absolute path, e.g. /Users/xxx/Downloads/task.png; do not write filename only)\n\
+     \x20\x20\x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
+     \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
+     \x20\x20\x20\x20Quality standards: <qualityStandards>\n\
+     \x20\x20\x20\x20Payment: escrow\n\
+     \x20\x20\x20\x20Choose:\n\
+     \x20\x20\x20\x201. Approve → reply \"approve\"\n\
+     \x20\x20\x20\x202. Reject → reply \"reject, because <reason>\"\n\n\
+     \x20\x20\x20\x20▸ deliverableType=text:\n\
+     \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
+     \x20\x20\x20\x20---Deliverable---\n\
+     \x20\x20\x20\x20<deliverableText full content, no truncation, no summarization>\n\
+     \x20\x20\x20\x20---End of deliverable---\n\
+     \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
+     \x20\x20\x20\x20Quality standards: <qualityStandards>\n\
+     \x20\x20\x20\x20Payment: escrow\n\
+     \x20\x20\x20\x20Choose:\n\
+     \x20\x20\x20\x201. Approve → reply \"approve\"\n\
+     \x20\x20\x20\x202. Reject → reply \"reject, because <reason>\"\n\n\
      ═══════════════════════════════════════════════════════════════\n\
      🛑🛑🛑 STOP — Step 3 xmtp_prompt_user 调完后 **必须结束本 turn**\n\
      ═══════════════════════════════════════════════════════════════\n\
@@ -195,19 +197,21 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      ⚠️ x402 流程中资金已在 job_accepted 阶段支付，用户**不能拒绝交付物**，只需通知。\n\
      \n\
      **B-Step 1 — 调用 xmtp_dispatch_user 通知用户收到交付物（按 deliverableType 分）：**\n\n\
-     \x20\x20▸ deliverableType=file：\n\
+     \x20\x20▸ deliverableType=file:\n\
      \x20\x20content:\n\
-     \x20\x20[交付物已收到] 任务 {job_id} 服务商已提交交付物（x402 模式，资金已支付）。\n\
-     \x20\x20📁 交付物文件路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/task预发.png，严禁只写文件名）\n\
-     \x20\x20<如果 deliverableText 非空，追加：服务商说明：<deliverableText>>\n\
-     \x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\n\
-     \x20\x20▸ deliverableType=text：\n\
+     \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
+     \x20\x20📁 Deliverable file path: <localPath> (⚠️ must be full absolute path, e.g. /Users/xxx/Downloads/task.png; do not write filename only)\n\
+     \x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
+     \x20\x20Deliverable URL: <deliverableUrl>\n\
+     \x20\x20Quality standards: <qualityStandards>\n\n\
+     \x20\x20▸ deliverableType=text:\n\
      \x20\x20content:\n\
-     \x20\x20[交付物已收到] 任务 {job_id} 服务商已提交交付物（x402 模式，资金已支付）。\n\
-     \x20\x20---交付物内容---\n\
-     \x20\x20<deliverableText 完整原文，不截断不概括>\n\
-     \x20\x20---交付物结束---\n\
-     \x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\n\
+     \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
+     \x20\x20---Deliverable---\n\
+     \x20\x20<deliverableText full content, no truncation, no summarization>\n\
+     \x20\x20---End of deliverable---\n\
+     \x20\x20Deliverable URL: <deliverableUrl>\n\
+     \x20\x20Quality standards: <qualityStandards>\n\n\
      **B-Step 2 — 终态收尾（保留 sub session）：**\n\
      {terminal_session_hint}\n\
      ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价服务商，请回复「评价」。」\n\

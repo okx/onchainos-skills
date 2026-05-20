@@ -49,7 +49,7 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20比较 x402-check 的 `amountHuman` 与 services[0] 的 `feeAmount`：\n\
              \x20\x20- 不一致（差异 > 1%）→ 调用 xmtp_prompt_user 询问用户是否接受实际价格：\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「肯定/接受/accept/OK/同意 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 继续 DX-Step 3；用户语义「否定/拒绝/reject/decline/no 等」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] 用户原话：<用户回复原文，不解读、不翻译>\") relay 回 sub session 引导换服务商。⚠️ **路由 tag 协议**：`[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` 必须**完全大写 ASCII** 原样塞入，禁止翻译/改写——sub 按 intent tag 分支，不读用户原话做匹配。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
-             \x20\x20\x20\x20userContent: 任务 {job_id} 指定服务商（AgentID={dp_id}）实际收费 <amountHuman> <tokenSymbol>，与注册费用 <feeAmount> <feeTokenSymbol> 不一致，是否接受？\n\
+             \x20\x20\x20\x20userContent: Job `{job_id}` — the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
              \x20\x20- 一致 → 继续 DX-Step 3。\n\n\
              \x20\x20**DX-Step 3 — 预算检查：**\n\
              \x20\x20先调 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}`，提取 `paymentMostTokenAmount`（最高预算）和任务的 `tokenSymbol`。\n\
@@ -318,10 +318,10 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              如果有结果 → 回到 Step 2 展示新列表给用户。\n\
              如果为空 → 调用 xmtp_prompt_user 通知用户无更多服务商，引导选择（需要用户决策，不能用 xmtp_dispatch_user）：\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] 用户语义「选 A / 指定服务商」并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<用户提供的agentId>] 用户原话：<用户回复原文>\") relay 回 sub session；用户语义「选 B / 公开」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] 用户原话：<用户回复原文>\") relay；用户语义「选 C / 关闭」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] 用户原话：<用户回复原文>\") relay。⚠️ 路由 tag 协议同上。⚠️ relay 必须使用 xmtp_dispatch_session。禁止 user session agent 自己执行 task CLI。{CONSTRAINT}\n\
-             \x20\x20\x20\x20userContent: [任务 {short_id} 你作为用户] 没有更多推荐服务商了。请选择下一步：\n\
-             \x20\x20\x20\x20A. 指定服务商 — 请提供服务商 agentId\n\
-             \x20\x20\x20\x20B. 转为公开任务 — 让更多服务商看到任务\n\
-             \x20\x20\x20\x20C. 关闭任务\n\n\
+             \x20\x20\x20\x20userContent: [Job {short_id} — you are the User Agent] All recommended ASPs have been tried; no match found. Choose next step:\n\
+             \x20\x20\x20\x20A. Specify an ASP — provide the ASP's agentId\n\
+             \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
+             \x20\x20\x20\x20C. Close the job — cancel and refund\n\n\
              ▸ 用户选择转为公开任务 → `onchainos agent set-public {job_id}`\n\n\
              ▸ 用户选择关闭任务 → `onchainos agent close {job_id}`",
              CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
@@ -425,12 +425,12 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \x20\x20⚠️ intent tag 必须完全大写 ASCII 原样塞入，禁止翻译/改写。relay 必须使用 xmtp_dispatch_session。禁止 user session agent 自己执行建群或 task CLI。{CONSTRAINT}\n\
      \x20\x20⚠️ 映射表必须从 pending list 逐行提取并内联到 llmContent——user session agent 看不到 userContent，没有映射表就无法把序号转为 AgentID。\n\
      \x20\x20userContent:\n\
-     \x20\x20[任务 {short_id} 你作为用户] 有以下服务商主动联系你，请选择一个开始协商：\n\
+     \x20\x20[Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
      \x20\x20\n\
-     \x20\x20[遍历 pending list 每个服务商，格式：]\n\
-     \x20\x20<序号>. 服务商 AgentID：<agentId> | 名称：<name> | 信用分：<creditScore> | 完成任务数：<completedTaskCount>\n\
+     \x20\x20[iterate pending list; format per ASP:]\n\
+     \x20\x20<N>. agentId: <agentId> | name: <name> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
      \x20\x20\n\
-     \x20\x20请回复服务商序号开始协商，或回复「全部跳过」。\n\n\
+     \x20\x20Reply with the ASP's number to start, or reply \"skip all\".\n\n\
      **Step 3 — 收到 `[USER_DECISION_RELAY][intent:CODE] 用户原话：...` 后按 intent code 路由：**\n\n\
      ━━━━━━━━━ 分支 A：`[intent:PICK_PROVIDER index=<N> agentId=<X>]` → 建立 session 后协商 ━━━━━━━━━\n\n\
      A-Step 1：从 intent tag 里直接读 `agentId=<X>`，调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
