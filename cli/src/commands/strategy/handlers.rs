@@ -250,7 +250,7 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
                 from_token, resolved_chain
             )
         })?;
-    let from_amount_raw = trader_mode::shift_value(&args.amount, from_decimals)?;
+    let from_amount_raw = trader_mode::human_decimal_to_raw_integer(&args.amount, from_decimals)?;
 
     let rule = Rule {
         from_token_address: from_token.clone(),

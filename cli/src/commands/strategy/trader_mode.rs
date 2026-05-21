@@ -79,7 +79,7 @@ pub fn build_intent(args: BuildIntentArgs<'_>) -> String {
 /// excess fractional digits, and zero results.
 /// Examples: `("0.01", 6)` → `"10000"`, `("1.5", 18)` → `"1500000000000000000"`.
 /// `pub(super)` to keep the strict zero-reject rule scoped to strategy callers.
-pub(super) fn shift_value(amount: &str, decimals: u32) -> Result<String> {
+pub(super) fn human_decimal_to_raw_integer(amount: &str, decimals: u32) -> Result<String> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {
         bail!("amount is empty");
@@ -241,41 +241,41 @@ mod tests {
         assert!(lines[2].starts_with("Chain Index:"));
     }
 
-    // ── shift_value ──────────────────────────────────────────────
+    // ── human_decimal_to_raw_integer ──────────────────────────────────────────────
 
     #[test]
-    fn shift_value_typical_cases() {
-        assert_eq!(shift_value("0.01", 6).unwrap(), "10000");        // 0.01 USDC → 10000
-        assert_eq!(shift_value("1", 18).unwrap(), "1000000000000000000"); // 1 ETH
-        assert_eq!(shift_value("1.5", 18).unwrap(), "1500000000000000000");
-        assert_eq!(shift_value("100", 6).unwrap(), "100000000");
-        assert_eq!(shift_value("12", 6).unwrap(), "12000000");        // 12 USDC → 12000000
-        assert_eq!(shift_value("0.000001", 6).unwrap(), "1");        // smallest USDC unit
-        assert_eq!(shift_value(".5", 6).unwrap(), "500000");          // ".5" = "0.5"
+    fn human_decimal_to_raw_integer_typical_cases() {
+        assert_eq!(human_decimal_to_raw_integer("0.01", 6).unwrap(), "10000");        // 0.01 USDC → 10000
+        assert_eq!(human_decimal_to_raw_integer("1", 18).unwrap(), "1000000000000000000"); // 1 ETH
+        assert_eq!(human_decimal_to_raw_integer("1.5", 18).unwrap(), "1500000000000000000");
+        assert_eq!(human_decimal_to_raw_integer("100", 6).unwrap(), "100000000");
+        assert_eq!(human_decimal_to_raw_integer("12", 6).unwrap(), "12000000");        // 12 USDC → 12000000
+        assert_eq!(human_decimal_to_raw_integer("0.000001", 6).unwrap(), "1");        // smallest USDC unit
+        assert_eq!(human_decimal_to_raw_integer(".5", 6).unwrap(), "500000");          // ".5" = "0.5"
     }
 
     #[test]
-    fn shift_value_rejects_zero() {
+    fn human_decimal_to_raw_integer_rejects_zero() {
         // After P0 amount fix: "0" / "0.000" / etc. now bail rather than producing "0".
-        assert!(shift_value("0", 6).is_err());
-        assert!(shift_value("0.0", 6).is_err());
-        assert!(shift_value("0.000000", 6).is_err());
+        assert!(human_decimal_to_raw_integer("0", 6).is_err());
+        assert!(human_decimal_to_raw_integer("0.0", 6).is_err());
+        assert!(human_decimal_to_raw_integer("0.000000", 6).is_err());
     }
 
     #[test]
-    fn shift_value_rejects_excess_precision() {
-        let err = shift_value("0.0000001", 6).unwrap_err();
+    fn human_decimal_to_raw_integer_rejects_excess_precision() {
+        let err = human_decimal_to_raw_integer("0.0000001", 6).unwrap_err();
         let s = format!("{err:#}");
         assert!(s.contains("more than"), "want precision-overflow err, got: {s}");
     }
 
     #[test]
-    fn shift_value_rejects_invalid_input() {
-        assert!(shift_value("", 6).is_err());
-        assert!(shift_value("abc", 6).is_err());
-        assert!(shift_value("1.2.3", 6).is_err());
-        assert!(shift_value("-1", 6).is_err()); // negative not supported
-        assert!(shift_value("1e6", 6).is_err()); // scientific not supported
+    fn human_decimal_to_raw_integer_rejects_invalid_input() {
+        assert!(human_decimal_to_raw_integer("", 6).is_err());
+        assert!(human_decimal_to_raw_integer("abc", 6).is_err());
+        assert!(human_decimal_to_raw_integer("1.2.3", 6).is_err());
+        assert!(human_decimal_to_raw_integer("-1", 6).is_err()); // negative not supported
+        assert!(human_decimal_to_raw_integer("1e6", 6).is_err()); // scientific not supported
     }
 
     // ── sign_intent ──────────────────────────────────────────────

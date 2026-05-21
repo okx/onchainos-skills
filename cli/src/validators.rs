@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_readable_to_minimal_str_accepts_leading_dot_and_whitespace() {
-        // Match trader_mode::shift_value's contract: ".5" == "0.5", and
+        // Match trader_mode::human_decimal_to_raw_integer's contract: ".5" == "0.5", and
         // surrounding whitespace is trimmed.
         assert_eq!(readable_to_minimal_str(".5", 6).unwrap(), "500000");
         assert_eq!(readable_to_minimal_str("  1.5  ", 6).unwrap(), "1500000");
