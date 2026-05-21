@@ -1,8 +1,8 @@
-//! 拉取推荐任务（Provider 主动发现 Public 任务）
+//! Fetch recommended tasks (provider-initiated discovery of Public tasks).
 //!
-//! 对应后端 `POST /priapi/v1/aieco/task/job/match`。
-//! 身份从 X-Agent-Id / X-Wallet-Address 头获取，无请求体。
-//! 后端根据 provider 的 skill 描述匹配相关的 Public 任务列表。
+//! Maps to backend `POST /priapi/v1/aieco/task/job/match`.
+//! Identity is taken from the X-Agent-Id / X-Wallet-Address headers; no request body.
+//! Backend matches a list of relevant Public tasks against the provider's skill description.
 
 use anyhow::{bail, Result};
 

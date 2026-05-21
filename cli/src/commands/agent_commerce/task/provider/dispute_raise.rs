@@ -1,14 +1,14 @@
-//! 发起仲裁（卖家）第一步 — onchainos agent dispute raise <jobId> --reason "..."
+//! Raise dispute (provider) step 1 — onchainos agent dispute raise <jobId> --reason "..."
 //!
-//! 仲裁是两阶段链上流程，每阶段独立 tx + 独立链事件：
-//!   阶段 1（本命令）：POST /aieco/task/{jobId}/dispute/approve  → ERC-20 token approve 给 dispute 合约
-//!                     → 等链上 `dispute_approved` 系统通知
-//!   阶段 2（dispute confirm 命令）：POST /aieco/task/{jobId}/dispute → 实际发起仲裁
-//!                     → 等链上 `job_disputed` 系统通知
+//! Dispute is a two-stage on-chain flow; each stage has its own tx and its own chain event:
+//!   Stage 1 (this command): POST /aieco/task/{jobId}/dispute/approve → ERC-20 token approve to the dispute contract
+//!                     → wait for on-chain `dispute_approved` system notification
+//!   Stage 2 (dispute confirm command): POST /aieco/task/{jobId}/dispute → actually raises the dispute
+//!                     → wait for on-chain `job_disputed` system notification
 //!
-//! 本命令只跑阶段 1。完成后必须等 `dispute_approved` 通知到达，再调 `next-action`
-//! 拿阶段 2 剧本，**不能在同一 turn 内连续调 dispute confirm**。
-//! reason 仅作 user-facing log，不上链。
+//! This command runs stage 1 only. After completion, wait for the `dispute_approved` notification
+//! before calling `next-action` to fetch the stage 2 script — **do NOT call dispute confirm in the same turn**.
+//! reason is a user-facing log only; not put on-chain.
 
 use anyhow::{bail, Context, Result};
 use std::time::Duration;
@@ -28,8 +28,8 @@ pub async fn handle_dispute_raise(
     }
     let (account_id, address) = signing::resolve_wallet(None, None)?;
 
-    // 仲裁保证金预检：钱包对应代币余额需 ≥ 任务金额的 5%。
-    // 不足直接 bail，避免后面 approve / dispute 上链浪费 gas。
+    // Dispute deposit precheck: wallet's matching token balance must be ≥ 5% of the job amount.
+    // Insufficient balance bails immediately to avoid wasting gas on later approve / dispute on-chain txs.
     let task_resp = client
         .get_with_identity(&client.task_path(job_id), agent_id)
         .await

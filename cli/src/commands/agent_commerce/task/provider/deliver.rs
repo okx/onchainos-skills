@@ -1,6 +1,6 @@
-//! 卖家提交交付物
+//! Provider submits deliverable.
 //!
-//! 卖家动作：交付 — onchainos agent deliver
+//! Provider action: deliver — onchainos agent deliver
 
 use anyhow::{bail, Result};
 use std::time::Duration;
@@ -10,11 +10,11 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 use crate::commands::agent_commerce::task::signing;
 
-/// deliver — 提交交付物
+/// deliver — submit deliverable
 ///
-/// 1. 前置检查：任务必须在 accepted 状态（status=1）—— 即买家已 confirm-accept 上链
-/// 2. POST submit API（带身份头）→ 获取 uopData
-/// 3. 签名 uopData + 广播上链
+/// 1. Precondition: job must be in accepted state (status=1) — i.e. the buyer has confirm-accept on-chain
+/// 2. POST submit API (with identity headers) → fetch uopData
+/// 3. Sign uopData + broadcast on-chain
 pub async fn handle_deliver(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -26,8 +26,8 @@ pub async fn handle_deliver(
         bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
     }
 
-    // 前置：任务必须 accepted（买家已 confirm-accept、收到链上 job_accepted 通知）才能交付。
-    // 防止 agent 在 apply 完没等买家确认就抢跑 deliver——后端会拒，但提前 bail 让错误更清楚。
+    // Precondition: job must be accepted (buyer has confirm-accept, on-chain job_accepted notification received) before delivery.
+    // Prevents the agent from racing to deliver right after apply without waiting for buyer confirmation — backend rejects this, but an early bail makes the error clearer.
     let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
     let status_int = task_resp["status"]
         .as_i64()
@@ -58,9 +58,9 @@ pub async fn handle_deliver(
     }
 
     let (account_id, address) = signing::resolve_wallet(None, None)?;
-    // 后端 spec：submit endpoint 接受 `evidenceHash` 字段，目前传空字符串占位（链下证据由
-    // /evidence/upload 多 part 上传，不在 submit 阶段提供 hash）。file/message 仍只作
-    // CLI 输入预留位，不上链。
+    // Backend spec: submit endpoint accepts an `evidenceHash` field; for now pass an empty string placeholder (offchain
+    // evidence is uploaded multipart via /evidence/upload — no hash is provided at submit stage). file/message are
+    // kept as CLI input placeholders only; not put on-chain.
     let body = serde_json::json!({
         "evidenceHash": "",
     });

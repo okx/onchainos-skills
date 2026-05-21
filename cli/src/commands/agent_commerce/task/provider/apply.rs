@@ -1,6 +1,6 @@
-//! 卖家申请接单
+//! Provider applies for a job.
 //!
-//! 卖家动作：申请接单 — onchainos agent apply
+//! Provider action: apply for a job — onchainos agent apply
 
 use anyhow::Result;
 use std::time::Duration;
@@ -9,10 +9,10 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// apply — 卖家申请接单
+/// apply — provider applies for a job
 ///
-/// 1. POST apply API（带身份头）→ 获取 uopData
-/// 2. 签名 uopData + 广播上链
+/// 1. POST apply API (with identity headers) → fetch uopData
+/// 2. Sign uopData + broadcast on-chain
 pub async fn handle_apply(
     client: &mut TaskApiClient,
     job_id: &str,
