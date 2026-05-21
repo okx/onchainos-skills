@@ -316,11 +316,12 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              \x20\x20Please choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP | reply \"next page\" for more | reply \"public\" to make the job public | reply \"close\" to close the job.\n\n\
              -> **end this turn** and wait for the user's reply to be relayed back.\n\n\
              **Step 3 - handle the relayed user reply:**\n\n\
-             - The user picked an ASP (agentId=X) -> call `next-action --provider X` to enter the designated-provider flow:\n\
+             - The user picked an ASP (agentId=X) -> 🛑 **MUST call `next-action --provider X`** to enter the designated-provider flow:\n\
              ```bash\n\
              onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId picked by user>\n\
              ```\n\
-             Execute the returned script (it internally queries service-list and routes x402 or A2A).\n\n\
+             Execute the returned script (it internally queries service-list and routes x402 or A2A).\n\
+             ❌ Do NOT skip `next-action` and jump directly to `xmtp_start_conversation` / `xmtp_send` — the returned playbook contains mandatory routing (x402 vs A2A) and negotiation rules that cannot be skipped.\n\n\
              - The user asked for the next page -> run:\n\
              ```bash\n\
              onchainos agent recommend {job_id} --next-page\n\
