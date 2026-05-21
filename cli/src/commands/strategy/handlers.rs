@@ -35,8 +35,7 @@ const ACTIVATE_DEFAULT_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// `sourceType` value for Agentic-Wallet origin (BE-confirmed 2026-05-12).
 const SOURCE_TYPE_AGENTIC: i32 = 4;
 
-// Label strings reused across cancel / resume's order-id validation —
-// kept as consts to avoid singular/plural typos drifting across call sites.
+// order-id labels — const to avoid singular/plural typos.
 const ORDER_ID_LABEL: &str = "order-id";
 const ORDER_IDS_LABEL: &str = "order-ids";
 
@@ -174,8 +173,7 @@ async fn fetch_token_price(
         .map_err(|e| anyhow!("market price `{price_str}` is not a number: {e}"))?;
     if price <= 0.0 || !price.is_finite() {
         bail!(
-            "market price for `{address}` on chain `{chain_index}` is not a positive finite number, got `{price_str}` — \
-             refusing to use it for strategy type derivation (would risk div-by-zero / NaN downstream)"
+            "market price for `{address}` on chain `{chain_index}` must be positive finite, got `{price_str}`"
         );
     }
     Ok(price)
@@ -198,8 +196,6 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     }
 
     // Alias → CA + chain-aware format check (shared with swap / wallet send).
-    // Catches `--to-token usdc` / `--from-token aaa` before they leak to BE.
-    // `label` is bare (no `--` prefix) — validate_address_for_chain adds it.
     let from_token =
         token_alias::resolve_and_validate(&resolved_chain, &args.from_token, "from-token")?;
     let to_token =

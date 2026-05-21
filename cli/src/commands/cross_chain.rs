@@ -589,7 +589,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             }
             let from_token = crate::token_alias::resolve_and_validate(&from_idx, &from, "from")?;
             let to_token = crate::token_alias::resolve_and_validate(&to_idx, &to, "to")?;
-            crate::validators::validate_slippage_decimal(&slippage)?;
+            crate::validators::validate_slippage_zero_to_one(&slippage)?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
                 amount.as_deref(),
@@ -679,7 +679,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             if let Some(ref addr) = receive_address {
                 validate_receive_address(addr, &to_idx)?;
             }
-            crate::validators::validate_slippage_decimal(&slippage)?;
+            crate::validators::validate_slippage_zero_to_one(&slippage)?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
                 amount.as_deref(),
@@ -811,14 +811,21 @@ pub(crate) fn validate_receive_address(receive_address: &str, to_chain_index: &s
 }
 
 
-/// Resolve approve amount from `--amount` (raw, allows "0" for revoke) or
-/// `--readable-amount` (human decimal, converted via token decimals).
-///
-/// Mirrors `swap::resolve_amount_arg` but uses `validate_non_negative_integer`
-/// on the raw path so `"0"` (USDT revoke pattern) is accepted — `swap`'s
-/// helper rejects "0" because no real swap can be zero. Approve is just an
-/// authorisation amount, so even a raw value that exceeds the user's actual
-/// balance is harmless until/unless a spender draws on it.
+/// Canonical zero: `"0"` or `"0.0…"` (only). Rejects `"-0"` / `"00"` / `"0e10"` / `".0"` / `"0."`.
+/// Examples: `"0"` ✓, `"0.000"` ✓, `"-0"` ✗, `"001"` ✗.
+fn is_canonical_zero_str(s: &str) -> bool {
+    if s == "0" {
+        return true;
+    }
+    s.starts_with("0.")
+        && s.len() > 2
+        && s[2..].chars().all(|c| c == '0')
+}
+
+/// Approve amount: raw `--amount` (allows `"0"` for revoke) or `--readable-amount`
+/// (human decimal, fetches token decimals + converts).
+/// Examples: `("500000", None)` → `"500000"`, `(None, "0.5")` → `"500000"` (USDC),
+/// `(None, "0")` → `"0"` (revoke).
 async fn resolve_approve_amount(
     client: &mut ApiClient,
     amount: Option<&str>,
@@ -836,13 +843,9 @@ async fn resolve_approve_amount(
         if readable.is_empty() {
             bail!("--readable-amount must not be empty");
         }
-        // Semantic shortcut: human "0" == raw "0" == revoke. Bypass the
-        // decimals lookup + readable_to_minimal_str (which rejects results
-        // of zero) so callers can revoke from either flag.
-        if let Ok(v) = readable.parse::<f64>() {
-            if v == 0.0 {
-                return Ok("0".to_string());
-            }
+        // Canonical zero → revoke; non-canonical forms fall through to readable_to_minimal_str.
+        if is_canonical_zero_str(readable) {
+            return Ok("0".to_string());
         }
         let info = crate::commands::token::fetch_info(client, token, chain_index)
             .await
@@ -909,7 +912,7 @@ async fn cmd_execute(
     if let Some(addr) = receive_address {
         validate_receive_address(addr, &to_idx)?;
     }
-    crate::validators::validate_slippage_decimal(slippage)?;
+    crate::validators::validate_slippage_zero_to_one(slippage)?;
 
     let raw_amount = crate::commands::swap::resolve_amount_arg(
         client,
@@ -1287,6 +1290,40 @@ fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── is_canonical_zero_str ──────────────────────────────────────────
+
+    #[test]
+    fn canonical_zero_accepts_zero_forms() {
+        assert!(is_canonical_zero_str("0"));
+        assert!(is_canonical_zero_str("0.0"));
+        assert!(is_canonical_zero_str("0.00"));
+        assert!(is_canonical_zero_str("0.000000"));
+    }
+
+    #[test]
+    fn canonical_zero_rejects_signed_and_leading_zero_forms() {
+        // Signed → typo-ish, fall through to a real error
+        assert!(!is_canonical_zero_str("-0"));
+        assert!(!is_canonical_zero_str("+0"));
+        assert!(!is_canonical_zero_str("-0.0"));
+        // Leading-zero — validate_amount rejects elsewhere, keep parity
+        assert!(!is_canonical_zero_str("00"));
+        assert!(!is_canonical_zero_str("001"));
+        assert!(!is_canonical_zero_str("00.0"));
+    }
+
+    #[test]
+    fn canonical_zero_rejects_other_non_canonical_forms() {
+        assert!(!is_canonical_zero_str(""));
+        assert!(!is_canonical_zero_str("0."));        // no trailing digits
+        assert!(!is_canonical_zero_str(".0"));        // no leading "0"
+        assert!(!is_canonical_zero_str("0e10"));      // scientific notation
+        assert!(!is_canonical_zero_str("0.0.0"));     // not a valid number
+        assert!(!is_canonical_zero_str("0.0a"));      // mixed
+        assert!(!is_canonical_zero_str("1"));         // non-zero
+        assert!(!is_canonical_zero_str("0.1"));       // non-zero fractional
+    }
 
     // ── annotate_bridge_id_mismatch ─────────────────────────────────────────
 

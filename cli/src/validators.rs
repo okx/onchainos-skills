@@ -1,17 +1,13 @@
-//! Generic CLI input validators shared across command modules.
-//!
-//! All validators here are domain-agnostic — they care about the shape of
-//! the string (number range, integer-ness, ID format, etc.) rather than
-//! about a particular subcommand's business semantics. Domain-specific
-//! checks (e.g. `validate_swap_mode`, `validate_receive_address` for
-//! cross-chain family pairing) stay in their owning module.
+//! Generic CLI input validators (numeric / id format).
+//! Domain-specific checks (e.g. swap-mode, cross-chain family pairing)
+//! stay in their owning module.
 
 use anyhow::{bail, Result};
 
 // ── numeric validators ───────────────────────────────────────────────
 
-/// Validate that `amount` is a non-empty string of digits (no Infinity, NaN,
-/// negative, zero-only, leading-zeros, or other non-numeric values).
+/// Validate raw integer amount. Rejects empty, decimals, non-digits,
+/// zero, and leading zeros. Example: `"500000"` ✓, `"0"` / `"1.5"` / `"007"` ✗.
 pub fn validate_amount(amount: &str) -> Result<()> {
     let amount = amount.trim();
     if amount.is_empty() {
@@ -36,9 +32,8 @@ pub fn validate_amount(amount: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validate that `slippage` is a number strictly greater than 0 and at most 100.
-/// Accepts decimals like "0.5", "1", "99.9", "100" and trailing `%` (e.g. "20%").
-/// Rejects "0", negatives, >100, non-numeric.
+/// Percent slippage in (0, 100]. Accepts trailing `%`.
+/// Examples: `"1"` = 1%, `"20%"` = 20%, `"100"` = 100%. Used by swap / strategy.
 pub fn validate_slippage(slippage: &str) -> Result<()> {
     let slippage = slippage.trim().trim_end_matches('%').trim();
     let val: f64 = slippage.parse().map_err(|_| {
@@ -62,17 +57,19 @@ pub fn validate_slippage(slippage: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validate that `slippage` is a **decimal** number strictly greater than 0
-/// and at most 1.0 (i.e. 0%-exclusive, 100%-inclusive expressed as fraction).
-/// Used by cross-chain where the BE wire format is already decimal — keeps
-/// the historical CLI input contract intact (e.g. `--slippage 0.5` means
-/// 50%, `--slippage 0.01` means 1%) and avoids silent semantic shifts that
-/// would change effective slippage 100x for deployed scripts.
-///
-/// Distinct from `validate_slippage` (percent, range (0, 100]) which is
-/// used by swap / strategy where CLI input is percent.
-pub fn validate_slippage_decimal(slippage: &str) -> Result<()> {
+/// Decimal slippage in (0, 1]. Rejects `%` suffix (use `validate_slippage` for percent mode).
+/// Examples: `"0.01"` = 1%, `"0.005"` = 0.5%, `"0.5"` = 50%, `"1"` = 100%. Used by cross-chain.
+pub fn validate_slippage_zero_to_one(slippage: &str) -> Result<()> {
     let slippage = slippage.trim();
+    // `%` belongs to percent-mode; reject early with a translation hint so
+    // `--slippage 0.5%` doesn't get silently stripped into 50%.
+    if slippage.ends_with('%') {
+        bail!(
+            "--slippage is decimal here (e.g. 0.01 for 1%, 0.005 for 0.5%); \
+             the '%' suffix only applies to swap/strategy (percent mode). \
+             Drop the '%' and divide by 100, got \"{slippage}\""
+        );
+    }
     let val: f64 = slippage.parse().map_err(|_| {
         anyhow::anyhow!(
             "--slippage must be a decimal number between 0 (exclusive) and 1 (inclusive), got \"{}\"",
@@ -94,8 +91,9 @@ pub fn validate_slippage_decimal(slippage: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validate non-negative integer string (≥ 0). Used for gasLimit, aaDexTokenAmount,
-/// approve amounts (where 0 = revoke), etc.
+/// Non-negative integer string (≥ 0, no leading zeros). Allows `"0"`.
+/// Used for gas-limit / aa-dex-token-amount / approve amount (where `"0"` = revoke).
+/// Examples: `"0"` ✓, `"21000"` ✓, `"007"` / `"-1"` / `"1.5"` ✗.
 pub fn validate_non_negative_integer(value: &str, label: &str) -> Result<()> {
     let value = value.trim();
     if value.is_empty() {
@@ -108,16 +106,14 @@ pub fn validate_non_negative_integer(value: &str, label: &str) -> Result<()> {
             value
         );
     }
-    // Allow "0", but reject leading zeros like "007"
     if value.len() > 1 && value.starts_with('0') {
         bail!("--{} must not have leading zeros, got \"{}\"", label, value);
     }
     Ok(())
 }
 
-/// Backend expects orderId as Java Long (`i64`, max value
-/// `9_223_372_036_854_775_807` — 19 digits). Reject non-numeric strings
-/// and any value that overflows i64 early so BE doesn't have to.
+/// Numeric order id that fits in BE Java Long (`i64`, max 19 digits).
+/// Examples: `"17296046425729984"` ✓, `"abc-1"` / 20-digit overflow ✗.
 pub fn validate_order_id_numeric(id: &str, label: &str) -> Result<()> {
     let trimmed = id.trim();
     if trimmed.is_empty() {
@@ -126,9 +122,6 @@ pub fn validate_order_id_numeric(id: &str, label: &str) -> Result<()> {
     if !trimmed.chars().all(|c| c.is_ascii_digit()) {
         bail!("--{label} must be a numeric order id, got `{trimmed}`");
     }
-    // Reject overflow against i64::MAX (19 digits). `parse::<i64>()` is the
-    // tightest check — also catches the boundary case "9223372036854775808"
-    // (20-th value of 19-digit space that won't fit in i64).
     if trimmed.parse::<i64>().is_err() {
         bail!(
             "--{label} `{trimmed}` does not fit in BE Long range (max {})",
@@ -140,11 +133,9 @@ pub fn validate_order_id_numeric(id: &str, label: &str) -> Result<()> {
 
 // ── conversion helpers ───────────────────────────────────────────────
 
-/// Convert a human-readable decimal string to minimal units (integer string).
-/// Uses string arithmetic to avoid floating-point precision issues.
-/// e.g. "0.1" with decimal=6 → "100000", "1.5" with decimal=18 → "1500000000000000000".
-/// Accepts leading-`.`  form (`".5"` == `"0.5"`) and trims surrounding whitespace
-/// to match `trader_mode::shift_value`'s contract.
+/// Human decimal → raw integer string. Uses string arithmetic (no f64).
+/// Accepts leading `.` (`".5"` == `"0.5"`) and trims whitespace. Rejects results of 0.
+/// Examples: `("0.1", 6)` → `"100000"`, `("1.5", 18)` → `"1500000000000000000"`.
 pub fn readable_to_minimal_str(amount: &str, decimal: u32) -> Result<String> {
     let amount = amount.trim();
     let (integer, frac) = if let Some(dot_pos) = amount.find('.') {
@@ -152,7 +143,6 @@ pub fn readable_to_minimal_str(amount: &str, decimal: u32) -> Result<String> {
     } else {
         (amount, "")
     };
-    // Treat leading `.` as `0.` — `".5"` == `"0.5"`.
     let integer = if integer.is_empty() { "0" } else { integer };
     if !integer.chars().all(|c| c.is_ascii_digit()) {
         bail!(
@@ -298,32 +288,44 @@ mod tests {
     // ── slippage decimal validation ──────────────────────────
 
     #[test]
-    fn test_validate_slippage_decimal_valid() {
-        assert!(validate_slippage_decimal("0.01").is_ok()); // 1%
-        assert!(validate_slippage_decimal("0.5").is_ok()); // 50%
-        assert!(validate_slippage_decimal("1").is_ok()); // 100% upper bound inclusive
-        assert!(validate_slippage_decimal("1.0").is_ok());
-        assert!(validate_slippage_decimal("0.002").is_ok()); // BE lower bound
-        assert!(validate_slippage_decimal("0.5").is_ok()); // BE upper bound
-        assert!(validate_slippage_decimal("  0.05  ").is_ok()); // trimmed
+    fn test_validate_slippage_zero_to_one_valid() {
+        assert!(validate_slippage_zero_to_one("0.01").is_ok()); // 1%
+        assert!(validate_slippage_zero_to_one("0.5").is_ok()); // 50%
+        assert!(validate_slippage_zero_to_one("1").is_ok()); // 100% upper bound inclusive
+        assert!(validate_slippage_zero_to_one("1.0").is_ok());
+        assert!(validate_slippage_zero_to_one("0.002").is_ok()); // BE lower bound
+        assert!(validate_slippage_zero_to_one("0.5").is_ok()); // BE upper bound
+        assert!(validate_slippage_zero_to_one("  0.05  ").is_ok()); // trimmed
     }
 
     #[test]
-    fn test_validate_slippage_decimal_rejects_out_of_range() {
-        assert!(validate_slippage_decimal("0").is_err()); // 0 exclusive
-        assert!(validate_slippage_decimal("0.0").is_err());
-        assert!(validate_slippage_decimal("-0.01").is_err());
-        assert!(validate_slippage_decimal("1.01").is_err()); // > 1
-        assert!(validate_slippage_decimal("50").is_err()); // percent value, not decimal
-        assert!(validate_slippage_decimal("100").is_err());
+    fn test_validate_slippage_zero_to_one_rejects_out_of_range() {
+        assert!(validate_slippage_zero_to_one("0").is_err()); // 0 exclusive
+        assert!(validate_slippage_zero_to_one("0.0").is_err());
+        assert!(validate_slippage_zero_to_one("-0.01").is_err());
+        assert!(validate_slippage_zero_to_one("1.01").is_err()); // > 1
+        assert!(validate_slippage_zero_to_one("50").is_err()); // percent value, not decimal
+        assert!(validate_slippage_zero_to_one("100").is_err());
     }
 
     #[test]
-    fn test_validate_slippage_decimal_rejects_non_numeric() {
-        assert!(validate_slippage_decimal("abc").is_err());
-        assert!(validate_slippage_decimal("").is_err());
-        assert!(validate_slippage_decimal("NaN").is_err());
-        assert!(validate_slippage_decimal("inf").is_err());
+    fn test_validate_slippage_zero_to_one_rejects_non_numeric() {
+        assert!(validate_slippage_zero_to_one("abc").is_err());
+        assert!(validate_slippage_zero_to_one("").is_err());
+        assert!(validate_slippage_zero_to_one("NaN").is_err());
+        assert!(validate_slippage_zero_to_one("inf").is_err());
+    }
+
+    #[test]
+    fn test_validate_slippage_zero_to_one_rejects_percent_suffix() {
+        // The `%` suffix only makes sense in percent mode (validate_slippage);
+        // here it almost always indicates the user mixed up the two modes.
+        let err = validate_slippage_zero_to_one("0.5%").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("decimal here"), "want translation hint, got: {msg}");
+        assert!(msg.contains("divide by 100"), "want translation hint, got: {msg}");
+        assert!(validate_slippage_zero_to_one("50%").is_err());
+        assert!(validate_slippage_zero_to_one("0.01%").is_err());
     }
 
     // ── amount validation (positive integer) ─────────────────
