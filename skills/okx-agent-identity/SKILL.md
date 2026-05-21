@@ -67,7 +67,12 @@ metadata:
 
 Full-lifecycle ERC-8004 on-chain Agent identity management — register → manage → discover → rate.
 
-This skill enforces **three** non-overridable ⛔ gates around every content-creating on-chain write — pre-check (before routing), confirmation (before execution), post-execute (after CLI returns). Each gate is listed in its chronological position below; together they bracket the dangerous part of the flow.
+This skill enforces **three** non-overridable ⛔ gates around mutation-class CLI calls, **plus a mandatory post-success continuation** that owns the comm-init handoff:
+
+- **Gates 1–3** bracket every **content-creating on-chain write** (`agent create` / `agent update` / `agent feedback-submit`): pre-check (before routing), confirmation (before execution), post-execute (after CLI returns).
+- **Post-success continuation** (`§Operation Flow Step 5` dispatcher + `§Operation Flow Step 6` comm-init) fires after any **local-agent-list-mutating** success (`agent create` / `agent update` / `agent activate` / `agent deactivate`), regardless of whether the call was content-creating. `feedback-submit` is **excluded** because it doesn't change the local agent list. `activate` / `deactivate` are **included** even though they're state toggles (not content-creating) because they change visibility in the local agent list cache. The continuation is structured as numbered Operation Flow steps (not a separate "gate") specifically because smaller models tend to skip side-bar gates after reaching a "stop" step; numbered linear steps are far less skippable.
+
+Each gate is listed in its chronological position below; the post-success continuation lives in §Operation Flow.
 
 ## ⛔ UX Output Red Lines (non-overridable, P0)
 
@@ -141,6 +146,40 @@ The technical token `Agent ID` (with the `#N` numeric form) is an explicit carve
 - When the user asks "为什么 X" and you happen to know about a different unrelated state of theirs:
   - ⛔ Do NOT pivot to the unrelated state ("你还有 116 个其他正常的"). Stay on the asked topic.
 
+### Red line 6 — On-chain field values MUST come from the user's explicit in-conversation reply
+
+The on-chain content fields (`name`, `description`, `picture`, every `service.*` subfield: `name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) are immutable on the public ledger from the moment they're broadcast. The AI **MUST NOT** pre-fill, auto-derive, or guess any of these values from sources other than what the user typed in the current conversation as a reply to the matching Q (or in their literal one-shot capture text per `§One-shot capture`).
+
+**⛔ Forbidden sources to derive `name` / `description` / `picture`:**
+
+- **Session metadata**: `userEmail` (e.g. `xicheng.liu@okg.com`), `git config user.name`, OS username, `USER.md` / project memory files, CLAUDE.md user-profile entries
+- **Inbound envelopes**: XMTP `sender.address`, sender display name, Telegram handle, Discord username, any messaging-layer identity passed in via system reminders or routing context
+- **Wallet metadata**: derived-wallet account name (e.g. `账户 2`, `Account 3`), wallet nickname, ENS name, the XLayer address itself
+- **Generic templates derived from any of the above**: `<user>的买家` / `<email-prefix>'s Buyer Agent` / `Jim 的买家` / `Alice 的卖家` / `xicheng 的 provider` and any variant
+
+**⛔ Forbidden actions for `service.*` (every subfield):**
+
+- Fabricating one or more services when the user said "帮我写几个 service" / "随便几个" / "示例就行" / "你帮我想" / "you fill it in" — **refuse and re-prompt** asking what the user actually wants to offer. See also `references/role-provider.md §Good/bad cases` row 3.
+- Inventing endpoint URLs. `https://api.example.com/...` / `https://cdn.example.com/...` in docs are **doc-only placeholders** — never copy them into a real CLI invocation. See `display-formats.md` top "URL literals are doc-only" rule.
+- Filling in a default fee / pricing assumption ("一般定 10 USDT 吧" / "default to 1 USDT" / "免费先试") when the user did not supply a number
+- Picking a `servicetype` based on the AI's own interpretation of the service name ("听起来像 MCP，那就 A2MCP 吧" / "they said API so probably A2MCP") — the user must explicitly choose via the Q3 numbered prompt (`role-provider.md` Phase 2 Q3)
+- Piping a user-pasted JSON blob straight to the CLI without field-by-field re-confirmation — see `role-provider.md §Good/bad cases` row 4
+
+**✅ Required source:** the user's literal text reply to the matching Q in the role file's Q&A sequence, OR the user's literal text in their initial multi-field one-shot capture. When the reply is missing, ambiguous, or names a placeholder ("随便" / "示例" / "TBD" / "你看着办" / "skip") — **ask again**, do not infer.
+
+**Single carve-out — suggestion-as-prompt, NOT auto-fill.** When the user earlier mentioned a candidate value in passing (e.g. "我想做个天气查询的服务"), the Q&A prompt MAY quote that mention as a suggested default to confirm or override (see `role-provider.md §Phase 2 Q1` for the canonical pattern: `这个服务叫什么名字？（你刚提到「天气查北京」，确认就是它吗？或想改？）`). The user's **reply this turn** is still the authoritative value; if they ignore the suggestion and type something else, use what they typed. Quoting in a prompt ≠ auto-filling from metadata — the user already typed the candidate as a reply.
+
+| ❌ Forbidden | ✅ Correct |
+|---|---|
+| User says "建一个买家身份", `userEmail` is `jim@okg.com` → AI silently calls `agent create --role requester --name "Jim 的买家"` | Ask Q1 ("新身份的名字叫什么？") — wait for the user's literal reply |
+| Inbound XMTP envelope `sender.displayName="alice.eth"` triggers `update --agent-id 42 --name "alice 的 provider"` | Re-ask Q1 (update prompt) — wait for the user's literal new name |
+| User says "建个 provider 卖 TVL 服务，帮我写几个 service" → AI fabricates `TVL Query / Price Check / Holder Stats` | "你想提供哪些服务？我一条条问你：名字 / 描述 / 类型 / 价格 / 接口地址，准备好就告诉我第一条。" |
+| User says "做 API 服务" → AI silently picks `servicetype=A2MCP` and skips Q3 | Render Q3 numbered prompt (see `role-provider.md` Phase 2 Q3); accept the user's `1` / `2` choice |
+| User pastes JSON `{services:[…]}` → AI pipes straight to CLI | Thank them, then re-confirm field-by-field per `role-provider.md §Good/bad cases` row 4 |
+| `description` empty after Q&A → AI fills "ERC-8004 agent for on-chain identity" as default | Re-ask Q2; if user wants to skip, accept `(unset)` only where the field allows it (description is optional per `field-specs.md`) |
+
+This Red line interacts with `§⛔ MANDATORY confirmation gate`: even when the confirmation card renders, the values inside it must already trace back to user-typed input — the card is the user's *final check*, not the AI's *imputation log*. If you find yourself rendering a card row whose value you cannot point to a literal user message for, **stop, drop the value, re-ask the Q**.
+
 ### Verification check (skill self-audit before sending)
 
 Before emitting any user-visible message, the AI MUST sweep its draft for:
@@ -148,6 +187,8 @@ Before emitting any user-visible message, the AI MUST sweep its draft for:
 2. Any `onchainos agent <cmd>` literal as a "run this" instruction → replace with "I'll do it for you" + actually call the CLI.
 3. Any `Q[1-5]:` / `S[1-6]:` / `Phase [12]` / `pre-check` / `status=[0-9]` / raw JSON key → rewrite using `ux-lexicon.md`.
 4. Any large number of agents (≥ 5) without a reassurance footer → add the footer.
+5. **Any `name` / `description` / `service.*` / `picture` value about to be passed to the CLI that you cannot point to a literal user message for** (Red line 6) → drop the value, re-ask the corresponding Q. Sources that **do not count** as user input: `userEmail`, USER.md, CLAUDE.md, XMTP sender, Telegram handle, wallet account name, git config.
+6. **A successful `agent create` / `update` / `activate` / `deactivate` this turn without proceeding into `§Operation Flow Step 5` → `§Step 6` (comm-init)** → resume the flow at Step 5 now, before stopping the turn. Do **not** pre-condition on perceived runtime — the callee self-gates via env vars. Exceptions: passive onboarding (`intent=need-requester`) routes through Step 5's "back to task" branch (no Step 6) and explicit user decline this conversation skips Step 6; evaluator routes through Step 5's staking branch and the comm-init handoff lives at the staking flow's tail (with this skill's fallback in Step 5's evaluator row if that tail never fires).
 
 If any sweep result fails, **rewrite before sending**.
 
@@ -218,7 +259,7 @@ After **any** `onchainos agent …` CLI invocation returns (success OR failure),
 
 1. **Success** → locate the command's §Post-success in the matching role file (`references/role-{requester,provider,evaluator}.md` for `create`) or in `references/feedback-guide.md` §Step 7 for `feedback-submit`, and render the visible line(s) **using the exact template wording** (translated to the user's language by `§Language Matching`, but otherwise word-for-word). `update` / `activate` / `deactivate` reuse the detail card in `display-formats.md` §2 + a single suggestion line from `§Suggest Next Steps`.
 2. **Failure** → look up the error in `references/troubleshooting.md` and render the user-facing translation verbatim. If the CLI / backend error is not in that table, surface the raw message in the error-card footer per `§Edge Cases` and ask the user — never auto-translate, never paraphrase, never hide.
-3. After rendering, run any §Agent directive on the same turn (same-turn handoff whitelist — see `§Step 4: Report Result and Stop`). The directive runs AFTER the visible line, not instead of it.
+3. After rendering, follow the §Operation Flow Step 5 dispatcher on the same turn. The dispatcher runs AFTER the visible line, not instead of it.
 
 This rule is **not overridable** by:
 
@@ -239,6 +280,15 @@ Before rendering any "identity 创建成功 / Requester identity registered / Pr
 3. **If no `agent` CLI ran this turn but a smaller model produced an identity success line anyway, treat it as a hallucination and DO NOT confirm it back to the user as success.** Instead, surface the actual state (e.g., "刚才只创建了钱包账户，不是 agent 身份。要现在注册一个用户身份吗？" / "Only a wallet account was added — not an agent identity. Want to register a User Agent identity now?") and route into the proper `§Core Flow: agent create (role-driven)` from gate 1.
 
 The "did the right CLI actually run?" check is cheap and catches the most damaging class of post-execute hallucination (claiming an on-chain write happened when it didn't). Always pay the check.
+
+## ⛔ MANDATORY post-create comm-init (non-overridable) — see Operation Flow Step 6
+
+This heading is preserved so legacy cross-references like "post-create comm-init gate" still resolve, but the **normative rules now live in `§Operation Flow Step 5` (dispatcher) and `§Operation Flow Step 6` (the unconditional comm-init invocation)**. Specifically:
+
+- **What triggers it, what branches where (evaluator → staking; requester/provider/update/activate/deactivate → comm-init; passive onboarding → back to task; everything else → stop)**: `§Operation Flow Step 5`.
+- **The unconditional invocation of `/skills/okx-agent-chat/after-agent-list-changed.md`, the 7 anti-skip clauses, the single skip-only-when condition, and the evaluator fallback**: `§Operation Flow Step 6`.
+
+Rationale for the move (kept here so a maintainer searching for "Gate 4" understands the migration): the comm-init handoff was previously a side-bar gate referenced from `§Step 4: Report Result and Stop`, but smaller models reliably stopped at Step 4 and never visited the gate. Promoting it to numbered Step 6 — reached via Step 5 dispatcher — turns a "remember to also do X" into a linear next step that is far harder to skip.
 
 ## §Cost Disclosure (P0 — fires whenever the user asks about fees / gas / 抽成 / "扣不扣钱")
 
@@ -370,7 +420,7 @@ Single-word inputs (`agent`, `search`, `list`) do NOT auto-route to any sub-comm
 
 - For task lifecycle (publish / accept / deliver / settle / dispute) → `okx-agent-task`
 - For wallet login / balance / transfer / signing → `okx-agentic-wallet`
-- For syncing the local a2a agent list to the OpenClaw runtime (mandatory post-hook after any local agent list mutation) → `okx-agent-chat` — same-turn handoff target after `agent create --role requester|provider`, `agent activate`, `agent deactivate`. Load `after-agent-list-changed.md` and continue with its Execution Flow inside the same response. The flow self-gates on `OPENCLAW_CLI` / `OPENCLAW_SHELL` env vars — silent no-op outside an OpenClaw runtime. See `§Step 4: Report Result and Stop` for the whitelist.
+- For syncing the local a2a agent list to the OpenClaw runtime (mandatory post-hook after any local agent list mutation) → `okx-agent-chat` — comm-init target reached via `§Operation Flow Step 5` (dispatcher) → `§Step 6` after `agent create --role requester|provider`, `agent update`, `agent activate`, `agent deactivate`. Load `after-agent-list-changed.md` and continue with its Execution Flow inside the same response. Always invoke unconditionally per `§Step 6`; the callee self-gates on `OPENCLAW_CLI` / `OPENCLAW_SHELL` env vars (Step 0 of the file).
 - For OKB staking (required to **receive dispute assignments** as an evaluator; NOT required to `create` the evaluator agent) — including 首次 onboarding / 追加 / 解质押 / claim / 查询 — → follow `/skills/okx-agent-task/references/evaluator-staking.md` (§1 routes to the right sub-flow)
 - For counterparty address / contract security check → `okx-security`
 - For broadcasting raw transactions → `okx-onchain-gateway`
@@ -500,26 +550,53 @@ Always show the confirmation card (field table) before any content-creating on-c
 
 **No narration between confirmation and result.** When the user replies `执行` / `execute` / `yes` / `好` / `confirm` / similar confirmation tokens, invoke the CLI tool **immediately in the same turn**. Do NOT emit any pre-execution acknowledgment text — including but not limited to `下发`, `下发中`, `好的，正在执行`, `执行中…`, `稍等`, `马上`, `OK`, `on it`, `executing…`, `submitting…`, `sending…`. The first user-visible content for that turn must be the post-CLI rendering (success → detail card per `display-formats.md §2` **except passive onboarding which renders only one line and no detail card per `§Passive Onboarding` + `references/passive-onboarding.md §Messages to the user`**; failure → error card per `display-formats.md §7`). Confirmation-card footers must therefore be neutral instructions like `回复 "执行" 即可。` / `Reply "execute" to run.` — never promise a verb (`我就下发` / `I'll dispatch`) that the model is then tempted to echo back. Same rule applies to `update` diff cards and feedback-submit confirmations.
 
-### Step 4: Report Result and Stop
+### Step 4: Report Result
 
 - Render the detail card (success) or the error card (failure), following `references/display-formats.md`. **Exception — passive onboarding** (`intent=need-requester` from `okx-agent-task`): render **only one line** and **no detail card** — see `§Passive Onboarding` + `references/passive-onboarding.md §Messages to the user` + `references/role-requester.md §Passive Onboarding → After success` for the canonical contract. The detail card is omitted to keep the handoff back to `okx-agent-task` lean (the user just confirmed all fields a turn ago).
 - Attach exactly **one** next-step suggestion line (Suggest Next Steps table below) — this is the same one line for passive onboarding (subsumes the line above).
-- Stop. Wait for the user. No status polling, no auto-retry, no speculative side-query.
-- **Same-turn handoff exceptions (whitelist).** A small set of post-success paths must, in the same response, load a downstream skill file and continue executing it. The visible post-success line still renders first; the agent then continues without waiting for a user reply.
+- Then **always** proceed to `§Step 5: Post-success Flow Continuation`. Step 5 owns the stop/continue decision — do NOT stop here. (Earlier revisions ended Step 4 with "Stop. Wait for the user." — that wording was removed because smaller models read "Stop" and never visited the side-bar comm-init gate; the stop/continue decision is now a dedicated linear step.)
 
-  | Trigger | Downstream | Why |
-  |---|---|---|
-  | `agent create --role evaluator` succeeds | `/skills/okx-agent-task/references/evaluator-staking.md` §2 Step 1 → Step 2 | Registration and staking form a single onboarding intent. Stake amount + chat handoff are owned by that flow. See `role-evaluator.md §Post-success`. |
-  | `agent create --role requester` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | The local a2a agent list just changed — the chat skill keeps the OpenClaw side in sync (refresh-agents fast path or first-time install). Silent no-op outside an OpenClaw runtime. See `role-requester.md §Post-success`. |
-  | `agent create --role provider` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Provider is immediately discoverable; OpenClaw-side agent list must be refreshed so the new provider becomes visible to xmtp tooling. Silent no-op outside an OpenClaw runtime. See `role-provider.md §Post-success`. |
-  | `agent activate --agent-id <id>` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Re-publishing changes the local agent list state — sync to OpenClaw. Idempotent; silent no-op outside an OpenClaw runtime. |
-  | `agent deactivate --agent-id <id>` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Deactivation changes the local agent list state — sync to OpenClaw. Idempotent; silent no-op outside an OpenClaw runtime. |
+### Step 5: Post-success Flow Continuation
 
-  **Skip the handoff** (render visible line only, then stop) if the user has explicitly declined the relevant downstream earlier in this conversation — see `role-evaluator.md §Good / bad cases` for evaluator/stake; for chat, treat any prior "不用聊天 / no chat / skip messaging" or similar wording as decline.
+> **Step 5 decides flow direction (continue / route / stop); the §Suggest Next Steps table below decides visible-line shape.** The two are orthogonal and never conflict — read Step 5 to know whether the turn ends, read Suggest Next Steps to know what visible line/card to render before that decision fires.
 
-  **Passive Onboarding (`intent=need-requester`) is NOT in this whitelist.** That path must hand strictly back to `okx-agent-task` with the contracted single line — task skill handles chat setup downstream. See `references/passive-onboarding.md`.
+After Step 4 emits its visible content, branch on the last successful CLI to decide whether to continue (and where) or stop:
 
-  These are the only same-turn chains allowed from this skill.
+| Last successful CLI | Next |
+|---|---|
+| `agent create --role evaluator` succeeds | Load `/skills/okx-agent-task/references/evaluator-staking.md` §2 Step 1 → Step 2 in the same response. Registration and staking form a single onboarding intent. The staking flow's terminal handoff feeds into `§Step 6` (comm-init). **Fallback**: if the staking flow ends without invoking `after-agent-list-changed.md` for any reason (user declines stake, error mid-stake, etc.), proceed to `§Step 6` from here before stopping the turn. |
+| `agent create --role requester` succeeds | Proceed to `§Step 6`. See `role-requester.md §Post-success` for the user-visible template. |
+| `agent create --role provider` succeeds | Proceed to `§Step 6`. See `role-provider.md §Post-success` for the user-visible template. |
+| `agent update --agent-id <id>` succeeds | Proceed to `§Step 6` — agent metadata (`name` / `picture` / `description` / `services`) just changed, the OpenClaw-side cache needs refresh too (see `after-agent-list-changed.md §When To Run` row 2). |
+| `agent activate --agent-id <id>` succeeds | Proceed to `§Step 6`. |
+| `agent deactivate --agent-id <id>` succeeds | Proceed to `§Step 6`. |
+| Passive Onboarding (`intent=need-requester` from `okx-agent-task`) | Hand strictly back to `okx-agent-task` with the contracted single line — task skill triggers chat post-hook itself when its downstream flow needs it. **Do NOT proceed to `§Step 6`.** See `references/passive-onboarding.md` and `references/role-requester.md §Passive Onboarding → After success`. |
+| Everything else (`agent feedback-submit`, `agent search`, `agent get` — including the `agent get --agent-ids <ids>` detail-card variant — `agent service-list`, `agent feedback-list`) | **Stop.** Wait for the user. No status polling, no auto-retry, no speculative side-query. (Visible-line shape for each read-only command lives in §Suggest Next Steps below — `agent get --agent-ids <ids>` in particular has special multi-id rendering rules there.) |
+
+These are the only same-turn chains allowed from this skill.
+
+### Step 6: Communication Init Check (non-overridable)
+
+Triggered only when `§Step 5` routed here. **Unconditional** from this skill's side — invoke the comm-init handoff in the same response, regardless of perceived runtime:
+
+- Load `/skills/okx-agent-chat/after-agent-list-changed.md`.
+- Continue with its **Execution Flow** in the same response.
+- Do NOT pre-judge runtime. Whether the user is inside an OpenClaw runtime is decided by Step 0 of the called file (env-var inspection — `OPENCLAW_CLI` / `OPENCLAW_SHELL`). The LLM cannot reliably enumerate the parent process's environment from a tool call, so any "I don't think we're in OpenClaw" reasoning here is unreliable AND violates the contract. When the callee determines the runtime is not OpenClaw, it becomes a **silent no-op** — the user sees nothing extra, the cost is near-zero.
+- Do NOT wait for a user reply between Step 4's visible line and Step 6's invocation.
+
+The following are **NOT** valid reasons to skip Step 6:
+
+- "the post-success line already ended in a period — I should stop" — for list-mutating CLIs, Step 5 routes here unconditionally; the period at the end of the visible line is a typographic choice, not a stop signal.
+- "the user didn't ask for sync / refresh" — `after-agent-list-changed.md §When To Run` explicitly says auto-trigger, no user request required.
+- "we did this earlier this conversation" — state changes per write; each successful write is its own trigger (the local agent list mutated again).
+- "I don't see `OPENCLAW_*` env vars in my tool output" — the env-var detection lives inside the called file's Step 0. Don't run it yourself; just invoke the file and let it decide.
+- "this is a state toggle, not a content write" — `activate` / `deactivate` are explicitly in scope; agent list visibility (and therefore the OpenClaw cache) just changed.
+- "the user is not technical, they don't care about plugins" — silent no-op outside OpenClaw means the user never sees anything if it doesn't apply.
+- "the callee says `silent no-op outside an OpenClaw runtime`" — that phrase describes the **callee's behavior in one possible runtime**, not permission for the caller to skip. The caller (this skill) always invokes; the callee always self-gates.
+
+**Skip Step 6 only when** the user has explicitly declined chat / messaging setup earlier in this conversation (any "不用聊天 / no chat / 不用同步 / skip messaging / 不用同步到客户端" wording). Decline is conversation-scoped, not session-scoped, and not memory-derived — re-declines are user-initiated, not pre-assumed from past sessions. (The Passive Onboarding carve-out lives in Step 5, not here — by the time control reaches Step 6, that path has already been filtered out.)
+
+Runtime gating, plugin install flow, OpenClaw config requirements, deprecated-plugin cleanup, and the `xmtp_refresh_agents` fast-path are all owned by `after-agent-list-changed.md` — do not duplicate or second-guess them here.
 
 ### Suggest Next Steps
 
@@ -528,11 +605,11 @@ Always show the confirmation card (field table) before any content-creating on-c
 | `agent create --role requester` | See `references/role-requester.md §Post-success` for the full visible-line + same-turn chat handoff contract. |
 | `agent create --role provider` | See `references/role-provider.md §Post-success` for the full visible-line + same-turn chat handoff contract. |
 | `agent create --role evaluator` | See `references/role-evaluator.md §Post-success` for the two visible lines + same-turn staking handoff. |
-| `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
-| `agent activate` | Render the visible line in the user's language. **Must be declarative — no question mark, no offer that solicits a reply** (the same-turn chat handoff continues without waiting per `display-formats.md §511`; a trailing question creates a stuck-prompt regression). **No `agent search` / `agent <cmd>` CLI literal in user-visible text** (Red lines 1/2). Chinese: "上架完成 — 你的 agent 现在已经能被市场搜到。" / English: "Re-published — your agent is now discoverable on the marketplace." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
-| `agent deactivate` | Render the visible line in the user's language. **Declarative — no question mark, no offer that solicits a reply** (same reason as `agent activate` above). **No `agent <cmd>` CLI literal in user-visible text** (Red line 2) — describe the re-publish path in natural language. Chinese: "下架完成 — 你的 agent 已经从客户端列表里隐藏。想恢复随时跟我说"上架 #<id>"，我帮你跑。" / English: "Unpublished — your agent is now hidden from client lists. Say "activate #<id>" anytime to re-publish." (Note: these template sentences end with periods, not question marks — the "想恢复随时跟我说" phrasing is an informational statement of how to come back, not a question to the user this turn.) Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
-| `agent feedback-submit` | **No CLI literal / no `--sort-by` flag in user-visible text** (Red line 2). `feedback-submit` is NOT in the same-turn handoff whitelist (no auto-loaded downstream skill), so the line MAY end with a question — the AI stops and waits for the user's reply. Chinese: "评分已提交。要看一下 #<target> 最近的评价吗？按时间倒序还是按评分高低？" / English: "Rating submitted. Want me to pull #<target>'s latest reviews? Sort by date or by rating?" If user agrees, the AI runs `agent feedback-list` internally (mapping their reply via `cli-reference.md §10` natural-language → `--sort-by` table) — the flag never appears in the chat. Never echo the raw 0–100 score; say "评价 / 评分" / "rating / reviews" instead. |
-| `agent search` | **No CLI literal in user-visible text** (Red line 2). `agent search` is read-only and NOT in the same-turn handoff whitelist — the line is informational, not a question; the user reads it and decides what to say next. Chinese: "想看某条 agent 的服务详情就跟我说"详情 #<id>"。准备好发任务就说"发布一个 ... 的任务"，我直接帮你走流程。" / English: "Say "detail #<id>" to drill into a specific agent's services; or "publish a task for X" when you're ready and I'll take you through it." |
+| `agent update` | Show new detail card with the updated values (`display-formats.md` §2). If user deactivated during update, suggest re-activate. Then proceed to `§Step 5` (which routes to `§Step 6` for the comm-init handoff) — agent metadata (`name` / `picture` / `description` / `services`) just changed, so the OpenClaw-side cache needs refresh too. |
+| `agent activate` | Render the visible line in the user's language. **Must be declarative — no question mark, no offer that solicits a reply** (the `§Step 5` → `§Step 6` continuation runs without waiting; a trailing question creates a stuck-prompt regression). **No `agent search` / `agent <cmd>` CLI literal in user-visible text** (Red lines 1/2). Chinese: "上架完成 — 你的 agent 现在已经能被市场搜到。" / English: "Re-published — your agent is now discoverable on the marketplace." Then proceed to `§Step 5` → `§Step 6`. |
+| `agent deactivate` | Render the visible line in the user's language. **Declarative — no question mark, no offer that solicits a reply** (same reason as `agent activate` above). **No `agent <cmd>` CLI literal in user-visible text** (Red line 2) — describe the re-publish path in natural language. Chinese: "下架完成 — 你的 agent 已经从客户端列表里隐藏。想恢复随时跟我说"上架 #<id>"，我帮你跑。" / English: "Unpublished — your agent is now hidden from client lists. Say "activate #<id>" anytime to re-publish." (Note: these template sentences end with periods, not question marks — the "想恢复随时跟我说" phrasing is an informational statement of how to come back, not a question to the user this turn.) Then proceed to `§Step 5` → `§Step 6`. |
+| `agent feedback-submit` | **No CLI literal / no `--sort-by` flag in user-visible text** (Red line 2). `feedback-submit` is in the `§Step 5` "stop" branch (no comm-init follow-up), so the line MAY end with a question — the AI stops and waits for the user's reply. Chinese: "已给 #<target> 打 ★ N。要看一下 #<target> 最近的评价吗？按时间倒序还是按评分高低？" / English: "Submitted ★ N for #<target>. Want me to pull #<target>'s latest reviews? Sort by date or by rating?" **`N` MUST be the wire-normalized star value (= `round(user_stars × 20) / 20`), not the user's raw input** — wire grain is 0.05 stars so `3.31` becomes `★ 3.3`, and the post-success echo must match what `feedback-list` will return on the next call (full rationale in `references/feedback-guide.md §Step 7`). If user agrees, the AI runs `agent feedback-list` internally (mapping their reply via `cli-reference.md §10` natural-language → `--sort-by` table) — the flag never appears in the chat. Never echo the raw 0–100 score; say "评价 / 评分" / "rating / reviews" instead. |
+| `agent search` | **No CLI literal in user-visible text** (Red line 2). `agent search` is read-only and falls in the `§Step 5` "stop" branch — the line is informational, not a question; the user reads it and decides what to say next. Chinese: "想看某条 agent 的服务详情就跟我说"详情 #<id>"。准备好发任务就说"发布一个 ... 的任务"，我直接帮你走流程。" / English: "Say "detail #<id>" to drill into a specific agent's services; or "publish a task for X" when you're ready and I'll take you through it." |
 | `agent get --agent-ids <ids>` | Single id → render `display-formats.md §2` + §Post-detail prompt. Multiple ids → render `display-formats.md §2.5` (one §2 card per agent separated by `---`, then a single multi-select Post-detail prompt). **Do NOT** auto-run `service-list` or `feedback-list` either way. |
 
 ## Sub-flows
@@ -635,7 +712,7 @@ Never call `update` without first showing the current state. Never invent fields
 
 `--creator-id` is the **user's own** agent id — it is not `--agent-id` (the target being rated). The user must have at least one registered agent (any role) before they can submit feedback. Full decision tree for 0 / 1 / many creator candidates → `references/feedback-guide.md`.
 
-Rating UX is **integer 0–5 stars**. The CLI's `--score` now accepts 0–5 directly and multiplies by 20 internally to produce the 0–100 backend wire value (`utils::stars_to_score` is the single source of truth). The skill validates `0..=5` only as a friendlier pre-check; the CLI rejects out-of-range values on its own. Never expose the raw 0–100 number to the user — see `references/feedback-guide.md` Step 3 for the input flow and `references/display-formats.md` for the rendering rules.
+Rating UX is **0.00–5.00 stars with up to 2 decimal places (step 0.01)**. The CLI's `--score` accepts decimals (e.g. `5`, `4.5`, `3.33`) and multiplies by 20 with round-half-up to produce the 0–100 u32 wire value (`utils::parse_stars_arg` is the single source of truth). The skill validates `0.00..=5.00` and `≤ 2 decimal places` only as a friendlier pre-check; the CLI rejects out-of-range / over-precision values on its own. Never expose the raw 0–100 number to the user — see `references/feedback-guide.md` Step 3 for the input flow and `references/display-formats.md` for the rendering rules. Note: the wire grain is 0.05 stars (one wire unit), so inputs whose ×20 product rounds to the same integer collapse on the wire (e.g. 3.30 / 3.31 / 3.32 all → wire 66); this is a wire limitation, not a parser bug.
 
 `--task-id` is optional; currently accepts any free-form string (will align with `okx-agent-task` jobId format in a later release).
 
@@ -759,19 +836,18 @@ Some users type their whole request in one turn: "注册一个 provider 叫 Alic
 - Service `fee` is **required for `A2MCP` and optional for `A2A`**. For `A2A` the user may either skip (skill sends `"fee": ""` — see `cli-reference.md` §1's `--service` note for why the key is always present) or supply a USDT reference price following the same format. When rendering an A2A service: if `fee` is non-empty, show it as `<N> USDT` like A2MCP; if empty / absent, show the short form `免费` / `free` in the user's language (Type=A2A on the same row already gives the negotiated-pricing context). For dedicated Fee rows in confirm/diff cards (where space allows), `（未填，双方自行协商）` / `(skipped — negotiated directly)` is also acceptable per `ux-lexicon.md §Field` "A2A 服务未填价格的渲染" rule.
 - Evaluator stake amount is owned by `okx-agent-task` and may change; **never hardcode the amount** in this skill's copy. Just point users to the staking flow at `/skills/okx-agent-task/references/evaluator-staking.md`.
 - EVM contract / agent addresses must be displayed all lowercase.
-- **Reputation is rendered as 0–5 stars, never as the raw 0–100 score.** The backend wire format depends on the endpoint; whether the skill needs to convert depends on what the response carries.
+- **Reputation is rendered as 0.00–5.00 stars (up to 2 decimal places), never as the raw 0–100 score.** The backend wire format depends on the endpoint; whether the skill needs to convert depends on what the response carries.
   - **Backend-returned already-scaled (skill renders directly — do NOT divide):**
     - `agent search` — each `list[*].feedbackRate` is already a 0–5 Double from the backend per `references/cli-reference.md §7` schema. Render as `★ <feedbackRate>`; `null` → `—`. **No `/20` arithmetic, no round-half-up at this layer** — backend already did it. (Also note: the array field is `list`, NOT `items` — see §7. There is no `reputation.score` / `reputation.count` on this endpoint; that shape belongs to `agent get` only.)
   - **CLI-converted endpoints** (skill renders the value verbatim — do NOT divide again):
-    - `agent feedback-list` — CLI's `utils::convert_feedback_list_scores` already maps top-level `average` to a 1-decimal star float and each `items[*].score` / `list[*].score` to an integer star bucket. Render directly: `★ <average>` / `★ <score>`.
-    - `agent feedback-submit` (input) — CLI takes 0–5 stars via `--score` and multiplies by 20 internally (`utils::stars_to_score`). Skill passes user stars straight to `--score` — no multiplication on the skill side.
-  - **Not-yet-converted endpoints** (CLI returns raw 0–100, skill still applies the round-half-up rule at render time):
-    - `agent get` — `list[*].agentList[*].reputation.score` is the 0–100 backend aggregate (note the double-layer envelope: outer `list[*]` is an accountName wrapper, agent rows live one level deeper — see `references/cli-reference.md §3`); render as `★ <round-half-up(score / 20) to 1 decimal>`.
+    - `agent feedback-list` — CLI's `utils::convert_feedback_list_scores` already maps both top-level `average` and each `items[*].score` / `list[*].score` to 2-decimal star floats (e.g. backend `66 → 3.3`, backend `67 → 3.35`). Render directly: `★ <average>` / `★ <score>`. Earlier revisions rendered per-item as an integer bucket — that bucket rounding has been removed now that input precision is 2 decimals.
+    - `agent feedback-submit` (input) — CLI takes 0.00–5.00 stars via `--score` (up to 2 decimal places) and multiplies by 20 with round-half-up internally (`utils::parse_stars_arg`). Skill passes the user's stars straight to `--score` — no multiplication on the skill side.
+  - **Not-yet-converted endpoints** (CLI returns raw 0–100, skill still applies the conversion at render time):
+    - `agent get` — `list[*].agentList[*].reputation.score` is the 0–100 backend aggregate (note the double-layer envelope: outer `list[*]` is an accountName wrapper, agent rows live one level deeper — see `references/cli-reference.md §3`); render as `★ <score / 20 with up to 2 decimals>`.
     - Tracked for future extension into the CLI; until then the rule below applies skill-side.
-  - **Canonical rounding rule** (used both inside the CLI's converters and by skill-side rendering for the not-yet-converted endpoints): `score / 20` followed by **round-half-up** tie-breaking at the displayed precision.
-    - Integer star buckets (single review): `round-half-up(score / 20)` — `50 → 3`, `70 → 4`, `90 → 5`.
-    - 1-decimal aggregates: round the second decimal half-up — `92 → 4.6`, `89 → 4.5`, `85 → 4.3`, `30 → 1.5`.
-    - A backend score of `70` always corresponds to `★ 4`; aggregate `89` always renders as `★ 4.5` — regardless of which side did the math.
+  - **Canonical rounding rule** (used both inside the CLI's converters and by skill-side rendering for the not-yet-converted endpoints): `score / 20` rendered with **up to 2 decimal places**. Because wire is integer 0–100, division by 20 yields values with at most 2 significant decimal positions (one wire unit = 0.05 stars), so no further rounding is needed.
+    - Examples: `0 → 0`, `66 → 3.3`, `67 → 3.35`, `70 → 3.5`, `89 → 4.45`, `92 → 4.6`, `100 → 5`.
+    - A backend score of `70` always corresponds to `★ 3.5`; aggregate `89` always renders as `★ 4.45` — regardless of which side did the math. (This is a tightening from the prior integer-bucket / 1-decimal aggregate rule: now that input precision is 2 decimals, render precision matches.)
   - **No-data**: render `—`.
   - The raw 0–100 number appears only in CLI / backend logs and in the maintainer bash block (hidden from end users by the "Do NOT show the bash command" rule on confirmation cards). **Never** render `92 / 100` / `85 分` in any user-visible cell, post-success line, or error message.
 
@@ -823,7 +899,7 @@ Maps CLI `bail!` strings (from `cli/src/commands/agent_commerce/identity/*.rs`) 
 
 > Read `references/cross-skill-workflows.md`
 
-Workflows A–D — buyer onboarding (+ passive fallback), provider onboarding, evaluator onboarding, discover→rate. Each includes the explicit data-handoff contract between sibling skills and the same-turn handoff cutpoints (see `§Step 4: Report Result and Stop` whitelist).
+Workflows A–D — buyer onboarding (+ passive fallback), provider onboarding, evaluator onboarding, discover→rate. Each includes the explicit data-handoff contract between sibling skills and the same-turn handoff cutpoints (see `§Operation Flow Step 5` dispatcher + `§Step 6` comm-init).
 
 ### Keyword Glossary
 

@@ -176,10 +176,10 @@ End with: `Reply "execute" to run it.`
 After the user replies "执行" / "yes" / equivalent:
 
 1. Run the CLI command once.
-2. On success → render the detail card (`display-formats.md` §Agent detail card) + the role-specific next-step line (see each role file). **Exception — passive onboarding** (`intent=need-requester`): render **only one line** and **no detail card** per `passive-onboarding.md §Messages to the user` + `role-requester.md §Passive Onboarding → After success`. **For the writes in the `SKILL.md §Step 4` same-turn handoff whitelist** (`requester` / `provider` / `evaluator` create, plus `activate` / `deactivate`), the visible line is followed by the same-turn handoff to the downstream file specified in that whitelist (chat post-hook is a silent no-op outside an OpenClaw runtime). Do not stop between visible line and handoff. See each role file's §Post-success "Agent directive" block. **Passive onboarding does NOT trigger the same-turn chat handoff** either (`role-requester.md §Passive Onboarding` "Do NOT load after-agent-list-changed.md" rule).
+2. On success → render the detail card (`display-formats.md` §Agent detail card) + the role-specific next-step line (see each role file). **Exception — passive onboarding** (`intent=need-requester`): render **only one line** and **no detail card** per `passive-onboarding.md §Messages to the user` + `role-requester.md §Passive Onboarding → After success`. **For the list-mutating writes** (`requester` / `provider` / `evaluator` create, `update`, plus `activate` / `deactivate`), control then flows into `SKILL.md §Operation Flow Step 5` (dispatcher) → `§Step 6` (comm-init) in the same response. The Step 6 invocation is **unconditional from this skill's side** — runtime gating lives inside the callee's Step 0, not in this skill's pre-decision. Do not stop between visible line and Step 5. See each role file's §Post-success "Agent directive" block. **Passive onboarding lands in Step 5's "back to task" branch** — no Step 6.
 3. On failure → render the error card (`display-formats.md` §Error card) + the recovery action (see `troubleshooting.md`). **Do NOT auto-retry.**
 
-See `_shared/no-polling.md` — do NOT follow up with `agent get` / status poll. Same-turn skill handoffs in the §Step 4 whitelist are explicitly allowed (they are not polling).
+See `_shared/no-polling.md` — do NOT follow up with `agent get` / status poll. The Step 5 → Step 6 same-turn chain is explicitly allowed (it is not polling).
 
 ## bash blocks in these files
 

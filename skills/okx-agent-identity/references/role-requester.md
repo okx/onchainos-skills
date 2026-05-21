@@ -32,6 +32,8 @@ The preview is **declarative**, not imperative — it describes what's next but 
 
 ## Standard Q&A chain
 
+> ⛔ **Field values come from the user, not from elsewhere.** Each of `name` / `description` / `picture` MUST come from the user's literal reply to the matching Q below, OR from their literal text in a §One-shot capture multi-field message. **Never** pre-fill `name` from `userEmail`, USER.md, CLAUDE.md, the wallet account name, the XMTP sender, a Telegram handle, or any session metadata. Do **not** generate "Jim 的买家" / "Alice 的 requester" / "<email-prefix> 的用户" style templates. See `SKILL.md §Red line 6` for the complete forbidden-sources list and table of anti-patterns.
+
 The `Q1 / Q2 / Q3` column labels below are **maintainer-internal indexes**. The prompt strings in the Chinese / English columns are the **literal text** rendered to the user — they carry **no `Q1：` / `Q1:` prefix**. Each prompt inlines the four-segment field spec from `field-specs.md` in the user's language only. If §One-shot capture already captured a field, **silently skip that Q** and move to the next.
 
 | Q | Chinese prompt | English prompt | Validation | On failure |
@@ -95,6 +97,8 @@ onchainos agent create \
 
 ## ⛔ Post-success — MANDATORY template (do NOT paraphrase)
 
+> ⛔ **After the visible line, this turn is NOT over.** → proceed to `SKILL.md §Operation Flow Step 5` (which routes to `§Step 6` for the unconditional comm-init handoff). Full rules (anti-skip clauses, runtime self-gating, decline carve-out) live in Step 6 — not duplicated here.
+
 Render **one visible line** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, adding fields, omitting fields, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
 
 ### Visible line (template)
@@ -137,13 +141,11 @@ Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate` + `§UX 
 
 ### Agent directive (internal — do NOT render to the user)
 
-After emitting the visible line above, **do not stop the turn**. In the same response, load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue with its `Execution Flow` inside the same response — the local a2a agent list just changed, so the chat skill keeps the OpenClaw runtime side in sync (refresh-agents fast path or first-time install). The flow self-gates on `OPENCLAW_CLI` / `OPENCLAW_SHELL`, so it is a **silent no-op** in non-OpenClaw runtimes; loading it unconditionally is safe and is the documented contract.
+After emitting the visible line above, **do not stop the turn**. → proceed to `SKILL.md §Operation Flow Step 5` — the requester row routes directly to `§Step 6` (comm-init), which loads `/skills/okx-agent-chat/after-agent-list-changed.md` Execution Flow in the same response.
 
-**Skip the handoff** (render visible line only, then stop) if the user has already declined chat / messaging setup earlier in this conversation (e.g., "不用聊天 / no chat / skip messaging" or similar). Also skip on the **passive onboarding** path — see §Passive Onboarding `After success`.
+Skip / decline carve-outs and the runtime self-gating contract are owned by Step 6. The **passive onboarding** path is filtered out at Step 5 (different row — see `§Passive Onboarding After success` below).
 
-This is one of the documented exceptions to `SKILL.md §Step 4`'s "Stop. Wait for the user." rule; see that section's whitelist for the carve-out.
-
-**Do NOT** chase with `agent get` / status poll (that is about querying chain state — different from the same-turn handoff above, which just loads the next skill's prompt). See `_shared/no-polling.md`.
+**Do NOT** chase with `agent get` / status poll (that is about querying chain state — different from the Step 5 → Step 6 chain above, which just loads the next skill's prompt). See `_shared/no-polling.md`.
 
 ## Passive Onboarding — entry from `okx-agent-task`
 

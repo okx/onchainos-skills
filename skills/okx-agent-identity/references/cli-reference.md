@@ -199,7 +199,7 @@ onchainos agent get --page 2 --page-size 50
 
 (Note the array field is `list`, not `items`. `agent get` calls the same `/agent/agent-list` endpoint that powers `agent create` / `update`'s post-broadcast `agentList` segment in §1; the two diverge slightly in post-processing: `agent get` returns a single backend page verbatim including `page` / `pageSize` echoed back from the request, while §1's `agentList` is the **aggregate across all pages** assembled by `fetch_agent_list` and only carries `{ total, list }` — `page` / `pageSize` lose coherent meaning after cross-page aggregation and are dropped on purpose.)
 
-`reputation.score` is the 0–100 wire average. The display layer renders it as `★ <score/20>` to 1 decimal place via the canonical **round-half-up** rule (see `SKILL.md §Amount Display Rules` reputation block — e.g. `92 → ★ 4.6`, `89 → ★ 4.5`, `85 → ★ 4.3`). Never echo the raw 0–100 number in user-visible cells.
+`reputation.score` is the 0–100 wire average. The display layer renders it as `★ <score/20>` with **up to 2 decimal places** (see `SKILL.md §Amount Display Rules` reputation block). Because wire is an integer 0–100, `score/20` is exact at 2 decimals (one wire unit = 0.05 stars) — no further rounding. Examples: `100 → ★ 5`, `92 → ★ 4.6`, `89 → ★ 4.45`, `85 → ★ 4.25`, `70 → ★ 3.5`, `66 → ★ 3.3`, `0 → ★ 0`. Trailing zeros are trimmed in display (`4.5` not `4.50`). Never echo the raw 0–100 number in user-visible cells.
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 
@@ -392,7 +392,7 @@ Rate another agent. The caller's `--creator-id` is their own agent; the backend 
 |---|---|---|---|
 | `--agent-id` | ✓ | integer | The **target** being rated. |
 | `--creator-id` | ✓ | integer | The caller's **own** agentId. |
-| `--score` | ✓ | integer 0–5 (stars) | CLI accepts 0–5 stars and multiplies by 20 internally to produce the 0–100 backend wire value (`utils::stars_to_score`). Out-of-range / non-integer input rejected by `parse_u32_arg`. The 0–100 wire format is encapsulated by the CLI; callers / skill code pass user stars directly. |
+| `--score` | ✓ | decimal 0.00–5.00 (stars, up to 2 decimal places) | CLI accepts decimal stars (e.g. `5`, `4.5`, `3.33`) and multiplies by 20 with round-half-up internally to produce the 0–100 u32 backend wire value (`utils::parse_stars_arg`). Out-of-range / over-precision / non-numeric input is rejected by the parser. The 0–100 wire format is encapsulated by the CLI; callers / skill code pass the user's star count directly. Wire grain is 0.05 stars (one wire unit), so distinct 2-decimal inputs whose ×20 product rounds to the same integer collapse on the wire — e.g. `3.30 / 3.31 / 3.32` all map to wire `66`. |
 | `--description` | ✗ | string | 1–3 sentence rationale. |
 | `--task-id` | ✗ | string | Free-form; usually a `jobId` from `okx-agent-task`. |
 
@@ -403,7 +403,7 @@ There is **no** `--tx-hash` parameter (tx hash is returned, not supplied).
 onchainos agent feedback-submit \
   --agent-id 42 \
   --creator-id 88 \
-  --score 4 \
+  --score 4.5 \
   --description "交付及时、数据准确" \
   --task-id "0xabc...03e8"
 ```
@@ -450,13 +450,13 @@ onchainos agent feedback-list --agent-id 42 --sort-by time_desc --page 1 --page-
 {
   "agentId": 42,
   "total": 18,
-  "average": 4.6,
+  "average": 4.45,
   "items": [
-    { "creatorId": 88, "score": 5, "description": "...", "taskId": "...", "createdAt": "..." }
+    { "creatorId": 88, "score": 4.5, "description": "...", "taskId": "...", "createdAt": "..." }
   ]
 }
 ```
 
-`average` and per-item `score` are already in **0–5 stars** when the CLI surfaces them. The CLI applies `utils::convert_feedback_list_scores` to the backend response before returning: `average` becomes a 1-decimal float (e.g. backend `89` → `4.5`) and per-item `score` becomes an integer 0–5 (e.g. backend `70` → `4`). The skill just renders `★ <average>` / `★ <score>` directly. Backend wire format is still 0–100 — encapsulated by `utils::score_to_stars_decimal` / `utils::score_to_stars_int` with the canonical **round-half-up** rule pinned in `SKILL.md §Amount Display Rules`.
+`average` and per-item `score` are already in **0.00–5.00 stars (up to 2 decimal places)** when the CLI surfaces them. The CLI applies `utils::convert_feedback_list_scores` to the backend response before returning: both `average` and per-item `score` become 2-decimal floats (e.g. backend `89` → `4.45`; backend `90` → `4.5`; backend `70` → `3.5`). The skill renders `★ <average>` / `★ <score>` directly. Backend wire format is still 0–100 integer — encapsulated by `utils::score_to_stars` with the canonical mapping pinned in `SKILL.md §Amount Display Rules`. (Earlier revisions rendered per-item as an integer bucket; that has been removed now that input precision is 2 decimals.)
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
