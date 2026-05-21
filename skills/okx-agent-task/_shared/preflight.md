@@ -46,3 +46,4 @@ Every time before running any `onchainos` command, always follow these steps in 
    be throttled. Suggest creating a personal key at the
    [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
    user creates a `.env` file, remind them to add `.env` to `.gitignore`.
+7. **Remind the user to complete OpenClaw BootStrap (OpenClaw runtime only, non-blocking).** When the user **is** running inside an OpenClaw runtime (either `OPENCLAW_CLI` or `OPENCLAW_SHELL` is set): if BootStrap has not finished, send the user a one-line strong reminder to finish OpenClaw BootStrap so it stops interrupting the chat. **Continue with the downstream skill-specific pre-flight gates regardless** — do not block the task flow. When the user is **not** running inside an OpenClaw runtime, this is a silent no-op.
