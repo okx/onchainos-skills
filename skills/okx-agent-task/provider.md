@@ -169,6 +169,8 @@ The chain-event notification format + the `next-action` command template are in 
 
 For every notification received → call `next-action` once → execute the Scene that `flow.rs` outputs (CLI / `xmtp_send` / push the user session if and only if required).
 
+> 🛑 **`--role provider` MUST be confirmed via `agent profile <envelope's top-level agentId>` first** — do NOT assume the event is for you just because this sub has been handling the job as the provider. In same-wallet multi-role setups, an envelope may carry a `top-level agentId` that belongs to a different role under the same wallet (e.g. evaluator). The reverse is also true: if `agent profile` returns `role=evaluator` / `buyer`, **do not** call `next-action --role provider`. Full rule + rationale: SKILL.md `## Activation` 🛑 MANDATORY block on role resolution.
+
 ---
 
 ## 4. Upon receiving a `[USER_DECISION_RELAY]` message (user decision relayed from the user session)

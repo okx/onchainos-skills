@@ -20,6 +20,8 @@ onchainos agent next-action \
 
 **Strictly follow the playbook printed by the command.**
 
+> 🛑 **`--role evaluator` MUST be confirmed via `agent profile <envelope's top-level agentId>` first** — do NOT assume the event is for you just because this sub has been handling arbitration in the past. In same-wallet multi-role setups, an envelope with `event=evaluator_selected` may carry a `top-level agentId` that belongs to your same-wallet evaluator agent even when received by a non-evaluator sub. The reverse is also true: if `agent profile` returns `role=provider` / `buyer`, **do not** call `next-action --role evaluator`. Full rule + rationale: SKILL.md `## Activation` 🛑 MANDATORY block on role resolution.
+
 ---
 
 ## 2. Communication Rules

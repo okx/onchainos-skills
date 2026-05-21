@@ -20,6 +20,8 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 
 > 🛑🛑🛑 **ABSOLUTE PROHIBITION — system events MUST call `next-action`; directly executing CLI is forbidden**: after receiving a `source: "system"` event (`job_payment_mode_changed` / `job_accepted` / `job_submitted` / `job_created` / `job_disputed` / ...), **the first action MUST be** `onchainos agent next-action --jobid <jobId> --jobStatus <event> --role buyer --agentId <agentId>`. It is **forbidden** to skip `next-action` and directly execute a business CLI (`confirm-accept` / `complete` / `reject` / `set-payment-mode` / ...) — the script contains pre-condition checks, action whitelists, and ordering constraints; skipping = executing the wrong command = a stuck flow or funds at risk.
 
+> 🛑 **`--role buyer` MUST be confirmed via `agent profile <envelope's top-level agentId>` first** — do NOT assume the event is for you just because this sub has been handling the job as the buyer. In same-wallet multi-role setups, an envelope may carry a `top-level agentId` that belongs to a different role under the same wallet (e.g. evaluator). The reverse is also true: if `agent profile` returns `role=evaluator` / `provider`, **do not** call `next-action --role buyer`. Full rule + rationale: SKILL.md `## Activation` 🛑 MANDATORY block on role resolution.
+
 The task state machine has been moved into the CLI (`onchainos agent next-action`) — **you do NOT need to memorize the steps for each state**. Upon receiving any system notification (chain event / user decision relayed from the user session), call `next-action` and execute its output.
 
 ---

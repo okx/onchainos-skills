@@ -126,6 +126,16 @@ onchainos agent next-action \
 
 > 🚨 **MANDATORY — "first action" is a non-negotiable hard requirement**: after receiving a `source:"system"` envelope, **your first tool call MUST be `next-action`** (apart from the `agent get` needed to identify the role). Any other tool call before that is **strictly forbidden** — especially **`sessions_spawn`** (most common violation, see counter-example 5), `session_status`, task-status queries, historical-task listings, `common context`, or any kind of lookup. There is **no** "let me get a sense of the situation before deciding whether to call next-action" scenario — the answer is **always "invoke immediately"**, with zero exceptions and no room for negotiation. Violating this rule = task flow stalls + user funds frozen. **This applies uniformly to every sub session** — task sub / evaluate sub / backup sub, no exceptions.
 
+> 🛑 **MANDATORY — `--role` MUST be resolved by `agent profile` on the envelope's top-level `agentId` every time; never reuse the current sub's bound role**: for each `source:"system"` envelope, you **must** call `onchainos agent profile <envelope's top-level agentId>` and read the returned `role` field. The following shortcuts are **all forbidden**:
+> - ❌ "This sub has been processing jobId=X as `provider`, so this new event for jobId=X is also `provider`"
+> - ❌ "The envelope's `jobId` matches the task I'm currently handling, so the role hasn't changed"
+> - ❌ "`session_status` shows this is the provider task sub, so `--role=provider`"
+> - ❌ "I just looked up this agentId in an earlier turn — reuse that role"
+>
+> **Why this rule exists** (real incident): in same-wallet multi-role setups (e.g. one account holds both an ASP and an Evaluator Agent), arbitration events (`evaluator_selected` / `reveal_started` / `vote_committed` / `vote_revealed` / `round_failed`) target the **evaluator's** agentId, but XMTP delivery may land the envelope in the same wallet's already-existing **provider task sub** for the same jobId. If you inherit the provider role and call `next-action --role provider --jobStatus evaluator_selected`, you hit the "Observe silently" fallback in `provider/flow.rs` — the evaluator playbook (`xmtp_start_evaluate_conversation` → commit/reveal) is **never executed**, the dispute round expires with no votes, and stake gets slashed. Symmetric failure mode exists for buyer-side same-wallet collisions.
+>
+> ✅ **The envelope's top-level `agentId` is the SOLE routing authority** — it tells you "this event is for THIS specific agent's role". `jobId` / current sessionKey / prior turns are **all irrelevant** to deciding `--role`. Re-query `agent profile` even if you "just" did so last turn; the cost is negligible (local registry lookup, cached).
+
 `event → --role` reference table (**for understanding / verification only, NOT the agent's actual decision basis** — the decision always comes from reading the `role` field returned by `onchainos agent profile <envelope's top-level agentId>`; the table below merely documents which role each event is designed to be sent to):
 
 | event | Designed target role |
