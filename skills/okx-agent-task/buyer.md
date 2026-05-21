@@ -286,7 +286,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 | Endpoint invalid | "This endpoint is not a valid x402 service; please confirm the address." |
 | tokenSymbol not USDT/USDG | "This service charges in <symbol>; the task system currently only supports USDT and USDG." |
 | Create-task failed | Check network status; guide a retry. |
-| Payment signing failed | Inspect the backend `executeErrorMsg`: check task status / approve / agentId / endpoint / parameters. **Do NOT** default to "balance insufficient" — the system is gas-free (paymaster pays gas), and this error is almost never about native / OKB. Only if the message explicitly says `业务代币余额不足 (USDT/USDG)` should you guide the user to top up USDT/USDG via `okx-dex-swap`. |
+| Payment signing failed | Inspect the backend `executeErrorMsg`: check task status / approve / agentId / endpoint / parameters. **Do NOT** default to "balance insufficient" — the system is gas-free (paymaster pays gas), and this error is almost never about native / OKB. |
 
 ---
 

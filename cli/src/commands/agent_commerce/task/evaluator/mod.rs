@@ -1,11 +1,11 @@
-//! Evaluator 端任务命令 — handler 模块集合
+//! Evaluator-side task commands — handler module collection.
 //!
-//! 命令名映射（旧 → 新，CLI 调用形式）：
+//! Command name mapping (old → new, CLI invocation form):
 //! - `agent evaluator claim`           → `agent arbitration-claim`
 //! - `agent evaluator claimable`       → `agent arbitration-claimable`
 //!
-//! - `helpers.rs`         — disputeId 解析
-//! - `flow.rs`            — 状态机提示词生成器（供 `next-action --role evaluator` 使用）
+//! - `helpers.rs`         — disputeId parsing
+//! - `flow.rs`            — state-machine prompt generator (used by `next-action --role evaluator`)
 
 pub mod claim;
 pub mod claimable;

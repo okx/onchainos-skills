@@ -1,25 +1,28 @@
-//! `dispute/status` 硬门 helper —— 不是独立 CLI 子命令，是 `evidence-info`
-//! (`handle_info`) 内联调用的前置门。
+//! `dispute/status` hard-gate helper — not a standalone CLI subcommand; it is the
+//! preflight gate called inline by `evidence-info` (`handle_info`).
 //!
-//! 用途：evaluator 收到 `evaluator_selected` 等系统通知时，envelope 可能是旧轮
-//! 的（agent 重启、网络滞后、commit 窗口已关、本轮已重抽、任务已结算……）。
-//! 直接按 stale envelope 走 commit/reveal 会被罚 stake，所以 `handle_info` 在
-//! 下载证据前先跑 [`precheck_round_gate`] 把所有 stale 场景兜在一起判一遍，
-//! 任一不过就早返回不下载。
+//! Purpose: when the evaluator receives a `evaluator_selected` (or similar) system
+//! notification, the envelope may be stale (agent restarted, network lag, commit
+//! window already closed, current round re-drawn, task already settled, …).
+//! Acting on a stale envelope to run commit/reveal gets the stake slashed, so
+//! before downloading evidence `handle_info` runs [`precheck_round_gate`] to
+//! check every stale scenario at once; if any gate fails it returns early
+//! without downloading.
 //!
-//! API：`GET /priapi/v1/aieco/task/{jobId}/dispute/status`，返回
-//! `{ jobId, currentRound, selectedVoter, taskStatus, disputeStatus }`。后端按
-//! 调用者 `agenticId` 个性化（非选中陪审时 `selectedVoter=null`）。
+//! API: `GET /priapi/v1/aieco/task/{jobId}/dispute/status` returns
+//! `{ jobId, currentRound, selectedVoter, taskStatus, disputeStatus }`. The
+//! backend personalizes by caller `agenticId` (when not selected as juror,
+//! `selectedVoter=null`).
 //!
-//! 四条硬门（与 / AND）：
-//! 1. `taskStatus` 不能是终态 — 6 Completed / 7 Close / 8 Expired / 9 Rejected
-//! 2. 入参 `round_num` 必须等于 `currentRound`（envelope 滞后于真实链上轮次 = stale）
-//! 3. `disputeRoundStatus` 必须是 1 (CommitPhase)（commit 窗口已关 / 未开 → 投了就罚）
-//! 4. `selectedVoter` 必须非空（本账户不是本轮选中陪审）
+//! Four hard gates (AND):
+//! 1. `taskStatus` must not be a terminal status — 6 Completed / 7 Close / 8 Expired / 9 Rejected.
+//! 2. Input `round_num` must equal `currentRound` (envelope lagging behind the real on-chain round = stale).
+//! 3. `disputeRoundStatus` must be 1 (CommitPhase) — commit window already closed / not yet open → voting gets slashed.
+//! 4. `selectedVoter` must be non-null (this account is not the selected juror for this round).
 //!
-//! [`precheck_round_gate`] 自己负责诊断输出 + 稳定标记行：
-//! - 全过 → 打印 `selected: yes`，返回 `true`（`handle_info` 继续下载证据）
-//! - 任一不过 → 打印 `reason: ...` + `selected: no`，返回 `false`（`handle_info` 早返回）
+//! [`precheck_round_gate`] is responsible for its own diagnostic output + stable marker lines:
+//! - All pass → print `selected: yes`, return `true` (`handle_info` proceeds to download evidence).
+//! - Any fail → print `reason: ...` + `selected: no`, return `false` (`handle_info` returns early).
 
 use anyhow::{Context, Result};
 use serde::de::IgnoredAny;
@@ -28,33 +31,42 @@ use serde::Deserialize;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::state_machine::{DisputeRoundStatus, Status};
 
-/// `dispute/status` 接口的原始响应承载体。
+/// Raw response payload for the `dispute/status` endpoint.
 ///
-/// 命名上故意 `Response` 后缀和 [`crate::commands::agent_commerce::task::common::state_machine::DisputeRoundStatus`]
-/// 枚举区分开——一个是 HTTP DTO，一个是仲裁子状态机阶段枚举（响应里的
-/// `dispute_round_status: i32` 字段才映射到那个枚举）。
-/// **可空字段说明**：后端在任务终态 / 无 active dispute 时返回
-/// `{currentRound:null, disputeStatus:null, selectedVoter:null, taskStatus:9}`，
-/// 故 `current_round` / `dispute_round_status` / `selected_voter` 必须用 `Option`，
-/// 不能裸 i64 / i32 + `#[serde(default)]`——后者只兜 missing 不兜 null，
-/// 会触发 `invalid type: null, expected i64` deserialize 失败。
+/// The `Response` suffix intentionally distinguishes this from
+/// [`crate::commands::agent_commerce::task::common::state_machine::DisputeRoundStatus`]
+/// — one is an HTTP DTO, the other is the arbitration sub-state-machine phase enum
+/// (the `dispute_round_status: i32` field in the response maps to that enum).
+///
+/// **Nullable fields**: in terminal task state / when there is no active dispute,
+/// the backend returns `{currentRound:null, disputeStatus:null, selectedVoter:null, taskStatus:9}`,
+/// so `current_round` / `dispute_round_status` / `selected_voter` must be `Option`;
+/// a bare `i64` / `i32` + `#[serde(default)]` is NOT enough — `#[serde(default)]`
+/// only covers `missing`, not `null`, and will trigger
+/// `invalid type: null, expected i64` deserialize failures.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DisputeStatusResponse {
     pub job_id: String,
     #[serde(default)]
     pub current_round: Option<i64>,
-    /// 后端按调用者 agentId 个性化：非空 = 命中，null = 未命中（含 stale 通知 / 无 active dispute）。
-    /// 内部字段（voterAddress / voterAgentId）在命中时一定就是调用者自己，零增量信息，所以
-    /// 用 `IgnoredAny` consume 而不解出来——硬门只需要 `is_none()` 判断。
+    /// Backend personalizes by caller agentId: non-null = selected, null = not selected
+    /// (including stale notification / no active dispute). The inner fields
+    /// (voterAddress / voterAgentId) are guaranteed to be the caller itself when
+    /// selected — zero incremental info — so we `IgnoredAny`-consume them instead
+    /// of deserializing; the hard gate only needs `is_none()`.
     #[serde(default)]
     pub selected_voter: Option<IgnoredAny>,
-    /// task 主状态机当前状态。样本里始终为整数（终态时也给数字如 9 Rejected），不为 null，仍用裸 i32 + default。
+    /// Current state of the task main state machine. The sample always carries an
+    /// integer (terminal states also give a number like 9 Rejected), never null,
+    /// so a bare `i32` + `default` is fine.
     #[serde(default)]
     pub task_status: i32,
-    /// 仲裁子状态机当前阶段（state_machine::DisputeStatus）。任务终态 / 无 dispute 时为 null。
-    /// `rename` + `alias` 兼容后端两种 JSON key：`disputeStatus` / `disputeRoundStatus`，
-    /// 哪个不同步都不破。
+    /// Current phase of the arbitration sub-state-machine
+    /// (`state_machine::DisputeStatus`). Null when the task is in a terminal state
+    /// or when there is no dispute.
+    /// `rename` + `alias` accept both backend JSON keys: `disputeStatus` /
+    /// `disputeRoundStatus`, so a mismatch on either side does not break parsing.
     #[serde(default)]
     pub dispute_round_status: Option<i32>,
 }
@@ -69,9 +81,10 @@ pub async fn get_dispute_status(
     serde_json::from_value(data).context("failed to parse dispute/status response")
 }
 
-/// 跑 4 条 AND 硬门：通过返回 `true` 并打印 `selected: yes`；任一不过返回 `false`
-/// 并打印 `reason: ...` + `selected: no`。`agent_id` 由调用方（`handle_info`）负责
-/// resolve，本函数不再二次 resolve（同一个 evaluator 流程内重复 resolve 无意义）。
+/// Run the 4 AND hard gates: on pass return `true` and print `selected: yes`;
+/// on any fail return `false` and print `reason: ...` + `selected: no`. `agent_id`
+/// is resolved by the caller (`handle_info`); this function does NOT re-resolve
+/// (repeated resolution within the same evaluator flow is pointless).
 pub async fn precheck_round_gate(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -80,13 +93,16 @@ pub async fn precheck_round_gate(
 ) -> Result<bool> {
     let s = get_dispute_status(client, job_id, agent_id).await?;
 
-    // 把后端的裸 int 提前升成枚举，下游硬门校验 + 打印都走 enum，杜绝裸数字比较。
-    // 两个枚举都对 unknown 值做了容错（Status::Other / DisputeStatus::Other）。
-    // disputeStatus 字段后端在终态 / 无 dispute 时返 null，所以 dispute_status 整个是 Option。
+    // Lift the backend's bare ints into enums up front; downstream gate checks
+    // and printing both work on enums, eliminating bare-number comparisons.
+    // Both enums tolerate unknown values (Status::Other / DisputeStatus::Other).
+    // The disputeStatus field is null in terminal / no-dispute cases, hence the
+    // whole `dispute_round_status` is `Option`.
     let task_status = Status::from_int(s.task_status);
     let dispute_round_status = s.dispute_round_status.map(DisputeRoundStatus::from_int);
 
-    // Option 字段打印：None 显示成 "null"，避免读者把缺省 0 误判成 round 0 / NONE 状态。
+    // Option-field printing: render None as "null" so readers don't mistake a
+    // default 0 for round 0 / a NONE state.
     let fmt_opt = |n: Option<i64>| n.map(|v| v.to_string()).unwrap_or_else(|| "null".into());
     let fmt_opt_i32 = |n: Option<i32>| n.map(|v| v.to_string()).unwrap_or_else(|| "null".into());
 
@@ -106,11 +122,14 @@ pub async fn precheck_round_gate(
         },
     );
 
-    // 硬门（AND）：任一不过都是 stale，输出第一条失败原因即可。
-    // 顺序：先验任务是否终态（最强信号——终态时 currentRound/disputeStatus 都会是 null，
-    // 必须先短路掉，否则下面的 None 分支会给出误导性的 reason）→ 再验 round_num 可解析
-    // → 再验链上 currentRound 不为 null → 再验 req_round == currentRound → 再验
-    // disputeStatus 不为 null → 再验 disputeStatus == CommitPhase → 最后验本账户命中。
+    // Hard gates (AND): any failure is stale; print the first failing reason.
+    // Order: first check whether the task is in a terminal state (strongest
+    // signal — terminal states have currentRound/disputeStatus both null, so we
+    // must short-circuit here, otherwise the None branches below would print
+    // misleading reasons) → then verify round_num is parseable → then verify
+    // on-chain currentRound is non-null → then verify req_round == currentRound
+    // → then verify disputeStatus is non-null → then verify
+    // disputeStatus == CommitPhase → finally verify this account was selected.
     let reason: Option<String> = if task_status.is_terminal() {
         Some(format!(
             "taskStatus={} ({}) is terminal — task finished, dispute window closed",
@@ -143,8 +162,9 @@ pub async fn precheck_round_gate(
         }
     };
 
-    // 稳定标记行 + reason 行：flow.rs 剧本按 `selected: yes/no` 判定走向，
-    // reason 行用于诊断（任一硬门不过时输出，紧贴 selected 行上方）。
+    // Stable marker line + reason line: flow.rs scripts dispatch on
+    // `selected: yes/no`; the reason line is for diagnostics (emitted only when
+    // a gate fails, printed immediately above the `selected` line).
     match reason {
         None => {
             println!("\nselected: yes");

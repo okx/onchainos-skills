@@ -43,7 +43,7 @@ When dealing with integer values of any of the fields below, **look up the table
 | `vote` (Evaluator Agent arbitration) | `0` = Approve (User Agent wins, funds refunded) / `1` = Reject (ASP wins, funds released to the ASP) |
 | `status` (task) | `0` = created / `1` = accepted / `2` = submitted / `3` = refused / `4` = disputed / `5` = admin_stopped / `6` = complete (done, funds released to the ASP) / `7` = close (closed, funds returned to the User Agent) / `8` = expired / `9` = rejected (arbitration refunds the User Agent) |
 
-🛑 **铁律**：写到这些字段的语义判断（thinking / xmtp_send / xmtp_dispatch_user 任何位置）之前，**强制对照上表**，不凭印象。错读这些字段会导致 agent 跑错链上动作（已发生事故）。
+🛑 **Iron rule**: before writing any semantic judgment about these fields (anywhere — `thinking` / `xmtp_send` / `xmtp_dispatch_user`), **you MUST cross-check the table above**; do not go from memory. Misreading these fields will make the agent run the wrong on-chain action (incidents have already occurred).
 
 ## Core Architecture (must understand)
 

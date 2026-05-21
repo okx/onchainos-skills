@@ -1,17 +1,21 @@
-//! 非负十进制字符串的精确算术（加 / 减 / 比较）。
+//! Exact arithmetic (add / sub / compare) over non-negative decimal strings.
 //!
-//! 用途：staking 预检需要在 `activeStake` / `amount` / `minCumulativeStake` /
-//! `partialUnstakeMinRetainOkb` 之间做加减比较，这些值都是后端 / 配置下发的
-//! UI 字符串（OKB 单位）。直接 `f64` 减法会出现 `0.0012 - 0.0002 =
-//! 0.0009999999999999998` 之类的精度抖动，把"恰好达标"误判为"差一点"。
+//! Purpose: the staking preflight needs to add/subtract/compare `activeStake`
+//! / `amount` / `minCumulativeStake` / `partialUnstakeMinRetainOkb`, all of
+//! which are UI strings (in OKB units) coming from backend / config. Plain
+//! `f64` subtraction produces artifacts like
+//! `0.0012 - 0.0002 = 0.0009999999999999998`, which misclassifies an "exactly
+//! meets threshold" case as "just short".
 //!
-//! 实现思路：把两个操作数对齐到二者中较大的小数位数，去掉小数点后当 `u128`
-//! 整数运算 —— 不依赖 token decimals，对任意精度的输入都精确。
+//! Approach: align both operands to the larger fractional precision of the
+//! two, drop the decimal point, and run the operation as `u128` integer math
+//! — no dependency on token decimals; exact for inputs of any precision.
 
 use anyhow::{anyhow, bail, Result};
 use std::cmp::Ordering;
 
-/// 拆分非负十进制字符串为 (整数部分, 小数部分)，校验只允许数字和最多一个小数点。
+/// Split a non-negative decimal string into (integer part, fractional part);
+/// validate that only digits and at most one decimal point are present.
 fn split(s: &str) -> Result<(&str, &str)> {
     let s = s.trim();
     if s.is_empty() {
@@ -31,13 +35,15 @@ fn split(s: &str) -> Result<(&str, &str)> {
     Ok((int_part, frac_part))
 }
 
-/// 把两个十进制字符串对齐到共同精度，返回 (a 的整数表示, b 的整数表示, 共同精度)。
+/// Align two decimal strings to a common precision; returns
+/// (integer representation of a, integer representation of b, common precision).
 fn align(a: &str, b: &str) -> Result<(u128, u128, usize)> {
     let (ai, af) = split(a)?;
     let (bi, bf) = split(b)?;
     let prec = af.len().max(bf.len());
     let to_u128 = |i: &str, f: &str, original: &str| -> Result<u128> {
-        // 小数部分右侧补 0 到 prec 位（width 是最小长度，不会截断）
+        // Pad the fractional part on the right with 0s to `prec` digits
+        // (the `width` specifier is a minimum length, not a truncation).
         let combined = format!("{i}{f:0<prec$}");
         let stripped = combined.trim_start_matches('0');
         let normalized = if stripped.is_empty() { "0" } else { stripped };
@@ -48,9 +54,9 @@ fn align(a: &str, b: &str) -> Result<(u128, u128, usize)> {
     Ok((to_u128(ai, af, a)?, to_u128(bi, bf, b)?, prec))
 }
 
-/// 把 u128 在指定精度下还原成规范十进制字符串：
-/// - 小数部分尾部 0 截掉
-/// - 整数（小数全 0）不带小数点
+/// Render a `u128` at the given precision back into a canonical decimal string:
+/// - trailing zeros in the fractional part are stripped
+/// - whole numbers (all-zero fractional part) carry no decimal point
 fn format_at(value: u128, prec: usize) -> String {
     if prec == 0 {
         return value.to_string();
@@ -71,7 +77,7 @@ pub fn cmp(a: &str, b: &str) -> Result<Ordering> {
     Ok(av.cmp(&bv))
 }
 
-/// `a - b`，要求 `a >= b`，否则返回 underflow 错误。
+/// `a - b`; requires `a >= b`, otherwise returns an underflow error.
 pub fn sub(a: &str, b: &str) -> Result<String> {
     let (av, bv, prec) = align(a, b)?;
     let diff = av
@@ -94,9 +100,9 @@ mod tests {
 
     #[test]
     fn sub_no_fp_artifact() {
-        // 同一个 case 下 f64 与字符串十进制的对比：
-        //   - f64    : 0.0012 - 0.0002 = 0.0009999999999999998（≠ 0.001）
-        //   - 字符串 :                  = "0.001"               （== 0.001）
+        // Same case, f64 vs string-decimal:
+        //   - f64    : 0.0012 - 0.0002 = 0.0009999999999999998  (!= 0.001)
+        //   - string :                  = "0.001"                (== 0.001)
         let fp_result = 0.0012_f64 - 0.0002_f64;
         assert_ne!(fp_result, 0.001_f64);
         assert_eq!(format!("{fp_result}"), "0.0009999999999999998");
@@ -106,7 +112,8 @@ mod tests {
 
     #[test]
     fn cmp_handles_uneven_precision() {
-        // remaining=0.001 vs retain=0.001 应该相等，不能因为对齐方式被判 < 或 >
+        // remaining=0.001 vs retain=0.001 must compare Equal — the alignment
+        // logic must not skew the result to < or >.
         assert_eq!(cmp("0.001", "0.0010").unwrap(), Ordering::Equal);
         assert_eq!(cmp("0.0012", "0.001").unwrap(), Ordering::Greater);
         assert_eq!(cmp("0.0009", "0.001").unwrap(), Ordering::Less);
@@ -128,7 +135,7 @@ mod tests {
 
     #[test]
     fn mixed_precision_alignment() {
-        // 10.5 (1 frac) vs 0.0001 (4 frac) → 共同精度 4
+        // 10.5 (1 frac digit) vs 0.0001 (4 frac digits) → common precision 4
         assert_eq!(sub("10.5", "0.0001").unwrap(), "10.4999");
         assert_eq!(add("10.5", "0.0001").unwrap(), "10.5001");
         assert_eq!(cmp("10.5", "0.0001").unwrap(), Ordering::Greater);

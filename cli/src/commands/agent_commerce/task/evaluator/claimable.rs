@@ -6,10 +6,11 @@ use crate::commands::agent_commerce::task::common::{
     claim as common_claim, network::task_api_client::TaskApiClient,
 };
 
-/// 查询当前 evaluator 账户可领取的奖励（跨 dispute 聚合）。
-/// - 0 金额的代币也会出现在列表里（后端返回全量统计）
+/// Query claimable rewards for the current evaluator account (aggregated across disputes).
+/// - Zero-amount tokens still appear in the list (the backend returns the full breakdown).
 ///
-/// 发现有非 0 奖励时，调 `arbitration-claim`（account 级 pull，无 jobId）一次领走全部。
+/// When non-zero rewards are found, call `arbitration-claim` (an account-level
+/// pull, no jobId) to sweep everything in a single call.
 pub async fn handle_claimable(
     client: &mut TaskApiClient,
     agent_id: &str,
