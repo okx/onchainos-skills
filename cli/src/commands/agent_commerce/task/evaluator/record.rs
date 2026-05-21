@@ -5,8 +5,10 @@ use std::time::Duration;
 use super::helpers::evidence_dir;
 use crate::audit;
 
-/// 用户自定义 rubric 删除了 §3 裁决书模板、或 LLM 未按模板产出时落盘的占位符。
-/// 留下 jobId / agentId 让审计槽位永不为空。
+/// Placeholder written to disk when the user-customized rubric stripped the
+/// §3 verdict template, or when the LLM did not produce output following the
+/// template. We still leave jobId / agentId on the page so the audit slot is
+/// never empty.
 fn placeholder(job_id: &str, agent_id: &str) -> String {
     format!(
         "# Verdict not generated\n\
@@ -19,14 +21,18 @@ fn placeholder(job_id: &str, agent_id: &str) -> String {
     )
 }
 
-/// 把 LLM 通过 `--verdict` 传入的单行 shell-safe 字符串还原为多行 markdown：
-/// `\n` → newline, `\t` → tab, `\r` → CR, `\\` → `\`, `\"` → `"`。
+/// Restore the single-line shell-safe string the LLM passes via `--verdict`
+/// back into multi-line markdown: `\n` → newline, `\t` → tab, `\r` → CR,
+/// `\\` → `\`, `\"` → `"`.
 ///
-/// 其他 `\<x>` 序列原样保留（不识别 ≠ 报错；前向兼容 LLM 写出未约定的转义）。
+/// Other `\<x>` sequences pass through verbatim (unknown ≠ error; this is
+/// forward-compat for LLMs that emit unspecified escapes).
 ///
-/// 设计动机：让 LLM 把 verdict markdown 压成单行 `--verdict "..."` 参数，绕开
-/// bash heredoc / 缩进 / 跨平台 shell（PowerShell / cmd）的兼容性陷阱；同时让
-/// 落盘的 `verdict.md` 保持人类可读的多行格式（事后审计 / 人工复议必需）。
+/// Design motivation: let the LLM compress the verdict markdown into a
+/// single-line `--verdict "..."` argument, bypassing the compat pitfalls of
+/// bash heredocs / indentation / cross-platform shells (PowerShell / cmd);
+/// at the same time keep the on-disk `verdict.md` in a human-readable
+/// multi-line format (mandatory for post-hoc audit / human review).
 fn unescape_verdict(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut chars = raw.chars();
@@ -51,10 +57,12 @@ fn unescape_verdict(raw: &str) -> String {
     out
 }
 
-/// 把 evaluator 产出的裁决书 markdown 落盘到 `<evidence_dir>/verdict.md`。
+/// Persist the evaluator's verdict markdown to `<evidence_dir>/verdict.md`.
 ///
-/// commit 后调用，作为本地审计冗余（vote 已上链，落盘仅供事后人工/复议核对）。
-/// `verdict` 为 None → 写入占位符；失败由 flow.rs 决定如何处理（默认不重试、不阻塞）。
+/// Called after commit, as a local audit redundancy (the vote is already
+/// on-chain; the on-disk copy is only for post-hoc manual review).
+/// `verdict = None` → write the placeholder; on failure, flow.rs decides
+/// (default: no retry, non-blocking).
 pub async fn handle_record(
     job_id: &str,
     agent_id: &str,

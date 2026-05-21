@@ -10,7 +10,8 @@ use super::helpers::evidence_dir;
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
-/// 双方证据袋的顶层 key（后端返回扁平结构，provider/client 直接在顶层）。
+/// Top-level keys of the two evidence buckets (backend returns a flat
+/// structure: `provider` / `client` sit directly at the top).
 const EVIDENCE_SIDES: [&str; 2] = ["provider", "client"];
 
 pub async fn handle_info(
@@ -19,9 +20,10 @@ pub async fn handle_info(
     agent_id: &str,
     round_num: &str,
 ) -> Result<()> {
-    // 前置门：commit 前的 4 条 AND 硬门（taskStatus 非终态 / round 对齐 /
-    // disputeStatus=CommitPhase / selectedVoter 非空）。任一不过 → precheck
-    // 内部已打印 `reason: ...` + `selected: no`，本函数早返回不下载证据，
+    // Pre-gate: the 4 AND hard gates before commit (taskStatus not terminal /
+    // round aligned / disputeStatus=CommitPhase / selectedVoter non-null).
+    // Any failure → precheck already printed `reason: ...` + `selected: no`;
+    // this function returns early without downloading evidence.
     if !dispute_status::precheck_round_gate(client, job_id, agent_id, round_num).await? {
         return Ok(());
     }
@@ -32,7 +34,8 @@ pub async fn handle_info(
     let tmp_dir = evidence_dir(job_id, agent_id)?;
     fs::create_dir_all(&tmp_dir)?;
 
-    // 后端扁平结构：顶层有 title/description 任务元数据 + provider/client 两个证据桶
+    // Backend flat structure: top level holds task metadata (title/description)
+    // plus the two evidence buckets `provider` / `client`.
     for side in EVIDENCE_SIDES {
         let Some(bucket) = data.get_mut(side).and_then(Value::as_object_mut) else { continue };
         let Some(images) = bucket.get_mut("images").and_then(Value::as_array_mut) else { continue };
@@ -90,9 +93,10 @@ pub(super) async fn fetch_evidence_bytes(
         .await
 }
 
-/// 把单张证据图下载到 `tmp_dir`，返回本地路径。
-/// fileKey 形态 `<jobId>/<idx>/<uuid>` —— 去掉 jobId 前缀后用 `_` 拼成 `<idx>_<uuid>`，
-/// 再按 magic bytes 嗅扩展名（png/jpg/gif/webp），让本地文件能直接被图片预览器打开。
+/// Download a single evidence image into `tmp_dir`; returns the local path.
+/// fileKey shape is `<jobId>/<idx>/<uuid>` — strip the jobId prefix, join the
+/// rest with `_` into `<idx>_<uuid>`, then sniff the extension via magic bytes
+/// (png/jpg/gif/webp) so the local file opens directly in any image viewer.
 async fn download_image(
     client: &TaskApiClient,
     job_id: &str,
@@ -114,7 +118,8 @@ async fn download_image(
     Ok(path)
 }
 
-/// 按 magic bytes 嗅常见图片格式，返回不带点的扩展名。未识别返回 None。
+/// Sniff a common image format from magic bytes; returns the extension
+/// without a leading dot, or `None` if the format is not recognized.
 fn sniff_image_ext(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         Some("png")

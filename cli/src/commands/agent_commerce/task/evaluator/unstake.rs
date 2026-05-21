@@ -8,7 +8,7 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::evaluator::{decimal_str, staking_types};
 use crate::commands::agent_commerce::task::signing;
 
-/// 把 unix 秒格式化为「ts（本地时间 YYYY-MM-DD HH:MM:SS TZ）」用于错误提示。
+/// Format a unix-seconds value as "ts (local time YYYY-MM-DD HH:MM:SS TZ)" for error messages.
 fn fmt_local_ts(ts: i64) -> String {
     chrono::Local
         .timestamp_opt(ts, 0)
@@ -40,7 +40,7 @@ pub async fn handle_request_unstake(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
-    // 拉 my-stake / staking-config（任一失败 → 直接报错结束，不做 best-effort 猜测）
+    // Fetch my-stake / staking-config (any failure → abort; no best-effort guessing).
     let m = staking_types::get_my_stake(client, &agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("failed to fetch my-stake, cannot validate request-unstake preconditions: {e}"))?;
@@ -68,12 +68,14 @@ pub async fn handle_request_unstake(
         .await
         .map_err(|e| anyhow::anyhow!("failed to fetch staking-config, cannot validate partial-unstake min retain: {e}"))?;
     let retain = &cfg.partial_unstake_min_retain_okb;
-    // 部分赎回后剩余必须 >= partialUnstakeMinRetainOkb（全额赎回 amt == active 不受此限）。
-    // 全部走字符串十进制运算：避免 f64 精度抖动把"恰好达标"误判为"差一点"。
+    // After a partial redemption the remainder must be >= partialUnstakeMinRetainOkb
+    // (a full redemption where amt == active is exempt). All arithmetic runs in
+    // string-decimal to avoid f64 precision artifacts that would misclassify
+    // "exactly meets" as "just short".
     //
-    // 真实复现 case（active=0.0012, amt=0.0002, retain=0.001）：
-    //   - f64    : 0.0012_f64 - 0.0002_f64 = 0.0009999999999999998 < 0.001 → 误报"低于最低保留"
-    //   - 字符串 : sub("0.0012", "0.0002") = "0.001"               == 0.001 → 通过
+    // Real reproducer (active=0.0012, amt=0.0002, retain=0.001):
+    //   - f64    : 0.0012_f64 - 0.0002_f64 = 0.0009999999999999998 < 0.001 → false "below min retain"
+    //   - string : sub("0.0012", "0.0002") = "0.001"               == 0.001 → pass
     let remaining = decimal_str::sub(active, trimmed).map_err(|e| {
         anyhow::anyhow!(
             "unstake pre-check: activeStake {active} - amount {trimmed} computation failed: {e}"
@@ -139,7 +141,8 @@ pub async fn handle_request_unstake(
     Ok(())
 }
 
-/// 冷却期结束后领取已解质押的 OKB。合约内部知道金额与解锁时间，请求体为空。
+/// Claim unstaked OKB after the cooldown ends. The contract internally knows
+/// the amount and unlock time; the request body is empty.
 pub async fn handle_claim_unstake(
     client: &mut TaskApiClient,
     agent_id: &str,
@@ -147,7 +150,7 @@ pub async fn handle_claim_unstake(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
-    // best-effort pre-check：my-stake 失败 → 跳过预检由合约兜底
+    // Best-effort pre-check: if my-stake fails, skip the preflight and let the contract guard.
     if let Ok(m) = staking_types::get_my_stake(client, &agent_id).await {
         if m.unstake_available_at == 0 {
             bail!("no pending unstake request to claim. Submit an unstake request first.");
@@ -204,7 +207,7 @@ pub async fn handle_cancel_unstake(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
-    // best-effort pre-check：my-stake 失败 → 跳过预检由合约兜底
+    // Best-effort pre-check: if my-stake fails, skip the preflight and let the contract guard.
     if let Ok(m) = staking_types::get_my_stake(client, &agent_id).await {
         if m.unstake_available_at == 0 {
             bail!("no pending unstake request to cancel.");

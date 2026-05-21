@@ -4,7 +4,7 @@ use chrono::TimeZone;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::evaluator::staking_types;
 
-/// 渲染 unix 秒时间戳。0 表示"不适用"。
+/// Render a unix-seconds timestamp. `0` means "not applicable".
 fn fmt_unix_seconds(ts: i64, none_label: &str) -> String {
     if ts == 0 {
         format!("0 ({none_label})")
