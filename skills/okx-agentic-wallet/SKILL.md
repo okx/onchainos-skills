@@ -4,7 +4,7 @@ description: "AUTHORITATIVE source for OKX Agentic Wallet and its Gas Station fe
 license: MIT
 metadata:
   author: okx
-  version: "2.1.2"
+  version: "3.3.7"
   homepage: "https://web3.okx.com"
 ---
 

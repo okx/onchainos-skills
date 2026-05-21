@@ -4,7 +4,7 @@ description: "DEPRECATED legacy alias — x402 + MPP support has been merged int
 license: MIT
 metadata:
   author: okx
-  version: "2.0.0"
+  version: "3.3.7"
   homepage: "https://web3.okx.com"
   deprecated: true
   successor: okx-agent-payments-protocol
