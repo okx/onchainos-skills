@@ -106,7 +106,7 @@ pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
          \x20\x20\x20\x20  - txHash: <txHash>\n\
          \x20\x20\x20\x20  - Settled at: <timestamp>\n\
          \x20\x20\x20\x20\n\
-         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\"."
+         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\". You can also include a comment, e.g. \"rate 5 great service\"."
     )
 }
 
@@ -121,7 +121,7 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
          \x20\x20\x20\x20  - Spent: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Payment: x402\n\
          \x20\x20\x20\x20  - Settled at: <timestamp>\n\
-         \x20\x20\x20\x20To rate the ASP (0–5 stars), reply \"rate\"."
+         \x20\x20\x20\x20To rate the ASP (0–5 stars), reply \"rate\". You can also include a comment, e.g. \"rate 5 great service\"."
     )
 }
 
@@ -136,7 +136,7 @@ pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
         "\x20\x20\x20\x20[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
          \x20\x20\x20\x20  - Refund: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Outcome: ClientWins\n\
-         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\"."
+         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\". You can also include a comment, e.g. \"rate 5 great service\"."
     )
 }
 
@@ -149,7 +149,7 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
         "\x20\x20\x20\x20[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
          \x20\x20\x20\x20  - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
          \x20\x20\x20\x20  - Outcome: ProviderWins\n\
-         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\"."
+         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\". You can also include a comment, e.g. \"rate 5 great service\"."
     )
 }
 
