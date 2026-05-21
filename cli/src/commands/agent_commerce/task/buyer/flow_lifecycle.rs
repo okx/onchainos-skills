@@ -223,8 +223,8 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20Quality standards: <qualityStandards>\n\n\
      **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP (0–5 stars), reply 'rate'.\"\n\
-     When the user replies `rate`, ask for a score (0–5 integer) and optional text feedback, then execute:\n\
+     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user: if they want to rate the ASP (0–5 stars), they can reply with their rating.\n\
+     When the user replies with a rating intent, ask for a score (0–5 integer) and optional text feedback if not already provided, then execute:\n\
      ```bash\n\
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
      ```\n\
@@ -443,8 +443,8 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
      {completed_escrow_notify}\n\n\
      **A-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP (0–5 stars), reply 'rate'.\"\n\
-     When the user replies `rate`, ask for a score (0–5 integer) and optional text feedback, then execute:\n\
+     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user: if they want to rate the ASP (0–5 stars), they can reply with their rating.\n\
+     When the user replies with a rating intent, ask for a score (0–5 integer) and optional text feedback if not already provided, then execute:\n\
      ```bash\n\
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
      ```\n\
@@ -504,8 +504,8 @@ pub(super) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      {dispute_lost}\n\n\
      **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- the notification template already includes \"To rate the ASP (0–5 stars), reply 'rate'.\"\n\
-     When the user replies `rate`, ask for a score (0–5 integer) and optional text feedback, then execute:\n\
+     ⚠️ **Do not auto-rate** -- the notification already includes a rating prompt; wait for the user to reply with their rating.\n\
+     When the user replies with a rating intent, ask for a score (0–5 integer) and optional text feedback if not already provided, then execute:\n\
      ```bash\n\
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
      ```\n\
