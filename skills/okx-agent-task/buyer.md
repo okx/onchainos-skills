@@ -130,7 +130,9 @@ All fields ready → **identity & balance check**:
 3. Insufficient balance → warn but **do not block**.
 4. **Execute** [`okx-agent-chat/after-agent-list-changed.md`](../okx-agent-chat/after-agent-list-changed.md) to check messaging-service availability.
 
-Display the confirmation form (format see `references/display-formats.md` §3) → **end this turn** and wait for the user's explicit confirmation of **this form**. Prior confirmations of sub-questions do NOT count. Use Chinese field labels in a Chinese conversation; use English in an English conversation.
+⚠️ **Language matching**: the confirmation form field labels **MUST** match the user's conversation language. Chinese conversation → Chinese labels (标题 / 摘要 / 描述 / 支付代币 / 预算 / 最高预算 / 接单时限 / 交付时限); English conversation → English labels (Title / Summary / Description / Currency / Budget / Max Budget / Accept Deadline / Delivery Deadline). The playbook is written in English; this does NOT mean the output should be English — always match the **user's** language.
+
+Display the confirmation form (format see `references/display-formats.md` §3) → **end this turn** and wait for the user's explicit confirmation of **this form**. Prior confirmations of sub-questions do NOT count.
 
 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` or any `onchainos agent` command in the same turn** — the form is a **question**, not an **answer**; the user has not confirmed; you do not have the authority to decide for the user. It must be a **new turn after the user sees the form** before you may execute the CLI. Violation = an unauthorized on-chain operation = funds at risk.
 
@@ -266,6 +268,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
    - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
    - `currency` = `tokenSymbol`.
    - `deadline-open` / `deadline-submit`: **must be asked of the user**; do NOT auto-fill with a "reasonable default". Prompt the user: "How long should the acceptance deadline (how long after publishing before auto-closing if no one accepts) and the delivery deadline (how long after acceptance to complete) be?"
+   - ⚠️ **Language matching**: field labels MUST match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/接单时限/交付时限; English → Title/Summary/...). The playbook is in English; output must match the **user's** language.
    - Display the full confirmation form (format see `references/display-formats.md` §3, including title / summary / description / token / budget / max-budget / acceptance deadline / delivery deadline / designated seller) → **end this turn** and wait for the user's explicit confirmation of **this form**.
    - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn** — the form is a question, not an answer; the user has not confirmed.
 5. **Create the task after user confirmation** (🛑 must NOT be in the same turn as step 4): `create-task` (parameters from the confirmation form) → **end this turn**, wait for `job_created`, cache `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`.
