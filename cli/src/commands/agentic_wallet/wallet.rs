@@ -382,7 +382,7 @@ async fn resolve_send_amount(
             }
         };
 
-        return crate::commands::swap::readable_to_minimal_str(readable, decimal);
+        return crate::validators::readable_to_minimal_str(readable, decimal);
     }
 
     bail!("Either --amt or --readable-amount is required")

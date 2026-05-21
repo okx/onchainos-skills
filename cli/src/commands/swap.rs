@@ -9,6 +9,7 @@ use super::Context;
 use crate::client::ApiClient;
 use crate::output;
 use crate::token_alias::{resolve_token_address, validate_address_for_chain};
+use crate::validators::{readable_to_minimal_str, validate_amount, validate_slippage};
 
 #[derive(Subcommand)]
 pub enum SwapCommand {
@@ -319,103 +320,6 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
     Ok(())
 }
 
-// ── Pre-flight validation helpers ────────────────────────────────────
-
-/// Validate that `amount` is a non-empty string of digits (no Infinity, NaN,
-/// negative, zero-only, leading-zeros, or other non-numeric values).
-pub(crate) fn validate_amount(amount: &str) -> Result<()> {
-    let amount = amount.trim();
-    if amount.is_empty() {
-        bail!("--amount must not be empty");
-    }
-    if amount.contains('.') {
-        bail!("--amount must be a whole number in minimal units (no decimals)");
-    }
-    if !amount.chars().all(|c| c.is_ascii_digit()) {
-        bail!(
-            "--amount must be a whole number in minimal units, got \"{}\". \
-             Infinity, NaN, negative numbers and non-numeric values are not accepted.",
-            amount
-        );
-    }
-    if amount.chars().all(|c| c == '0') {
-        bail!("--amount must be greater than zero");
-    }
-    if amount.starts_with('0') {
-        bail!("--amount must not have leading zeros, got \"{}\"", amount);
-    }
-    Ok(())
-}
-
-/// Validate that `slippage` is a number strictly greater than 0 and at most 100.
-/// Accepts decimals like "0.5", "1", "99.9", "100". Rejects "0", negatives, >100, non-numeric.
-fn validate_slippage(slippage: &str) -> Result<()> {
-    let slippage = slippage.trim();
-    let val: f64 = slippage.parse().map_err(|_| {
-        anyhow::anyhow!(
-            "--slippage must be a number between 0 (exclusive) and 100 (inclusive), got \"{}\"",
-            slippage
-        )
-    })?;
-    if val.is_nan() || val.is_infinite() {
-        bail!(
-            "--slippage must be a finite number between 0 (exclusive) and 100 (inclusive), got \"{}\"",
-            slippage
-        );
-    }
-    if val <= 0.0 || val > 100.0 {
-        bail!(
-            "--slippage must be greater than 0 and at most 100, got \"{}\"",
-            slippage
-        );
-    }
-    Ok(())
-}
-
-/// Convert a human-readable decimal string to minimal units (integer string).
-/// Uses string arithmetic to avoid floating-point precision issues.
-/// e.g. "0.1" with decimal=6 → "100000", "1.5" with decimal=18 → "1500000000000000000"
-pub(crate) fn readable_to_minimal_str(amount: &str, decimal: u32) -> Result<String> {
-    let (integer, frac) = if let Some(dot_pos) = amount.find('.') {
-        (&amount[..dot_pos], &amount[dot_pos + 1..])
-    } else {
-        (amount, "")
-    };
-    if integer.is_empty() || !integer.chars().all(|c| c.is_ascii_digit()) {
-        bail!(
-            "--readable-amount must be a positive number, got \"{}\"",
-            amount
-        );
-    }
-    if !frac.chars().all(|c| c.is_ascii_digit()) {
-        bail!(
-            "--readable-amount must be a positive number, got \"{}\"",
-            amount
-        );
-    }
-    let precision = decimal as usize;
-    let frac_padded = if frac.len() >= precision {
-        if frac[precision..].chars().any(|c| c != '0') {
-            bail!(
-                "--readable-amount \"{}\" has more decimal places than this token supports ({} decimals)",
-                amount, decimal
-            );
-        }
-        frac[..precision].to_string()
-    } else {
-        format!("{:0<width$}", frac, width = precision)
-    };
-    let combined = format!("{}{}", integer, frac_padded);
-    let stripped = combined.trim_start_matches('0');
-    let result = if stripped.is_empty() { "0" } else { stripped };
-    if result == "0" {
-        bail!(
-            "--readable-amount {} is too small for this token ({} decimals); results in zero minimal units",
-            amount, decimal
-        );
-    }
-    Ok(result.to_string())
-}
 
 /// Resolve the effective raw amount from either --amount (raw) or --readable-amount (human-readable).
 /// If --readable-amount is given, fetches token decimals via token info and converts.
@@ -530,26 +434,6 @@ fn validate_tips(tips: &str) -> Result<()> {
     }
     if val > 2.0 {
         bail!("--tips must be at most 2 SOL, got \"{}\"", tips);
-    }
-    Ok(())
-}
-
-/// Validate non-negative integer string (≥ 0). Used for gasLimit, aaDexTokenAmount, etc.
-pub(crate) fn validate_non_negative_integer(value: &str, label: &str) -> Result<()> {
-    let value = value.trim();
-    if value.is_empty() {
-        bail!("--{} must not be empty", label);
-    }
-    if !value.chars().all(|c| c.is_ascii_digit()) {
-        bail!(
-            "--{} must be a non-negative integer, got \"{}\"",
-            label,
-            value
-        );
-    }
-    // Allow "0", but reject leading zeros like "007"
-    if value.len() > 1 && value.starts_with('0') {
-        bail!("--{} must not have leading zeros, got \"{}\"", label, value);
     }
     Ok(())
 }
@@ -1681,114 +1565,6 @@ mod tests {
         assert_eq!(classify_approve_action("56", USDT_ETH, "100", "1000000"), (true, false));
     }
 
-    #[test]
-    fn test_readable_to_minimal_str() {
-        // USDC: 6 decimals
-        assert_eq!(readable_to_minimal_str("0.1", 6).unwrap(), "100000");
-        assert_eq!(readable_to_minimal_str("1.5", 6).unwrap(), "1500000");
-        assert_eq!(readable_to_minimal_str("100", 6).unwrap(), "100000000");
-        assert_eq!(readable_to_minimal_str("1", 6).unwrap(), "1000000");
-        assert_eq!(readable_to_minimal_str("0.000001", 6).unwrap(), "1");
-        // ETH: 18 decimals
-        assert_eq!(
-            readable_to_minimal_str("0.1", 18).unwrap(),
-            "100000000000000000"
-        );
-        assert_eq!(
-            readable_to_minimal_str("1", 18).unwrap(),
-            "1000000000000000000"
-        );
-        // SOL: 9 decimals
-        assert_eq!(readable_to_minimal_str("1", 9).unwrap(), "1000000000");
-        // Excess fractional digits with non-zero content → error
-        assert!(readable_to_minimal_str("0.1234567", 6).is_err());
-        assert!(readable_to_minimal_str("1.00000002", 2).is_err());
-        // Excess fractional digits that are all zero → ok
-        assert_eq!(readable_to_minimal_str("1.000", 2).unwrap(), "100");
-        assert_eq!(readable_to_minimal_str("0.1230000", 6).unwrap(), "123000");
-    }
-
-    // ── slippage validation ────────────────────────────────────────
-
-    #[test]
-    fn test_validate_slippage_valid() {
-        assert!(validate_slippage("0.5").is_ok());
-        assert!(validate_slippage("1").is_ok());
-        assert!(validate_slippage("50").is_ok());
-        assert!(validate_slippage("99.9").is_ok());
-        assert!(validate_slippage("100").is_ok()); // upper bound inclusive
-        assert!(validate_slippage("100.0").is_ok());
-        assert!(validate_slippage("0.001").is_ok());
-        assert!(validate_slippage("0.01").is_ok());
-        assert!(validate_slippage("  1  ").is_ok()); // trimmed
-    }
-
-    #[test]
-    fn test_validate_slippage_boundary_reject() {
-        // 0 is exclusive
-        assert!(validate_slippage("0").is_err());
-        assert!(validate_slippage("0.0").is_err());
-        // >100 rejected
-        assert!(validate_slippage("100.1").is_err());
-    }
-
-    #[test]
-    fn test_validate_slippage_out_of_range() {
-        assert!(validate_slippage("-1").is_err());
-        assert!(validate_slippage("-0.5").is_err());
-        assert!(validate_slippage("100.1").is_err());
-        assert!(validate_slippage("200").is_err());
-    }
-
-    #[test]
-    fn test_validate_slippage_non_numeric() {
-        assert!(validate_slippage("abc").is_err());
-        assert!(validate_slippage("").is_err());
-        assert!(validate_slippage("   ").is_err());
-        assert!(validate_slippage("NaN").is_err());
-        assert!(validate_slippage("inf").is_err());
-        assert!(validate_slippage("infinity").is_err());
-        assert!(validate_slippage("-inf").is_err());
-    }
-
-    // ── amount validation (swap: positive integer) ─────────────────
-
-    #[test]
-    fn test_validate_amount_valid() {
-        assert!(validate_amount("1").is_ok());
-        assert!(validate_amount("1000000").is_ok());
-        assert!(validate_amount("999999999999999999").is_ok());
-    }
-
-    #[test]
-    fn test_validate_amount_reject_decimal() {
-        assert!(validate_amount("1.5").is_err());
-        assert!(validate_amount("0.1").is_err());
-        assert!(validate_amount("100.0").is_err());
-    }
-
-    #[test]
-    fn test_validate_amount_reject_zero() {
-        assert!(validate_amount("0").is_err());
-        assert!(validate_amount("000").is_err());
-    }
-
-    #[test]
-    fn test_validate_amount_reject_negative_and_non_numeric() {
-        assert!(validate_amount("-1").is_err());
-        assert!(validate_amount("-100").is_err());
-        assert!(validate_amount("abc").is_err());
-        assert!(validate_amount("12abc").is_err());
-        assert!(validate_amount("").is_err());
-        assert!(validate_amount("  ").is_err());
-    }
-
-    #[test]
-    fn test_validate_amount_reject_leading_zeros() {
-        assert!(validate_amount("007").is_err());
-        assert!(validate_amount("01").is_err());
-    }
-
     // ── approve amount validation (allows 0 for revoke) ────────────
 
     #[test]
@@ -1900,44 +1676,6 @@ mod tests {
         assert!(validate_tips("  1  ").is_ok());
     }
 
-    // ── non-negative integer validation ───────────────────────────────
-
-    #[test]
-    fn test_validate_non_negative_integer_valid() {
-        assert!(validate_non_negative_integer("0", "gas-limit").is_ok());
-        assert!(validate_non_negative_integer("1", "gas-limit").is_ok());
-        assert!(validate_non_negative_integer("21000", "gas-limit").is_ok());
-        assert!(validate_non_negative_integer("999999999", "aa-dex-token-amount").is_ok());
-    }
-
-    #[test]
-    fn test_validate_non_negative_integer_rejects_non_numeric() {
-        assert!(validate_non_negative_integer("abc", "gas-limit").is_err());
-        assert!(validate_non_negative_integer("-1", "gas-limit").is_err());
-        assert!(validate_non_negative_integer("1.5", "gas-limit").is_err());
-        assert!(validate_non_negative_integer("", "gas-limit").is_err());
-        assert!(validate_non_negative_integer("  ", "gas-limit").is_err());
-    }
-
-    #[test]
-    fn test_validate_non_negative_integer_rejects_leading_zeros() {
-        assert!(validate_non_negative_integer("007", "gas-limit").is_err());
-        assert!(validate_non_negative_integer("00", "gas-limit").is_err());
-        assert!(validate_non_negative_integer("01", "aa-dex-token-amount").is_err());
-    }
-
-    #[test]
-    fn test_validate_non_negative_integer_allows_zero() {
-        assert!(validate_non_negative_integer("0", "gas-limit").is_ok());
-    }
-
-    #[test]
-    fn test_validate_non_negative_integer_error_contains_label() {
-        let err = validate_non_negative_integer("abc", "gas-limit").unwrap_err();
-        assert!(err.to_string().contains("--gas-limit"));
-        let err2 = validate_non_negative_integer("-1", "aa-dex-token-amount").unwrap_err();
-        assert!(err2.to_string().contains("--aa-dex-token-amount"));
-    }
 
     // ── extract_tx_hash_and_order_id (Gas Station orderId propagation) ──
 
