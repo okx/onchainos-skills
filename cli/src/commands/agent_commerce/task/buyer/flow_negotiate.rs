@@ -141,6 +141,7 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              Negotiation steps:\n\
              1. Call xmtp_send to send the first inquiry (natural language - let the ASP quote first, then judge):\n\
              \x20\x20content=<job description + expected deliverable + paymentMode preference + budget (base budget); **do NOT expose max_budget**>\n\
+             \x20\x20⚠️ `[intent:propose]` is ALWAYS sent by the buyer (you), NEVER by the ASP. Do NOT ask or instruct the ASP to send `[intent:propose]`.\n\
              \x20\x20-> wait for the ASP's reply (5-minute timeout)\n\
              2. (Inside the sub session) the ASP replies with a quote (amount, token, payment-mode preference, estimated delivery time).\n\n\
              🛑 **Mandatory pre-evaluation - after the ASP replies, you MUST complete the steps below before sending any xmtp_send**:\n\
