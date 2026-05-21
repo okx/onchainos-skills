@@ -1,8 +1,8 @@
-//! 用户条款变更（仅 Open 状态）
+//! User terms changes (only in the Open state).
 //!
-//! - `set-token-and-budget` — 修改支付代币及支付金额（上链，等 task_token_budget_change 通知）
-//! - `set-provider`         — 修改服务商（上链，不等确认直接继续）
-//! - `set-max-budget`       — 修改最高预算（不上链，接口成功即完成）
+//! - `set-token-and-budget` — change payment token and amount (on-chain, wait for `task_token_budget_change`).
+//! - `set-provider`         — change provider (on-chain; do NOT wait for confirmation, continue immediately).
+//! - `set-max-budget`       — change max budget (off-chain; succeeds when the API call returns).
 
 use anyhow::Result;
 use std::time::Duration;
@@ -11,11 +11,11 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// set-token-and-budget — 修改支付代币及支付金额
+/// set-token-and-budget — change payment token and amount.
 ///
 /// POST /priapi/v1/aieco/task/{jobId}/setTokenAndBudget
-/// Request:  { "tokenSymbol": "<symbol>", "budget": "<human金额>", "sessionCert": "..." }
-/// Response: { code: "0", data: { jobId, type: 27, uopData } } → 签名广播
+/// Request:  { "tokenSymbol": "<symbol>", "budget": "<human-readable amount>", "sessionCert": "..." }
+/// Response: { code: "0", data: { jobId, type: 27, uopData } } → sign and broadcast.
 pub async fn handle_set_token_and_budget(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -55,17 +55,17 @@ pub async fn handle_set_token_and_budget(
         None,
     );
 
-    println!("✓ 支付条款变更已提交，等待上链确认（task_token_budget_change）");
+    println!("✓ Payment terms change submitted; awaiting on-chain confirmation (task_token_budget_change).");
     println!("  token: {token_symbol}, budget: {budget}");
     println!("  txHash: {tx_hash}");
     Ok(())
 }
 
-/// set-provider — 修改服务商
+/// set-provider — change the provider.
 ///
 /// POST /priapi/v1/aieco/task/{jobId}/setProviderAndAgentId
 /// Request:  { "providerAgentId": "<agentId>", "sessionCert": "..." }
-/// Response: { code: "0", data: { jobId, type: 28, uopData } } → 签名广播
+/// Response: { code: "0", data: { jobId, type: 28, uopData } } → sign and broadcast.
 pub async fn handle_set_provider(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -104,18 +104,18 @@ pub async fn handle_set_provider(
         None,
     );
 
-    println!("✓ 服务商变更已提交（不等上链确认，立即启动新服务商流程）");
+    println!("✓ Provider change submitted (not waiting for on-chain confirmation; starting the new-provider flow immediately).");
     println!("  providerAgentId: {provider_agent_id}");
     println!("  txHash: {tx_hash}");
     println!();
-    println!("下一步: onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id} --provider {provider_agent_id}");
+    println!("Next: onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id} --provider {provider_agent_id}");
     Ok(())
 }
 
-/// set-max-budget — 修改最高预算（不上链）
+/// set-max-budget — change the max budget (off-chain).
 ///
 /// POST /priapi/v1/aieco/task/{jobId}/setBudget
-/// Request:  { "paymentMostTokenAmount": "<human金额>" }
+/// Request:  { "paymentMostTokenAmount": "<human-readable amount>" }
 /// Response: { code: 0, data: null }
 pub async fn handle_set_max_budget(
     client: &mut TaskApiClient,
@@ -153,6 +153,6 @@ pub async fn handle_set_max_budget(
         None,
     );
 
-    println!("✓ 最高预算已更新为 {max_budget}");
+    println!("✓ Max budget updated to {max_budget}.");
     Ok(())
 }

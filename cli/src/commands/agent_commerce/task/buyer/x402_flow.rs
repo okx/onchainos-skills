@@ -1,19 +1,20 @@
-//! x402 支付流程
+//! x402 payment flow.
 //!
-//! 用户 accept 后调用 x402 完成支付。通过子进程调用 `onchainos payment x402-pay`
-//! 复用 agentic_wallet 中的签名逻辑，本模块负责：
-//! - 请求 Provider endpoint → 解码 HTTP 402
-//! - 调用 CLI 签名
-//! - 组装 payment header → 重放请求
+//! After the user accepts, x402 is invoked to complete payment. Subprocess invocation
+//! of `onchainos payment x402-pay` reuses the signing logic in `agentic_wallet`.
+//! This module is responsible for:
+//! - requesting the Provider endpoint → decoding HTTP 402;
+//! - invoking the CLI signer;
+//! - assembling the payment header → replaying the request.
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-// ─── 公共类型 ────────────────────────────────────────────────────────────
+// ─── Public types ───────────────────────────────────────────────────────
 
-/// 解码后的 402 响应
+/// Decoded 402 response.
 #[derive(Debug, Clone)]
 pub struct X402Payload {
     pub x402_version: i64,
@@ -22,7 +23,7 @@ pub struct X402Payload {
     pub raw: serde_json::Value,
 }
 
-/// CLI 签名输出
+/// CLI signing output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct X402PaymentProof {
     pub signature: String,
@@ -31,44 +32,44 @@ pub struct X402PaymentProof {
     pub session_cert: Option<String>,
 }
 
-// ─── x402 验证 & 定价 ──────────────────────────────────────────────────
+// ─── x402 validation & pricing ─────────────────────────────────────────
 
-/// 从 accepts 数组中提取的原始定价信息
+/// Raw pricing info extracted from the `accepts` array.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct X402Pricing {
-    /// 最小单位金额（如 "1000000" = 1 USDC）
+    /// Amount in minimal units (e.g. "1000000" = 1 USDC).
     pub amount_minimal: String,
-    /// ERC-20 合约地址
+    /// ERC-20 contract address.
     pub asset: String,
-    /// 收款地址
+    /// Recipient address.
     pub pay_to: String,
-    /// CAIP-2 网络标识（如 "eip155:196"）
+    /// CAIP-2 network identifier (e.g. "eip155:196").
     pub network: String,
-    /// x402 scheme（exact / aggr_deferred）
+    /// x402 scheme (`exact` / `aggr_deferred`).
     pub scheme: Option<String>,
-    /// EIP-3009 超时秒数
+    /// EIP-3009 timeout in seconds.
     pub max_timeout_seconds: u64,
-    /// 从 accepts entry 直接提取的 decimals（优先于 token info 查询）
+    /// Decimals extracted directly from the accepts entry (preferred over a token-info lookup).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_decimals: Option<u8>,
 }
 
-/// x402 endpoint 验证结果
+/// x402 endpoint validation result.
 #[derive(Debug, Clone, Serialize)]
 pub struct X402EndpointCheck {
-    /// 是否是合法的 x402 endpoint
+    /// Whether this is a valid x402 endpoint.
     pub valid: bool,
-    /// HTTP 状态码
+    /// HTTP status code.
     pub status_code: u16,
-    /// 定价信息（valid=true 时有值）
+    /// Pricing info (present when `valid=true`).
     pub pricing: Option<X402Pricing>,
-    /// 原始 accepts JSON（valid=true 时有值，用于后续传递给 task-402-pay --accepts）
+    /// Raw `accepts` JSON (present when `valid=true`; passed downstream to `task-402-pay --accepts`).
     pub accepts_json: Option<String>,
-    /// x402 协议版本
+    /// x402 protocol version.
     pub x402_version: Option<i64>,
 }
 
-/// 带人类可读信息的完整定价（代币已解析）
+/// Full pricing with human-readable info (token already resolved).
 #[derive(Debug, Clone, Serialize)]
 pub struct X402PricingResolved {
     pub amount_minimal: String,
@@ -82,12 +83,12 @@ pub struct X402PricingResolved {
     pub max_timeout_seconds: u64,
 }
 
-// ─── 402 解码 ────────────────────────────────────────────────────────────
+// ─── 402 decoding ───────────────────────────────────────────────────────
 
-/// 解码 HTTP 402 响应，提取 accepts 数组
+/// Decode the HTTP 402 response and extract the `accepts` array.
 ///
-/// - v2: `PAYMENT-REQUIRED` header (base64 JSON)
-/// - v1: response body (直接 JSON)
+/// - v2: `PAYMENT-REQUIRED` header (base64 JSON).
+/// - v1: response body (raw JSON).
 pub fn decode_402_response(
     headers: &reqwest::header::HeaderMap,
     body: &str,
@@ -126,10 +127,10 @@ pub fn decode_402_response(
     })
 }
 
-// ─── scheme 选择 ────────────────────────────────────────────────────────
+// ─── Scheme selection ────────────────────────────────────────────────────
 
-/// 从 accepts 数组选择最佳 scheme entry
-/// 优先级: exact > aggr_deferred > first
+/// Pick the best scheme entry from the `accepts` array.
+/// Priority: `exact` > `aggr_deferred` > first.
 fn select_best_scheme(accepts: &[serde_json::Value]) -> Result<(serde_json::Value, Option<String>)> {
     if accepts.is_empty() {
         bail!("accepts array is empty");
@@ -143,26 +144,26 @@ fn select_best_scheme(accepts: &[serde_json::Value]) -> Result<(serde_json::Valu
     Ok((accepts[0].clone(), accepts[0]["scheme"].as_str().map(|s| s.to_string())))
 }
 
-// ─── x402 定价提取 ──────────────────────────────────────────────────────
+// ─── x402 pricing extraction ────────────────────────────────────────────
 
-/// 从 accepts 数组提取定价信息（选择最佳 scheme）
+/// Extract pricing info from the `accepts` array (picking the best scheme).
 pub fn extract_x402_pricing(accepts: &[serde_json::Value]) -> Result<X402Pricing> {
     let (entry, scheme) = select_best_scheme(accepts)?;
 
     let amount_minimal = crate::commands::payment::payment_flow::extract_amount(&entry)?;
 
     let asset = entry["asset"].as_str()
-        .ok_or_else(|| anyhow!("accepts entry 缺少 asset"))?
+        .ok_or_else(|| anyhow!("accepts entry is missing `asset`"))?
         .to_string();
     let pay_to = entry["payTo"].as_str()
-        .ok_or_else(|| anyhow!("accepts entry 缺少 payTo"))?
+        .ok_or_else(|| anyhow!("accepts entry is missing `payTo`"))?
         .to_string();
     let network = entry["network"].as_str()
-        .ok_or_else(|| anyhow!("accepts entry 缺少 network"))?
+        .ok_or_else(|| anyhow!("accepts entry is missing `network`"))?
         .to_string();
     let max_timeout = entry["maxTimeoutSeconds"].as_u64().unwrap_or(300);
 
-    // 优先从 extra.decimals 提取，兜底 entry.decimals
+    // Prefer extra.decimals; fall back to entry.decimals.
     let extra_decimals = entry["extra"]["decimals"].as_u64()
         .or_else(|| entry["decimals"].as_u64())
         .or_else(|| entry["extra"]["decimals"].as_str().and_then(|s| s.parse().ok()))
@@ -180,18 +181,18 @@ pub fn extract_x402_pricing(accepts: &[serde_json::Value]) -> Result<X402Pricing
     })
 }
 
-// ─── x402 endpoint 验证 ────────────────────────────────────────────────
+// ─── x402 endpoint validation ──────────────────────────────────────────
 
-/// 判断 URL 是否是合法的 x402 endpoint
+/// Decide whether a URL is a valid x402 endpoint.
 ///
-/// GET endpoint → 402? → 解码 accepts → 提取定价
+/// GET endpoint → 402? → decode `accepts` → extract pricing.
 pub async fn check_x402_endpoint(endpoint: &str) -> Result<X402EndpointCheck> {
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
-        .context("构建 HTTP client 失败")?;
+        .context("failed to build HTTP client")?;
     let resp = http.get(endpoint).send().await
-        .map_err(|e| anyhow!("请求 endpoint 失败: {e}"))?;
+        .map_err(|e| anyhow!("endpoint request failed: {e}"))?;
 
     let status = resp.status().as_u16();
     if status != 402 {
@@ -206,7 +207,7 @@ pub async fn check_x402_endpoint(endpoint: &str) -> Result<X402EndpointCheck> {
 
     let headers = resp.headers().clone();
     let body_text = resp.text().await
-        .map_err(|e| anyhow!("读取 402 响应体失败: {e}"))?;
+        .map_err(|e| anyhow!("failed to read 402 response body: {e}"))?;
 
     let payload = decode_402_response(&headers, &body_text)?;
     if payload.accepts.is_empty() {
@@ -231,10 +232,10 @@ pub async fn check_x402_endpoint(endpoint: &str) -> Result<X402EndpointCheck> {
     })
 }
 
-// ─── 代币解析 & 金额转换 ──────────────────────────────────────────────
+// ─── Token resolution & amount conversion ──────────────────────────────
 
-/// 通过任务系统 tokenDetail 接口查询代币信息。
-/// 遍历支持的 token（USDT、USDG），匹配合约地址返回 (symbol, decimals)。
+/// Look up token info via the task system's `tokenDetail` API.
+/// Iterate the supported tokens (USDT, USDG); on contract-address match, return `(symbol, decimals)`.
 pub async fn resolve_token_by_asset(
     client: &mut crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient,
     asset: &str,
@@ -254,16 +255,16 @@ pub async fn resolve_token_by_asset(
                 }
             }
             Err(e) => {
-                eprintln!("[resolve_token_by_asset] {symbol} 查询失败: {e}");
+                eprintln!("[resolve_token_by_asset] {symbol} lookup failed: {e}");
                 continue;
             }
         }
     }
 
-    bail!("asset {asset} 不在任务系统支持的代币列表中（已查 USDT、USDG）")
+    bail!("asset {asset} is not in the task system's supported token list (checked: USDT, USDG)")
 }
 
-/// 将最小单位金额转为人类可读金额（纯字符串插入小数点，再 parse f64 用于展示）
+/// Convert a minimal-unit amount to a human-readable amount (pure string with decimal-point insertion, then `parse::<f64>` for display).
 pub fn minimal_to_human(amount_minimal: &str, decimals: u8) -> Result<f64> {
     let d = decimals as usize;
     let s = amount_minimal.trim_start_matches('0');
@@ -276,17 +277,17 @@ pub fn minimal_to_human(amount_minimal: &str, decimals: u8) -> Result<f64> {
         let split = s.len() - d;
         format!("{}.{}", &s[..split], &s[split..])
     };
-    human_str.parse::<f64>().context("minimal → f64 转换失败")
+    human_str.parse::<f64>().context("minimal → f64 conversion failed")
 }
 
-/// 将人类可读金额字符串转为最小单位字符串（复用 swap 的纯字符串实现，零精度损失）
+/// Convert a human-readable amount string to a minimal-unit string (reuses swap's pure-string impl; no precision loss).
 pub fn human_to_minimal(amount_human: &str, decimals: u8) -> Result<String> {
     crate::commands::swap::readable_to_minimal_str(amount_human, decimals as u32)
 }
 
-/// 丰富定价信息：解析代币符号、精度、人类可读金额
+/// Enrich pricing info: resolve token symbol, decimals, and human-readable amount.
 ///
-/// decimals 优先级：accepts entry 内联 > token info 查询
+/// `decimals` priority: inline from accepts entry > token-info lookup.
 pub async fn enrich_pricing(
     client: &mut crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient,
     pricing: &X402Pricing,
@@ -301,22 +302,22 @@ pub async fn enrich_pricing(
         (Ok((sym, dec)), Some(extra_dec)) => {
             if *dec != extra_dec {
                 eprintln!(
-                    "⚠ decimals 不一致: accepts entry={extra_dec}, token info={dec}，使用 accepts entry 值"
+                    "⚠ decimals mismatch: accepts entry={extra_dec}, token info={dec}; using the accepts-entry value"
                 );
             }
             (sym.clone(), extra_dec)
         }
         (Ok((sym, dec)), None) => (sym.clone(), *dec),
         (Err(e), Some(extra_dec)) => {
-            eprintln!("⚠ token info 查询失败: {e}，使用 accepts entry decimals={extra_dec}");
+            eprintln!("⚠ token-info lookup failed: {e}; using accepts entry decimals={extra_dec}");
             ("UNKNOWN".to_string(), extra_dec)
         }
         (Err(e), None) => {
-            bail!("无法确定代币精度: token info 查询失败 ({e})，且 accepts entry 未提供 decimals 字段");
+            bail!("cannot determine token decimals: token-info lookup failed ({e}) and the accepts entry does not provide a `decimals` field");
         }
     };
     eprintln!(
-        "[enrich_pricing] 结果: symbol={symbol}, decimals={decimals}, extra_decimals={:?}, token_info={:?}",
+        "[enrich_pricing] result: symbol={symbol}, decimals={decimals}, extra_decimals={:?}, token_info={:?}",
         pricing.extra_decimals,
         token_result.as_ref().map(|(_, d)| *d).ok()
     );
@@ -335,9 +336,9 @@ pub async fn enrich_pricing(
     })
 }
 
-/// 比较 x402 金额（最小单位）与人类可读金额（字符串）是否一致
+/// Check whether the x402 amount (minimal units) matches a human-readable amount (string).
 ///
-/// 允许 1 个最小单位的精度误差
+/// Allows a tolerance of 1 minimal unit.
 pub fn amounts_match(x402_amount_minimal: &str, fee_amount_human: &str, decimals: u8) -> bool {
     let Ok(x402_raw) = x402_amount_minimal.parse::<u128>() else { return false };
     let Ok(expected_str) = human_to_minimal(fee_amount_human, decimals) else { return false };
@@ -345,11 +346,11 @@ pub fn amounts_match(x402_amount_minimal: &str, fee_amount_human: &str, decimals
     x402_raw.abs_diff(expected_raw) <= 1
 }
 
-// ─── Header 组装 ─────────────────────────────────────────────────────────
+// ─── Header assembly ────────────────────────────────────────────────────
 
-/// 根据签名结果和 402 payload 组装 payment header
+/// Assemble the payment header from the signing result and the 402 payload.
 ///
-/// 返回 `(header_name, header_value)`:
+/// Returns `(header_name, header_value)`:
 /// - v2 → `("PAYMENT-SIGNATURE", base64(...))`
 /// - v1 → `("X-PAYMENT", base64(...))`
 pub fn assemble_payment_header(
@@ -357,9 +358,9 @@ pub fn assemble_payment_header(
     payload: &X402Payload,
 ) -> Result<(String, String)> {
     let payment_payload = if payload.x402_version >= 2 {
-        // v2: 选择对应 scheme 的 accepted entry
-        // 由于 CLI 自动选择 scheme（exact > aggr_deferred > first），
-        // 这里尝试匹配 session_cert 来判断 scheme
+        // v2: pick the accepted entry for the matching scheme.
+        // Since the CLI auto-selects the scheme (exact > aggr_deferred > first),
+        // here we try to infer the scheme from session_cert.
         let scheme = if proof.session_cert.is_some() {
             "aggr_deferred"
         } else {

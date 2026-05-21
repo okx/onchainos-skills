@@ -1,7 +1,8 @@
-//! 超时自动退款
+//! Timeout auto-refund.
 //!
-//! 用户动作：服务商未提交交付物超时 / 用户拒绝后服务商仲裁超时
-//! → 领取自动退款 — onchainos agent claim-auto-refund
+//! User action: provider failed to submit a deliverable in time, or the provider's
+//! arbitration timed out after the user rejected → claim the auto-refund —
+//! `onchainos agent claim-auto-refund`.
 //!
 //! Response: `{ jobId, type: 23, uopData: { ... } }`
 
@@ -12,7 +13,7 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// claimAutoRefund — 超时自动退款
+/// claimAutoRefund — timeout auto-refund.
 pub async fn handle_claim_auto_refund(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
@@ -41,7 +42,7 @@ pub async fn handle_claim_auto_refund(client: &mut TaskApiClient, job_id: &str) 
         None,
     );
 
-    println!("✓ 超时自动退款已领取，资金将退回账户");
+    println!("✓ Timeout auto-refund claimed; funds will return to the account.");
     println!("  jobId:  {job_id}");
     println!("  txHash: {tx_hash}");
     Ok(())

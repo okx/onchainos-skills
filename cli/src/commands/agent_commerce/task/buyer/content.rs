@@ -1,311 +1,324 @@
-//! Buyer 端消息模板 — 单一维护点。
+//! Buyer-side message templates — single source of truth.
 //!
-//! 收两类模板:
+//! Two categories of templates:
 //!
 //! 1. **User-facing** (`xmtp_dispatch_user(content)` / `xmtp_prompt_user(userContent)`)
-//!    给用户看的聊天内容。命名后缀 `_user_notify` / `_user_prompt`。
-//!    规则:**禁用技术术语** —— tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*` 等) /
-//!    状态名(`open`/`accepted` 等英文枚举) / CLI flag(`--*`) /
-//!    skill 名(`okx-agent-identity` 等) / 状态字段名(`jobStatus`/`paymentMode`)。
-//!    **本文件模板的字面量是中文**(担保/x402,验收期超时,任务已完成,等),作为 sub agent
-//!    LOCALIZATION_PREFIX 翻译时的 source-of-truth —— 中文用户原样呈现,非中文用户由
-//!    sub agent 翻成等价口语化表达(英文用户:「escrowed payment/x402, review window expired,
-//!    task completed」等)。禁用技术术语这条对所有语言生效,不止中文。
+//!    Chat content shown directly to the user. Naming suffix: `_user_notify` / `_user_prompt`.
+//!    Rule: **no technical jargon** — tool names (`xmtp_*`) / event names (`provider_applied`/`job_*` etc.) /
+//!    status names (English enums like `Open`/`accepted` are kept as doc-reserved literals) / CLI flags (`--*`) /
+//!    skill names (`okx-agent-identity` etc.) / backend method names (`claimAutoComplete` etc.).
+//!    **Literals in this file are English** (aligned with the PM Review translation baseline;
+//!    source: `https://okg-block.sg.larksuite.com/docx/YSHcdZaWmo2KofxaHRuloeBYgme` §1),
+//!    serving as the source-of-truth for sub agent LOCALIZATION_PREFIX translation — English users
+//!    see them as-is; non-English users get an equivalent conversational translation from the sub agent.
+//!    Terminology: task → Job, user → User Agent, provider → ASP, agentId in camelCase,
+//!    escrow/non-escrow/x402 in lowercase, user reply instructions in plain `"..."` double quotes.
 //!
-//! 2. **Peer-facing** (`xmtp_send` content,给服务商 sub agent)
-//!    agent-to-agent 协议消息。命名后缀 `_to_seller`。
-//!    规则:可以含协议字面量(`[intent:*]` 等);
-//!    **禁止指挥对方调 CLI**(对方有自己的 flow.rs,会按链事件自决,你下指令是越权)。
+//! 2. **Peer-facing** (`xmtp_send` content, sent to the provider sub agent)
+//!    Agent-to-agent protocol messages. Naming suffix: `_to_seller`.
+//!    Rule: may contain protocol literals (`[intent:*]` etc.);
+//!    **never instruct the peer to call CLI** (the peer has its own flow.rs and decides based on chain events;
+//!    issuing commands to the peer is overreach).
 //!
-//! 字段值占位符用 `<...>` 包,agent 拿 `common context` / 上下文填充。
-//! 添加新文案 → 加新 fn;改文案 → 改 fn 体;flow.rs 永远只调这里、不内嵌字面量。
+//! Field-value placeholders use `<...>`; the agent fills them from `common context` / session context.
+//! To add copy → add a new fn; to edit copy → edit the fn body; flow.rs always calls here and never inlines literals.
 
 // ── Event::JobCreated ──────────────────────────────────────────────
 
-/// `Event::JobCreated` Step 0 推给用户的任务上链成功通知。
+/// `Event::JobCreated` Step 0 — user notification that the job is confirmed on-chain.
 pub fn job_created_user_notify(job_id: &str, notify_text: &str) -> String {
-    format!("任务 {job_id} 已上链成功（待接单），{notify_text}")
+    format!("Job `{job_id}` confirmed on-chain (status: Open). {notify_text}")
+}
+
+/// Prompt shown when the designated ASP is offline (D-Step 1.5).
+pub fn provider_offline_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -> String {
+    format!(
+        "[Job {short_id} — you are the User Agent] The designated ASP (agentId={dp_id}) for job {job_id} \
+         is currently offline. Negotiation requires the ASP to be online. \
+         Please choose:\n\
+         A. Designate another ASP — please provide the agentId\n\
+         B. Make the job public — let more ASPs discover it\n\
+         C. Close the job"
+    )
 }
 
 // ── Event::JobAccepted ─────────────────────────────────────────────
 
-/// `Event::JobAccepted` 分支 A（escrow）推给用户的接单成功通知。
+/// `Event::JobAccepted` Branch A (escrow) — user notification that the job is accepted.
 pub fn job_accepted_escrow_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20[接单成功] 任务 {job_id} 已确认接单，进入执行阶段。\n\
-         \x20\x20任务标题：{title}\n\
-         \x20\x20任务描述：<description>\n\
-         \x20\x20服务商 AgentID：<providerAgentId>\n\
-         \x20\x20支付方式：担保\n\
-         \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
-         \x20\x20等待服务商执行并提交交付物。"
+        "\x20\x20[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
+         \x20\x20Title: {title}\n\
+         \x20\x20Description: <description>\n\
+         \x20\x20Deliverable: <deliverable>\n\
+         \x20\x20ASP agentId: <providerAgentId>\n\
+         \x20\x20Payment: escrow\n\
+         \x20\x20Amount: <tokenAmount> <tokenSymbol>\n\
+         \x20\x20Waiting for the ASP to execute and submit the deliverable."
     )
 }
 
-/// `Event::JobAccepted` 分支 B（x402）重放失败时推给用户的通知。
+/// `Event::JobAccepted` Branch B (x402) — user notification when endpoint replay failed.
 pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
     format!(
-        "\x20\x20[x402 重放失败] 任务 {job_id} 已接单但 endpoint 重放失败。\n\
-         \x20\x20HTTP 状态：<replayStatus>\n\
-         \x20\x20错误信息：<replayBody>\n\
-         \x20\x20任务已进入 accepted 状态，等待进一步处理。"
+        "\x20\x20[x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
+         \x20\x20HTTP status: <replayStatus>\n\
+         \x20\x20Error: <replayBody>\n\
+         \x20\x20The job is now in `accepted` status. Please give a new instruction; the agent will not auto-retry."
     )
 }
 
 // ── Event::JobRefused ──────────────────────────────────────────────
 
-/// `Event::JobRefused` Step 1 推给用户的拒绝上链成功通知。
+/// `Event::JobRefused` Step 1 — user notification that the rejection is confirmed on-chain.
 pub fn job_refused_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[拒绝已确认] 任务 **{title}**（{job_id}）的交付物已拒绝，等待服务商处理。\n\
-         \x20\x20\x20\x20服务商将在 24 小时内选择：发起仲裁 或 同意退款。\n\
-         \x20\x20\x20\x20超时未操作将自动退款至您的钱包。"
+        "\x20\x20\x20\x20[Rejection Confirmed] The deliverable for **{title}** (`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
+         \x20\x20\x20\x20The ASP has 24 hours to choose: file a dispute or agree to a refund.\n\
+         \x20\x20\x20\x20If the ASP takes no action, funds will be auto-refunded to your wallet."
     )
 }
 
 // ── Event::JobDisputed ─────────────────────────────────────────────
 
-/// `Event::JobDisputed` Step 1 给用户看的证据收集 prompt(`xmtp_prompt_user.userContent`)。
+/// `Event::JobDisputed` Step 1 — evidence collection prompt (`xmtp_prompt_user.userContent`).
 pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[任务 {short_id} 你作为用户] 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
-         \x20\x20\x20\x20- 文字摘要（必填）：说明交付物不达标的关键证据点\n\
-         \x20\x20\x20\x20- 图片路径（可选）：截图、聊天记录等本地文件路径\n\
-         \x20\x20\x20\x20回复格式示例：『证据：交付物缺少 X/Y/Z；图片：/path/to/screenshot.png』"
+        "\x20\x20\x20\x20[Job {short_id} — you are the User Agent] The dispute is confirmed on-chain. You must submit off-chain evidence within 1 hour. Please provide:\n\
+         \x20\x20\x20\x20- Text summary (required): key evidence that the deliverable failed the quality standards\n\
+         \x20\x20\x20\x20- Image path (optional): local file path to screenshots, chat logs, etc.\n\
+         \x20\x20\x20\x20Reply format example: \"Evidence: the deliverable is missing X/Y/Z; image: /path/to/screenshot.png\""
     )
 }
 
 // ── Event::JobCompleted ────────────────────────────────────────────
 
-/// `Event::JobCompleted` 分支 A（escrow）推给用户的任务完成通知。
+/// `Event::JobCompleted` Branch A (escrow) — user notification that the job is complete.
+///
+/// Ends with a prompt to rate the ASP (0–5 stars). When the user replies `rate`,
+/// it is handled by the `okx-agent-identity` skill (`§Feedback Submit`);
+/// does not include rating details / CLI flags here.
 pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[任务完成] **{title}**（{job_id}）已验收通过，资金已释放给服务商。\n\
-         \x20\x20\x20\x20  - 支出：**<tokenAmount> <tokenSymbol>**\n\
-         \x20\x20\x20\x20  - 支付方式：**担保**\n\
-         \x20\x20\x20\x20  - 链上凭证：<txHash>（来自 complete CLI 输出）\n\
-         \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
+        "\x20\x20\x20\x20[Job Completed] {title} (`{job_id}`) — approved by the User Agent; funds released to the ASP.\n\
+         \x20\x20\x20\x20  - Spent: <tokenAmount> <tokenSymbol>\n\
+         \x20\x20\x20\x20  - Payment: escrow\n\
+         \x20\x20\x20\x20  - txHash: <txHash>\n\
+         \x20\x20\x20\x20  - Settled at: <timestamp>\n\
          \x20\x20\x20\x20\n\
-         \x20\x20\x20\x20本任务流程结束。"
+         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\". You can also include a comment, e.g. \"rate 5 great service\"."
     )
 }
 
-/// `Event::JobCompleted` 分支 B（x402）推给用户的最终汇总通知。
+/// `Event::JobCompleted` Branch B (x402) — final summary notification to the user.
+///
+/// Ends with a prompt to rate the ASP (0–5 stars). When the user replies `rate`,
+/// it is handled by the `okx-agent-identity` skill (`§Feedback Submit`);
+/// does not include rating details / CLI flags here.
 pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[x402 任务完成] **{title}**（{job_id}）全部流程已完成。\n\
-         \x20\x20\x20\x20  - 支出：**<tokenAmount> <tokenSymbol>**\n\
-         \x20\x20\x20\x20  - 支付方式：**x402**\n\
-         \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
-         \x20\x20\x20\x20如需评价服务商，请回复「评价」。"
+        "\x20\x20\x20\x20[x402 Job Completed] {title} (`{job_id}`) — all steps complete.\n\
+         \x20\x20\x20\x20  - Spent: <tokenAmount> <tokenSymbol>\n\
+         \x20\x20\x20\x20  - Payment: x402\n\
+         \x20\x20\x20\x20  - Settled at: <timestamp>\n\
+         \x20\x20\x20\x20To rate the ASP (0–5 stars), reply \"rate\". You can also include a comment, e.g. \"rate 5 great service\"."
     )
 }
 
 // ── Event::DisputeResolved ─────────────────────────────────────────
 
-/// `Event::DisputeResolved` 用户胜诉推给用户的通知。
+/// `Event::DisputeResolved` — user notification when the user wins the dispute.
+///
+/// Ends with a prompt to rate the ASP (0–5 stars). When the user replies `rate`,
+/// it is handled by the `okx-agent-identity` skill (`§Feedback Submit`).
 pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[仲裁胜诉] **{title}**（{job_id}）仲裁完成，**用户方胜诉**。\n\
-         \x20\x20\x20\x20  - 退款：**<tokenAmount> <tokenSymbol>**\n\
-         \x20\x20\x20\x20本任务流程结束。如需评价服务商，请回复「评价」。"
+        "\x20\x20\x20\x20[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
+         \x20\x20\x20\x20  - Refund: <tokenAmount> <tokenSymbol>\n\
+         \x20\x20\x20\x20  - Outcome: ClientWins\n\
+         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\". You can also include a comment, e.g. \"rate 5 great service\"."
     )
 }
 
-/// `Event::DisputeResolved` 用户败诉推给用户的通知。
+/// `Event::DisputeResolved` — user notification when the user loses the dispute.
+///
+/// Ends with a prompt to rate the ASP (0–5 stars). When the user replies `rate`,
+/// it is handled by the `okx-agent-identity` skill (`§Feedback Submit`).
 pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[仲裁败诉] **{title}**（{job_id}）仲裁完成，**服务商方胜诉**。\n\
-         \x20\x20\x20\x20  - 损失：**<tokenAmount> <tokenSymbol>**（资金已释放给服务商）\n\
-         \x20\x20\x20\x20本任务流程结束。如需评价服务商，请回复「评价」。"
+        "\x20\x20\x20\x20[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
+         \x20\x20\x20\x20  - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
+         \x20\x20\x20\x20  - Outcome: ProviderWins\n\
+         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\". You can also include a comment, e.g. \"rate 5 great service\"."
     )
 }
 
 // ── Event::JobRefunded ─────────────────────────────────────────────
 
-/// `Event::JobRefunded` 推给用户的退款完成通知。
+/// `Event::JobRefunded` — user notification that the refund is settled.
 pub fn job_refunded_user_notify(job_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[退款完成] 任务 {job_id} 退款已上链，**资金已返还**至您的钱包。\n\
-         \x20\x20\x20\x20本任务流程结束。"
+        "\x20\x20\x20\x20[Refund Settled] Job `{job_id}` — refund confirmed on-chain; funds returned to your wallet. This job is complete."
     )
 }
 
 // ── Event::JobAutoRefunded ─────────────────────────────────────────
 
-/// `Event::JobAutoRefunded` 推给用户的自动退款成功通知。
+/// `Event::JobAutoRefunded` — user notification that the auto-refund succeeded.
 pub fn job_auto_refunded_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[自动退款成功] **{title}**（{job_id}）的担保资金已退还至您的钱包。\n\
-         \x20\x20\x20\x20本任务流程结束。"
+        "\x20\x20\x20\x20[Auto-Refund Settled] {title} (`{job_id}`) — escrowed funds returned to your wallet. This job is complete."
     )
 }
 
 // ── Event::JobExpired ──────────────────────────────────────────────
 
-/// `Event::JobExpired` 推给用户的任务超时通知。
+/// `Event::JobExpired` — user notification that the job has expired.
 pub fn job_expired_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} **已超时**（accept 截止前未接单 或 submit 截止前未提交），任务已结束。")
+    format!(
+        "Job `{job_id}` has expired (no ASP accepted before the accept deadline, or no deliverable submitted before the submit deadline). The job is now closed."
+    )
 }
 
 // ── Event::JobClosed ───────────────────────────────────────────────
 
-/// `Event::JobClosed` 推给用户的任务关闭通知。
+/// `Event::JobClosed` — user notification that the job is closed.
 pub fn job_closed_user_notify(job_id: &str, title: &str) -> String {
-    format!("**{title}**（{job_id}）**已关闭**，资金已回收。")
+    format!("{title} (`{job_id}`) has been closed; funds have been returned.")
 }
 
 // ── Event::JobVisibilityChanged ────────────────────────────────────
 
-/// `Event::JobVisibilityChanged` visibility=0 → 公开通知。
+/// `Event::JobVisibilityChanged` visibility=0 — public notification.
 pub fn visibility_public_user_notify(job_id: &str, title: &str) -> String {
-    format!("[可见性变更] **{title}**（{job_id}）已切换为**公开（public）**，等待服务商主动联系。")
+    format!("[Visibility Changed] {title} (`{job_id}`) is now public. Waiting for ASPs to reach out.")
 }
 
-/// `Event::JobVisibilityChanged` visibility=1 → 私有通知。
+/// `Event::JobVisibilityChanged` visibility=1 — private notification.
 pub fn visibility_private_user_notify(job_id: &str, title: &str) -> String {
-    format!("[可见性变更] **{title}**（{job_id}）已切换为**私有（private）**。")
+    format!("[Visibility Changed] {title} (`{job_id}`) is now private.")
 }
 
 // ── Event::JobPaymentModeChanged ───────────────────────────────────
 
-/// `Event::JobPaymentModeChanged` escrow 分支 Step 4 推给用户的通知。
+/// `Event::JobPaymentModeChanged` escrow branch Step 4 — user notification.
 pub fn payment_mode_escrow_user_notify(job_id: &str, title: &str) -> String {
-    format!("**{title}**（{job_id}）更新支付方式成功，设置服务商 **<providerName>**（<providerAgentId>）接单中...")
+    format!("{title} (`{job_id}`) — payment mode updated successfully; ASP <providerName> (`<providerAgentId>`) is accepting...")
 }
 
-/// x402 set-payment-mode 上链成功后、task-402-pay 之前推给用户的过渡通知。
+/// x402 set-payment-mode confirmed on-chain; transition notification before task-402-pay.
 pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "[x402 支付中] 任务 **{title}**（{job_id}）已与服务商（<providerAgentId>）达成 x402 协议，\
-         费用 <tokenAmount> <tokenSymbol>，正在支付并获取交付物..."
+        "[x402 Payment In Progress] Job **{title}** (`{job_id}`) — x402 agreement reached with ASP (<providerAgentId>); \
+         fee: <tokenAmount> <tokenSymbol>. Paying and fetching the deliverable..."
     )
 }
 
-/// `Event::JobPaymentModeChanged` x402 分支 — 重放成功时推给用户的交付物通知。
-pub fn x402_deliverable_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20[x402 交付物已获取] 任务 {job_id} endpoint 重放成功。\n\
-         \x20\x20服务商 AgentID：<providerAgentId>\n\
-         \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
-         \x20\x20---交付物内容---\n\
-         \x20\x20<replayBody 完整内容，JSON 则格式化输出>\n\
-         \x20\x20---交付物结束---\n\
-         \x20\x20正在等待链上确认，确认后将自动完成任务。"
-    )
-}
-
-/// `Event::JobPaymentModeChanged` x402 分支 — 重放失败时推给用户的通知。
-pub fn x402_replay_fail_payment_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20[x402 重放失败] 任务 {job_id} 已接单但 endpoint 重放失败。\n\
-         \x20\x20HTTP 状态：<replayStatus>\n\
-         \x20\x20错误信息：<replayBody>\n\
-         \x20\x20等待链上确认后**不会自动执行 complete**，需要用户指示。"
-    )
-}
 
 // ── Event::NegotiateReply (over budget) ────────────────────────────
 
-/// `Event::NegotiateReply` 报价超出 max_budget 时推给用户的决策 prompt。
+/// `Event::NegotiateReply` — decision prompt when the ASP's quote exceeds max_budget.
 pub fn over_budget_user_prompt(short_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[任务 {short_id}] 服务商报价超出最高预算，协商已终止。请选择下一步：\n\
-         \x20\x20\x20\x20\x20\x20A. 查看推荐服务商列表\n\
-         \x20\x20\x20\x20\x20\x20B. 指定其他服务商（请提供 agentId）\n\
-         \x20\x20\x20\x20\x20\x20C. 关闭任务"
+        "\x20\x20\x20\x20[Task {short_id}] The ASP's quote exceeds the maximum budget; negotiation terminated. Choose next step:\n\
+         \x20\x20\x20\x20\x20\x20A. View recommended ASP list\n\
+         \x20\x20\x20\x20\x20\x20B. Designate another ASP (provide the agentId)\n\
+         \x20\x20\x20\x20\x20\x20C. Close the job"
     )
 }
 
 // ── Pseudo events (close / set_public) ─────────────────────────────
 
-/// 关闭任务后推给用户的通知。
+/// User notification after closing a job.
 pub fn close_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} 已关闭。")
+    format!("Job `{job_id}` has been closed.")
 }
 
-/// 转为公开任务后推给用户的通知。
+/// User notification after switching a job to public.
 pub fn set_public_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} 已转为公开任务，等待服务商主动申请。")
+    format!("Job `{job_id}` is now public. Waiting for ASPs to apply.")
 }
 
 // ── Event::SubmitExpired ───────────────────────────────────────────
 
-/// `Event::SubmitExpired` 推给用户的服务商提交超时通知。
+/// `Event::SubmitExpired` — user notification that the ASP missed the submit deadline.
 pub fn submit_expired_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} 的服务商未在截止时间前提交交付物，已自动申请退款，资金将退回你的账户。")
+    format!(
+        "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund has been requested; funds will return to your wallet."
+    )
 }
 
 // ── Event::RefuseExpired ───────────────────────────────────────────
 
-/// `Event::RefuseExpired` 推给用户的服务商仲裁超时通知。
+/// `Event::RefuseExpired` — user notification that the ASP missed the dispute deadline.
 pub fn refuse_expired_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} 的服务商在你拒绝交付物后未及时发起仲裁，已自动申请退款，资金将退回你的账户。")
+    format!(
+        "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund has been requested; funds will return to your wallet."
+    )
 }
 
 // ── Event::ReviewDeadlineWarn ──────────────────────────────────────
 
-/// `Event::ReviewDeadlineWarn` 给用户看的验收截止 prompt(`xmtp_prompt_user.userContent`)。
+/// `Event::ReviewDeadlineWarn` — review deadline prompt (`xmtp_prompt_user.userContent`).
 pub fn review_deadline_warn_user_prompt(job_id: &str) -> String {
     format!(
-        "\x20\x20[验收截止提醒] 任务 {job_id} 的验收截止时间即将到期。\n\
-         \x20\x20超时后服务商可自动领取资金。\n\
-         \x20\x20请尽快决定：\n\
-         \x20\x20A. 通过验收 — 回复「通过」\n\
-         \x20\x20B. 拒绝交付物 — 回复「拒绝」并说明原因"
+        "\x20\x20[⏰ Review Deadline Warning] Job `{job_id}` — the review deadline is approaching.\n\
+         \x20\x20After expiry, the ASP can auto-claim the funds.\n\
+         \x20\x20Please decide soon:\n\
+         \x20\x20A. Approve → reply \"approve\"\n\
+         \x20\x20B. Reject → reply \"reject\" and provide  {{reason}}"
     )
 }
 
 // ── Event::ReviewExpired ───────────────────────────────────────────
 
-/// `Event::ReviewExpired` 推给用户的验收超时通知。
+/// `Event::ReviewExpired` — user notification that the review window has expired.
 pub fn review_expired_user_notify(job_id: &str) -> String {
     format!(
-        "\x20\x20[验收超时] 任务 {job_id} 的验收窗口已过期，你未在截止时间前做出验收决定。\n\
-         \x20\x20服务商现在可自动领取资金。\n\
-         \x20\x20等待服务商操作中..."
+        "\x20\x20[Review Expired] Job `{job_id}` — the review window has expired; you did not decide before the deadline.\n\
+         \x20\x20The ASP can now claim the funds automatically. Waiting for the ASP's action..."
     )
 }
 
 // ── Event::JobAutoCompleted ────────────────────────────────────────
 
-/// `Event::JobAutoCompleted` 推给用户的自动完成通知。
+/// `Event::JobAutoCompleted` — user notification that the job was auto-completed.
 pub fn job_auto_completed_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "\x20\x20[任务自动完成] **{title}**（{job_id}）因**验收超时**，资金已自动释放给服务商。\n\
-         \x20\x20本任务流程结束。"
+        "\x20\x20[Job Auto-Completed] {title} (`{job_id}`) — the review window expired and the ASP has claimed the funds.\n\
+         \x20\x20Status: completed. This job is complete."
     )
 }
 
 // ── Event::RewardClaimed ───────────────────────────────────────────
 
-/// `Event::RewardClaimed` 推给用户的奖励到账通知。
+/// `Event::RewardClaimed` — user notification that the reward has been claimed.
 pub fn reward_claimed_user_notify(job_id: &str, title: &str) -> String {
-    format!("[奖励已到账] **{title}**（{job_id}）的**奖励/退款已成功领取**到您的钱包。")
+    format!("[Reward Claimed] {title} (`{job_id}`) — reward / refund successfully claimed to your wallet.")
 }
 
 // ── Event::WakeupNotify ────────────────────────────────────────────
 
-/// `Event::WakeupNotify` 已有 pending 条目时推给用户的恢复通知。
+/// `Event::WakeupNotify` — user notification to resume when pending decisions exist.
 pub fn wakeup_resume_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} 已恢复，请继续之前的决策")
+    format!("Job `{job_id}` is back online. Please continue your decision in the user session.")
 }
 
-// ── provider_conversation 无更多服务商 ──────────────────────────────
+// ── provider_conversation — no more ASPs ───────────────────────────
 
-/// `provider_conversation` B-Step 4 无更多待沟通服务商时推给用户的通知。
+/// `provider_conversation` B-Step 4 — notification when no more ASPs are pending.
 pub fn no_more_sellers_user_notify(job_id: &str) -> String {
-    format!("任务 {job_id} 当前没有更多待沟通服务商，建议等待新服务商联系或调整任务描述。")
+    format!("Job `{job_id}` — no more pending ASPs. Wait for new ASPs to reach out, or adjust the job description.")
 }
 
-// ── Escalation（preamble 异常升级）─────────────────────────────────
+// ── Escalation (preamble anomaly escalation) ───────────────────────
 
-/// preamble 异常升级硬规则 1) 协议理解错位 — content 模板。
+/// Preamble escalation hard rule 1) protocol misalignment — content template.
 pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
-    format!("[⚠️ 协议理解错位] 任务 {job_id} 多次澄清同一流程对方仍重复，已停回复，请介入或给新指令。")
+    format!("[⚠️ Protocol Misalignment] Job `{job_id}` — the remote agent repeatedly sends messages that do not match the current flow. Replies have stopped. Please intervene manually to continue.")
 }
 
-/// preamble 异常升级硬规则 2) 执行报错 — content 模板。
+/// Preamble escalation hard rule 2) CLI execution error — content template.
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
-    format!("[⚠️ 执行报错] 任务 {job_id} <动作简述,如「确认接单」/「验收交付物」/「提交证据」>失败,请查看后给新指令。")
+    format!("[⚠️ CLI Error] Job `{job_id}` <action summary, e.g. \"confirm accept\" / \"approve deliverable\" / \"submit evidence\"> failed. Please review and give a new instruction; the agent will not auto-retry.")
 }

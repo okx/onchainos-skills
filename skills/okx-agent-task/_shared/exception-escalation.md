@@ -1,82 +1,82 @@
-# 异常升级规则（buyer / provider 共用）
+# Exception Escalation Rules (shared by buyer / provider)
 
-agent 每轮 turn 都是无状态的，**没有内置防循环**。下列 4 条规则覆盖所有 a2a / CLI 场景，buyer.md / provider.md 各自再叠加 role-specific 例外（在自己 6 里写）。
+Each agent turn is stateless, with **no built-in loop protection**. The 4 rules below cover all a2a / CLI scenarios. `buyer.md` / `provider.md` stack role-specific exceptions on top (each writing their own §6).
 
-> 全部规则同源：进入异常时**立即推 user session**，**不在 sub 里自动重试**。
+> All rules share one principle: on entering an exception, **immediately push to the user session**, and **do not auto-retry inside the sub**.
 
-## 1. 协议理解错位（对方坚持错误流程）
+## 1. Protocol misalignment (the counterpart insists on a wrong flow)
 
-**触发条件**：
-- 你已经把同一条流程澄清过 ≥1 次（看 XMTP group 历史里你之前发的消息）
-- 对方下一条 inbound envelope 里**还在重复同一个错误诉求**（如对协商已确认的字段反复改口、重复要求你执行不存在的命令）
+**Trigger conditions**:
+- You have already clarified the same flow ≥ 1 time (check your previously sent messages in the XMTP group history)
+- The next inbound envelope from the counterpart **still repeats the same wrong demand** (e.g. backtracking on a negotiation field already confirmed, or repeatedly asking you to run a command that doesn't exist)
 
-**动作**：
-1. **不要再回复对方**——不调 `xmtp_send` 解释第二轮，那只会让对方 agent 跟着循环
-2. 调 `xmtp_dispatch_user` 推用户：
+**Action**:
+1. **Do not reply to the counterpart again** — do not call `xmtp_send` to explain a second round; that will only make the peer agent loop along with you
+2. Call `xmtp_dispatch_user` to push to the user:
    ```
-   [⚠️ 协议理解错位] 任务 <jobId> 卡住了
-   - 对方反复要求：<对方诉求一句话摘要>
-   - 我已澄清：<你之前澄清的核心点>
-   - 当前已澄清次数：<N>
-   - 建议人工介入
+   [⚠️ Protocol misalignment] Task <jobId> is stuck
+   - Counterpart keeps demanding: <one-sentence summary of their demand>
+   - I have clarified: <core point you already clarified>
+   - Clarifications so far: <N>
+   - Suggest human intervention
    ```
-3. **结束本轮 turn**，等用户回复
+3. **End the current turn** and wait for the user's reply
 
-## 2. CLI 错误一律不重试，立即推 user session
+## 2. CLI errors are never retried — push to the user session immediately
 
-**触发条件**：`onchainos agent <cmd>` 任何子命令返回非 0 / `ok:false` / 解析失败 / 后端 API 返回非 0 `code`
+**Trigger conditions**: any `onchainos agent <cmd>` subcommand returns non-zero / `ok:false` / parse failure / backend API returns non-zero `code`
 
-**动作**：
-1. **不要重试**——同样的命令再跑一次结果几乎必然一样，只是浪费 turn
-2. 调 `xmtp_dispatch_user` 推用户：
+**Action**:
+1. **Do not retry** — running the same command again will almost certainly produce the same result, just wasting a turn
+2. Call `xmtp_dispatch_user` to push to the user:
    ```
-   [⚠️ CLI 报错] 任务 <jobId>
-   - 命令：onchainos agent <cmd> ...
-   - 错误：<stderr / error 字段一句话摘要>
-   - 当前任务状态：<status>
-   - 建议人工介入
+   [⚠️ CLI error] Task <jobId>
+   - Command: onchainos agent <cmd> ...
+   - Error: <one-sentence summary of stderr / error field>
+   - Current task status: <status>
+   - Suggest human intervention
    ```
-3. 等用户**显式给新指令**（变更参数 / 换命令 / 跳过这一步）才再尝试
+3. Wait for the user to **explicitly give a new instruction** (change parameters / switch commands / skip this step) before retrying
 
-**唯一例外（自动重试一次）**：
-- JWT 过期（错误消息含 `JWT verification failed` / `JWT expired` / `unauthorized` 且 `code=3001`）→ 刷新登录态后重试一次；仍失败走 2 标准流程推用户
+**Only exception (auto-retry once)**:
+- JWT expired (error message contains `JWT verification failed` / `JWT expired` / `unauthorized` with `code=3001`) → refresh login state and retry once; on continued failure, fall through to the §2 standard flow and push to the user
 
-**网络 timeout / connection error 不属于例外**——按 2 标准流程推用户，让用户决定是否重试。盲目重试网络抖动 = 同 turn 多次推送，跟 4 反模式重叠。
+**Network timeout / connection error does NOT qualify as an exception** — push to the user via §2 standard flow and let the user decide whether to retry. Blindly retrying network flakes = pushing repeatedly inside the same turn, which overlaps with the §4 anti-pattern.
 
-**Role-specific 例外（evaluator）**：`vote-commit` / `vote-reveal` / `arbitration-claim` 因 commit / reveal 窗口关闭直接罚 0.3% stake，allow sub 内部最多重试 3 次——这是仲裁经济模型逼出来的硬约束，详见 `references/evaluator-decision-rubric.md` 第 6 节。其他 evaluator 命令（`stake` / `unstake-*` / `info` / `download` 等）仍走第 2 节标准流程。Buyer / provider 没有此类例外。
+**Role-specific exception (evaluator)**: `vote-commit` / `vote-reveal` / `arbitration-claim` are penalized at 0.3% stake the moment the commit / reveal window closes, so the sub is allowed up to 3 internal retries — this is a hard constraint forced by the dispute economic model; see `references/evaluator-decision-rubric.md` §6 for details. Other evaluator commands (`stake` / `unstake-*` / `info` / `download` etc.) still follow the §2 standard flow. Buyer / provider have no such exception.
 
-## 3. ❌ 绝对禁止：把技术错误广播给对方
+## 3. ❌ Absolute prohibition: broadcasting technical errors to the counterpart
 
-CLI 报错 / 协议理解错位 / 任何内部异常 → **不要 `xmtp_send` 把错误细节告诉对方**。
+CLI errors / protocol misalignment / any internal exception → **do NOT `xmtp_send` the error details to the counterpart**.
 
-**禁止行为**：
-- ❌ 「`deliver` 命令因后端返回的 recipient 字段为空而失败」← 暴露 CLI 命令名 + 后端字段名
-- ❌ 「这看起来是后端的一个 bug」← 暴露内部判断
-- ❌ 任何带 `命令：` / `错误：` / `字段：` / `bug` / 大括号 / 代码块 / stderr 摘要的 P2P 消息
+**Prohibited behaviors**:
+- ❌ "The `deliver` command failed because the recipient field returned by the backend is empty" ← exposes CLI command name + backend field name
+- ❌ "This looks like a backend bug" ← exposes internal judgment
+- ❌ Any P2P message containing `command:` / `error:` / `field:` / `bug` / curly braces / code blocks / stderr excerpts
 
-**为什么禁止**：
-- 对方的 agent 看到技术错误细节会**尝试帮你 debug**——发更多消息分析、提建议，导致死循环或越权
-- 协议失败属于双方系统问题，让 user 自己沟通，不让 agent 互相"协助"
+**Why prohibited**:
+- The peer agent, seeing technical error details, will **try to help you debug** — sending more messages to analyze, suggest fixes, leading to deadlocks or overreach
+- Protocol failures are a shared system issue between both sides; let the users communicate themselves rather than have agents "help" each other
 
-**允许的对方通讯**（只在你已推过 user session 之后，且**只发一句**）：
-- `稍等，我这边正在确认细节，稍后回复。`——通用、不含技术信息
-- 或者**完全不通知对方**——直接结束 turn 也是正确做法
+**Allowed peer communication** (only after you've already pushed to the user session, and **send only one line**):
+- `One moment, I'm confirming some details on my side and will reply shortly.` — generic, no technical info
+- Or **don't notify the counterpart at all** — directly ending the turn is also a correct choice
 
-**严格规则**：推完 user session 这一轮 turn 内**最多**对对方发一句通用稍候，**不再发第二条**。即便对方接下来催你，仍按 1 规则处理。
+**Strict rule**: within the turn that pushes to the user session, send **at most one** generic "please wait" line to the counterpart; **never send a second**. Even if the counterpart pings you again afterward, still handle it via the §1 rule.
 
-## 4. ❌ 绝对禁止：单 turn 内对同一对方重复调 `xmtp_send`
+## 4. ❌ Absolute prohibition: calling `xmtp_send` repeatedly to the same counterpart within a single turn
 
-agent 每轮 turn **没有记忆**也**没有发送回执反馈**——工具返回"已发送至 0x..."就**算成功**。LLM 经常在工具返回后 second-guess（"刚才那条对方好像没收到？要不要再发一遍？"），导致单 turn 内对同一对方连发 3-5 条几乎一样的 `xmtp_send`。
+Each agent turn has **no memory** and **no send-receipt feedback** — the tool returning "sent to 0x..." **counts as success**. LLMs often second-guess after the tool returns ("Did they receive that one? Should I send it again?"), causing 3-5 nearly identical `xmtp_send` calls to the same counterpart within a single turn.
 
-**铁律**：
-- 一个 next-action 剧本只让你"发一条 xmtp_send"，**调过一次就停手**——不管你觉得这条是否清晰、是否需要补充
-- 工具返回 `已发送至 0x...` ⇒ **认定成功**，不要因为对方还没回复就重发
-- 想让对方更易理解？**写下次发的版本时再优化**，不是同 turn 重发
-- 真正剧本要求多条 xmtp_send 时（罕见），剧本会用 **Step 1 / Step 2 / Step 3** 显式编号
+**Iron rules**:
+- One next-action script lets you "send one xmtp_send" — **call it once and stop**, regardless of whether you think the message was clear or needs supplementing
+- Tool returning `sent to 0x...` ⇒ **treat as success**; do not resend just because the counterpart hasn't replied
+- Want the counterpart to understand better? **Improve the next send** — not by resending in the same turn
+- When a script genuinely requires multiple xmtp_send calls (rare), the script will explicitly number them as **Step 1 / Step 2 / Step 3**
 
-**反例（已发生事故）**：
-- deliver 完成后剧本让发一条交付通知，agent 连发 5 次同样的 "交付物已提交"
-- escrow 路径澄清后 agent 连发 3 次同样的重复消息
-- 后果：对方 agent 误以为消息很重要 / 触发其自己的循环 / 用户被刷屏
+**Anti-pattern (real incident that happened)**:
+- After `deliver` completed, the script asked for one delivery notification, but the agent sent the same "deliverable submitted" message 5 times
+- After clarifying the escrow path, the agent sent the same duplicate message 3 times
+- Consequence: the peer agent mistakenly treated the messages as important / triggered its own loop / the user got spammed
 
-**判别**：当前 turn 内你**已经**调过 `xmtp_send` 给某个 sessionKey 一次了 → **当前 turn 不再调第二次**。直接结束 turn，下一条 inbound envelope 进来再说。
+**Discriminator**: within the current turn, if you have **already** called `xmtp_send` once to a given sessionKey → **do not call it a second time in the current turn**. End the turn directly and wait for the next inbound envelope.

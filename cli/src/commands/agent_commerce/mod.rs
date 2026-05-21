@@ -258,7 +258,7 @@ pub enum AgentCommand {
     Deliver {
         job_id: String,
         #[arg(long, default_value = "")] file: String,
-        #[arg(long, default_value = "任务已完成，请验收")] message: String,
+        #[arg(long, default_value = "Task completed, please review")] message: String,
         /// 卖家 agentId（必填）。beta 后端拒空 agenticId header → 3001 auth fail。
         #[arg(long = "agent-id")] agent_id: String,
     },
@@ -343,7 +343,7 @@ pub enum AgentCommand {
     #[command(name = "pending-decisions", subcommand)]
     PendingDecisions(task::common::pending::PendingDecisionsCommand),
 
-    // ── Task system (Evaluator / arbitrator) ─────────────────────────────────
+    // ── Task system (Evaluator Agent) ────────────────────────────────────────
     // 历史上有过 `Evaluator(EvaluatorCommand)` 包装，2026-05 与 buyer/provider 风格
     // 对齐展平到顶层。`agent evaluator <sub>` 形式不再支持，各命令对应关系见
     // `evaluator/mod.rs` 文件头注释。
@@ -729,7 +729,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::PendingDecisions(c) =>
             task::common::pending::run(c).await,
 
-        // ── Evaluator (arbitrator) flat dispatch ────────────────────
+        // ── Evaluator Agent flat dispatch ───────────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
             task::evaluator::info::handle_info(&mut c, &job_id, &agent_id, &round_num).await

@@ -1,17 +1,17 @@
-//! Client 端任务命令 — 枚举定义 + 路由分发
+//! Buyer-side task commands — enum definitions + routing dispatch.
 //!
-//! 按用户动作划分文件：
-//! - `create.rs`       — 发布任务（场景1）
-//! - `recommend.rs`    — 获取推荐服务商（场景1）
-//! - `negotiate.rs`    — 协商（场景2，Agent 子 session）
-//! - `accept.rs`       — 确认接单 + Fund（场景3）
-//! - `complete.rs`     — 确认完成（场景5）
-//! - `refuse.rs`       — 拒绝交付物（场景6）
-//! - `close.rs`        — 关单（场景7）+ 领取仲裁奖金
-//! - `changepublic.rs` — 设为 Public（场景8）
+//! Files split by user action:
+//! - `create.rs`       — publish task (scene 1)
+//! - `recommend.rs`    — fetch recommended providers (scene 1)
+//! - `negotiate.rs`    — negotiation (scene 2, agent sub session)
+//! - `accept.rs`       — confirm accept + fund (scene 3)
+//! - `complete.rs`     — confirm completion (scene 5)
+//! - `refuse.rs`       — reject deliverable (scene 6)
+//! - `close.rs`        — close task (scene 7) + claim arbitration reward
+//! - `changepublic.rs` — set to Public (scene 8)
 //!
-//! 通用：
-//! - `query.rs`        — 只读查询（status、list、pay）
+//! Shared:
+//! - `query.rs`        — read-only queries (status, list, pay)
 
 mod accept;
 mod changepublic;
@@ -58,7 +58,7 @@ pub enum TaskCommand {
         deadline_submit: String,
         #[arg(long)]
         title: Option<String>,
-        /// 指定服务商 agentId（跳过 recommend，直接与该服务商协商或 x402 接单）
+        /// Designated provider agentId (skip recommend; negotiate or x402-accept with this provider directly).
         #[arg(long)]
         provider: Option<String>,
     },
@@ -98,7 +98,7 @@ pub enum TaskCommand {
         token_symbol: Option<String>,
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
-        /// x402 服务端点 URL（不指定时从 recommend 缓存或 service-list API 获取）
+        /// x402 service endpoint URL (when omitted, fetched from the recommend cache or service-list API).
         #[arg(long)]
         endpoint: Option<String>,
     },
@@ -107,13 +107,13 @@ pub enum TaskCommand {
         job_id: String,
         #[arg(long = "provider-agent-id")]
         provider_agent_id: String,
-        /// 不指定时自动从任务详情 paymentType 获取
+        /// When omitted, auto-fetched from the task detail's paymentType.
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
-        /// 协商确定的支付代币符号（如 USDT），escrow 必填
+        /// Payment token symbol agreed during negotiation (e.g. USDT); required for escrow.
         #[arg(long = "token-symbol")]
         token_symbol: Option<String>,
-        /// 协商确定的支付金额（人类可读，如 "50"），escrow 必填
+        /// Payment amount agreed during negotiation (human-readable, e.g. "50"); required for escrow.
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
     },
@@ -184,7 +184,7 @@ pub enum TaskCommand {
         /// x402 provider endpoint URL
         #[arg(long)]
         endpoint: String,
-        /// Buyer agent ID（用于代币详情查询鉴权）
+        /// Buyer agent ID (used to authenticate token-detail lookups).
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
@@ -228,13 +228,13 @@ pub enum TaskCommand {
     },
 }
 
-// ─── 路由分发 ──────────────────────────────────────────────────────────────
+// ─── Routing dispatch ──────────────────────────────────────────────────────
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
 
     match cmd {
-        // ── 用户动作 ─────────────────────────────────────────────
+        // ── User actions ─────────────────────────────────────────
         TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
@@ -285,7 +285,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await
         }
 
-        // ── 只读查询 ─────────────────────────────────────────────
+        // ── Read-only queries ────────────────────────────────────
         TaskCommand::Payment { job_id, agent_id } =>
             query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
 

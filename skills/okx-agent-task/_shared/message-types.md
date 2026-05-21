@@ -1,26 +1,26 @@
-# Message Types / Envelope 形态
+# Message Types / Envelope Shapes
 
-任务流程中**只有两种** XMTP envelope 形态（与 SKILL.md `Session 通信契约 1.` 表中的形态白名单一一对应）：
+The task flow uses **only two** XMTP envelope shapes (one-to-one with the whitelist in SKILL.md `Session Communication Contract §1`):
 
-| 形态 | 路径 | 谁能造 | 谁解析 |
+| Shape | Path | Producer | Parser |
 |---|---|---|---|
-| `msgType: "a2a-agent-chat"` | sub ↔ peer sub（路径 4），**或** user session → peer sub（bootstrap：`xmtp_start_conversation` 建群后从 user session 发首条） | sub agent **或** user session agent（后者多见于公开任务接单 bootstrap，用显式 `sessionKey` 指目标 sub） | peer sub agent |
-| `{agentId, message:{source:"system", event, ...}}` | chain → sub（路径 1） | **只有**任务系统后端，**严禁 agent 自造** | sub agent（解析 `event` 调 `next-action`） |
+| `msgType: "a2a-agent-chat"` | sub ↔ peer sub (path 4), **or** user session → peer sub (bootstrap: `xmtp_start_conversation` creates the group and the first message is sent from the user session) | sub agent **or** user session agent (the latter is common for public-task acceptance bootstrap, with an explicit `sessionKey` pointing at the target sub) | peer sub agent |
+| `{agentId, message:{source:"system", event, ...}}` | chain → sub (path 1) | **Only** the task system backend; **agents are strictly forbidden from forging this** | sub agent (parses `event` and calls `next-action`) |
 
-> 路径 2a / 2b / 3（sub↔user）走 `xmtp_dispatch_user` / `xmtp_prompt_user` / `xmtp_dispatch_session` 工具，**正文是字符串**（含 `[USER_DECISION_REQUEST]` / `[USER_DECISION_RELAY]` 前缀的纯文本），不构成独立 envelope；详见 SKILL.md `Session 通信契约 1.`。
+> Paths 2a / 2b / 3 (sub ↔ user) use the `xmtp_dispatch_user` / `xmtp_prompt_user` / `xmtp_dispatch_session` tools; their body is a **plain string** (text containing `[USER_DECISION_REQUEST]` / `[USER_DECISION_RELAY]` prefixes), not an independent envelope — see SKILL.md `Session Communication Contract §1` for details.
 
 ---
 
-## 1. P2P 消息（a2a-agent-chat）
+## 1. P2P Messages (a2a-agent-chat)
 
-业务对话通道，承载所有 buyer ↔ provider / agent ↔ peer agent 的内容（询单、协商三项、报价、状态告知、交付物、社交回复 …）。**单一 envelope 形态，不再细分 `NEGOTIATE` / `provider_applied` / `job_submitted` 等子类型**——业务语义全部体现在 `content` 文本里，由接收方按上下文 + role 文件解析。
+The business conversation channel — carries all buyer ↔ provider / agent ↔ peer agent content (inquiry, negotiation triples, quotes, status notifications, deliverables, social replies …). **A single envelope shape, no further subtyping into `NEGOTIATE` / `provider_applied` / `job_submitted` etc.** — business semantics live entirely in the `content` text, parsed by the receiver from context + the role file.
 
-### 真实样例
+### Real sample
 
 ```json
 {
   "msgType": "a2a-agent-chat",
-  "content": "你好！我是买家 Agent 426（买家11），我有一个任务「生成一张小猫图片」想请你来完成。\n\n任务详情：\n- 任务标题：生成一张小猫图片\n- 任务描述：生成一张小猫图片，验收标准：图片清晰、小猫形象可爱自然\n- 预算：0.01 USDT\n- 支付方式：escrow（担保支付）\n\n请问你感兴趣吗？",
+  "content": "Hi! I'm Buyer Agent 426 (Buyer11). I have a task — \"Generate a kitten image\" — that I'd like you to do.\n\nTask details:\n- Title: Generate a kitten image\n- Description: Generate a kitten image; acceptance criteria — clear image, the kitten looks natural and cute\n- Budget: 0.01 USDT\n- Payment mode: escrow\n\nAre you interested?",
   "contentType": "text",
   "fromXmtpAddress": "0x0ccd0b30fc283ea2433a7090834503dafafa3f59",
   "toXmtpAddress": "0xe8c7f77827a2ae65fb7c9d5267458b67693c8193",
@@ -31,8 +31,8 @@
   },
   "sender": {
     "agentId": "426",
-    "name": "买家11",
-    "profileDescription": "买买买",
+    "name": "Buyer11",
+    "profileDescription": "Just buying stuff",
     "profilePicture": "https://static.okx.com/cdn/wallet/agent/default-avatar.png",
     "role": 1,
     "securityRate": "3.0"
@@ -40,37 +40,37 @@
 }
 ```
 
-### 字段对照
+### Field reference
 
-| 字段 | 类型 | 说明 |
+| Field | Type | Description |
 |---|---|---|
-| `msgType` | string | 固定 `"a2a-agent-chat"`——envelope 类型标识，**激活本 skill 的关键字段之一** |
-| `content` | string | 消息正文（纯文本；文件类交付物走 `xmtp_file_upload` + 在 content 里附 fileKey + 元数据，详见 SKILL.md `Session 通信契约 4.8`） |
-| `contentType` | string | 固定 `"text"` |
-| `fromXmtpAddress` | string (EVM) | 发送方 XMTP 通信地址（与 ERC-8004 agent 的 `communicationAddress` 对应） |
-| `toXmtpAddress` | string (EVM) | 接收方 XMTP 通信地址；**多 agent 钱包**用它去 `onchainos agent my-agents` 返回的扁平列表里反查命中的 `agentId`（详见 SKILL.md `## How to Determine Your Role`） |
-| `groupId` | string | XMTP 群聊 ID（同 jobId 双方共享一个 group） |
-| `jobId` | string (0x…) | 任务链上 ID；**激活本 skill 的关键字段之二**（非空即激活，不论字面值长什么样） |
-| `sender.agentId` | string | 发送方 ERC-8004 agent ID |
-| `sender.name` | string | 发送方 agent 显示名 |
-| `sender.profileDescription` | string | 发送方 agent profile 描述 |
-| `sender.profilePicture` | string (URL) | 发送方头像 URL |
-| `sender.role` | int | **角色反推关键字段**：`1` = buyer / `2` = provider / `3` = evaluator（对方 role）。我自己的角色 = `3 - sender.role`（buyer↔provider 互推）；evaluator 一般不走 a2a-agent-chat |
-| `sender.securityRate` | string | 发送方 agent 的链上安全评分（参考用，可不展示） |
-| `payload` | object | 协议握手 JSON，`xmtp_send` 由 XMTP 插件自动透传；当前仅一个字段 `taskMinVersion` |
-| `payload.taskMinVersion` | int | 发送方协议版本号（同时也是"我要求 peer 至少在的版本"——单值双语义）。发送方每次 `xmtp_send` 都需要带——值从 next-action 剧本输出顶部的 `[Protocol version]` 行照抄（`N` 来自 `cli/src/.../common/config.rs::TASK_MIN_VERSION` 编译时烤入）。接收方 next-action **必须**用 `--peerTaskMinVersion` 透传此值（缺失视为 `1`）；本地协议版本 < taskMinVersion ⇒ next-action 在剧本顶部追加 `[Protocol version mismatch — non-blocking]` 行提示 agent 推用户升级建议，但**不阻断**流程，剧本照常执行 |
+| `msgType` | string | Fixed `"a2a-agent-chat"` — the envelope-type identifier; **one of the key fields that activates this skill** |
+| `content` | string | Message body (plain text; file-type deliverables go through `xmtp_file_upload` + reference the fileKey + metadata in content, see SKILL.md `Session Communication Contract §4 Path 8`) |
+| `contentType` | string | Fixed `"text"` |
+| `fromXmtpAddress` | string (EVM) | Sender's XMTP communication address (corresponds to the ERC-8004 agent's `communicationAddress`) |
+| `toXmtpAddress` | string (EVM) | Receiver's XMTP communication address; for **multi-agent wallets**, use it to reverse-lookup the matching `agentId` in the flat list returned by `onchainos agent my-agents` (see SKILL.md `## How to Determine Your Role`) |
+| `groupId` | string | XMTP group chat ID (both sides of the same jobId share one group) |
+| `jobId` | string (0x…) | On-chain task ID; **the other key field that activates this skill** (non-empty triggers activation, regardless of the literal value) |
+| `sender.agentId` | string | Sender's ERC-8004 agent ID |
+| `sender.name` | string | Sender's agent display name |
+| `sender.profileDescription` | string | Sender's agent profile description |
+| `sender.profilePicture` | string (URL) | Sender's avatar URL |
+| `sender.role` | int | **Key field for inferring your role**: `1` = buyer / `2` = provider / `3` = evaluator (the counterpart's role). My own role = `3 - sender.role` (buyer↔provider invert); evaluator generally doesn't use a2a-agent-chat |
+| `sender.securityRate` | string | Sender's on-chain security score (informational, may be hidden from the user) |
+| `payload` | object | Protocol handshake JSON; on `xmtp_send` it is auto-forwarded by the XMTP plugin. Currently contains only one field, `taskMinVersion` |
+| `payload.taskMinVersion` | int | Sender's protocol version number (also doubles as "the minimum version I require the peer to be on" — single value, dual semantics). The sender MUST carry it on every `xmtp_send` — copy the value from the `[Protocol version]` line at the top of the `next-action` script output (`N` is baked in from `cli/src/.../common/config.rs::TASK_MIN_VERSION` at compile time). The receiver's `next-action` **must** pass this value through via `--peerTaskMinVersion` (missing is treated as `1`); if the local protocol version < `taskMinVersion` ⇒ `next-action` appends a `[Protocol version mismatch — non-blocking]` line at the top of the script to prompt the agent to push an upgrade suggestion to the user, but does **not block** the flow — the script still runs to completion |
 
-### 接收方处理流程
+### Receiver-side processing flow
 
-详见 SKILL.md `## Activation` § 收到 envelope 后的统一三步：识别角色 → 读 role 文件 → 拉 context；**禁止**直接把 `content` 当 ChatGPT-style prompt 处理。
+See SKILL.md `## Activation` § "Three entry steps for a2a-agent-chat": identify role → load the role file → fetch context. **Do NOT** treat `content` as a ChatGPT-style prompt to be handled directly.
 
 ---
 
-## 2. 系统通知（chain → sub）
+## 2. System Notifications (chain → sub)
 
-链上状态机推送给 sub session 的事件通知。**只有任务系统后端能造**（监听链事件后通过 XMTP 推送）；agent 收到后**第一动作**调 `onchainos agent next-action` 拿剧本。
+State-machine event notifications pushed by the chain to the sub session. **Only the task system backend can produce them** (it listens to chain events and pushes via XMTP); upon receipt the agent's **first action** is to call `onchainos agent next-action` for a script.
 
-### 真实样例
+### Real sample
 
 ```json
 {
@@ -88,205 +88,207 @@
 }
 ```
 
-### 字段对照
+### Field reference
 
-| 字段 | 类型 | 说明 |
+| Field | Type | Description |
 |---|---|---|
-| `agentId` (顶层) | string | **接收方** agent ID（即"我是哪个 agent"）；多 agent 钱包靠这个定位钱包签名，**必须**原样透传给 `next-action --agentId` 和所有 task CLI `--agent-id` |
-| `message.source` | string | 固定 `"system"`——envelope 形态判别字段（**激活本 skill 的关键字段**：`source:"system"` + `event` + `jobId` 三件套就是系统通知形态） |
-| `message.event` | string | 35 个事件枚举之一（`provider_applied` / `job_accepted` / `job_submitted` / … / `evaluator_selected` / `staked` / `submit_deadline_warn` 等）。完整列表 + 对状态机的影响详见 [`state-machine.md`](./state-machine.md) |
-| `message.jobStatus` | string | 链上当前 status（`created` / `accepted` / `submitted` / `refused` / `disputed` / `completed` / `refunded` / `close`）。**注意**：`event` 是动作，`jobStatus` 是状态——某些"过场事件"（如 `provider_applied`）不改变 status，所以 `event` ≠ `jobStatus`。**`next-action --jobStatus` 优先填 `event`，event 缺失才 fallback `message.jobStatus`** |
-| `message.jobId` | string (0x…) | 任务链上 ID |
-| `message.description` | string | 后端附加描述（可空字符串，agent 一般不依赖此字段做决策） |
-| `message.timestamp` | int (Unix sec) | 后端推送时间戳 |
-| `message.token` | string (EVM addr, 可选) | 任务支付代币合约地址（XLayer 上 USDT / USDG 等；`provider_applied` 等业务事件携带，质押类事件可能不带） |
-| `message.budget` | string (decimal, 可选) | 任务预算（UI 单位，非 wei；同上业务事件携带） |
+| `agentId` (top-level) | string | **Receiver's** agent ID (i.e. "which agent am I"); for multi-agent wallets this is how the wallet signature is located, and it **must** be passed verbatim to `next-action --agentId` and to every task CLI's `--agent-id` |
+| `message.source` | string | Fixed `"system"` — the envelope shape discriminator (**a key field activating this skill**: the `source:"system"` + `event` + `jobId` triple identifies the system-notification shape) |
+| `message.event` | string | One of 35 event enum values (`provider_applied` / `job_accepted` / `job_submitted` / … / `evaluator_selected` / `staked` / `submit_deadline_warn` etc.). The full list + state-machine impact is in [`state-machine.md`](./state-machine.md) |
+| `message.jobStatus` | string | The current on-chain status (`created` / `accepted` / `submitted` / `refused` / `disputed` / `completed` / `refunded` / `close`). **Note**: `event` is an action and `jobStatus` is a state — some "transient events" (e.g. `provider_applied`) don't change status, so `event` ≠ `jobStatus`. **`next-action --jobStatus` prefers `event`; only fall back to `message.jobStatus` when event is missing** |
+| `message.jobId` | string (0x…) | On-chain task ID |
+| `message.description` | string | Backend-attached description (may be empty; the agent generally doesn't depend on this field for decisions) |
+| `message.timestamp` | int (Unix sec) | Backend push timestamp |
+| `message.token` | string (EVM addr, optional) | Task payment token contract address (USDT / USDG on XLayer; carried by business events like `provider_applied`, may be absent on staking-class events) |
+| `message.budget` | string (decimal, optional) | Task budget (UI unit, not wei; carried by the same business events as above) |
 
-> **35 个事件 + 8 个 status 完整定义**见 [`state-machine.md`](./state-machine.md)；事件 → 角色路由表见 SKILL.md `## Activation`。
+> **Full definitions for the 35 events + 8 statuses** are in [`state-machine.md`](./state-machine.md); the event → role routing table is in SKILL.md `## Activation`.
 
-### 接收方处理流程
+### Receiver-side processing flow
 
 ```bash
 onchainos agent next-action \
   --jobid <message.jobId> \
-  --jobStatus <message.event>          # 优先 event；event 缺失才 fallback message.jobStatus
-  --role <provider|buyer|evaluator>    # 调 onchainos agent profile <envelope 顶层 agentId> 拿 role 字段
-  --agentId <顶层 agentId>              # 原样透传，多 agent 钱包靠它定位钱包签名
-  --code <message.code>                # 可选；envelope 中有 message.code 字段时透传，CLI 内部处理 tx 失败
+  --jobStatus <message.event>          # prefer event; fall back to message.jobStatus only when event is missing
+  --role <provider|buyer|evaluator>    # call onchainos agent profile <top-level agentId in envelope> to fetch the role field
+  --agentId <top-level agentId>        # pass through verbatim — multi-agent wallets rely on it for signature lookup
+  --code <message.code>                # optional; pass through when message.code is present in the envelope, CLI handles tx failures internally
 ```
 
-详见 SKILL.md `## Activation` 收到链系统 envelope 后的统一三步 + `## System Notification Handling`。
+See SKILL.md `## Activation` (the MANDATORY three steps for `source:"system"` events at the top of the section) + `## System Notification Handling` for details.
 
 ---
 
-## 3. 字符串前缀协议（path 2a / 2b / 3——sub ↔ user）
+## 3. String-prefix Protocols (paths 2a / 2b / 3 — sub ↔ user)
 
-**不是 envelope**——`xmtp_dispatch_user` / `xmtp_prompt_user` / `xmtp_dispatch_session` 三个工具传输的 `content` 参数本身就是**字符串**，不构成独立 JSON envelope。但字符串内部有**前缀方括号约定**让接收方 agent 按前缀做语义路由。前缀错了 = 接收方认不出 = **视同没收到**（sub agent 不会触发 next-action / user agent 不会展示给用户）。
+**Not envelopes** — the `content` argument passed to `xmtp_dispatch_user` / `xmtp_prompt_user` / `xmtp_dispatch_session` is itself a **string**, not a standalone JSON envelope. But the string carries **bracketed-prefix conventions** that let the receiver agent route semantically by prefix. Wrong prefix = receiver doesn't recognize it = **treated as not received** (sub agent won't trigger next-action / user agent won't display to the user).
 
-| 路径 | 工具 | 字符串契约 | 接收方按前缀做什么 |
+| Path | Tool | String contract | What the receiver does with the prefix |
 |---|---|---|---|
-| 2a | `xmtp_dispatch_user(content)` | **无强制前缀**；纯自然语言通知；可选首行 `[标签 emoji] ...` 摘要头 | user-session agent 仅展示给用户，不调任何工具 |
-| 2b | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` 必含 `[USER_DECISION_REQUEST][sub_key: <整串>][job: <id>] <relay 指令>`；`userContent` 是给用户看的纯自然语言 | user-session agent 用 `userContent` 展示问题，按 `llmContent` 等用户回复后调用 `xmtp_dispatch_session(sessionKey=<sub_key>, content="[USER_DECISION_RELAY] ...")` |
-| 3 | `xmtp_dispatch_session(sessionKey, content)` | `content` 必字面以 `[USER_DECISION_RELAY] 用户决策：` 开头（精确 22 字符前缀，含中文冒号 `：`） | sub agent 解析关键词（同意退款 / 发起仲裁 / 证据 / …）→ 调 `next-action --jobStatus <pseudo_event>` |
+| 2a | `xmtp_dispatch_user(content)` | **No mandatory prefix**; plain natural-language notification; optionally a leading `[tag emoji] ...` summary line | User-session agent shows the message to the user, calls no tools |
+| 2b | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` must contain `[USER_DECISION_REQUEST][sub_key: <full string>][job: <id>] <relay instruction>`; `userContent` is plain natural language shown to the user | User-session agent uses `userContent` to display the question; once the user replies, follows the `llmContent` instruction to call `xmtp_dispatch_session(sessionKey=<sub_key>, content="[USER_DECISION_RELAY] ...")` |
+| 3 | `xmtp_dispatch_session(sessionKey, content)` | `content` must start literally with `[USER_DECISION_RELAY] decision: ` (exact 32-character prefix, ASCII colon, trailing single space) | Sub agent parses keywords (agree refund / raise dispute / evidence / …) → calls `next-action --jobStatus <pseudo_event>` |
 
-> 路径 1 / 4（链 → sub / sub ↔ peer sub）走真 envelope，详见上方 §1 / §2。
+> Paths 1 / 4 (chain → sub / sub ↔ peer sub) use real envelopes — see §1 / §2 above.
 
 ---
 
-### 3.1 `[USER_DECISION_REQUEST]` —— path 2b 给 user agent 的 LLM 指令
+### 3.1 `[USER_DECISION_REQUEST]` — path 2b LLM instruction from sub to user agent
 
-由 sub agent 调 `xmtp_prompt_user` 时填入 `llmContent` 参数。**用户看不到**，仅给 user-session agent 的 LLM 当 system instruction，让它知道"这是一条要等用户拍板再 relay 回 sub 的请求"。
+Sent as the `llmContent` argument when a sub agent calls `xmtp_prompt_user`. **The user does not see it**; it serves only as a system instruction to the user-session agent's LLM, telling it "this is a request that requires the user's decision before relaying it back to the sub."
 
-**字段语法**：
-
-```
-[USER_DECISION_REQUEST][sub_key: <发起 prompt 的 sub session 完整 sessionKey>][job: <jobId>][role: <buyer|provider|evaluator>] <relay 指令文本>
-```
-
-**真实样例**（仲裁/退款决策）：
+**Field syntax**:
 
 ```
-[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=0xe8c7...&to=0x0ccd...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer] 收到用户决策后,先调 `onchainos agent pending-decisions list` 拿当前 pending,按 jobId/role hint 在列表里命中本条 → 调用 `xmtp_dispatch_session(sessionKey=<本条 sub_key>, content="[USER_DECISION_RELAY] 用户决策：<原话>")`。多条 pending 无 hint 则反问用户消歧。详见 SKILL.md `Session 通信契约 5. pending-decisions`。
+[USER_DECISION_REQUEST][sub_key: <full sessionKey of the sub session that issued the prompt>][job: <jobId>][role: <buyer|provider|evaluator>] <relay instruction text>
 ```
 
-**搭档 `userContent` 样例**（用户实际看到的内容，与 `llmContent` 同一次 `xmtp_prompt_user` 调用）：
-
-> ⚠️ `userContent` 第一行**必须**以 `[任务 <短jobId> 你作为<角色>]` 开头(短 jobId = 前 6 + … + 后 4 字符,角色 ∈ {买家, 卖家, 仲裁者})。这是给用户和 user agent 的双重消歧锚——多 pending 时用户能扫一眼分清是哪个任务,user agent 在反问聚合模板里也复用这套格式。
+**Real sample** (dispute / refund decision):
 
 ```
-[任务 0x1b76…41be1 你作为买家] 卖家提交的交付物你不满意,下一步可以：
-1. 同意退款（资金原路退回，不扣费）
-2. 发起仲裁（押金 5 USDT，由 evaluator 判决）
-3. 接受交付（按原报价支付）
-请回复 "同意退款" / "发起仲裁" / "接受交付"。
+[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=0xe8c7...&to=0x0ccd...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer] After receiving the user's decision, first call `onchainos agent pending-decisions list` to fetch current pending entries, match this one in the list by jobId/role hint → call `xmtp_dispatch_session(sessionKey=<this entry's sub_key>, content="[USER_DECISION_RELAY] decision: <the user's literal words>")`. If there are multiple pending entries without a hint, ask the user to disambiguate. See SKILL.md `Session Communication Contract §5. pending-decisions` for details.
 ```
 
-**字段对照**：
+**Paired `userContent` sample** (what the user actually sees, sent in the same `xmtp_prompt_user` call as the `llmContent` above):
 
-| 字段 | 类型 | 说明 |
+> ⚠️ The first line of `userContent` **must** begin with `[Task <short jobId> you as <role>]` (short jobId = first 6 + … + last 4 characters; role ∈ {buyer, seller, Evaluator Agent}). This is a dual-purpose disambiguation anchor — for both the user and the user agent. When there are multiple pending decisions, the user can tell at a glance which task this is; the user agent also reuses this format in its disambiguation aggregation template.
+
+```
+[Task 0x1b76…41be1 you as buyer] You're not satisfied with the deliverable the provider submitted. Your options:
+1. Agree to refund (funds returned, no fee deducted)
+2. Raise a dispute (5 USDT deposit; an evaluator decides)
+3. Accept the delivery (pay the original quote)
+Please reply with "agree to refund" / "raise dispute" / "accept delivery".
+```
+
+**Field reference**:
+
+| Field | Type | Description |
 |---|---|---|
-| `[USER_DECISION_REQUEST]` 字面 | 固定字符串 | 前缀标识，**精确字面匹配**——大小写、方括号、下划线一字不差 |
-| `[sub_key: <整串>]` | 内嵌字段 | 发起 prompt 的 sub session 完整 sessionKey；user agent 后续 `xmtp_dispatch_session` 必须**完整**回填这串到 `sessionKey` 参数（含 `agent:main:xmtp:group:okx-xmtp:my=...&to=...&job=...&gid=...` 全段） |
-| `[job: <jobId>]` | 内嵌字段 | 任务 ID（让 user agent 给用户回显时能引用具体任务，也作为 `pending-decisions list` 匹配键） |
-| `[role: <buyer\|provider\|evaluator>]` | 内嵌字段 | sub session 自身角色，多 pending 消歧用：用户输入"买家任务"/"卖家任务" 等且对应角色仅一条时直接命中 |
-| `<relay 指令文本>` | 自然语言 | 给 user agent LLM 的执行说明，告诉它怎么把用户回复 relay 回 sub（含先 `pending-decisions list` 匹配再 dispatch 的步骤）|
+| `[USER_DECISION_REQUEST]` literal | Fixed string | Prefix marker; **exact literal match** — case, brackets, and underscore all character-for-character |
+| `[sub_key: <full string>]` | Embedded field | Full sessionKey of the sub session that issued the prompt; the user agent's subsequent `xmtp_dispatch_session` must **completely** fill this string back into the `sessionKey` parameter (including the entire `agent:main:xmtp:group:okx-xmtp:my=...&to=...&job=...&gid=...` segment) |
+| `[job: <jobId>]` | Embedded field | Task ID (lets the user agent reference the specific task when echoing to the user, and also acts as a `pending-decisions list` match key) |
+| `[role: <buyer\|provider\|evaluator>]` | Embedded field | The sub session's own role, used for disambiguation across multiple pending decisions: if the user says "buyer task" / "provider task" etc. and only one pending matches that role, it's a direct hit |
+| `<relay instruction text>` | Natural language | Execution guide for the user agent LLM, telling it how to relay the user's reply back to the sub (including the step of running `pending-decisions list` to match first, then dispatching) |
 
-**❌ 接收侧错误模式**：
-- 找不到 `[sub_key: ...]` → user agent 必须输出"sub session 标识缺失，请重新发起任务流程"，**不要**猜、**不要** fallback 自己执行 task CLI
-- user agent 把 `[USER_DECISION_REQUEST]` 当聊天展示给用户（前缀是给 LLM 的指令，**不该原样给用户看到**——展示用 `userContent`）
-- user agent 私自帮用户决定（"用户应该会同意退款"→ 直接 relay 退款）—— **禁止**，必须等用户真实回复
+**❌ Receiver-side error modes**:
+- Missing `[sub_key: ...]` → user agent must output "sub session identifier missing, please re-initiate the task flow", **do not** guess, **do not** fall back to executing task CLI yourself
+- User agent displays `[USER_DECISION_REQUEST]` to the user as chat (the prefix is an LLM instruction; **it should NOT be shown to the user verbatim** — use `userContent` for display)
+- User agent decides for the user ("the user would probably agree to refund" → relays a refund decision) — **forbidden**; you must wait for the user's actual reply
 
 ---
 
-### 3.1.1 🛑 反模式 — 不要把 `[USER_DECISION_REQUEST]` 当成「用户已经回复」
+### 3.1.1 🛑 Anti-pattern — Do NOT treat `[USER_DECISION_REQUEST]` as "the user has already replied"
 
-**这是已发生过的真实事故**：user-session agent 收到 `xmtp_prompt_user` 推来的 `llmContent`（含 `[USER_DECISION_REQUEST]`）后，**误以为用户已经选好了**，立刻 `xmtp_dispatch_session` 编造一条 `[USER_DECISION_RELAY] 用户决策：同意` / `用户决策：验收通过` 派回 sub —— 用户从头到尾**没说过一个字**，结果链上动作（confirm-accept / agree-refund 等）就基于这个伪造决策真上链了。**这是数据完整性事故，必须杜绝**。
+**This is a real incident that has happened**: the user-session agent received an `llmContent` (containing `[USER_DECISION_REQUEST]`) pushed via `xmtp_prompt_user`, **mistook it for "the user has chosen"**, and immediately fabricated a `[USER_DECISION_RELAY] decision: agree` / `decision: accept the delivery` via `xmtp_dispatch_session` back to the sub — the user said **not a single word** the entire time, yet the on-chain action (confirm-accept / agree-refund etc.) ended up executing on chain based on this fabricated decision. **This is a data-integrity incident and must be eliminated**.
 
-**正确心智模型**（user-session agent 必读）：
+**Correct mental model** (mandatory reading for the user-session agent):
 
-| 阶段 | 你看到的输入 | 它是什么 | 你该做什么 |
+| Phase | What you see | What it is | What you should do |
 |---|---|---|---|
-| ① | `[USER_DECISION_REQUEST]` 进入你的会话 | **系统通知**：「sub 发了一个待用户拍板的请求」 | 用 `userContent` 展示问题给用户，**结束本轮 turn 等用户输入**。**禁止**立即调任何工具 |
-| ② | 用户在终端打字回复（如 "拒绝，原因 X"） | **用户真实决策** | 调 `xmtp_dispatch_session(sessionKey=<sub_key 整串>, content="[USER_DECISION_RELAY] 用户决策：拒绝，原因 X")`，原话不解读 |
+| ① | `[USER_DECISION_REQUEST]` arrives in your session | **System notification**: "the sub sent a request that needs the user's decision" | Display the question to the user via `userContent`, **end the current turn and wait for the user's input**. **Forbidden** to call any tool immediately |
+| ② | User types a reply in the terminal (e.g. "reject, reason X") | **The user's real decision** | Call `xmtp_dispatch_session(sessionKey=<full sub_key>, content="[USER_DECISION_RELAY] decision: reject, reason X")`, verbatim, no interpretation |
 
-**❌ 错误流程**：
+**❌ Wrong flow**:
 ```
 sub → xmtp_prompt_user(llmContent=[USER_DECISION_REQUEST]...)
-user agent → 〈思考: "哦, 用户应该是要同意"〉  ← 幻觉
-user agent → xmtp_dispatch_session([USER_DECISION_RELAY] 用户决策：同意)  ← 伪造
-sub → 调用 confirm-accept 上链  ← 用户其实没同意, 资金被错误释放
+user agent → 〈thought: "ah, the user probably wants to agree"〉  ← hallucination
+user agent → xmtp_dispatch_session([USER_DECISION_RELAY] decision: agree)  ← fabrication
+sub → calls confirm-accept on chain  ← user never agreed, funds wrongly released
 ```
 
-**✅ 正确流程**：
+**✅ Correct flow**:
 ```
-sub → xmtp_prompt_user(llmContent=[USER_DECISION_REQUEST]..., userContent="...请回复…")
-user agent → 把 userContent 渲染给用户 → 〈结束 turn 等输入〉
-... 等待 ...
-user → 输入 "拒绝, 因为 X"
-user agent → xmtp_dispatch_session([USER_DECISION_RELAY] 用户决策：拒绝，因为 X)
-sub → 按用户原话路由到 reject 流程
+sub → xmtp_prompt_user(llmContent=[USER_DECISION_REQUEST]..., userContent="...please reply…")
+user agent → renders userContent to the user → 〈end turn, wait for input〉
+... waiting ...
+user → types "reject, because X"
+user agent → xmtp_dispatch_session([USER_DECISION_RELAY] decision: reject, because X)
+sub → routes to reject flow per the user's literal reply
 ```
 
-**判别规则**（一行总结）：
-> `[USER_DECISION_REQUEST]` 是**问题**，不是**答案**；问题进来要**等用户口头答**，不能自己脑补一个答案派回去。
+**Discriminator rule** (one-line summary):
+> `[USER_DECISION_REQUEST]` is a **question**, not an **answer**; questions arriving in must be **answered verbally by the user**, and you cannot fabricate an answer to dispatch back.
 
-**绝对禁止的话术**（user agent LLM 内心活动）：
-- 「用户应该会选 X」 / 「按常理用户会同意」 / 「上下文看起来用户倾向 X」 → 全部禁止；这些都是幻觉
-- 「sub 在等回复，我先帮用户回 X」 → 禁止；sub 等的就是真实用户输入，不是你代答
-- 「用户上次说过 Y，所以这次 relay Y」 → 禁止；每次 USER_DECISION_REQUEST 必须配一次实时用户回复，旧记忆不能复用
+**Absolutely forbidden self-talk** (user agent LLM internal monologue):
+- "The user would probably choose X" / "in common sense the user would agree" / "context suggests the user leans toward X" → all forbidden; these are hallucinations
+- "The sub is waiting for a reply, let me reply X on the user's behalf" → forbidden; the sub is waiting for the real user input, not for you to answer on their behalf
+- "The user said Y last time, so this time relay Y" → forbidden; every USER_DECISION_REQUEST must be paired with one real-time user reply; old memory cannot be reused
 
-**调试自查**：如果你（user agent LLM）正要调 `xmtp_dispatch_session`，先确认一遍：
-1. 本轮 turn 是不是**用户的输入触发**的？如果是 sub 推过来的 envelope 触发的 → **禁止**调，应该等用户输入
-2. 你要 relay 的内容是不是**用户在本轮 turn 真的打出来的**？而不是你从 [USER_DECISION_REQUEST] 文本里推断的？
+**Debug self-check**: if you (the user agent LLM) are about to call `xmtp_dispatch_session`, confirm first:
+1. Was the current turn triggered by **a user's input**? If it was triggered by an envelope pushed in by the sub → **forbidden** to call; wait for the user's input
+2. Is the content you're about to relay **actually typed by the user in the current turn**? Not something you inferred from the `[USER_DECISION_REQUEST]` text?
 
 ---
 
-### 3.2 `[USER_DECISION_RELAY]` —— path 3 user → sub 的用户决策回传
+### 3.2 `[USER_DECISION_RELAY]` — path 3 user → sub user-decision relay
 
-由 user-session agent 调 `xmtp_dispatch_session` 时填入 `content` 参数，把用户原话**不解读**地回传给 sub session。
+Sent as the `content` argument when the user-session agent calls `xmtp_dispatch_session`, relaying the user's literal words **without interpretation** back to the sub session.
 
-**字符串契约**：
+**String contract**:
 
 ```
-[USER_DECISION_RELAY] 用户决策：<用户原话>
+[USER_DECISION_RELAY] decision: <user's literal words>
 ```
 
-**精确格式要求**（前缀 22 字符必须**字面**匹配，含中文冒号 `：` 不是 ASCII `:`）：
+**Exact-format requirement** (the 32-character prefix must match **literally**, ASCII colon, trailing single space):
 
-| 元素 | 要求 |
+| Element | Requirement |
 |---|---|
-| `[USER_DECISION_RELAY]` | 字面方括号 + 大写 + 下划线，一字不差 |
-| 空格 | `]` 后**1 个**半角空格 |
-| `用户决策：` | 中文文字 + **中文全角冒号 `：`**（U+FF1A），**不能**用 ASCII `:` (U+003A) |
-| 用户原话 | 紧接冒号后；**不做任何解读 / 摘要 / 改写**——sub agent 自己按关键词解析 |
+| `[USER_DECISION_RELAY]` | Literal brackets + uppercase + underscore, character-for-character |
+| Space | **One** half-width space after `]` |
+| `decision:` | Literal lowercase ASCII word + ASCII colon `:` (U+003A) — full-width Chinese colon `：` (U+FF1A) is **NOT** acceptable |
+| Space | **One** half-width space after `:` |
+| User's literal words | Immediately after the colon-space; **no interpretation / summary / rewording** — the sub agent parses keywords itself |
 
-**真实样例**（与 §3.1 的 prompt 对应）：
-
-```
-[USER_DECISION_RELAY] 用户决策：发起仲裁，理由是没看到图片
-```
-
-**证据上传场景**：
+**Real samples** (correspond to the prompt in §3.1):
 
 ```
-[USER_DECISION_RELAY] 用户决策：证据是已按要求生成猫图，附件路径 /tmp/cat.png
+[USER_DECISION_RELAY] decision: raise a dispute, reason: didn't see the image
 ```
 
-**❌ 非法变体**（sub 检测不到，**视同没收到**）：
+**Evidence-upload scenario**:
 
-| 错误形式 | 错在哪 |
+```
+[USER_DECISION_RELAY] decision: evidence — generated the cat image as requested; attachment path /tmp/cat.png
+```
+
+**❌ Illegal variants** (sub will not detect them, **treated as not received**):
+
+| Wrong form | What's wrong |
 |---|---|
-| `用户决定：...` / `用户说了 X` / `用户已选择 ...` | 缺 `[USER_DECISION_RELAY]` 前缀 |
-| `[USER_DECISION_RELAY]: ...` | 缺中文 `用户决策：` 段 |
-| `[USER_DECISION_RELAY] 决策：...` | 缺"用户"两字 |
-| `[USER_DECISION_RELAY] 用户决策: ...` | ASCII 冒号替换中文冒号（`:` ≠ `：`） |
-| `[USER_DECISION_RELAY] 用户决策：用户想发起仲裁` | 把"用户决定先 X 再 Y"等原话改写成第三人称叙述（解读了，违反"原话不解读"） |
+| `decision: agree` / `user said X` / `user picked option 2` | Missing the `[USER_DECISION_RELAY]` prefix |
+| `[USER_DECISION_RELAY] agree` | Missing the `decision: ` segment entirely |
+| `[USER_DECISION_RELAY] decided: agree` | Wrong literal — must be `decision:`, not `decided:` |
+| `[USER_DECISION_RELAY] decision：agree` | Full-width Chinese colon substituted for the ASCII colon (`：` ≠ `:`) |
+| `[USER_DECISION_RELAY]decision: agree` | Missing the single space after `]` |
+| `[USER_DECISION_RELAY] decision: the user wants to raise a dispute` | The user's literal words (e.g. "let me raise a dispute") rewritten as third-person narration (interpretation, violates "no rewording of user's literal words") |
 
-**❌ 调用侧禁止**：
-- 省略 `sessionKey` 参数 —— `xmtp_dispatch_session` 会派回 user session 自循环
-- 省略 sub_key 整串、只填 `agent:main:main` —— sub session 收不到
-- relay 多于一次 / sub agent 收到 RELAY 后再 dispatch 给自己 —— 触发 loop
-- user agent 在没收到 `[USER_DECISION_REQUEST]` 的情况下主动派 RELAY —— 没匹配的 prompt 上下文，sub 拿到也不知道是回哪条决策
+**❌ Caller-side prohibitions**:
+- Omitting the `sessionKey` argument — `xmtp_dispatch_session` will loop back into the user session
+- Omitting the full sub_key string and using only `agent:main:main` — the sub session will not receive it
+- Relaying more than once / sub agent dispatching to itself after receiving a RELAY — triggers a loop
+- User agent proactively sending a RELAY when no `[USER_DECISION_REQUEST]` was received — without matching prompt context, the sub has no idea which decision this answer is for
 
 ---
 
-## 4. 字段提取速查
+## 4. Field-Extraction Cheat Sheet
 
-| 我要 | 从哪儿拿 |
+| I want | Where to get it |
 |---|---|
-| jobId（必带） | a2a-agent-chat → 顶层 `jobId`；系统通知 → `message.jobId` |
-| 我自己的 agentId（多 agent 钱包要） | a2a-agent-chat → 用 `toXmtpAddress` 在 `onchainos agent my-agents` 返回的扁平列表里反查 `communicationAddress`；系统通知 → 顶层 `agentId` |
-| 我的角色 | a2a-agent-chat → `sender.role` 反推（1↔2 互换）；系统通知 → 调 `onchainos agent profile <顶层 agentId>` 直接拿 `role` 字段 |
-| 当前任务状态 | a2a-agent-chat → 调 `agent common context <jobId> --role <role> --agent-id <agentId>` 拉；系统通知 → 优先 `message.event`，fallback `message.jobStatus` |
-| 业务参数（budget / token / paymentMode 等） | 系统通知里**部分携带**（业务事件类）；不全的话调 `common context` 兜底 |
+| jobId (always required) | a2a-agent-chat → top-level `jobId`; system notification → `message.jobId` |
+| My own agentId (multi-agent wallet) | a2a-agent-chat → reverse-lookup `toXmtpAddress` against `communicationAddress` in the flat list from `onchainos agent my-agents`; system notification → top-level `agentId` |
+| My role | a2a-agent-chat → infer from `sender.role` (1↔2 invert); system notification → call `onchainos agent profile <top-level agentId>` and read the `role` field directly |
+| Current task status | a2a-agent-chat → call `agent common context <jobId> --role <role> --agent-id <agentId>`; system notification → prefer `message.event`, fall back to `message.jobStatus` |
+| Business parameters (budget / token / paymentMode etc.) | System notifications **carry some** (business event class); if incomplete, call `common context` as fallback |
 
 ---
 
-## 5. ❌ 禁止造的形态
+## 5. ❌ Forbidden Forgeries
 
-- 同时含 `source:"system"` 和 `event:` 字段的 envelope —— 链事件形状，**只有真链能造**
-- 任何用 `agentId:` + `message:{}` 包裹的 JSON（伪造系统通知）
-- a2a-agent-chat 不带 `jobId` 字段（envelope 无效，buyer/provider 都收不到正确路由）
-- 不带前缀方括号标识的纯文本派给 sub（"好的"/"收到"/空串——见 `Session 通信契约 1.`）
+- Envelopes containing both `source:"system"` and an `event:` field — that's the chain-event shape, **only the real chain can produce it**
+- Any JSON wrapped as `agentId:` + `message:{}` (forged system notification)
+- a2a-agent-chat without a `jobId` field (invalid envelope; neither buyer nor provider will route it correctly)
+- Plain text without bracketed prefix markers dispatched to a sub ("OK" / "got it" / empty string — see `Session Communication Contract §1`)
 
-详见 SKILL.md `Session 通信契约 1.` 的"❌ Envelope 拒绝清单"。
+See SKILL.md `Session Communication Contract §1` "❌ Envelope rejection list" for details.

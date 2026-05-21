@@ -1,8 +1,8 @@
-//! 拒绝交付物
+//! Reject deliverable.
 //!
-//! 用户动作：拒绝交付物 — onchainos agent reject
+//! User action: reject deliverable — `onchainos agent reject`.
 //!
-//! 流程：pre-refuse(orderId,deadline) → 签 digest → refuse(signatureData+reason) → 签 uopHash → broadcast
+//! Flow: `pre-refuse(orderId, deadline)` → sign digest → `refuse(signatureData + reason)` → sign uopHash → broadcast.
 
 use anyhow::Result;
 use std::time::Duration;
@@ -11,7 +11,7 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// reject/refuse — 拒绝验收
+/// reject/refuse — reject review.
 pub async fn handle_reject(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -40,8 +40,8 @@ pub async fn handle_reject(
         None,
     );
 
-    println!("✓ 已拒绝验收（原因：{reason}），状态 → refused");
-    println!("  服务商有 24 小时内可申请仲裁");
+    println!("✓ Review rejected (reason: {reason}); status → refused.");
+    println!("  The provider has 24 hours to file for arbitration.");
     println!("  txHash: {}", result.tx_hash);
     Ok(())
 }

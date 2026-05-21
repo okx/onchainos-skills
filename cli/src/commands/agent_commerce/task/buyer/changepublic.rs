@@ -1,6 +1,6 @@
-//! 设为 Public
+//! Set to Public.
 //!
-//! 用户动作：设为 Public — onchainos agent set-public
+//! User action: set to Public — `onchainos agent set-public`.
 
 use anyhow::Result;
 use std::time::Duration;
@@ -9,10 +9,10 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// set-public — 转为公开任务
+/// set-public — convert the task to public.
 ///
-/// 后端 VisibilityEnum：0=PUBLIC（公开） / 1=PRIVATE（私有）。
-/// 转公开 = visibility=0。
+/// Backend `VisibilityEnum`: 0=PUBLIC / 1=PRIVATE.
+/// Converting to public = `visibility=0`.
 pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str, explicit_agent_id: Option<&str>) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, explicit_agent_id).await?;
@@ -41,7 +41,7 @@ pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str, explici
         None,
     );
 
-    println!("✓ 任务已转为公开，其他服务商可以看到并报名");
+    println!("✓ Task converted to public; other providers can now see and apply.");
     println!("  txHash: {tx_hash}");
     Ok(())
 }
