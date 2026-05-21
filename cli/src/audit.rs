@@ -375,6 +375,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SetTokenAndBudget { .. } => "set-token-and-budget".into(),
         AgentCommand::SetProvider { .. } => "set-provider".into(),
         AgentCommand::SetMaxBudget { .. } => "set-max-budget".into(),
+        AgentCommand::TaskAttach { .. } => "task-attach".into(),
+        AgentCommand::ListAttachments { .. } => "list-attachments".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
         AgentCommand::ProviderClaimable { .. } => "provider-claimable".into(),
         AgentCommand::ProviderClaimRewards { .. } => "provider-claim-rewards".into(),

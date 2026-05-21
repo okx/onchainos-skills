@@ -292,3 +292,21 @@ Sent as the `content` argument when the user-session agent calls `xmtp_dispatch_
 - Plain text without bracketed prefix markers dispatched to a sub ("OK" / "got it" / empty string — see `Session Communication Contract §1`)
 
 See SKILL.md `Session Communication Contract §1` "❌ Envelope rejection list" for details.
+
+---
+
+## 6. Attachment Protocols
+
+### 6.1 `[ATTACHMENT_ADDED]` — user session → sub session (path 3)
+
+Sent via `xmtp_dispatch_session` when the user adds an attachment to a task mid-flow. The sub session receives it and processes per `buyer.md` §3 routing rule #5.
+
+```
+[ATTACHMENT_ADDED] /path/to/file.pdf
+```
+
+### 6.2 `[intent:attachment]` — buyer sub → provider sub (path 4)
+
+Appended as a suffix to `xmtp_send` content when the buyer forwards an attachment file to the provider. The provider should download the file and acknowledge receipt but **must NOT reply** to the buyer (to avoid triggering negotiation routing).
+
+The message content carries `fileKey` + decryption metadata (digest/salt/nonce/secret) following the standard file-transfer protocol (SKILL.md `Session Communication Contract §4 Path 8`), with `[intent:attachment]` appended at the end.

@@ -58,6 +58,15 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
      Extract: {title_in_extract}description, providerAgentId, paymentMode (int: 1=escrow, 3=x402), tokenAmount, tokenSymbol.\n\n\
+     **Step 1.5 -- Upload pending attachments (if any):**\n\
+     ```bash\n\
+     onchainos agent list-attachments {job_id}\n\
+     ```\n\
+     If the output is a non-empty JSON array, iterate over each file path:\n\
+     1. `xmtp_file_upload` (filePath=<path>, agentId={agent_id}, jobId={job_id}) → obtain fileKey + decryption metadata.\n\
+     2. `xmtp_send` to the provider with content carrying the fileKey + decryption fields + `[intent:attachment]` suffix.\n\
+     ⚠️ **Attachment upload failure MUST NOT block the main flow**: if `xmtp_file_upload` fails for any file, skip that file, notify the user via `xmtp_dispatch_user` that the attachment failed to send, and **proceed to Step 2 immediately**. The task acceptance flow is the critical path; attachment forwarding is best-effort.\n\
+     If empty (`[]`), skip this step.\n\n\
      **Step 2 -- Branch by payment mode:**\n\n\
      --------- Branch A: escrow ---------\n\n\
      Call xmtp_dispatch_user to notify the user that accept succeeded:\n\

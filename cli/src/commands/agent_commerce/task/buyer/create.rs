@@ -40,6 +40,7 @@ pub struct CreateTaskParams {
     pub deadline_submit: String,
     pub title: Option<String>,
     pub provider: Option<String>,
+    pub attachments: Option<Vec<String>>,
 }
 
 struct ValidatedParams {
@@ -101,6 +102,14 @@ impl CreateTaskParams {
             Some(s) => s.clone(),
             None => self.description.chars().take(MAX_SUMMARY_CHARS).collect(),
         };
+
+        if let Some(ref files) = self.attachments {
+            for f in files {
+                if !std::path::Path::new(f).exists() {
+                    bail!("attachment file not found: {f}");
+                }
+            }
+        }
 
         Ok(ValidatedParams { currency, title, summary, open_secs, submit_secs })
     }
@@ -217,6 +226,12 @@ pub async fn handle_create(
 
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
     let job_id = resp["jobId"].as_str().unwrap_or("?").to_string();
+
+    if let Some(ref files) = params.attachments {
+        if !files.is_empty() {
+            super::attachments::copy_attachments_to_job(&job_id, files)?;
+        }
+    }
 
     println!("✓ Calldata generated (jobId: {job_id})");
 

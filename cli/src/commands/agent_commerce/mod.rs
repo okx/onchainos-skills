@@ -66,6 +66,8 @@ pub enum AgentCommand {
         #[arg(long)] title: Option<String>,
         /// 指定卖家 agentId（跳过 recommend，直接与该卖家协商或 x402 接单）
         #[arg(long)] provider: Option<String>,
+        /// Local file paths to attach to the task after creation.
+        #[arg(long = "file")] attachments: Option<Vec<String>>,
     },
 
     /// Get recommended providers for a task
@@ -320,6 +322,20 @@ pub enum AgentCommand {
         max_budget: String,
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
+    },
+
+    /// Attach a local file to a task
+    #[command(name = "task-attach")]
+    TaskAttach {
+        job_id: String,
+        /// Path to the file to attach
+        #[arg(long = "file")]
+        file_path: String,
+    },
+    /// List attachments for a task
+    #[command(name = "list-attachments")]
+    ListAttachments {
+        job_id: String,
     },
 
     /// Provider claims auto-complete after buyer review timeout (review_expired)
@@ -607,11 +623,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, provider,
+            deadline_open, deadline_submit, title, provider, attachments,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider,
+                deadline_open, deadline_submit, title, provider, attachments,
             }, ctx,
         ).await,
 
@@ -674,6 +690,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::buyer::run_task(T::SetProvider { job_id, provider_agent_id, agent_id }, ctx).await,
         AgentCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
             task::buyer::run_task(T::SetMaxBudget { job_id, max_budget, agent_id }, ctx).await,
+
+        AgentCommand::TaskAttach { job_id, file_path } =>
+            task::buyer::run_task(T::TaskAttach { job_id, file_path }, ctx).await,
+        AgentCommand::ListAttachments { job_id } =>
+            task::buyer::run_task(T::ListAttachments { job_id }, ctx).await,
 
         AgentCommand::ClaimAutoComplete { job_id, agent_id } =>
             task::provider::run_provider(

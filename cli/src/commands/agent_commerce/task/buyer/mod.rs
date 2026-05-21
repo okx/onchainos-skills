@@ -14,6 +14,7 @@
 //! - `query.rs`        — read-only queries (status, list, pay)
 
 mod accept;
+mod attachments;
 mod changepublic;
 mod claim_auto_refund;
 mod close;
@@ -61,6 +62,9 @@ pub enum TaskCommand {
         /// Designated provider agentId (skip recommend; negotiate or x402-accept with this provider directly).
         #[arg(long)]
         provider: Option<String>,
+        /// Local file paths to attach to the task after creation.
+        #[arg(long = "file")]
+        attachments: Option<Vec<String>>,
     },
     /// Get recommended providers for a task
     Recommend {
@@ -226,6 +230,17 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
+    /// Attach a local file to a task
+    TaskAttach {
+        job_id: String,
+        /// Path to the file to attach
+        #[arg(long = "file")]
+        file_path: String,
+    },
+    /// List attachments for a task
+    ListAttachments {
+        job_id: String,
+    },
 }
 
 // ─── Routing dispatch ──────────────────────────────────────────────────────
@@ -235,10 +250,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider,
+                deadline_open, deadline_submit, title, provider, attachments,
             }).await,
         TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page } => {
             if next {
@@ -283,6 +298,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             set_terms::handle_set_max_budget(&mut client, &job_id, &max_budget, agent_id.as_deref()).await,
         TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {
             negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await
+        }
+        TaskCommand::TaskAttach { job_id, file_path } => {
+            attachments::handle_task_attach(&job_id, &file_path)
+        }
+        TaskCommand::ListAttachments { job_id } => {
+            attachments::handle_task_attachments(&job_id)
         }
 
         // ── Read-only queries ────────────────────────────────────

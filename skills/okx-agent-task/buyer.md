@@ -84,10 +84,10 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 >      - `[intent:reject]` → the provider has actively rejected the negotiation; **do not reply**; run `onchainos agent mark-failed <jobId> --provider <provider agentId>`, return to the recommendation list (`onchainos agent recommend <jobId> --current`), and let the user pick the next provider.
 >      - `[intent:propose]` → anomaly (the provider should NOT send PROPOSE); `xmtp_send` informing "PROPOSE is initiated by the user; please reply ACK/COUNTER/REJECT".
 > 4. **`[MAX_BUDGET_UPDATE]` internal notification** (source: user session via `xmtp_dispatch_session`): content begins with the `[MAX_BUDGET_UPDATE]` prefix → extract `paymentMostTokenAmount=<value>` and update the current negotiation's max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, notify the provider, `xmtp_send`, or `xmtp_dispatch_user`** — violation = max_budget leaked to the provider = loss of bargaining leverage. After the silent update, **end the turn immediately**.
-> 5. **Forwarding user-supplied materials** (source: user session via `xmtp_dispatch_session`): content contains a local file path (e.g. `.openclaw/media/inbound/` or an absolute path pointing to an image/document) → **you must first** call `agent status <jobId>` to check status:
->    - status=1 (accepted) → execute SKILL.md `Session Communication Contract §4 Path 8` file-transfer protocol: (1) `xmtp_file_upload` (parameters: `filePath` = the file path from content, `agentId` = your agentId, `jobId`) → obtain `fileKey` + decryption metadata (digest/salt/nonce/secret); (2) `xmtp_send` to the provider, with content carrying the fileKey + five decryption fields + the user's description (if any); (3) `xmtp_dispatch_user` to notify the user "Materials sent to the provider." ⚠️ This operation is exempt from preamble rule 9 (which forbids transition messages to the provider) — this is a user-initiated material forwarding, not a transition notification.
->    - status=0 (created) → `xmtp_dispatch_user` notifies the user "The task has not yet entered the execution phase; materials cannot be sent to the provider for now."
->    - status≥2 (submitted / refused / disputed / terminal) → `xmtp_dispatch_user` notifies the user "The task has entered the acceptance/terminal phase; if you need to submit evidence, please follow the acceptance flow."
+> 5. **Attachment added notification** (source: user session via `xmtp_dispatch_session`): content starts with `[ATTACHMENT_ADDED]` → extract the file path from the content. Call `agent status <jobId>` to check status:
+>    - status=1 (accepted) → upload and forward the file to the provider: (1) `xmtp_file_upload` (parameters: `filePath` = extracted path, `agentId` = your agentId, `jobId`) → obtain `fileKey` + decryption metadata (digest/salt/nonce/secret); (2) `xmtp_send` to the provider with `[intent:attachment]` suffix, carrying the fileKey + five decryption fields + a brief description; (3) `xmtp_dispatch_user` to notify the user that the attachment has been sent to the provider. ⚠️ If `xmtp_file_upload` fails, `xmtp_dispatch_user` notifies the user that the attachment failed to send; **do NOT retry or block** — end the turn.
+>    - status=0 (created) → the file is already stored locally; it will be uploaded to the provider automatically after a provider is matched and the task is accepted. `xmtp_dispatch_user` notifies the user that the attachment has been saved and will be forwarded to the provider once the task enters the execution phase.
+>    - status≥2 (submitted / refused / disputed / terminal) → `xmtp_dispatch_user` notifies the user that the task has entered the acceptance/terminal phase and attachments can no longer be added.
 > 6. **Fallback** (1–5 did not match, source: peer) → call `agent status <jobId>` to check status (if already known this turn, reuse it; do not call again):
 >    - status=1 (accepted) → enter discussion mode (§3.5).
 >    - status=0 (created) and an active sub session exists (`session_status` is non-empty) → natural-language discussion during negotiation; call `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <your agentId>` to fetch the script.
@@ -121,6 +121,7 @@ After collecting fields per the next-action script, **additionally** perform the
 1. **Token validation**: not USDT / USDG → **"Only USDT and USDG are currently supported; please choose one."**, do NOT silently substitute.
 2. **Description length validation**: `description` < 10 chars → **"The more detailed the description, the more accurate the Provider matching. Could you add more specifics?"**
 3. **Payment-method intercept**: the user mentions a payment-method preference (escrow / guarantee / x402) → **do NOT set it**; inform the user: "The payment method will be determined during negotiation with the provider, based on what the provider supports and your preferences."
+4. **Attachment reminder**: if the task description mentions reference materials, images, documents, or any phrasing that implies supplementary files (e.g. "see attached", "refer to the file", "according to the document", "参考附件", "见附件", "根据文档") → proactively ask the user whether they want to attach those files now (provide local file paths) or add them later after the task is created. Match the user's language.
 
 ### 3.1.2 Confirmation Form + Create Task
 
@@ -135,6 +136,8 @@ All fields ready → **identity & balance check**:
 Display the confirmation form (format see `references/display-formats.md` §3) → **end this turn** and wait for the user's explicit confirmation of **this form**. Prior confirmations of sub-questions do NOT count.
 
 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` or any `onchainos agent` command in the same turn** — the form is a **question**, not an **answer**; the user has not confirmed; you do not have the authority to decide for the user. It must be a **new turn after the user sees the form** before you may execute the CLI. Violation = an unauthorized on-chain operation = funds at risk.
+
+If the user provided attachment file paths, include them in the `create-task` call via `--file <path>` (repeatable for multiple files). The CLI copies files to `~/.onchainos/task/<jobId>/attachments/` after the jobId is obtained.
 
 After success, inform the user of the `jobId`. ⚠️ Do NOT say "published successfully" (not yet confirmed on-chain). ⚠️ Do NOT call `recommend` (wait for `job_created` to trigger it automatically).
 
@@ -306,6 +309,22 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 4. **Exempt from preamble rule 9** (which forbids transition messages to the provider): in this mode, proactive `xmtp_send` replies to the provider are allowed.
 5. **Autonomous reply**: for execution-detail questions where the agent has enough information to answer → `xmtp_send` reply; only one message per turn.
 6. **Fallback to user forwarding**: questions beyond the agent's capability / requiring user decision → `xmtp_dispatch_user` forwards to the user with a brief explanation.
+
+---
+
+## 3.5.1 Mid-task attachment (user session)
+
+> **Session**: user session
+>
+> **Trigger**: the user wants to add an attachment to an existing task (e.g. "add this file to the task", "attach this to job #478", "补充附件", "给任务加个文件").
+
+**Flow**:
+
+1. **Task disambiguation**: if the user has multiple active tasks, **always confirm which task** even if only one is active — ask the user to specify the jobId or pick from the list (`onchainos agent tasks`). ⚠️ Multi-task confirmation is mandatory to prevent attaching to the wrong task.
+2. **Save locally**: `onchainos agent task-attach <jobId> --file <path>` — copies the file to `~/.onchainos/task/<jobId>/attachments/`.
+3. **Notify sub session**: call `xmtp_sessions_query` (myAgentId, jobId) to find the sub session key, then `xmtp_dispatch_session(sessionKey=<sub_key>, content="[ATTACHMENT_ADDED] <file path>")`.
+   - If no sub session exists (task not yet matched with a provider), the file is stored locally and will be picked up when the sub session starts (see flow_negotiate.rs job_created checkpoint).
+4. **Confirm to user**: inform the user the attachment has been saved.
 
 ---
 

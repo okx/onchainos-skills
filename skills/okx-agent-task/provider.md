@@ -112,7 +112,7 @@ to fetch the complete script for the current status (including: the three topics
 5. ❌ **Do NOT treat a User Agent's task description in natural language as a "start execution" trigger** — the User Agent's first inquiry **commonly contains** the full task description, expected deliverables, and desired format (e.g. "give me a list of projects, with X / Y / Z per item"), but this is **just an inquiry**, not a work order. Real work starts ONLY after the `job_accepted` system notification.
 6. ❌ **Do NOT call `xmtp_send` with the literal `sessionKey: "main"`** — call `session_status` first to get the real peer sessionKey (only once per turn, then reuse), then `xmtp_send`.
 
-**Protocol-literal whitelist** — `[intent:*]` has exactly **5** legal values; **fabrication is strictly forbidden**:
+**Protocol-literal whitelist** — `[intent:*]` has exactly **6** legal values; **fabrication is strictly forbidden**:
 
 | Literal | Direction | Purpose |
 |---|---|---|
@@ -121,8 +121,11 @@ to fetch the complete script for the current status (including: the three topics
 | `[intent:counter]` | Either direction | Counter-quote |
 | `[intent:confirm]` | User Agent → ASP | Last step of the three-step handshake; **the sole `apply` trigger** |
 | `[intent:reject]` | Either direction | Terminate negotiation |
+| `[intent:attachment]` | User Agent → ASP | Buyer forwards a supplementary file; download and acknowledge but **do NOT reply** to the buyer |
 
-❌ Forbidden hallucinated literals include but are not limited to: `[intent:confirm_ack]` / `[intent:confirm_ok]` / `[intent:done]` / `[intent:final]` / `[CONFIRM_ACK]`, etc. — **the User Agent's code only matches the 5 literals above**; making up new ones equals broadcasting junk messages and polluting the conversation history.
+❌ Forbidden hallucinated literals include but are not limited to: `[intent:confirm_ack]` / `[intent:confirm_ok]` / `[intent:done]` / `[intent:final]` / `[CONFIRM_ACK]`, etc. — **the User Agent's code only matches the 6 literals above**; making up new ones equals broadcasting junk messages and polluting the conversation history.
+
+**Mandatory reflex upon receiving `[intent:attachment]`**: the message carries `fileKey` + decryption metadata. Download the file via `xmtp_file_download` and note it as supplementary material for the task. **Do NOT reply** to the buyer — attachment forwarding is one-way; replying triggers buyer-side routing and may cause confusion.
 
 > ⚠️ `[intent:confirm]` **does NOT need an ACK reply** (unlike PROPOSE → ACK, which IS a symmetric handshake). After the User Agent sends CONFIRM, it directly runs `confirm-accept` on-chain and **does NOT wait for your reply**. Sending an ACK = fabricated protocol literal + triggers a User-Agent reply loop.
 

@@ -349,6 +349,12 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
          Call xmtp_dispatch_user to tell the user the job is on-chain (pure notification, no LLM thinking):\n\
          \x20\x20content: {created_notify}\n\n\
          ⚠️ Subsequent routing -> negotiation / acceptance all run in the **current session**; do NOT switch to the user session, do NOT sessions_spawn.\n\n\
+         **Step 0.5 - check local attachments:**\n\
+         ```bash\n\
+         onchainos agent list-attachments {job_id}\n\
+         ```\n\
+         If the output is a non-empty JSON array (files exist), remember these file paths — they must be uploaded and forwarded to the provider via `xmtp_file_upload` + `xmtp_send` with `[intent:attachment]` suffix **after the task is accepted** (status=1). Do NOT upload now (no provider yet).\n\
+         If empty (`[]`), skip.\n\n\
          {routing_section}\n\n"
     );
 
@@ -384,6 +390,12 @@ pub(super) fn switch_provider(ctx: &FlowContext<'_>) -> String {
          [Role] User (User Agent) | [Execution environment] user session\n\n\
          🛑 **CLIs forbidden in this event**: save-agreed / set-payment-mode / confirm-accept / apply / complete / reject - negotiation with the new ASP has not started, all of these are illegal here.\n\n\
          ⚠️ The old ASP's sub session will automatically send [intent:reject] when it receives the `task_provider_change` on-chain event; no intervention from you required.\n\n\
+         **Pre-step - check local attachments:**\n\
+         ```bash\n\
+         onchainos agent list-attachments {job_id}\n\
+         ```\n\
+         If the output is a non-empty JSON array (files exist), remember these file paths — they must be uploaded and forwarded to the new provider via `xmtp_file_upload` + `xmtp_send` with `[intent:attachment]` suffix **after the task is accepted** (status=1). Do NOT upload now.\n\
+         If empty (`[]`), skip.\n\n\
          [Your next actions (strict order)]\n\n\
          {d_steps}\n\n\
          ━━━━━━━━━ The B-Steps below run ONLY when D-Step concludes \"no service or no endpoint\" ━━━━━━━━━\n\
