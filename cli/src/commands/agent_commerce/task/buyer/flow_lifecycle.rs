@@ -223,7 +223,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20Quality standards: <qualityStandards>\n\n\
      **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP, reply with 'rate'.\"\n\
+     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP (0–5 stars), reply 'rate'.\" When the user replies `rate`, the `okx-agent-identity` skill (`§Feedback Submit`) handles it — do not call rating CLI yourself.\n\
      Task fully complete.\n\n\
      [Follow-up events]\n\
      - escrow: job_completed → task complete / job_refused → wait for ASP to choose dispute or refund\n\
@@ -437,7 +437,7 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
      {completed_escrow_notify}\n\n\
      **A-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP, reply with 'rate'.\"\n\
+     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP (0–5 stars), reply 'rate'.\" When the user replies `rate`, the `okx-agent-identity` skill (`§Feedback Submit`) handles it — do not call rating CLI yourself.\n\
      Task fully complete.\n\n\
      --------- Branch B: x402 -- final summary ---------\n\n\
      ⚠️ In x402, job_completed means the payment pipeline (accept + complete) is settled on-chain.\n\
@@ -492,7 +492,7 @@ pub(super) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      {dispute_lost}\n\n\
      **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate**.\n\
+     ⚠️ **Do not auto-rate** -- the notification template already includes \"To rate the ASP (0–5 stars), reply 'rate'.\" When the user replies `rate`, the `okx-agent-identity` skill (`§Feedback Submit`) handles it — do not call rating CLI yourself.\n\
      Arbitration flow fully complete.\n"
     )
 }

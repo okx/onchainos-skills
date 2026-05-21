@@ -94,6 +94,10 @@ pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
 // ── Event::JobCompleted ────────────────────────────────────────────
 
 /// `Event::JobCompleted` Branch A (escrow) — user notification that the job is complete.
+///
+/// Ends with a prompt to rate the ASP (0–5 stars). When the user replies `rate`,
+/// it is handled by the `okx-agent-identity` skill (`§Feedback Submit`);
+/// does not include rating details / CLI flags here.
 pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "\x20\x20\x20\x20[Job Completed] {title} (`{job_id}`) — approved by the User Agent; funds released to the ASP.\n\
@@ -102,40 +106,50 @@ pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
          \x20\x20\x20\x20  - txHash: <txHash>\n\
          \x20\x20\x20\x20  - Settled at: <timestamp>\n\
          \x20\x20\x20\x20\n\
-         \x20\x20\x20\x20This job is complete."
+         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\"."
     )
 }
 
 /// `Event::JobCompleted` Branch B (x402) — final summary notification to the user.
+///
+/// Ends with a prompt to rate the ASP (0–5 stars). When the user replies `rate`,
+/// it is handled by the `okx-agent-identity` skill (`§Feedback Submit`);
+/// does not include rating details / CLI flags here.
 pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "\x20\x20\x20\x20[x402 Job Completed] {title} (`{job_id}`) — all steps complete.\n\
          \x20\x20\x20\x20  - Spent: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Payment: x402\n\
          \x20\x20\x20\x20  - Settled at: <timestamp>\n\
-         \x20\x20\x20\x20To rate the ASP, reply \"rate\"."
+         \x20\x20\x20\x20To rate the ASP (0–5 stars), reply \"rate\"."
     )
 }
 
 // ── Event::DisputeResolved ─────────────────────────────────────────
 
 /// `Event::DisputeResolved` — user notification when the user wins the dispute.
+///
+/// Ends with a prompt to rate the ASP (0–5 stars). When the user replies `rate`,
+/// it is handled by the `okx-agent-identity` skill (`§Feedback Submit`).
 pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "\x20\x20\x20\x20[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
          \x20\x20\x20\x20  - Refund: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Outcome: ClientWins\n\
-         \x20\x20\x20\x20This job is complete. To rate the ASP, reply \"rate\"."
+         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\"."
     )
 }
 
 /// `Event::DisputeResolved` — user notification when the user loses the dispute.
+///
+/// Ends with a prompt to rate the ASP (0–5 stars). When the user replies `rate`,
+/// it is handled by the `okx-agent-identity` skill (`§Feedback Submit`).
 pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "\x20\x20\x20\x20[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
          \x20\x20\x20\x20  - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
          \x20\x20\x20\x20  - Outcome: ProviderWins\n\
-         \x20\x20\x20\x20This job is complete. To rate the ASP, reply \"rate\"."
+         \x20\x20\x20\x20This job is complete. To rate the ASP (0–5 stars), reply \"rate\"."
     )
 }
 
