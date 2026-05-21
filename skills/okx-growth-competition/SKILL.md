@@ -743,7 +743,7 @@ Congratulations on your standout performance in this competition! As a thank-you
 | User's message contains | `contactType` | `contactValue` |
 |---|---|---|
 | `Telegram @handle`, `tg @handle`, `Telegram: @handle` | `Telegram` | the handle (preserve `@` if user included it) |
-| `WeChat <id>`, `微信 <id>`, `WeChat: <id>` | `WeChat` | the WeChat id |
+| `WeChat <id>`, `WeChat: <id>` | `WeChat` | the WeChat id |
 | Anything looking like an email (`user@domain.com`) or `Email <addr>` | `Email` | the address |
 | `Twitter @handle`, `X @handle`, `Twitter: @handle` | `Twitter` | the handle |
 
