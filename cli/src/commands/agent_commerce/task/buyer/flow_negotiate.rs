@@ -104,7 +104,8 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20- \"Terms are locked / terms finalized / no further proposal needed / please apply directly / please accept the job directly\"\n\
              \x20\x20- \"Final confirmation: job/price/payment mode ...\" plain-text summaries without the [intent:propose] / [intent:confirm] markers\n\
              \x20\x20- Any kind of \"alternative handshake\" short-circuit - the ASP flow treats the `[intent:confirm]` literal as the only apply trigger, so a natural-language \"please apply\" will simply not be recognized and the ASP will keep waiting for [intent:propose].\n\n\
-             Correct behavior: once negotiation aligns, **strictly use** the `[intent:propose]` template (see B-Step 2 Step 4 below) so the handshake parser succeeds. **Even short negotiations must complete all three steps** - even if it's \"can do, original price OK, escrow OK\" three-liner, turn it into [intent:propose] and send it; never skip.\n\n\
+             Correct behavior: once negotiation aligns (after the ASP has replied and you have evaluated in Step 2.5), **strictly use** the `[intent:propose]` template (see B-Step 2 Step 4 below) so the handshake parser succeeds. **Even short negotiations must complete all three steps** - even if it's \"can do, original price OK, escrow OK\" three-liner, turn it into [intent:propose] and send it; never skip.\n\
+             ⚠️ This rule applies to Step 4 onward — the **first message (Step 1) must always be pure natural language** with no `[intent:*]` markers.\n\n\
              ━━━━━━━━━ Branch B: supportA2MCP=false -> A2A (negotiation required) ━━━━━━━━━\n\n\
              **B-Step 0 - duplicate guard (🛑 hard gate):**\n\
              Call `session_status` to check whether this job already has a sub session (i.e. group already created).\n\
@@ -139,8 +140,9 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              ❌ Absolutely forbidden: mentioning \"max budget\", \"cap\", \"max budget\", \"the most I can pay\" or the corresponding value in xmtp_send\n\
              ❌ Absolutely forbidden: writing the `paymentMostTokenAmount` field value into any message to the ASP\n\n\
              Negotiation steps:\n\
-             1. Call xmtp_send to send the first inquiry (natural language - let the ASP quote first, then judge):\n\
+             1. Call xmtp_send to send the first inquiry (**pure natural language** - let the ASP quote first, then judge):\n\
              \x20\x20content=<job description + expected deliverable + paymentMode preference + budget (base budget); **do NOT expose max_budget**>\n\
+             \x20\x20🛑 The first message MUST be natural language only. Do NOT include `[intent:propose]` or any `[intent:*]` marker — propose is only allowed in Step 4, after the ASP has replied and evaluation (Step 2.5) is complete.\n\
              \x20\x20⚠️ `[intent:propose]` is ALWAYS sent by the buyer (you), NEVER by the ASP. Do NOT ask or instruct the ASP to send `[intent:propose]`.\n\
              \x20\x20-> wait for the ASP's reply (5-minute timeout)\n\
              2. (Inside the sub session) the ASP replies with a quote (amount, token, payment-mode preference, estimated delivery time).\n\n\
