@@ -223,7 +223,13 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20Quality standards: <qualityStandards>\n\n\
      **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP (0–5 stars), reply 'rate'.\" When the user replies `rate`, the `okx-agent-identity` skill (`§Feedback Submit`) handles it — do not call rating CLI yourself.\n\
+     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP (0–5 stars), reply 'rate'.\"\n\
+     When the user replies `rate`, ask for a score (0–5 integer) and optional text feedback, then execute:\n\
+     ```bash\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
+     ```\n\
+     ⚠️ `--score` MUST come from the user's explicit reply in this rating flow; do NOT infer from verbs like \"rate\" / \"打分\", do NOT use a default value.\n\
+     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
      Task fully complete.\n\n\
      [Follow-up events]\n\
      - escrow: job_completed → task complete / job_refused → wait for ASP to choose dispute or refund\n\
@@ -437,7 +443,13 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
      {completed_escrow_notify}\n\n\
      **A-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP (0–5 stars), reply 'rate'.\" When the user replies `rate`, the `okx-agent-identity` skill (`§Feedback Submit`) handles it — do not call rating CLI yourself.\n\
+     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user to rate manually: \"To rate the ASP (0–5 stars), reply 'rate'.\"\n\
+     When the user replies `rate`, ask for a score (0–5 integer) and optional text feedback, then execute:\n\
+     ```bash\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
+     ```\n\
+     ⚠️ `--score` MUST come from the user's explicit reply in this rating flow; do NOT infer from verbs like \"rate\" / \"打分\", do NOT use a default value.\n\
+     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
      Task fully complete.\n\n\
      --------- Branch B: x402 -- final summary ---------\n\n\
      ⚠️ In x402, job_completed means the payment pipeline (accept + complete) is settled on-chain.\n\
@@ -492,7 +504,13 @@ pub(super) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      {dispute_lost}\n\n\
      **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- the notification template already includes \"To rate the ASP (0–5 stars), reply 'rate'.\" When the user replies `rate`, the `okx-agent-identity` skill (`§Feedback Submit`) handles it — do not call rating CLI yourself.\n\
+     ⚠️ **Do not auto-rate** -- the notification template already includes \"To rate the ASP (0–5 stars), reply 'rate'.\"\n\
+     When the user replies `rate`, ask for a score (0–5 integer) and optional text feedback, then execute:\n\
+     ```bash\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
+     ```\n\
+     ⚠️ `--score` MUST come from the user's explicit reply in this rating flow; do NOT infer from verbs like \"rate\" / \"打分\", do NOT use a default value.\n\
+     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 2 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
      Arbitration flow fully complete.\n"
     )
 }
