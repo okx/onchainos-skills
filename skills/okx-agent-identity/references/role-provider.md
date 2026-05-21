@@ -36,6 +36,8 @@ The preview is declarative; Q1 follows after a blank line. See `role-playbook.md
 
 ### Q&A
 
+> ⛔ **Field values come from the user, not from elsewhere.** Each of `name` / `description` / `picture` MUST come from the user's literal reply to the matching Q below (or from their literal text in a §One-shot capture multi-field message). **Never** pre-fill `name` from `userEmail`, USER.md, CLAUDE.md, the wallet account name, the XMTP sender, a Telegram handle, or any session metadata. Do **not** generate "Jim 的卖家" / "Alice 的 provider" / "<email-prefix> 的 ASP" style templates. See `SKILL.md §Red line 6` for the complete forbidden-sources list and table of anti-patterns.
+
 The `Q1 / Q2 / Q3` labels in the column below are **maintainer-internal only** — they help this document index questions but **MUST NOT** appear in the prompt strings the AI sends to the user. The prompts in the Chinese/English columns are the literal text rendered to the user; they carry no `Q1：` / `Q1:` prefix. See `SKILL.md §UX Output Red Lines Red line 3` (no Q/S/Phase leakage) and `references/ux-lexicon.md` for the canonical rule. Each prompt inlines the four-segment field spec from `field-specs.md` in the user's language only. Skip any Q whose field was already captured via §One-shot capture.
 
 | Q | Chinese prompt | English prompt | Validation |
@@ -49,6 +51,8 @@ The `Q1 / Q2 / Q3` labels in the column below are **maintainer-internal only** �
 After Q3 answered, render the Phase-1 confirmation card (identity only, no service rows yet — but note: that is **not** the final `create` — final confirmation happens after Phase 2). Or alternatively, hold identity in-memory and show one combined confirmation at the end of Phase 2. **This skill does the latter**: one final confirmation card after all services are collected. Phase-1 end transitions directly to Phase-2 preview.
 
 ## Phase 2 — service Q&A (loop once per service)
+
+> ⛔ **No fabricated services. Ever.** Every `service.*` subfield (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) MUST come from the user's literal in-conversation reply to the matching per-service Q. When the user says "帮我写几个 service" / "随便几个" / "示例就行" / "你帮我想" / "you fill it in" / "make some up" — **refuse and re-prompt** asking what they actually want to offer (see §Good/bad cases row 3 for the canonical decline). Do not infer `servicetype` from the service name ("听起来像 MCP" — wrong, the user must choose Q3 explicitly). Do not pick a default `fee`. Do not invent an `endpoint`. Do not pipe a user-pasted JSON blob straight to the CLI (re-confirm field-by-field). Full forbidden-action list + anti-patterns in `SKILL.md §Red line 6`.
 
 ### Phase 2 preview (render BEFORE the first service's Q1)
 
@@ -85,6 +89,20 @@ For each service, ask the fields in this exact order. The reason: name + descrip
 The `Q1 / Q2 / ... / Q5` column labels in the per-service tables below are **maintainer-internal indexes only** — they reset per service iteration but **MUST NOT** appear as prefixes in the prompt strings the AI sends to the user. The prompts in the Chinese/English columns are the literal text rendered to the user; they carry no `Q1：` / `Q1:` prefix. See `SKILL.md §UX Output Red Lines Red line 3` and `references/ux-lexicon.md`. The preamble for service `[N]` ("接下来是服务[N]：" / "Now service [N]:") contextualizes which service is being collected. The loop gate is a numbered-options pattern, not a Q-labelled question.
 
 The **Ask column below shows what the skill says to the user, in user language**. The **Maps to column shows the CLI JSON key** that the collected value lands under in the `--service` payload — that stays English and unchanged regardless of user language.
+
+#### Suggestion-as-prompt carve-out (Q1 + Q3, opt-in)
+
+This is the **single carve-out** to `SKILL.md §Red line 6` "field values come from the user, not from elsewhere": when the user, in an earlier turn of THIS conversation, mentioned a candidate value for the service `name` or `servicetype` (e.g. Phase 1 ask "建个 provider 卖天气查询的服务" — they named "天气查询" as a likely service-name candidate, or "API 接口式服务" as a likely type), the Q1 / Q3 prompt **MAY** quote that mention inline as a default for the user to confirm-or-override. This is **suggestion text in the prompt**, NOT auto-fill — the user's reply this turn is still the authoritative value; if they ignore the suggestion and type something else, use what they typed.
+
+Canonical examples (render exactly — **no `Q1：` / `Q3：` prefix** per `SKILL.md §UX Output Red Lines Red line 3`):
+
+- **Q1 name**: `这个服务叫什么名字？（你刚提到「天气查北京」，确认就是它吗？或想改？）` / `What's the name of this service? (You mentioned "weather lookup for Beijing" earlier — confirm or change?)`
+- **Q3 servicetype** when user said `A2A` / `agent 互调` / `agent-to-agent` / `agent 通信` in Phase 1: `服务类型？（你刚说想要 agent（智能体）通信式服务（议价 / 灵活协作），确认 2 即可；想改回 1 也行。）`
+- **Q3 servicetype** when user said `A2MCP` / `MCP 服务` / `API 接口` in Phase 1: `服务类型？（你刚说想要 API 接口式服务（按次调用、固定价格），确认 1 即可；想改回 2 也行。）`
+
+⛔ For Q3 specifically: when quoting the user's earlier type mention, **map their term to the long-form-with-gloss** per `references/ux-lexicon.md §Service-type` Pattern A — Q3 is a Pattern-A teaching context, so the short form alone is not enough on first encounter. **Never** echo the raw enum `A2MCP` / `A2A` back to the user (input acceptance is OK; output is not). Full source-of-truth rule: `SKILL.md §Sub-flows §Core Flow §Phase 2 Q1 UX guidance Option A`.
+
+⛔ The carve-out **only** applies when the candidate value appeared as the user's own typed text in an earlier turn of this conversation. It does **NOT** legitimize pulling from `userEmail`, USER.md, CLAUDE.md, XMTP sender, the wallet account name, or any other session-metadata source — those remain forbidden per Red line 6.
 
 Chinese per-service Q&A (render `接下来是服务[N]：` as a one-line preamble before Q1):
 
@@ -194,6 +212,8 @@ onchainos agent create \
 
 ## ⛔ Post-success — MANDATORY template (do NOT paraphrase)
 
+> ⛔ **After the visible line, this turn is NOT over.** → proceed to `SKILL.md §Operation Flow Step 5` (which routes to `§Step 6` for the unconditional comm-init handoff). Full rules (anti-skip clauses, runtime self-gating, decline carve-out) live in Step 6 — not duplicated here.
+
 Render **one visible line** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, adding fields (txHash, agentList, activeClients, refresh-agents output), omitting fields, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
 
 ### Visible line (template)
@@ -239,13 +259,11 @@ Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
 
 ### Agent directive (internal — do NOT render to the user)
 
-After emitting the visible line above, **do not stop the turn**. In the same response, load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue with its `Execution Flow` inside the same response — the local a2a agent list just changed (a fresh ASP was added and is immediately discoverable), so the chat skill keeps the OpenClaw runtime side in sync. The flow self-gates on `OPENCLAW_CLI` / `OPENCLAW_SHELL`, so it is a **silent no-op** in non-OpenClaw runtimes; loading it unconditionally is safe and is the documented contract.
+After emitting the visible line above, **do not stop the turn**. → proceed to `SKILL.md §Operation Flow Step 5` — the provider row routes directly to `§Step 6` (comm-init), which loads `/skills/okx-agent-chat/after-agent-list-changed.md` Execution Flow in the same response. A fresh ASP was added and is immediately discoverable, so the OpenClaw runtime side needs sync.
 
-**Skip the handoff** (render visible line only, then stop) if the user has already declined chat / messaging setup earlier in this conversation (e.g., "不用聊天 / no chat / skip messaging" or similar).
+Skip / decline carve-outs and the runtime self-gating contract are owned by Step 6 — not duplicated here.
 
-This is one of the documented exceptions to `SKILL.md §Step 4`'s "Stop. Wait for the user." rule; see that section's whitelist for the carve-out.
-
-**Do NOT** run `agent get` or poll status after create (that is about querying chain state — different from the same-turn handoff above, which just loads the next skill's prompt). See `_shared/no-polling.md`.
+**Do NOT** run `agent get` or poll status after create (that is about querying chain state — different from the Step 5 → Step 6 chain above, which just loads the next skill's prompt). See `_shared/no-polling.md`.
 
 ## Error recovery
 

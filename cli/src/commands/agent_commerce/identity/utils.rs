@@ -262,55 +262,87 @@ pub(super) fn parse_u32_arg(
     Ok(parsed)
 }
 
-// ─── Rating: 0–5 stars (CLI surface) ↔ 0–100 score (backend wire) ─────────
+// ─── Rating: 0.00–5.00 stars (CLI surface) ↔ 0–100 score (backend wire) ───
 //
 // Single source of truth for the conversion. The CLI takes user input in
-// stars and writes stars in responses; the wire format with the backend
-// remains 0–100 integers. Skills no longer need to do the multiplication
-// themselves (earlier revisions made that the skill's responsibility,
-// which was fragile because skills are prompt-driven; a forgetful prompt
-// would send raw 1–5 to the wire and corrupt the rating).
+// stars with up to 2 decimal places (step 0.01) and renders 2-decimal
+// stars in responses; the wire format with the backend remains 0–100
+// integers. Skills no longer need to do the multiplication themselves —
+// earlier revisions pushed that onto the skill, which was fragile because
+// skills are prompt-driven; a forgetful prompt would send raw stars to
+// the wire and corrupt the rating.
 //
 // All conversions use **round-half-up** at the displayed precision —
 // consistent with the canonical rule pinned in
-// `skills/okx-agent-identity/SKILL.md` §Amount Display Rules.
+// `skills/okx-agent-identity/SKILL.md` §Amount Display Rules. Note that
+// the wire (0..=100 integer) gives an effective storage grain of 0.05
+// stars per wire unit, so distinct 2-decimal inputs whose ×20 product
+// rounds to the same integer collapse on the wire (e.g. 3.30 / 3.31 /
+// 3.32 all → wire 66). That is a wire limitation, not a parser bug.
 
-/// 0–5 stars → 0–100 backend score (exact, multiplied by 20).
-pub(super) fn stars_to_score(stars: u32) -> u32 {
-    stars.saturating_mul(20).min(100)
+/// Parse a `--score` CLI argument: 0.00–5.00 stars with up to 2 decimal
+/// places, returning the 0–100 backend wire value (round-half-up). Pure
+/// integer arithmetic to avoid float drift on inputs like 3.33.
+pub(super) fn parse_stars_arg(value: &str, flag: &str) -> Result<u32> {
+    let trimmed = value.trim();
+    let error = || anyhow!("invalid value for {flag}: expected 0.00–5.00 (up to 2 decimal places)");
+    let (int_str, frac_str) = match trimmed.split_once('.') {
+        Some((int_str, frac_str)) => {
+            if frac_str.is_empty() || frac_str.len() > 2 {
+                return Err(error());
+            }
+            (int_str, frac_str)
+        }
+        None => (trimmed, ""),
+    };
+    if int_str.is_empty() || !int_str.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(error());
+    }
+    if !frac_str.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(error());
+    }
+    let int_val: u32 = int_str.parse().map_err(|_| error())?;
+    let frac_val: u32 = match frac_str.len() {
+        0 => 0,
+        1 => frac_str.parse::<u32>().map_err(|_| error())? * 10,
+        2 => frac_str.parse::<u32>().map_err(|_| error())?,
+        _ => unreachable!(),
+    };
+    // stars in cents: 0..=500 corresponds to 0.00..=5.00.
+    let stars_cents = int_val
+        .checked_mul(100)
+        .and_then(|v| v.checked_add(frac_val))
+        .ok_or_else(error)?;
+    if stars_cents > 500 {
+        bail!("invalid value for {flag}: must be between 0.00 and 5.00");
+    }
+    // stars × 20 = stars_cents / 5. Round-half-up: (n + 2) / 5. The half
+    // boundary (n % 5 == 2.5) is unreachable for integer n, so this is
+    // exact, not an approximation.
+    Ok((stars_cents + 2) / 5)
 }
 
-/// 0–100 backend score → 0–5 integer stars, round-half-up.
-/// Used for per-review entries where the value is conceptually integer.
-pub(super) fn score_to_stars_int(score: u64) -> u64 {
-    (score.min(100) + 10) / 20
-}
-
-/// 0–100 backend score → 1-decimal star rating (0.0–5.0), round-half-up
-/// at the second decimal. Used for aggregates like `average` /
-/// `reputation.score` where 1 decimal place matches the user-visible
-/// rendering rule (e.g. `92 → 4.6`, `89 → 4.5`, `85 → 4.3`).
-pub(super) fn score_to_stars_decimal(score: u64) -> f64 {
-    let s = score.min(100);
-    // (s * 10 + 10) / 20 with integer truncation = round-half-up at the
-    // second decimal of stars. Examples: 89 → (890+10)/20 = 45 → 4.5;
-    // 85 → (850+10)/20 = 43 → 4.3.
-    ((s * 10 + 10) / 20) as f64 / 10.0
+/// 0–100 backend score → 0.00–5.00 star rating (2 decimals, exact).
+/// Used for both per-review entries and aggregate `average` since the
+/// CLI now accepts 2-decimal input and the wire grain matches.
+pub(super) fn score_to_stars(score: u64) -> f64 {
+    (score.min(100) * 5) as f64 / 100.0
 }
 
 /// In-place convert score-like fields in a feedback-list response from
-/// 0–100 backend ints to 0–5 stars (integer per-entry, 1-decimal aggregate).
+/// 0–100 backend ints to 0.00–5.00 star floats.
 ///
 /// Conversions applied (each only when the field exists and is numeric):
-///   - top-level `average` → 1-decimal stars
-///   - `items[*].score`     → integer stars
-///   - `list[*].score`      → integer stars (alternate field name; backend
-///     is inconsistent across endpoints — see `agent-list` which uses `list`,
-///     so accept either; only one will actually be present)
+///   - top-level `average` → 2-decimal stars
+///   - `items[*].score`     → 2-decimal stars
+///   - `list[*].score`      → 2-decimal stars (alternate field name;
+///     backend is inconsistent across endpoints — see `agent-list` which
+///     uses `list`, so accept either; only one will actually be present)
 pub(super) fn convert_feedback_list_scores(v: &mut Value) {
+    let convert = |score: u64| serde_json::Number::from_f64(score_to_stars(score));
     if let Value::Object(map) = v {
         if let Some(score) = map.get("average").and_then(Value::as_u64) {
-            if let Some(num) = serde_json::Number::from_f64(score_to_stars_decimal(score)) {
+            if let Some(num) = convert(score) {
                 map.insert("average".to_string(), Value::Number(num));
             }
         }
@@ -319,14 +351,158 @@ pub(super) fn convert_feedback_list_scores(v: &mut Value) {
                 for entry in arr.iter_mut() {
                     if let Value::Object(entry_map) = entry {
                         if let Some(score) = entry_map.get("score").and_then(Value::as_u64) {
-                            entry_map.insert(
-                                "score".to_string(),
-                                Value::Number(score_to_stars_int(score).into()),
-                            );
+                            if let Some(num) = convert(score) {
+                                entry_map.insert("score".to_string(), Value::Number(num));
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ─── parse_stars_arg: happy path ─────────────────────────────────────
+
+    #[test]
+    fn parse_stars_arg_accepts_integers() {
+        assert_eq!(parse_stars_arg("0", "--score").unwrap(), 0);
+        assert_eq!(parse_stars_arg("1", "--score").unwrap(), 20);
+        assert_eq!(parse_stars_arg("5", "--score").unwrap(), 100);
+    }
+
+    #[test]
+    fn parse_stars_arg_accepts_one_and_two_decimals() {
+        assert_eq!(parse_stars_arg("4.5", "--score").unwrap(), 90);
+        assert_eq!(parse_stars_arg("5.00", "--score").unwrap(), 100);
+        assert_eq!(parse_stars_arg("0.01", "--score").unwrap(), 0); // 0.2 → round to 0
+        assert_eq!(parse_stars_arg("0.03", "--score").unwrap(), 1); // 0.6 → round to 1
+    }
+
+    #[test]
+    fn parse_stars_arg_round_half_up_at_wire_boundary() {
+        // 3.30 / 3.31 / 3.32 all collapse to wire 66 (0.05-star grain).
+        assert_eq!(parse_stars_arg("3.30", "--score").unwrap(), 66);
+        assert_eq!(parse_stars_arg("3.31", "--score").unwrap(), 66);
+        assert_eq!(parse_stars_arg("3.32", "--score").unwrap(), 66);
+        // 3.33 rounds up to wire 67 (= 66.6 round-half-up).
+        assert_eq!(parse_stars_arg("3.33", "--score").unwrap(), 67);
+        // 3.35 is exact (no rounding needed).
+        assert_eq!(parse_stars_arg("3.35", "--score").unwrap(), 67);
+        // Upper-edge: 4.97 → 99.4 → 99; 4.98 / 4.99 → 100.
+        assert_eq!(parse_stars_arg("4.97", "--score").unwrap(), 99);
+        assert_eq!(parse_stars_arg("4.98", "--score").unwrap(), 100);
+        assert_eq!(parse_stars_arg("4.99", "--score").unwrap(), 100);
+    }
+
+    #[test]
+    fn parse_stars_arg_trims_whitespace() {
+        assert_eq!(parse_stars_arg("  4.5  ", "--score").unwrap(), 90);
+    }
+
+    // ─── parse_stars_arg: rejected inputs ────────────────────────────────
+
+    #[test]
+    fn parse_stars_arg_rejects_more_than_two_decimals() {
+        assert!(parse_stars_arg("3.333", "--score").is_err());
+        assert!(parse_stars_arg("0.001", "--score").is_err());
+    }
+
+    #[test]
+    fn parse_stars_arg_rejects_trailing_dot() {
+        assert!(parse_stars_arg("3.", "--score").is_err());
+    }
+
+    #[test]
+    fn parse_stars_arg_rejects_signs_and_exponent() {
+        assert!(parse_stars_arg("-1", "--score").is_err());
+        assert!(parse_stars_arg("+5", "--score").is_err());
+        assert!(parse_stars_arg("5e0", "--score").is_err());
+    }
+
+    #[test]
+    fn parse_stars_arg_rejects_out_of_range() {
+        assert!(parse_stars_arg("6", "--score").is_err());
+        assert!(parse_stars_arg("5.01", "--score").is_err());
+    }
+
+    #[test]
+    fn parse_stars_arg_rejects_non_numeric() {
+        assert!(parse_stars_arg("abc", "--score").is_err());
+        assert!(parse_stars_arg("3.3.3", "--score").is_err());
+        assert!(parse_stars_arg("", "--score").is_err());
+        assert!(parse_stars_arg("   ", "--score").is_err());
+    }
+
+    // ─── score_to_stars: wire (0..=100) → stars (0.0..=5.0) ──────────────
+
+    #[test]
+    fn score_to_stars_is_exact_at_two_decimals() {
+        assert_eq!(score_to_stars(0), 0.0);
+        assert_eq!(score_to_stars(66), 3.3);
+        assert_eq!(score_to_stars(67), 3.35);
+        assert_eq!(score_to_stars(70), 3.5);
+        assert_eq!(score_to_stars(89), 4.45);
+        assert_eq!(score_to_stars(90), 4.5);
+        assert_eq!(score_to_stars(100), 5.0);
+    }
+
+    #[test]
+    fn score_to_stars_clamps_above_100() {
+        assert_eq!(score_to_stars(101), 5.0);
+        assert_eq!(score_to_stars(u64::MAX), 5.0);
+    }
+
+    // ─── convert_feedback_list_scores: average + items + list ────────────
+
+    fn assert_score_eq(v: &Value, expected: f64) {
+        let got = v.as_f64().expect("expected numeric");
+        assert!(
+            (got - expected).abs() < 1e-9,
+            "expected {expected}, got {got}"
+        );
+    }
+
+    #[test]
+    fn convert_feedback_list_scores_rewrites_average_and_items() {
+        let mut v = json!({
+            "average": 89,
+            "items": [
+                { "score": 90 },
+                { "score": 70 },
+                { "score": 67 },
+            ],
+        });
+        convert_feedback_list_scores(&mut v);
+        assert_score_eq(&v["average"], 4.45);
+        assert_score_eq(&v["items"][0]["score"], 4.5);
+        assert_score_eq(&v["items"][1]["score"], 3.5);
+        assert_score_eq(&v["items"][2]["score"], 3.35);
+    }
+
+    #[test]
+    fn convert_feedback_list_scores_rewrites_list_field() {
+        let mut v = json!({ "list": [ { "score": 100 } ] });
+        convert_feedback_list_scores(&mut v);
+        assert_score_eq(&v["list"][0]["score"], 5.0);
+    }
+
+    #[test]
+    fn convert_feedback_list_scores_leaves_non_numeric_fields_alone() {
+        let mut v = json!({
+            "average": "n/a",
+            "items": [
+                { "score": "n/a" },
+                { "other_field": 5 },
+            ],
+        });
+        let before = v.clone();
+        convert_feedback_list_scores(&mut v);
+        assert_eq!(v, before);
     }
 }

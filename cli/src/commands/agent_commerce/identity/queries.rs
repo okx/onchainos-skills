@@ -270,9 +270,10 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
         Err(e) => eprintln!("[agent-identity] feedback-list response err: {:#}", e),
     }
 
-    // Convert backend 0–100 scores to 0–5 stars before surfacing to the
-    // user. `average` becomes a 1-decimal float; per-entry `score` becomes
-    // an integer. Mapping rule: `utils::convert_feedback_list_scores`.
+    // Convert backend 0–100 scores to 0.00–5.00 stars before surfacing to
+    // the user. Both `average` and per-entry `score` become 2-decimal
+    // floats — matches the 2-decimal input precision now accepted by
+    // `feedback-submit`. Mapping rule: `utils::convert_feedback_list_scores`.
     let mut out = normalize_singleton_object(result?);
     convert_feedback_list_scores(&mut out);
     Ok(out)
