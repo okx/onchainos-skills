@@ -62,6 +62,38 @@ pub fn validate_slippage(slippage: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate that `slippage` is a **decimal** number strictly greater than 0
+/// and at most 1.0 (i.e. 0%-exclusive, 100%-inclusive expressed as fraction).
+/// Used by cross-chain where the BE wire format is already decimal — keeps
+/// the historical CLI input contract intact (e.g. `--slippage 0.5` means
+/// 50%, `--slippage 0.01` means 1%) and avoids silent semantic shifts that
+/// would change effective slippage 100x for deployed scripts.
+///
+/// Distinct from `validate_slippage` (percent, range (0, 100]) which is
+/// used by swap / strategy where CLI input is percent.
+pub fn validate_slippage_decimal(slippage: &str) -> Result<()> {
+    let slippage = slippage.trim();
+    let val: f64 = slippage.parse().map_err(|_| {
+        anyhow::anyhow!(
+            "--slippage must be a decimal number between 0 (exclusive) and 1 (inclusive), got \"{}\"",
+            slippage
+        )
+    })?;
+    if val.is_nan() || val.is_infinite() {
+        bail!(
+            "--slippage must be a finite decimal number between 0 (exclusive) and 1 (inclusive), got \"{}\"",
+            slippage
+        );
+    }
+    if val <= 0.0 || val > 1.0 {
+        bail!(
+            "--slippage must be greater than 0 and at most 1 (decimal form, e.g. 0.01 = 1%), got \"{}\"",
+            slippage
+        );
+    }
+    Ok(())
+}
+
 /// Validate non-negative integer string (≥ 0). Used for gasLimit, aaDexTokenAmount,
 /// approve amounts (where 0 = revoke), etc.
 pub fn validate_non_negative_integer(value: &str, label: &str) -> Result<()> {
@@ -261,6 +293,37 @@ mod tests {
         assert!(validate_slippage("inf").is_err());
         assert!(validate_slippage("infinity").is_err());
         assert!(validate_slippage("-inf").is_err());
+    }
+
+    // ── slippage decimal validation ──────────────────────────
+
+    #[test]
+    fn test_validate_slippage_decimal_valid() {
+        assert!(validate_slippage_decimal("0.01").is_ok()); // 1%
+        assert!(validate_slippage_decimal("0.5").is_ok()); // 50%
+        assert!(validate_slippage_decimal("1").is_ok()); // 100% upper bound inclusive
+        assert!(validate_slippage_decimal("1.0").is_ok());
+        assert!(validate_slippage_decimal("0.002").is_ok()); // BE lower bound
+        assert!(validate_slippage_decimal("0.5").is_ok()); // BE upper bound
+        assert!(validate_slippage_decimal("  0.05  ").is_ok()); // trimmed
+    }
+
+    #[test]
+    fn test_validate_slippage_decimal_rejects_out_of_range() {
+        assert!(validate_slippage_decimal("0").is_err()); // 0 exclusive
+        assert!(validate_slippage_decimal("0.0").is_err());
+        assert!(validate_slippage_decimal("-0.01").is_err());
+        assert!(validate_slippage_decimal("1.01").is_err()); // > 1
+        assert!(validate_slippage_decimal("50").is_err()); // percent value, not decimal
+        assert!(validate_slippage_decimal("100").is_err());
+    }
+
+    #[test]
+    fn test_validate_slippage_decimal_rejects_non_numeric() {
+        assert!(validate_slippage_decimal("abc").is_err());
+        assert!(validate_slippage_decimal("").is_err());
+        assert!(validate_slippage_decimal("NaN").is_err());
+        assert!(validate_slippage_decimal("inf").is_err());
     }
 
     // ── amount validation (positive integer) ─────────────────

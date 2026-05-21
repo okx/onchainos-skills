@@ -342,8 +342,8 @@ pub enum CrossChainCommand {
         /// Raw amount in minimal units. Mutually exclusive with --readable-amount.
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
-        /// Slippage tolerance in **percent**, range (0, 100]. Default "1" (= 1%). CLI converts to BE decimal wire format internally.
-        #[arg(long, default_value = "1")]
+        /// Slippage tolerance as **decimal**, range (0, 1] (e.g. 0.01 = 1%, 0.5 = 50%). Default "0.01".
+        #[arg(long, default_value = "0.01")]
         slippage: String,
         /// User wallet address. Required when --check-approve is set.
         #[arg(long)]
@@ -403,8 +403,8 @@ pub enum CrossChainCommand {
         readable_amount: Option<String>,
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
-        /// Slippage tolerance in **percent**, range (0, 100]. Default "1" (= 1%). CLI converts to BE decimal wire format internally.
-        #[arg(long, default_value = "1")]
+        /// Slippage tolerance as **decimal**, range (0, 1] (e.g. 0.01 = 1%, 0.5 = 50%). Default "0.01".
+        #[arg(long, default_value = "0.01")]
         slippage: String,
         #[arg(long)]
         wallet: String,
@@ -439,8 +439,8 @@ pub enum CrossChainCommand {
         readable_amount: Option<String>,
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
-        /// Slippage tolerance in **percent**, range (0, 100]. Default "1" (= 1%). CLI converts to BE decimal wire format internally.
-        #[arg(long, default_value = "1")]
+        /// Slippage tolerance as **decimal**, range (0, 1] (e.g. 0.01 = 1%, 0.5 = 50%). Default "0.01".
+        #[arg(long, default_value = "0.01")]
         slippage: String,
         #[arg(long)]
         wallet: String,
@@ -578,8 +578,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             }
             let from_token = crate::token_alias::resolve_and_validate(&from_idx, &from, "from")?;
             let to_token = crate::token_alias::resolve_and_validate(&to_idx, &to, "to")?;
-            crate::validators::validate_slippage(&slippage)?;
-            let slippage_decimal = cross_chain_slippage_percent_to_decimal(&slippage)?;
+            crate::validators::validate_slippage_decimal(&slippage)?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
                 amount.as_deref(),
@@ -596,7 +595,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
                     &from_token,
                     &to_token,
                     &raw_amount,
-                    &slippage_decimal,
+                    &slippage,
                     wallet.as_deref(),
                     check_approve,
                     bridge_id.as_deref(),
@@ -661,8 +660,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             if let Some(ref addr) = receive_address {
                 validate_receive_address(addr, &to_idx)?;
             }
-            crate::validators::validate_slippage(&slippage)?;
-            let slippage_decimal = cross_chain_slippage_percent_to_decimal(&slippage)?;
+            crate::validators::validate_slippage_decimal(&slippage)?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
                 amount.as_deref(),
@@ -679,7 +677,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
                     &from_token,
                     &to_token,
                     &raw_amount,
-                    &slippage_decimal,
+                    &slippage,
                     &wallet,
                     receive_address.as_deref(),
                     bridge_id.as_deref(),
@@ -793,106 +791,6 @@ pub(crate) fn validate_receive_address(receive_address: &str, to_chain_index: &s
     }
 }
 
-/// Cross-chain BE expects slippage as a decimal (0.002–0.5). CLI input is
-/// percent (0, 100]; this helper does the ÷100 conversion before the wire
-/// layer. Caller must already have run `validators::validate_slippage(percent)?`.
-///
-/// Uses string-based decimal-point shifting (same approach as
-/// `readable_to_minimal_str`) to avoid f64 precision artifacts —
-/// `format!("{}", 1.1_f64 / 100.0)` yields `"0.011000000000000001"`, whereas
-/// shifting the decimal point left by 2 deterministically yields `"0.011"`.
-fn cross_chain_slippage_percent_to_decimal(percent: &str) -> Result<String> {
-    let raw = percent.trim().trim_end_matches('%').trim();
-    if raw.is_empty() {
-        bail!("--slippage `{percent}` is not a number");
-    }
-    // Parse digits + optional single dot; reject anything else.
-    let (int_part, frac_part) = match raw.find('.') {
-        Some(i) => (&raw[..i], &raw[i + 1..]),
-        None => (raw, ""),
-    };
-    if int_part.is_empty() && frac_part.is_empty() {
-        bail!("--slippage `{percent}` is not a number");
-    }
-    if !int_part.chars().all(|c| c.is_ascii_digit())
-        || !frac_part.chars().all(|c| c.is_ascii_digit())
-    {
-        bail!("--slippage `{percent}` is not a number");
-    }
-    // Shift the decimal point 2 positions left:
-    //   "1"      → "0.01"      (int_part="1",   frac_part="")
-    //   "1.1"    → "0.011"     (int_part="1",   frac_part="1")
-    //   "50"     → "0.5"       (int_part="50",  frac_part="")
-    //   "0.2"    → "0.002"     (int_part="0",   frac_part="2")
-    //   "100"    → "1"         (int_part="100", frac_part="")
-    let combined_digits: String = format!("{int_part}{frac_part}");
-    // Position from the right where the decimal point should land in the
-    // shifted form: existing frac digits + 2.
-    let shift = frac_part.len() + 2;
-    let result = if combined_digits.len() <= shift {
-        // Need leading zero padding to fill the shift.
-        let pad = "0".repeat(shift - combined_digits.len());
-        let frac = format!("{pad}{combined_digits}");
-        // Trim trailing zeros for cleanliness, but keep at least one digit.
-        let frac_trimmed = frac.trim_end_matches('0');
-        if frac_trimmed.is_empty() {
-            "0".to_string()
-        } else {
-            format!("0.{frac_trimmed}")
-        }
-    } else {
-        let split = combined_digits.len() - shift;
-        let int_out = &combined_digits[..split];
-        let frac_out = combined_digits[split..].trim_end_matches('0');
-        // Strip leading zeros from the integer part too, but keep at least one digit.
-        let int_trimmed = int_out.trim_start_matches('0');
-        let int_final = if int_trimmed.is_empty() { "0" } else { int_trimmed };
-        if frac_out.is_empty() {
-            int_final.to_string()
-        } else {
-            format!("{int_final}.{frac_out}")
-        }
-    };
-    Ok(result)
-}
-
-#[cfg(test)]
-mod slippage_conv_tests {
-    use super::cross_chain_slippage_percent_to_decimal as conv;
-
-    #[test]
-    fn typical_cases() {
-        assert_eq!(conv("1").unwrap(), "0.01");
-        assert_eq!(conv("50").unwrap(), "0.5");
-        assert_eq!(conv("100").unwrap(), "1");
-        assert_eq!(conv("0.5").unwrap(), "0.005");
-        assert_eq!(conv("0.2").unwrap(), "0.002");
-    }
-
-    #[test]
-    fn precision_risk_cases() {
-        // The whole point of switching off f64 — these stay clean.
-        assert_eq!(conv("1.1").unwrap(), "0.011");
-        assert_eq!(conv("2.3").unwrap(), "0.023");
-        assert_eq!(conv("0.7").unwrap(), "0.007");
-        assert_eq!(conv("99.99").unwrap(), "0.9999");
-    }
-
-    #[test]
-    fn percent_suffix_and_whitespace() {
-        assert_eq!(conv("1%").unwrap(), "0.01");
-        assert_eq!(conv(" 50 ").unwrap(), "0.5");
-        assert_eq!(conv("  0.5%  ").unwrap(), "0.005");
-    }
-
-    #[test]
-    fn rejects_non_numeric() {
-        assert!(conv("abc").is_err());
-        assert!(conv("").is_err());
-        assert!(conv("1.2.3").is_err());
-        assert!(conv("-1").is_err());
-    }
-}
 
 // ── Execute orchestration (4-step flow) ────────────────────────────────────
 
@@ -929,8 +827,7 @@ async fn cmd_execute(
     if let Some(addr) = receive_address {
         validate_receive_address(addr, &to_idx)?;
     }
-    crate::validators::validate_slippage(slippage)?;
-    let slippage_decimal = cross_chain_slippage_percent_to_decimal(slippage)?;
+    crate::validators::validate_slippage_decimal(slippage)?;
 
     let raw_amount = crate::commands::swap::resolve_amount_arg(
         client,
@@ -953,7 +850,7 @@ async fn cmd_execute(
         &from_token,
         &to_token,
         &raw_amount,
-        &slippage_decimal,
+        slippage,
         Some(wallet),
         true, // checkApprove=true so server fills needApprove from on-chain allowance
         bridge_id,
@@ -1106,7 +1003,7 @@ async fn cmd_execute(
         &from_token,
         &to_token,
         &raw_amount,
-        &slippage_decimal,
+        slippage,
         wallet,
         receive_address,
         Some(&resolved_bridge_id),
