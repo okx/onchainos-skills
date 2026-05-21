@@ -208,11 +208,11 @@ pub async fn handle_create(
             "acceptDeadline":    validated.open_secs,
             "submittedDeadline": validated.submit_secs
         },
-        "paymentMode":        0
+        "paymentMode":        0,
+        "visibility":         1
     });
     if let Some(ref provider_id) = params.provider {
         body["providerAgentId"] = serde_json::json!(provider_id);
-        body["visibility"] = serde_json::json!(1);
     }
 
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;

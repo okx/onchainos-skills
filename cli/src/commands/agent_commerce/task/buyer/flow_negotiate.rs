@@ -283,6 +283,7 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              ```\n\
              If the returned list already contains an entry with jobId={job_id} and role=buyer -> **the user has already been notified; this is a duplicate event - end the turn without notifying again.**\n\
              If not present -> continue to Step 1.\n\n\
+             🛑 **Do NOT ask the user whether to fetch the recommendation list** -- proceed to Step 1 directly and automatically. The recommend query is mandatory, not optional.\n\n\
              **Step 1 - query the recommended ASP list:**\n\
              ```bash\n\
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\

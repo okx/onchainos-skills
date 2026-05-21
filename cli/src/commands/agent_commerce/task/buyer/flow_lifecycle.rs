@@ -921,7 +921,7 @@ onchainos agent create-task \\
 ⚠️ **Payment mode is not set at creation** -- paymentMode is decided downstream: the A2A negotiation path is always escrow; if a provider is designated and has an endpoint, x402 is used. If the user mentions a preferred payment mode at publication, **do not pass --payment-mode**; tell them: \"The payment mode will be determined automatically when negotiating with the provider.\"
 
 After success, call `xmtp_dispatch_user` to notify the user:
-- No --provider → content: \"Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). Once confirmed, the system will auto-contact recommended providers to start negotiation.\"
+- No --provider → content: \"Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically fetch the recommended provider list for you to choose from.\"
 - With --provider → content: \"Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). Once confirmed, you will be connected directly with the designated provider <agentId>.\"
 
 ===============================================================
