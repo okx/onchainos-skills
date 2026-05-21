@@ -391,9 +391,8 @@ pub enum CrossChainCommand {
         amount: Option<String>,
         /// Approve amount in **human-readable form** (e.g. "0.5" for 0.5 USDC).
         /// CLI fetches token decimals via token-info and converts to raw
-        /// minimal units before broadcast. To revoke, use `--amount 0`
-        /// instead (human "0" is meaningless and rejected by the converter).
-        /// Mutually exclusive with --amount.
+        /// minimal units before broadcast. Pass "0" / "0.0" to revoke
+        /// (equivalent to `--amount 0`). Mutually exclusive with --amount.
         #[arg(long, conflicts_with = "amount")]
         readable_amount: Option<String>,
         /// Skip server allowance check (default: skip; pass --check-allowance to enable)
@@ -836,6 +835,14 @@ async fn resolve_approve_amount(
         let readable = readable.trim();
         if readable.is_empty() {
             bail!("--readable-amount must not be empty");
+        }
+        // Semantic shortcut: human "0" == raw "0" == revoke. Bypass the
+        // decimals lookup + readable_to_minimal_str (which rejects results
+        // of zero) so callers can revoke from either flag.
+        if let Ok(v) = readable.parse::<f64>() {
+            if v == 0.0 {
+                return Ok("0".to_string());
+            }
         }
         let info = crate::commands::token::fetch_info(client, token, chain_index)
             .await
