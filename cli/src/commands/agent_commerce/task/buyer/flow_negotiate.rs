@@ -550,11 +550,20 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
      ```\n\
      Internally executes: x402_pay signing -> direct/accept on-chain -> assemble payment header -> replay endpoint.\n\
-     Output: {{ replaySuccess, replayStatus, replayBody, signature, authorization, sessionCert, txHash, userNotify }}\n\n\
+     Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, signature, authorization, sessionCert, txHash }}\n\n\
      **x402 stage 2 Step 3 - check replay result and notify the user:**\n\
-     🛑 **MANDATORY -- use the `userNotify` field from CLI output directly**: task-402-pay has pre-formatted the deliverable/error into the `userNotify` field.\n\
-     **Immediately** call xmtp_dispatch_user with content = the `userNotify` field value (pass through as-is; do not rewrite, summarize, or omit deliverable content).\n\
-     ❌ Do not compose your own notification instead of `userNotify` -- self-composed notifications lose the deliverable content (replayBody) and the user cannot see the actual data the ASP returned.\n\
+     Call xmtp_dispatch_user with the following content template (branch by `replaySuccess`):\n\n\
+     ▸ replaySuccess=true:\n\
+     [Deliverable Received] Job {job_id} — payment succeeded, deliverable received.\n\
+     Amount: <tokenAmount> <tokenSymbol>\n\
+     ---Deliverable Content---\n\
+     <replayBodyDisplay value from CLI output — pass through in full, do not truncate or summarize>\n\
+     ---End of Deliverable---\n\
+     The task will be completed automatically once confirmed.\n\n\
+     ▸ replaySuccess=false:\n\
+     [Payment Completed] Job {job_id} — payment completed, but the deliverable could not be retrieved.\n\
+     The task will be completed automatically once confirmed; you may contact the service provider for the deliverable.\n\n\
+     🛑 The `replayBodyDisplay` field contains the deliverable content; when replaySuccess=true it **must** be included in full.\n\
      🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data the ASP returned.\n\n\
      -> **end this turn** and wait for the `job_accepted` system notification.\n\n\
      🛑🛑🛑 **Iron rule (MANDATORY) after receiving `job_accepted`**:\n\
