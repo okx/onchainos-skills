@@ -265,8 +265,8 @@ pub fn review_deadline_warn_user_prompt(job_id: &str) -> String {
         "\x20\x20[⏰ Review Deadline Warning] Job `{job_id}` — the review deadline is approaching.\n\
          \x20\x20After expiry, the ASP can auto-claim the funds.\n\
          \x20\x20Please decide soon:\n\
-         \x20\x20A. Approve → reply \"approve\"\n\
-         \x20\x20B. Reject → reply \"reject\" and provide  {{reason}}"
+         \x20\x20A. Approve the deliverable\n\
+         \x20\x20B. Reject the deliverable — please provide a reason"
     )
 }
 

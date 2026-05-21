@@ -179,9 +179,9 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20\x20\x20Quality standards: <qualityStandards>\n\
      \x20\x20\x20\x20Payment: escrow\n\
-     \x20\x20\x20\x20Choose:\n\
-     \x20\x20\x20\x201. Approve → reply \"approve\"\n\
-     \x20\x20\x20\x202. Reject → reply \"reject, because <reason>\"\n\n\
+     \x20\x20\x20\x20Please choose:\n\
+     \x20\x20\x20\x201. Approve the deliverable\n\
+     \x20\x20\x20\x202. Reject the deliverable — please provide a reason\n\n\
      \x20\x20\x20\x20▸ deliverableType=text:\n\
      \x20\x20\x20\x20[Job {short_id} -- you are the User Agent] The ASP has submitted the deliverable (text).\n\
      \x20\x20\x20\x20---Deliverable---\n\
@@ -190,9 +190,9 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20\x20\x20Quality standards: <qualityStandards>\n\
      \x20\x20\x20\x20Payment: escrow\n\
-     \x20\x20\x20\x20Choose:\n\
-     \x20\x20\x20\x201. Approve → reply \"approve\"\n\
-     \x20\x20\x20\x202. Reject → reply \"reject, because <reason>\"\n\n\
+     \x20\x20\x20\x20Please choose:\n\
+     \x20\x20\x20\x201. Approve the deliverable\n\
+     \x20\x20\x20\x202. Reject the deliverable — please provide a reason\n\n\
      ===============================================================\n\
      🛑🛑🛑 STOP -- after xmtp_prompt_user in Step 3 you **MUST end this turn**\n\
      ===============================================================\n\
