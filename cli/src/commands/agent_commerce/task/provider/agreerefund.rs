@@ -1,6 +1,6 @@
-//! 卖家同意退款
+//! Provider agrees to refund.
 //!
-//! 卖家动作：同意退款 — onchainos agent agree-refund
+//! Provider action: agree to refund — onchainos agent agree-refund
 
 use anyhow::{bail, Result};
 use std::time::Duration;
@@ -9,10 +9,10 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// agree-refund — 同意退款
+/// agree-refund — agree to refund
 ///
-/// 1. POST agreeRefund API（带身份头）→ 获取 uopData
-/// 2. 签名 uopData + 广播上链
+/// 1. POST agreeRefund API (with identity headers) → fetch uopData
+/// 2. Sign uopData + broadcast on-chain
 pub async fn handle_agree_refund(
     client: &mut TaskApiClient,
     job_id: &str,

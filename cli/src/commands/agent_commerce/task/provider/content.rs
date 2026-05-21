@@ -12,7 +12,7 @@
 //!    expired, task completed, etc.) and serve as the source-of-truth that the sub
 //!    agent localizes via LOCALIZATION_PREFIX — English users see them as-is,
 //!    non-English users see equivalents produced by the sub agent (e.g. Chinese
-//!    users see 「担保/x402, 验收期超时, 任务已完成」). The no-technical-jargon
+//!    users see the equivalent of "escrow/x402, review window expired, task completed"). The no-technical-jargon
 //!    rule applies to all languages, not just English.
 //!
 //! 2. **Peer-facing** (`xmtp_send` content, sent to the User Agent's sub agent)

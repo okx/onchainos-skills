@@ -19,7 +19,7 @@ pub async fn handle_stake(
         StakeUx {
             label: "stake",
             amount_prefix: "",
-            next_hint: "质押交易已提交，等待链上确认；确认后即成为活跃仲裁者候选，可被选入陪审。",
+            next_hint: "stake transaction submitted; waiting for on-chain confirmation. Once confirmed, you become an active evaluator candidate and may be drawn into a jury panel.",
         },
     )
     .await
@@ -37,7 +37,7 @@ pub async fn handle_increase_stake(
         StakeUx {
             label: "increase-stake",
             amount_prefix: "+",
-            next_hint: "追加质押已提交，等待链上确认。",
+            next_hint: "increase-stake submitted; waiting for on-chain confirmation.",
         },
     )
     .await
@@ -101,12 +101,12 @@ fn validate_amount(amount: &str) -> Result<&str> {
     Ok(trimmed)
 }
 
-/// 阈值校验 + 路由：
-/// 1. 拉 my-stake / staking-config（任一失败直接报错结束）
-/// 2. 强制 `activeStake + amount >= minCumulativeStakeOkb`（不分 registered 状态）
-/// 3. 按 registered 路由：true → increaseStake；false → stake
+/// Threshold check + routing:
+/// 1. Fetch my-stake / staking-config (any failure aborts).
+/// 2. Enforce `activeStake + amount >= minCumulativeStakeOkb` (irrespective of `registered`).
+/// 3. Route by `registered`: true → `increaseStake`; false → `stake`.
 ///
-/// 返回 (txHash, 端点 label)。
+/// Returns (txHash, endpoint label).
 pub(super) async fn execute_stake_or_increase(
     client: &mut TaskApiClient,
     amount: &str,
@@ -121,9 +121,11 @@ pub(super) async fn execute_stake_or_increase(
         .await
         .map_err(|e| anyhow::anyhow!("failed to fetch staking-config, cannot validate cumulative stake threshold: {e}"))?;
 
-    // 累计质押门槛硬校验（无论 registered=true/false）：activeStake + amount >= min
-    // 全部走字符串十进制运算：避免 f64 精度抖动把"恰好达标"误判为"差一点"。
-    // 解析失败（API 异常字段）时静默跳过预检 — 与旧版 f64 行为一致，由后端兜底。
+    // Cumulative stake threshold hard check (regardless of registered=true/false):
+    // activeStake + amount >= min. All arithmetic runs in string-decimal to avoid
+    // f64 precision artifacts that would misclassify "exactly meets" as "just
+    // short". On parse failure (API field anomaly) silently skip this preflight
+    // — matches the prior f64 behavior; the backend is the ultimate guard.
     let active = &m.active_stake_okb;
     let min_str = &cfg.min_cumulative_stake_okb;
     if let Ok(total) = decimal_str::add(amount, active) {
@@ -131,7 +133,7 @@ pub(super) async fn execute_stake_or_increase(
             .map(|o| o == Ordering::Less)
             .unwrap_or(false)
         {
-            // total < min ∧ amount > 0 ⇒ active < min ⇒ min - active 不会 underflow
+            // total < min ∧ amount > 0 ⇒ active < min ⇒ min - active cannot underflow.
             let needed = decimal_str::sub(min_str, active).unwrap_or_else(|_| min_str.clone());
             bail!(
                 "cumulative stake too low: this {amount} OKB + current activeStake {active} OKB < platform minimum {min_str} OKB (minCumulativeStakeOkb). \

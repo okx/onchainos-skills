@@ -43,6 +43,8 @@ Preview is declarative; the first question follows after a blank line.
 
 ### Q&A
 
+> ⛔ **Field values come from the user, not from elsewhere.** Each of `name` / `description` MUST come from the user's literal reply to the matching Q below (or from their literal text in a §One-shot capture multi-field message). **Never** pre-fill `name` from `userEmail`, USER.md, CLAUDE.md, the wallet account name, the XMTP sender, a Telegram handle, or any session metadata. Do **not** generate "Jim 的仲裁者" / "Alice 的 evaluator" / "<email-prefix> 的 Evaluator" style templates. See `SKILL.md §Red line 6` for the complete forbidden-sources list and table of anti-patterns.
+
 The `Q1 / Q2` column labels below are **maintainer-internal indexes**. The prompt strings in the Chinese / English columns are the **literal text** rendered to the user — they carry **no `Q1：` / `Q1:` prefix** (see `SKILL.md §UX Output Red Lines Red line 3` and `references/ux-lexicon.md`). Each prompt inlines the four-segment field spec from `field-specs.md` in the user's language only. Skip any Q whose field was already captured via `SKILL.md §One-shot capture`.
 
 | Q | Chinese prompt | English prompt | Validation |
@@ -98,6 +100,8 @@ onchainos agent create \
 
 ## ⛔ Post-success — MANDATORY template (do NOT paraphrase)
 
+> ⛔ **After the visible lines, this turn is NOT over — and comm-init applies to evaluator too.** → proceed to `SKILL.md §Operation Flow Step 5`. The evaluator row routes **first** to `/skills/okx-agent-task/references/evaluator-staking.md §2`; the staking flow's terminal handoff feeds into `§Step 6` (comm-init). **Fallback**: if the staking flow ends without that handoff for any reason (user declines stake, staking error, etc.), the evaluator row in Step 5 requires invoking `§Step 6` from this skill before stopping the turn. Full rules live in Step 5 + Step 6 — not duplicated here.
+
 Render **two visible lines** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, hardcoding the stake amount, mentioning the downstream skill path, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
 
 ### Visible lines (template)
@@ -146,15 +150,13 @@ Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
 
 ### Agent directive (internal — do NOT render to the user)
 
-After emitting the two visible lines above, **do not stop the turn**. In the same response, load `/skills/okx-agent-task/references/evaluator-staking.md` §2 and continue with Step 1 → Step 2; render its staking confirmation card as the next part of the same response. The stake amount is owned by that skill — the identity skill does not pass one.
+After emitting the two visible lines above, **do not stop the turn**. → proceed to `SKILL.md §Operation Flow Step 5` — the evaluator row routes first to `/skills/okx-agent-task/references/evaluator-staking.md` §2 (Step 1 → Step 2); render its staking confirmation card as the next part of the same response. The stake amount is owned by that skill — identity does not pass one. Staking's terminal handoff feeds `§Step 6` (comm-init); the fallback path (staking declined / errored) is documented in Step 5's evaluator row.
 
-**Skip the handoff** (render visible lines only, then stop) if the user has already declined staking in this conversation — see §Good / bad cases row "不想质押".
-
-This is the documented exception to `SKILL.md §Step 4`'s "Stop. Wait for the user." rule; see that section for the carve-out.
+Skip carve-out (staking ONLY, not comm-init): if the user has already declined staking earlier in this conversation — see §Good / bad cases row "不想质押". This skips the staking handoff (do NOT load `evaluator-staking.md`), but **Step 5's evaluator fallback still applies** — proceed to `SKILL.md §Operation Flow Step 6` (comm-init) from this skill before stopping the turn. The local agent list still changed when `create` succeeded, so the OpenClaw cache still needs sync regardless of stake status. Comm-init decline is a **separate** axis owned by Step 6.
 
 ---
 
-**Do NOT** chase with status poll (that is about querying chain state — different from the same-turn handoff above, which just loads the next skill's prompt). See `_shared/no-polling.md`.
+**Do NOT** chase with status poll (that is about querying chain state — different from the Step 5 → staking / Step 6 chain above, which just loads the next skill's prompt). See `_shared/no-polling.md`.
 
 ## Error recovery
 

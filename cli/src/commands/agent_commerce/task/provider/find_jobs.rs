@@ -1,10 +1,10 @@
-//! 开始接单 — 自动发现可接任务（对所有在线 Provider Agent 循环匹配）
+//! Start finding jobs — auto-discover available jobs (loop-match for every online Provider Agent).
 //!
-//! 流程：
-//! 1. 调用 `onchainos agent get`（子进程）→ 拉取用户所有 Agent
-//! 2. 过滤 status=1（在线）+ role=2（provider）
-//! 3. 对每个 Agent 调用 `recommend-task`（POST /priapi/v1/aieco/task/job/match）
-//! 4. 按 agent 分组打印匹配结果
+//! Flow:
+//! 1. Call `onchainos agent get` (subprocess) → fetch all of the user's Agents.
+//! 2. Filter by status=1 (online) + role=2 (provider).
+//! 3. For each Agent, call `recommend-task` (POST /priapi/v1/aieco/task/job/match).
+//! 4. Print matched results grouped by agent.
 
 use anyhow::Result;
 use serde_json::Value;
@@ -12,9 +12,9 @@ use serde_json::Value;
 use crate::commands::agent_commerce::task::common::{fetch_my_agents, network::task_api_client::TaskApiClient};
 use crate::commands::agent_commerce::task::signing;
 
-/// Provider 角色值（后端约定：1=buyer, 2=provider, 3=evaluator）
+/// Provider role value (backend convention: 1=buyer, 2=provider, 3=evaluator).
 const ROLE_PROVIDER: i64 = 2;
-/// 在线状态值
+/// Online status value.
 const STATUS_ONLINE: i64 = 1;
 
 pub async fn handle_find_jobs() -> Result<()> {
@@ -26,7 +26,7 @@ pub async fn handle_find_jobs() -> Result<()> {
         return Ok(());
     }
 
-    // Step 2: 过滤 online provider
+    // Step 2: filter online providers
     let online_providers: Vec<&Value> = agent_list
         .iter()
         .filter(|a| {
@@ -43,7 +43,7 @@ pub async fn handle_find_jobs() -> Result<()> {
 
     println!("发现 {} 个在线 Provider Agent，开始为每个匹配任务...\n", online_providers.len());
 
-    // Step 3: 对每个 online provider agent 调 recommend-task
+    // Step 3: call recommend-task for each online provider agent
     let mut task_client = TaskApiClient::new();
     let _ = signing::resolve_wallet(None, None)?;
     let mut total_tasks = 0usize;
@@ -71,7 +71,7 @@ pub async fn handle_find_jobs() -> Result<()> {
         println!();
     }
 
-    // Step 4: 汇总
+    // Step 4: summary
     println!("═══ 汇总 ═══");
     for (id, name, n) in &summary {
         println!("  Agent {id} ({name}): {n} 个任务");
@@ -87,7 +87,7 @@ pub async fn handle_find_jobs() -> Result<()> {
     Ok(())
 }
 
-/// 对指定 agent 调 recommend-task 接口
+/// Call the recommend-task endpoint for the specified agent.
 async fn fetch_tasks_for_agent(
     client: &mut TaskApiClient,
     agent_id: &str,

@@ -48,7 +48,7 @@ pub enum AgentCommand {
     #[command(name = "feedback-list")]
     FeedbackList(identity::FeedbackListArgs),
 
-    /// 用 keyUuid + signing_seed 代签任意 message（xmtp 等场景），不走广播
+    /// Sign an arbitrary message with keyUuid + signing_seed (xmtp etc.); does not broadcast
     #[command(name = "xmtp-sign")]
     XmtpSign(identity::XmtpSignArgs),
 
@@ -64,7 +64,7 @@ pub enum AgentCommand {
         #[arg(long = "deadline-open")]  deadline_open: String,
         #[arg(long = "deadline-submit")] deadline_submit: String,
         #[arg(long)] title: Option<String>,
-        /// 指定卖家 agentId（跳过 recommend，直接与该卖家协商或 x402 接单）
+        /// Specified provider agentId (skip recommend, negotiate directly with this provider or x402 accept)
         #[arg(long)] provider: Option<String>,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")] attachments: Option<Vec<String>>,
@@ -93,7 +93,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
-    /// 列出"我已有的"任务（接过的 / 我发布的）。**不要**用它找新单——找新单走 `recommend-task` / `find-jobs`
+    /// List "tasks I have" (accepted / published by me). **Do not** use this to find new jobs — use `recommend-task` / `find-jobs` for that.
     #[command(visible_alias = "list")]
     Tasks {
         #[arg(long)] status: Option<String>,
@@ -111,7 +111,7 @@ pub enum AgentCommand {
         #[arg(long = "payment-mode")] payment_mode: Option<String>,
         #[arg(long = "token-symbol")] token_symbol: Option<String>,
         #[arg(long = "token-amount")] token_amount: Option<String>,
-        /// x402 服务端点 URL
+        /// x402 service endpoint URL
         #[arg(long)] endpoint: Option<String>,
     },
 
@@ -120,11 +120,11 @@ pub enum AgentCommand {
     ConfirmAccept {
         job_id: String,
         #[arg(long = "provider-agent-id")] provider_agent_id: String,
-        /// 不指定时自动从任务详情 paymentType 获取
+        /// If unspecified, auto-fetched from the task detail's paymentType
         #[arg(long = "payment-mode")] payment_mode: Option<String>,
-        /// 协商确定的支付代币符号（如 USDT），escrow 必填
+        /// Negotiated payment token symbol (e.g. USDT); required for escrow
         #[arg(long = "token-symbol")] token_symbol: Option<String>,
-        /// 协商确定的支付金额（人类可读，如 "50"），escrow 必填
+        /// Negotiated payment amount (human-readable, e.g. "50"); required for escrow
         #[arg(long = "token-amount")] token_amount: Option<String>,
     },
 
@@ -157,7 +157,7 @@ pub enum AgentCommand {
     X402Check {
         /// x402 provider endpoint URL
         #[arg(long)] endpoint: String,
-        /// Buyer agent ID（用于代币详情查询鉴权）
+        /// Buyer agent ID (used for auth on token detail queries)
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
@@ -193,13 +193,13 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
-    /// Provider account-pull 查待领奖励
+    /// Provider account-pull: query pending claimable rewards
     #[command(name = "provider-claimable")]
     ProviderClaimable {
         #[arg(long = "agent-id")] agent_id: String,
     },
 
-    /// Provider account-pull 一次性领取所有可领奖励
+    /// Provider account-pull: claim all pending rewards in one call
     #[command(name = "provider-claim-rewards")]
     ProviderClaimRewards {
         #[arg(long = "agent-id")] agent_id: String,
@@ -221,7 +221,7 @@ pub enum AgentCommand {
     /// to current account). Wrapper over `agent get --agent-ids` that flattens
     /// the `list[].agentList[]` nesting and returns the matched agent as a
     /// single flat object. Used for verifying peer / designated provider
-    /// identities (e.g. buyer.md §3.4 Provider 校验).
+    /// identities (e.g. buyer.md §3.4 Provider validation).
     ///
     /// `ok: false` when not found / agentId malformed; otherwise `data` is
     /// the agent object `{agentId, name, role, status, ownerAddress,
@@ -235,12 +235,12 @@ pub enum AgentCommand {
     /// Provider fetches recommended Public tasks matching their skill
     #[command(name = "recommend-task")]
     RecommendTask {
-        /// 卖家 agentId（必填）。beta 后端拒空 agenticId header → 3001 auth fail。
+        /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")]
         agent_id: String,
     },
 
-    /// 开始接单：调 `agent get` 拉所有在线 provider agent，对每个循环 recommend-task
+    /// Start accepting jobs: call `agent get` to pull all online provider agents and loop recommend-task over each
     #[command(name = "find-jobs")]
     FindJobs,
 
@@ -249,7 +249,7 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long = "token-amount", default_value = "0")]
         token_amount: String,
-        /// 任务实际币种（USDT / USDG），从任务详情读取，不要假设 USDT
+        /// Actual task currency (USDT / USDG); read from task detail, do not assume USDT
         #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "agent-id")]
@@ -261,7 +261,7 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long, default_value = "")] file: String,
         #[arg(long, default_value = "Task completed, please review")] message: String,
-        /// 卖家 agentId（必填）。beta 后端拒空 agenticId header → 3001 auth fail。
+        /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")] agent_id: String,
     },
 
@@ -269,7 +269,7 @@ pub enum AgentCommand {
     #[command(name = "agree-refund")]
     AgreeRefund {
         job_id: String,
-        /// 卖家 agentId（必填）
+        /// Provider agentId (required)
         #[arg(long = "agent-id")] agent_id: String,
     },
 
@@ -285,7 +285,7 @@ pub enum AgentCommand {
         token_symbol: String,
         #[arg(long = "token-amount")]
         token_amount: String,
-        /// Buyer agent ID（用于查询任务详情校验预算上限）
+        /// Buyer agent ID (used to query task detail and validate budget ceiling)
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
@@ -355,30 +355,31 @@ pub enum AgentCommand {
     /// Pending user decisions registry — sub agent calls `add` before
     /// `xmtp_prompt_user` and `remove` after parsing `[USER_DECISION_RELAY]`;
     /// user session agent calls `list` before rendering. See SKILL.md
-    /// `Session 通信契约 5. pending-decisions`.
+    /// `Session communication contract 5. pending-decisions`.
     #[command(name = "pending-decisions", subcommand)]
     PendingDecisions(task::common::pending::PendingDecisionsCommand),
 
     // ── Task system (Evaluator Agent) ────────────────────────────────────────
-    // 历史上有过 `Evaluator(EvaluatorCommand)` 包装，2026-05 与 buyer/provider 风格
-    // 对齐展平到顶层。`agent evaluator <sub>` 形式不再支持，各命令对应关系见
-    // `evaluator/mod.rs` 文件头注释。
+    // Historically wrapped as `Evaluator(EvaluatorCommand)`; flattened to the top level in 2026-05
+    // to align with the buyer/provider style. The `agent evaluator <sub>` form is no longer supported;
+    // see the file header comment in `evaluator/mod.rs` for per-command correspondence.
 
     /// Fetch dispute evidence (text + images downloaded locally so multimodal agents can view them).
     /// Backend resolves the active dispute round from jobId — CLI does not need disputeId.
     ///
-    /// 内部前置门（合并自原 `dispute-status`）：在拉取/下载证据前先校验
-    /// `taskStatus` 非终态 / `--round-num` == 链上 currentRound /
-    /// `disputeStatus = CommitPhase` / 本账户命中本轮 selectedVoter，任一不过
-    /// 输出 `reason: ...` + `selected: no` 早返回不下载（避免 stale envelope 后续
-    /// commit 被罚 stake）。全过输出 `selected: yes` 继续下载并打印证据 JSON。
+    /// Internal precondition gate (merged from the former `dispute-status`): before fetching/downloading
+    /// evidence, validate that `taskStatus` is non-terminal / `--round-num` == on-chain currentRound /
+    /// `disputeStatus = CommitPhase` / the current account is hit in this round's selectedVoter. If any
+    /// check fails, output `reason: ...` + `selected: no` and early-return without downloading (to avoid
+    /// later commit being slashed due to a stale envelope). If all pass, output `selected: yes` and
+    /// continue to download and print the evidence JSON.
     #[command(name = "evidence-info")]
     EvidenceInfo {
         job_id: String,
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// 从 inbound envelope 顶层 `roundNum` 透传——和链上 currentRound 比对发现 stale envelope。
+        /// Pass-through of inbound envelope's top-level `roundNum` — compared against on-chain currentRound to detect a stale envelope.
         #[arg(long = "round-num")]
         round_num: String,
     },
@@ -441,7 +442,7 @@ pub enum AgentCommand {
     /// First-time stake OKB to become an active evaluator (onboarding handoff from identity skill).
     /// Requires the current wallet's agentId to already be registered with evaluator role
     /// (identity=2). Backend enforces amount >= minCumulativeStakeOkb on first stake (see staking-config).
-    /// For top-up / 补充质押 use `increase-stake` (backend `/staking/increaseStake`).
+    /// For top-up use `increase-stake` (backend `/staking/increaseStake`).
     Stake {
         #[arg(long)]
         amount: String,
@@ -814,9 +815,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
             );
 
-            // 版本握手:peer 要求的最低版本高于本地 TASK_MIN_VERSION 时,只在剧本顶部追加一条
-            // 提示行(让 agent 推给用户升级建议),**不阻断流程** —— role flow 继续按当前协议执行,
-            // 实际兼容性问题(若有)由后续 CLI / 业务层报错时再升级处理。
+            // Version handshake: when peer's required minimum version is higher than the local TASK_MIN_VERSION,
+            // only prepend a notice line at the top of the script (so the agent can push an upgrade suggestion to the user);
+            // **do not block the flow** — the role flow continues to execute under the current protocol, and any actual
+            // compatibility issues (if any) are escalated when subsequent CLI / business layer errors surface.
             let version_notice: Option<String> = if let Some(peer_min) = peer_task_min_version {
                 let local = task::common::config::TASK_MIN_VERSION;
                 if local < peer_min {
@@ -841,14 +843,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 None
             };
 
-            // --provider 传入时写 designated-provider 文件，让 generate_next_action 走指定卖家路径
+            // When --provider is passed, write the designated-provider file so generate_next_action takes the specified-provider path
             if let Some(ref pid) = provider {
                 if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
                     eprintln!("[next-action] save_designated_provider failed: {e}");
                 }
             }
 
-            // code ≠ 0 → tx 失败，直接输出失败剧本，不进入事件 match
+            // code ≠ 0 → tx failed; output the failure script directly and skip the event match
             if code != 0 {
                 let label = tx_failure_label(&job_status);
                 let title_part = match job_title.as_deref() {
@@ -864,11 +866,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
 
-            // designated-provider 只由 --provider 写入（line 748）或 create.rs 写入，
-            // 不再从 API designatedProvider 字段回填——后端该字段是链上地址，
-            // 与 agentId 语义不同，且未指定卖家时也可能返回非零值导致误判。
+            // designated-provider is only written by --provider (line 748) or create.rs;
+            // no longer backfilled from the API `designatedProvider` field — that backend field is an on-chain address,
+            // semantically different from agentId, and may return non-zero even when no provider is specified, causing misjudgment.
 
-            // ── review gate：buyer 验收门禁自动标记 ──────────────────────
+            // ── review gate: auto-mark buyer's review gate ──────────────────────
             if matches!(role.as_str(), "buyer" | "client") {
                 if job_status == "job_submitted" {
                     if let Err(e) = task::common::review_gate::mark_pending(&job_id) {
@@ -881,8 +883,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
             }
 
-            // 状态脱节 → block 输出剧本（避免 sub 按 stale event 跑老剧本上链）
-            // 只在 PSEUDO_EVENTS / unknown / network failure 时跳过校验，正常情况下严格守门
+            // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
+            // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
             if let Some(w) = check_status_freshness(&job_id, &job_status, &agent_id).await {
                 println!("{w}");
                 return Ok(());
@@ -992,18 +994,20 @@ fn tx_failure_label(event: &str) -> &'static str {
     task::common::state_machine::Event::parse(event).failure_label()
 }
 
-/// 不一致时返回一段 warning 文本（用于 prepend 到剧本输出顶部）。
+/// Returns a warning text when inconsistent (used to prepend to the top of the script output).
 ///
-/// 触发场景：system event 延迟、之前的 CLI 操作已经把 status 推得更靠前、
-/// 网络/解析失败时返回 None（不阻塞剧本输出，graceful fallback）。
+/// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
+/// returns None on network/parse failure (does not block script output, graceful fallback).
 async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_id: &str) -> Option<String> {
     use task::common::network::task_api_client::TaskApiClient;
     use task::common::state_machine::{parse_status_or_event, status_when_event, Event, Status};
 
-    // user-instruction 伪 event 不是链事件，不直接对应 status——它们在某个 status 下被触发
-    // 后才会上链改 status。校验它们的"对应 status"会误报，所以这里直接跳过。
-    // wakeup_notify 是网络/重启恢复事件,真实 status 在 envelope.message.jobStatus 字段;
-    // agent 应该用 message.jobStatus 重调 next-action,这里跳过校验让 WakeupNotify arm 输出引导剧本。
+    // user-instruction pseudo events are not chain events and do not directly correspond to a status —
+    // they are triggered under some status and only change the status on-chain afterward. Validating
+    // their "corresponding status" would produce false positives, so skip directly here.
+    // wakeup_notify is a network/restart recovery event; the real status is in envelope.message.jobStatus;
+    // the agent should re-invoke next-action with message.jobStatus, so skip validation here and let
+    // the WakeupNotify arm output the guidance script.
     const PSEUDO_EVENTS: &[&str] = &[
         "create_task", "switch_provider",
         "dispute_raise", "agree_refund", "dispute_evidence", "approve_review", "reject_review",
@@ -1020,23 +1024,24 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     let event = parse_status_or_event(job_status_or_event);
     let expected = status_when_event(&event);
 
-    // 如果 event 解析成 Status::Other("unknown")（即未识别的 Event::Other），
-    // 也跳过校验（避免对不认识的 event 误报）
+    // If event parses to Status::Other("unknown") (i.e. an unrecognized Event::Other),
+    // also skip validation (to avoid false positives on unrecognized events)
     if matches!(expected, Status::Other(ref s) if s == "unknown") {
         eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
         return None;
     }
 
     let mut c = TaskApiClient::new();
-    // 必须带 agenticId header——beta 后端没 header 就返回 code=3001 auth fail。
-    // next-action 命令本身要求 --agentId 必填，所以这里直接用，不做 empty fallback。
+    // Must include the agenticId header — without it the beta backend returns code=3001 auth fail.
+    // The next-action command itself requires --agentId, so use it directly here without an empty fallback.
     let resp = c.get_with_identity(&c.task_path(job_id), agent_id).await.ok()?;
-    // 后端 spec：响应平铺，status 是 int
+    // Backend spec: response is flat, status is an int
     let actual = Status::from_int(i32::try_from(resp.get("status")?.as_i64()?).ok()?);
     let actual_str = actual.as_str().to_string();
 
-    // DisputeResolved 特判：仲裁裁决落链时实际 status 可能是 Completed（卖家胜）
-    // 或 Rejected（买家胜），单从 event 推不出确切方向；只要 actual 是这两个之一就算合法。
+    // DisputeResolved special case: when the arbitration verdict lands on-chain, the actual status
+    // may be Completed (provider wins) or Rejected (buyer wins); the exact direction can't be inferred
+    // from the event alone — as long as `actual` is one of these two, treat it as valid.
     let dispute_resolved_ok = matches!(event, Event::DisputeResolved)
         && matches!(actual, Status::Completed | Status::Rejected);
 

@@ -34,8 +34,8 @@ use super::signing::{
 use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
     ensure_provider_has_service, identity_ws_url, normalize_role, normalize_singleton_object,
-    parse_agent_unsigned, parse_services, parse_u32_arg, reconstruct_post_url_for_log,
-    redact_token_for_debug, require_non_empty, stars_to_score, trim_or_empty, wallet_client,
+    parse_agent_unsigned, parse_services, parse_stars_arg, reconstruct_post_url_for_log,
+    redact_token_for_debug, require_non_empty, trim_or_empty, wallet_client,
 };
 
 const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -414,21 +414,18 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     // --agent-id / --creator-id / --score 必填；--description / --task-id 选填。
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string();
     let creator_id = require_non_empty(args.creator_id.as_deref(), "--creator-id")?.to_string();
-    // --score is 0–5 stars; CLI internally multiplies by 20 to produce the
-    // 0–100 backend wire value. Mapping lives in `utils::stars_to_score`
-    // (single source of truth). Earlier revisions made stars→score the
-    // skill's responsibility, which was fragile — skills are prompt-driven
-    // and would occasionally forget the multiplication and corrupt the
-    // rating on chain. CLI is the authoritative boundary now.
-    let stars = parse_u32_arg(
-        Some(require_non_empty(args.score.as_deref(), "--score")?),
+    // --score is 0.00–5.00 stars (up to 2 decimal places, step 0.01); the
+    // CLI multiplies by 20 with round-half-up to produce the 0–100 u32
+    // wire value. Mapping + format validation live in
+    // `utils::parse_stars_arg` (single source of truth). Earlier revisions
+    // made stars→score the skill's responsibility, which was fragile —
+    // skills are prompt-driven and would occasionally forget the
+    // multiplication and corrupt the rating on chain. CLI is the
+    // authoritative boundary now.
+    let score = parse_stars_arg(
+        require_non_empty(args.score.as_deref(), "--score")?,
         "--score",
-        0,
-        Some(0),
-        Some(5),
-        false,
     )?;
-    let score = stars_to_score(stars);
     let feedback_desc = trim_or_empty(args.description.as_deref());
     let task_id = trim_or_empty(args.task_id.as_deref());
     let signing_session = load_agent_signing_session(None)?;

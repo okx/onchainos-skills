@@ -1,11 +1,11 @@
-//! 发起仲裁（卖家）第二步 — onchainos agent dispute confirm <jobId>
+//! Raise dispute (provider) step 2 — onchainos agent dispute confirm <jobId>
 //!
-//! 仲裁两阶段链上流程的第二步。前置条件：
-//!   1. 已跑过 `dispute raise`（阶段 1 approve 上链）
-//!   2. 已收到链上 `dispute_approved` 系统通知
+//! Step 2 of the two-stage on-chain dispute flow. Preconditions:
+//!   1. `dispute raise` has been run (stage 1 approve on-chain)
+//!   2. On-chain `dispute_approved` system notification has been received
 //!
-//! 本命令调 POST /aieco/task/{jobId}/dispute → uopData → sign + broadcast，
-//! 完成后等链上 `job_disputed` 通知，再调 next-action 进入证据准备期。
+//! This command calls POST /aieco/task/{jobId}/dispute → uopData → sign + broadcast.
+//! After completion, wait for the on-chain `job_disputed` notification, then call next-action to enter the evidence preparation window.
 
 use anyhow::{bail, Context, Result};
 use std::time::Duration;

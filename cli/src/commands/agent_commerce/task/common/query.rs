@@ -1,14 +1,14 @@
-//! 通用只读查询命令（buyer / provider 共用）
+//! Common read-only query commands (shared by buyer / provider).
 //!
-//! status — 查询单个任务状态
-//! list   — 查询「我的」任务列表
+//! status — query a single task's status
+//! list   — query the "my tasks" list
 
 use anyhow::Result;
 
 use super::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// --agent-id 未传时，按角色从本地身份列表解析 agentId
+/// Resolves agentId from the local identity list by role when --agent-id is omitted.
 pub async fn resolve_agent_id(agent_id: &str, role: i64) -> String {
     if !agent_id.is_empty() {
         return agent_id.to_string();
@@ -18,7 +18,7 @@ pub async fn resolve_agent_id(agent_id: &str, role: i64) -> String {
         .unwrap_or_default()
 }
 
-/// 查询任务状态
+/// Query task status.
 pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &str, role: i64) -> Result<()> {
     let agent_id = resolve_agent_id(agent_id, role).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
@@ -37,7 +37,7 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
     Ok(())
 }
 
-/// 查询「我的」任务列表
+/// Query the "my tasks" list.
 pub async fn handle_list(
     client: &mut TaskApiClient,
     status: Option<&str>,

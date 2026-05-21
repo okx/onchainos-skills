@@ -97,9 +97,10 @@ pub struct FeedbackSubmitArgs {
     /// 必填：评价发起方的 agent id，进广播 `extraData.erc8004Msg.feedBackAgentId`。
     #[arg(long = "creator-id")]
     pub creator_id: Option<String>,
-    /// 必填：0-5 的整数星数。CLI 内部 *20 转成 0-100 后写入 create-comment
-    /// 请求体 `comment.value`（后端 wire 格式仍是 0-100）。映射规则统一在
-    /// `utils::stars_to_score`。
+    /// 必填：0.00-5.00 的星数，最多 2 位小数（步长 0.01）。CLI 内部 *20 后
+    /// round-half-up 转成 0-100 u32 写入 create-comment 请求体
+    /// `comment.value`（后端 wire 格式仍是 0-100 整数）。格式校验 + 映射
+    /// 规则统一在 `utils::parse_stars_arg`。
     #[arg(long)]
     pub score: Option<String>,
     /// 选填：文字评价，进 create-comment 请求体 `comment.comment`。

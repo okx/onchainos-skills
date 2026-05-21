@@ -1,15 +1,15 @@
-//! 上传仲裁证据（纯链下，multipart）— 买卖双方共用
+//! Upload dispute evidence (off-chain only, multipart) — shared by buyer and seller.
 //!
-//! 对应后端 `POST /priapi/v1/aieco/task/{jobId}/evidence/upload`，
-//! Content-Type: multipart/form-data，字段 `text` 和/或 `images[]`。
-//! 仅在 1 小时准备期内可提交，不上链。
+//! Maps to backend `POST /priapi/v1/aieco/task/{jobId}/evidence/upload`,
+//! Content-Type: multipart/form-data, fields `text` and/or `images[]`.
+//! Can only be submitted within the 1-hour preparation window; never goes on-chain.
 //!
-//! 实现说明：手动按 RFC 7578 拼 multipart body（curl 兼容格式），
-//! 而不是用 reqwest 的 `multipart::Form` builder。原因：
-//! 1) reqwest builder 默认把 body 用 chunked transfer 发送，部分 Spring/Tomcat
-//!    配置不接受没有 Content-Length 的 multipart；
-//! 2) 手写格式可控制 part header 的引号 / boundary / 顺序，与 curl 输出对得上，
-//!    便于和后端联调对照。
+//! Implementation note: the multipart body is assembled manually per RFC 7578 (curl-compatible format)
+//! instead of using reqwest's `multipart::Form` builder. Reasons:
+//! 1) The reqwest builder sends the body with chunked transfer by default, and some Spring/Tomcat
+//!    configurations reject multipart requests that lack a Content-Length.
+//! 2) Hand-rolled format lets us control part-header quoting / boundary / ordering so the wire format
+//!    matches curl output, making backend integration debugging straightforward.
 
 use anyhow::{bail, Result};
 use std::path::Path;
@@ -17,16 +17,16 @@ use tokio::fs;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
-/// 允许的图片扩展名（与后端校验对齐）
+/// Allowed image extensions (aligned with backend validation).
 const ALLOWED_IMG_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp"];
 
-/// text 字段最大字节数（escape 前粗略上限，防止超大 paste 撑爆 multipart body）
+/// Max byte length of the text field (rough pre-escape upper bound to prevent oversized pastes from bloating the multipart body).
 const MAX_TEXT_BYTES: usize = 16 * 1024;
 
-/// 单张图片最大字节数（与后端 multipart.maxFileSize 对齐；client-side fail-fast 防大文件浪费带宽）
+/// Max byte size per image (aligned with backend multipart.maxFileSize; client-side fail-fast to avoid wasting bandwidth on oversized files).
 const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
-/// 上传链下证据（买卖双方共用入口）
+/// Upload off-chain evidence (shared entrypoint for buyer and seller).
 pub async fn handle_upload_evidence(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -34,7 +34,7 @@ pub async fn handle_upload_evidence(
     text: Option<&str>,
     image_paths: &[String],
 ) -> Result<()> {
-    // 与 backend `StringUtils.isBlank` 对齐：trim 后再判空
+    // Align with backend `StringUtils.isBlank`: trim then check empty.
     let text_clean: Option<String> = text
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -50,7 +50,7 @@ pub async fn handle_upload_evidence(
     if text_clean.is_none() && image_paths.is_empty() {
         bail!("必须提供 --text（非空白）或 --image 之一");
     }
-    // escape 前粗校验长度——比 escape 后再校验更直观，且能 short-circuit 大 paste
+    // Length precheck before escaping — more intuitive than post-escape, and short-circuits large pastes.
     if let Some(t) = text_clean.as_deref() {
         if t.len() > MAX_TEXT_BYTES {
             bail!(
@@ -61,7 +61,7 @@ pub async fn handle_upload_evidence(
         }
     }
 
-    // 收集 image part 元信息（先把文件内容读到内存，方便统一计算 Content-Length）
+    // Collect image part metadata (read file contents into memory first so Content-Length can be computed uniformly).
     struct ImagePart {
         filename: String,
         mime: &'static str,
@@ -111,14 +111,15 @@ pub async fn handle_upload_evidence(
         images.push(ImagePart { filename, mime, bytes });
     }
 
-    // 手动拼 multipart body
+    // Manually assemble the multipart body.
     let boundary = format!("----onchainos-{:016x}", rand_u64());
     let mut body: Vec<u8> = Vec::new();
 
     if let Some(t) = text_clean.as_deref() {
-        // 对齐 backend 校验：text 字段值必须带字面双引号包裹（curl 的 `--form 'text="..."'`
-        // 透传双引号到 multipart body，backend 按这种格式 parse；不带引号会被拒 code=1001）
-        // 内层引号需转义防止结束 part body
+        // Align with backend validation: the text field value must be wrapped in literal double quotes
+        // (curl's `--form 'text="..."'` forwards the double quotes into the multipart body, and the backend
+        // parses it in that format; missing quotes will be rejected with code=1001).
+        // Inner quotes must be escaped to avoid prematurely ending the part body.
         let escaped = t.replace('\\', "\\\\").replace('"', "\\\"");
         let wrapped = format!("\"{escaped}\"");
         eprintln!(
@@ -128,8 +129,8 @@ pub async fn handle_upload_evidence(
             t.len(),
             wrapped.len(),
         );
-        // 对齐 curl `--form 'text=...'` 行为：纯文本 part 不带 Content-Type header，
-        // 否则 Spring 会把它当成 multipart-file，导致 @RequestParam String text 绑定失败。
+        // Align with curl `--form 'text=...'` behavior: the plain-text part has no Content-Type header,
+        // otherwise Spring would treat it as a multipart-file and the @RequestParam String text binding would fail.
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(b"Content-Disposition: form-data; name=\"text\"\r\n\r\n");
         body.extend_from_slice(wrapped.as_bytes());
@@ -150,7 +151,7 @@ pub async fn handle_upload_evidence(
         body.extend_from_slice(b"\r\n");
     }
 
-    // 结束 boundary
+    // Closing boundary.
     body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
 
     eprintln!(
@@ -175,7 +176,7 @@ pub async fn handle_upload_evidence(
     Ok(())
 }
 
-/// 简单的非加密随机数（仅用于生成 boundary，不需要密码学强度）
+/// Simple non-cryptographic random number (used only for boundary generation; no cryptographic strength required).
 fn rand_u64() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()

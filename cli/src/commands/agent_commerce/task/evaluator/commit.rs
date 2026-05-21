@@ -25,7 +25,7 @@ pub async fn handle_commit(
         &agent_id,
     ).await?;
 
-    // 后端 commit 响应里返回 `salt` 与 `commitHash`，broadcast bizContext
+    // Backend commit response returns `salt` and `commitHash`; broadcast bizContext.
     let salt = resp["salt"].as_str()
         .unwrap_or("");
     if salt.is_empty() {

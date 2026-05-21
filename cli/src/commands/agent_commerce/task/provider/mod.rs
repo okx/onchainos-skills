@@ -1,18 +1,18 @@
-//! Provider 端任务命令 — 枚举定义 + 路由分发
+//! Provider-side task commands — enum definitions + routing dispatch.
 //!
-//! 按卖家动作划分文件：
-//! - `apply.rs`             — 申请接单
-//! - `deliver.rs`           — 提交交付物
-//! - `agreerefund.rs`       — 同意退款
-//! - `dispute_raise.rs`     — 发起仲裁（上链）
-//! - `provider_claim.rs`    — submit→complete 超时领取（claimAutoComplete）
+//! Files split by provider action:
+//! - `apply.rs`             — apply for a job
+//! - `deliver.rs`           — submit deliverable
+//! - `agreerefund.rs`       — agree to refund
+//! - `dispute_raise.rs`     — raise dispute (on-chain)
+//! - `provider_claim.rs`    — claim after submit→complete timeout (claimAutoComplete)
 //!
-//! account-pull 仲裁奖励（`claim-rewards` / `claimable`）：直接在 dispatch arm
-//! 里 inline 调 `common::claim`，不再为 provider 单独写薄壳——逻辑就是
-//! `signing::resolve_wallet(None, None)` + `common::claim::*`，没有角色专属解析。
+//! account-pull arbitration rewards (`claim-rewards` / `claimable`): called inline in
+//! the dispatch arm via `common::claim`; no thin wrapper for provider — the logic is just
+//! `signing::resolve_wallet(None, None)` + `common::claim::*`, with no role-specific resolution.
 //!
-//! 链下证据上传 (`dispute upload`) 由买卖双方共用，
-//! 实现在 `common/dispute_upload.rs`。
+//! Offchain evidence upload (`dispute upload`) is shared by both sides;
+//! implementation lives in `common/dispute_upload.rs`.
 
 mod agreerefund;
 mod apply;
@@ -47,7 +47,7 @@ pub enum ProviderCommand {
         job_id: String,
         #[arg(long = "token-amount", default_value = "0")]
         token_amount: String,
-        /// 任务实际币种（USDT / USDG），从任务详情读取，不要假设 USDT
+        /// Actual job token (USDT / USDG); read from job detail — do not assume USDT.
         #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "agent-id")]
@@ -60,22 +60,22 @@ pub enum ProviderCommand {
         file: String,
         #[arg(long, default_value = "Task completed, please review")]
         message: String,
-        /// 卖家 agentId（必填）。beta 后端拒空 agenticId header → 3001 auth fail；
-        /// 任务详情里的 providerAgentId 字段可能为 null，不能依赖反查。
+        /// Provider agentId (required). Beta backend rejects an empty agenticId header → 3001 auth fail;
+        /// the providerAgentId field in job detail may be null, so reverse lookup is unreliable.
         #[arg(long = "agent-id")]
         agent_id: String,
     },
     /// Provider agrees to refund (agreeRefund API → sign → broadcast)
     AgreeRefund {
         job_id: String,
-        /// 卖家 agentId（必填）
+        /// Provider agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
     /// Provider claims after submit→complete timeout (claimAutoComplete API → sign → broadcast)
     ClaimAutoComplete {
         job_id: String,
-        /// 卖家 agentId（必填）
+        /// Provider agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
@@ -96,12 +96,12 @@ pub enum ProviderCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Account-pull: 查待领奖励（仲裁胜诉等场景累积的余额）
+    /// Account-pull: query pending rewards (balance accumulated from arbitration wins, etc.).
     Claimable {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Account-pull: 一次性领取所有可领奖励
+    /// Account-pull: claim all pending rewards in one go.
     ClaimRewards {
         #[arg(long = "agent-id")]
         agent_id: String,
@@ -112,41 +112,41 @@ pub enum ProviderCommand {
 
 #[derive(Subcommand)]
 pub enum DisputeCommand {
-    /// 仲裁阶段 1：调用 approve API 给 dispute 合约 token 授权（calldata → sign → broadcast）。
-    /// 完成后等链上 `dispute_approved` 通知，再走 `dispute confirm` 跑阶段 2。
+    /// Dispute stage 1: call the approve API to grant the dispute contract token approval (calldata → sign → broadcast).
+    /// After completion, wait for the on-chain `dispute_approved` notification, then run `dispute confirm` for stage 2.
     Raise {
         job_id: String,
         #[arg(long)]
         reason: String,
-        /// 卖家 agentId（必填）
+        /// Provider agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// 仲裁阶段 2：调用 dispute API 实际发起仲裁（calldata → sign → broadcast）。
-    /// 前置必须收到 `dispute_approved` 系统通知。完成后等 `job_disputed` 通知。
+    /// Dispute stage 2: call the dispute API to actually raise the dispute (calldata → sign → broadcast).
+    /// The `dispute_approved` system notification must have been received first. After completion, wait for the `job_disputed` notification.
     Confirm {
         job_id: String,
-        /// 卖家 agentId（必填）
+        /// Provider agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Upload offchain evidence (multipart, 1h preparation window only) — 买卖双方共用
+    /// Upload offchain evidence (multipart, 1h preparation window only) — shared by both sides.
     Upload {
         job_id: String,
-        /// 调用方自己的 agentId（buyer 或 provider）。由 next-action 剧本注入，避免
-        /// 客户端再做钱包-角色映射（同一钱包可能注册多个 agentId）
+        /// Caller's own agentId (buyer or provider). Injected by the next-action script so the
+        /// client doesn't have to do wallet-to-role mapping (a single wallet may have multiple registered agentIds).
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// 文本证据（可选，text/images 至少一项）
+        /// Text evidence (optional; at least one of text/images is required).
         #[arg(long)]
         text: Option<String>,
-        /// 图片路径（可重复，仅支持 jpg/jpeg/png/gif/webp）
+        /// Image path (repeatable; only jpg/jpeg/png/gif/webp are supported).
         #[arg(long = "image")]
         images: Vec<String>,
     },
 }
 
-// ─── 路由分发 ─────────────────────────────────────────────────────────────
+// ─── routing dispatch ─────────────────────────────────────────────────────
 
 pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
@@ -169,9 +169,9 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             common_query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_PROVIDER).await
         }
 
-        // account-pull claim 直接 inline 调 common::claim：
-        // provider 没有 role-specific 的 wallet/agent 解析（不像 evaluator），
-        // 不需要单独的 wrapper 文件。
+        // account-pull claim calls common::claim inline:
+        // provider has no role-specific wallet/agent resolution (unlike evaluator),
+        // so a dedicated wrapper file is unnecessary.
         ProviderCommand::Claimable { agent_id } => {
             if agent_id.is_empty() {
                 bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");

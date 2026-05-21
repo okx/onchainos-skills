@@ -1,4 +1,4 @@
-/// 后端 paymentMode: NONE(0), ESCROW(1), X402(3)
+/// Backend paymentMode: NONE(0), ESCROW(1), X402(3)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaymentMode {
     None,
@@ -7,7 +7,7 @@ pub enum PaymentMode {
 }
 
 impl PaymentMode {
-    /// CLI 字符串 → 枚举（"escrow" / "x402"）
+    /// CLI string -> enum ("escrow" / "x402")
     pub fn from_str(s: &str) -> Self {
         match s {
             "escrow" => Self::Escrow,
@@ -16,7 +16,7 @@ impl PaymentMode {
         }
     }
 
-    /// 后端 int → 枚举
+    /// Backend int -> enum
     pub fn from_int(i: i32) -> Self {
         match i {
             1 => Self::Escrow,
@@ -25,7 +25,7 @@ impl PaymentMode {
         }
     }
 
-    /// 枚举 → CLI 字符串
+    /// Enum -> CLI string
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::None => "none",
@@ -34,7 +34,7 @@ impl PaymentMode {
         }
     }
 
-    /// 枚举 → 后端 int
+    /// Enum -> backend int
     pub fn as_int(&self) -> i32 {
         match self {
             Self::None => 0,
@@ -43,7 +43,7 @@ impl PaymentMode {
         }
     }
 
-    /// 中文展示描述
+    /// Human-readable description (Chinese display label).
     pub fn desc(&self) -> &'static str {
         match self {
             Self::None => "未设置",

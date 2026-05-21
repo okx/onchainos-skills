@@ -1,11 +1,11 @@
-//! 卖家在 submit→complete 超时后主动 claim（claimAutoComplete）
+//! Provider claims after the submit→complete timeout (claimAutoComplete).
 //!
-//! 卖家动作：超时领取 — onchainos agent claim-auto-complete
+//! Provider action: timeout claim — onchainos agent claim-auto-complete
 //!
-//! 触发场景：买家在 completedWindow 内未验收（既不 complete 也不 reject）
-//! → 后端 keeper 给 provider 发 system notification
-//! → provider 调本接口（permissionless 链上 claim）
-//! → AP.complete → 状态 complete，资金乐观结算给 provider
+//! Trigger: buyer fails to review within the completedWindow (neither completes nor rejects)
+//! → backend keeper pushes a system notification to the provider
+//! → provider calls this endpoint (permissionless on-chain claim)
+//! → AP.complete → status becomes complete, funds optimistically settle to the provider.
 
 use anyhow::{bail, Result};
 use std::time::Duration;
@@ -14,10 +14,10 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// claim-auto-complete — submit→complete 超时的乐观结算
+/// claim-auto-complete — optimistic settlement on submit→complete timeout
 ///
-/// 1. POST claimAutoComplete API（带身份头）→ 获取 uopData（spec：Request 无）
-/// 2. 签名 uopData + 广播上链
+/// 1. POST claimAutoComplete API (with identity headers) → fetch uopData (spec: empty Request)
+/// 2. Sign uopData + broadcast on-chain
 pub async fn handle_claim_auto_complete(
     client: &mut TaskApiClient,
     job_id: &str,

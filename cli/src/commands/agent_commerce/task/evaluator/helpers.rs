@@ -2,11 +2,13 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-/// 证据图片落盘目录：`~/.onchainos/task/<job_id>/dispute/<agent_id>/`。
+/// Evidence-image on-disk directory: `~/.onchainos/task/<job_id>/dispute/<agent_id>/`.
 ///
-/// V1 一个 jobId 同时只有一条 active dispute，证据按 jobId + agent_id 隔离——
-/// 同机器同 OS 用户跑多个 evaluator agent 时各自独立目录，避免并发写入竞争；
-/// 多轮重抽时本地缓存按需被新一轮 evidence-info 覆盖。
+/// In V1 a single jobId has at most one active dispute at a time; evidence is
+/// isolated by jobId + agent_id — when multiple evaluator agents run on the
+/// same machine under the same OS user, each gets its own directory, so
+/// concurrent writes do not race. On round re-draws the local cache is
+/// overwritten on demand by the next `evidence-info` run.
 pub(super) fn evidence_dir(job_id: &str, agent_id: &str) -> Result<PathBuf> {
     let home = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("failed to resolve HOME directory"))?;

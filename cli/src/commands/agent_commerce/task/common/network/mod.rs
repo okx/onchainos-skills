@@ -1,5 +1,5 @@
-//! 任务系统网络层
+//! Task system network layer.
 //!
-//! 统一使用 `ensure_tokens_refreshed` 管理 JWT 生命周期（与 identity 模块一致）。
+//! Uses `ensure_tokens_refreshed` to manage JWT lifecycle (aligned with the identity module).
 
 pub mod task_api_client;

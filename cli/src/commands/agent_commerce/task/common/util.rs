@@ -1,7 +1,9 @@
-//! common::util — 任务系统通用工具函数
+//! common::util — generic helpers for the task system.
 //!
-//! 收敛 task 模块里被多处复用、与具体业务无关的小工具，避免散落在各 mod / flow 中。
-//! 后续新增的展示格式化、字符串归一化、时间换算等通用 helper 都放这里。
+//! Collects small utilities reused across the task module that aren't tied to specific business logic,
+//! preventing them from being scattered across the individual mod / flow files.
+//! Future formatting helpers, string normalization, time conversion, and similar generic helpers
+//! should also go here.
 
 use anyhow::{bail, Result};
 use chrono::{TimeZone, Utc};
@@ -9,7 +11,7 @@ use chrono::{TimeZone, Utc};
 use super::network::task_api_client::TaskApiClient;
 use super::{PaymentMode, XLAYER_CHAIN_INDEX};
 
-/// unix 秒 → 展示字符串。0 / 负数当未设置；正常值转 RFC 3339。
+/// unix seconds -> display string. 0 / negative are treated as unset; positive values are converted to RFC 3339.
 pub fn fmt_unix_secs(secs: Option<i64>) -> String {
     match secs {
         Some(n) if n > 0 => Utc
@@ -21,9 +23,9 @@ pub fn fmt_unix_secs(secs: Option<i64>) -> String {
     }
 }
 
-// ─── JSON 提取工具 ──────────────────────────────────────────────────────
+// ─── JSON extraction helpers ────────────────────────────────────────────
 
-/// 从 JSON 对象提取字符串字段。
+/// Extract a string field from a JSON object.
 pub fn json_str(obj: &serde_json::Value, key: &str) -> Result<String> {
     obj[key]
         .as_str()
@@ -31,7 +33,7 @@ pub fn json_str(obj: &serde_json::Value, key: &str) -> Result<String> {
         .map(|s| s.to_string())
 }
 
-/// 从 JSON 对象提取 u64 字段（兼容数字和字符串）。
+/// Extract a u64 field from a JSON object (accepts both number and string forms).
 pub fn json_u64(obj: &serde_json::Value, key: &str) -> Result<u64> {
     if let Some(n) = obj[key].as_u64() {
         return Ok(n);
@@ -44,11 +46,11 @@ pub fn json_u64(obj: &serde_json::Value, key: &str) -> Result<u64> {
     bail!("响应缺少 {key} 字段")
 }
 
-// ─── Token 查询 ─────────────────────────────────────────────────────────
+// ─── Token lookup ───────────────────────────────────────────────────────
 
-/// 通过 tokenDetail API 查询 token 合约地址和精度。
+/// Look up a token's contract address and decimals via the tokenDetail API.
 /// GET /priapi/v1/aieco/task/tokenDetail?symbol=<symbol>
-/// 返回 (token_address, decimals)
+/// Returns (token_address, decimals).
 pub async fn fetch_token_detail(client: &mut TaskApiClient, symbol: &str, agent_id: &str) -> Result<(String, u32)> {
     let path = format!("/priapi/v1/aieco/task/tokenDetail?symbol={symbol}");
     let resp = client.get_with_agent_id(&path, agent_id).await
@@ -63,9 +65,9 @@ pub async fn fetch_token_detail(client: &mut TaskApiClient, symbol: &str, agent_
     Ok((address, decimals))
 }
 
-// ─── 支付方式解析 ───────────────────────────────────────────────────────
+// ─── Payment mode resolution ────────────────────────────────────────────
 
-/// 解析支付方式：CLI flag > 任务详情 paymentType
+/// Resolve the payment mode: CLI flag > task detail paymentType.
 pub async fn resolve_payment_mode(
     client: &mut TaskApiClient,
     payment_mode: Option<&str>,
@@ -89,7 +91,7 @@ pub async fn resolve_payment_mode(
     }
 }
 
-/// 解析复合 fee 字符串（如 "0.01 USDT"）→ (amount, symbol)
+/// Parse a composite fee string (e.g. "0.01 USDT") -> (amount, symbol).
 pub fn parse_composite_fee(fee: &str) -> Result<(f64, String)> {
     let fee = fee.trim();
     if fee.is_empty() {
@@ -116,16 +118,16 @@ pub fn parse_composite_fee(fee: &str) -> Result<(f64, String)> {
     }
 }
 
-// ─── x402 服务参数解析 ──────────────────────────────────────────────────
+// ─── x402 service params resolution ─────────────────────────────────────
 
-/// x402 三级 fallback 解析结果
+/// Result of the x402 three-tier fallback resolution.
 pub struct X402ServiceParams {
     pub endpoint: String,
     pub fee_amount: f64,
     pub fee_token_symbol: String,
 }
 
-/// 解析 x402 服务参数：CLI flag > recommend 缓存 > identity service-list API > 报错
+/// Resolve x402 service params: CLI flag > recommend cache > identity service-list API > error.
 pub async fn resolve_x402_params(
     job_id: &str,
     provider_agent_id: Option<&str>,
@@ -133,7 +135,7 @@ pub async fn resolve_x402_params(
     cli_token_symbol: Option<&str>,
     cli_token_amount: Option<&str>,
 ) -> Result<X402ServiceParams> {
-    // Tier 1: CLI flags 全部提供
+    // Tier 1: all CLI flags provided.
     if let (Some(ep), Some(sym), Some(amt_str)) = (cli_endpoint, cli_token_symbol, cli_token_amount) {
         let amt: f64 = amt_str.parse()
             .map_err(|_| anyhow::anyhow!("--token-amount 格式错误: {amt_str}"))?;
@@ -145,7 +147,7 @@ pub async fn resolve_x402_params(
         });
     }
 
-    // Tier 2: recommend 缓存
+    // Tier 2: recommend cache.
     let mut cached_provider_agent_id = String::new();
     match crate::commands::agent_commerce::task::buyer::negotiate::current(job_id) {
         Ok(Some(pi)) => {
@@ -171,7 +173,7 @@ pub async fn resolve_x402_params(
         Err(e) => eprintln!("⚠ x402: 读取 recommend 缓存失败 ({e})，尝试 service-list API"),
     }
 
-    // Tier 3: identity service-list API（优先入参，其次缓存中的 provider_agent_id）
+    // Tier 3: identity service-list API (prefer the input arg, otherwise the cached provider_agent_id).
     let resolved_id = provider_agent_id
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
@@ -191,7 +193,7 @@ pub async fn resolve_x402_params(
     })
 }
 
-/// 通过 `onchainos agent service-list` 查询 provider 的 A2MCP 服务信息
+/// Query a provider's A2MCP service info via `onchainos agent service-list`.
 async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X402ServiceParams> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
@@ -248,10 +250,10 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
     Ok(X402ServiceParams { endpoint, fee_amount, fee_token_symbol })
 }
 
-// ─── 余额预检 ──────────────────────────────────────────────────────────
+// ─── Balance precheck ──────────────────────────────────────────────────
 
-/// 归一化 token symbol：Unicode 货币符号 → ASCII 等价字母，然后转大写。
-/// 例：`USD₮0` → `USDT0`（₮ U+20AE → T）
+/// Normalize a token symbol: map Unicode currency symbols to their ASCII letter equivalents, then uppercase.
+/// Example: `USD₮0` -> `USDT0` (₮ U+20AE -> T).
 fn normalize_token_symbol(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -262,12 +264,13 @@ fn normalize_token_symbol(s: &str) -> String {
         .to_uppercase()
 }
 
-/// 调用 `onchainos wallet balance --chain 196` 查询 XLayer 上的**业务代币**余额（USDT/USDG），
-/// 若不足则 bail，阻断后续流程。
+/// Call `onchainos wallet balance --chain 196` to look up the **business token** balance on XLayer
+/// (USDT/USDG); bail and block downstream flow if insufficient.
 ///
-/// 注意：task 系统全程 gas-free，gas 由 paymaster 支付。本检查只针对业务代币本金，
-/// **绝不**意味着用户需要 OKB / native 来付 gas。bail 文案必须明确这一点，
-/// 避免下游 agent 把错误归到"补 gas"上。
+/// Note: the task system is fully gas-free; gas is paid by the paymaster. This check applies only
+/// to the business-token principal and **never** implies the user needs OKB / native to pay gas.
+/// The bail message must make this explicit to avoid downstream agents misattributing the error
+/// to a "top up gas" issue.
 pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<()> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;

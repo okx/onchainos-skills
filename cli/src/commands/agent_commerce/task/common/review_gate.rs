@@ -1,13 +1,14 @@
-//! 验收门禁（review gate）
+//! Review gate.
 //!
-//! 防止 escrow 模式下 agent 跳过用户验收决策直接调 `complete`。
+//! Prevents the agent from skipping the user's review decision and calling `complete` directly
+//! in escrow mode.
 //!
-//! 写入时机（代码级自动，不依赖 prompt）：
-//! - `next-action --jobStatus job_submitted --role buyer` → 写 `pending`
+//! Write points (automatic at the code level, not driven by prompts):
+//! - `next-action --jobStatus job_submitted --role buyer` → writes `pending`
 //! - `next-action --jobStatus approve_review --role buyer` → `pending` → `approved`
 //!
-//! 检查时机：
-//! - `complete.rs` escrow 路径：`approved` 放行并删除，其余拒绝
+//! Check points:
+//! - `complete.rs` escrow path: `approved` lets the call through and clears the gate; everything else is rejected.
 
 use anyhow::{bail, Result};
 use std::path::PathBuf;
