@@ -1,25 +1,27 @@
-//! Account-level reward claim — 公共 API 调用层
+//! Account-level reward claim — shared API call layer.
 //!
-//! 后端 `POST /priapi/v1/aieco/task/claim` 是 **account-pull** 接口：
-//! 一次性领取该账户在所有已结算 dispute / job 中的全部待领奖励，body 为空，
-//! 不按 jobId / token 切分。该接口与调用方角色（buyer / provider / evaluator）无关，
-//! 只要 agentId + 钱包能签名就能调。
+//! The backend `POST /priapi/v1/aieco/task/claim` is an **account-pull** endpoint:
+//! it pulls every pending reward for the account across all settled disputes / jobs in one shot,
+//! with an empty body, and does not split by jobId / token. The endpoint is role-agnostic
+//! (buyer / provider / evaluator) — any agentId + wallet able to sign can call it.
 //!
-//! 本模块只负责：API 调用 + 签名 + broadcast / JSON 解析 + 表格输出。
-//! 角色专属的 wallet/agent 解析（不同角色用不同 `signing::resolve_*`）和上下文文案
-//! （例如 evaluator 的"跟我说『领取奖励』"提示）由各自的薄壳保留。
+//! This module only handles: API call + sign + broadcast / JSON parsing + table output.
+//! Role-specific wallet/agent resolution (different roles use different `signing::resolve_*`)
+//! and role-flavored prompt text (e.g. evaluator's "tell me 'claim rewards'" hint) live in
+//! the per-role thin wrappers.
 //!
-//! 当前接入：`evaluator/claim.rs`、`evaluator/claimable.rs`。
-//! buyer / provider 接入时只需在自己的 handler 里 resolve 钱包后调用此处的两个函数。
+//! Current callers: `evaluator/claim.rs`, `evaluator/claimable.rs`.
+//! buyer / provider integration only needs to resolve the wallet in its own handler and then
+//! call the two functions here.
 
 use anyhow::Result;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// 调用 account-pull claim 接口，签名 uopData 并广播。返回 txHash。
+/// Call the account-pull claim endpoint, sign uopData, and broadcast. Returns the txHash.
 ///
-/// 调用方需先自行解析出 `(account_id, address, agent_id)`（不同角色用不同 resolver）。
+/// Callers must first resolve `(account_id, address, agent_id)` themselves (different roles use different resolvers).
 pub async fn submit_claim_and_broadcast(
     client: &mut TaskApiClient,
     account_id: &str,
@@ -43,10 +45,10 @@ pub async fn submit_claim_and_broadcast(
     .await
 }
 
-/// 拉取账户级 claimable 列表并直接 println 输出。返回 `has_nonzero`，调用方可据此决定
-/// 是否给出"建议立刻 claim"之类的角色文案。
+/// Fetch the account-level claimable list and println-print it. Returns `has_nonzero`, which callers
+/// can use to decide whether to surface a role-flavored "claim now" hint.
 ///
-/// 表头展示的 `account` 字段直接取自后端响应；后端不回时为空串。
+/// The `account` field shown in the header is taken directly from the backend response; empty string when absent.
 pub async fn fetch_and_print_claimable(
     client: &mut TaskApiClient,
     agent_id: &str,

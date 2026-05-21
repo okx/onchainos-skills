@@ -1,20 +1,22 @@
-//! 待用户决策列表（pending-decisions）本地缓存
+//! Local cache for the pending-user-decision list (pending-decisions).
 //!
-//! 文件：`~/.onchainos/task/pending-decisions.json`(任务级状态都集中在 `~/.onchainos/task/` 下)
+//! File: `~/.onchainos/task/pending-decisions.json` (all task-level state lives under `~/.onchainos/task/`).
 //!
-//! 配套 `xmtp_prompt_user` / `[USER_DECISION_RELAY]` 的 sub agent 工具配对规则使用，
-//! 给 user session agent 一个**确定的**「当前有几条 pending」状态源，
-//! 避免靠扫聊天历史推断（不可靠且会被上下文裁剪影响）。
+//! Used together with the sub-agent tool pairing rules for `xmtp_prompt_user` /
+//! `[USER_DECISION_RELAY]` to give the user-session agent a **definitive** source of
+//! "how many pending decisions are there right now", instead of inferring from chat
+//! history scans (which is unreliable and gets clobbered by context truncation).
 //!
-//! 三个子命令（在顶层以 `agent pending-decisions <add|remove|list>` 暴露）：
-//! - `add`：sub agent 调 `xmtp_prompt_user` **之前**调一次，登记一条 pending
-//! - `remove`：sub agent 解析完 `[USER_DECISION_RELAY]` **之前**调一次，删一条
-//! - `list`：user session agent 进入「展示中 / 待用户回复」状态时调一次，拿当前列表
+//! Three subcommands (exposed at the top level as `agent pending-decisions <add|remove|list>`):
+//! - `add`: sub agent calls this **before** invoking `xmtp_prompt_user` to register one pending entry.
+//! - `remove`: sub agent calls this **before** parsing `[USER_DECISION_RELAY]` to remove one entry.
+//! - `list`: user-session agent calls this when entering the "displaying / waiting for user reply" state.
 //!
-//! 唯一键 = `(job_id, role, agent_id)` 三元组：
-//! - 同 `(job_id, role)` 但不同 `agent_id`（典型场景：单钱包多 provider agent
-//!   同时盯同一 public 任务）→ 各占一条不会互覆
-//! - 重复 add 时按三元组替换旧条，避免漏调 remove 后再 add 造成重复
+//! Unique key = `(job_id, role, agent_id)` triple:
+//! - Same `(job_id, role)` but different `agent_id` (typical: one wallet running multiple provider
+//!   agents that are all watching the same public task) → each occupies its own entry, no overwrite.
+//! - On duplicate `add`, the old entry with the same triple is replaced, preventing duplicates when
+//!   a previous `remove` was missed.
 
 use anyhow::{bail, Result};
 use chrono::Utc;
@@ -26,48 +28,48 @@ const DEFAULT_TTL_SECS: i64 = 86400;
 
 #[derive(Subcommand)]
 pub enum PendingDecisionsCommand {
-    /// 登记一条待用户决策（sub agent 在调 xmtp_prompt_user **之前**调用）
+    /// Register one pending user decision (sub agent calls this **before** invoking xmtp_prompt_user).
     Add {
-        /// sub session sessionKey 整串（先调 session_status 工具拿到）
+        /// Full sub-session sessionKey string (obtained by calling the session_status tool first).
         #[arg(long = "sub-key")]
         sub_key: String,
-        /// 任务 jobId
+        /// Task jobId.
         #[arg(long = "job-id")]
         job_id: String,
-        /// sub session 角色：buyer / provider / evaluator
+        /// Sub session role: buyer / provider / evaluator.
         #[arg(long)]
         role: String,
-        /// sub session 自己的 agentId（多 agent 钱包必填，唯一键的第三维度）
+        /// The sub session's own agentId (required for multi-agent wallets; third dimension of the unique key).
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// 一句话摘要（场景 1：新 prompt 末尾"另有 N 条待决策"简列时用）
+        /// One-line summary (used in scenario 1: the "N more pending decisions" brief list at the end of a new prompt).
         #[arg(long)]
         summary: String,
-        /// 完整 userContent 原文（场景 2：反问聚合详细列表时 verbatim 渲染）
+        /// Full original userContent (used in scenario 2: verbatim render in the aggregated detail list when the user asks back).
         #[arg(long = "user-content")]
         user_content: String,
-        /// 过期时间（秒），默认 86400（24h）；过期条目下次 list 时自动清理
+        /// TTL in seconds; default 86400 (24h). Expired entries are auto-cleaned on the next `list` call.
         #[arg(long, default_value_t = DEFAULT_TTL_SECS)]
         ttl: i64,
     },
-    /// 按 (job_id, role, agent_id) 删除一条 pending（sub agent 在解析
-    /// [USER_DECISION_RELAY] **之前**调用，避免 user agent 看到僵尸条目）
+    /// Remove one pending by (job_id, role, agent_id) (sub agent calls this **before**
+    /// parsing [USER_DECISION_RELAY], so the user agent never sees a stale entry).
     Remove {
         #[arg(long = "job-id")]
         job_id: String,
         #[arg(long)]
         role: String,
-        /// sub session 自己的 agentId（多 agent 钱包必填）
+        /// The sub session's own agentId (required for multi-agent wallets).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// 列出当前 pending（自动清理过期条目）。可按 --agent-id 过滤。
-    /// `--format json` 输出 `{ ok, data: { pending: [...], count } }`，
-    /// `--format text` 输出人类可读列表，每行 `<idx>. [Task <短ID> you as <role>(#<agentId>)] <summary>`。
+    /// List current pending entries (auto-cleans expired ones). Optionally filter by --agent-id.
+    /// `--format json` emits `{ ok, data: { pending: [...], count } }`;
+    /// `--format text` emits a human-readable list, one line each: `<idx>. [Task <short-id> you as <role>(#<agentId>)] <summary>`.
     List {
         #[arg(long, default_value = "json")]
         format: String,
-        /// 仅列出指定 agentId 的 pending（可选）。缺省返回全部。
+        /// List only the specified agentId's pending entries (optional). Default returns all.
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
@@ -93,7 +95,7 @@ struct PendingFile {
 
 fn pending_path() -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?;
-    // 跟 ~/.onchainos/task/<jobId>/ 下的协商 / 仲裁状态目录对齐,任务级状态都集中在 task/ 下
+    // Aligned with ~/.onchainos/task/<jobId>/ negotiation/arbitration state directories; all task-level state lives under task/.
     let dir = home.join(".onchainos").join("task");
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("pending-decisions.json"))
@@ -111,7 +113,7 @@ fn read_pending() -> Result<PendingFile> {
     match serde_json::from_str::<PendingFile>(&raw) {
         Ok(pf) => Ok(pf),
         Err(e) => {
-            // 容错：文件损坏时备份并重置（沿用 wallet_store 的容错风格）
+            // Tolerance: back up and reset when the file is corrupted (mirrors wallet_store's tolerance style).
             let backup = path.with_file_name(format!(
                 "pending-decisions.broken-{}.json",
                 Utc::now().timestamp()
@@ -126,7 +128,7 @@ fn read_pending() -> Result<PendingFile> {
     }
 }
 
-/// 原子写：先写 `.tmp` 再 rename（POSIX 上 rename 是原子操作）
+/// Atomic write: write to `.tmp` first, then rename (rename is atomic on POSIX).
 fn write_pending_atomic(pf: &PendingFile) -> Result<()> {
     let path = pending_path()?;
     let tmp = path.with_extension("tmp");
@@ -143,8 +145,8 @@ fn cleanup_expired(pf: &mut PendingFile) -> usize {
     before - pf.pending.len()
 }
 
-/// 短 jobId：前 6 + … + 后 4 字符。0x... hex 形式得到 `0x1b76…1be1`，
-/// 长字符串 ID 得到 `task-0…long`。≤ 12 字符原样返回。
+/// Short jobId: first 6 + … + last 4 characters. A 0x... hex value yields `0x1b76…1be1`;
+/// a long string ID yields `task-0…long`. Returned as-is if ≤ 12 characters.
 pub fn short_job_id(job_id: &str) -> String {
     if job_id.chars().count() <= 12 {
         return job_id.to_string();
@@ -193,7 +195,7 @@ pub async fn run(cmd: PendingDecisionsCommand) -> Result<()> {
             let mut pf = read_pending()?;
             cleanup_expired(&mut pf);
 
-            // 同 (job_id, role, agent_id) 已存在则替换，避免漏 remove 后再 add 造成重复
+            // Replace any existing entry with the same (job_id, role, agent_id) to avoid duplicates when a previous remove was missed.
             let replaced = pf
                 .pending
                 .iter()
@@ -246,12 +248,12 @@ pub async fn run(cmd: PendingDecisionsCommand) -> Result<()> {
         PendingDecisionsCommand::List { format, agent_id } => {
             let mut pf = read_pending()?;
             let dropped = cleanup_expired(&mut pf);
-            // 把过期清理后的状态写回（防止下次又跑一遍）
+            // Write back the post-cleanup state so we don't have to redo the cleanup next time.
             if dropped > 0 {
                 write_pending_atomic(&pf)?;
             }
 
-            // 按 agent_id 过滤(可选)
+            // Filter by agent_id (optional).
             let filtered: Vec<&PendingEntry> = match &agent_id {
                 Some(aid) if !aid.is_empty() => {
                     pf.pending.iter().filter(|e| &e.agent_id == aid).collect()

@@ -1,14 +1,15 @@
-//! 任务系统状态机 single source of truth。
+//! Task-system state machine — single source of truth.
 //!
-//! 把散落在 `available_actions` / `provider/flow.rs` / `buyer/flow.rs` /
-//! `evaluator/flow.rs` 里的字符串 `"created"` / `"provider_applied"` 收拢到这里，
-//! 提供 `Status` / `Event` / `Role` enum 加上 status<->event 互转，
-//! 让所有 match 都走 enum，杜绝字符串拼写漂移。
+//! Centralizes string literals like `"created"` / `"provider_applied"` previously scattered across
+//! `available_actions` / `provider/flow.rs` / `buyer/flow.rs` / `evaluator/flow.rs`, exposing
+//! `Status` / `Event` / `Role` enums plus status<->event conversion helpers. All matches now go
+//! through the enums, eliminating string-spelling drift.
 //!
-//! 设计上**事件视图**与**状态视图**互通：
-//! - `entry_event(status)` —— 把任务推进到此 status 的入口事件
-//! - `status_when_event(event)` —— 事件触发时任务处于哪个 status（包括 `provider_applied`
-//!   这种"过场事件"——发生在 created 状态下，不改变 status）
+//! By design the **event view** and the **status view** are interconvertible:
+//! - `entry_event(status)` — the entry event that drove the task into this status.
+//! - `status_when_event(event)` — what status the task is in when the event fires (including
+//!   "pass-through events" like `provider_applied`, which fires in the created state and does not
+//!   change the status).
 
 // ─── Role ───────────────────────────────────────────────────────────────
 
@@ -40,16 +41,16 @@ impl Role {
 
 // ─── Status ─────────────────────────────────────────────────────────────
 
-/// 任务在状态机里此刻的真实状态。后端 `TaskStatusEnum`：响应回 `status: int`，
-/// 本地用 [`Status::from_int`] 派生。
+/// The task's current real state in the state machine. Backend `TaskStatusEnum` returns `status: int`;
+/// derive locally via [`Status::from_int`].
 ///
-/// 对齐后端 `TaskStatusEnum`：
+/// Aligns with backend `TaskStatusEnum`:
 /// INIT=-1, CREATED=0, ACCEPTED=1, SUBMITTED=2, REFUSED=3, DISPUTED=4,
-/// ADMINSTOPPED=5, COMPLETE=6, CLOSE=7, EXPIRED=8, REJECTED=9
+/// ADMINSTOPPED=5, COMPLETE=6, CLOSE=7, EXPIRED=8, REJECTED=9.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Init,         // -1
-    Created,      // 0（后端原值 OPEN，改名避免与"公开"歧义）
+    Created,      // 0 (backend original is OPEN; renamed to avoid ambiguity with "public" visibility)
     Accepted,     // 1
     Submitted,    // 2
     Refused,      // 3
@@ -59,12 +60,12 @@ pub enum Status {
     Close,        // 7
     Expired,      // 8
     Rejected,     // 9
-    /// 后端返回的、当前枚举不认识的状态字符串（容错保留原值）
+    /// A status string returned by the backend that this enum does not recognize (tolerantly preserved as-is).
     Other(String),
 }
 
 impl Status {
-    /// 字符串解析（用于 CLI `--jobStatus` 参数 / event 名解析），spec 字段是 int 应走 [`Self::from_int`]。
+    /// String parsing (for the CLI `--jobStatus` flag / event-name parsing); int fields in the spec should go through [`Self::from_int`].
     pub fn parse(s: &str) -> Self {
         match s {
             "init"                               => Status::Init,
@@ -99,9 +100,9 @@ impl Status {
         }
     }
 
-    /// 后端 `TaskStatusEnum` int 映射：
+    /// Backend `TaskStatusEnum` int mapping:
     /// -1=INIT / 0=CREATED / 1=ACCEPTED / 2=SUBMITTED / 3=REFUSED / 4=DISPUTED /
-    /// 5=ADMINSTOPPED / 6=COMPLETE / 7=CLOSE / 8=EXPIRED / 9=REJECTED。
+    /// 5=ADMINSTOPPED / 6=COMPLETE / 7=CLOSE / 8=EXPIRED / 9=REJECTED.
     pub fn from_int(n: i32) -> Self {
         match n {
             -1 => Status::Init,
@@ -119,8 +120,9 @@ impl Status {
         }
     }
 
-    /// 任务主状态机的终态——这些 status 下任务已结束，不会再有新链事件可推进；
-    /// dispute 子流程（如果存在）也必然已经关闭，commit/reveal 投票一律会被罚。
+    /// Terminal states of the main task state machine — in these statuses the task is finished and
+    /// no further chain events can advance it; any dispute subflow (if it exists) is also necessarily
+    /// closed, and any commit/reveal vote will be slashed.
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
@@ -131,22 +133,23 @@ impl Status {
 
 // ─── DisputeRoundStatus ─────────────────────────────────────────────────
 
-/// 仲裁单轮（round）子状态机当前阶段，由 `GET /priapi/v1/aieco/task/{jobId}/dispute/status`
-/// 的 `disputeRoundStatus: int` 字段携带（与任务主状态 [`Status`] 正交——一个 Disputed
-/// 任务在仲裁子流程里可能依次穿过 CommitPhase / RevealPhase / Completed 这条链，
-/// 或在本轮票数不足时落到 Invalidated 等下一轮重抽）。
+/// Current phase of a single dispute round's sub state machine, carried by the
+/// `disputeRoundStatus: int` field on `GET /priapi/v1/aieco/task/{jobId}/dispute/status`.
+/// Orthogonal to the main task status [`Status`] — a Disputed task may walk through
+/// CommitPhase / RevealPhase / Completed in the dispute subflow, or drop into Invalidated
+/// when the current round's votes are insufficient and wait for the next-round redraw.
 ///
-/// 对齐后端 `RoundStatusEnum`：
-/// INIT=0, COMMIT_PHASE=1, REVEAL_PHASE=2, COMPLETED=3, REJECTED=4, INVALIDATED=5
+/// Aligns with backend `RoundStatusEnum`:
+/// INIT=0, COMMIT_PHASE=1, REVEAL_PHASE=2, COMPLETED=3, REJECTED=4, INVALIDATED=5.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DisputeRoundStatus {
-    Init,         // 0 — 初始化（本轮已开始，等进入 commit 窗口）
-    CommitPhase,  // 1 — commit 阶段
-    RevealPhase,  // 2 — reveal 阶段
-    Completed,    // 3 — 轮次完成（仲裁出结果）
-    Rejected,     // 4 — 轮次驳回
-    Invalidated,  // 5 — 本轮失效（票数不足 / 无人 reveal），等下一轮重抽
-    /// 后端返回的、当前枚举不认识的状态码（容错保留原值）
+    Init,         // 0 — initialized (round started, waiting to enter the commit window)
+    CommitPhase,  // 1 — commit phase
+    RevealPhase,  // 2 — reveal phase
+    Completed,    // 3 — round completed (verdict reached)
+    Rejected,     // 4 — round rejected
+    Invalidated,  // 5 — round invalidated (insufficient votes / nobody revealed); wait for next-round redraw
+    /// A status code returned by the backend that this enum does not recognize (tolerantly preserved as-is).
     Other(i32),
 }
 
@@ -178,131 +181,137 @@ impl DisputeRoundStatus {
 
 // ─── Event ──────────────────────────────────────────────────────────────
 
-/// 系统通知里的 `event` 字段——触发本通知的具体动作。
-/// 完整对齐后端事件枚举（参见 task system 设计文档）。
+/// The `event` field in system notifications — the specific action that triggered this notification.
+/// Fully aligned with the backend event enum (see the task system design doc).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    // ── 任务主流程 ────────────────────────────────────────────────────
-    /// 任务创建上链（status 进入 created；通知 buyer）
+    // ── Main task flow ────────────────────────────────────────────────
+    /// Task creation on-chain (status enters created; notifies buyer).
     JobCreated,
-    /// 卖家 apply 上链（status 仍是 created，过场事件；通知刚 apply 的 provider）
+    /// Provider apply on-chain (status remains created; pass-through event; notifies the provider that just applied).
     ProviderApplied,
-    /// 买家 confirm-accept 上链（status 进入 accepted；通知 provider）
+    /// Buyer confirm-accept on-chain (status enters accepted; notifies provider).
     JobAccepted,
-    /// 卖家 deliver 上链（status 进入 submitted；通知 buyer 验收）
+    /// Provider deliver on-chain (status enters submitted; notifies buyer to review).
     JobSubmitted,
-    /// 买家 complete 上链 / 仲裁 approve（status 进入 completed；通知 provider）
+    /// Buyer complete on-chain / arbitration approve (status enters completed; notifies provider).
     JobCompleted,
-    /// 买家 reject 上链（status 进入 refused；通知 provider 决策仲裁/退款）
+    /// Buyer reject on-chain (status enters refused; notifies provider to choose between arbitration / refund).
     JobRefused,
-    /// 仲裁第一阶段（approve）上链（status 仍 refused，过场事件；通知发起的 provider 走第二阶段 dispute confirm）
+    /// Arbitration phase-1 (approve) on-chain (status remains refused; pass-through event;
+    /// notifies the initiating provider to proceed to phase-2 dispute confirm).
     DisputeApproved,
-    /// 任一方 dispute raise 上链（status 进入 disputed；通知 buyer + provider 上传证据）
+    /// Either party's dispute-raise on-chain (status enters disputed; notifies both buyer + provider to upload evidence).
     JobDisputed,
-    /// 卖家同意退款 / 仲裁买家胜诉退款上链（status 进入 refunded；通知 buyer + provider）
+    /// Provider agrees to refund / arbitration buyer-wins refund on-chain (status enters refunded; notifies buyer + provider).
     JobRefunded,
-    /// DisputeSettled 仲裁裁决（status 进入 completed 或 refunded；通知 buyer/provider/voters
-    /// 调 /claimable + /claim 领取奖励）
+    /// DisputeSettled arbitration verdict (status enters completed or refunded; notifies buyer/provider/voters
+    /// to call /claimable + /claim to collect rewards).
     DisputeResolved,
-    /// 任务超时（accept 截止前未接单 或 submit 截止前未提交；通知 buyer 关单回收资金）
+    /// Task expired (no accept before the accept deadline, or no submit before the submit deadline;
+    /// notifies buyer to close and reclaim funds).
     JobExpired,
-    /// TaskMarket.close 上链 / Close tx 结果（通知发起人 client）
+    /// TaskMarket.close on-chain / Close tx result (notifies the initiating client).
     JobClosed,
-    /// TaskMarket.setVisibility 上链（通知发起人 client）
+    /// TaskMarket.setVisibility on-chain (notifies the initiating client).
     JobVisibilityChanged,
-    /// TaskMarket.setPaymentMode 上链（通知发起人 client）
+    /// TaskMarket.setPaymentMode on-chain (notifies the initiating client).
     JobPaymentModeChanged,
 
-    // ── 仲裁 lifecycle（evaluator 子状态机）────────────────────────────
-    /// VotersSelected 选出本轮 evaluators（通知被选中的每个 evaluator 调 /vote 提 commit）
+    // ── Arbitration lifecycle (evaluator sub state machine) ─────────────
+    /// VotersSelected — round evaluators selected (notifies each selected evaluator to call /vote with commit).
     EvaluatorSelected,
-    /// RevealStarted 上链（commit 阶段结束，reveal 窗口开启；通知本轮已 commit 的 evaluators）
+    /// RevealStarted on-chain (commit phase ends, reveal window opens; notifies evaluators who already committed).
     RevealStarted,
-    /// evaluator commit tx 上链 success（通知发起 commit 的 evaluator 本人，等 reveal 窗口）
+    /// Evaluator commit tx on-chain success (notifies the evaluator that initiated the commit; wait for reveal window).
     VoteCommitted,
-    /// evaluator reveal tx 上链 success（通知发起 reveal 的 evaluator 本人，等 dispute_resolved）
+    /// Evaluator reveal tx on-chain success (notifies the evaluator that initiated the reveal; wait for dispute_resolved).
     VoteRevealed,
-    /// DisputeInvalidated 当前轮失效（票数不足/无人揭示等；通知 buyer/provider/本轮 evaluators 等下一轮）
+    /// DisputeInvalidated — current round invalidated (insufficient votes / nobody revealed, etc.;
+    /// notifies buyer/provider/round-evaluators to wait for the next round).
     RoundFailed,
-    /// VoterStaking.Slashed 上链被罚没（无 user tx 触发；通知被罚的 evaluator）
+    /// VoterStaking.Slashed on-chain (no user tx triggers this; notifies the slashed evaluator).
     Slashed,
 
-    // ── 质押 lifecycle（evaluator）────────────────────────────────────
-    /// VoterStaking.Staked 上链（**首次质押 stake 与追加质押 increaseStake 均发此事件**；
-    /// 真后端不区分，event 流只有 staked。区分首次/追加只能由 my-stake 看 activeStake 增量决定。）
+    // ── Staking lifecycle (evaluator) ─────────────────────────────────
+    /// VoterStaking.Staked on-chain (**both first-time stake and additional increaseStake emit this event**;
+    /// the real backend does not distinguish — the event stream only has `staked`. Distinguishing first-time
+    /// vs additional can only be inferred from my-stake's activeStake delta.)
     Staked,
-    /// VoterStaking.UnstakeRequested 上链（进入冷却期；通知发起 unstake 的 evaluator）
+    /// VoterStaking.UnstakeRequested on-chain (enters cooldown; notifies the evaluator that initiated unstake).
     UnstakeRequested,
-    /// VoterStaking.UnstakeClaimed 上链（冷却期满已提走；通知发起 claim 的 evaluator）
+    /// VoterStaking.UnstakeClaimed on-chain (cooldown finished, funds withdrawn; notifies the evaluator that initiated claim).
     UnstakeClaimed,
-    /// VoterStaking.UnstakeCancelled 上链（冷却期内取消；通知发起 cancel 的 evaluator）
+    /// VoterStaking.UnstakeCancelled on-chain (cancelled during cooldown; notifies the evaluator that initiated cancel).
     UnstakeCancelled,
-    /// claimRewards tx 上链结果（通知领取人 client/provider/evaluator）
+    /// claimRewards tx on-chain result (notifies the claimer — client/provider/evaluator).
     RewardClaimed,
 
-    // ── 超时事件 ─────────────────────────────────────────────────────
-    /// submit 超时未交付（通知 buyer 调 claimAutoRefund）
+    // ── Timeout events ────────────────────────────────────────────────
+    /// Submit timeout — no delivery (notifies buyer to call claimAutoRefund).
     SubmitExpired,
-    /// refuse 后 provider 未发起仲裁超时（通知 buyer 调 claimAutoRefund）
+    /// After refuse, the provider failed to raise arbitration in time (notifies buyer to call claimAutoRefund).
     RefuseExpired,
-    /// review 超时（provider 提交后买家未确认；通知 provider 调 claimAutoComplete）
+    /// Review timeout (after provider submit, the buyer did not confirm; notifies provider to call claimAutoComplete).
     ReviewExpired,
-    // ── 自动完成 / 自动退款 tx 回执 ──────────────────────────────────
-    /// Provider 调 claimAutoComplete tx 上链结果（review 超时后 provider 主动领走资金；通知 provider）
+    // ── Auto-complete / auto-refund tx receipts ──────────────────────
+    /// Provider's claimAutoComplete tx on-chain result (after review timeout the provider pulls funds; notifies provider).
     JobAutoCompleted,
-    /// Buyer 调 claimAutoRefund tx 上链结果（submit/refuse 超时后 buyer 主动领回资金；通知 buyer）
+    /// Buyer's claimAutoRefund tx on-chain result (after submit/refuse timeout the buyer pulls funds back; notifies buyer).
     JobAutoRefunded,
 
-    // ── 截止时间提醒（warn 类，不改 status）────────────────────────────
-    /// 担保支付 accept→submit 快超时提醒（通知 provider 发起 submit）
+    // ── Deadline reminders (warn class, no status change) ─────────────
+    /// Escrow accept→submit nearing-deadline reminder (notifies provider to submit).
     SubmitDeadlineWarn,
-    /// 担保支付 submit→complete 快超时提醒（通知 buyer 发起 complete）
+    /// Escrow submit→complete nearing-deadline reminder (notifies buyer to complete).
     ReviewDeadlineWarn,
 
-    // ── evaluator 额外 lifecycle ─────────────────────────────────────
-    /// VoterStaking.VoterStakeStopped 上链（退出 voter 池；通知发起 stop 的 evaluator）
+    // ── Extra evaluator lifecycle ────────────────────────────────────
+    /// VoterStaking.VoterStakeStopped on-chain (exits the voter pool; notifies the evaluator that initiated stop).
     StakeStopped,
-    /// DisputeManager.VoterCooldownEntered 上链（被动进入冷却期；通知 evaluator）
+    /// DisputeManager.VoterCooldownEntered on-chain (passive entry into cooldown; notifies evaluator).
     CooldownEntered,
 
-    // ── 买家条款变更上链回执(不改 status,仍 created) ──────────────────
-    /// setTokenAndBudget tx 上链成功(通知 buyer 侧所有子 session;无子 session 时通知 backup)
+    // ── Buyer terms-change tx receipts (no status change, stays created) ─
+    /// setTokenAndBudget tx on-chain success (notifies all sub sessions on the buyer side; if none, notifies backup).
     TaskTokenBudgetChange,
-    /// setProviderAndAgentId tx 上链成功(通知 buyer 侧所有子 session;无子 session 时通知 backup)
+    /// setProviderAndAgentId tx on-chain success (notifies all sub sessions on the buyer side; if none, notifies backup).
     TaskProviderChange,
 
-    // ── user session 伪事件(user 指令触发,不改 status) ────────────────
-    /// set-provider 成功后 user session 立即发起新卖家流程(不等 task_provider_change 上链确认)
+    // ── User-session pseudo events (triggered by user command, no status change) ──
+    /// After set-provider succeeds, the user session immediately kicks off the new-provider flow
+    /// (without waiting for the on-chain task_provider_change confirmation).
     SwitchProvider,
 
-    // ── 协商中继事件(buyer 本地派发,不改 status) ────────────────────
-    /// 卖家自然语言回复(不含 [intent:*] 标记),buyer.md Route 4 → negotiate_reply
+    // ── Negotiation relay events (buyer-local dispatch, no status change) ─
+    /// Provider's natural-language reply (no [intent:*] marker); buyer.md Route 4 → negotiate_reply.
     NegotiateReply,
-    /// 卖家回 [intent:ack](接受 PROPOSE),buyer.md Route 3 → negotiate_ack
+    /// Provider replied with [intent:ack] (accepts PROPOSE); buyer.md Route 3 → negotiate_ack.
     NegotiateAck,
-    /// 卖家回 [intent:counter](反提案),buyer.md Route 3 → negotiate_counter
+    /// Provider replied with [intent:counter] (counter-proposal); buyer.md Route 3 → negotiate_counter.
     NegotiateCounter,
 
-    // ── 网络/重启恢复事件(过场,不改 status) ─────────────────────────
-    /// 网络/电脑重启后,后端通知 agent 唤起本任务续跑剧本。
-    /// envelope 形态(per-task fan-out):
+    // ── Network / restart recovery events (pass-through, no status change) ─
+    /// After a network / machine restart, the backend notifies the agent to resume this task's script.
+    /// Envelope shape (per-task fan-out):
     /// `{ agentId, message: { event: "wakeup_notify", source: "system",
-    ///                         jobId: <真 jobId>, jobStatus: <真实 status string>,
+    ///                         jobId: <real jobId>, jobStatus: <real status string>,
     ///                         paymentMode, visibility, ... } }`
-    /// agent 收到后**不要**用 `wakeup_notify` 调 next-action;
-    /// 应该读 `message.jobStatus` 拿真实 status,以此为 `--jobStatus` 重调 next-action,
-    /// 拿当前 status 对应剧本续跑。详见 flow.rs WakeupNotify arm。
+    /// Upon receipt the agent **must not** call next-action with `wakeup_notify`;
+    /// instead, read `message.jobStatus` to get the real status, then call next-action again with
+    /// that as `--jobStatus` to resume the script for the current status. See the WakeupNotify arm
+    /// in flow.rs for details.
     WakeupNotify,
 
-    /// 后端发的、当前枚举不认识的事件名（也用来承载 user-instruction 伪 event：
-    /// dispute_raise / agree_refund / dispute_evidence / close / set_public）
+    /// An event name returned by the backend that this enum does not recognize (also used to carry
+    /// user-instruction pseudo events: dispute_raise / agree_refund / dispute_evidence / close / set_public).
     Other(String),
 }
 
 impl Event {
     pub fn parse(s: &str) -> Self {
         match s {
-            // 任务主流程
+            // Main task flow
             "job_created"               => Event::JobCreated,
             "provider_applied"          => Event::ProviderApplied,
             "job_accepted"              => Event::JobAccepted,
@@ -317,42 +326,42 @@ impl Event {
             "job_closed"                => Event::JobClosed,
             "job_visibility_changed"    => Event::JobVisibilityChanged,
             "job_payment_mode_changed"  => Event::JobPaymentModeChanged,
-            // 仲裁 lifecycle
+            // Arbitration lifecycle
             "evaluator_selected"        => Event::EvaluatorSelected,
             "reveal_started"            => Event::RevealStarted,
             "vote_committed"            => Event::VoteCommitted,
             "vote_revealed"             => Event::VoteRevealed,
             "round_failed"              => Event::RoundFailed,
             "slashed"                   => Event::Slashed,
-            // 质押 lifecycle（首次/追加均映射到 Staked——真后端只发一个 staked 事件）
+            // Staking lifecycle (first-time / additional both map to Staked — the real backend only emits one `staked` event)
             "staked"                    => Event::Staked,
             "unstake_requested"         => Event::UnstakeRequested,
             "unstake_claimed"           => Event::UnstakeClaimed,
             "unstake_cancelled"         => Event::UnstakeCancelled,
             "reward_claimed"            => Event::RewardClaimed,
-            // 超时
+            // Timeouts
             "submit_expired"            => Event::SubmitExpired,
             "refuse_expired"            => Event::RefuseExpired,
             "review_expired"            => Event::ReviewExpired,
-            // 自动完成 / 自动退款 tx 回执
+            // Auto-complete / auto-refund tx receipts
             "job_auto_completed"        => Event::JobAutoCompleted,
             "job_auto_refunded"         => Event::JobAutoRefunded,
-            // 提醒
+            // Reminders
             "submit_deadline_warn"      => Event::SubmitDeadlineWarn,
             "review_deadline_warn"      => Event::ReviewDeadlineWarn,
-            // evaluator 额外 lifecycle
+            // Extra evaluator lifecycle
             "stake_stopped"             => Event::StakeStopped,
             "cooldown_entered"          => Event::CooldownEntered,
-            // 买家条款变更上链回执
+            // Buyer terms-change tx receipts
             "task_token_budget_change"  => Event::TaskTokenBudgetChange,
             "task_provider_change"      => Event::TaskProviderChange,
-            // user session 伪事件
+            // User-session pseudo events
             "switch_provider"           => Event::SwitchProvider,
-            // 协商中继(buyer 本地派发)
+            // Negotiation relay (buyer-local dispatch)
             "negotiate_reply"           => Event::NegotiateReply,
             "negotiate_ack"             => Event::NegotiateAck,
             "negotiate_counter"         => Event::NegotiateCounter,
-            // 网络/重启恢复
+            // Network / restart recovery
             "wakeup_notify"             => Event::WakeupNotify,
             other                       => Event::Other(other.to_string()),
         }
@@ -428,16 +437,17 @@ impl Event {
     }
 }
 
-// ─── 双向 mapping ────────────────────────────────────────────────────────
+// ─── Bidirectional mapping ───────────────────────────────────────────────
 
-/// 事件触发时任务处于哪个 status。
+/// Which status the task is in when the event fires.
 ///
-/// `provider_applied` 不改变 status —— 它发生在 created 状态下；
-/// `dispute_resolved` 取决于裁决方（buyer-wins → refunded；seller-wins → completed），
-/// 单从 event 不能确定，这里默认返回 `Completed`，调用方应优先调 `agent status` 拉取真实 status。
+/// `provider_applied` does not change status — it occurs in the created state;
+/// `dispute_resolved` depends on the verdict (buyer-wins → refunded; seller-wins → completed),
+/// which cannot be determined from the event alone; this returns `Completed` by default,
+/// and callers should prefer calling `agent status` to fetch the real status.
 pub fn status_when_event(e: &Event) -> Status {
     match e {
-        // 主流程
+        // Main flow
         Event::JobCreated | Event::ProviderApplied
         | Event::TaskTokenBudgetChange | Event::TaskProviderChange
         | Event::SwitchProvider
@@ -445,47 +455,48 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
         Event::JobRefused | Event::RefuseExpired                             => Status::Refused,
-        // submit_expired: 卖家未提交，status 仍是 accepted（未进入 submitted）
+        // submit_expired: provider did not submit; status is still accepted (never entered submitted)
         Event::SubmitExpired                                                => Status::Accepted,
-        // dispute_approved 是过场事件，status 仍为 refused（dispute 阶段 1，未真正进入 disputed）
+        // dispute_approved is a pass-through event; status is still refused (dispute phase 1, not yet truly disputed)
         Event::DisputeApproved                                              => Status::Refused,
         Event::JobDisputed                                                  => Status::Disputed,
-        // review_expired 只表示 review 窗口结束，task 仍 submitted；要等 provider 调 claimAutoComplete 才进 completed
+        // review_expired only means the review window has ended; task is still submitted —
+        // must wait for the provider's claimAutoComplete to enter completed
         Event::ReviewExpired                                                => Status::Submitted,
-        // 后端 TaskStatusEnum：6=COMPLETE（资金释放给卖家），9=REJECTED（资金退还买家）。
-        // 区分两种终态由 event 直接表达。
+        // Backend TaskStatusEnum: 6=COMPLETE (funds released to provider), 9=REJECTED (funds returned to buyer).
+        // The two terminal states are distinguished directly by the event.
         Event::JobCompleted | Event::JobAutoCompleted                       => Status::Completed,
         Event::JobRefunded | Event::JobAutoRefunded                         => Status::Rejected,
-        // DisputeResolved 取决于裁决方（buyer-wins → Rejected；seller-wins → Completed）；
-        // 单从 event 不能确定，默认 Completed，调用方应优先调 `agent status` 拉真实 status。
+        // DisputeResolved depends on the verdict (buyer-wins → Rejected; seller-wins → Completed);
+        // not determinable from the event alone — default to Completed and callers should prefer `agent status`.
         Event::DisputeResolved  => Status::Completed,
-        // 仲裁子状态机：所有事件都发生在 task=disputed 状态下
+        // Arbitration sub state machine: all events fire while task=disputed
         Event::EvaluatorSelected | Event::VoteCommitted
         | Event::RevealStarted | Event::VoteRevealed
         | Event::Slashed | Event::CooldownEntered | Event::RoundFailed      => Status::Disputed,
-        // 提醒类（不改 status，task 还在原状态）
+        // Reminder class (no status change; task stays in its current status)
         Event::SubmitDeadlineWarn                                           => Status::Accepted,
         Event::ReviewDeadlineWarn                                           => Status::Submitted,
         Event::JobExpired                                                   => Status::Expired,
         Event::JobClosed                                                    => Status::Close,
-        // visibility/paymentMode 是过场事件，不改 status；非 created 状态不允许操作，所以期望 Created
+        // visibility/paymentMode are pass-through events that do not change status; not allowed outside of created, so expect Created
         Event::JobVisibilityChanged | Event::JobPaymentModeChanged         => Status::Created,
-        // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
+        // Staking / slashing / reward lifecycle is decoupled from task status
         Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
         | Event::StakeStopped                                               => Status::Other("staking".to_string()),
         Event::RewardClaimed                                                     => Status::Other("reward_claimed".to_string()),
-        // wake-up 是过场事件,真实 status 在 envelope.message.jobStatus 字段;
-        // 这里返回占位 status,agent 不应该用 wakeup_notify 走 next-action
+        // wake-up is a pass-through event; the real status lives in envelope.message.jobStatus.
+        // Return a placeholder status here — agents must not drive next-action with wakeup_notify.
         Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),
         Event::Other(_)                                                     => Status::Other("unknown".to_string()),
     }
 }
 
-/// 把任务推进到此 status 的**典型**入口事件。
-/// - Status::Completed canonical = JobCompleted（happy-path 验收 / 仲裁卖家胜）
-/// - Status::Rejected canonical = JobRefunded（退款 / 仲裁买家胜）
-/// - DisputeResolved 不归属 canonical（同一 event 可能落 Completed 或 Rejected）
+/// The **canonical** entry event that drove the task into this status.
+/// - Status::Completed canonical = JobCompleted (happy-path acceptance / arbitration seller-wins)
+/// - Status::Rejected canonical = JobRefunded (refund / arbitration buyer-wins)
+/// - DisputeResolved is not canonical (the same event may land on either Completed or Rejected)
 pub fn entry_event(s: &Status) -> Option<Event> {
     match s {
         Status::Init         => None,
@@ -503,9 +514,9 @@ pub fn entry_event(s: &Status) -> Option<Event> {
     }
 }
 
-/// 收到一个字符串（可能是 status 也可能是 event），优先按 event 解析。
-/// 失败时（即 Event::Other）尝试按 status 解析、走 entry_event 反查。
-/// 用于 `next-action --jobStatus <X>` 的兼容入口——历史调用既传 event 名也传 status 名。
+/// Given a string (which may be either a status or an event), parse it as an event first.
+/// On failure (i.e. Event::Other) fall back to status parsing and run it back through entry_event.
+/// Used as the compatibility entry for `next-action --jobStatus <X>` — historical callers pass either event or status names.
 pub fn parse_status_or_event(s: &str) -> Event {
     let evt = Event::parse(s);
     if !matches!(evt, Event::Other(_)) {
@@ -521,9 +532,9 @@ mod tests {
 
     #[test]
     fn status_event_roundtrip() {
-        // entry_event(s) → e ; status_when_event(e) 必须能反推回 s
-        // Status::AdminStopped 无客户端入口事件（entry_event 返回 None），跳过。
-        // Status::Completed → JobCompleted；Status::Rejected → JobRefunded（buyer-wins / 退款）
+        // entry_event(s) → e ; status_when_event(e) must round-trip back to s.
+        // Status::AdminStopped has no client-side entry event (entry_event returns None); skip.
+        // Status::Completed → JobCompleted; Status::Rejected → JobRefunded (buyer-wins / refund).
         for s in [
             Status::Created, Status::Accepted, Status::Submitted, Status::Refused,
             Status::Disputed, Status::Completed, Status::Close, Status::Expired,
@@ -538,13 +549,13 @@ mod tests {
     fn parse_status_or_event_handles_both() {
         assert_eq!(parse_status_or_event("provider_applied"), Event::ProviderApplied);
         assert_eq!(parse_status_or_event("created"), Event::JobCreated);
-        assert_eq!(parse_status_or_event("open"), Event::JobCreated); // 后端兼容
+        assert_eq!(parse_status_or_event("open"), Event::JobCreated); // backend compatibility
         assert_eq!(parse_status_or_event("submitted"), Event::JobSubmitted);
     }
 
     #[test]
     fn provider_applied_keeps_status_created() {
-        // 过场事件不改 status
+        // Pass-through event does not change status.
         assert_eq!(status_when_event(&Event::ProviderApplied), Status::Created);
     }
 }

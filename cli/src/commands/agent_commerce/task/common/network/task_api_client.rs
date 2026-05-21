@@ -1,11 +1,11 @@
-//! 任务后端 API 客户端
+//! Task backend API client.
 //!
-//! 内部委托 `WalletApiClient` 完成所有 HTTP 请求，复用其 DoH（DNS-over-HTTPS）
-//! 解析和 failover retry 能力。在此基础上，额外注入任务系统特有的
-//! `agenticId` 身份头。
+//! Internally delegates all HTTP requests to `WalletApiClient`, reusing its DoH (DNS-over-HTTPS)
+//! resolution and failover retry capabilities. On top of that, it injects the task-system-specific
+//! `agenticId` identity header.
 //!
-//! 所有请求方法接收 **path**（如 `/priapi/v1/aieco/task/{jobId}/apply`），
-//! 不再接收完整 URL。返回值为 `body["data"]`。
+//! All request methods take a **path** (e.g. `/priapi/v1/aieco/task/{jobId}/apply`),
+//! no longer a full URL. The return value is `body["data"]`.
 
 use std::time::Instant;
 
@@ -17,8 +17,8 @@ use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::wallet_api::WalletApiClient;
 use crate::wallet_store;
 
-/// 把一次 API 请求结果写到 audit.jsonl。
-/// 成功不带 error；失败带截断后的 error。命令名固定 `api/<method>` 便于 jq 筛选。
+/// Write the result of a single API request to audit.jsonl.
+/// Success writes no error; failure writes a truncated error. The command name is fixed as `api/<method>` for easy jq filtering.
 fn log_api(
     method: &str,
     path: &str,
@@ -42,14 +42,14 @@ fn log_api(
     );
 }
 
-/// 任务 API 路径前缀
+/// Task API path prefix.
 const TASK_PREFIX: &str = "/priapi/v1/aieco/task";
 
 async fn get_access_token() -> Result<String, anyhow::Error> {
     ensure_tokens_refreshed().await
 }
 
-/// 从本地 session 读取 sessionCert
+/// Read sessionCert from the local session.
 fn get_session_cert() -> Option<String> {
     wallet_store::load_session()
         .ok()
@@ -58,7 +58,7 @@ fn get_session_cert() -> Option<String> {
         .filter(|c| !c.is_empty())
 }
 
-/// 将 sessionCert 注入到 JSON body 中（如果 body 是 Object 且尚未包含该字段）
+/// Inject sessionCert into the JSON body (if the body is an Object and does not already contain that field).
 fn inject_session_cert(body: &Value) -> Value {
     let mut body = body.clone();
     if let Some(obj) = body.as_object_mut() {
@@ -71,7 +71,7 @@ fn inject_session_cert(body: &Value) -> Value {
     body
 }
 
-/// 任务后端 API 客户端（DoH-enabled，委托 WalletApiClient）
+/// Task backend API client (DoH-enabled, delegates to WalletApiClient).
 pub struct TaskApiClient {
     wallet: WalletApiClient,
     pub(crate) raw_http: reqwest::Client,
@@ -84,9 +84,9 @@ impl TaskApiClient {
     }
 
     fn build(base_url_override: Option<String>) -> Self {
-        // base_url 解析 —— 与 WalletApiClient::with_base_url 保持一致的优先级，
-        // 这样 eprintln 里展示的 URL 跟 wallet 实际发请求的 URL 不会撕裂。
-        // 优先级：OKX_BASE_URL env > 编译时 OKX_BASE_URL > 显式 override > DEFAULT_BASE_URL
+        // base_url resolution — keep the same precedence as WalletApiClient::with_base_url,
+        // so the URL shown in eprintln matches the URL the wallet actually requests against.
+        // Precedence: OKX_BASE_URL env > compile-time OKX_BASE_URL > explicit override > DEFAULT_BASE_URL.
         let base_url = std::env::var("OKX_BASE_URL")
             .ok()
             .or_else(|| option_env!("OKX_BASE_URL").map(str::to_string))
@@ -103,7 +103,7 @@ impl TaskApiClient {
         }
     }
 
-    // ─── URL / path 辅助 ─────────────────────────────────────────────────
+    // ─── URL / path helpers ──────────────────────────────────────────────
 
     /// `/priapi/v1/aieco/task/{job_id}`
     pub fn task_path(&self, job_id: &str) -> String {
@@ -121,10 +121,10 @@ impl TaskApiClient {
         PATH
     }
 
-    // ─── 请求方法（接收 path，非完整 URL）────────────────────────────────
+    // ─── Request methods (take a path, not a full URL) ───────────────────
 
-    /// GET + JWT + agenticId header（不注入 sessionCert）→ 返回 data。
-    /// 用于查询接口（如 providerConfirmStatus）需要 JWT + agenticId 但不需要 sessionCert 的场景。
+    /// GET + JWT + agenticId header (no sessionCert injection) -> returns data.
+    /// Used by query endpoints (e.g. providerConfirmStatus) that need JWT + agenticId but not sessionCert.
     pub async fn get_with_agent_id(&mut self, path: &str, agent_id: &str) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await?;
@@ -148,7 +148,7 @@ impl TaskApiClient {
         result
     }
 
-    /// GET + JWT + 身份头（agenticId）→ 返回 data（自动注入 sessionCert query param）。
+    /// GET + JWT + identity header (agenticId) -> returns data (sessionCert is auto-injected as a query param).
     pub async fn get_with_identity(
         &mut self,
         path: &str,
@@ -181,9 +181,9 @@ impl TaskApiClient {
         result
     }
 
-    /// GET 二进制（证据下载等非 JSON 端点）+ JWT + agenticId header。
-    /// 走裸 `raw_http`（不经 wallet 的 JSON `handle_response`，无 DoH failover），
-    /// 返回原始字节。后端对 evidence/download 也强制鉴权，必须带 Bearer。
+    /// GET binary (non-JSON endpoints such as evidence download) + JWT + agenticId header.
+    /// Uses raw `raw_http` (bypasses wallet's JSON `handle_response`, no DoH failover) and returns raw bytes.
+    /// The backend also enforces auth on evidence/download, so Bearer is required.
     pub async fn get_bytes_with_identity(
         &self,
         path: &str,
@@ -281,7 +281,7 @@ impl TaskApiClient {
         Ok(bytes.to_vec())
     }
 
-    /// POST JSON + JWT + 身份头 → 返回 data（自动注入 sessionCert）
+    /// POST JSON + JWT + identity header -> returns data (sessionCert auto-injected).
     pub async fn post_with_identity(
         &mut self,
         path: &str,
@@ -312,11 +312,11 @@ impl TaskApiClient {
         result
     }
 
-    /// POST 原始 body + 自定义 Content-Type + JWT + 身份头（agenticId）
+    /// POST raw body + custom Content-Type + JWT + identity header (agenticId).
     ///
-    /// 用于手写 multipart body 等需要精确控制 wire 格式的场景（curl 兼容）。
-    /// 调用方手写 body bytes 并提供 Content-Type（含 boundary）；
-    /// 比 reqwest 自带的 `multipart::Form` builder 更可控，避免 chunked 传输 / part 头不可控问题。
+    /// Used for scenarios that need precise control over the wire format, such as hand-rolled multipart bodies (curl-compatible).
+    /// Callers write the body bytes themselves and provide the Content-Type (including the boundary);
+    /// this is more controllable than reqwest's built-in `multipart::Form` builder and avoids chunked-transfer / part-header issues.
     pub async fn raw_post_with_identity(
         &mut self,
         path: &str,
