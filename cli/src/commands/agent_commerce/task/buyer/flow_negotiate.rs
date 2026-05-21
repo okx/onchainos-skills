@@ -20,11 +20,17 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              ```bash\n\
              onchainos agent service-list --agent-id {dp_id}\n\
              ```\n\
+             ⚠️ `--agent-id` is a **required named flag** — do NOT pass the agent ID as a positional argument (e.g. `service-list {dp_id}` will error). Always use `--agent-id {dp_id}`.\n\
+             If the command returns an error (e.g. \"unexpected argument\", \"unrecognized\"), **retry once** using the exact command above with `--agent-id`. Do NOT skip D-Steps on error — the routing decision depends on this result.\n\
              Check whether the response contains services (non-empty `services` array) and inspect the `endpoint`, `feeAmount`, `feeTokenSymbol` fields on each service.\n\n\
              **D-Step 1.5 - online-status check (only effective on the escrow path):**\n\
-             Read `agentInfo.onlineStatus` from the service-list JSON (1=online / 2=offline).\n\
-             - `onlineStatus == 1` (online) -> continue to D-Step 2.\n\
-             - `onlineStatus == 2` or field missing (offline / unknown) AND **no endpoint** (so you are about to enter the escrow negotiation path) -> the ASP is offline and cannot negotiate.\n\
+             Query the ASP's profile to get its online status:\n\
+             ```bash\n\
+             onchainos agent profile {dp_id}\n\
+             ```\n\
+             Read `onlineStatus` from the response (1=online / 2=offline). If the field is missing, null, or empty, treat the ASP as **online** (the backend may not yet return this field).\n\
+             - `onlineStatus == 1` **or field missing/null/empty** (online / unknown) -> continue to D-Step 2.\n\
+             - `onlineStatus == 2` AND **no endpoint** (so you are about to enter the escrow negotiation path) -> the ASP is offline and cannot negotiate.\n\
              \x20\x20Call xmtp_prompt_user to notify the user:\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user's intent is \"option A / specify ASP\" and they provide an agentId -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<agentId provided by user>] User reply verbatim: <user reply>\") to relay back to the sub session; \"option B / public\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] User reply verbatim: <user reply>\"); \"option C / close\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\"). ⚠️ Routing-tag protocol: intent names must be inserted verbatim in ALL-CAPS ASCII; never translate or rewrite. ⚠️ The relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
              \x20\x20userContent: {provider_offline}\n\
