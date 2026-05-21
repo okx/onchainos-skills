@@ -3,7 +3,7 @@
 //! Provides reusable sign-and-broadcast helpers for task CLI commands.
 //! All on-chain write operations go through one of these flows:
 //!
-//! - [`sign_uop_and_broadcast`] — sign uopData + broadcast (caller已拿到 uopData)
+//! - [`sign_uop_and_broadcast`] — sign uopData + broadcast (caller already has uopData)
 //! - [`task_dual_sign_and_broadcast`] — dual-sign for complete/refuse
 //!   (pre-endpoint → sign typedData → main endpoint → sign uopHash → broadcast)
 
@@ -29,15 +29,15 @@ pub struct BroadcastResult {
     pub tx_hash: String,
 }
 
-/// 从上一步 API 响应中提取 bizType（数字），原样透传给广播接口。
+/// Extract bizType (numeric) from the previous step's API response and pass through to the broadcast endpoint as-is.
 pub fn extract_biz_type(resp: &Value) -> i64 {
     resp["type"].as_i64().unwrap_or(0)
 }
 
 /// Resolve wallet account_id and address for XLayer.
 ///
-/// - `account_id`: 指定账户 ID。传 `None` 使用当前默认钱包。
-/// - `address`: 指定地址。传 `None` 使用该账户的默认 XLayer 地址。
+/// - `account_id`: specified account ID. Pass `None` to use the current default wallet.
+/// - `address`: specified address. Pass `None` to use the account's default XLayer address.
 ///
 /// Returns (account_id, address).
 pub fn resolve_wallet(
@@ -98,7 +98,7 @@ pub async fn resolve_wallet_and_agent_for_provider(
     client: &mut TaskApiClient,
     job_id: &str,
 ) -> Result<(String, String, String)> {
-    // 先通过本地身份列表拿 provider agentId，用于 GET 请求带 agenticId header
+    // First fetch provider agentId from local identity list, used for GET request with agenticId header
     let local_agent_id = resolve_agent_by_role(AGENT_ROLE_PROVIDER, "provider（卖家）", None)
         .await
         .map(|(id, _)| id)
@@ -122,12 +122,12 @@ async fn query_agent_list() -> Vec<Value> {
     fetch_my_agents().await
 }
 
-/// 在 `onchainos agent get` 列表里按 `role` 筛选，可选限定 `ownerAddress`。
+/// Filter the `onchainos agent get` list by `role`, optionally constrained by `ownerAddress`.
 ///
-/// - `wallet_address`: 传 `Some(addr)` 则只匹配 `ownerAddress` 一致的身份（大小写不敏感）；
-///   传 `None` 则取首个匹配 role 的（用于只需 agentId header 的只读场景）。
+/// - `wallet_address`: pass `Some(addr)` to only match identities with matching `ownerAddress` (case-insensitive);
+///   pass `None` to take the first matching role (for read-only scenarios that only need the agentId header).
 ///
-/// 返回 `(agent_id, owner_address)`。
+/// Returns `(agent_id, owner_address)`.
 async fn resolve_agent_by_role(
     role_code: i64,
     role_label: &str,
@@ -163,13 +163,13 @@ async fn resolve_agent_by_role(
 
 /// Resolve wallet + evaluator agentId for signing.
 ///
-/// 按 `agent_id` 调 `fetch_my_agent_by_id`（走 `agent get` 全量拉，然后客户端
-/// 按 `agentId` 过滤）拿 `agentWalletAddress` → 在 wallet store 中找对应账户。
-/// `agent_id` 必传（来自系统消息 envelope 的顶层 `agentId`），是多身份场景下
-/// 唯一的正确路径——禁用「默认钱包反查」兜底以防错位签名。
+/// Call `fetch_my_agent_by_id` by `agent_id` (does a full `agent get` pull, then client-side
+/// filters by `agentId`) to get `agentWalletAddress` → find the corresponding account in wallet store.
+/// `agent_id` is required (from system message envelope's top-level `agentId`); it is the only
+/// correct path in multi-identity scenarios — the "default wallet reverse lookup" fallback is disabled to prevent mis-signing.
 ///
-/// 唯一例外：`staking-config` 是 platform-level 只读 API，不签名、不动
-/// 钱包，直接调 `resolve_agent_id_by_role(AGENT_ROLE_EVALUATOR)` 取 header 用。
+/// Sole exception: `staking-config` is a platform-level read-only API that doesn't sign and doesn't
+/// touch the wallet; it calls `resolve_agent_id_by_role(AGENT_ROLE_EVALUATOR)` directly for the header.
 ///
 /// Returns `(account_id, address, evaluator_agent_id)`.
 pub async fn resolve_wallet_and_agent_for_evaluator(
@@ -226,8 +226,8 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
     Ok((account_id, address, id.to_string()))
 }
 
-/// 仅解析 agentId（不解析 wallet），用于只读查询命令 fallback。
-/// 失败返回 Ok(String::new())，不阻断调用方。
+/// Resolve agentId only (not wallet), used as fallback for read-only query commands.
+/// On failure returns Ok(String::new()) without blocking the caller.
 pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
     let label = match role_code {
         1 => "buyer（买家）",
@@ -241,12 +241,12 @@ pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
         .unwrap_or_default())
 }
 
-/// 签名 uopData + 广播上链（纯签名广播，不含 API 请求）
+/// Sign uopData + broadcast on-chain (pure sign-broadcast, no API request).
 ///
-/// 接收后端返回的 `uopData`，签名后通过 `TaskApiClient` 广播到链上，返回 txHash。
-/// API 请求由调用方通过 `TaskApiClient` 完成。
+/// Receives `uopData` from the backend, signs it, then broadcasts on-chain via `TaskApiClient` and returns txHash.
+/// The API request is performed by the caller via `TaskApiClient`.
 ///
-/// `biz_context` 标记业务场景（TaskAccept / DisputeCreate 等），随广播请求发送供后端区分。
+/// `biz_context` marks the business scenario (TaskAccept / DisputeCreate etc.) and is sent with the broadcast request so the backend can distinguish them.
 pub async fn sign_uop_and_broadcast(
     client: &mut TaskApiClient,
     uop_data: &Value,
@@ -263,9 +263,10 @@ pub async fn sign_uop_and_broadcast(
     let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
         .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
 
-    // 模拟执行失败兜底：后端返回 uopData 非空但 executeResult=false 表示链上 estimateGas
-    // 已 revert（合约校验不过 / 余额不足 / approve 不够等），此时 hash/uopHash 都是空串，
-    // 继续走 broadcast 只会被下游兜底拒掉、掩盖真实失败原因。这里直接抛 executeErrorMsg。
+    // Simulation-failure guard: backend returns non-empty uopData but executeResult=false means
+    // on-chain estimateGas already reverted (contract check failed / insufficient balance / insufficient approve, etc.);
+    // at this point hash/uopHash are empty strings, and continuing to broadcast would only be
+    // rejected by downstream guards and mask the real failure reason. Throw executeErrorMsg directly here.
     let exec_ok = match &unsigned.execute_result {
         Value::Bool(b) => *b,
         Value::Null => true,
@@ -304,9 +305,9 @@ pub async fn sign_uop_and_broadcast(
         .to_string())
 }
 
-/// sign_uop_and_broadcast 的变体，仅 vote/commit 场景使用：
-/// 把后端返回的 `commitSalt` 和 evaluator 选择的 `vote`(0/1) 附加到 bizContext，
-/// 让链上广播能复原 `commitHash = keccak256(disputeId, vote, salt)` 的素材。
+/// Variant of sign_uop_and_broadcast used only for vote/commit scenarios:
+/// attaches the backend-returned `commitSalt` and the evaluator's chosen `vote` (0/1) to bizContext,
+/// so the on-chain broadcast can reconstruct the material for `commitHash = keccak256(disputeId, vote, salt)`.
 #[allow(clippy::too_many_arguments)]
 pub async fn sign_uop_and_broadcast_with_commit_meta(
     client: &mut TaskApiClient,
@@ -366,8 +367,8 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
         .to_string())
 }
 
-/// sign_uop_and_broadcast 的变体，支持在 bizContext 中附加 paymentVerify。
-/// 仅 escrow accept 场景需要。
+/// Variant of sign_uop_and_broadcast that supports attaching paymentVerify in bizContext.
+/// Required only for the escrow accept scenario.
 #[allow(clippy::too_many_arguments)]
 pub async fn sign_uop_and_broadcast_with_payment(
     client: &mut TaskApiClient,
@@ -425,7 +426,7 @@ pub async fn sign_uop_and_broadcast_with_payment(
         .to_string())
 }
 
-/// 用 session key 对 EIP-712 digest 进行签名，返回 hex 签名字符串。
+/// Sign an EIP-712 digest with the session key and return a hex signature string.
 pub fn sign_digest_with_session_key(digest: &str) -> Result<String> {
     let session = crate::wallet_store::load_session()?
         .ok_or_else(|| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
@@ -438,8 +439,8 @@ pub fn sign_digest_with_session_key(digest: &str) -> Result<String> {
     crate::crypto::ed25519_sign_hex(digest, &signing_seed_b64)
 }
 
-/// 对 EIP-712 typedData 进行签名，返回最终的 ECDSA 签名 hex。
-/// 委托给 `agentic_wallet::sign::eip712_sign_raw`（gen-msg-hash → ed25519 → sign-msg）。
+/// Sign EIP-712 typedData and return the final ECDSA signature hex.
+/// Delegates to `agentic_wallet::sign::eip712_sign_raw` (gen-msg-hash → ed25519 → sign-msg).
 pub async fn sign_typed_data(typed_data: &Value, from_address: &str) -> Result<String> {
     eprintln!("[debug] sign_typed_data 入参: from={from_address}, typedData primaryType={}", typed_data["primaryType"]);
     let sig = crate::commands::agentic_wallet::sign::eip712_sign_raw(
@@ -483,10 +484,10 @@ pub async fn task_dual_sign_and_broadcast(
     }
     let nonce = pre_resp["nonce"].as_str().unwrap_or("");
 
-    // Step 2: EIP-712 签名 typedData
+    // Step 2: EIP-712 sign typedData
     let signature = sign_typed_data(typed_data, address).await?;
 
-    // Step 3: 构造 signatureData + merge extra fields → POST main endpoint
+    // Step 3: build signatureData + merge extra fields → POST main endpoint
     let mut main_body = serde_json::json!({
         "signatureData": {
             "signature": signature,
