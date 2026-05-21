@@ -76,7 +76,14 @@ pub fn build_intent(args: BuildIntentArgs<'_>) -> String {
 }
 
 /// Human decimal → raw integer string (`"0.01"` + 6 → `"10000"`). Bails on
-/// non-numeric, multiple dots, or fractional digits beyond `decimals`.
+/// non-numeric, multiple dots, fractional digits beyond `decimals`, or
+/// inputs that round to zero minimal units.
+///
+/// Caller audit (2026-05-21): the only caller is `handlers::create_limit`'s
+/// `from_amount_raw` builder. No cancel / resume / list path uses this
+/// function, so rejecting `"0"` here is not a no-op-regression risk. Update
+/// this comment if a new caller is added that legitimately needs an
+/// `Ok("0")` no-op.
 pub fn shift_value(amount: &str, decimals: u32) -> Result<String> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {

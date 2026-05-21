@@ -37,9 +37,10 @@ pub fn validate_amount(amount: &str) -> Result<()> {
 }
 
 /// Validate that `slippage` is a number strictly greater than 0 and at most 100.
-/// Accepts decimals like "0.5", "1", "99.9", "100". Rejects "0", negatives, >100, non-numeric.
+/// Accepts decimals like "0.5", "1", "99.9", "100" and trailing `%` (e.g. "20%").
+/// Rejects "0", negatives, >100, non-numeric.
 pub fn validate_slippage(slippage: &str) -> Result<()> {
-    let slippage = slippage.trim();
+    let slippage = slippage.trim().trim_end_matches('%').trim();
     let val: f64 = slippage.parse().map_err(|_| {
         anyhow::anyhow!(
             "--slippage must be a number between 0 (exclusive) and 100 (inclusive), got \"{}\"",
@@ -82,8 +83,9 @@ pub fn validate_non_negative_integer(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
-/// Backend expects orderId as Long (≤ 32 digits to stay clearly within i64);
-/// reject non-numeric strings early so BE doesn't have to.
+/// Backend expects orderId as Java Long (`i64`, max value
+/// `9_223_372_036_854_775_807` — 19 digits). Reject non-numeric strings
+/// and any value that overflows i64 early so BE doesn't have to.
 pub fn validate_order_id_numeric(id: &str, label: &str) -> Result<()> {
     let trimmed = id.trim();
     if trimmed.is_empty() {
@@ -92,10 +94,13 @@ pub fn validate_order_id_numeric(id: &str, label: &str) -> Result<()> {
     if !trimmed.chars().all(|c| c.is_ascii_digit()) {
         bail!("--{label} must be a numeric order id, got `{trimmed}`");
     }
-    if trimmed.len() > 32 {
+    // Reject overflow against i64::MAX (19 digits). `parse::<i64>()` is the
+    // tightest check — also catches the boundary case "9223372036854775808"
+    // (20-th value of 19-digit space that won't fit in i64).
+    if trimmed.parse::<i64>().is_err() {
         bail!(
-            "--{label} `{trimmed}` is too long ({} digits); order ids must be ≤ 32 digits",
-            trimmed.len()
+            "--{label} `{trimmed}` does not fit in BE Long range (max {})",
+            i64::MAX
         );
     }
     Ok(())
@@ -106,13 +111,18 @@ pub fn validate_order_id_numeric(id: &str, label: &str) -> Result<()> {
 /// Convert a human-readable decimal string to minimal units (integer string).
 /// Uses string arithmetic to avoid floating-point precision issues.
 /// e.g. "0.1" with decimal=6 → "100000", "1.5" with decimal=18 → "1500000000000000000".
+/// Accepts leading-`.`  form (`".5"` == `"0.5"`) and trims surrounding whitespace
+/// to match `trader_mode::shift_value`'s contract.
 pub fn readable_to_minimal_str(amount: &str, decimal: u32) -> Result<String> {
+    let amount = amount.trim();
     let (integer, frac) = if let Some(dot_pos) = amount.find('.') {
         (&amount[..dot_pos], &amount[dot_pos + 1..])
     } else {
         (amount, "")
     };
-    if integer.is_empty() || !integer.chars().all(|c| c.is_ascii_digit()) {
+    // Treat leading `.` as `0.` — `".5"` == `"0.5"`.
+    let integer = if integer.is_empty() { "0" } else { integer };
+    if !integer.chars().all(|c| c.is_ascii_digit()) {
         bail!(
             "--readable-amount must be a positive number, got \"{}\"",
             amount
@@ -181,6 +191,24 @@ mod tests {
         assert_eq!(readable_to_minimal_str("0.1230000", 6).unwrap(), "123000");
     }
 
+    #[test]
+    fn test_readable_to_minimal_str_too_small_rejects() {
+        // Per the function contract, sub-precision amounts that round to zero
+        // minimal units must bail rather than silently produce "0".
+        assert!(readable_to_minimal_str("0.0000001", 6).is_err());
+        assert!(readable_to_minimal_str("0.0", 18).is_err());
+        assert!(readable_to_minimal_str("0", 6).is_err());
+    }
+
+    #[test]
+    fn test_readable_to_minimal_str_accepts_leading_dot_and_whitespace() {
+        // Match trader_mode::shift_value's contract: ".5" == "0.5", and
+        // surrounding whitespace is trimmed.
+        assert_eq!(readable_to_minimal_str(".5", 6).unwrap(), "500000");
+        assert_eq!(readable_to_minimal_str("  1.5  ", 6).unwrap(), "1500000");
+        assert_eq!(readable_to_minimal_str(" .000001 ", 6).unwrap(), "1");
+    }
+
     // ── slippage validation ────────────────────────────────────────
 
     #[test]
@@ -194,6 +222,17 @@ mod tests {
         assert!(validate_slippage("0.001").is_ok());
         assert!(validate_slippage("0.01").is_ok());
         assert!(validate_slippage("  1  ").is_ok()); // trimmed
+    }
+
+    #[test]
+    fn test_validate_slippage_accepts_percent_suffix() {
+        // Caller docs (handlers.rs CreateLimitArgs::slippage) promise both
+        // "20" and "20%" work; mirror that here.
+        assert!(validate_slippage("20%").is_ok());
+        assert!(validate_slippage("0.5%").is_ok());
+        assert!(validate_slippage(" 100% ").is_ok());
+        assert!(validate_slippage("0%").is_err()); // still rejects 0
+        assert!(validate_slippage("101%").is_err()); // still range-checks
     }
 
     #[test]
@@ -318,11 +357,16 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_order_id_numeric_rejects_too_long() {
-        let too_long = "1".repeat(33);
-        assert!(validate_order_id_numeric(&too_long, "order-id").is_err());
-        let max_len = "1".repeat(32);
-        assert!(validate_order_id_numeric(&max_len, "order-id").is_ok());
+    fn test_validate_order_id_numeric_rejects_i64_overflow() {
+        // i64::MAX = 9_223_372_036_854_775_807 (19 digits)
+        assert!(validate_order_id_numeric("9223372036854775807", "order-id").is_ok());
+        // One past the max → fails parse::<i64>()
+        assert!(validate_order_id_numeric("9223372036854775808", "order-id").is_err());
+        // 20 digits → overflows
+        let twenty = "1".repeat(20);
+        assert!(validate_order_id_numeric(&twenty, "order-id").is_err());
+        // Real-world BE ids fit comfortably (17-18 digits)
+        assert!(validate_order_id_numeric("17296046425729984", "order-id").is_ok());
     }
 
     #[test]

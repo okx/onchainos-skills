@@ -35,6 +35,11 @@ const ACTIVATE_DEFAULT_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// `sourceType` value for Agentic-Wallet origin (BE-confirmed 2026-05-12).
 const SOURCE_TYPE_AGENTIC: i32 = 4;
 
+// Label strings reused across cancel / resume's order-id validation —
+// kept as consts to avoid singular/plural typos drifting across call sites.
+const ORDER_ID_LABEL: &str = "order-id";
+const ORDER_IDS_LABEL: &str = "order-ids";
+
 // ── create-limit ──
 
 #[derive(Args, Debug)]
@@ -164,9 +169,16 @@ async fn fetch_token_price(
             serde_json::to_string(item).unwrap_or_default()
         )
     })?;
-    price_str
-        .parse::<f64>()
-        .map_err(|e| anyhow!("market price `{price_str}` is not a number: {e}"))
+    let price: f64 = price_str
+        .parse()
+        .map_err(|e| anyhow!("market price `{price_str}` is not a number: {e}"))?;
+    if price <= 0.0 || !price.is_finite() {
+        bail!(
+            "market price for `{address}` on chain `{chain_index}` is not a positive finite number, got `{price_str}` — \
+             refusing to use it for strategy type derivation (would risk div-by-zero / NaN downstream)"
+        );
+    }
+    Ok(price)
 }
 
 pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
@@ -455,7 +467,7 @@ fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq
             bail!("--order-ids parsed into an empty list");
         }
         for id in &parsed {
-            crate::validators::validate_order_id_numeric(id, "order-ids")?;
+            crate::validators::validate_order_id_numeric(id, ORDER_IDS_LABEL)?;
         }
         return Ok(CancelReq {
             account_id: account_id.to_string(),
@@ -464,7 +476,7 @@ fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq
         });
     }
     if let Some(id) = args.order_id.as_ref() {
-        crate::validators::validate_order_id_numeric(id, "order-id")?;
+        crate::validators::validate_order_id_numeric(id, ORDER_ID_LABEL)?;
         return Ok(CancelReq {
             account_id: account_id.to_string(),
             order_ids: Some(vec![id.clone()]),
@@ -712,7 +724,7 @@ pub async fn resume(ctx: &Context, args: ResumeArgs) -> Result<()> {
             .filter(|s| !s.is_empty())
             .collect();
         for id in &parsed {
-            crate::validators::validate_order_id_numeric(id, "order-ids")?;
+            crate::validators::validate_order_id_numeric(id, ORDER_IDS_LABEL)?;
         }
         parsed
     } else {
