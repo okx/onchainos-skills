@@ -18,13 +18,13 @@ pub async fn handle_info(
     client: &mut TaskApiClient,
     job_id: &str,
     agent_id: &str,
-    round_num: &str,
+    round_number: &str,
 ) -> Result<()> {
     // Pre-gate: the 4 AND hard gates before commit (taskStatus not terminal /
     // round aligned / disputeStatus=CommitPhase / selectedVoter non-null).
     // Any failure → precheck already printed `reason: ...` + `selected: no`;
     // this function returns early without downloading evidence.
-    if !dispute_status::precheck_round_gate(client, job_id, agent_id, round_num).await? {
+    if !dispute_status::precheck_round_gate(client, job_id, agent_id, round_number).await? {
         return Ok(());
     }
 

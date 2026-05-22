@@ -34,7 +34,7 @@ For an agent in the evaluator role, any non-`source:"system"` inbound envelope (
 
 | Scenario | Command |
 |---|---|
-| Inspect arbitration details (evidence + criteria, with built-in pre-commit hard gate) | `onchainos agent evidence-info <jobId> --agent-id <evaluatorAgentId> --round-num <envelope top-level roundNum>` |
+| Inspect arbitration details (evidence + criteria, with built-in pre-commit hard gate) | `onchainos agent evidence-info <jobId> --agent-id <evaluatorAgentId> --round-number <envelope top-level roundNumber>` |
 | Inspect raw task info | `onchainos agent status <jobId>` |
 | Check account-level claimable rewards | `onchainos agent arbitration-claimable --agent-id <evaluatorAgentId>` |
 

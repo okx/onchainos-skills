@@ -386,12 +386,12 @@ Multipart upload of off-chain evidence to the backend (`POST /aieco/task/{jobId}
 ### evidence-info
 
 ```
-agent evidence-info <jobId> --agent-id <evaluatorAgentId> --round-num <roundNum from envelope top level>
+agent evidence-info <jobId> --agent-id <evaluatorAgentId> --round-number <roundNumber from envelope top level>
 ```
 
 Fetch evidence + built-in pre-commit hard gate (carries its own stale-round check; no separate command needed). Flow:
 
-1. **Pre-gate**: first calls `GET /priapi/v1/aieco/task/{jobId}/dispute/status` and AND-validates four conditions — ① `taskStatus` is not a terminal value (≠ 6 Completed / 7 Close / 8 Expired / 9 Rejected); ② `--round-num` equals the response's `currentRound`; ③ `disputeStatus = 3 (commit_phase)`; ④ `selectedVoter` non-empty (the current account is among the selected voters for this round).
+1. **Pre-gate**: first calls `GET /priapi/v1/aieco/task/{jobId}/dispute/status` and AND-validates four conditions — ① `taskStatus` is not a terminal value (≠ 6 Completed / 7 Close / 8 Expired / 9 Rejected); ② `--round-number` equals the response's `currentRound`; ③ `disputeStatus = 3 (commit_phase)`; ④ `selectedVoter` non-empty (the current account is among the selected voters for this round).
 2. **stdout stable markers** (use these two lines to decide what to do next; do not judge by other fields):
    - `selected: no` → immediately followed by `reason: <details>`; CLI does NOT download evidence; **immediately end the turn** (continuing to commit / vote-record will incur a stake slash).
    - `selected: yes` → continue parsing the subsequent evidence JSON.

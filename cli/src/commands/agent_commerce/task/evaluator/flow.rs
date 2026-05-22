@@ -84,11 +84,11 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              **1.3** Compare the two `[evaluator-routing]` lines above character-by-character (don't go by impression — base it on the two printed lines):\n\
              - Exact match → proceed to Step 2.\n\
              - Any character differs → call `xmtp_dispatch_session` (`sessionKey=arbKey`, `content=<the entire current inbound envelope as a JSON string>`, **insert all fields verbatim, no rewriting**), then **end this turn**.\n\n\
-             **Step 2 — Extract `jobId`, top-level `agentId` (your evaluator agentId), and top-level `roundNum` from the inbound envelope.**\n\
-             If any of `jobId` / top-level `agentId` / `roundNum` is missing, abort this turn immediately and output `missing jobId/agentId/roundNum in payload; abort` log.\n\
+             **Step 2 — Extract `jobId`, top-level `agentId` (your evaluator agentId), and top-level `roundNumber` from the inbound envelope.**\n\
+             If any of `jobId` / top-level `agentId` / `roundNumber` is missing, abort this turn immediately and output `missing jobId/agentId/roundNumber in payload; abort` log.\n\
              **Step 3 — Fetch evidence:**\n\
              ```bash\n\
-             onchainos agent evidence-info <jobId> --agent-id <envelope top-level agentId> --round-num <envelope top-level roundNum>\n\
+             onchainos agent evidence-info <jobId> --agent-id <envelope top-level agentId> --round-number <envelope top-level roundNumber>\n\
              ```\n\n\
              Evidence JSON top-level: `{{ title, description, provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`. `description` / `title` is the task's original definition; `texts[]` is text evidence; `images[]` is already downloaded — each item has `localPath` (absolute path; use it to open the image).\n\n\
              **Post-evidence hard constraints**:\n\
