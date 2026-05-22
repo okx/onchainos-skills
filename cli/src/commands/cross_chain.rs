@@ -342,7 +342,7 @@ pub enum CrossChainCommand {
         /// Raw amount in minimal units. Mutually exclusive with --readable-amount.
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
-        /// Slippage tolerance (decimal, 0.002–0.5). Default 0.01 (1%).
+        /// Slippage tolerance as **decimal**, range (0, 1] (e.g. 0.01 = 1%, 0.5 = 50%). Default "0.01".
         #[arg(long, default_value = "0.01")]
         slippage: String,
         /// User wallet address. Required when --check-approve is set.
@@ -354,8 +354,8 @@ pub enum CrossChainCommand {
         /// Pin a specific bridge id (openApiCode from quote / supported-bridges)
         #[arg(long)]
         bridge_id: Option<String>,
-        /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
-        #[arg(long)]
+        /// Sort preference: 0=optimal, 1=fastest, 2=max output. Omit to let BE pick (BE-default = 0).
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["0", "1", "2"]))]
         sort: Option<String>,
         /// Allowed bridges (comma-separated bridge ids)
         #[arg(long)]
@@ -370,7 +370,11 @@ pub enum CrossChainCommand {
         receive_address: Option<String>,
     },
 
-    /// Build ERC-20 approve transaction for a bridge router (manual use)
+    /// Build ERC-20 approve transaction for a bridge router (manual use).
+    ///
+    /// Exactly one of `--amount` (raw integer, smallest token unit) or
+    /// `--readable-amount` (human-readable decimal, CLI fetches token
+    /// decimals and converts) is required. They are mutually exclusive.
     Approve {
         #[arg(long)]
         chain: String,
@@ -380,10 +384,17 @@ pub enum CrossChainCommand {
         wallet: String,
         #[arg(long)]
         bridge_id: String,
-        /// Approve amount human-readable (e.g. "100" for 100 USDC, "0" to revoke).
-        /// /approve-tx accepts human-readable values, not raw.
-        #[arg(long)]
-        readable_amount: String,
+        /// Approve amount in **smallest token unit** (raw integer, e.g. "500000"
+        /// for 0.5 USDC at 6 decimals). Pass "0" to revoke (USDT pattern).
+        /// Mutually exclusive with --readable-amount.
+        #[arg(long, conflicts_with = "readable_amount")]
+        amount: Option<String>,
+        /// Approve amount in **human-readable form** (e.g. "0.5" for 0.5 USDC).
+        /// CLI fetches token decimals via token-info and converts to raw
+        /// minimal units before broadcast. Pass "0" / "0.0" to revoke
+        /// (equivalent to `--amount 0`). Mutually exclusive with --amount.
+        #[arg(long, conflicts_with = "amount")]
+        readable_amount: Option<String>,
         /// Skip server allowance check (default: skip; pass --check-allowance to enable)
         #[arg(long, default_value_t = false)]
         check_allowance: bool,
@@ -403,6 +414,7 @@ pub enum CrossChainCommand {
         readable_amount: Option<String>,
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
+        /// Slippage tolerance as **decimal**, range (0, 1] (e.g. 0.01 = 1%, 0.5 = 50%). Default "0.01".
         #[arg(long, default_value = "0.01")]
         slippage: String,
         #[arg(long)]
@@ -413,8 +425,8 @@ pub enum CrossChainCommand {
         /// Pin a specific bridge id
         #[arg(long)]
         bridge_id: Option<String>,
-        /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
-        #[arg(long)]
+        /// Sort preference: 0=optimal, 1=fastest, 2=max output. Omit to let BE pick (BE-default = 0).
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["0", "1", "2"]))]
         sort: Option<String>,
         /// Allowed bridges (comma-separated bridge ids)
         #[arg(long)]
@@ -438,6 +450,7 @@ pub enum CrossChainCommand {
         readable_amount: Option<String>,
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
+        /// Slippage tolerance as **decimal**, range (0, 1] (e.g. 0.01 = 1%, 0.5 = 50%). Default "0.01".
         #[arg(long, default_value = "0.01")]
         slippage: String,
         #[arg(long)]
@@ -452,8 +465,8 @@ pub enum CrossChainCommand {
         /// Mutually exclusive with --bridge-id.
         #[arg(long, conflicts_with = "bridge_id")]
         route_index: Option<usize>,
-        /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
-        #[arg(long)]
+        /// Sort preference: 0=optimal, 1=fastest, 2=max output. Omit to let BE pick (BE-default = 0).
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["0", "1", "2"]))]
         sort: Option<String>,
         /// Allowed bridges (comma-separated bridge ids)
         #[arg(long)]
@@ -574,8 +587,9 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             if let Some(addr) = receive_address.as_deref() {
                 validate_receive_address(addr, &to_idx)?;
             }
-            let from_token = crate::commands::swap::resolve_token_address(&from_idx, &from);
-            let to_token = crate::commands::swap::resolve_token_address(&to_idx, &to);
+            let from_token = crate::token_alias::resolve_and_validate(&from_idx, &from, "from")?;
+            let to_token = crate::token_alias::resolve_and_validate(&to_idx, &to, "to")?;
+            crate::validators::validate_slippage_zero_to_one(&slippage)?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
                 amount.as_deref(),
@@ -610,12 +624,22 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             token,
             wallet,
             bridge_id,
+            amount,
             readable_amount,
             check_allowance,
         } => {
             let chain_idx = crate::chains::resolve_chain(&chain).to_string();
             crate::chains::ensure_supported_chain(&chain_idx, &chain)?;
-            let resolved_token = crate::commands::swap::resolve_token_address(&chain_idx, &token);
+            let resolved_token =
+                crate::token_alias::resolve_and_validate(&chain_idx, &token, "token")?;
+            let raw_amount = resolve_approve_amount(
+                &mut client,
+                amount.as_deref(),
+                readable_amount.as_deref(),
+                &resolved_token,
+                &chain_idx,
+            )
+            .await?;
             output::success(
                 fetch_approve_tx(
                     &mut client,
@@ -623,7 +647,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
                     &resolved_token,
                     &wallet,
                     &bridge_id,
-                    &readable_amount,
+                    &raw_amount,
                     check_allowance,
                 )
                 .await?,
@@ -649,11 +673,13 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             let to_idx = crate::chains::resolve_chain(&to_chain).to_string();
             crate::chains::ensure_supported_chain(&from_idx, &from_chain)?;
             crate::chains::ensure_supported_chain(&to_idx, &to_chain)?;
-            let from_token = crate::commands::swap::resolve_token_address(&from_idx, &from);
-            let to_token = crate::commands::swap::resolve_token_address(&to_idx, &to);
+            let from_token = crate::token_alias::resolve_and_validate(&from_idx, &from, "from")?;
+            let to_token = crate::token_alias::resolve_and_validate(&to_idx, &to, "to")?;
+            crate::token_alias::validate_address_for_chain(&from_idx, &wallet, "wallet")?;
             if let Some(ref addr) = receive_address {
                 validate_receive_address(addr, &to_idx)?;
             }
+            crate::validators::validate_slippage_zero_to_one(&slippage)?;
             let raw_amount = crate::commands::swap::resolve_amount_arg(
                 &mut client,
                 amount.as_deref(),
@@ -784,6 +810,73 @@ pub(crate) fn validate_receive_address(receive_address: &str, to_chain_index: &s
     }
 }
 
+
+/// Canonical zero: `"0"` or `"0.0…"` (only). Rejects `"-0"` / `"00"` / `"0e10"` / `".0"` / `"0."`.
+/// Examples: `"0"` ✓, `"0.000"` ✓, `"-0"` ✗, `"001"` ✗.
+fn is_canonical_zero_str(s: &str) -> bool {
+    if s == "0" {
+        return true;
+    }
+    s.starts_with("0.")
+        && s.len() > 2
+        && s[2..].chars().all(|c| c == '0')
+}
+
+/// Approve amount: raw `--amount` (allows `"0"` for revoke) or `--readable-amount`
+/// (human decimal, fetches token decimals + converts).
+/// Examples: `("500000", None)` → `"500000"`, `(None, "0.5")` → `"500000"` (USDC),
+/// `(None, "0")` → `"0"` (revoke).
+async fn resolve_approve_amount(
+    client: &mut ApiClient,
+    amount: Option<&str>,
+    readable_amount: Option<&str>,
+    token: &str,
+    chain_index: &str,
+) -> Result<String> {
+    if let Some(raw) = amount {
+        let raw = raw.trim();
+        crate::validators::validate_non_negative_integer(raw, "amount")?;
+        return Ok(raw.to_string());
+    }
+    if let Some(readable) = readable_amount {
+        let readable = readable.trim();
+        if readable.is_empty() {
+            bail!("--readable-amount must not be empty");
+        }
+        // Canonical zero → revoke; non-canonical forms fall through to readable_to_minimal_str.
+        if is_canonical_zero_str(readable) {
+            return Ok("0".to_string());
+        }
+        let info = crate::commands::token::fetch_info(client, token, chain_index)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to fetch token decimals for {token}: {e}. Use --amount with raw units instead."
+                )
+            })?;
+        let info_arr = info.as_array().filter(|a| !a.is_empty()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Token not found for address {token} on chain {chain_index}. \
+                 Verify the address is correct. Use --amount with raw units instead."
+            )
+        })?;
+        let decimal: u32 = match &info_arr[0]["decimal"] {
+            serde_json::Value::String(s) => s.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid decimal value \"{s}\" for token {token}")
+            })?,
+            serde_json::Value::Number(n) => n
+                .as_u64()
+                .ok_or_else(|| anyhow::anyhow!("Invalid decimal value for token {token}"))?
+                as u32,
+            _ => bail!(
+                "Token decimal not found for {token}. Use --amount with raw units instead."
+            ),
+        };
+        return crate::validators::readable_to_minimal_str(readable, decimal);
+    }
+    bail!("either --amount or --readable-amount is required")
+}
+
 // ── Execute orchestration (4-step flow) ────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -813,11 +906,13 @@ async fn cmd_execute(
     crate::chains::ensure_supported_chain(&from_idx, from_chain)?;
     crate::chains::ensure_supported_chain(&to_idx, to_chain)?;
 
-    let from_token = crate::commands::swap::resolve_token_address(&from_idx, from);
-    let to_token = crate::commands::swap::resolve_token_address(&to_idx, to);
+    let from_token = crate::token_alias::resolve_and_validate(&from_idx, from, "from")?;
+    let to_token = crate::token_alias::resolve_and_validate(&to_idx, to, "to")?;
+    crate::token_alias::validate_address_for_chain(&from_idx, wallet, "wallet")?;
     if let Some(addr) = receive_address {
         validate_receive_address(addr, &to_idx)?;
     }
+    crate::validators::validate_slippage_zero_to_one(slippage)?;
 
     let raw_amount = crate::commands::swap::resolve_amount_arg(
         client,
@@ -1195,6 +1290,40 @@ fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── is_canonical_zero_str ──────────────────────────────────────────
+
+    #[test]
+    fn canonical_zero_accepts_zero_forms() {
+        assert!(is_canonical_zero_str("0"));
+        assert!(is_canonical_zero_str("0.0"));
+        assert!(is_canonical_zero_str("0.00"));
+        assert!(is_canonical_zero_str("0.000000"));
+    }
+
+    #[test]
+    fn canonical_zero_rejects_signed_and_leading_zero_forms() {
+        // Signed → typo-ish, fall through to a real error
+        assert!(!is_canonical_zero_str("-0"));
+        assert!(!is_canonical_zero_str("+0"));
+        assert!(!is_canonical_zero_str("-0.0"));
+        // Leading-zero — validate_amount rejects elsewhere, keep parity
+        assert!(!is_canonical_zero_str("00"));
+        assert!(!is_canonical_zero_str("001"));
+        assert!(!is_canonical_zero_str("00.0"));
+    }
+
+    #[test]
+    fn canonical_zero_rejects_other_non_canonical_forms() {
+        assert!(!is_canonical_zero_str(""));
+        assert!(!is_canonical_zero_str("0."));        // no trailing digits
+        assert!(!is_canonical_zero_str(".0"));        // no leading "0"
+        assert!(!is_canonical_zero_str("0e10"));      // scientific notation
+        assert!(!is_canonical_zero_str("0.0.0"));     // not a valid number
+        assert!(!is_canonical_zero_str("0.0a"));      // mixed
+        assert!(!is_canonical_zero_str("1"));         // non-zero
+        assert!(!is_canonical_zero_str("0.1"));       // non-zero fractional
+    }
 
     // ── annotate_bridge_id_mismatch ─────────────────────────────────────────
 
