@@ -197,10 +197,16 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      🛑🛑🛑 STOP -- after xmtp_prompt_user in Step 3 you **MUST end this turn**\n\
      ===============================================================\n\
      This playbook ends here. In a later turn, upon receiving `[USER_DECISION_RELAY]`,\n\
-     call `next-action` by intent to fetch the matching playbook:\n\
+     you **MUST call `next-action`** to fetch the execution playbook — the playbook contains the on-chain command (`complete` or `reject`) that ONLY `next-action` can provide:\n\
      ▸ `[intent:APPROVE_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}`\n\
      ▸ `[intent:REJECT_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId {agent_id}`\n\
-     ❌ Do NOT run `onchainos agent complete` / `onchainos agent reject` in this turn -- those commands are not part of this playbook.\n\
+     Then execute the returned playbook in full (it will instruct you to run `onchainos agent complete` or `onchainos agent reject`).\n\
+     ===============================================================\n\
+     🔴🔴🔴 ABSOLUTE PROHIBITION upon receiving `[USER_DECISION_RELAY]`:\n\
+     ❌ Do NOT call `xmtp_dispatch_session` — you are the sub session (executor), NOT the user session (relay). Dispatching = the approval is lost and `complete` never runs.\n\
+     ❌ Do NOT call `pending-decisions remove` without first calling `next-action` — the returned playbook defines the correct order.\n\
+     ❌ Do NOT skip `next-action` and improvise — without the playbook you will miss the `onchainos agent complete` command and funds will stay locked forever.\n\
+     🔴 Real incident: a model received APPROVE_REVIEW, skipped next-action, called xmtp_dispatch_session to \"relay\" the approval — the on-chain complete was never executed, funds remained locked, and the user was told the job was approved when it was not.\n\
      ===============================================================\n\n\
      --------- Branch B: x402 -- notify the user (no rejection allowed) ---------\n\n\
      ⚠️ In x402 funds are already paid in the job_accepted stage; the user **cannot reject the deliverable**, just notify.\n\
@@ -353,6 +359,9 @@ pub(super) fn approve_review(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Action] Approve review -- run complete to release funds\n\
      [Role] User (User Agent)\n\n\
+     🛑🛑🛑 You are the **sub session** (executor). Your job is to run the on-chain `complete` command below — NOT to relay, forward, or dispatch the decision.\n\
+     ❌ Do NOT call `xmtp_dispatch_session` — that is the user-session agent's tool, not yours.\n\
+     ❌ Do NOT skip Step 2 (`onchainos agent complete`) — skipping it = funds stay locked forever.\n\n\
      Routed in via `[USER_DECISION_RELAY][intent:APPROVE_REVIEW]`; the user has approved the deliverable.\n\n\
      **Step 1 -- Clear pending-decisions:**\n\
      ```bash\n\
