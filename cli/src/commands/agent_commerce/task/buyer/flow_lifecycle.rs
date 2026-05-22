@@ -167,14 +167,14 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      🛑 After presenting userContent, **you MUST end this turn and wait for real user input** -- [USER_DECISION_REQUEST] is a **question**, not an **answer**; do not fabricate a user decision in the same turn.\
      🛑 **Do not run** onchainos agent commands (complete/reject/status or any task CLI) -- you only present and relay, never execute on-chain actions.\
      **After the user's real reply arrives** (next turn):\
-     User intent \"yes/approve/OK/agree etc.\" → **only call** xmtp_dispatch_session(sessionKey=\"<full sessionKey from Step 2 session_status>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] user said: <verbatim user reply, no interpretation, no translation>\") to relay back to the sub session, **and stop there** (the sub session will run the approve_review flow itself; do nothing else);\
-     User intent \"no/reject/decline/no etc. + reason\" → **only call** xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] user said: <verbatim user reply, including reason>\") to relay back to the sub session, **and stop there** (the sub session will run the reject_review flow itself; do nothing else).\
+     User expresses affirmative intent (acceptance, agreement, satisfaction) → **only call** xmtp_dispatch_session(sessionKey=\"<full sessionKey from Step 2 session_status>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] user said: <verbatim user reply, no interpretation, no translation>\") to relay back to the sub session, **and stop there** (the sub session will run the approve_review flow itself; do nothing else);\
+     User expresses negative intent (dissatisfaction, refusal) with a reason → **only call** xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] user said: <verbatim user reply, including reason>\") to relay back to the sub session, **and stop there** (the sub session will run the reject_review flow itself; do nothing else).\
      ⚠️ **Routing tag protocol**: `[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` MUST be inserted **verbatim, fully uppercase ASCII** -- **no translation / rewrite / omission / splitting** -- the sub branches on the intent tag, no longer on text matching, to avoid multilingual mismatch.\n\
      ⚠️ Relay MUST use the xmtp_dispatch_session tool (do not use sessions_send; it has session tree restrictions). ⚠️ xmtp_dispatch_session is called **exactly once**. {CONSTRAINT}\n\
-     \x20\x20\x20\x20userContent (split by deliverableType; first line must include `[Job {short_id} -- you are the User Agent]` prefix):\n\n\
+     \x20\x20\x20\x20userContent (split by deliverableType):\n\n\
      \x20\x20\x20\x20▸ deliverableType=file:\n\
-     \x20\x20\x20\x20[Job {short_id} -- you are the User Agent] The ASP has submitted the deliverable (file); it has been downloaded locally.\n\
-     \x20\x20\x20\x20📁 Deliverable file path: <localPath> (⚠️ must be full absolute path, e.g. /Users/xxx/Downloads/task.png; do not write filename only)\n\
+     \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (file); it has been downloaded locally.\n\
+     \x20\x20\x20\x20Deliverable file path: <localPath> (full absolute path, e.g. /Users/xxx/Downloads/task.png)\n\
      \x20\x20\x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
      \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20\x20\x20Quality standards: <qualityStandards>\n\
@@ -183,7 +183,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x201. Approve the deliverable\n\
      \x20\x20\x20\x202. Reject the deliverable — please provide a reason\n\n\
      \x20\x20\x20\x20▸ deliverableType=text:\n\
-     \x20\x20\x20\x20[Job {short_id} -- you are the User Agent] The ASP has submitted the deliverable (text).\n\
+     \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
      \x20\x20\x20\x20---Deliverable---\n\
      \x20\x20\x20\x20<deliverableText full content, no truncation, no summarization>\n\
      \x20\x20\x20\x20---End of deliverable---\n\
@@ -208,14 +208,14 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      **B-Step 1 -- Call xmtp_dispatch_user to notify the user (split by deliverableType):**\n\n\
      \x20\x20▸ deliverableType=file:\n\
      \x20\x20content:\n\
-     \x20\x20[Deliverable Received] Job `{job_id}` -- the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
-     \x20\x20📁 Deliverable file path: <localPath> (⚠️ must be full absolute path, e.g. /Users/xxx/Downloads/task.png; do not write filename only)\n\
+     \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
+     \x20\x20Deliverable file path: <localPath> (full absolute path, e.g. /Users/xxx/Downloads/task.png)\n\
      \x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20Quality standards: <qualityStandards>\n\n\
      \x20\x20▸ deliverableType=text:\n\
      \x20\x20content:\n\
-     \x20\x20[Deliverable Received] Job `{job_id}` -- the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
+     \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
      \x20\x20---Deliverable---\n\
      \x20\x20<deliverableText full content, no truncation, no summarization>\n\
      \x20\x20---End of deliverable---\n\
@@ -631,8 +631,9 @@ pub(super) fn refuse_expired(ctx: &FlowContext<'_>) -> String {
 pub(super) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
 
-    let review_deadline_prompt = super::content::review_deadline_warn_user_prompt(job_id);
+    let review_deadline_prompt = super::content::review_deadline_warn_user_prompt(job_id, short_id);
     format!(
     "[System Notification] review_deadline_warn (review deadline approaching)\n\
      [Role] User (User Agent)\n\n\
@@ -657,8 +658,8 @@ pub(super) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
      🛑 After presenting userContent, **you MUST end this turn and wait for real user input** -- [USER_DECISION_REQUEST] is a **question**, not an **answer**; do not fabricate a user decision in the same turn.\
      🛑 **Do not run** onchainos agent commands (complete/reject/status or any task CLI) -- you only present and relay, never execute on-chain actions.\
      **After the user's real reply arrives** (next turn):\
-     User intent \"yes/approve/OK/agree etc.\" → call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] user said: <verbatim user reply, no interpretation, no translation>\") to relay back to the sub session, which runs complete;\
-     User intent \"no/reject/decline/no etc. + reason\" → call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] user said: <verbatim user reply, including reason>\") to relay back to the sub session, which runs reject.\
+     User expresses affirmative intent (acceptance, agreement, satisfaction) → call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:APPROVE_REVIEW] user said: <verbatim user reply, no interpretation, no translation>\") to relay back to the sub session, which runs complete;\
+     User expresses negative intent (dissatisfaction, refusal) with a reason → call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_REVIEW] user said: <verbatim user reply, including reason>\") to relay back to the sub session, which runs reject.\
      ⚠️ **Routing tag protocol**: `[intent:APPROVE_REVIEW]` / `[intent:REJECT_REVIEW]` MUST be inserted **verbatim, fully uppercase ASCII**, **no translation / rewrite / omission** -- the sub branches on the intent tag, not on text matching.\n\
      ⚠️ Relay MUST use xmtp_dispatch_session (do not use sessions_send). ⚠️ xmtp_dispatch_session is called **exactly once**. {CONSTRAINT}\n\
      \x20\x20userContent:\n\

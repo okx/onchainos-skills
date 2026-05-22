@@ -46,16 +46,16 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20```\n\
              \x20\x20- `valid=false` -> call xmtp_prompt_user to tell the user the endpoint is invalid and guide them to pick a next step (user decision required):\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user's intent is \"option A / specify ASP\" and they provide an agentId -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<agentId provided by user>] User reply verbatim: <user reply>\"); \"option B / public\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] User reply verbatim: <user reply>\"); \"option C / close\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\"). ⚠️ Routing-tag protocol: intent names verbatim in ALL-CAPS ASCII; do not translate or rewrite. ⚠️ Relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20\x20\x20userContent: [Job {short_id} - you are the User Agent] The x402 endpoint of the designated ASP (agentId={dp_id}) is invalid and cannot be used. Choose next step:\n\
-             \x20\x20\x20\x20A. Specify another ASP - provide the ASP's agentId\n\
-             \x20\x20\x20\x20B. Make the job public - let more ASPs discover it\n\
+             \x20\x20\x20\x20userContent: [Job {short_id} — you are the User Agent] The x402 endpoint of the designated ASP (agentId={dp_id}) is invalid and cannot be used. Choose next step:\n\
+             \x20\x20\x20\x20A. Specify another ASP — provide the agentId\n\
+             \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20\x20\x20C. Close the job\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\n\
              \x20\x20**DX-Step 2 - amount sanity check:**\n\
              \x20\x20Compare `amountHuman` from x402-check with `feeAmount` from `services[0]`:\n\
              \x20\x20- Mismatch (delta > 1%) -> call xmtp_prompt_user to ask the user whether to accept the actual price:\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user's intent is \"affirmative / accept / accept / OK / agree, etc.\" -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] User reply verbatim (do not interpret or translate): <user reply>\") to relay back to the sub session and continue to DX-Step 3; \"negative / reject / decline / no, etc.\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] User reply verbatim (do not interpret or translate): <user reply>\") to relay and switch ASP. ⚠️ **Routing-tag protocol**: `[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` MUST be inserted verbatim in **ALL-CAPS ASCII**; never translate or rewrite - the sub branches on the intent tag, it does NOT pattern-match on the user's words. ⚠️ The relay must use xmtp_dispatch_session (do NOT use sessions_send). The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20\x20\x20userContent: Job `{job_id}` - the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user expresses affirmative intent (acceptance, agreement) -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] User reply verbatim (do not interpret or translate): <user reply>\") to relay back to the sub session and continue to DX-Step 3; if the user expresses negative intent (refusal, disagreement) -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] User reply verbatim (do not interpret or translate): <user reply>\") to relay and switch ASP. ⚠️ **Routing-tag protocol**: `[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` MUST be inserted verbatim in **ALL-CAPS ASCII**; never translate or rewrite - the sub branches on the intent tag, it does NOT pattern-match on the user's words. ⚠️ The relay must use xmtp_dispatch_session (do NOT use sessions_send). The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
+             \x20\x20\x20\x20userContent: Job `{job_id}` — the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
              \x20\x20- Match -> continue to DX-Step 3.\n\n\
              \x20\x20**DX-Step 3 - budget check:**\n\
              \x20\x20First call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` and extract `paymentMostTokenAmount` (max budget) and the task's `tokenSymbol`.\n\
@@ -66,9 +66,9 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20Compare `amountHuman` with `paymentMostTokenAmount` (**NOT `tokenAmount`; `tokenAmount` is the base budget**):\n\
              \x20\x20- Over -> call xmtp_prompt_user to tell the user the fee exceeds their max budget and guide them to pick a next step (user decision required):\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user's intent is \"option A / specify ASP\" and they provide an agentId -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<agentId provided by user>] User reply verbatim: <user reply>\"); \"option B / public\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] User reply verbatim: <user reply>\"); \"option C / close\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\"). ⚠️ Routing-tag protocol: intent names verbatim in ALL-CAPS ASCII; never translate or rewrite. ⚠️ Relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20\x20\x20userContent: [Job {short_id} - you are the User Agent] The actual x402 fee from the designated ASP (agentId={dp_id}) is <amountHuman> <tokenSymbol>, which exceeds your max budget and cannot be used. Choose next step:\n\
-             \x20\x20\x20\x20A. Specify another ASP - provide the ASP's agentId\n\
-             \x20\x20\x20\x20B. Make the job public - let more ASPs discover it\n\
+             \x20\x20\x20\x20userContent: [Job {short_id} — you are the User Agent] The x402 fee from the designated ASP (agentId={dp_id}) is <amountHuman> <tokenSymbol>, which exceeds your max budget and cannot be used. Choose next step:\n\
+             \x20\x20\x20\x20A. Specify another ASP — provide the ASP's agentId\n\
+             \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20\x20\x20C. Close the job\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20- Within budget -> execute **A-Step 3** below.\n\n\
@@ -248,10 +248,10 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \"option C / close / close\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim (do not interpret or translate): <user reply>\") to relay and run close. \
              ⚠️ **Routing-tag protocol**: `[intent:PICK_PROVIDER agentId=<...>]` / `[intent:SET_PUBLIC]` / `[intent:CLOSE_TASK]` MUST be inserted verbatim in **ALL-CAPS ASCII**; never translate or rewrite - the sub branches on the intent tag, it does NOT pattern-match on the user's words. \
              ⚠️ Relay must use xmtp_dispatch_session (do NOT use sessions_send). The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20userContent: [Job {short_id} - you are the User Agent] None of the recommended ASPs are a fit. Choose next step:\n\
-             \x20\x20A. Specify an ASP - provide the ASP's agentId\n\
-             \x20\x20B. Make the job public - let more ASPs discover it\n\
-             \x20\x20C. Close the job - cancel and refund\n\
+             \x20\x20userContent: [Job {short_id} — you are the User Agent] None of the recommended ASPs are a fit. Choose next step:\n\
+             \x20\x20A. Specify an ASP — provide the ASP's agentId\n\
+             \x20\x20B. Make the job public — let more ASPs discover it\n\
+             \x20\x20C. Close the job — cancel and refund\n\
              \x20\x20-> **end this turn** and resume execution once the user's reply is relayed back.\n\n\
              [Subsequent events]\n\
              - x402 -> set-payment-mode -> job_payment_mode_changed -> task-402-pay (sign + direct/accept + endpoint replay) -> job_accepted -> complete\n\
@@ -310,18 +310,29 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              \x20\x20- User says \"close / cancel / close\" -> xmtp_dispatch_session(sessionKey=\"<same>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\")\n\
              \x20\x20⚠️ The intent tag must be inserted verbatim in ALL-CAPS ASCII; never translate or rewrite. Relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\n\
              \x20\x20⚠️ The \"Index -> AgentID mapping\" inside llmContent **must** be extracted line-by-line from recommend output and inlined - the user session agent cannot see the userContent list, and without the mapping table it cannot turn the user's index into an AgentID, leading to routing failure.\n\n\
-             \x20\x20userContent: [Job {short_id} - you are the User Agent] Below is the list of recommended ASPs:\n\
+             \x20\x20userContent: [Job {short_id} — you are the User Agent] Below is the list of recommended ASPs:\n\
              \x20\x20<paste the recommend output's ASP list in full, one block per ASP: index / Agent Name / AgentID / service name and description / credit / fee / payment modes>\n\
              \x20\x20---\n\
-             \x20\x20Please choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP | reply \"next page\" for more | reply \"public\" to make the job public | reply \"close\" to close the job.\n\n\
+             \x20\x20Please choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP; or reply with next page / public / close.\n\n\
              -> **end this turn** and wait for the user's reply to be relayed back.\n\n\
              **Step 3 - handle the relayed user reply:**\n\n\
-             - The user picked an ASP (agentId=X) -> 🛑 **MUST call `next-action --provider X`** to enter the designated-provider flow:\n\
+             - The user picked an ASP (agentId=X):\n\
+             ===============================================================\n\
+             🛑🛑🛑 ABSOLUTE MANDATORY — call `next-action` FIRST. This is the ONLY action allowed.\n\
+             ===============================================================\n\
              ```bash\n\
              onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId picked by user>\n\
              ```\n\
-             Execute the returned script (it internally queries service-list and routes x402 or A2A).\n\
-             ❌ Do NOT skip `next-action` and jump directly to `xmtp_start_conversation` / `xmtp_send` — the returned playbook contains mandatory routing (x402 vs A2A) and negotiation rules that cannot be skipped.\n\n\
+             Then execute the returned playbook — it contains ALL subsequent instructions.\n\
+             ===============================================================\n\
+             🔴🔴🔴 ABSOLUTE PROHIBITION — before next-action returns, you are FORBIDDEN from:\n\
+             ❌ Creating groups or conversations\n\
+             ❌ Sending ANY message to ANY agent\n\
+             ❌ Calling ANY onchainos CLI command other than the next-action above\n\
+             ❌ Deciding routing (x402 / A2A / escrow) yourself\n\
+             ❌ Composing negotiation content of any kind\n\
+             🔴 Real incident: a model skipped next-action and sent [intent:propose] directly — this broke routing, skipped service-list check, and sent an invalid first message. The ONLY correct path is next-action first.\n\
+             ===============================================================\n\n\
              - The user asked for the next page -> run:\n\
              ```bash\n\
              onchainos agent recommend {job_id} --next-page\n\
@@ -329,10 +340,10 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              If results -> go back to Step 2 and show the new list to the user.\n\
              If empty -> call xmtp_prompt_user to tell the user there are no more ASPs and guide their choice (user decision required, cannot use xmtp_dispatch_user):\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user's intent is \"option A / specify ASP\" and they provide an agentId -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<agentId provided by user>] User reply verbatim: <user reply>\"); \"option B / public\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] User reply verbatim: <user reply>\"); \"option C / close\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\"). ⚠️ Routing-tag protocol same as above. ⚠️ Relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20\x20\x20userContent: [Job {short_id} - you are the User Agent] All recommended ASPs have been tried; no match found. Choose next step:\n\
-             \x20\x20\x20\x20A. Specify an ASP - provide the ASP's agentId\n\
-             \x20\x20\x20\x20B. Make the job public - let more ASPs discover it\n\
-             \x20\x20\x20\x20C. Close the job - cancel and refund\n\n\
+             \x20\x20\x20\x20userContent: [Job {short_id} — you are the User Agent] All recommended ASPs have been tried; no match found. Choose next step:\n\
+             \x20\x20\x20\x20A. Specify an ASP — provide the ASP's agentId\n\
+             \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
+             \x20\x20\x20\x20C. Close the job — cancel and refund\n\n\
              - The user chose to make the job public -> `onchainos agent set-public {job_id}`\n\n\
              - The user chose to close the job -> `onchainos agent close {job_id}`",
              CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
@@ -349,6 +360,9 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
          [Role] User (User Agent)\n\n\
          ⚠️ **Open != public**: Open is a job lifecycle state (pending acceptance), not a visibility (public/private). Job visibility is governed by the `visibility` field (0=public, 1=private), unrelated to the Open state. Do NOT translate Open as \"public\" in notifications.\n\n\
          🛑 **CLIs forbidden in this event**: save-agreed / set-payment-mode / confirm-accept / apply / complete / reject - no ASP has been picked yet, negotiation has not started, all of these are illegal here.\n\n\
+         🛑🛑🛑 You MUST execute ALL steps below immediately in this turn. Do NOT end the turn before completing Step 0 (notify user) and Step 1 (recommend query).\n\
+         Ending the turn without executing = user never gets notified = task stalls permanently.\n\
+         🔴 Real incident: a model called next-action, received this playbook, then said \"end turn, wait for User Agent\" without executing any step — the user was never notified and the task was permanently stuck.\n\n\
          [Your next actions (strict order)]\n\n\
          **Step 0 - notify the user session + continue execution in the current sub/backup session:**\n\
          Call xmtp_dispatch_user to tell the user the job is on-chain (pure notification, no LLM thinking):\n\
@@ -438,12 +452,12 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \x20\x20⚠️ The intent tag must be inserted verbatim in ALL-CAPS ASCII; never translate or rewrite. Relay must use xmtp_dispatch_session. The user session agent must NOT create groups or execute task CLI itself. {CONSTRAINT}\n\
      \x20\x20⚠️ The mapping table must be extracted line-by-line from the pending list and inlined into llmContent - the user session agent cannot see userContent, and without the mapping table it cannot turn an index into an AgentID.\n\
      \x20\x20userContent:\n\
-     \x20\x20[Job {short_id} - you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
+     \x20\x20[Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
      \x20\x20\n\
      \x20\x20[iterate pending list; format per ASP:]\n\
      \x20\x20<N>. agentId: <agentId> | name: <name> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
      \x20\x20\n\
-     \x20\x20Reply with the ASP's number to start, or reply \"skip all\".\n\n\
+     \x20\x20Reply with the ASP's number to start, or reply to skip all.\n\n\
      **Step 3 - on receiving `[USER_DECISION_RELAY][intent:CODE] User reply verbatim: ...`, route by intent code:**\n\n\
      ━━━━━━━━━ Branch A: `[intent:PICK_PROVIDER index=<N> agentId=<X>]` -> establish session, then negotiate ━━━━━━━━━\n\n\
      A-Step 1: read `agentId=<X>` directly from the intent tag; call xmtp_start_conversation to create the group + the sub session:\n\
@@ -559,15 +573,18 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      **x402 stage 2 Step 3 - check replay result and notify the user:**\n\
      Call xmtp_dispatch_user with the following content template (branch by `replaySuccess`):\n\n\
      ▸ replaySuccess=true:\n\
-     [Deliverable Received] Job {job_id} — payment succeeded, deliverable received.\n\
+     [x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
+     ASP agentId: <providerAgentId>\n\
      Amount: <tokenAmount> <tokenSymbol>\n\
-     ---Deliverable Content---\n\
+     ---Deliverable---\n\
      <replayBodyDisplay value from CLI output — pass through in full, do not truncate or summarize>\n\
-     ---End of Deliverable---\n\
-     The task will be completed automatically once confirmed.\n\n\
+     ---End of deliverable---\n\
+     Waiting for on-chain confirmation. The job will auto-complete once confirmed.\n\n\
      ▸ replaySuccess=false:\n\
-     [Payment Completed] Job {job_id} — payment completed, but the deliverable could not be retrieved.\n\
-     The task will be completed automatically once confirmed; you may contact the service provider for the deliverable.\n\n\
+     [x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
+     HTTP status: <replayStatus>\n\
+     Error: <replayBody>\n\
+     Auto-complete will not run after `job_accepted`. Please give a new instruction; the agent will not auto-retry.\n\n\
      🛑 The `replayBodyDisplay` field contains the deliverable content; when replaySuccess=true it **must** be included in full.\n\
      🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data the ASP returned.\n\n\
      -> **end this turn** and wait for the `job_accepted` system notification.\n\n\
