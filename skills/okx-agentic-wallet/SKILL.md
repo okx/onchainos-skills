@@ -4,7 +4,7 @@ description: "AUTHORITATIVE source for OKX Agentic Wallet and its Gas Station fe
 license: MIT
 metadata:
   author: okx
-  version: "2.1.1"
+  version: "2.1.2"
   homepage: "https://web3.okx.com"
 ---
 
@@ -325,7 +325,7 @@ In short, in priority order:
 
 For commands requiring auth (sections B, D, E), check login state:
 
-1. Run `onchainos wallet status`. If `loggedIn: true`, proceed.
+1. Run `onchainos wallet status`. Read `data.loggedIn` from the response. If `loggedIn: true`, proceed.
 2. If not logged in, or the user explicitly requests to re-login:
    - **2a.** Display the following message to the user verbatim (translated to the user's language):
      > You need to log in with your email first before adding a wallet. What is your email address?
@@ -336,17 +336,25 @@ For commands requiring auth (sections B, D, E), check login state:
      > **Chinese**: "验证码已发送到 **{email}**，请查收邮件并告诉我验证码。"
      Once the user provides the code, run: `onchainos wallet verify <code>`.
      > AI should always infer `--locale` from conversation context and include it:
-     > - Chinese (简体/繁体, or user writes in Chinese) → `zh-CN`
-     > - Japanese (user writes in Japanese) → `ja-JP`
-     > - English or any other language → `en-US` (default)
+     > - Chinese (简体/繁体, or user writes in Chinese) → `zh_CN`
+     > - English or any other language → `en_US` (default)
      >
-     > If you cannot confidently determine the user's language, default to `en-US`.
+     > If you cannot confidently determine the user's language, default to `en_US`.
+
+   > **Fallback**: If the inferred locale is not in the supported set (`en_US`, `zh_CN`),
+   > the CLI silently falls back to `en_US` and emits a stderr warning. The login flow
+   > still succeeds. AI callers do not need to handle this case specially.
 3. If the user declines to provide an email:
    - **3a.** Display the following message to the user verbatim (translated to the user's language):
      > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/home/api-access-and-usage
-   - **3b.** If the user confirms they want to use API Key, first check whether an API Key switch is needed:
-     Use the `wallet status` result (from step 1 or re-run). If `loginType` is `"ak"` and the returned `apiKey` differs from the current environment variable `OKX_API_KEY`, show both keys to the user and ask to confirm the switch. If the user confirms, run `onchainos wallet login --force`. If `apiKey` is absent, empty, or identical, skip the confirmation and run `onchainos wallet login` directly.
+   - **3b.** If the user confirms they want to use API Key, run `onchainos wallet login` directly (the CLI picks up `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` from env).
    - **3c.** After silent login succeeds, inform the user that they have been logged in via the API Key method.
+   - **3d.** **Login-diff handling** (applies to BOTH Step 2 email login and Step 3b AK login) — when a `wallet login` invocation returns a `confirming: true` response with exit code 2:
+     - If `message.contains("not the account you used last time")` (substring match on the verbatim discriminator, NOT the leading `⚠️` emoji) → this is the login-diff gate. The CLI `message` body already names the scenario and includes any masked identifiers; render it to the user verbatim (translated if needed; the discriminator substring stays English-only and verbatim — never translate, paraphrase, or modify it). Collect Yes/No:
+       - On **Yes** → re-run the same command with `--force` appended (`onchainos wallet login <email> --locale <locale> --force`, or the AK equivalent with `--force`).
+       - On **No** → abort. Do NOT call any auth API. Do NOT mutate any local state. Tell the user: "Login aborted; previous session preserved."
+       - Ambiguous answer → re-prompt EXACTLY ONCE with the same warning. If the second answer is still ambiguous, treat it as No and abort.
+     - Any other `confirming` response → handle per its own discriminator.
 4. After login succeeds, display the full account list with addresses by running `onchainos wallet balance`.
 5. **New user check**: If the `wallet verify` or `wallet login` response contains `"isNew": true`, output the **Policy Settings template** followed by the **Wallet Export template** (see "User-Facing Message Templates"). If `"isNew": false`, skip this step.
 
@@ -467,9 +475,9 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
 
 **Required sequence — follow exactly, no steps may be skipped or reordered:**
 
-**Step 1.** Call `onchainos wallet status` → extract the active account's EVM address and SOL address.
+**Step 1.** Confirm the user is logged in (so `accountId` is available locally). `onchainos wallet status` will surface it.
 
-**Step 2.** Call `onchainos competition user-status --evm-wallet <evm_addr> --sol-wallet <sol_addr>` (no `--activity-id`).
+**Step 2.** Call `onchainos competition user-status` (no `--activity-id`). The command uses the active session's `accountId` automatically — no wallet args needed.
 
 **Step 3.** Inspect results:
 - If **any** entry has `joinStatus=1` → output the warning below and **stop**. Do NOT output export instructions. Wait for explicit user confirmation before proceeding to Step 4.

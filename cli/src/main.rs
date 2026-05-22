@@ -14,6 +14,8 @@ mod mcp;
 mod output;
 mod payment_cache;
 mod payment_notify;
+pub mod token_alias;
+pub mod validators;
 mod wallet_api;
 mod wallet_store;
 mod watch;

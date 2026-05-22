@@ -62,6 +62,10 @@ reports
 
 .zigbuild-cache/
 
+# Oli / fe-sdd-to-a pipeline artifacts (per-run docs; never committed)
+oli-docs/
+.wiki-to-oli-launch.sh
+
 # Test artifacts (local only)
 results/
 onchainos_bin

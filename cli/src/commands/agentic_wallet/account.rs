@@ -76,6 +76,7 @@ pub(super) async fn cmd_status() -> Result<()> {
                 "currentAccountId": "",
                 "currentAccountName": "",
                 "accountCount": 0,
+                "lastLoginMode": serde_json::Value::Null,
             }));
             return Ok(());
         }
@@ -157,6 +158,13 @@ pub(super) async fn cmd_status() -> Result<()> {
         serde_json::Value::Null
     };
 
+    // spec §1.4: surface the last login mode derived from existing
+    // `email` + `is_ak` so the skill can detect mode-diff before
+    // re-invoking `wallet login`. No new persisted field is needed.
+    let last_login_mode = super::common::derive_last_login_mode(&wallets.email, wallets.is_ak)
+        .map(serde_json::Value::from)
+        .unwrap_or(serde_json::Value::Null);
+
     output::success(json!({
         "email": wallets.email,
         "loggedIn": logged_in,
@@ -166,6 +174,7 @@ pub(super) async fn cmd_status() -> Result<()> {
         "currentAccountName": current_account_name,
         "accountCount": wallets.accounts.len(),
         "policy": policy,
+        "lastLoginMode": last_login_mode,
     }));
     Ok(())
 }
