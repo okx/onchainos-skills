@@ -352,7 +352,7 @@ pub enum AgentCommand {
     /// Backend resolves the active dispute round from jobId — CLI does not need disputeId.
     ///
     /// Internal precondition gate (merged from the former `dispute-status`): before fetching/downloading
-    /// evidence, validate that `taskStatus` is non-terminal / `--round-number` == on-chain currentRound /
+    /// evidence, validate that `taskStatus` is non-terminal / `--round-num` == on-chain currentRound /
     /// `disputeStatus = CommitPhase` / the current account is hit in this round's selectedVoter. If any
     /// check fails, output `reason: ...` + `selected: no` and early-return without downloading (to avoid
     /// later commit being slashed due to a stale envelope). If all pass, output `selected: yes` and
@@ -363,9 +363,9 @@ pub enum AgentCommand {
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Pass-through of inbound envelope's top-level `roundNumber` — compared against on-chain currentRound to detect a stale envelope.
-        #[arg(long = "round-number")]
-        round_number: String,
+        /// Pass-through of inbound envelope's top-level `roundNum` — compared against on-chain currentRound to detect a stale envelope.
+        #[arg(long = "round-num")]
+        round_num: String,
     },
     /// Commit a vote (Phase 1 of commit-reveal). vote: 0 = Approve (Client wins), 1 = Reject (Provider wins).
     /// Body sent to backend is only `{ vote }` — reason is NOT part of the API (lives in agent session memory).
@@ -731,9 +731,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::pending::run(c).await,
 
         // ── Evaluator Agent flat dispatch ───────────────────────────
-        AgentCommand::EvidenceInfo { job_id, agent_id, round_number } => {
+        AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::info::handle_info(&mut c, &job_id, &agent_id, &round_number).await
+            task::evaluator::info::handle_info(&mut c, &job_id, &agent_id, &round_num).await
         }
         AgentCommand::VoteCommit { job_id, vote, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
