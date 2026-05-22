@@ -217,11 +217,11 @@ pub async fn handle_create(
             "acceptDeadline":    validated.open_secs,
             "submittedDeadline": validated.submit_secs
         },
-        "paymentMode":        0
+        "paymentMode":        0,
+        "visibility":         1
     });
     if let Some(ref provider_id) = params.provider {
         body["providerAgentId"] = serde_json::json!(provider_id);
-        body["visibility"] = serde_json::json!(1);
     }
 
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
@@ -235,14 +235,17 @@ pub async fn handle_create(
 
     println!("✓ Calldata generated (jobId: {job_id})");
 
+    // Save designated-provider BEFORE broadcast: job_created event fires
+    // on-chain during broadcast and may be processed by the agent before
+    // sign_uop_and_broadcast returns — the file must already exist.
+    if let Some(ref provider_id) = params.provider {
+        super::negotiate::save_designated_provider(&job_id, provider_id)?;
+    }
+
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
         &job_id, 1, &buyer_agent_id,
     ).await?;
-
-    if let Some(ref provider_id) = params.provider {
-        super::negotiate::save_designated_provider(&job_id, provider_id)?;
-    }
 
     audit::log(
         "cli",

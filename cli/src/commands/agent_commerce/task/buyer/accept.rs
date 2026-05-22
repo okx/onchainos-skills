@@ -618,16 +618,15 @@ pub async fn handle_task_402_pay(
             .unwrap_or_else(|_| serde_json::json!({ "raw": raw_text }));
         let success = (200..300).contains(&initial_status);
         eprintln!("[task-402-pay] endpoint returned HTTP {initial_status} (not 402); using as the result directly");
-        let user_notify = format_x402_user_notify(job_id, provider, token_amount, token_symbol, success, initial_status, &body);
         crate::output::success(serde_json::json!({
             "replaySuccess": success,
             "replayStatus": initial_status,
             "replayBody": body,
+            "replayBodyDisplay": format_replay_body_display(&body),
             "signature": proof.signature,
             "authorization": proof.authorization,
             "sessionCert": proof.session_cert,
             "txHash": tx_hash,
-            "userNotify": user_notify,
         }));
         return Ok(());
     }
@@ -722,7 +721,6 @@ pub async fn handle_task_402_pay(
     };
 
     // Step 4: emit the complete result.
-    let user_notify = format_x402_user_notify(job_id, provider, token_amount, token_symbol, replay_success, replay_status, &replay_body);
     audit::log(
         "cli",
         if replay_success { "buyer/task_402_pay_completed" } else { "buyer/task_402_pay_replay_failed" },
@@ -743,48 +741,22 @@ pub async fn handle_task_402_pay(
         "replaySuccess": replay_success,
         "replayStatus": replay_status,
         "replayBody": replay_body,
+        "replayBodyDisplay": format_replay_body_display(&replay_body),
         "signature": proof.signature,
         "authorization": proof.authorization,
         "sessionCert": proof.session_cert,
         "txHash": tx_hash,
-        "userNotify": user_notify,
     }));
     Ok(())
 }
 
-fn format_x402_user_notify(
-    job_id: &str,
-    provider: &str,
-    token_amount: &str,
-    token_symbol: &str,
-    replay_success: bool,
-    replay_status: u16,
-    replay_body: &serde_json::Value,
-) -> String {
-    let body_display = if let Some(raw) = replay_body.get("raw").and_then(|v| v.as_str()) {
+fn format_replay_body_display(replay_body: &serde_json::Value) -> String {
+    if let Some(raw) = replay_body.get("raw").and_then(|v| v.as_str()) {
         raw.to_string()
     } else if replay_body.is_string() {
         replay_body.as_str().unwrap_or_default().to_string()
     } else {
         serde_json::to_string_pretty(replay_body).unwrap_or_else(|_| replay_body.to_string())
-    };
-    if replay_success {
-        format!(
-            "[x402 Deliverable Received] Job {job_id} payment succeeded. Deliverable:\n\
-             ASP AgentID: {provider}\n\
-             Amount: {token_amount} {token_symbol}\n\
-             ---Deliverable Content---\n\
-             {body_display}\n\
-             ---End of Deliverable---\n\
-             Waiting for on-chain confirmation; the job will be completed automatically."
-        )
-    } else {
-        format!(
-            "[x402 Replay Failed] Job {job_id} was accepted but the endpoint replay failed.\n\
-             HTTP status: {replay_status}\n\
-             Error: {body_display}\n\
-             After on-chain confirmation, complete will NOT run automatically; awaiting user instructions."
-        )
     }
 }
 
