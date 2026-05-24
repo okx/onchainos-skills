@@ -792,7 +792,7 @@ pub(super) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Follow the returned playbook for what to do at the current status.\n\n\
      **Step 3 -- Idempotency self-check (avoid re-prompting the user)**:\n\
-     If the playbook from Step 2 would push a decision to the user — i.e. it contains either `xmtp_prompt_user` (legacy direct-push scenes) or `onchainos agent pending-decisions-v2 request` (migrated scenes) — **first** call:\n\
+     If the playbook from Step 2 would push a decision to the user — i.e. it contains `onchainos agent pending-decisions-v2 request` — **first** call:\n\
      ```bash\n\
      onchainos agent pending-decisions-v2 list --format json\n\
      ```\n\
@@ -911,7 +911,7 @@ onchainos agent create-task \\
 
 After success, call `xmtp_dispatch_user` to notify the user:
 - No --provider → content: \"Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically fetch the recommended provider list for you to choose from.\"
-- With --provider → content: \"Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). Once confirmed, you will be connected directly with the designated provider <agentId>.\"
+- With --provider → content: \"Task submitted; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider.\"
 
 ===============================================================
 🛑🛑🛑 STOP -- after create-task you **MUST end this turn immediately**
@@ -919,6 +919,7 @@ After success, call `xmtp_dispatch_user` to notify the user:
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.
 ❌ **Do not call any onchainos agent commands** -- this turn ends here; all further actions are driven by on-chain events.
+❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.
 ===============================================================
 ".to_string()
 }

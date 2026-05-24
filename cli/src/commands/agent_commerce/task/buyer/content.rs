@@ -291,7 +291,7 @@ pub fn wakeup_resume_user_notify(job_id: &str) -> String {
 
 /// `provider_conversation` B-Step 4 — no more ASPs pending (B-7-14).
 pub fn no_more_sellers_user_notify(job_id: &str) -> String {
-    format!("Job `{job_id}` — no more pending ASPs. Wait for new ASPs to reach out, or adjust the job description.")
+    format!("[Job `{job_id}` — you are the User Agent] All pending ASPs have been contacted; none remaining. Choose next step:")
 }
 
 // ── Escalation (preamble anomaly escalation) ───────────────────────

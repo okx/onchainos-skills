@@ -32,10 +32,21 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              Read `onlineStatus` from the response (1=online / 2=offline). If the field is missing, null, or empty, treat the ASP as **online** (the backend may not yet return this field).\n\
              - `onlineStatus == 1` **or field missing/null/empty** (online / unknown) -> continue to D-Step 2.\n\
              - `onlineStatus == 2` AND **no endpoint** (so you are about to enter the escrow negotiation path) -> the ASP is offline and cannot negotiate.\n\
-             \x20\x20Call xmtp_prompt_user to notify the user:\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user's intent is \"option A / specify ASP\" and they provide an agentId -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<agentId provided by user>] User reply verbatim: <user reply>\") to relay back to the sub session; \"option B / public\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] User reply verbatim: <user reply>\"); \"option C / close\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\"). ⚠️ Routing-tag protocol: intent names must be inserted verbatim in ALL-CAPS ASCII; never translate or rewrite. ⚠️ The relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20userContent: {provider_offline}\n\
+             \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
+             \x20\x20First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Offline {short_id}] Choose next step\"\n\
+             \x20\x20```\n\
+             \x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language before running):\n\
+             \x20\x20{provider_offline}\n\
+             \x20\x20🌐 **Localize `--user-content` AND `--list-label` to the user's language** before running.\n\
+             \x20\x20Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\
              \x20\x20-> **end this turn** and wait for the user's reply.\n\
+             \x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
+             \x20\x20- Verbatim is `A` / `选A`, or contains `指定` / `specify` or looks like an agentId → extract agentId → `onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId>`\n\
+             \x20\x20- Verbatim is `B` / `选B`, or contains `公开` / `public` → `onchainos agent set-public {job_id}`\n\
+             \x20\x20- Verbatim is `C` / `选C`, or contains `关闭` / `close` / `取消` → `onchainos agent close {job_id}`\n\
+             \x20\x20- Otherwise → `pending-decisions-v2 request` again with clarifying userContent to re-ask.\n\
              - `onlineStatus == 2` but **has an endpoint** (x402 path) -> x402 is automated payment and does not depend on the ASP being online in real time, so continue to D-Step 2.\n\n\
              **D-Step 2 - route by service-list result:**\n\
              - **Has services and contains an endpoint (x402-capable)** -> extract `feeAmount`, `feeTokenSymbol`, `endpoint` from `services[0]`.\n\
@@ -45,18 +56,38 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20```bash\n\
              \x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
              \x20\x20```\n\
-             \x20\x20- `valid=false` -> call xmtp_prompt_user to tell the user the endpoint is invalid and guide them to pick a next step (user decision required):\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user's intent is \"option A / specify ASP\" and they provide an agentId -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<agentId provided by user>] User reply verbatim: <user reply>\"); \"option B / public\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] User reply verbatim: <user reply>\"); \"option C / close\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\"). ⚠️ Routing-tag protocol: intent names verbatim in ALL-CAPS ASCII; do not translate or rewrite. ⚠️ Relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20\x20\x20userContent: [Job {short_id} — you are the User Agent] The x402 endpoint of the designated ASP (agentId={dp_id}) is invalid and cannot be used. Choose next step:\n\
+             \x20\x20- `valid=false` -> enqueue the user decision via `pending-decisions-v2 request`:\n\
+             \x20\x20\x20\x20First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+             \x20\x20\x20\x20```bash\n\
+             \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 invalid {short_id}] A/B/C\"\n\
+             \x20\x20\x20\x20```\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The x402 endpoint of the designated ASP (agentId={dp_id}) is invalid and cannot be used. Choose next step:\n\
              \x20\x20\x20\x20A. Specify another ASP — provide the agentId\n\
              \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20\x20\x20C. Close the job\n\
-             \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\n\
+             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             \x20\x20\x20\x20Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\
+             \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
+             \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask via `pending-decisions-v2 request`.\n\n\
              \x20\x20**DX-Step 2 - amount sanity check:**\n\
              \x20\x20Compare `amountHuman` from x402-check with `feeAmount` from `services[0]`:\n\
-             \x20\x20- Mismatch (delta > 1%) -> call xmtp_prompt_user to ask the user whether to accept the actual price:\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user expresses affirmative intent (acceptance, agreement) -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:ACCEPT_X402_PRICE] User reply verbatim (do not interpret or translate): <user reply>\") to relay back to the sub session and continue to DX-Step 3; if the user expresses negative intent (refusal, disagreement) -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:REJECT_X402_PRICE] User reply verbatim (do not interpret or translate): <user reply>\") to relay and switch ASP. ⚠️ **Routing-tag protocol**: `[intent:ACCEPT_X402_PRICE]` / `[intent:REJECT_X402_PRICE]` MUST be inserted verbatim in **ALL-CAPS ASCII**; never translate or rewrite - the sub branches on the intent tag, it does NOT pattern-match on the user's words. ⚠️ The relay must use xmtp_dispatch_session (do NOT use sessions_send). The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20\x20\x20userContent: Job `{job_id}` — the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
+             \x20\x20- Mismatch (delta > 1%) -> enqueue the user decision via `pending-decisions-v2 request`:\n\
+             \x20\x20\x20\x20First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+             \x20\x20\x20\x20```bash\n\
+             \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 price {short_id}] Accept / Reject\"\n\
+             \x20\x20\x20\x20```\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             \x20\x20\x20\x20Job `{job_id}` — the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
+             \x20\x20\x20\x20A. Accept — continue with this price\n\
+             \x20\x20\x20\x20B. Reject — switch to another ASP\n\
+             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             \x20\x20\x20\x20Follow the playbook the CLI returns verbatim.\n\
+             \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
+             \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
+             \x20\x20\x20\x20- Verbatim is `A` / `选A` / contains `接受` / `同意` / `accept` / `agree` / `yes` → continue to DX-Step 3 (budget check)\n\
+             \x20\x20\x20\x20- Verbatim is `B` / `选B` / contains `拒绝` / `reject` / `no` / `换` → mark-failed + recommend to switch ASP\n\
+             \x20\x20\x20\x20- Otherwise → `pending-decisions-v2 request` again with clarifying userContent to re-ask.\n\
              \x20\x20- Match -> continue to DX-Step 3.\n\n\
              \x20\x20**DX-Step 3 - budget check:**\n\
              \x20\x20First call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` and extract `paymentMostTokenAmount` (max budget) and the task's `tokenSymbol`.\n\
@@ -65,13 +96,20 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20`set-payment-mode` will switch the on-chain payment token to **the x402 endpoint's token** (no longer the token used at job creation).\n\
              \x20\x20- Match -> compare directly.\n\
              \x20\x20Compare `amountHuman` with `paymentMostTokenAmount` (**NOT `tokenAmount`; `tokenAmount` is the base budget**):\n\
-             \x20\x20- Over -> call xmtp_prompt_user to tell the user the fee exceeds their max budget and guide them to pick a next step (user decision required):\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user's intent is \"option A / specify ASP\" and they provide an agentId -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<agentId provided by user>] User reply verbatim: <user reply>\"); \"option B / public\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] User reply verbatim: <user reply>\"); \"option C / close\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\"). ⚠️ Routing-tag protocol: intent names verbatim in ALL-CAPS ASCII; never translate or rewrite. ⚠️ Relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20\x20\x20userContent: [Job {short_id} — you are the User Agent] The x402 fee from the designated ASP (agentId={dp_id}) is <amountHuman> <tokenSymbol>, which exceeds your max budget and cannot be used. Choose next step:\n\
+             \x20\x20- Over -> enqueue the user decision via `pending-decisions-v2 request`:\n\
+             \x20\x20\x20\x20First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+             \x20\x20\x20\x20```bash\n\
+             \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Over budget {short_id}] A/B/C\"\n\
+             \x20\x20\x20\x20```\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The x402 fee from the designated ASP (agentId={dp_id}) is <amountHuman> <tokenSymbol>, which exceeds your max budget and cannot be used. Choose next step:\n\
              \x20\x20\x20\x20A. Specify another ASP — provide the ASP's agentId\n\
              \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20\x20\x20C. Close the job\n\
+             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             \x20\x20\x20\x20Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
+             \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask via `pending-decisions-v2 request`.\n\
              \x20\x20- Within budget -> execute **A-Step 3** below.\n\n\
              \x20\x20**A-Step 3 - set-payment-mode (push x402 on-chain):**\n\
              \x20\x20```bash\n\
@@ -84,15 +122,14 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20no event will fire on-chain. **Within this same turn, immediately execute the x402 flow for job_payment_mode_changed**:\n\
              \x20\x20\x20\x20call `onchainos agent next-action --jobid {job_id} --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (task-402-pay).\n\
              \x20\x20- Output contains `\"confirming\": true` (normal on-chain submission in flight) -> **end this turn** and wait for the `job_payment_mode_changed` system notification.\n\n\
-             - **No service or no endpoint (no x402 support)** -> enter **B-Step 1** to create a chat and negotiate.",
-             CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
+             - **No service or no endpoint (no x402 support)** -> enter **B-Step 1** to create a chat and negotiate.")
 }
 
 /// Designated-provider B-Step negotiation protocol (three-step handshake + group creation + multi-round negotiation + persistence + fallback)
 pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
     let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent recommend {job_id} --agent-id {agent_id}");
     let fallback_lines = format!("First run `onchainos agent mark-failed {job_id} --provider {dp_id}` to flag the failure, then run `onchainos agent recommend {job_id} --agent-id {agent_id}` to fetch a fresh recommendation list.\n\
-             \x20\x20If the list is non-empty -> show it to the user via the xmtp_prompt_user template (same format as the non-designated Step 2: list each ASP's info + pick/next-page/public/close options).\n\
+             \x20\x20If the list is non-empty -> show it to the user via `pending-decisions-v2 request` (same format as the non-designated Step 2: list each ASP's info + pick/next-page/public/close options).\n\
              \x20\x20If the list is empty -> guide the user through A/B/C below");
     format!("\
              🛑 **Hard constraint - the three-step handshake is the ONLY legitimate path to get the ASP to apply**\n\n\
@@ -252,22 +289,23 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              Current ASP timed out (5 min) / COUNTER rounds exceeded (>=3) / received `[intent:reject]` / negotiation failed -> first xmtp_send `[intent:reject]` (reason: timeout / round limit / failure cause) to the ASP, then switch:\n\
              \x20\x20{fallback_lines}\n\
              ⚠️ **When switching you MUST first send [intent:reject] before switching away** (so the ASP has a clear termination signal), but **do NOT xmtp_delete_conversation**. After switching, ignore any further messages from that ASP.\n\
-             No ASPs left on the current page and pagination also returns nothing -> first call `session_status` for the sessionKey; **before** calling `xmtp_prompt_user`, call `pending-decisions add` (see hard rule 7); then call xmtp_prompt_user to guide the user:\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] \
-             If the user's intent is \"option A / specify ASP\" and they provide an agentId -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<agentId provided by user>] User reply verbatim (do not interpret or translate): <user reply>\") to relay back to the sub session; the sub agent will query service-list and route (x402 or group-negotiation); \
-             \"option B / public / public\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] User reply verbatim (do not interpret or translate): <user reply>\") to relay and run set-public; \
-             \"option C / close / close\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim (do not interpret or translate): <user reply>\") to relay and run close. \
-             ⚠️ **Routing-tag protocol**: `[intent:PICK_PROVIDER agentId=<...>]` / `[intent:SET_PUBLIC]` / `[intent:CLOSE_TASK]` MUST be inserted verbatim in **ALL-CAPS ASCII**; never translate or rewrite - the sub branches on the intent tag, it does NOT pattern-match on the user's words. \
-             ⚠️ Relay must use xmtp_dispatch_session (do NOT use sessions_send). The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20userContent: [Job {short_id} — you are the User Agent] None of the recommended ASPs are a fit. Choose next step:\n\
+             No ASPs left on the current page and pagination also returns nothing -> enqueue the user decision via `pending-decisions-v2 request`:\n\
+             \x20\x20First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP {short_id}] A/B/C\"\n\
+             \x20\x20```\n\
+             \x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             \x20\x20[Job {short_id} — you are the User Agent] None of the recommended ASPs are a fit. Choose next step:\n\
              \x20\x20A. Specify an ASP — provide the ASP's agentId\n\
              \x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20C. Close the job — cancel and refund\n\
-             \x20\x20-> **end this turn** and resume execution once the user's reply is relayed back.\n\n\
+             \x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             \x20\x20Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\
+             \x20\x20-> **end this turn** and resume execution once the user's reply is relayed back.\n\
+             \x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask via `pending-decisions-v2 request`.\n\n\
              [Subsequent events]\n\
              - x402 -> set-payment-mode -> job_payment_mode_changed -> task-402-pay (sign + direct/accept + endpoint replay) -> job_accepted -> complete\n\
-             - escrow -> set-payment-mode -> job_payment_mode_changed -> notify ASP to apply -> ASP applies on-chain -> ASP xmtp_send notifies user -> user receives a2a-agent-chat -> confirm-accept -> job_accepted\n",
-             CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
+             - escrow -> set-payment-mode -> job_payment_mode_changed -> notify ASP to apply -> ASP applies on-chain -> ASP xmtp_send notifies user -> user receives a2a-agent-chat -> confirm-accept -> job_accepted\n")
 }
 
 // --- Event handler functions ------------------------------------------------
@@ -292,9 +330,9 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
         format!("\
              **Step 0 - idempotency check: query whether a pending decision already exists for this job:**\n\
              ```bash\n\
-             onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+             onchainos agent pending-decisions-v2 list --format json\n\
              ```\n\
-             If the returned list already contains an entry with jobId={job_id} and role=buyer -> **the user has already been notified; this is a duplicate event - end the turn without notifying again.**\n\
+             If the returned `entries` array already contains an entry with job_id={job_id} and role=buyer -> **the user has already been notified; this is a duplicate event - end the turn without notifying again.**\n\
              If not present -> continue to Step 1.\n\n\
              🛑 **Do NOT ask the user whether to fetch the recommendation list** -- proceed to Step 1 directly and automatically. The recommend query is mandatory, not optional.\n\n\
              **Step 1 - query the recommended ASP list:**\n\
@@ -304,30 +342,26 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              Outputs the ASP list (Agent Name / service description / credit / payment modes); ASPs that previously failed negotiation are auto-filtered.\n\n\
              🛑🛑🛑 **ABSOLUTE PROHIBITION - iron rule: in the current session (sub/backup) you must NOT directly print the recommendation list or any text reply.**\n\
              You are inside a sub session or backup session - **the user cannot see any output here**.\n\
-             You must call the `xmtp_prompt_user` tool to push the list to the user session; that is the **only** way the user sees the list.\n\
+             You must push the list to the user session via `pending-decisions-v2 request`; that is the **only** way the user sees the list.\n\
              🔴 Real incident: the Minimax model, after getting recommend results in a backup session, just printed the list as text; the user never saw it and the task stalled.\n\
-             ❌ Absolutely forbidden: replacing the xmtp_prompt_user tool call with a text reply - text reply = invisible to user = task stalls.\n\
-             ❌ Absolutely forbidden: using xmtp_dispatch_user instead of xmtp_prompt_user - dispatch_user cannot relay, the user's choice cannot be routed back to the sub.\n\
+             ❌ Absolutely forbidden: replacing the `pending-decisions-v2 request` call with a text reply - text reply = invisible to user = task stalls.\n\
+             ❌ Absolutely forbidden: using xmtp_dispatch_user instead of `pending-decisions-v2 request` - dispatch_user is pure notification, the user's choice cannot be relayed back.\n\
              ❌ Absolutely forbidden: printing text \"for the user to see\" first and then calling the tool - text output in a sub session never reaches the user.\n\n\
              **Step 2 - show the list to the user and let them choose:**\n\
-             Call `session_status` to get the sessionKey; call `pending-decisions add` (see hard rule 7); then call `xmtp_prompt_user`:\n\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer]\n\
-             \x20\x20Index -> AgentID mapping: <extract from recommend output, e.g. 1->798, 2->806, 3->866, 4->864, 5->865, 6->916, 7->810>\n\
-             \x20\x20If the user replies with a number (e.g. \"2\" / \"4\") -> map to AgentID via the table above; if the user replies with a 3-digit AgentID (e.g. \"864\") -> use directly.\n\
-             \x20\x20Routing rules:\n\
-             \x20\x20- User picks an ASP (number or AgentID) -> xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<mapped AgentID>] User reply verbatim: <user reply>\")\n\
-             \x20\x20- User says \"next page / more / next\" -> xmtp_dispatch_session(sessionKey=\"<same>\", content=\"[USER_DECISION_RELAY][intent:NEXT_PAGE] User reply verbatim: <user reply>\")\n\
-             \x20\x20- User says \"public / public\" -> xmtp_dispatch_session(sessionKey=\"<same>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] User reply verbatim: <user reply>\")\n\
-             \x20\x20- User says \"close / cancel / close\" -> xmtp_dispatch_session(sessionKey=\"<same>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\")\n\
-             \x20\x20⚠️ The intent tag must be inserted verbatim in ALL-CAPS ASCII; never translate or rewrite. Relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\n\
-             \x20\x20⚠️ The \"Index -> AgentID mapping\" inside llmContent **must** be extracted line-by-line from recommend output and inlined - the user session agent cannot see the userContent list, and without the mapping table it cannot turn the user's index into an AgentID, leading to routing failure.\n\n\
-             \x20\x20userContent: [Job {short_id} — you are the User Agent] Below is the list of recommended ASPs:\n\
-             \x20\x20<paste the recommend output's ASP list in full, one block per ASP: index / Agent Name / AgentID / service name and description / credit / fee / payment modes>\n\
-             \x20\x20---\n\
-             \x20\x20Please choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP; or reply with next page / public / close.\n\n\
+             Call `session_status` to get the sessionKey (only once per turn). Then run:\n\
+             ```bash\n\
+             onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Recommend {short_id}] Pick ASP\"\n\
+             ```\n\
+             `--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             [Job {short_id} — you are the User Agent] Below is the list of recommended ASPs:\n\
+             <paste the recommend output's ASP list in full, one block per ASP: index / Agent Name / AgentID / service name and description / credit / fee / payment modes>\n\
+             ---\n\
+             Please choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP; or reply with next page / public / close.\n\n\
+             🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\n\
              -> **end this turn** and wait for the user's reply to be relayed back.\n\n\
-             **Step 3 - handle the relayed user reply:**\n\n\
-             - The user picked an ASP (agentId=X):\n\
+             **Step 3 - after receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:**\n\n\
+             - Verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the recommend list above; the user picked an ASP (agentId=X):\n\
              ===============================================================\n\
              🛑🛑🛑 ABSOLUTE MANDATORY — call `next-action` FIRST. This is the ONLY action allowed.\n\
              ===============================================================\n\
@@ -344,20 +378,26 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              ❌ Composing negotiation content of any kind\n\
              🔴 Real incident: a model skipped next-action and sent [intent:propose] directly — this broke routing, skipped service-list check, and sent an invalid first message. The ONLY correct path is next-action first.\n\
              ===============================================================\n\n\
-             - The user asked for the next page -> run:\n\
+             - Verbatim contains `next page` / `下一页` / `more` / `更多` → run:\n\
              ```bash\n\
              onchainos agent recommend {job_id} --next-page\n\
              ```\n\
              If results -> go back to Step 2 and show the new list to the user.\n\
-             If empty -> call xmtp_prompt_user to tell the user there are no more ASPs and guide their choice (user decision required, cannot use xmtp_dispatch_user):\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer] If the user's intent is \"option A / specify ASP\" and they provide an agentId -> call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<agentId provided by user>] User reply verbatim: <user reply>\"); \"option B / public\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:SET_PUBLIC] User reply verbatim: <user reply>\"); \"option C / close\" -> call xmtp_dispatch_session(sessionKey=\"<same sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\"). ⚠️ Routing-tag protocol same as above. ⚠️ Relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-             \x20\x20\x20\x20userContent: [Job {short_id} — you are the User Agent] All recommended ASPs have been tried; no match found. Choose next step:\n\
+             If empty -> enqueue the user decision via `pending-decisions-v2 request`:\n\
+             \x20\x20\x20\x20```bash\n\
+             \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP {short_id}] A/B/C\"\n\
+             \x20\x20\x20\x20```\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             \x20\x20\x20\x20[Job {short_id} — you are the User Agent] All recommended ASPs have been tried; no match found. Choose next step:\n\
              \x20\x20\x20\x20A. Specify an ASP — provide the ASP's agentId\n\
              \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
-             \x20\x20\x20\x20C. Close the job — cancel and refund\n\n\
-             - The user chose to make the job public -> `onchainos agent set-public {job_id}`\n\n\
-             - The user chose to close the job -> `onchainos agent close {job_id}`",
-             CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
+             \x20\x20\x20\x20C. Close the job — cancel and refund\n\
+             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             \x20\x20\x20\x20Follow the playbook the CLI returns verbatim.\n\
+             \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask.\n\n\
+             - Verbatim contains `public` / `公开` → `onchainos agent set-public {job_id}`\n\n\
+             - Verbatim contains `close` / `关闭` / `取消` / `cancel` → `onchainos agent close {job_id}`\n\n\
+             - Otherwise (unrelated reply) → `pending-decisions-v2 request` again with clarifying userContent to re-ask.")
     };
 
     let mut output = format!(
@@ -446,15 +486,15 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      🛑 **Do NOT auto-create groups**: after receiving the pending_list notification, you must NOT call xmtp_start_conversation on your own.\n\
      You must first show the list and let the user pick an ASP; only after an explicit user choice may you create the group.\n\n\
-     🛑 **CRITICAL - this event MUST push the ASP list to the user session via `xmtp_prompt_user`; printing text reply in the sub session is forbidden.**\n\
-     ❌ Do NOT replace the xmtp_prompt_user tool call with a text reply (sub-session output is invisible to the user).\n\
-     ❌ Do NOT use xmtp_dispatch_user instead of xmtp_prompt_user (the user needs to make an ASP-choice decision; dispatch_user cannot relay).\n\n\
+     🛑 **CRITICAL - this event MUST push the ASP list to the user session via `pending-decisions-v2 request`; printing text reply in the sub session is forbidden.**\n\
+     ❌ Do NOT replace the `pending-decisions-v2 request` call with a text reply (sub-session output is invisible to the user).\n\
+     ❌ Do NOT use xmtp_dispatch_user instead of `pending-decisions-v2 request` (the user needs to make an ASP-choice decision; dispatch_user is pure notification and cannot relay).\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 0 - idempotency check: query whether a pending decision already exists for this job:**\n\
      ```bash\n\
-     onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+     onchainos agent pending-decisions-v2 list --format json\n\
      ```\n\
-     If the returned list already contains an entry with jobId={job_id} and role=buyer -> **the user has already been notified; this is a duplicate event - end the turn without notifying again.**\n\
+     If the returned `entries` array already contains an entry with job_id={job_id} and role=buyer -> **the user has already been notified; this is a duplicate event - end the turn without notifying again.**\n\
      If not present -> continue to Step 1.\n\n\
      **Step 1 - fetch the pending-contact ASP list:**\n\
      Call the xmtp_get_pending_list tool to fetch the pending-contact ASP list.\n\
@@ -463,28 +503,25 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      If the result is an empty list -> call xmtp_dispatch_user:\n\
      \x20\x20content: There are no ASPs to contact right now. You can wait for new ASPs to reach out, or reply \"close\" to close the task.\n\
      Then finish.\n\n\
-     **Step 2 - call xmtp_prompt_user to show all pending ASPs and let the user choose:**\n\
+     **Step 2 - enqueue the user decision via `pending-decisions-v2 request`:**\n\
      🛑 **You MUST wait for the user's choice**; you may not decide for them.\n\
-     Call `session_status` first to get this sub session's sessionKey; **before** calling `xmtp_prompt_user`, call `pending-decisions add` (see hard rule 7).\n\
-     List **every** ASP in the pending list one by one for the user to pick from:\n\
-     \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <full sessionKey from session_status>][job: {job_id}][role: buyer]\n\
-     \x20\x20Index -> AgentID mapping: <extract from the pending list, e.g. 1->798, 2->806, 3->866>\n\
-     \x20\x20Routing rules:\n\
-     \x20\x20- User picks an ASP (number or AgentID) -> map number -> AgentID, then call xmtp_dispatch_session(sessionKey=\"<full sessionKey from session_status>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER index=<N> agentId=<mapped AgentID>] User reply verbatim: <user reply>\")\n\
-     \x20\x20- User says \"skip all / none / skip all / none\" -> xmtp_dispatch_session(sessionKey=\"<same>\", content=\"[USER_DECISION_RELAY][intent:SKIP_ALL_PROVIDERS] User reply verbatim: <user reply>\")\n\
-     \x20\x20⚠️ The intent tag must be inserted verbatim in ALL-CAPS ASCII; never translate or rewrite. Relay must use xmtp_dispatch_session. The user session agent must NOT create groups or execute task CLI itself. {CONSTRAINT}\n\
-     \x20\x20⚠️ The mapping table must be extracted line-by-line from the pending list and inlined into llmContent - the user session agent cannot see userContent, and without the mapping table it cannot turn an index into an AgentID.\n\
-     \x20\x20userContent:\n\
-     \x20\x20[Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
-     \x20\x20\n\
-     \x20\x20[iterate pending list; format per ASP:]\n\
-     \x20\x20<N>. agentId: <agentId> | name: <name> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
-     \x20\x20\n\
-     \x20\x20Reply with the ASP's number to start, or reply to skip all.\n\n\
-     **Step 3 - on receiving `[USER_DECISION_RELAY][intent:CODE] User reply verbatim: ...`, route by intent code:**\n\n\
-     ━━━━━━━━━ Branch A: `[intent:PICK_PROVIDER index=<N> agentId=<X>]` -> establish session, then negotiate ━━━━━━━━━\n\n\
-     A-Step 1: read `agentId=<X>` directly from the intent tag; call xmtp_start_conversation to create the group + the sub session:\n\
-     \x20\x20Args: myAgentId={agent_id}, toAgentId=<agentId from the tag>, jobId={job_id}\n\
+     Call `session_status` first to get this sub session's sessionKey (only once per turn). Then run:\n\
+     ```bash\n\
+     onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Pending ASP {short_id}] Pick\"\n\
+     ```\n\
+     `--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+     [Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
+     \n\
+     [iterate pending list; format per ASP:]\n\
+     <N>. agentId: <agentId> | name: <name> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
+     \n\
+     Reply with the ASP's number to start, or reply \"skip all\".\n\n\
+     🌐 Localize both `--user-content` and `--list-label` before running.\n\
+     Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\n\
+     **Step 3 - after receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:**\n\n\
+     ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\
+     A-Step 1: map the user's reply to agentId (index → AgentID via the pending list, or use a 3-digit AgentID directly); call xmtp_start_conversation to create the group + the sub session:\n\
+     \x20\x20Args: myAgentId={agent_id}, toAgentId=<agentId from the pending list above>, jobId={job_id}\n\
      \x20\x20⚠️ Before the call, print: `[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
      \x20\x20⚠️ After the call, print: `[buyer-xmtp] xmtp_start_conversation result: sessionKey=<returned value>, xmtpGroupId=<returned value>`\n\n\
      🛑 **Within the same turn after creating the group you MUST call `xmtp_send` to send the first message** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
@@ -493,17 +530,28 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \x20\x20⚠️ **Do NOT** use xmtp_dispatch_user / xmtp_dispatch_session; after the group is created use xmtp_send uniformly.\n\
      \x20\x20content: Hi, I have a job (jobId: {job_id}) - are you interested in taking it on?\n\n\
      A-Step 3: negotiation success -> ASP applies on-chain -> wait for the ASP's XMTP message announcing the apply (buyer.md routing #2 triggers confirm-accept).\n\n\
-     A-Step 4: negotiation failure (ASP rejects / timeout / terms mismatch) -> jump to Branch B.\n\n\
-     ━━━━━━━━━ Branch B: user rejects current ASP / negotiation failed -> reject and return to the list ━━━━━━━━━\n\n\
-     B-Step 1: call xmtp_deny_pending_conversation to reject this ASP:\n\
+     A-Step 4: negotiation failure (ASP rejects / timeout / terms mismatch) -> jump to Branch C.\n\n\
+     ━━━━━━━━━ Branch B: verbatim contains `skip all` / `跳过` / `不选` → skip all pending ASPs ━━━━━━━━━\n\n\
+     End the flow — call xmtp_dispatch_user to notify the user that all pending ASPs are skipped.\n\n\
+     ━━━━━━━━━ Branch C: user rejects current ASP / negotiation failed -> reject and return to the list ━━━━━━━━━\n\n\
+     C-Step 1: call xmtp_deny_pending_conversation to reject this ASP:\n\
      \x20\x20Args: agentId=<rejected ASP's agentId>, jobId={job_id}\n\
      \x20\x20⚠️ Before the call, print: `[buyer-xmtp] xmtp_deny_pending_conversation: agentId=<agentId>, jobId={job_id}`\n\n\
-     B-Step 2: call xmtp_get_pending_list again to refresh the pending list.\n\n\
-     B-Step 3: if the list is non-empty -> go back to Step 2 and show the remaining ASPs to the user.\n\n\
-     B-Step 4: if the list is empty -> call xmtp_dispatch_user to notify the user:\n\
-     \x20\x20content: {no_sellers}\n\n\
-     [Loop termination conditions] xmtp_get_pending_list returns an empty list, OR negotiation succeeds and enters Scene 6.\n",
-     CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
+     C-Step 2: call xmtp_get_pending_list again to refresh the pending list.\n\n\
+     C-Step 3: if the list is non-empty -> go back to Step 2 and show the remaining ASPs to the user.\n\n\
+     C-Step 4: if the list is empty -> enqueue the user decision via `pending-decisions-v2 request`:\n\
+     \x20\x20```bash\n\
+     \x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP {short_id}] A/B/C\"\n\
+     \x20\x20```\n\
+     \x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+     \x20\x20{no_sellers}\n\
+     \x20\x20A. Specify an ASP — provide the ASP's agentId\n\
+     \x20\x20B. Make the job public — let more ASPs discover it\n\
+     \x20\x20C. Close the job — cancel and refund\n\
+     \x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+     \x20\x20Follow the playbook the CLI returns verbatim.\n\
+     \x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask via `pending-decisions-v2 request`.\n\n\
+     [Loop termination conditions] xmtp_get_pending_list returns an empty list, OR negotiation succeeds and enters Scene 6.\n")
 
 }
 
@@ -643,8 +691,8 @@ pub(super) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      Extract the key fields: budget, paymentMostTokenAmount (max_budget), tokenSymbol, description.\n\n\
      **Step 2 - evaluate the ASP's reply:**\n\n\
      🛑 **Iron rule: any message replying to the ASP must NEVER reveal the max_budget value** - leaking = the ASP quotes the cap immediately = the user loses all bargaining power.\n\
-     🚫 **Negotiation-autonomy red line**: except for the \"quote > max_budget\" auto-REJECT path below, do NOT call **any** user-facing tool (`xmtp_dispatch_user` / `xmtp_prompt_user` / `pending-decisions add`) to make the user decide on negotiation. Negotiation is autonomous in the sub session - evaluate via the decision matrix and reply directly to the ASP (natural-language discussion / [intent:propose]); do NOT forward the quote to the user asking \"do you accept?\" or \"please confirm\".\n\
-     🔴 Real incident: model correctly called next-action but then used `xmtp_dispatch_user` (instead of forbidden `xmtp_prompt_user`) to forward the quote to the user — `xmtp_dispatch_user` is equally forbidden for this purpose.\n\n\
+     🚫 **Negotiation-autonomy red line**: except for the \"quote > max_budget\" auto-REJECT path below, do NOT call **any** user-facing tool (`xmtp_dispatch_user` / `pending-decisions-v2 request`) to make the user decide on negotiation. Negotiation is autonomous in the sub session - evaluate via the decision matrix and reply directly to the ASP (natural-language discussion / [intent:propose]); do NOT forward the quote to the user asking \"do you accept?\" or \"please confirm\".\n\
+     🔴 Real incident: model correctly called next-action but then used `xmtp_dispatch_user` to forward the quote to the user — `xmtp_dispatch_user` is equally forbidden for this purpose.\n\n\
      Extract quote info from the ASP's message if any: amount, token, payment-mode preference, delivery time.\n\n\
      🔴 **Quote evaluation decision matrix** (if the ASP gave an explicit price):\n\
      \x20\x20| ASP quote | Action |\n\
@@ -659,11 +707,21 @@ pub(super) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20reason: quote exceeds max budget\n\
      \x20\x20\x20\x20[intent:reject]\n\
      \x20\x20b) `onchainos agent mark-failed {job_id} --provider <current ASP agentId>`\n\
-     \x20\x20c) Call `session_status` for the sessionKey; call `pending-decisions add` (see hard rule 7); call `xmtp_prompt_user` to let the user decide:\n\
-     \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] If the user's intent is \"option A / view recommendations\" -> call xmtp_dispatch_session(sessionKey=\"<sessionKey>\", content=\"[USER_DECISION_RELAY][intent:VIEW_RECOMMEND] User reply verbatim: <user reply>\"); \"option B / specify ASP\" and provides an agentId -> call xmtp_dispatch_session(sessionKey=\"<sessionKey>\", content=\"[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=<agentId provided by user>] User reply verbatim: <user reply>\"); \"option C / close\" -> call xmtp_dispatch_session(sessionKey=\"<sessionKey>\", content=\"[USER_DECISION_RELAY][intent:CLOSE_TASK] User reply verbatim: <user reply>\"). ⚠️ Routing-tag protocol: intent names verbatim in ALL-CAPS ASCII; never translate or rewrite. ⚠️ Relay must use xmtp_dispatch_session. The user session agent must NOT execute task CLI itself. {CONSTRAINT}\n\
-     \x20\x20\x20\x20userContent:\n\
+     \x20\x20c) Enqueue the user decision via `pending-decisions-v2 request`:\n\
+     \x20\x20\x20\x20First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+     \x20\x20\x20\x20```bash\n\
+     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Over budget {short_id}] A/B/C\"\n\
+     \x20\x20\x20\x20```\n\
+     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
      {over_budget}\n\
-     \x20\x20\x20\x20-> **end this turn** and after the user's reply is relayed back: A -> `recommend`; B -> `next-action --provider <agentId>`; C -> `close`.\n\n\
+     \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+     \x20\x20\x20\x20Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\
+     \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
+     \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
+     \x20\x20\x20\x20- Verbatim is `A` / `选A` / contains `推荐` / `recommend` / `列表` / `list` → `onchainos agent recommend {job_id} --agent-id {agent_id}` then show the list via `pending-decisions-v2 request` (same format as Step 2 in job_created)\n\
+     \x20\x20\x20\x20- Verbatim is `B` / `选B` / contains `指定` / `specify` or looks like an agentId → `onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId>`\n\
+     \x20\x20\x20\x20- Verbatim is `C` / `选C` / contains `关闭` / `close` / `取消` → `onchainos agent close {job_id}`\n\
+     \x20\x20\x20\x20- Otherwise → `pending-decisions-v2 request` again with clarifying userContent to re-ask.\n\n\
      **Step 3 - reply to the ASP (depends on Step 2 evaluation):**\n\n\
      - **ASP is still in discussion (no explicit price yet or asking for details)** -> xmtp_send a natural-language reply to keep discussing.\n\n\
      - **Both sides agree on tokenAmount / tokenSymbol / paymentMode** -> send [intent:propose]:\n\
@@ -678,8 +736,7 @@ pub(super) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      ⚠️ **Do NOT replace [intent:propose] with natural language** - the ASP Agent only recognizes structured markers; \"please apply / terms locked\" in natural language will not be parsed.\n\
      ⚠️ **Only one xmtp_send per turn.**\n\
      🚫 🛑 **CRITICAL - this event absolutely forbids save-agreed / set-payment-mode / confirm-accept** - those only run in the later negotiate_ack event. ASP natural-language phrases like \"I accept\", \"agree\", \"OK\", \"no problem\" are **NOT** `[intent:ack]` - only content that starts with the literal `[intent:ack]` square brackets counts. Before the user sends [intent:propose], the ASP cannot reply with [intent:ack]. Violating this = skipping the three-step handshake = the job is permanently stuck.\n\
-     -> **end this turn** and wait for the ASP's reply.\n",
-     CONSTRAINT = super::flow::PROMPT_USER_SESSION_CONSTRAINT)
+     -> **end this turn** and wait for the ASP's reply.\n")
 }
 
 pub(super) fn negotiate_ack(ctx: &FlowContext<'_>) -> String {
@@ -741,7 +798,7 @@ pub(super) fn negotiate_counter(ctx: &FlowContext<'_>) -> String {
      \x20\x20reason: negotiation round limit reached, 3 COUNTERs already\n\
      \x20\x20[intent:reject]\n\
      \x20\x20then `onchainos agent mark-failed {job_id} --provider <current ASP agentId>`,\n\
-     \x20\x20call xmtp_prompt_user to let the user decide (same as negotiate_reply over-budget handling: A. view recommendations / B. specify ASP / C. close).\n\
+     \x20\x20then enqueue the user decision via `pending-decisions-v2 request` (same pattern as negotiate_reply over-budget: A. view recommendations / B. specify ASP / C. close — see that scene for the exact command and keyword routing).\n\
      \x20\x20-> **end this turn** and wait for the user relay.\n\n\
      - Under the limit -> continue to Step 2.\n\n\
      **Step 2 - PROPOSE typo self-check (highest priority):**\n\
@@ -758,7 +815,7 @@ pub(super) fn negotiate_counter(ctx: &FlowContext<'_>) -> String {
      \x20\x20|---|---|\n\
      \x20\x20| <= budget | Acceptable; send a new [intent:propose] with the COUNTER value |\n\
      \x20\x20| budget < quote <= max_budget | Acceptable, or keep negotiating; send a new [intent:propose] |\n\
-     \x20\x20| > max_budget | xmtp_send `[intent:reject]`, mark-failed, xmtp_prompt_user to let the user decide (same as the over-budget handling in negotiate_reply) |\n\n\
+     \x20\x20| > max_budget | xmtp_send `[intent:reject]`, mark-failed, enqueue user decision via `pending-decisions-v2 request` (same as the over-budget handling in negotiate_reply) |\n\n\
      - Check tokenSymbol change: if the ASP suggests a different token, evaluate whether to accept.\n\
      - paymentMode is fixed to escrow; do not accept any other payment mode.\n\n\
      **Step 4 - send a new [intent:propose] (if you decide to accept or counter):**\n\

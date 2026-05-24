@@ -86,7 +86,7 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 > 4. **`[MAX_BUDGET_UPDATE]` internal notification** (source: user session via `xmtp_dispatch_session`): content begins with the `[MAX_BUDGET_UPDATE]` prefix → extract `paymentMostTokenAmount=<value>` and update the current negotiation's max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, notify the provider, `xmtp_send`, or `xmtp_dispatch_user`** — violation = max_budget leaked to the provider = loss of bargaining leverage. After the silent update, **end the turn immediately**.
 > 5. **Attachment added notification** (source: user session via `xmtp_dispatch_session`): content starts with `[ATTACHMENT_ADDED]` → extract the file path from the content. Call `agent status <jobId>` to check status:
 >    - status=1 (accepted) → upload and forward the file to the provider: (1) `xmtp_file_upload` (parameters: `filePath` = extracted path, `agentId` = your agentId, `jobId`) → obtain `fileKey` + decryption metadata (digest/salt/nonce/secret); (2) `xmtp_send` to the provider with `[intent:attachment]` suffix, carrying the fileKey + five decryption fields + a brief description; (3) `xmtp_dispatch_user` to notify the user that the attachment has been sent to the provider. ⚠️ If `xmtp_file_upload` fails, `xmtp_dispatch_user` notifies the user that the attachment failed to send; **do NOT retry or block** — end the turn.
->    - status=0 (created) → check whether a negotiation session with a provider already exists (call `session_status`):
+>    - status=0 (created) → check whether a negotiation session with a provider already exists (call `session_status`; if already called this turn, reuse the cached result):
 >      - Sub session exists → upload and forward the file to the provider immediately (same steps as status=1 above: `xmtp_file_upload` → `xmtp_send` with `[intent:attachment]` → `xmtp_dispatch_user` to confirm). The provider can use the attachment to evaluate the task during negotiation.
 >      - No sub session → the file is already stored locally; it will be uploaded to the provider automatically when the negotiation session starts (flow_negotiate.rs B-Step 2 step 1.5). `xmtp_dispatch_user` notifies the user that the attachment has been saved and will be forwarded to the provider once a negotiation session is established.
 >    - status≥2 (submitted / refused / disputed / terminal) → `xmtp_dispatch_user` notifies the user that the task has entered the review/terminal phase and attachments can no longer be added.
@@ -97,6 +97,19 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 >    - Otherwise (submitted / refused / disputed / terminal) → ignore; do not reply or forward.
 >
 > 🛑 **Anti-hallucination — status verification iron rule**: before outputting wait-style phrasing such as "still negotiating", "waiting for acceptance", "waiting for provider confirmation", or "after escrow is set", you **must first** call `agent status <jobId>` to check the real on-chain status. If status=1 (accepted) or paymentMode=1 (escrow already set), it is **forbidden** to output any waiting-for-acceptance / negotiation phrasing — the task is already in the execution phase. 🔴 Real incident: a backup session, after receiving user materials, reasoned from context that "the task hasn't been accepted yet"; in reality the task was long since accepted (status=1, paymentMode=1), so the materials were not forwarded to the provider.
+
+---
+
+### User-session intent routing table
+
+> When the **user** (not a peer / not a system event) sends a message in the user session, match against this table **before** falling through to sub-session routing (§3 preamble):
+>
+> | User intent | Examples | Route to |
+> |---|---|---|
+> | Create / publish a task | "create a task", "publish a task for XXX", "帮我发个任务" | §3.1 |
+> | Add attachment / image to a task | "add this file to the task", "attach this to job #478", "补充附件", "补充图片", "给任务加个文件", or user sends a file/image during an active task conversation (ask which task before proceeding) | §3.5.1 |
+> | Modify task terms | "change budget", "switch provider", "修改预算", "换服务商" | §3.6 |
+> | Negotiate with a provider | "negotiate with XXX", "pick XXX", "start negotiation", "找810接单" | §3.2 Unified entry |
 
 ---
 
@@ -318,7 +331,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 
 > **Session**: user session
 >
-> **Trigger**: the user wants to add an attachment to an existing task (e.g. "add this file to the task", "attach this to job #478", "补充附件", "给任务加个文件").
+> **Trigger**: the user wants to add an attachment or image to an existing task (e.g. "add this file to the task", "attach this to job #478", "补充附件", "补充图片", "给任务加个文件"). Also triggered when the user **directly sends a file or image** during an active task conversation — in this case, ask which task it belongs to before proceeding (the user may have sent the file for a non-task purpose; confirm intent first).
 
 **Flow**:
 
