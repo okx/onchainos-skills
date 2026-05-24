@@ -180,7 +180,11 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              ❌ Absolutely forbidden: writing the `paymentMostTokenAmount` field value into any message to the ASP\n\n\
              Negotiation steps:\n\
              1. Call xmtp_send to send the first inquiry (**pure natural language** - let the ASP quote first, then judge):\n\
-             \x20\x20content=<job description + expected deliverable + paymentMode preference + budget (base budget); **do NOT expose max_budget**>\n\
+             \x20\x20content MUST include: job description, expected deliverable, paymentMode preference, budget (base budget).\n\
+             \x20\x20content MUST NOT include:\n\
+             \x20\x20\x20\x20❌ max_budget / paymentMostTokenAmount / \"最高\" / \"上限\" / \"cap\" / \"maximum\" / \"max\" budget value\n\
+             \x20\x20\x20\x20❌ Any number that equals the max_budget value (even without labeling it as such)\n\
+             \x20\x20🔴 Real incident: the model included \"最高 0.1 USDT\" in the first inquiry — the ASP immediately quoted 0.1 USDT (the cap), and the user lost all bargaining leverage.\n\
              \x20\x20🛑 The first message MUST be natural language only. Do NOT include `[intent:propose]` or any `[intent:*]` marker — propose is only allowed in Step 4, after the ASP has replied and evaluation (Step 2.5) is complete.\n\
              \x20\x20⚠️ `[intent:propose]` is ALWAYS sent by the buyer (you), NEVER by the ASP. Do NOT ask or instruct the ASP to send `[intent:propose]`.\n\
              \x20\x20-> after sending the first inquiry, proceed to step 1.5 before waiting for the reply.\n\n\
@@ -326,6 +330,23 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
 
     let created_notify = super::content::job_created_user_notify(job_id, &notify_text);
 
+    let attachment_paths = super::attachments::list_attachment_paths(job_id);
+    let attachment_section_created = if attachment_paths.is_empty() {
+        String::new()
+    } else {
+        let paths_list = attachment_paths.iter()
+            .map(|p| format!("  - `{p}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "**Step 0.5 — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
+             The following files are saved locally and MUST be uploaded to the provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
+             {paths_list}\n\
+             ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
+             ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
+        )
+    };
+
     let routing_section = if let Some(dp_id) = &designated_provider {
         designated_provider_d_steps(job_id, agent_id, short_id, dp_id)
     } else {
@@ -421,12 +442,7 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
          Call xmtp_dispatch_user to tell the user the job is on-chain (pure notification, no LLM thinking):\n\
          \x20\x20content: {created_notify}\n\n\
          ⚠️ Subsequent routing -> negotiation / acceptance all run in the **current session**; do NOT switch to the user session, do NOT sessions_spawn.\n\n\
-         **Step 0.5 - check local attachments:**\n\
-         ```bash\n\
-         onchainos agent list-attachments {job_id}\n\
-         ```\n\
-         If the output is a non-empty JSON array (files exist), these attachments must be uploaded to the provider **immediately after the first `xmtp_send`** in the negotiation flow (B-Step 2 step 1.5 below). The provider needs the attachments during negotiation to evaluate the task scope and quote accurately.\n\
-         If empty (`[]`), skip.\n\n\
+         {attachment_section_created}\
          {routing_section}\n\n"
     );
 
@@ -455,6 +471,23 @@ pub(super) fn switch_provider(ctx: &FlowContext<'_>) -> String {
         }
     };
 
+    let attachment_paths = super::attachments::list_attachment_paths(job_id);
+    let attachment_section = if attachment_paths.is_empty() {
+        String::new()
+    } else {
+        let paths_list = attachment_paths.iter()
+            .map(|p| format!("  - `{p}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "**Pre-step — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
+             The following files are saved locally and MUST be uploaded to the new provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
+             {paths_list}\n\
+             ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
+             ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
+        )
+    };
+
     let d_steps = designated_provider_d_steps(job_id, agent_id, short_id, &dp_id);
     let negotiate = designated_provider_negotiate(job_id, agent_id, short_id, &dp_id);
     format!("\
@@ -462,12 +495,7 @@ pub(super) fn switch_provider(ctx: &FlowContext<'_>) -> String {
          [Role] User (User Agent) | [Execution environment] user session\n\n\
          🛑 **CLIs forbidden in this event**: save-agreed / set-payment-mode / confirm-accept / apply / complete / reject - negotiation with the new ASP has not started, all of these are illegal here.\n\n\
          ⚠️ The old ASP's sub session will automatically send [intent:reject] when it receives the `task_provider_change` on-chain event; no intervention from you required.\n\n\
-         **Pre-step - check local attachments:**\n\
-         ```bash\n\
-         onchainos agent list-attachments {job_id}\n\
-         ```\n\
-         If the output is a non-empty JSON array (files exist), these attachments must be uploaded to the new provider **immediately after the first `xmtp_send`** in the negotiation flow (B-Step 2 step 1.5). The provider needs the attachments during negotiation to evaluate the task scope and quote accurately.\n\
-         If empty (`[]`), skip.\n\n\
+         {attachment_section}\
          [Your next actions (strict order)]\n\n\
          {d_steps}\n\n\
          ━━━━━━━━━ The B-Steps below run ONLY when D-Step concludes \"no service or no endpoint\" ━━━━━━━━━\n\

@@ -9,8 +9,10 @@
 //!    skill names (`okx-agent-identity` etc.) / backend method names (`claimAutoComplete` etc.).
 //!    **Literals in this file are English** (aligned with the PM Review translation baseline;
 //!    source: `https://okg-block.sg.larksuite.com/docx/YSHcdZaWmo2KofxaHRuloeBYgme` §1),
-//!    serving as the source-of-truth for sub agent LOCALIZATION_PREFIX translation — English users
-//!    see them as-is; non-English users get an equivalent conversational translation from the sub agent.
+//!    serving as the canonical content for sub agent localization — English users see them
+//!    verbatim (after `<...>` placeholder fills); non-English users get a faithful translation
+//!    that preserves all field labels, data values, and structure (see `localization_prefix`
+//!    in flow.rs for the strict rules).
 //!    Terminology: Job (not Task), User Agent, ASP (Agent Service Provider),
 //!    escrow / x402 lowercase, agentId in camelCase for data fields.
 //!    Label format: `[Label]` bracket prefix (e.g. `[Job Accepted]`).

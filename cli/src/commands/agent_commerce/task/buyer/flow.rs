@@ -111,7 +111,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol version handshake.
     // version_prefix uses format! to inject the current TASK_MIN_VERSION value, so playbooks auto-update when the constant is bumped.
-    let localization_prefix = "[Localization] All `content:` / `userContent:` templates below are samples — translate to the user's language before `xmtp_dispatch_user` / `xmtp_prompt_user`. Field labels in tables/confirmation forms MUST also match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/接单时限/交付时限; English → Title/Summary/Description/Currency/Budget/Max Budget/Accept Deadline/Delivery Deadline). This playbook is written in English; output language follows the **user**, not the playbook.\n\n";
+    let localization_prefix = "\
+[Localization] All `content:` / `userContent:` templates below are **canonical text, NOT samples**. Strict rules:\n\
+(1) Fill `<...>` placeholders with real values from context; every other word stays unchanged.\n\
+(2) Do NOT add information, time estimates, promises, or details not present in the template.\n\
+(3) Do NOT rephrase, summarize, or embellish the template — its wording is intentional.\n\
+(4) For English-speaking users: use the English template verbatim (after placeholder fills).\n\
+(5) For non-English users: translate into the user's language while preserving ALL field labels, data values, structure, and line breaks — translation must be faithful, not creative.\n\
+(6) Field labels in tables/confirmation forms MUST also match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/接单时限/交付时限; English → Title/Summary/Description/Currency/Budget/Max Budget/Accept Deadline/Delivery Deadline).\n\
+🔴 Real incident: a model treated the template as a loose \"sample\", translated English to Chinese in an English environment, and fabricated \"预计1-2小时内交付\" (estimated 1-2h delivery) — information that did not exist in the template. The user received inaccurate information.\n\n";
     let version_prefix = format!(
         "[Protocol version] When calling `xmtp_send`, the `payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
     );

@@ -55,22 +55,28 @@ pub async fn handle_task_attach(client: &mut TaskApiClient, job_id: &str, file_p
     Ok(())
 }
 
-pub fn handle_task_attachments(job_id: &str) -> Result<()> {
-    let dir = attachments_dir(job_id)?;
+pub fn list_attachment_paths(job_id: &str) -> Vec<String> {
+    let dir = match attachments_dir(job_id) {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
     if !dir.exists() {
-        println!("[]");
-        return Ok(());
+        return Vec::new();
     }
-
     let mut files: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(&dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_file() {
-            files.push(entry.path().display().to_string());
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                files.push(entry.path().display().to_string());
+            }
         }
     }
-
     files.sort();
+    files
+}
+
+pub fn handle_task_attachments(job_id: &str) -> Result<()> {
+    let files = list_attachment_paths(job_id);
     let json = serde_json::to_string_pretty(&files)?;
     println!("{json}");
     Ok(())

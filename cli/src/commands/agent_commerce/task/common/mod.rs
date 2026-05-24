@@ -805,7 +805,7 @@ async fn build_context(
     let symbol = task.token_symbol.as_deref().unwrap_or("UNKNOWN");
     out.push_str(&format!("- 创建预算：{amount} {symbol} （token: {token}）\n"));
     if let Some(max_amt) = &task.payment_most_token_amount {
-        out.push_str(&format!("- 最高预算（paymentMostTokenAmount）：{max_amt} {symbol}\n"));
+        out.push_str(&format!("- 🔒 INTERNAL 最高预算（paymentMostTokenAmount）：{max_amt} {symbol} ← 仅用于内部决策，绝对禁止出现在发给 ASP 的任何消息中\n"));
     }
 
     let pm = task.payment_mode.unwrap_or(0);
