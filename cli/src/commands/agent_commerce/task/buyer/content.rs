@@ -294,6 +294,29 @@ pub fn no_more_sellers_user_notify(job_id: &str) -> String {
     format!("[Job `{job_id}` — you are the User Agent] All pending ASPs have been contacted; none remaining. Choose next step:")
 }
 
+// ── Attachment (buyer → provider) ──────────────────────────────────
+
+/// File attachment `xmtp_send` content sent from the buyer sub session
+/// to the provider sub session.
+///
+/// The 6 fields (`fileKey` / `digest` / `salt` / `nonce` / `secret` /
+/// `filename`) come from `xmtp_file_upload`; the provider sub agent
+/// parses them and calls `xmtp_file_download` to fetch the file.
+pub fn attachment_file_to_seller(job_id: &str) -> String {
+    format!(
+        "jobId: {job_id}\n\
+         attachmentType: file\n\
+         fileKey: <fileKey from xmtp_file_upload>\n\
+         digest: <digest from xmtp_file_upload>\n\
+         salt: <salt from xmtp_file_upload>\n\
+         nonce: <nonce from xmtp_file_upload>\n\
+         secret: <secret from xmtp_file_upload>\n\
+         filename: <filename from xmtp_file_upload>\n\
+         description: <brief one-line description of the attachment>\n\
+         [intent:attachment]"
+    )
+}
+
 // ── Escalation (preamble anomaly escalation) ───────────────────────
 
 /// Preamble escalation hard rule 1) protocol misalignment (B-6-1).

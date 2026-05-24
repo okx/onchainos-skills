@@ -127,6 +127,7 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
 
 /// Designated-provider B-Step negotiation protocol (three-step handshake + group creation + multi-round negotiation + persistence + fallback)
 pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
+    let attachment_file = super::content::attachment_file_to_seller(job_id);
     let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent recommend {job_id} --agent-id {agent_id}");
     let fallback_lines = format!("First run `onchainos agent mark-failed {job_id} --provider {dp_id}` to flag the failure, then run `onchainos agent recommend {job_id} --agent-id {agent_id}` to fetch a fresh recommendation list.\n\
              \x20\x20If the list is non-empty -> show it to the user via `pending-decisions-v2 request` (same format as the non-designated Step 2: list each ASP's info + pick/next-page/public/close options).\n\
@@ -188,8 +189,9 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20onchainos agent list-attachments {job_id}\n\
              \x20\x20```\n\
              \x20\x20If the output is a non-empty JSON array, iterate over each file path:\n\
-             \x20\x20a) `xmtp_file_upload` (filePath=<path>, agentId={agent_id}, jobId={job_id}) → obtain fileKey + decryption metadata.\n\
-             \x20\x20b) `xmtp_send` to the provider with content carrying the fileKey + decryption fields + `[intent:attachment]` suffix.\n\
+             \x20\x20a) `xmtp_file_upload` (filePath=<path>, agentId={agent_id}, jobId={job_id}) → obtain fileKey + 5 decryption-metadata fields (digest/salt/nonce/secret/filename).\n\
+             \x20\x20b) `xmtp_send` to the provider with the following content (paste all 6 fields verbatim from xmtp_file_upload):\n\
+             \x20\x20{attachment_file}\n\
              \x20\x20⚠️ **Attachment upload failure MUST NOT block the negotiation flow**: if `xmtp_file_upload` fails for any file, skip that file and continue. The negotiation is the critical path; attachment forwarding is best-effort.\n\
              \x20\x20If empty (`[]`) or no attachments were found in the earlier attachment check, skip this step.\n\
              \x20\x20-> wait for the ASP's reply (5-minute timeout)\n\n\
