@@ -144,7 +144,17 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20content=<job description + expected deliverable + paymentMode preference + budget (base budget); **do NOT expose max_budget**>\n\
              \x20\x20🛑 The first message MUST be natural language only. Do NOT include `[intent:propose]` or any `[intent:*]` marker — propose is only allowed in Step 4, after the ASP has replied and evaluation (Step 2.5) is complete.\n\
              \x20\x20⚠️ `[intent:propose]` is ALWAYS sent by the buyer (you), NEVER by the ASP. Do NOT ask or instruct the ASP to send `[intent:propose]`.\n\
-             \x20\x20-> wait for the ASP's reply (5-minute timeout)\n\
+             \x20\x20-> after sending the first inquiry, proceed to step 1.5 before waiting for the reply.\n\n\
+             1.5. **Upload pending attachments (if any)**:\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent list-attachments {job_id}\n\
+             \x20\x20```\n\
+             \x20\x20If the output is a non-empty JSON array, iterate over each file path:\n\
+             \x20\x20a) `xmtp_file_upload` (filePath=<path>, agentId={agent_id}, jobId={job_id}) → obtain fileKey + decryption metadata.\n\
+             \x20\x20b) `xmtp_send` to the provider with content carrying the fileKey + decryption fields + `[intent:attachment]` suffix.\n\
+             \x20\x20⚠️ **Attachment upload failure MUST NOT block the negotiation flow**: if `xmtp_file_upload` fails for any file, skip that file and continue. The negotiation is the critical path; attachment forwarding is best-effort.\n\
+             \x20\x20If empty (`[]`) or no attachments were found in the earlier attachment check, skip this step.\n\
+             \x20\x20-> wait for the ASP's reply (5-minute timeout)\n\n\
              2. (Inside the sub session) the ASP replies with a quote (amount, token, payment-mode preference, estimated delivery time).\n\n\
              🛑 **Mandatory pre-evaluation - after the ASP replies, you MUST complete the steps below before sending any xmtp_send**:\n\
              \x20\x20a) `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` to get budget / max_budget\n\
@@ -372,7 +382,7 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
          ```bash\n\
          onchainos agent list-attachments {job_id}\n\
          ```\n\
-         If the output is a non-empty JSON array (files exist), remember these file paths — they must be uploaded and forwarded to the provider via `xmtp_file_upload` + `xmtp_send` with `[intent:attachment]` suffix **after the task is accepted** (status=1). Do NOT upload now (no provider yet).\n\
+         If the output is a non-empty JSON array (files exist), these attachments must be uploaded to the provider **immediately after the first `xmtp_send`** in the negotiation flow (B-Step 2 step 1.5 below). The provider needs the attachments during negotiation to evaluate the task scope and quote accurately.\n\
          If empty (`[]`), skip.\n\n\
          {routing_section}\n\n"
     );
@@ -413,7 +423,7 @@ pub(super) fn switch_provider(ctx: &FlowContext<'_>) -> String {
          ```bash\n\
          onchainos agent list-attachments {job_id}\n\
          ```\n\
-         If the output is a non-empty JSON array (files exist), remember these file paths — they must be uploaded and forwarded to the new provider via `xmtp_file_upload` + `xmtp_send` with `[intent:attachment]` suffix **after the task is accepted** (status=1). Do NOT upload now.\n\
+         If the output is a non-empty JSON array (files exist), these attachments must be uploaded to the new provider **immediately after the first `xmtp_send`** in the negotiation flow (B-Step 2 step 1.5). The provider needs the attachments during negotiation to evaluate the task scope and quote accurately.\n\
          If empty (`[]`), skip.\n\n\
          [Your next actions (strict order)]\n\n\
          {d_steps}\n\n\

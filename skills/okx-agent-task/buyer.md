@@ -86,8 +86,10 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 > 4. **`[MAX_BUDGET_UPDATE]` internal notification** (source: user session via `xmtp_dispatch_session`): content begins with the `[MAX_BUDGET_UPDATE]` prefix → extract `paymentMostTokenAmount=<value>` and update the current negotiation's max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, notify the provider, `xmtp_send`, or `xmtp_dispatch_user`** — violation = max_budget leaked to the provider = loss of bargaining leverage. After the silent update, **end the turn immediately**.
 > 5. **Attachment added notification** (source: user session via `xmtp_dispatch_session`): content starts with `[ATTACHMENT_ADDED]` → extract the file path from the content. Call `agent status <jobId>` to check status:
 >    - status=1 (accepted) → upload and forward the file to the provider: (1) `xmtp_file_upload` (parameters: `filePath` = extracted path, `agentId` = your agentId, `jobId`) → obtain `fileKey` + decryption metadata (digest/salt/nonce/secret); (2) `xmtp_send` to the provider with `[intent:attachment]` suffix, carrying the fileKey + five decryption fields + a brief description; (3) `xmtp_dispatch_user` to notify the user that the attachment has been sent to the provider. ⚠️ If `xmtp_file_upload` fails, `xmtp_dispatch_user` notifies the user that the attachment failed to send; **do NOT retry or block** — end the turn.
->    - status=0 (created) → the file is already stored locally; it will be uploaded to the provider automatically after a provider is matched and the task is accepted. `xmtp_dispatch_user` notifies the user that the attachment has been saved and will be forwarded to the provider once the task enters the execution phase.
->    - status≥2 (submitted / refused / disputed / terminal) → `xmtp_dispatch_user` notifies the user that the task has entered the acceptance/terminal phase and attachments can no longer be added.
+>    - status=0 (created) → check whether a negotiation session with a provider already exists (call `session_status`):
+>      - Sub session exists → upload and forward the file to the provider immediately (same steps as status=1 above: `xmtp_file_upload` → `xmtp_send` with `[intent:attachment]` → `xmtp_dispatch_user` to confirm). The provider can use the attachment to evaluate the task during negotiation.
+>      - No sub session → the file is already stored locally; it will be uploaded to the provider automatically when the negotiation session starts (flow_negotiate.rs B-Step 2 step 1.5). `xmtp_dispatch_user` notifies the user that the attachment has been saved and will be forwarded to the provider once a negotiation session is established.
+>    - status≥2 (submitted / refused / disputed / terminal) → `xmtp_dispatch_user` notifies the user that the task has entered the review/terminal phase and attachments can no longer be added.
 > 6. **Fallback** (1–5 did not match, source: peer) → call `agent status <jobId>` to check status (if already known this turn, reuse it; do not call again):
 >    - status=1 (accepted) → enter discussion mode (§3.5).
 >    - status=0 (created) and an active sub session exists (`session_status` is non-empty) → natural-language discussion during negotiation; call `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <your agentId>` to fetch the script.
@@ -321,10 +323,11 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 **Flow**:
 
 1. **Task disambiguation**: if the user has multiple active tasks, **always confirm which task** even if only one is active — ask the user to specify the jobId or pick from the list (`onchainos agent tasks`). ⚠️ Multi-task confirmation is mandatory to prevent attaching to the wrong task.
-2. **Save locally**: `onchainos agent task-attach <jobId> --file <path>` — copies the file to `~/.onchainos/task/<jobId>/attachments/`.
-3. **Notify sub session**: call `xmtp_sessions_query` (myAgentId, jobId) to find the sub session key, then `xmtp_dispatch_session(sessionKey=<sub_key>, content="[ATTACHMENT_ADDED] <file path>")`.
+2. **Status check** (🛑 MUST run before saving): `onchainos agent status <jobId>` — if status≥2 (submitted / refused / disputed / completed / terminal) → inform the user "The task has already entered the review/terminal phase; attachments can no longer be added." and **stop**. Only status=0 (created) or status=1 (accepted) may proceed.
+3. **Save locally**: `onchainos agent task-attach <jobId> --file <path>` — copies the file to `~/.onchainos/task/<jobId>/attachments/`.
+4. **Notify sub session**: call `xmtp_sessions_query` (myAgentId, jobId) to find the sub session key, then `xmtp_dispatch_session(sessionKey=<sub_key>, content="[ATTACHMENT_ADDED] <file path>")`.
    - If no sub session exists (task not yet matched with a provider), the file is stored locally and will be picked up when the sub session starts (see flow_negotiate.rs job_created checkpoint).
-4. **Confirm to user**: inform the user the attachment has been saved.
+5. **Confirm to user**: inform the user the attachment has been saved.
 
 ---
 
