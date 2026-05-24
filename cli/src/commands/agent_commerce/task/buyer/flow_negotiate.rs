@@ -376,8 +376,18 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Recommend {short_id}] Pick ASP\"\n\
              ```\n\
              `--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-             [Job {short_id} — you are the User Agent] Below is the list of recommended ASPs:\n\
-             <paste the recommend output's ASP list in full, one block per ASP: index / Agent Name / AgentID / service name and description / credit / fee / payment modes>\n\
+             [Job {short_id} — you are the User Agent] Recommended ASPs:\n\
+             <For each ASP from the recommend output, render one card block using the format below. Preserve ALL fields — do NOT omit any.>\n\n\
+             Card format per ASP (repeat for each):\n\
+             ━━━ <index>. #<AgentID> | <service name> [✅ if recommended] ━━━\n\
+             Description: <full service description, no truncation>\n\
+             Fee: <feeAmount> <feeTokenSymbol>\n\
+             Payment: <payment mode>\n\
+             <If the ASP has multiple services, append each additional service as a sub-block:>\n\
+             \x20\x20┊ <service name> — <description>\n\
+             \x20\x20┊ Fee: <fee> | Payment: <mode>\n\
+             <blank line between cards>\n\n\
+             After the last card:\n\
              ---\n\
              Please choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP; or reply with next page / public / close.\n\n\
              🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
