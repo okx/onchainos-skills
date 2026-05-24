@@ -125,6 +125,19 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 > | Modify task terms | "change budget", "switch provider", "修改预算", "换服务商" | §3.6 |
 > | Negotiate with a provider | "negotiate with XXX", "pick XXX", "start negotiation", "找810接单" | §3.2 Unified entry |
 
+### User session — `pending-decisions-v2 resolve` execution rule
+
+> 🛑 **CRITICAL — the output of `pending-decisions-v2 resolve` is a PLAYBOOK (instructions to execute), NOT a status report.**
+>
+> When you call `resolve`, the CLI removes the active entry from the queue and returns a playbook containing one or more tool calls (typically `xmtp_dispatch_session` to relay the user's decision to the sub session, and optionally `xmtp_prompt_user` to render the next queued entry). **The decision has NOT been relayed yet — `resolve` only prepares the relay instructions.**
+>
+> You **MUST** execute every tool call in the playbook output, in order:
+> - **Step 1** (`xmtp_dispatch_session`): relay the user's decision to the sub session. Without this call, the sub session never receives the decision and the task is **stuck forever**.
+> - **Step 2** (if present, `xmtp_prompt_user`): render the next pending entry to the user.
+>
+> ❌ Skipping `xmtp_dispatch_session` and calling `pending-decisions-v2 list` or any other command = the relay is lost = task stuck.
+> ❌ Treating the playbook output as "done" or "informational" = the relay was never sent.
+
 ---
 
 ## 3.1 Publishing a task (Scene 1) — user session interaction
