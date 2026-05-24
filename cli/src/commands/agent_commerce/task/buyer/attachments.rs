@@ -5,13 +5,27 @@
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
 
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_BUYER};
+
 fn attachments_dir(job_id: &str) -> Result<PathBuf> {
     let home = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
     Ok(home.join(".onchainos").join("task").join(job_id).join("attachments"))
 }
 
-pub fn handle_task_attach(job_id: &str, file_path: &str) -> Result<()> {
+pub async fn handle_task_attach(client: &mut TaskApiClient, job_id: &str, file_path: &str) -> Result<()> {
+    let agent_id = common_query::resolve_agent_id("", AGENT_ROLE_BUYER).await;
+    let resp = client.get_with_agent_id(&client.task_path(job_id), &agent_id).await?;
+    let status = resp["status"].as_i64().unwrap_or(-1);
+    if status >= 2 {
+        let status_str = resp["statusStr"].as_str().unwrap_or("unknown");
+        bail!(
+            "task status is \"{status_str}\" (status={status}); \
+             attachments can only be added when the task is in created or accepted state"
+        );
+    }
+
     let src = Path::new(file_path);
     if !src.exists() {
         bail!("file not found: {file_path}");

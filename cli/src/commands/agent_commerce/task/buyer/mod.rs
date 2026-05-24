@@ -300,7 +300,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await
         }
         TaskCommand::TaskAttach { job_id, file_path } => {
-            attachments::handle_task_attach(&job_id, &file_path)
+            attachments::handle_task_attach(&mut client, &job_id, &file_path).await
         }
         TaskCommand::ListAttachments { job_id } => {
             attachments::handle_task_attachments(&job_id)

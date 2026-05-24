@@ -363,15 +363,19 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 **Flow**:
 
 1. **Task disambiguation**: if the user has multiple active tasks, **always confirm which task** even if only one is active — ask the user to specify the jobId or pick from the list (`onchainos agent tasks`). ⚠️ Multi-task confirmation is mandatory to prevent attaching to the wrong task.
-2. **Status check** (🛑 MUST run before saving): `onchainos agent status <jobId>` — if status≥2 (submitted / refused / disputed / completed / terminal) → inform the user "The task has already entered the review/terminal phase; attachments can no longer be added." and **stop**. Only status=0 (created) or status=1 (accepted) may proceed.
-3. **Save locally**: `onchainos agent task-attach <jobId> --file <path>` — copies the file to `~/.onchainos/task/<jobId>/attachments/`. ⚠️ This only saves the file **locally** — the file has NOT been sent to the provider yet. You **MUST** continue to step 4.
-4. 🛑 **Forward to sub session (MUST NOT SKIP)**: call `xmtp_sessions_query` (myAgentId, jobId) to find the sub session key, then dispatch with **exact** content format below (❌ do NOT invent your own prefix — the sub session pattern-matches on `[ATTACHMENT_ADDED]`):
+2. 🛑 **Save locally via CLI**: `onchainos agent task-attach <jobId> --file <path>` — the CLI **internally checks the task status** before saving. If the task is in submitted or later state (status≥2), the CLI **rejects** the operation and returns an error.
+   - **CLI returns error** → 🛑🛑🛑 **STOP immediately**. Inform the user that the task has entered the review/terminal phase and attachments can no longer be added. **Do NOT proceed to step 3.** **Do NOT save the file manually.**
+   - **CLI returns success** → the file is saved locally under `~/.onchainos/task/<jobId>/attachments/`. Continue to step 3.
+   - 🔴 Real incident: the CLI returned a status error, but the model used `mkdir -p` + `cp` shell commands to manually create the attachments directory and copy the file, then dispatched `[ATTACHMENT_ADDED]` to the sub session — completely bypassing the CLI's status guard. The provider received an attachment for a task that was already in the review phase.
+   - ❌ **ABSOLUTE PROHIBITION**: when `task-attach` returns an error, you are **forbidden** from using shell commands (`mkdir`, `cp`, `mv`, `ln`, or any file-copy operation) to manually save the file. The CLI is the **only** authorized path for saving attachments — if it rejects the operation, the operation is rejected. Period.
+   - ❌ **ABSOLUTE PROHIBITION**: when `task-attach` returns an error, you are **forbidden** from calling `xmtp_dispatch_session` with `[ATTACHMENT_ADDED]` or any other notification to the sub session.
+3. 🛑 **Forward to sub session (MUST NOT SKIP)**: call `xmtp_sessions_query` (myAgentId, jobId) to find the sub session key, then dispatch with **exact** content format below (❌ do NOT invent your own prefix — the sub session pattern-matches on `[ATTACHMENT_ADDED]`):
    ```
    xmtp_dispatch_session(sessionKey=<sub_key>, content="[ATTACHMENT_ADDED] <file path from task-attach output>")
    ```
-   ❌ Stopping after step 3 without dispatching = the attachment is stuck locally and never reaches the provider. ❌ Using any other prefix (`[ATTACHMENT_READY]`, `[FILE_ADDED]`, etc.) = sub session cannot recognize the message.
+   ❌ Stopping after step 2 without dispatching = the attachment is stuck locally and never reaches the provider. ❌ Using any other prefix (`[ATTACHMENT_READY]`, `[FILE_ADDED]`, etc.) = sub session cannot recognize the message.
    - If no sub session exists (task not yet matched with a provider), the file is stored locally and will be picked up when the sub session starts (see flow_negotiate.rs job_created checkpoint). In this case, tell the user the file is saved and will be forwarded once a provider is matched.
-5. **Confirm to user**: inform the user the attachment has been saved **and forwarded to the sub session** (or "saved and will be forwarded once a provider is matched" if no sub session exists per step 4).
+4. **Confirm to user**: inform the user the attachment has been saved **and forwarded to the sub session** (or "saved and will be forwarded once a provider is matched" if no sub session exists per step 3).
 
 ---
 
