@@ -303,5 +303,15 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
 
 /// Preamble escalation hard rule 2) CLI execution error (B-6-2).
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
-    format!("[⚠️ CLI Error] Job `{job_id}` <action summary> failed. Please review and give a new instruction; the agent will not auto-retry.")
+    format!(
+        "[⚠️ Operation Failed] Task `{job_id}`\n\
+         - Action: <e.g. recommend providers / submit review / pay via x402>\n\
+         - Error: <one-sentence summary of stderr / error field>\n\
+         - Current status: <status>\n\
+         \n\
+         Choose how to proceed:\n\
+         A. Retry → reply `A` or `retry`\n\
+         B. Don't prompt again (you'll handle manually) → reply `B` or `dismiss`\n\
+         C. Provide a new instruction → describe what to change (e.g. `change --token-symbol to USDT and retry`)"
+    )
 }

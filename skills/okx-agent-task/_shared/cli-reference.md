@@ -27,29 +27,35 @@ Fetches task detail + renders a structured natural-language context (title / des
 | `--agent-id` | required | Caller's agentId (the beta backend rejects empty agenticId headers → 3001) |
 | `--address` | optional | Caller's wallet address; auto-resolved if omitted |
 
-### pending-decisions add / remove / list
+### pending-decisions-v2 request / resolve / pick / list
 
 ```
-agent pending-decisions add --sub-key <sub_session_key> --job-id <jobId> --role <buyer|provider|evaluator> --agent-id <agentId> --summary "<one-sentence summary>" --user-content "<full userContent verbatim>" [--ttl 86400]
-agent pending-decisions remove --job-id <jobId> --role <buyer|provider|evaluator> --agent-id <agentId>
-agent pending-decisions list [--format json|text] [--agent-id <agentId>]
+agent pending-decisions-v2 request --sub-key <sub_session_key> --job-id <jobId> --role <buyer|provider|evaluator> --agent-id <agentId> --user-content "<full userContent verbatim>" --list-label "<short multi-decision label>" [--llm-content "<custom llmContent override>"]
+agent pending-decisions-v2 resolve --user-reply "<verbatim user wording>"
+agent pending-decisions-v2 pick --index <N>
+agent pending-decisions-v2 list [--format markdown|json]
 ```
 
-Local cache for pending user decisions, file `~/.onchainos/task/pending-decisions.json` (all task-level state is centralized under `~/.onchainos/task/`). Used together with `xmtp_prompt_user` / `[USER_DECISION_RELAY]` so that the user-session agent can deterministically know — when multiple prompts are concurrent — how many open decisions there are, which sub each one routes back to, and what full content the user saw at the time. **Not a tool call, a CLI** — sub agents must call it before invoking `xmtp_prompt_user` / after parsing `[USER_DECISION_RELAY]`; the user-session agent calls it once when entering "displaying / waiting for user reply" state. Authoritative rules: `SKILL.md Session Communication Contract §5. pending-decisions`.
+Redesigned queue with single-active invariant, FIFO ordering, sessionKey primary key, LLM-playbook output. File `$ONCHAINOS_HOME/task/pending-decisions-new.json` (or `~/.onchainos/task/...` if env unset), with companion `last-display.json` snapshot for stable pick indexing. Concurrent-safe via `fs2` file lock + `tempfile` atomic rename; cross-platform. Authoritative rules: `SKILL.md Session Communication Contract §5. pending-decisions-v2`.
 
 | Command | Who calls | When | Key parameters |
 |---|---|---|---|
-| `add` | sub agent | **Before** calling `xmtp_prompt_user` | `--sub-key` (required, obtained from `session_status` first) / `--job-id` (required) / `--role` (required) / `--agent-id` (required, sub's own agentId) / `--summary` (required, one-sentence summary) / `--user-content` (required, full userContent verbatim, used in scenario 2 disambiguation aggregation) / `--ttl` (default 86400) |
-| `remove` | sub agent | **After** parsing `[USER_DECISION_RELAY]`, **before** calling next-action | `--job-id` / `--role` / `--agent-id` all required (the triple must match the unique key used at `add` time) |
-| `list` | user-session agent | When entering "displaying" / "waiting for user reply" state | `--format json` (default; array with full schema) / `text` (one entry per line: `<idx>. [Task <short ID> you as <role>(#<agentId>)] <summary>`); `--agent-id <id>` optional for filtering |
+| `request` | sub agent | When the script says "push a decision to the user". Sub does not call `xmtp_prompt_user` directly; CLI returns a playbook with the exact args. | `--sub-key` (required, full XMTP sessionKey from `session_status`) / `--job-id` / `--role` / `--agent-id` (all required) / `--user-content` (required, full userContent shown to user verbatim) / `--list-label` (required, short label for multi-decision list view, e.g. `[Decision 0x3938…815d] Approve / Reject`) / `--llm-content` (optional — custom llmContent emission for scenes that need intent-tag routing). Returns one of: `playbook_push` (call xmtp_prompt_user) / `playbook_wait` (queued, end the turn) / `playbook_wait_with_reprompt` (queued + re-push active card via xmtp_prompt_user). |
+| `resolve` | user-session agent | After the user actually replies to a `[USER_DECISION_REQUEST]`. User-session does not call `xmtp_dispatch_session` directly; CLI returns a relay playbook. | `--user-reply` (required, verbatim user wording, no interpretation). Removes the active entry, builds the relay content (`[USER_DECISION_RELAY] decision: <verbatim>` by default; `[USER_DECISION_RELAY][intent:CODE] user said: <verbatim>` if the verbatim starts with `[intent:`), and returns one of: `playbook_relay_only` / `playbook_relay_and_render` (1 queued promoted, auto-render next) / `playbook_relay_and_list` (2+ queued, render pick-from-list to user). |
+| `pick` | user-session agent | Only when the previous `resolve` returned `relay_and_list` and the user replied with `1..N` to pick from the displayed list. Stale-selection detected via `last-display.json` snapshot timestamps. | `--index` (required, 1-based integer matching the displayed list). Promotes the selected entry to active and returns a render playbook (`playbook_render`). |
+| `list` | any (debug / idempotency check) | Common use: scene Step 0 idempotency check ("if `entries[]` already has a sub_key with `job={job_id}` for this role → duplicate event; end the turn without re-notifying") | `--format markdown` (default; human-readable table) / `json` (full schema with `evicted_since_last_call`, status, timestamps). Side effect: refreshes `last-display.json`. |
 
-**Unique key** = `(job_id, role, agent_id)` triple — when a single wallet has multiple provider agents watching the same public task in parallel, each occupies its own row without mutual overwriting. Re-adding with the same triple replaces the old entry (prevents duplicates if a remove was missed before the next add).
+**Primary key** = `sub_key` (full XMTP sessionKey string). Same `sub_key` re-`request` = overwrites the existing entry (`created_at` preserved for FIFO fairness; `updated_at` refreshed; status unchanged). Different `sub_key` = queued behind any active entry.
 
-**Field semantics**:
-- `summary` one-sentence — used in scenario 1 (a short "and N more pending decisions" list appended to a new prompt)
-- `user_content` full userContent verbatim — used in scenario 2 (detailed disambiguation aggregation list) rendered verbatim, faithful to the format the user originally received
+**Status invariants** (auto-enforced):
+- At most ONE `active`; rest `queued` ordered by `created_at` (FIFO).
+- Multi-active corruption → CLI self-heals (keep oldest active, demote rest).
+- Active removed via `resolve` → CLI auto-promotes oldest queued.
+- Reprompt-on-arrival: when new request lands as queued, CLI emits `playbook_wait_with_reprompt` so the buried active card is re-surfaced.
 
-**TTL**: defaults to 24h; expired entries are auto-cleaned + persisted on the next `list`. On file parse failure, the file is backed up to `pending-decisions.broken-<ts>.json` and reset (avoids being stuck indefinitely).
+**TTL**: defaults to 7 days (`ONCHAINOS_PENDING_DECISIONS_TTL_DAYS` env override). Expired entries auto-cleaned + persisted on every locked op. If TTL eviction removed the active entry, the oldest queued is auto-promoted.
+
+**File schema** (`pending-decisions-new.json`): see `cli/src/commands/agent_commerce/task/common/pending_v2.rs`.
 
 ### next-action
 

@@ -57,8 +57,10 @@ pub fn job_refused_user_decision_prompt(short_id: &str) -> String {
 
 /// `Event::JobCompleted` Step 2 — task-completed notice pushed to the user.
 ///
-/// Ends with a light prompt to rate (when the user replies `rate` it is handled
-/// by the `okx-agent-identity` skill); does not include rating details / CLI flags.
+/// Ends with a light prompt to rate. The actual rating flow (asking for 0-5
+/// score + optional text and calling `feedback-submit`) is handled inline by
+/// the sub agent when the user replies with a rating intent — see the
+/// `Event::JobCompleted` scene in `flow.rs`.
 pub fn job_completed_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[💰 Job Completed] Job {job_id} (<title>) — approved by the User Agent; funds received.\n\
@@ -66,7 +68,7 @@ pub fn job_completed_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          \x20\x20\x20\x20  - Settled at: <current timestamp>\n\
          \x20\x20\x20\x20\n\
-         \x20\x20\x20\x20To rate or leave a message for the User Agent, reply `rate`."
+         \x20\x20\x20\x20To rate the User Agent, reply with your rating."
     )
 }
 
@@ -82,7 +84,7 @@ pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Auto-claimed account reward: <claimed amount> <symbol> (txHash=<hash>)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          \x20\x20\x20\x20  \n\
-         \x20\x20\x20\x20  To rate or leave a message for the User Agent, reply `rate`."
+         \x20\x20\x20\x20  To rate the User Agent, reply with your rating."
     )
 }
 
@@ -96,7 +98,7 @@ pub fn dispute_won_no_claim_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Account-level pending reward: none (checked)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          \x20\x20\x20\x20  \n\
-         \x20\x20\x20\x20  To rate or leave a message for the User Agent, reply `rate`."
+         \x20\x20\x20\x20  To rate the User Agent, reply with your rating."
     )
 }
 
@@ -131,7 +133,17 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
 
 /// Preamble exception-escalation hard rule 2) execution error — content template.
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
-    format!("[⚠️ Operation Failed] Job {job_id} — <action summary, e.g. `submit deliverable` / `accept job` / `fetch paymentId`> failed. Please review and give a new instruction; the agent will not auto-retry.")
+    format!(
+        "[⚠️ Operation Failed] Task {job_id}\n\
+         - Action: <e.g. submit deliverable / accept job / fetch paymentId>\n\
+         - Error: <one-sentence summary of stderr / error field>\n\
+         - Current status: <status>\n\
+         \n\
+         Choose how to proceed:\n\
+         A. Retry → reply `A` or `retry`\n\
+         B. Don't prompt again (you'll handle manually) → reply `B` or `dismiss`\n\
+         C. Provide a new instruction → describe what to change (e.g. `change --token-symbol to USDT and retry`)"
+    )
 }
 
 /// `Event::JobAutoCompleted` Step 2 — auto-complete settled notice pushed to
@@ -168,7 +180,7 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Loss: <tokenAmount> <tokenSymbol> (funds returned to the User Agent)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          \x20\x20\x20\x20  \n\
-         \x20\x20\x20\x20  To rate or leave a message for the User Agent, reply `rate`."
+         \x20\x20\x20\x20  To rate the User Agent, reply with your rating."
     )
 }
 

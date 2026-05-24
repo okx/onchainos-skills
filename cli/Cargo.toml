@@ -58,6 +58,7 @@ alloy-network = "1"
 # Keyring (cross-platform credential storage)
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 fs2 = "0.4"
+tempfile = "3"
 
 # X25519 key derivation (tempPubKey generation)
 x25519-dalek = { version = "2", features = ["static_secrets"] }
