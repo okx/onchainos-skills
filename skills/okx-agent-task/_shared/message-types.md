@@ -146,7 +146,19 @@ Sent as the `llmContent` argument when a sub agent calls `xmtp_prompt_user`. **T
 **Real sample** (dispute / refund decision):
 
 ```
-[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=0xe8c7...&to=0x0ccd...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer] After receiving the user's decision, first call `onchainos agent pending-decisions list` to fetch current pending entries, match this one in the list by jobId/role hint → call `xmtp_dispatch_session(sessionKey=<this entry's sub_key>, content="[USER_DECISION_RELAY] decision: <the user's literal words>")`. If there are multiple pending entries without a hint, ask the user to disambiguate. See SKILL.md `Session Communication Contract §5. pending-decisions` for details.
+[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=0xe8c7...&to=0x0ccd...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer]
+
+⚠️ This llmContent block is for YOUR (user-session LLM's) instructions only — invisible to the user. Render ONLY the userContent block to the user; do NOT echo this llmContent.
+
+Phase 1 (THIS turn): Render userContent verbatim to the user. End the turn. Do NOT call any tool.
+
+🛑🛑🛑 HARDSTOP — the ONLY valid user reply is an actual user message arriving as an inbound in a LATER turn's tool_result (NOT this turn). After rendering, you MUST end the turn; the user has NOT spoken yet. Specifically forbidden: synthesizing a decision from the option list; reusing prior chat messages / task title as a user decision; fabricating user wording. If no genuine user-input inbound, `resolve` is forbidden — potential escrow loss.
+
+Phase 2 (NEXT turn, when the user actually replies):
+- Defer keyword (等会儿 / skip / later / ...) → just end the turn.
+- Otherwise → call `onchainos agent pending-decisions-v2 resolve --user-reply "<verbatim user wording>"` **exactly once**. CLI returns a relay playbook; execute its `xmtp_dispatch_session` Step once and end the turn.
+
+See SKILL.md `Session Communication Contract §5. pending-decisions-v2` for details.
 ```
 
 **Paired `userContent` sample** (what the user actually sees, sent in the same `xmtp_prompt_user` call as the `llmContent` above):
@@ -167,9 +179,9 @@ Please reply with "agree to refund" / "raise dispute" / "accept delivery".
 |---|---|---|
 | `[USER_DECISION_REQUEST]` literal | Fixed string | Prefix marker; **exact literal match** — case, brackets, and underscore all character-for-character |
 | `[sub_key: <full string>]` | Embedded field | Full sessionKey of the sub session that issued the prompt; the user agent's subsequent `xmtp_dispatch_session` must **completely** fill this string back into the `sessionKey` parameter (including the entire `agent:main:xmtp:group:okx-xmtp:my=...&to=...&job=...&gid=...` segment) |
-| `[job: <jobId>]` | Embedded field | Task ID (lets the user agent reference the specific task when echoing to the user, and also acts as a `pending-decisions list` match key) |
-| `[role: <buyer\|provider\|evaluator>]` | Embedded field | The sub session's own role, used for disambiguation across multiple pending decisions: if the user says "buyer task" / "provider task" etc. and only one pending matches that role, it's a direct hit |
-| `<relay instruction text>` | Natural language | Execution guide for the user agent LLM, telling it how to relay the user's reply back to the sub (including the step of running `pending-decisions list` to match first, then dispatching) |
+| `[job: <jobId>]` | Embedded field | Task ID (lets the user agent reference the specific task when echoing to the user). |
+| `[role: <buyer\|provider\|evaluator>]` | Embedded field | The sub session's own role; CLI propagates it through `pending-decisions-v2` routing |
+| `<relay instruction text>` | Natural language | Execution guide for the user agent LLM (HARDSTOP rules + Phase 1/2 instructions). In v2 the canonical guide tells the user-session to call `pending-decisions-v2 resolve --user-reply "<verbatim>"` exactly once and follow the CLI's returned relay playbook |
 
 **❌ Receiver-side error modes**:
 - Missing `[sub_key: ...]` → user agent must output "sub session identifier missing, please re-initiate the task flow", **do not** guess, **do not** fall back to executing task CLI yourself

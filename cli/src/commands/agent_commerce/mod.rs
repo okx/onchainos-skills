@@ -343,6 +343,12 @@ pub enum AgentCommand {
     #[command(name = "pending-decisions", subcommand)]
     PendingDecisions(task::common::pending::PendingDecisionsCommand),
 
+    /// Pending-decisions v2 — redesigned queue with single-active invariant +
+    /// sessionKey primary key + LLM-playbook output. Coexists with v1 during
+    /// migration. Design doc: https://okg-block.sg.larksuite.com/docx/URN9d8q49oYAJnxH6BYlYTkUgkd
+    #[command(name = "pending-decisions-v2", subcommand)]
+    PendingDecisionsV2(task::common::pending_v2::PendingDecisionsV2Command),
+
     // ── Task system (Evaluator Agent) ────────────────────────────────────────
     // Historically wrapped as `Evaluator(EvaluatorCommand)`; flattened to the top level in 2026-05
     // to align with the buyer/provider style. The `agent evaluator <sub>` form is no longer supported;
@@ -729,6 +735,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::PendingDecisions(c) =>
             task::common::pending::run(c).await,
+
+        AgentCommand::PendingDecisionsV2(c) =>
+            task::common::pending_v2::run(c).await,
 
         // ── Evaluator Agent flat dispatch ───────────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {

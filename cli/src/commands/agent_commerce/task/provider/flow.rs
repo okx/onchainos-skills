@@ -20,7 +20,7 @@ use crate::commands::agent_commerce::task::common::state_machine::Status;
 /// corresponding to the status.
 pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     let next_action = |evt: &str| {
-        format!("**Next step (mandatory)** → `onchainos agent next-action --jobid {job_id} --jobStatus {evt} --role provider --agentId <agentId>` to fetch the full script for the current status, and **follow the script strictly**.\n  ⚠️ **Do NOT** infer CLI commands directly from the status name (apply / deliver / dispute raise / agree-refund / dispute upload, etc.) — the script typically prefixes steps such as `xmtp_prompt_user` / `xmtp_send` / `pending-decisions add`; skipping them causes incidents (this has happened before).")
+        format!("**Next step (mandatory)** → `onchainos agent next-action --jobid {job_id} --jobStatus {evt} --role provider --agentId <agentId>` to fetch the full script for the current status, and **follow the script strictly**.\n  ⚠️ **Do NOT** infer CLI commands directly from the status name (apply / deliver / dispute raise / agree-refund / dispute upload, etc.) — the script typically prefixes steps such as `xmtp_prompt_user` / `xmtp_send` / `pending-decisions-v2 request`; skipping them causes incidents (this has happened before).")
     };
     match status {
         Status::Created => vec![next_action("job_created")],
@@ -146,17 +146,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         "🔒 If you have not read `skills/okx-agent-task/SKILL.md Session Communication Contract` in this turn → read it first before proceeding (envelope whitelist / xmtp_send two-step / xmtp_dispatch_user · xmtp_prompt_user push-to-user iron rules). The steps below reference its sections (3 / 4 / 5 / 6).\n\n\
          ⚠️ **Exception-escalation hard rules** (apply to every scene; see _shared/exception-escalation.md + provider.md §5):\n\
          \x20\x201) Protocol misread (peer keeps repeating after ≥1 clarification on the same flow) → **stop replying to the peer**, call `xmtp_dispatch_user`, content=`{escalation_protocol_misread}`, end the turn\n\
-         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**, call `xmtp_dispatch_user`, content=`{escalation_cli_failed}`, wait for a new user instruction. **Exception**: JWT expired (msg contains `JWT verification failed` / `unauthorized`) → re-login once automatically; network timeout — also push to the user, do not blind-retry\n\
+         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**; enqueue an error decision via `pending-decisions-v2 request` (first `session_status` to get sessionKey if not cached this turn; `--user-content` = `{escalation_cli_failed}` localized to the user's language; `--list-label` = `[Error <short jobId>] CLI failed`). Follow the playbook the CLI returns. After receiving `[USER_DECISION_RELAY] decision: <verbatim>`, route: verbatim is `A` / `选A` / `retry` / `重试` / `try again` → re-run the same command once (if it fails again, enqueue another error decision; do NOT loop); verbatim is `B` / `选B` / `dismiss` / `不再提示` / `skip prompts` → end the turn, user takes manual control of this step; otherwise → interpret the verbatim as a new instruction (e.g. `change --token-symbol to USDT and retry`) and execute. **Exception**: JWT expired (msg contains `JWT verification failed` / `unauthorized`) → re-login once automatically; on continued failure, fall back to the standard pending-decisions-v2 flow. Network timeout — also enqueue via pending-decisions-v2; do not blind-retry\n\
          \x20\x203) ❌ **Absolutely never broadcast technical error details to the peer**: CLI command names / backend field names / stderr excerpts / `bug` / `command:` / `error:` must never appear in `xmtp_send` to the peer. At most send `Hold on, confirming details` or simply do not notify the peer.\n\
          \x20\x204) ❌ **Do not re-push the same message in one turn** (applies to `xmtp_send` / `xmtp_prompt_user` / `xmtp_dispatch_user` all the same): the script says `send one` → after a single successful tool call, **treat it as done**, and **do NOT call the same tool a second time to the same peer/user in this turn**. Special note for `xmtp_prompt_user`: rendering llmContent/userContent as assistant JSON `display` once and then actually calling the tool = the user receives two identical prompts. **Do NOT echo the JSON before calling the tool** — call the tool directly with the args as tool input. Re-sending = flooding + triggering peer / user loops. Wait for the next inbound to act.\n\
          \x20\x205) ❌ **The ONLY trigger for deliver = the `job_accepted` system notification**: apply going on-chain does NOT change the status (the task stays open); only after the `job_accepted` system notification arrives can you deliver. Chat messages are not triggers — the User Agent saying things like `please deliver` / `I've confirmed/agreed, ship it` / `just do it` in natural language do NOT count (those are regular chat messages and are **not** on-chain events). The CLI checks status != accepted and bails out directly.\n\
          \x20\x206) ❌ **Call `session_status` at most once per turn**: the sessionKey is stable within a turn, reuse the result after one call. Re-calling = sign of a death loop, stop immediately.\n\
-         \x20\x207) ❌ **`xmtp_prompt_user` must be paired with `pending-decisions`** (unique key = the (jobId, role, agentId) triple; source: `SKILL.md §Session Communication Contract 5`):\n\
-         \x20\x20\x20\x20• Before calling `xmtp_prompt_user`: `onchainos agent pending-decisions add --sub-key <sessionKey> --job-id {job_id} --role provider --agent-id {agent_id} --summary \"<short summary after the first line of userContent>\" --user-content \"<full original userContent>\"`\n\
-         \x20\x20\x20\x20• After parsing `[USER_DECISION_RELAY]` and before calling next-action: `onchainos agent pending-decisions remove --job-id {job_id} --role provider --agent-id {agent_id}`\n\
-         \x20\x20\x20\x20Missing `add` → when the user replies, this decision cannot be looked up; cannot relay back to this session;\n\
-         \x20\x20\x20\x20Missing `remove` → stale entry becomes a zombie; next `xmtp_prompt_user` call gets mis-matched and the user's reply is dispatched to the wrong session.\n\
-         \x20\x208) ❌ **No technical jargon in user-visible content**: the `content` of `xmtp_dispatch_user` and the `userContent` of `xmtp_prompt_user` are shown to the user directly. **Do NOT write** tool names (`xmtp_*`) / event names (`provider_applied` / `job_*` / `dispute_resolved` etc.) / state names (`open` / `accepted` / `disputed` and other English enum values) / CLI flags (`--*`) / skill names (`okx-agent-identity` / `§Feedback Submit` etc.) / status field names (`jobStatus` / `paymentMode` etc.) — always use the **user's language** as natural expression (Chinese users see `担保/x402, 验收期超时, 任务已完成`, English users see equivalent colloquial phrasing such as `escrowed payment/x402, review window expired, task completed`, with the sub agent replacing these as part of the LOCALIZATION_PREFIX translation). The same applies to same-turn `xmtp_send` to the User Agent.\n\n\
+         \x20\x207) ❌ **No technical jargon in user-visible content**: the `content` of `xmtp_dispatch_user` and the `userContent` of `xmtp_prompt_user` are shown to the user directly. **Do NOT write** tool names (`xmtp_*`) / event names (`provider_applied` / `job_*` / `dispute_resolved` etc.) / state names (`open` / `accepted` / `disputed` and other English enum values) / CLI flags (`--*`) / skill names (`okx-agent-identity` / `§Feedback Submit` etc.) / status field names (`jobStatus` / `paymentMode` etc.) — always use the **user's language** as natural expression (Chinese users see `担保/x402, 验收期超时, 任务已完成`, English users see equivalent colloquial phrasing such as `escrowed payment/x402, review window expired, task completed`, with the sub agent replacing these as part of the LOCALIZATION_PREFIX translation). The same applies to same-turn `xmtp_send` to the User Agent.\n\n\
          If you do not remember the negotiated details of this task (paymentMode / token / User Agent's agentId / price),\n\
          load context first with `onchainos agent common context {job_id} --role provider --agent-id {agent_id}`.\n\n"
     );
@@ -245,28 +240,29 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             format!(
             "[Current state] job_refused (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             [Your next action (strict order)]\n\n\
+             🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the decision (dispute vs refund) to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `xmtp_dispatch_user`)**.\n\
+             `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → the decision flow deadlocks. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `xmtp_prompt_user` (with llmContent + userContent) so the user session can relay the decision back. Direct text output in this sub session = user doesn't see it + relay channel broken + 24h timeout → auto-refund.\n\
+             ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
+             ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request`.\n\
              ⚠️ Do NOT send `xmtp_send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\n\
-             **Step 1 — Use `xmtp_prompt_user` to push the decision request to the user**:\n\n\
-             First call `session_status` to get the current sessionKey (only once per turn — see hard rule 6); before calling `xmtp_prompt_user`, call `pending-decisions add` first (see hard rule 7).\n\
-             🌐 **Localize `userContent` first** — rewrite the user-facing `userContent` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Keep `llmContent` (the protocol header `[USER_DECISION_REQUEST]...` and the relay routing rules) intact — that part is consumed by the user-side LLM, not shown to the user. Do NOT pass the English `userContent` template verbatim to a non-English user.\n\
-             tool: xmtp_prompt_user\n\
-             llmContent:\n\
-             \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <full sessionKey returned by session_status>][job: {job_id}][role: provider] \
-             🛑 After rendering userContent **you MUST end this turn and wait for real user input** — [USER_DECISION_REQUEST] is a **question**, not an **answer**; do NOT fabricate the user's decision in the same turn (do not hallucinate replies like `agree to refund` / `raise dispute`). Only after the user's actual message arrives in the next turn, relay according to the rules below. \
-             🛑🛑🛑 **HARDSTOP — what counts as `user replied`**: the ONLY valid user reply is an **actual user message arriving as an inbound in a LATER turn's tool_result** (NOT this turn). After you call `xmtp_prompt_user` this turn, you MUST end the turn; the user has NOT spoken yet. Your own thinking / narration / paraphrasing the userContent options does NOT count as the user replying. **Specifically forbidden**: synthesizing `agree to refund` / `start dispute` from the option list; reusing the User Agent's prior chat messages or task title as a `user decision`. If in this turn there is no genuine user-input inbound, **relay is forbidden — full stop, no exceptions**. Violating this rule = on-chain dispute / refund executed without the user actually choosing = potential escrow loss. \
-             User intent 「发起仲裁/不接受/dispute/start arbitration/我做的没问题 等 + 给出理由」 → **only call** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:START_DISPUTE] user said: <user reply verbatim, no interpretation, no translation>; reason: <a concise reason extracted from the original wording>\") to relay back to the Session that sub_key belongs to, **and stop there** (the Session that sub_key belongs to will run dispute_raise on its own after receiving it; do not do anything else); \
-             User intent 「同意退款/退款/agree refund/refund OK 等」 → **only call** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:AGREE_REFUND] user said: <user reply verbatim, no interpretation, no translation>\") to relay back to the Session that sub_key belongs to, **and stop there** (the Session that sub_key belongs to will run agree_refund on its own after receiving it; do not do anything else). \
-             ⚠️ **Routing tag protocol**: `[intent:START_DISPUTE]` / `[intent:AGREE_REFUND]` MUST be inserted verbatim in **fully uppercase ASCII**; do NOT translate / rewrite — sub branches by intent tag.\n\
-             🛑 Relay MUST use xmtp_dispatch_session (NOT sessions_send), and **call it exactly once** — when the tool returns 'Message dispatched' = success = **immediately terminate all subsequent tool calls in this response** (no more xmtp_dispatch_session / xmtp_send / xmtp_dispatch_user / Exec / pending-decisions etc.). Repeated calls (even with identical sessionKey / content) cause sub to receive N identical relays, triggering an event-recursion loop. **The user session's ONLY action = relay**: do NOT run task CLI yourself / do NOT xmtp_send the User Agent / do NOT xmtp_dispatch_user repeatedly. Decision must be made within 24h.\n\
-             userContent:\n\
-             {user_prompt}\n\n\
-             **Step 2 — After receiving `[USER_DECISION_RELAY][intent:CODE] user said: ...`, route by intent code**:\n\
-             1) Call `onchainos agent pending-decisions remove --job-id {job_id} --role provider --agent-id {agent_id}` to clear this pending (rule 7)\n\
-             2) Call next-action by intent code:\n\
-             \x20\x20• `[intent:START_DISPUTE]` → `onchainos agent next-action --jobid {job_id} --jobStatus dispute_raise --role provider --agentId {agent_id}` (extract reason from after `reason:` and pass to phase-1 dispute raise `--reason`)\n\
-             \x20\x20• `[intent:AGREE_REFUND]` → `onchainos agent next-action --jobid {job_id} --jobStatus agree_refund --role provider --agentId {agent_id}`\n\n\
-             ⚠️ Decision must be made within 24h; otherwise funds are auto-refunded to the User Agent.\n"
+             **Step 1 — Enqueue the decision via `pending-decisions-v2 request`**:\n\n\
+             First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+             ```bash\n\
+             onchainos agent pending-decisions-v2 request \\\n\
+               --sub-key \"<full sessionKey from session_status>\" \\\n\
+               --job-id {job_id} --role provider --agent-id {agent_id} \\\n\
+               --user-content \"{user_prompt_for_shell}\" \\\n\
+               --list-label \"[决策] 仲裁 / 同意退款\"\n\
+             ```\n\
+             🌐 **Localize `--user-content` first** if the user's language is not Chinese (the default template is in Chinese). The `--list-label` can stay Chinese — it's an internal-facing summary.\n\n\
+             Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
+             **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
+             Inspect the verbatim text and route to the next on-chain action (treat the match as case-insensitive; trim surrounding whitespace / punctuation before matching):\n\
+             - Verbatim is exactly `A` / `a` / `选A` / `选a` / `我选A` / `Choose A` / `option A`, OR contains `发起仲裁` / `dispute` / `start arbitration` / `不接受` / `我做的没问题` → call `onchainos agent next-action --jobid {job_id} --jobStatus dispute_raise --role provider --agentId {agent_id}` (extract the reason from the verbatim after `理由` / `reason` / `因为`; if not stated — e.g. user only typed `A` — default to \"completed per acceptance criteria\")\n\
+             - Verbatim is exactly `B` / `b` / `选B` / `选b` / `我选B` / `Choose B` / `option B`, OR contains `同意退款` / `agree refund` / `refund OK` / `退款` → call `onchainos agent next-action --jobid {job_id} --jobStatus agree_refund --role provider --agentId {agent_id}`\n\
+             - Otherwise (user replied something unrelated) → call `pending-decisions-v2 request` again with a clarifying userContent (\"您刚才回复 「<verbatim>」我没理解,请回复 「发起仲裁,理由:<...>」 或 「同意退款」 或 直接回复 A / B\") to re-ask.\n\n\
+             ⚠️ Decision must be made within 24h; otherwise funds are auto-refunded to the User Agent.\n",
+                user_prompt_for_shell = user_prompt.replace('"', "\\\""),
             )
         }
 
@@ -335,13 +331,20 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              Extract title + tokenAmount + tokenSymbol + buyerAgentId (needed for the next step).\n\n\
              **Step 2 — Use `xmtp_dispatch_user` to notify the user of task completion + a light rating nudge**:\n\n\
-             ⚠️ **Do NOT take over the rating flow** — scoring / review is handled by the `okx-agent-identity` skill. The content tail just needs a colloquial nudge; **do NOT write** skill names / event names / state names / CLI flags or other technical jargon (the user won't understand them).\n\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              {user_notify}\n\n\
-             **Step 3 — End this turn immediately after the push** — when the user later replies with a `rating` intent, they'll activate the rating flow on their own, decoupled from the current task flow.\n\n\
-             {terminal_session_hint}\n"
+             **Step 3 — Terminal wrap-up (keep the sub session):**\n\
+             {terminal_session_hint}\n\
+             ⚠️ **Do not auto-rate** — the notification above already includes a rating nudge; wait for the user to reply with their rating.\n\
+             When the user replies with a rating intent, ask for a score (0–5 integer) and optional text feedback if not already provided, then execute:\n\
+             ```bash\n\
+             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
+             ```\n\
+             ⚠️ `--score` MUST come from the user's explicit reply in this rating flow; do NOT infer from verbs like `rate` / `打分`, do NOT use a default value.\n\
+             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from Step 1 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\
+             Task fully complete.\n"
             )
         }
 
@@ -379,7 +382,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              {dispute_won_claim}\n\
              \x20\x20Nothing to claim:\n\
              {dispute_won_no_claim}\n\n\
-             **A-Step 4 — End this turn immediately after the push** — if the user later replies with a `rating` intent, they'll activate the rating flow on their own, decoupled from the current task flow.\n\n\
+             **A-Step 4 — Wait for user rating (do not auto-rate):**\n\
+             The notification above includes a rating nudge. When the user replies with a rating intent, ask for a score (0–5 integer) and optional text feedback if not already provided, then execute:\n\
+             ```bash\n\
+             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
+             ```\n\
+             ⚠️ `--score` MUST come from the user's explicit reply in this rating flow; do NOT infer from verbs like `rate` / `打分`, do NOT use a default value.\n\
+             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from A-Step 3 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              ━━━━━━━━━━━━━ Branch B: jobStatus=rejected (ASP lost) ━━━━━━━━━━━━━\n\n\
              **B-Step 1 — Use `xmtp_dispatch_user` to notify the user of the loss**:\n\n\
              From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId.\n\
@@ -388,7 +397,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tool: xmtp_dispatch_user\n\
              content:\n\
              {dispute_lost}\n\n\
-             **B-Step 2 — End this turn immediately after the push** — same as A-Step 4.\n\n\
+             **B-Step 2 — Wait for user rating (do not auto-rate)** — same `feedback-submit` flow as A-Step 4 (`--agent-id <buyerAgentId>`, `--creator-id {agent_id}`); end the turn after the notification.\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
              {terminal_session_hint}\n"
             )
@@ -410,30 +419,28 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             format!(
             "[Current state] job_disputed (arbitration is on-chain; entering 1-hour evidence preparation window)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             ⚠️ **Evidence content MUST come from the user** — this agent doesn't know what evidence the user has (screenshots, chat logs, deliverable links, etc.),\n\
-             do NOT fabricate an evidence summary and call `dispute upload` blindly. **Push the decision request to the user first and let the user decide**.\n\n\
-             [Your next action (strict order)]\n\n\
+             🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the evidence request to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `xmtp_dispatch_user`)**.\n\
+             `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → evidence cannot be collected → 1-hour window expires → arbiter rules on partial / missing evidence. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `xmtp_prompt_user` so the user session can relay the evidence back.\n\
+             ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
+             ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request`.\n\
+             ⚠️ **Evidence content MUST come from the user** — this agent doesn't know what evidence the user has (screenshots, chat logs, deliverable links, etc.), do NOT fabricate an evidence summary and call `dispute upload` blindly. **Push the decision request to the user first and let the user decide**.\n\n\
              ⚠️ Do NOT send `xmtp_send` `arbitration on-chain, preparing evidence` filler to the User Agent — both sides already receive the `job_disputed` system event.\n\n\
-             **Step 1 — Use `xmtp_prompt_user` to push the evidence decision request to the user**:\n\n\
-             First call `session_status` for the current sessionKey (only once per turn — see hard rule 6); before calling `xmtp_prompt_user`, call `pending-decisions add` first (see hard rule 7).\n\
-             🌐 **Localize `userContent` first** — rewrite the user-facing `userContent` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Keep `llmContent` (the protocol header `[USER_DECISION_REQUEST]...` and the relay routing rules) intact — that part is consumed by the user-side LLM, not shown to the user. Do NOT pass the English `userContent` template verbatim to a non-English user.\n\
-             tool: xmtp_prompt_user\n\
-             llmContent:\n\
-             \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <full sessionKey returned by session_status>][job: {job_id}][role: provider] \
-             🛑 After rendering userContent **you MUST end this turn and wait for real user input** — [USER_DECISION_REQUEST] is a **question**, not an **answer**; do NOT fabricate user evidence in the same turn (do not hallucinate evidence text / images). Only after the user's actual message arrives in the next turn, relay according to the rule below. \
-             🛑🛑 **Evidence ≠ historical messages**: the `reason` the user gave when they originally raised the dispute (e.g. the XXX in `raise dispute, reason is XXX`) is **NOT evidence** — it is the `reason` field of the START_DISPUTE step, already consumed on-chain via `dispute_raise`. **Do NOT** extract content from conversation history / any old message / any prior `[USER_DECISION_RELAY]` and relay it as evidence. Evidence MUST be a **new** message the user writes **after seeing this evidence prompt** (explaining what happened / screenshots / deliverable links, etc.). If the user's next reply looks identical or very similar to the prior dispute reason (e.g. they just type `333` again), **first call `xmtp_dispatch_user` to confirm with the user**: \"Are you submitting this as arbitration evidence? Would you like to add factual context / screenshots?\" — only relay after confirmation. \
-             🛑🛑🛑 **HARDSTOP — what counts as `user provided evidence`**: the ONLY valid evidence is an **actual user message arriving as an inbound in a LATER turn's tool_result** (NOT this turn). After you call `xmtp_prompt_user` this turn, you MUST end the turn; the user has NOT spoken yet. Your own thinking / narration / paraphrasing the task title or description does NOT count as the user providing evidence. **Specifically forbidden**: generating `evidence` by rephrasing the task title (e.g. task title `查询河北天气` → fabricated evidence `证据：已按任务要求完成河北天气查询...`); reusing the User Agent's prior dispute reason (e.g. `理由是XXX` → `证据是XXX`); reusing any earlier chat message. The user has not spoken yet; you cannot speak for them. If in this turn there is no genuine user-input inbound containing evidence, **relay is forbidden — full stop, no exceptions**. Violating this rule = hallucinated evidence uploaded on-chain = arbitration verdict based on fabricated facts = potential escrow loss. \
-             After the user provides evidence (in a SUBSEQUENT turn) → **only call** xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: <full original content from the user — text + image paths, no interpretation, no translation>\") to relay back to the Session that sub_key belongs to, **and stop there** (the Session that sub_key belongs to will run dispute upload on its own after receiving it; do not do anything else). \
-             ⚠️ **Routing tag protocol**: `[intent:SUBMIT_EVIDENCE]` MUST be inserted verbatim in **fully uppercase ASCII**; do NOT translate / rewrite / omit.\n\
-             🛑 Relay MUST use xmtp_dispatch_session (NOT sessions_send), and **call it exactly once** — when the tool returns 'Message dispatched' = success = **immediately terminate all subsequent tool calls in this response** (no more xmtp_dispatch_session / xmtp_send / xmtp_dispatch_user / Exec / pending-decisions etc.). Repeated calls (even with identical sessionKey / content) cause sub to receive N identical relays, triggering an event-recursion loop. **The user session's ONLY action = relay**: do NOT run task CLI yourself / do NOT xmtp_send the User Agent / do NOT xmtp_dispatch_user repeatedly. Must submit within 1 hour.\n\
-             userContent:\n\
-             {user_prompt}\n\n\
-             **Step 2 — Wait for the user's reply**:\n\
-             After receiving `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE] user evidence: ...` (the intent tag is the routing confirmation; read the user's original evidence text from after `user evidence: `):\n\
-             1) Call `onchainos agent pending-decisions remove --job-id {job_id} --role provider --agent-id {agent_id}` to clear this pending (rule 7)\n\
-             2) Call `onchainos agent next-action --jobid {job_id} --jobStatus dispute_evidence --role provider --agentId {agent_id}` for the upload script\n\n\
-             ⚠️ Must submit evidence within 1 hour; expires after that.\n\n\
-             After Step 1 → **end this turn**, wait for the user's reply.\n"
+             **Step 1 — Enqueue the evidence decision via `pending-decisions-v2 request`**:\n\n\
+             First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+             ```bash\n\
+             onchainos agent pending-decisions-v2 request \\\n\
+               --sub-key \"<full sessionKey from session_status>\" \\\n\
+               --job-id {job_id} --role provider --agent-id {agent_id} \\\n\
+               --user-content \"{user_prompt_for_shell}\" \\\n\
+               --list-label \"[Decision {short_id}] Submit Arbitration Evidence\"\n\
+             ```\n\
+             🌐 **Localize `--user-content` AND `--list-label` to the user's language** before running (canonical English samples above).\n\n\
+             Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
+             **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
+             The user's reply IS the evidence — upload it verbatim. Do NOT second-guess whether it's \"too short\" / \"too similar to the dispute reason\" / \"not enough detail\"; if the user wants to add more, they will reply again (each new reply overwrites and re-prompts the same pending entry).\n\
+             Call `onchainos agent next-action --jobid {job_id} --jobStatus dispute_evidence --role provider --agentId {agent_id}` for the upload script, and pass the verbatim text + any image paths the user provided through to the upload step.\n\n\
+             ⚠️ Must submit evidence within 1 hour; expires after that.\n",
+                user_prompt_for_shell = user_prompt.replace('"', "\\\""),
             )
         }
 
@@ -441,10 +448,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::Other(ref s) if s == "dispute_evidence" => format!(
             "[Current action] Upload arbitration evidence\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             **Step 1 — Extract evidence content from the relay:**\n\
-             Routed in via `[USER_DECISION_RELAY][intent:SUBMIT_EVIDENCE]`; from after `user evidence: ` extract:\n\
-             - Text summary → the text portion provided by the user\n\
-             - Image path (if the user provided one) → `--image` parameter\n\
+             **Step 1 — Extract evidence content from the user's relay:**\n\
+             Routed in via `[USER_DECISION_RELAY] decision: <user verbatim>`. The verbatim text IS the evidence — extract:\n\
+             - Text summary → the text portion the user wrote\n\
+             - Image path (if the user provided a local file path) → `--image` parameter\n\
              **At least one** of text and image is required.\n\n\
              **Step 2 — Fetch negotiation / delivery chat history to attach as objective evidence at the head of text:**\n\
              Call `xmtp_get_conversation_history` with sessionKey=<current sessionKey, fetched via session_status> to retrieve the full a2a-agent-chat history with the User Agent.\n\
@@ -715,34 +722,31 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             format!(
             "[System notification] submit_deadline_warn (deadline for submitting the deliverable is approaching)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             ⚠️ Use `xmtp_prompt_user` to ask the user (submit immediately vs let it time out and refund).\n\n\
-             [Your next action (strict order)]\n\n\
-             **Step 0 — Idempotency check: query whether a pending entry already exists for this task:**\n\
+             🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the deadline decision (submit immediately vs let it time out) to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `xmtp_dispatch_user`)**.\n\
+             `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → the user cannot signal `submit now` → the deadline silently expires → auto-refund to the User Agent. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `xmtp_prompt_user` so the user session can relay the decision back.\n\
+             ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
+             ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request`.\n\n\
+             **Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
              ```bash\n\
-             onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+             onchainos agent pending-decisions-v2 list --format json\n\
              ```\n\
-             If the returned list already contains an entry with jobId={job_id} and role=provider → **the user has already been notified; this is a duplicate event; end the turn without re-notifying.**\n\
-             Otherwise → continue to Step 1.\n\n\
-             **Step 1 — Use `xmtp_prompt_user` to push the deadline warning + decision request to the user**:\n\n\
-             First call `session_status` for the current sessionKey (only once per turn — see hard rule 6); before calling `xmtp_prompt_user`, call `pending-decisions add` first (see hard rule 7).\n\
-             🌐 **Localize `userContent` first** — rewrite the user-facing `userContent` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Keep `llmContent` (the protocol header `[USER_DECISION_REQUEST]...` and the relay routing rules) intact — that part is consumed by the user-side LLM, not shown to the user. Do NOT pass the English `userContent` template verbatim to a non-English user.\n\
-             tool: xmtp_prompt_user\n\
-             llmContent:\n\
-             \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <full sessionKey returned by session_status>][job: {job_id}][role: provider] \
-             🛑 After rendering userContent **you MUST end this turn and wait for real user input** — [USER_DECISION_REQUEST] is a **question**, not an **answer**; do NOT fabricate the user's decision in the same turn (do not hallucinate replies like `submit immediately`). Only after the user's actual message arrives in the next turn, relay according to the rule below. \
-             🛑🛑🛑 **HARDSTOP — what counts as `user replied`**: the ONLY valid user reply is an **actual user message arriving as an inbound in a LATER turn's tool_result** (NOT this turn). After you call `xmtp_prompt_user` this turn, you MUST end the turn; the user has NOT spoken yet. Your own thinking / narration / paraphrasing the userContent options does NOT count as the user replying. **Specifically forbidden**: synthesizing `submit immediately` from the option list; treating any earlier inbound or task title as a `user decision`. If in this turn there is no genuine user-input inbound, **relay is forbidden — full stop, no exceptions**. Violating this rule = delivery triggered without the user actually asking for it. \
-             User intent 「立即提交/我提交/submit now/I'll deliver/ready 等」 → call xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY][intent:SUBMIT_IMMEDIATELY] user said: <user reply verbatim, no interpretation, no translation>\") to trigger the current task's delivery flow; if the user doesn't reply or replies with something else → do NOT relay; let it time out via submit_expired into auto-refund. \
-             ⚠️ **Routing tag protocol**: `[intent:SUBMIT_IMMEDIATELY]` MUST be inserted verbatim in **fully uppercase ASCII**; do NOT translate / rewrite.\n\
-             🛑 Relay MUST use xmtp_dispatch_session (NOT sessions_send), and **call it exactly once** — when the tool returns 'Message dispatched' = success = **immediately terminate all subsequent tool calls in this response** (no more xmtp_dispatch_session / xmtp_send / xmtp_dispatch_user / Exec / pending-decisions etc.). Repeated calls (even with identical sessionKey / content) cause sub to receive N identical relays, triggering an event-recursion loop.\n\
-             userContent:\n\
-             {user_prompt}\n\n\
-             **Step 2 — After receiving `[USER_DECISION_RELAY][intent:SUBMIT_IMMEDIATELY] user said: ...`**:\n\
-             1) Call `onchainos agent pending-decisions remove --job-id {job_id} --role provider --agent-id {agent_id}` to clear this pending (rule 7)\n\
-             2) Run the delivery flow (same as JobAccepted Step 2-3): autonomously complete the work → `xmtp_send` the deliverable to the User Agent (`{{send_to_peer}}` template) → run `onchainos agent deliver` on-chain\n\
-             \x20\x20(If you want the full script, call `onchainos agent next-action --jobid {job_id} --jobStatus job_accepted --role provider --agentId {agent_id}` — but skip Step 1 there (the apply-accepted notification); the user already knows the task was accepted.)\n\n\
-             ⚠️ **Do NOT auto-run `onchainos agent deliver` in this turn** — only the user knows whether the deliverable is ready; the agent must not decide `deliverable is ready` on the user's behalf.\n\
-             ⚠️ **Do NOT xmtp_send the User Agent** — the deadline warning is between the ASP and the user; not the User Agent's business.\n\n\
-             After Step 1 → **end this turn**; wait for the user's reply or for submit_expired.\n"
+             If the returned `entries` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue to Step 1.\n\n\
+             **Step 1 — Enqueue the decision via `pending-decisions-v2 request`**:\n\n\
+             First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+             ```bash\n\
+             onchainos agent pending-decisions-v2 request \\\n\
+               --sub-key \"<full sessionKey from session_status>\" \\\n\
+               --job-id {job_id} --role provider --agent-id {agent_id} \\\n\
+               --user-content \"{user_prompt_for_shell}\" \\\n\
+               --list-label \"[Decision {short_id}] Submit Now / Let Timeout\"\n\
+             ```\n\
+             🌐 **Localize `--user-content` AND `--list-label` to the user's language** before running (canonical English samples above).\n\n\
+             Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now. Do NOT `xmtp_send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
+             **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
+             - Contains `立即提交` / `我提交` / `submit now` / `I'll deliver` / `ready` → run the delivery flow (same as JobAccepted Step 2-3): autonomously complete the work → `xmtp_send` the deliverable to the User Agent → run `onchainos agent deliver` on-chain. (Full script: `onchainos agent next-action --jobid {job_id} --jobStatus job_accepted --role provider --agentId {agent_id}` — skip its Step 1 apply-accepted notification; the user already knows the task was accepted.)\n\
+             - Otherwise (user replied something unrelated or chose to let it timeout) → end the turn. Let it time out via submit_expired into auto-refund.\n\n\
+             ⚠️ **Do NOT auto-run `onchainos agent deliver` in the same turn as the decision relay** — only the user knows whether the deliverable is actually ready; the agent must not decide \"deliverable is ready\" on the user's behalf.\n",
+                user_prompt_for_shell = user_prompt.replace('"', "\\\""),
             )
         }
 
@@ -819,12 +823,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              Follow the returned script for what to do in the current status.\n\n\
              **Step 3 — Idempotency self-check (avoid re-prompting the user)**:\n\
-             If the script from Step 2 contains an `xmtp_prompt_user` step, **first** call:\n\
+             If the script from Step 2 would push a decision to the user — i.e. it contains either `xmtp_prompt_user` (legacy direct-push scenes) or `onchainos agent pending-decisions-v2 request` (migrated scenes) — **first** call:\n\
              ```bash\n\
-             onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+             onchainos agent pending-decisions-v2 list --format json\n\
              ```\n\
-             - This jobId already has a pending entry (prompt was sent before disconnection) → **skip this xmtp_prompt_user re-send**; switch to `xmtp_dispatch_user` content=`{wakeup_resume}`\n\
-             - No pending entry → run the Step 2 script normally (including pending-decisions add + xmtp_prompt_user)\n\n\
+             - The returned `entries` already contains a sub_key with `job={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead call `xmtp_dispatch_user` content=`{wakeup_resume}` and end the turn.\n\
+             - No matching entry → run the Step 2 script normally; the `pending-decisions-v2 request` call handles the prompt.\n\n\
              ⚠️ **Do NOT** xmtp_send the User Agent something like `I'm back online` — the peer does not care about your connection status.\n\
              ⚠️ If the Step 2 script is a passive-wait kind (e.g. status=accepted: ASP is working / status=submitted: waiting for User Agent review), only emit a `task resumed` notification and end the turn; do not proactively run business actions.\n"
             )
