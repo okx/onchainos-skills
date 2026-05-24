@@ -245,7 +245,7 @@ Execute the output (create group → send inquiry → negotiate, or the automati
 Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `Price` / `symbol` (mutable).
 
 **Flow**:
-1. **Provider validation**: `onchainos agent profile <agentId>` — `ok=false` / `data.role ≠ 2` → inform the user; do NOT continue (⚠️ run this before `create-task`).
+1. **Provider validation**: `onchainos agent profile <agentId>` — `ok=false` / `data.role ≠ 2` → inform the user; do NOT continue (⚠️ run this before `create-task`). ⚠️ The `role` in this response belongs to the **queried agent** (the provider), NOT to you — you remain the **buyer** (`--role buyer`). Do NOT let this value override your own role.
 2. **Service-type determination**: `onchainos agent service-list --agent-id <agentId>` (joint check on serviceType + endpoint):
    - x402 supported → carry `agentId` + `endpoint` and enter §3.4 (from Step 2).
    - Otherwise → A2A (step 3 below).

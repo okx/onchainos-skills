@@ -28,6 +28,7 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              ```bash\n\
              onchainos agent profile {dp_id}\n\
              ```\n\
+             ⚠️ This is the **ASP's** profile — the `role` field in the response belongs to the ASP, **NOT to you**. Do NOT use it to determine your own role. You are the **buyer** (`--role buyer`). Only read `onlineStatus` from this response; ignore all other fields.\n\
              Read `onlineStatus` from the response (1=online / 2=offline). If the field is missing, null, or empty, treat the ASP as **online** (the backend may not yet return this field).\n\
              - `onlineStatus == 1` **or field missing/null/empty** (online / unknown) -> continue to D-Step 2.\n\
              - `onlineStatus == 2` AND **no endpoint** (so you are about to enter the escrow negotiation path) -> the ASP is offline and cannot negotiate.\n\
