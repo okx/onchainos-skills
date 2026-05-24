@@ -326,6 +326,72 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
     format!("[⚠️ Protocol Misalignment] Job `{job_id}` — the remote agent repeatedly sends messages that do not match the current flow. Replies have stopped. Please intervene manually to continue.")
 }
 
+// ── x402 replay result (job_payment_mode_changed) ────────────────
+
+/// x402 replay success — deliverable received, awaiting on-chain confirmation.
+pub fn x402_replay_success_user_notify(job_id: &str) -> String {
+    format!(
+        "[x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
+         ASP agentId: <providerAgentId>\n\
+         Amount: <tokenAmount> <tokenSymbol>\n\
+         ---Deliverable---\n\
+         <replayBodyDisplay value from CLI output — pass through in full, do not truncate or summarize>\n\
+         ---End of deliverable---\n\
+         Waiting for on-chain confirmation. The job will auto-complete once confirmed."
+    )
+}
+
+/// x402 replay failure — accepted but endpoint replay failed.
+pub fn x402_replay_fail_user_notify(job_id: &str) -> String {
+    format!(
+        "[x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
+         HTTP status: <replayStatus>\n\
+         Error: <replayBody>\n\
+         Auto-complete will not run after `job_accepted`. Please give a new instruction; the agent will not auto-retry."
+    )
+}
+
+// ── complete failure (job_accepted x402 branch) ──────────────────
+
+/// x402 complete command failed — notify user with retry command.
+pub fn complete_failed_user_notify(job_id: &str) -> String {
+    format!(
+        "[⚠️ Complete Failed] Job `{job_id}` — the completion step failed. \
+         Please retry later or reply with a new instruction."
+    )
+}
+
+// ── create_task notification ─────────────────────────────────────
+
+/// create_task success — no designated provider.
+pub fn create_task_public_user_notify() -> String {
+    "Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
+     Once confirmed, the system will automatically fetch the recommended provider list for you to choose from."
+        .to_string()
+}
+
+/// create_task success — with designated provider.
+pub fn create_task_designated_user_notify() -> String {
+    "Task submitted; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); \
+     awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider."
+        .to_string()
+}
+
+// ── pending_list empty (provider_conversation) ───────────────────
+
+/// provider_conversation — user chose "skip all" pending ASPs.
+pub fn skip_all_pending_user_notify(job_id: &str) -> String {
+    format!("Job `{job_id}` — all pending ASPs have been skipped. You can wait for new ASPs to reach out, or reply \"close\" to close the task.")
+}
+
+/// provider_conversation — pending list is empty; no ASPs to contact.
+pub fn pending_list_empty_user_notify() -> String {
+    "There are no ASPs to contact right now. You can wait for new ASPs to reach out, or reply \"close\" to close the task."
+        .to_string()
+}
+
+// ── Escalation (preamble anomaly escalation) ───────────────────────
+
 /// Preamble escalation hard rule 2) CLI execution error (B-6-2).
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
     format!(

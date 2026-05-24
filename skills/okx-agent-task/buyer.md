@@ -12,6 +12,8 @@
 
 This file only covers the content **specific** to the Buyer role. Generic rules (envelope shapes / tool usage / anti-hallucination / push-to-user-session opt-in / communication boundary) all live in `SKILL.md`.
 
+> 🌐 **[Localization] — applies to ALL `xmtp_dispatch_user` / `pending-decisions-v2 request` calls in this file**: the `content` / `--user-content` / `--list-label` you compose must match the user's language. (1) For English-speaking users: use the English template verbatim (fill placeholders only). (2) For non-English users: translate faithfully, preserving all field labels, data values, structure, and line breaks. Do NOT add information, time estimates, or promises not in the template. (CLI playbooks from `next-action` carry their own `[Localization]` prefix — this rule covers the direct calls in buyer.md that bypass `next-action`.)
+
 > **Fully gas-free**: every on-chain action by the buyer (publishing a task / `confirm-accept` / acceptance / refund / dispute, etc.) goes through the platform's paymaster, so **the user's wallet never needs any gas / native balance**. **Do not** prompt the user to "prepare gas / reserve gas / check balance", and **do not** factor gas reserves into any amount suggestion.
 
 > 🛑🛑🛑 **ABSOLUTE PROHIBITION — `sessions_spawn` / `sessions_yield` are forbidden**: you (sub session / backup session) **are** the agent responsible for executing the script. Upon receiving a system event, you must call `next-action` and execute the script **yourself**. You are **absolutely forbidden** from calling `sessions_spawn` to delegate to a child agent, and **absolutely forbidden** from calling `sessions_yield` to hand over control. A backup session is also a sub, and the same rule applies.

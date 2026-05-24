@@ -48,6 +48,7 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
 
     let accepted_escrow_notify = super::content::job_accepted_escrow_user_notify(job_id, title_display);
     let accepted_x402_fail = super::content::job_accepted_x402_replay_fail_user_notify(job_id);
+    let complete_failed = super::content::complete_failed_user_notify(job_id);
     format!(
     "[Current Status] job_accepted (user has confirmed accept; task enters execution stage)\n\
      [Role] User (User Agent)\n\n\
@@ -57,7 +58,8 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     Extract: {title_in_extract}description, providerAgentId, paymentMode (int: 1=escrow, 3=x402), tokenAmount, tokenSymbol.\n\n\
+     Extract: {title_in_extract}description, providerAgentId, paymentMode (int: 1=escrow, 3=x402), tokenAmount, tokenSymbol.\n\
+     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n\
      **Step 2 -- Branch by payment mode:**\n\n\
      --------- Branch A: escrow ---------\n\n\
      Call xmtp_dispatch_user to notify the user that accept succeeded:\n\
@@ -81,7 +83,7 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ⚠️ **Do not notify the user** -- the deliverable was already sent after task-402-pay; the final summary is owned by the job_completed event.\n\n\
      ⚠️ **complete failure fallback**: if `onchainos agent complete` returns an error (CLI output contains `\"ok\": false` or stderr error),\n\
      call xmtp_dispatch_user to notify the user and provide a retry command:\n\
-     \x20\x20content: complete failed for this task; please retry later. Retry command: onchainos agent complete {job_id}\n\
+     \x20\x20content: {complete_failed}\n\
      → **End this turn** and wait for user retry or a wakeup_notify event.\n\n\
      **B-Branch 2: replaySuccess=false (only take this branch when replaySuccess=false is explicitly found in context)**\n\n\
      ⚠️ **Do not run complete** -- the user did not receive the deliverable.\n\n\
@@ -167,7 +169,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
        --user-content \"<deliverable card + A/B options, see templates below>\" \\\n\
        --list-label \"[Decision {short_id}] Approve / Reject\"\n\
      ```\n\
-     🌐 **Localize `--user-content` AND `--list-label` to the user's language** before running (canonical English samples below).\n\n\
+     🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** before running (rule 4: English users → verbatim; rule 5: non-English → faithful translation keeping all field labels, data values, and structure).\n\n\
      `--user-content` template (canonical English; localize before passing) — split by deliverableType:\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
@@ -309,7 +311,7 @@ pub(super) fn job_disputed(ctx: &FlowContext<'_>) -> String {
        --user-content \"{evidence_prompt_for_shell}\" \\\n\
        --list-label \"[Decision {short_id}] Submit Arbitration Evidence\"\n\
      ```\n\
-     🌐 **Localize `--user-content` AND `--list-label` to the user's language** before running (canonical English samples above).\n\n\
+     🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** before running (rule 4: English users → verbatim; rule 5: non-English → faithful translation keeping all field labels, data values, and structure).\n\n\
      Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
      **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
      The user's reply IS the evidence — upload it verbatim. Do NOT second-guess whether it's \"too short\" / \"too similar to the dispute reason\" / \"not enough detail\"; if the user wants to add more, they will reply again (each new reply overwrites and re-prompts the same pending entry).\n\
@@ -433,7 +435,8 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     Extract: {title_in_extract}tokenAmount, tokenSymbol, paymentMode (int: 1=escrow, 3=x402).\n\n\
+     Extract: {title_in_extract}tokenAmount, tokenSymbol, paymentMode (int: 1=escrow, 3=x402).\n\
+     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Completed] Job `{job_id}` — completed; funds settled. This job is complete.` — the user MUST still receive a notification.\n\n\
      **Step 2 -- Branch by payment mode:**\n\n\
      --------- Branch A: escrow -- flow ends ---------\n\n\
      In escrow mode, job_completed means the ASP has delivered and the user has approved; funds are released from contract to the ASP.\n\n\
@@ -499,7 +502,8 @@ pub(super) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     Extract {title_in_extract}tokenAmount, tokenSymbol.\n\n\
+     Extract {title_in_extract}tokenAmount, tokenSymbol.\n\
+     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade — user wins: `[Dispute Won] Job `{job_id}` — dispute resolved; User Agent wins.` / user loses: `[Dispute Lost] Job `{job_id}` — dispute resolved; ASP wins.` — the user MUST still receive a notification.\n\n\
      **Step 3 -- Call xmtp_dispatch_user to notify the user of the arbitration outcome (branch by winner):**\n\n\
      -------------- User wins (jobStatus=rejected) --------------\n\
      content:\n\
@@ -661,7 +665,7 @@ pub(super) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
        --user-content \"{review_deadline_prompt_for_shell}\" \\\n\
        --list-label \"[Decision {short_id}] Approve / Reject (deadline soon)\"\n\
      ```\n\
-     🌐 **Localize `--user-content` AND `--list-label` to the user's language** before running (canonical English samples above).\n\n\
+     🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** before running (rule 4: English users → verbatim; rule 5: non-English → faithful translation keeping all field labels, data values, and structure).\n\n\
      Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
      **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
      Inspect the verbatim text (case-insensitive; trim whitespace/punctuation) and route:\n\
@@ -933,19 +937,22 @@ If the user's message did NOT include any files, skip this step entirely.
 
 ================================================
 
-After success, call `xmtp_dispatch_user` to notify the user:
-- No --provider → content: \"Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically fetch the recommended provider list for you to choose from.\"
-- With --provider → content: \"Task submitted; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider.\"
-
-===============================================================
-🛑🛑🛑 STOP -- after create-task + task-attach (if any) you **MUST end this turn immediately**
-===============================================================
-❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.
-❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.
-❌ **Do not call any onchainos agent commands** (except `task-attach` in Step 6.5 above) -- this turn ends here; all further actions are driven by on-chain events.
-❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.
-===============================================================
+After success, call `xmtp_dispatch_user` to notify the user:\n\
 ".to_string()
+    + &format!("\
+- No --provider → content: \"{create_public}\"\n\
+- With --provider → content: \"{create_designated}\"\n\n\
+===============================================================\n\
+🛑🛑🛑 STOP -- after create-task + task-attach (if any) you **MUST end this turn immediately**\n\
+===============================================================\n\
+❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.\n\
+❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.\n\
+❌ **Do not call any onchainos agent commands** (except `task-attach` in Step 6.5 above) -- this turn ends here; all further actions are driven by on-chain events.\n\
+❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.\n\
+===============================================================\n",
+        create_public = super::content::create_task_public_user_notify(),
+        create_designated = super::content::create_task_designated_user_notify(),
+    )
 }
 
 // --- Term-change events ------------------------------------------------

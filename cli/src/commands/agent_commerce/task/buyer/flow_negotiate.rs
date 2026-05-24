@@ -37,9 +37,9 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20```bash\n\
              \x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Offline {short_id}] Choose next step\"\n\
              \x20\x20```\n\
-             \x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language before running):\n\
+             \x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
              \x20\x20{provider_offline}\n\
-             \x20\x20🌐 **Localize `--user-content` AND `--list-label` to the user's language** before running.\n\
+             \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
              \x20\x20Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\
              \x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
@@ -61,12 +61,12 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20```bash\n\
              \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 invalid {short_id}] A/B/C\"\n\
              \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
              \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The x402 endpoint of the designated ASP (agentId={dp_id}) is invalid and cannot be used. Choose next step:\n\
              \x20\x20\x20\x20A. Specify another ASP — provide the agentId\n\
              \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20\x20\x20C. Close the job\n\
-             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
              \x20\x20\x20\x20Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask via `pending-decisions-v2 request`.\n\n\
@@ -77,11 +77,11 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20```bash\n\
              \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 price {short_id}] Accept / Reject\"\n\
              \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
              \x20\x20\x20\x20Job `{job_id}` — the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
              \x20\x20\x20\x20A. Accept — continue with this price\n\
              \x20\x20\x20\x20B. Reject — switch to another ASP\n\
-             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
              \x20\x20\x20\x20Follow the playbook the CLI returns verbatim.\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
@@ -101,12 +101,12 @@ pub(super) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20```bash\n\
              \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Over budget {short_id}] A/B/C\"\n\
              \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
              \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The x402 fee from the designated ASP (agentId={dp_id}) is <amountHuman> <tokenSymbol>, which exceeds your max budget and cannot be used. Choose next step:\n\
              \x20\x20\x20\x20A. Specify another ASP — provide the ASP's agentId\n\
              \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20\x20\x20C. Close the job\n\
-             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
              \x20\x20\x20\x20Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask via `pending-decisions-v2 request`.\n\
@@ -300,12 +300,12 @@ pub(super) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20```bash\n\
              \x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP {short_id}] A/B/C\"\n\
              \x20\x20```\n\
-             \x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             \x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
              \x20\x20[Job {short_id} — you are the User Agent] None of the recommended ASPs are a fit. Choose next step:\n\
              \x20\x20A. Specify an ASP — provide the ASP's agentId\n\
              \x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20C. Close the job — cancel and refund\n\
-             \x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             \x20\x20🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
              \x20\x20Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\
              \x20\x20-> **end this turn** and resume execution once the user's reply is relayed back.\n\
              \x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask via `pending-decisions-v2 request`.\n\n\
@@ -375,12 +375,12 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              ```bash\n\
              onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Recommend {short_id}] Pick ASP\"\n\
              ```\n\
-             `--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             `--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
              [Job {short_id} — you are the User Agent] Below is the list of recommended ASPs:\n\
              <paste the recommend output's ASP list in full, one block per ASP: index / Agent Name / AgentID / service name and description / credit / fee / payment modes>\n\
              ---\n\
              Please choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP; or reply with next page / public / close.\n\n\
-             🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
              Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\n\
              -> **end this turn** and wait for the user's reply to be relayed back.\n\n\
              **Step 3 - after receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:**\n\n\
@@ -410,12 +410,12 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
              \x20\x20\x20\x20```bash\n\
              \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP {short_id}] A/B/C\"\n\
              \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
              \x20\x20\x20\x20[Job {short_id} — you are the User Agent] All recommended ASPs have been tried; no match found. Choose next step:\n\
              \x20\x20\x20\x20A. Specify an ASP — provide the ASP's agentId\n\
              \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20\x20\x20C. Close the job — cancel and refund\n\
-             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+             \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
              \x20\x20\x20\x20Follow the playbook the CLI returns verbatim.\n\
              \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask.\n\n\
              - Verbatim contains `public` / `公开` → `onchainos agent set-public {job_id}`\n\n\
@@ -439,7 +439,7 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
          🔴 Real incident: a model called next-action, received this playbook, then said \"end turn, wait for User Agent\" without executing any step — the user was never notified and the task was permanently stuck.\n\n\
          [Your next actions (strict order)]\n\n\
          **Step 0 - notify the user session + continue execution in the current sub/backup session:**\n\
-         Call xmtp_dispatch_user to tell the user the job is on-chain (pure notification, no LLM thinking):\n\
+         Call xmtp_dispatch_user to tell the user the job is on-chain (⚠️ translate per [Localization] rules before passing):\n\
          \x20\x20content: {created_notify}\n\n\
          ⚠️ Subsequent routing -> negotiation / acceptance all run in the **current session**; do NOT switch to the user session, do NOT sessions_spawn.\n\n\
          {attachment_section_created}\
@@ -511,6 +511,8 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
     let short_id = ctx.short_id;
 
     let no_sellers = super::content::no_more_sellers_user_notify(job_id);
+    let pending_empty = super::content::pending_list_empty_user_notify();
+    let skip_all = super::content::skip_all_pending_user_notify(job_id);
     format!(
     "[Trigger] Received an \"ASP pending contact\" style message (user session side)\n\
      [Role] User (User Agent)\n\n\
@@ -531,7 +533,7 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      ⚠️ Before the call, print: `[buyer-xmtp] xmtp_get_pending_list`\n\
      ⚠️ After the call, print: `[buyer-xmtp] xmtp_get_pending_list result: <returned value>`\n\n\
      If the result is an empty list -> call xmtp_dispatch_user:\n\
-     \x20\x20content: There are no ASPs to contact right now. You can wait for new ASPs to reach out, or reply \"close\" to close the task.\n\
+     \x20\x20content: {pending_empty}\n\
      Then finish.\n\n\
      **Step 2 - enqueue the user decision via `pending-decisions-v2 request`:**\n\
      🛑 **You MUST wait for the user's choice**; you may not decide for them.\n\
@@ -539,14 +541,14 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Pending ASP {short_id}] Pick\"\n\
      ```\n\
-     `--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+     `--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
      [Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
      \n\
      [iterate pending list; format per ASP:]\n\
      <N>. agentId: <agentId> | name: <name> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
      \n\
      Reply with the ASP's number to start, or reply \"skip all\".\n\n\
-     🌐 Localize both `--user-content` and `--list-label` before running.\n\
+     🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
      Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\n\
      **Step 3 - after receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:**\n\n\
      ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\
@@ -562,7 +564,8 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      A-Step 3: negotiation success -> ASP applies on-chain -> wait for the ASP's XMTP message announcing the apply (buyer.md routing #2 triggers confirm-accept).\n\n\
      A-Step 4: negotiation failure (ASP rejects / timeout / terms mismatch) -> jump to Branch C.\n\n\
      ━━━━━━━━━ Branch B: verbatim contains `skip all` / `跳过` / `不选` → skip all pending ASPs ━━━━━━━━━\n\n\
-     End the flow — call xmtp_dispatch_user to notify the user that all pending ASPs are skipped.\n\n\
+     End the flow — call xmtp_dispatch_user:\n\
+     \x20\x20content: {skip_all}\n\n\
      ━━━━━━━━━ Branch C: user rejects current ASP / negotiation failed -> reject and return to the list ━━━━━━━━━\n\n\
      C-Step 1: call xmtp_deny_pending_conversation to reject this ASP:\n\
      \x20\x20Args: agentId=<rejected ASP's agentId>, jobId={job_id}\n\
@@ -573,12 +576,12 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \x20\x20```bash\n\
      \x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP {short_id}] A/B/C\"\n\
      \x20\x20```\n\
-     \x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+     \x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
      \x20\x20{no_sellers}\n\
      \x20\x20A. Specify an ASP — provide the ASP's agentId\n\
      \x20\x20B. Make the job public — let more ASPs discover it\n\
      \x20\x20C. Close the job — cancel and refund\n\
-     \x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+     \x20\x20🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
      \x20\x20Follow the playbook the CLI returns verbatim.\n\
      \x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask via `pending-decisions-v2 request`.\n\n\
      [Loop termination conditions] xmtp_get_pending_list returns an empty list, OR negotiation succeeds and enters Scene 6.\n")
@@ -618,6 +621,8 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
 
     let payment_escrow_notify = super::content::payment_mode_escrow_user_notify(job_id, title_display);
     let x402_paying = super::content::x402_paying_user_notify(job_id, title_display);
+    let x402_replay_ok = super::content::x402_replay_success_user_notify(job_id);
+    let x402_replay_fail = super::content::x402_replay_fail_user_notify(job_id);
     format!(
     "[Current state] job_payment_mode_changed (payment-mode switch is on-chain)\n\
      [Role] User (User Agent)\n\n\
@@ -674,18 +679,9 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      **x402 stage 2 Step 3 - check replay result and notify the user:**\n\
      Call xmtp_dispatch_user with the following content template (branch by `replaySuccess`):\n\n\
      ▸ replaySuccess=true:\n\
-     [x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
-     ASP agentId: <providerAgentId>\n\
-     Amount: <tokenAmount> <tokenSymbol>\n\
-     ---Deliverable---\n\
-     <replayBodyDisplay value from CLI output — pass through in full, do not truncate or summarize>\n\
-     ---End of deliverable---\n\
-     Waiting for on-chain confirmation. The job will auto-complete once confirmed.\n\n\
+     {x402_replay_ok}\n\n\
      ▸ replaySuccess=false:\n\
-     [x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
-     HTTP status: <replayStatus>\n\
-     Error: <replayBody>\n\
-     Auto-complete will not run after `job_accepted`. Please give a new instruction; the agent will not auto-retry.\n\n\
+     {x402_replay_fail}\n\n\
      🛑 The `replayBodyDisplay` field contains the deliverable content; when replaySuccess=true it **must** be included in full.\n\
      🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data the ASP returned.\n\n\
      -> **end this turn** and wait for the `job_accepted` system notification.\n\n\
@@ -742,9 +738,9 @@ pub(super) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20```bash\n\
      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Over budget {short_id}] A/B/C\"\n\
      \x20\x20\x20\x20```\n\
-     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize to the user's language):\n\
+     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
      {over_budget}\n\
-     \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` before running.\n\
+     \x20\x20\x20\x20🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
      \x20\x20\x20\x20Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.\n\
      \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
      \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
