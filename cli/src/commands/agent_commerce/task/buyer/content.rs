@@ -85,9 +85,9 @@ pub fn job_refused_user_notify(job_id: &str, title: &str) -> String {
 // ── Event::JobDisputed ─────────────────────────────────────────────
 
 /// `Event::JobDisputed` Step 1 — evidence collection prompt (B-5-3, `xmtp_prompt_user.userContent`).
-pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
+pub fn job_disputed_user_evidence_prompt(short_id: &str, title: &str) -> String {
     format!(
-        "[Job {short_id} — you are the User Agent] The dispute is confirmed on-chain. You must submit off-chain evidence within 1 hour. Please provide:\n\
+        "[Job {short_id} — {title} — you are the User Agent] The dispute is confirmed on-chain. You must submit off-chain evidence within 1 hour. Please provide:\n\
          - Text summary (required): key evidence that the deliverable failed the quality standards\n\
          - Image path (optional): local file path to screenshots, chat logs, etc.\n\
          Reply format example: \"Evidence: the deliverable is missing X/Y/Z; image: /path/to/screenshot.png\""

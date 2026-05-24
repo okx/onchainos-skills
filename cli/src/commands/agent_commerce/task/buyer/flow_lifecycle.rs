@@ -279,8 +279,10 @@ pub(super) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
+    let title_display = ctx.title_display;
+    let title_query_hint = ctx.title_query_hint;
 
-    let evidence_prompt = super::content::job_disputed_user_evidence_prompt(short_id);
+    let evidence_prompt = super::content::job_disputed_user_evidence_prompt(short_id, title_display);
     format!(
     "[Current Status] job_disputed (arbitration opened; 1-hour evidence preparation window)\n\
      [Role] User (User Agent)\n\n\
@@ -292,6 +294,7 @@ pub(super) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      ❌ Do NOT fabricate an evidence summary and call `dispute upload` directly — the sub agent does not know what evidence the user has.\n\
      ❌ Do NOT xmtp_send any message to the ASP — during arbitration both sides interact via on-chain evidence.\n\n\
      [Your next actions (strict order)]\n\n\
+     {title_query_hint}\
      **Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
      ```bash\n\
      onchainos agent pending-decisions-v2 list --format json\n\
@@ -909,16 +912,37 @@ onchainos agent create-task \\
 🚫 **create-task only accepts the flags above. There is no --content / --period / --visibility / --amount / --token / --payment-mode flag.** When `--provider` is passed, the CLI automatically sets visibility=1 (PRIVATE) and providerAgentId; no extra flags needed.
 ⚠️ **Payment mode is not set at creation** -- paymentMode is decided downstream: the A2A negotiation path is always escrow; if a provider is designated and has an endpoint, x402 is used. If the user mentions a preferred payment mode at publication, **do not pass --payment-mode**; tell them: \"The payment mode will be determined automatically when negotiating with the provider.\"
 
+================================================
+Step 6.5 -- Save attachments (only if the user included files with the task request)
+================================================
+
+If the user's **original message** included file(s) or image(s) (e.g. Telegram documents `[document telegram:file/...]`, local file paths, inline images) that are intended as task reference material (e.g. 原图, reference image, 附件, sample):
+
+For each file, call:
+```bash
+onchainos agent task-attach --file \"<local file path>\" <jobId>
+```
+
+The file will be stored locally under `~/.onchainos/task/<jobId>/attachments/` and automatically picked up by the sub session during negotiation (Step 1.5 checks `list-attachments`).
+
+⚠️ Only save files the user explicitly mentioned as task-related. Do not save unrelated files.
+⚠️ If the file hasn't been downloaded to a local path yet, download it first (e.g. via the platform's file download mechanism) before calling `task-attach`.
+⚠️ If `task-attach` fails, skip it and proceed to the notification — attachment failure must NOT block task creation.
+
+If the user's message did NOT include any files, skip this step entirely.
+
+================================================
+
 After success, call `xmtp_dispatch_user` to notify the user:
 - No --provider → content: \"Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically fetch the recommended provider list for you to choose from.\"
 - With --provider → content: \"Task submitted; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider.\"
 
 ===============================================================
-🛑🛑🛑 STOP -- after create-task you **MUST end this turn immediately**
+🛑🛑🛑 STOP -- after create-task + task-attach (if any) you **MUST end this turn immediately**
 ===============================================================
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.
-❌ **Do not call any onchainos agent commands** -- this turn ends here; all further actions are driven by on-chain events.
+❌ **Do not call any onchainos agent commands** (except `task-attach` in Step 6.5 above) -- this turn ends here; all further actions are driven by on-chain events.
 ❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.
 ===============================================================
 ".to_string()

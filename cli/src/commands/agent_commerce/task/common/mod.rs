@@ -99,7 +99,6 @@ struct TaskDetail {
     category_codes: Option<Vec<String>>,
     chain_id: Option<i32>,
     min_credit_score: Option<f64>,
-    designated_provider: Option<String>,
     buyer_agent_address: Option<String>,
     buyer_agent_id: Option<String>,
     provider_agent_address: Option<String>,
@@ -826,9 +825,6 @@ async fn build_context(
     }
     if let Some(score) = task.min_credit_score {
         out.push_str(&format!("- 最低信用分要求：{score}\n"));
-    }
-    if let Some(dp) = &task.designated_provider {
-        out.push_str(&format!("- 指定卖家：{dp}\n"));
     }
     if let Some(ec) = &task.expire_config {
         if let (Some(open_sec), Some(acc_sec)) = (
