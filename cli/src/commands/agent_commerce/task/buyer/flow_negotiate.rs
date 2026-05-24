@@ -449,8 +449,9 @@ pub(super) fn job_created(ctx: &FlowContext<'_>) -> String {
          🔴 Real incident: a model called next-action, received this playbook, then said \"end turn, wait for User Agent\" without executing any step — the user was never notified and the task was permanently stuck.\n\n\
          [Your next actions (strict order)]\n\n\
          **Step 0 - notify the user session + continue execution in the current sub/backup session:**\n\
-         Call xmtp_dispatch_user to tell the user the job is on-chain (⚠️ translate per [Localization] rules before passing):\n\
-         \x20\x20content: {created_notify}\n\n\
+         Call xmtp_dispatch_user to tell the user the job is on-chain:\n\
+         \x20\x20content: {created_notify}\n\
+         🌐 **Canonical template — use verbatim after filling `<...>` placeholders; do NOT add extra information (price, budget, ASP capabilities, etc.) not present in the template. Localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).**\n\n\
          ⚠️ Subsequent routing -> negotiation / acceptance all run in the **current session**; do NOT switch to the user session, do NOT sessions_spawn.\n\n\
          {attachment_section_created}\
          {routing_section}\n\n"
@@ -544,6 +545,7 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      ⚠️ After the call, print: `[buyer-xmtp] xmtp_get_pending_list result: <returned value>`\n\n\
      If the result is an empty list -> call xmtp_dispatch_user:\n\
      \x20\x20content: {pending_empty}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\
      Then finish.\n\n\
      **Step 2 - enqueue the user decision via `pending-decisions-v2 request`:**\n\
      🛑 **You MUST wait for the user's choice**; you may not decide for them.\n\
@@ -575,7 +577,8 @@ pub(super) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      A-Step 4: negotiation failure (ASP rejects / timeout / terms mismatch) -> jump to Branch C.\n\n\
      ━━━━━━━━━ Branch B: verbatim contains `skip all` / `跳过` / `不选` → skip all pending ASPs ━━━━━━━━━\n\n\
      End the flow — call xmtp_dispatch_user:\n\
-     \x20\x20content: {skip_all}\n\n\
+     \x20\x20content: {skip_all}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
      ━━━━━━━━━ Branch C: user rejects current ASP / negotiation failed -> reject and return to the list ━━━━━━━━━\n\n\
      C-Step 1: call xmtp_deny_pending_conversation to reject this ASP:\n\
      \x20\x20Args: agentId=<rejected ASP's agentId>, jobId={job_id}\n\
@@ -617,7 +620,8 @@ pub(super) fn job_visibility_changed(ctx: &FlowContext<'_>) -> String {
      **Step 2 - call xmtp_dispatch_user to notify the user that visibility has changed:**\n\
      content:\n\
      \x20\x20- visibility=0 -> {visibility_public}\n\
-     \x20\x20- visibility=1 -> {visibility_private}\n\n\
+     \x20\x20- visibility=1 -> {visibility_private}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
      ⚠️ After switching to public, do **NOT** request the recommended ASP list (recommend); the user just waits for ASPs to reach out.\n\
      -> **end this turn**.\n"
     )
@@ -662,7 +666,8 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ⚠️ apply is an ASP action; the user does not execute apply.\n\n\
      **Step 4 - notify the user:**\n\
      Call xmtp_dispatch_user:\n\
-     \x20\x20content: {payment_escrow_notify}\n\n\
+     \x20\x20content: {payment_escrow_notify}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
      -> **end this turn** and wait for the ASP's XMTP message announcing the apply (handled by buyer.md routing priority #2).\n\n\
      ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\
      From the previous set-payment-mode / x402-check output, extract endpoint, acceptsJson, feeTokenSymbol, feeAmount, providerAgentId.\n\n\
@@ -679,7 +684,8 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      Extract `acceptsJson`, `tokenSymbol` (= feeTokenSymbol), `amountHuman` (= feeAmount).\n\n\
      **x402 stage 1.5 - notify the user that payment is in progress (before task-402-pay):**\n\
      Call xmtp_dispatch_user:\n\
-     \x20\x20content: {x402_paying}\n\n\
+     \x20\x20content: {x402_paying}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
      **x402 stage 2 - sign + direct/accept + endpoint replay (atomic command):**\n\
      ```bash\n\
      onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
@@ -691,7 +697,8 @@ pub(super) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ▸ replaySuccess=true:\n\
      {x402_replay_ok}\n\n\
      ▸ replaySuccess=false:\n\
-     {x402_replay_fail}\n\n\
+     {x402_replay_fail}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
      🛑 The `replayBodyDisplay` field contains the deliverable content; when replaySuccess=true it **must** be included in full.\n\
      🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data the ASP returned.\n\n\
      -> **end this turn** and wait for the `job_accepted` system notification.\n\n\

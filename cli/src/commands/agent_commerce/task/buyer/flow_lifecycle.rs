@@ -64,7 +64,8 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      --------- Branch A: escrow ---------\n\n\
      Call xmtp_dispatch_user to notify the user that accept succeeded:\n\
      \x20\x20content:\n\
-     {accepted_escrow_notify}\n\n\
+     {accepted_escrow_notify}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
      [Follow-up events]\n\
      - job_submitted → review the deliverable\n\n\
      --------- Branch B: x402 ---------\n\n\
@@ -84,13 +85,15 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ⚠️ **complete failure fallback**: if `onchainos agent complete` returns an error (CLI output contains `\"ok\": false` or stderr error),\n\
      call xmtp_dispatch_user to notify the user and provide a retry command:\n\
      \x20\x20content: {complete_failed}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\
      → **End this turn** and wait for user retry or a wakeup_notify event.\n\n\
      **B-Branch 2: replaySuccess=false (only take this branch when replaySuccess=false is explicitly found in context)**\n\n\
      ⚠️ **Do not run complete** -- the user did not receive the deliverable.\n\n\
      **B-Step 2 -- Notify the user of replay failure:**\n\
      Call xmtp_dispatch_user:\n\
      \x20\x20content:\n\
-     {accepted_x402_fail}\n\n\
+     {accepted_x402_fail}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
      [Follow-up events]\n\
      - replaySuccess=true / default: job_completed → final confirmation\n\
      - replaySuccess=false: wait for user instructions (retry or close task)\n\n\
@@ -231,7 +234,8 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20<deliverableText full content, no truncation, no summarization>\n\
      \x20\x20---End of deliverable---\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20Quality standards: <qualityStandards>\n\n\
+     \x20\x20Quality standards: <qualityStandards>\n\
+     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
      **B-Step 2 — Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      ⚠️ **Do not auto-rate** — at the end of the notification, prompt the user: if they want to rate the ASP (0–5 stars), they can reply with their rating.\n\
@@ -264,7 +268,8 @@ pub(super) fn job_refused(ctx: &FlowContext<'_>) -> String {
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed:**\n\n\
      content:\n\
-     {refused_notify}\n\n\
+     {refused_notify}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
      **Step 2 -- Silently wait for the ASP's decision:**\n\n\
      ⚠️ **Do not send any xmtp_send message to the ASP**. The ASP has 24h to decide:\n\
      - Open a dispute → you will receive job_disputed\n\
@@ -448,7 +453,8 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
      If not in context (e.g. auto-complete or other non-active-approval scenarios), omit the on-chain receipt line.\n\
      ✅ Call xmtp_dispatch_user with the following content parameter (replace placeholders with real values):\n\
      \x20\x20content:\n\
-     {completed_escrow_notify}\n\n\
+     {completed_escrow_notify}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
      **A-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user: if they want to rate the ASP (0–5 stars), they can reply with their rating.\n\
@@ -468,7 +474,8 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ❌ Do NOT output the notification as text — it will be trapped in the backup session and the user will never see it.\n\
      ✅ Call xmtp_dispatch_user with the following content parameter (replace placeholders with real values from Step 1):\n\
      \x20\x20content:\n\
-     {completed_x402_notify}\n\n\
+     {completed_x402_notify}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
      **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\
@@ -510,7 +517,8 @@ pub(super) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      {dispute_won}\n\n\
      -------------- User loses (jobStatus=complete) --------------\n\
      content:\n\
-     {dispute_lost}\n\n\
+     {dispute_lost}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
      **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      ⚠️ **Do not auto-rate** -- the notification already includes a rating prompt; wait for the user to reply with their rating.\n\
@@ -536,7 +544,8 @@ pub(super) fn job_refunded(ctx: &FlowContext<'_>) -> String {
      [Your next actions (strict order)]\n\n\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the refund completed:**\n\n\
      content:\n\
-     {refunded_notify}\n\n\
+     {refunded_notify}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
      **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Refund flow fully complete.\n"
@@ -558,7 +567,8 @@ pub(super) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the refund has arrived:**\n\n\
      content:\n\
-     {auto_refunded_notify}\n\n\
+     {auto_refunded_notify}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
      **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Refund flow fully complete.\n"
@@ -574,7 +584,8 @@ pub(super) fn job_expired(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      [Your next actions]\n\n\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the task expired:**\n\
-     \x20\x20content: {expired_notify}\n\n\
+     \x20\x20content: {expired_notify}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
      This task reached a terminal state; the flow ends.\n"
     )
 }
@@ -592,7 +603,8 @@ pub(super) fn job_closed(ctx: &FlowContext<'_>) -> String {
      [Your next actions]\n\n\
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user:**\n\
-     \x20\x20content: {closed_notify}\n\n\
+     \x20\x20content: {closed_notify}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
      **Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Close flow ends.\n"
@@ -615,7 +627,8 @@ pub(super) fn submit_expired(ctx: &FlowContext<'_>) -> String {
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
      **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
-     content: \"{submit_expired}\"\n"
+     content: \"{submit_expired}\"\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n"
     )
 }
 
@@ -633,7 +646,8 @@ pub(super) fn refuse_expired(ctx: &FlowContext<'_>) -> String {
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
      **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
-     content: \"{refuse_expired}\"\n"
+     content: \"{refuse_expired}\"\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n"
     )
 }
 
@@ -687,7 +701,8 @@ pub(super) fn review_expired(ctx: &FlowContext<'_>) -> String {
      [Your next actions]\n\n\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the review window expired:**\n\
      \x20\x20content:\n\
-     {review_expired}\n\n\
+     {review_expired}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
      **Step 2** -- Wait for the `job_auto_completed` system notification and then wrap up.\n"
     )
 }
@@ -707,7 +722,8 @@ pub(super) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed:**\n\
      \x20\x20content:\n\
-     {auto_completed_notify}\n\n\
+     {auto_completed_notify}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
      {terminal_session_hint}\n"
     )
 }
@@ -727,7 +743,8 @@ pub(super) fn close_task(ctx: &FlowContext<'_>) -> String {
      ```\n\n\
      **Step 2 -- Notify the user:**\n\
      Call xmtp_dispatch_user:\n\
-     content: \"{close_notify}\"\n"
+     content: \"{close_notify}\"\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n"
     )
 }
 
@@ -744,7 +761,8 @@ pub(super) fn set_public(ctx: &FlowContext<'_>) -> String {
      ```\n\n\
      **Step 2 -- Notify the user:**\n\
      Call xmtp_dispatch_user:\n\
-     content: \"{set_public_notify}\"\n"
+     content: \"{set_public_notify}\"\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n"
     )
 }
 
@@ -776,7 +794,8 @@ pub(super) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
      [Your next actions]\n\n\
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the reward has arrived:**\n\
-     \x20\x20content: {reward_claimed}\n"
+     \x20\x20content: {reward_claimed}\n\
+     🌐 Canonical template — localize per [Localization] rules before sending.\n"
     )
 }
 
@@ -803,7 +822,7 @@ pub(super) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent pending-decisions-v2 list --format json\n\
      ```\n\
-     - The returned `entries` already contains a sub_key with `job={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead call `xmtp_dispatch_user` content=`{wakeup_resume}` and end the turn.\n\
+     - The returned `entries` already contains a sub_key with `job={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead call `xmtp_dispatch_user` content=`{wakeup_resume}` (🌐 localize per [Localization] rules) and end the turn.\n\
      - No matching entry → run the Step 2 playbook normally; the `pending-decisions-v2 request` call handles the prompt.\n\n\
      ⚠️ **Do not** xmtp_send the ASP \"I'm back online\" or similar small talk -- they do not care about your connection state.\n\
      ⚠️ If the Step 2 playbook is passive (e.g. status=accepted waiting for ASP delivery), just emit a \"task resumed\" notification and end the turn; do not proactively run business actions.\n"
@@ -941,7 +960,8 @@ After success, call `xmtp_dispatch_user` to notify the user:\n\
 ".to_string()
     + &format!("\
 - No --provider → content: \"{create_public}\"\n\
-- With --provider → content: \"{create_designated}\"\n\n\
+- With --provider → content: \"{create_designated}\"\n\
+🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
 ===============================================================\n\
 🛑🛑🛑 STOP -- after create-task + task-attach (if any) you **MUST end this turn immediately**\n\
 ===============================================================\n\
