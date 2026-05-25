@@ -117,7 +117,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         services: parse_services(args.service.as_deref())?,
     };
     ensure_provider_has_service(&card)?;
-    let body = json!({
+    let mut body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
         "fromAddr": from_addr,
         "keyUuid": key_uuid.clone(),
@@ -125,6 +125,12 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         "sessionCert": &signing_session.session_cert,
         "cardJson": serde_json::to_string(&card).context("failed to serialize cardJson")?,
     });
+    if let Some(consent_key) = &args.consent_key {
+        body["consentKey"] = json!(consent_key);
+    }
+    if args.agreed == Some(true) {
+        body["agreed"] = json!(true);
+    }
     eprintln!(
         "[agent-identity] create request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(
@@ -147,6 +153,18 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         serde_json::to_string(&response)
             .unwrap_or_else(|_| "<serialize failed>".to_string())
     );
+    // Consent intercept: first-time wallet address returns a non-null consent
+    // object. Return the item directly so the skill layer can display the
+    // terms, collect user agreement, and re-invoke with --consent-key + --agreed true.
+    if let Some(item) = response.as_array().and_then(|a| a.first()) {
+        let has_consent = item
+            .get("consent")
+            .map(|c| !c.is_null())
+            .unwrap_or(false);
+        if has_consent {
+            return Ok(item.clone());
+        }
+    }
     let unsigned = parse_agent_unsigned(response)?;
     // erc8004Msg 三个字段：communicationAddress 由后端 pre-transaction 返回；
     // role / keyUuid 是本次 create 客户端持有的值。sessionSignature 已不再

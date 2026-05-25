@@ -15,6 +15,15 @@ pub struct CreateArgs {
     pub picture: Option<String>,
     #[arg(long)]
     pub service: Option<String>,
+    /// Two-step consent flow: consentKey returned by the backend on first call
+    /// when the wallet address has never registered an agent. Pass on the
+    /// second call together with `--agreed true`.
+    #[arg(long = "consent-key")]
+    pub consent_key: Option<String>,
+    /// Two-step consent flow: `true` = user agreed, passed together with
+    /// `--consent-key` on the second call.
+    #[arg(long)]
+    pub agreed: Option<bool>,
 }
 
 #[derive(Args, Clone, Debug)]
