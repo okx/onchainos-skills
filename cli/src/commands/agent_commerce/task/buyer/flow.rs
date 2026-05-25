@@ -12,6 +12,63 @@ use crate::commands::agent_commerce::task::common::config::TASK_MIN_VERSION;
 use crate::commands::agent_commerce::task::common::pending::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
+// ── Localization constants (shared across flow_negotiate / flow_lifecycle) ────
+//
+// Each constant produces byte-for-byte identical output when interpolated via
+// `format!("{CONST}")` — zero prompt-level risk.
+
+pub(super) const LOCALIZATION_PREFIX: &str = "\
+[Localization] All `content:` / `userContent:` templates below are **canonical text, NOT samples**. Strict rules:\n\
+(1) Fill `<...>` placeholders with real values from context; every other word stays unchanged.\n\
+(2) Do NOT add information, time estimates, promises, or details not present in the template.\n\
+(3) Do NOT rephrase, summarize, or embellish the template — its wording is intentional.\n\
+(4) For English-speaking users: use the English template verbatim (after placeholder fills).\n\
+(5) For non-English users: translate into the user's language while preserving ALL field labels, data values, structure, and line breaks — translation must be faithful, not creative.\n\
+(6) Field labels in tables/confirmation forms MUST also match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/接单时限/交付时限; English → Title/Summary/Description/Currency/Budget/Max Budget/Accept Deadline/Delivery Deadline).\n\
+🔴 Real incident: a model treated the template as a loose \"sample\", translated English to Chinese in an English environment, and fabricated \"预计1-2小时内交付\" (estimated 1-2h delivery) — information that did not exist in the template. The user received inaccurate information.\n\n";
+
+pub(super) const L10N_DISPATCH: &str = "\
+🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).";
+
+pub(super) const L10N_DISPATCH_SHORT: &str = "\
+🌐 Canonical template — localize per [Localization] rules before sending.";
+
+pub(super) const L10N_PROMPT: &str = "\
+🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).";
+
+pub(super) const L10N_PROMPT_BOLD: &str = "\
+🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** before running (rule 4: English users → verbatim; rule 5: non-English → faithful translation keeping all field labels, data values, and structure).";
+
+// ── Shared prompt fragments (pending-decisions / playbook / routing) ──────────
+
+pub(super) const SESSION_STATUS_HINT: &str = "\
+First call `session_status` to get the current sessionKey (only once per turn). Then run:";
+
+pub(super) const FOLLOW_PLAYBOOK: &str = "\
+Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.";
+
+pub(super) const FOLLOW_PLAYBOOK_SHORT: &str = "\
+Follow the playbook the CLI returns verbatim.";
+
+pub(super) const FOLLOW_PLAYBOOK_END_TURN: &str = "\
+Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.";
+
+pub(super) const ABC_KEYWORD_ROUTE: &str = "\
+After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask via `pending-decisions-v2 request`.";
+
+pub(super) fn pending_cmd(job_id: &str, agent_id: &str, list_label: &str) -> String {
+    format!("onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"{list_label}\"")
+}
+
+pub(super) fn idempotency_check(job_id: &str) -> String {
+    format!("\
+**Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
+```bash\n\
+onchainos agent pending-decisions-v2 list --format json\n\
+```\n\
+If `entries[]` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue.\n")
+}
+
 /// Shared context parameter pack across all event handler functions.
 pub(super) struct FlowContext<'a> {
     pub job_id: &'a str,
@@ -111,15 +168,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol version handshake.
     // version_prefix uses format! to inject the current TASK_MIN_VERSION value, so playbooks auto-update when the constant is bumped.
-    let localization_prefix = "\
-[Localization] All `content:` / `userContent:` templates below are **canonical text, NOT samples**. Strict rules:\n\
-(1) Fill `<...>` placeholders with real values from context; every other word stays unchanged.\n\
-(2) Do NOT add information, time estimates, promises, or details not present in the template.\n\
-(3) Do NOT rephrase, summarize, or embellish the template — its wording is intentional.\n\
-(4) For English-speaking users: use the English template verbatim (after placeholder fills).\n\
-(5) For non-English users: translate into the user's language while preserving ALL field labels, data values, structure, and line breaks — translation must be faithful, not creative.\n\
-(6) Field labels in tables/confirmation forms MUST also match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/接单时限/交付时限; English → Title/Summary/Description/Currency/Budget/Max Budget/Accept Deadline/Delivery Deadline).\n\
-🔴 Real incident: a model treated the template as a loose \"sample\", translated English to Chinese in an English environment, and fabricated \"预计1-2小时内交付\" (estimated 1-2h delivery) — information that did not exist in the template. The user received inaccurate information.\n\n";
+    let localization_prefix = LOCALIZATION_PREFIX;
     let version_prefix = format!(
         "[Protocol version] When calling `xmtp_send`, the `payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
     );

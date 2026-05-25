@@ -41,6 +41,8 @@ pub(super) fn provider_applied(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
+    let l10n_dispatch = super::flow::L10N_DISPATCH;
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -65,7 +67,7 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      Call xmtp_dispatch_user to notify the user that accept succeeded:\n\
      \x20\x20content:\n\
      {accepted_escrow_notify}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
+     {l10n_dispatch}\n\n\
      [Follow-up events]\n\
      - job_submitted → review the deliverable\n\n\
      --------- Branch B: x402 ---------\n\n\
@@ -85,7 +87,7 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ⚠️ **complete failure fallback**: if `onchainos agent complete` returns an error (CLI output contains `\"ok\": false` or stderr error),\n\
      call xmtp_dispatch_user to notify the user and provide a retry command:\n\
      \x20\x20content: {complete_failed}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n\
+     {l10n_short}\n\
      → **End this turn** and wait for user retry or a wakeup_notify event.\n\n\
      **B-Branch 2: replaySuccess=false (only take this branch when replaySuccess=false is explicitly found in context)**\n\n\
      ⚠️ **Do not run complete** -- the user did not receive the deliverable.\n\n\
@@ -93,7 +95,7 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      Call xmtp_dispatch_user:\n\
      \x20\x20content:\n\
      {accepted_x402_fail}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
+     {l10n_short}\n\n\
      [Follow-up events]\n\
      - replaySuccess=true / default: job_completed → final confirmation\n\
      - replaySuccess=false: wait for user instructions (retry or close task)\n\n\
@@ -110,10 +112,14 @@ pub(super) fn job_accepted(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
+    let l10n_prompt_bold = super::flow::L10N_PROMPT_BOLD;
+    let l10n_dispatch = super::flow::L10N_DISPATCH;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let terminal_session_hint = ctx.terminal_session_hint;
+    let follow_end = super::flow::FOLLOW_PLAYBOOK_END_TURN;
+    let idem_check = super::flow::idempotency_check(job_id);
 
     format!(
     "[Current Status] job_submitted (ASP has submitted the deliverable)\n\
@@ -126,11 +132,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      🛑 **In escrow mode auto-approval is strictly forbidden**: you must wait for the user's relayed decision; the agent must not decide on behalf of the user, regardless of deliverable quality or how close to deadline.\n\
      ⚠️ In x402 mode: funds are already paid; just notify the user of the deliverable content; the user cannot reject.\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
-     ```bash\n\
-     onchainos agent pending-decisions-v2 list --format json\n\
-     ```\n\
-     If `entries[]` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue.\n\n\
+     {idem_check}\n\
      **Step 1 — Query task details; extract deliverable and payment mode:**\n\
      ```bash\n\
      onchainos agent status {job_id}\n\
@@ -172,7 +174,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
        --user-content \"<deliverable card + A/B options, see templates below>\" \\\n\
        --list-label \"[Decision {short_id}] Approve / Reject\"\n\
      ```\n\
-     🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** before running (rule 4: English users → verbatim; rule 5: non-English → faithful translation keeping all field labels, data values, and structure).\n\n\
+     {l10n_prompt_bold}\n\n\
      `--user-content` template (canonical English; localize before passing) — split by deliverableType:\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
@@ -201,7 +203,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
      B. Reject the deliverable (please state your reason) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
      ```\n\n\
-     Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
+     {follow_end}\n\n\
      ===============================================================\n\
      🛑🛑🛑 STOP — after running `pending-decisions-v2 request` and following its returned playbook (one `xmtp_prompt_user` call) in Step 3, you **MUST end this turn**\n\
      ===============================================================\n\
@@ -235,7 +237,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20---End of deliverable---\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20Quality standards: <qualityStandards>\n\
-     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
+     {l10n_dispatch}\n\n\
      **B-Step 2 — Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      ⚠️ **Do not auto-rate** — at the end of the notification, prompt the user: if they want to rate the ASP (0–5 stars), they can reply with their rating.\n\
@@ -255,6 +257,7 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
 // --- Rejection / arbitration -------------------------------------------
 
 pub(super) fn job_refused(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
@@ -269,7 +272,7 @@ pub(super) fn job_refused(ctx: &FlowContext<'_>) -> String {
      **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed:**\n\n\
      content:\n\
      {refused_notify}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
+     {l10n_short}\n\n\
      **Step 2 -- Silently wait for the ASP's decision:**\n\n\
      ⚠️ **Do not send any xmtp_send message to the ASP**. The ASP has 24h to decide:\n\
      - Open a dispute → you will receive job_disputed\n\
@@ -283,11 +286,15 @@ pub(super) fn job_refused(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(super) fn job_disputed(ctx: &FlowContext<'_>) -> String {
+    let l10n_prompt_bold = super::flow::L10N_PROMPT_BOLD;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
+    let session_hint = super::flow::SESSION_STATUS_HINT;
+    let follow_end = super::flow::FOLLOW_PLAYBOOK_END_TURN;
+    let idem_check = super::flow::idempotency_check(job_id);
 
     let evidence_prompt = super::content::job_disputed_user_evidence_prompt(short_id, title_display);
     format!(
@@ -302,13 +309,9 @@ pub(super) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      ❌ Do NOT xmtp_send any message to the ASP — during arbitration both sides interact via on-chain evidence.\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
-     ```bash\n\
-     onchainos agent pending-decisions-v2 list --format json\n\
-     ```\n\
-     If `entries[]` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue.\n\n\
+     {idem_check}\n\
      **Step 1 — Enqueue the evidence decision via `pending-decisions-v2 request`**:\n\n\
-     First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+     {session_hint}\n\
      ```bash\n\
      onchainos agent pending-decisions-v2 request \\\n\
        --sub-key \"<full sessionKey from session_status>\" \\\n\
@@ -316,8 +319,8 @@ pub(super) fn job_disputed(ctx: &FlowContext<'_>) -> String {
        --user-content \"{evidence_prompt_for_shell}\" \\\n\
        --list-label \"[Decision {short_id}] Submit Arbitration Evidence\"\n\
      ```\n\
-     🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** before running (rule 4: English users → verbatim; rule 5: non-English → faithful translation keeping all field labels, data values, and structure).\n\n\
-     Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
+     {l10n_prompt_bold}\n\n\
+     {follow_end}\n\n\
      **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
      The user's reply IS the evidence — upload it verbatim. Do NOT second-guess whether it's \"too short\" / \"too similar to the dispute reason\" / \"not enough detail\"; if the user wants to add more, they will reply again (each new reply overwrites and re-prompts the same pending entry).\n\
      Call `onchainos agent next-action --jobid {job_id} --jobStatus dispute_evidence --role buyer --agentId {agent_id}` for the upload script, and pass the verbatim text + any image paths the user provided through to the upload step.\n\n\
@@ -421,6 +424,7 @@ pub(super) fn reject_review(ctx: &FlowContext<'_>) -> String {
 // --- Terminal states ---------------------------------------------------
 
 pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
+    let l10n_dispatch = super::flow::L10N_DISPATCH;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -454,7 +458,7 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ✅ Call xmtp_dispatch_user with the following content parameter (replace placeholders with real values):\n\
      \x20\x20content:\n\
      {completed_escrow_notify}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
+     {l10n_dispatch}\n\n\
      **A-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user: if they want to rate the ASP (0–5 stars), they can reply with their rating.\n\
@@ -475,7 +479,7 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ✅ Call xmtp_dispatch_user with the following content parameter (replace placeholders with real values from Step 1):\n\
      \x20\x20content:\n\
      {completed_x402_notify}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
+     {l10n_dispatch}\n\n\
      **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\
@@ -484,6 +488,7 @@ pub(super) fn job_completed(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(super) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
+    let l10n_dispatch = super::flow::L10N_DISPATCH;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -518,7 +523,7 @@ pub(super) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      -------------- User loses (jobStatus=complete) --------------\n\
      content:\n\
      {dispute_lost}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\n\
+     {l10n_dispatch}\n\n\
      **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      ⚠️ **Do not auto-rate** -- the notification already includes a rating prompt; wait for the user to reply with their rating.\n\
@@ -533,6 +538,7 @@ pub(super) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(super) fn job_refunded(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let terminal_session_hint = ctx.terminal_session_hint;
 
@@ -545,7 +551,7 @@ pub(super) fn job_refunded(ctx: &FlowContext<'_>) -> String {
      **Step 1 -- Call xmtp_dispatch_user to notify the user the refund completed:**\n\n\
      content:\n\
      {refunded_notify}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
+     {l10n_short}\n\n\
      **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Refund flow fully complete.\n"
@@ -553,6 +559,7 @@ pub(super) fn job_refunded(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(super) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
@@ -568,7 +575,7 @@ pub(super) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
      **Step 1 -- Call xmtp_dispatch_user to notify the user the refund has arrived:**\n\n\
      content:\n\
      {auto_refunded_notify}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
+     {l10n_short}\n\n\
      **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Refund flow fully complete.\n"
@@ -576,6 +583,7 @@ pub(super) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(super) fn job_expired(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let expired_notify = super::content::job_expired_user_notify(job_id);
@@ -585,12 +593,13 @@ pub(super) fn job_expired(ctx: &FlowContext<'_>) -> String {
      [Your next actions]\n\n\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the task expired:**\n\
      \x20\x20content: {expired_notify}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
+     {l10n_short}\n\n\
      This task reached a terminal state; the flow ends.\n"
     )
 }
 
 pub(super) fn job_closed(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
@@ -604,7 +613,7 @@ pub(super) fn job_closed(ctx: &FlowContext<'_>) -> String {
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user:**\n\
      \x20\x20content: {closed_notify}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
+     {l10n_short}\n\n\
      **Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Close flow ends.\n"
@@ -614,6 +623,7 @@ pub(super) fn job_closed(ctx: &FlowContext<'_>) -> String {
 // --- Timeouts / auto-completion ---------------------------------------
 
 pub(super) fn submit_expired(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let submit_expired = super::content::submit_expired_user_notify(job_id);
@@ -628,11 +638,12 @@ pub(super) fn submit_expired(ctx: &FlowContext<'_>) -> String {
      ```\n\n\
      **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
      content: \"{submit_expired}\"\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n"
+     {l10n_short}\n"
     )
 }
 
 pub(super) fn refuse_expired(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let refuse_expired = super::content::refuse_expired_user_notify(job_id);
@@ -647,14 +658,18 @@ pub(super) fn refuse_expired(ctx: &FlowContext<'_>) -> String {
      ```\n\n\
      **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
      content: \"{refuse_expired}\"\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n"
+     {l10n_short}\n"
     )
 }
 
 pub(super) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
+    let l10n_prompt_bold = super::flow::L10N_PROMPT_BOLD;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
+    let session_hint = super::flow::SESSION_STATUS_HINT;
+    let follow_end = super::flow::FOLLOW_PLAYBOOK_END_TURN;
+    let idem_check = super::flow::idempotency_check(job_id);
 
     let review_deadline_prompt = super::content::review_deadline_warn_user_prompt(job_id, short_id);
     format!(
@@ -665,13 +680,9 @@ pub(super) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
      ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
      ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request` (the user must make a review decision; dispatch_user cannot relay).\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
-     ```bash\n\
-     onchainos agent pending-decisions-v2 list --format json\n\
-     ```\n\
-     If `entries[]` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue.\n\n\
+     {idem_check}\n\
      **Step 1 — Enqueue the review decision via `pending-decisions-v2 request`**:\n\n\
-     First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
+     {session_hint}\n\
      ```bash\n\
      onchainos agent pending-decisions-v2 request \\\n\
        --sub-key \"<full sessionKey from session_status>\" \\\n\
@@ -679,8 +690,8 @@ pub(super) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
        --user-content \"{review_deadline_prompt_for_shell}\" \\\n\
        --list-label \"[Decision {short_id}] Approve / Reject (deadline soon)\"\n\
      ```\n\
-     🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** before running (rule 4: English users → verbatim; rule 5: non-English → faithful translation keeping all field labels, data values, and structure).\n\n\
-     Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
+     {l10n_prompt_bold}\n\n\
+     {follow_end}\n\n\
      **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
      Inspect the verbatim text (case-insensitive; trim whitespace/punctuation) and route:\n\
      - Verbatim is `A` / `a` / `选A` / `1` / `Choose A` / `option A`, OR contains `通过` / `同意` / `满意` / `验收` / `接受` / `approve` / `accept` / `agree` → call `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}` for the approve playbook (which runs `onchainos agent complete`).\n\
@@ -691,6 +702,7 @@ pub(super) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(super) fn review_expired(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let review_expired = super::content::review_expired_user_notify(job_id);
@@ -702,12 +714,13 @@ pub(super) fn review_expired(ctx: &FlowContext<'_>) -> String {
      **Step 1 -- Call xmtp_dispatch_user to notify the user the review window expired:**\n\
      \x20\x20content:\n\
      {review_expired}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
+     {l10n_short}\n\n\
      **Step 2** -- Wait for the `job_auto_completed` system notification and then wrap up.\n"
     )
 }
 
 pub(super) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
@@ -723,7 +736,7 @@ pub(super) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
      **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed:**\n\
      \x20\x20content:\n\
      {auto_completed_notify}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
+     {l10n_short}\n\n\
      {terminal_session_hint}\n"
     )
 }
@@ -731,6 +744,7 @@ pub(super) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
 // --- User-action pseudo events ----------------------------------------
 
 pub(super) fn close_task(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let close_notify = super::content::close_user_notify(job_id);
@@ -744,11 +758,12 @@ pub(super) fn close_task(ctx: &FlowContext<'_>) -> String {
      **Step 2 -- Notify the user:**\n\
      Call xmtp_dispatch_user:\n\
      content: \"{close_notify}\"\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n"
+     {l10n_short}\n"
     )
 }
 
 pub(super) fn set_public(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let set_public_notify = super::content::set_public_user_notify(job_id);
@@ -762,7 +777,7 @@ pub(super) fn set_public(ctx: &FlowContext<'_>) -> String {
      **Step 2 -- Notify the user:**\n\
      Call xmtp_dispatch_user:\n\
      content: \"{set_public_notify}\"\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n"
+     {l10n_short}\n"
     )
 }
 
@@ -783,6 +798,7 @@ pub(super) fn evaluator_events(event_str: &str) -> String {
 }
 
 pub(super) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
@@ -795,7 +811,7 @@ pub(super) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the reward has arrived:**\n\
      \x20\x20content: {reward_claimed}\n\
-     🌐 Canonical template — localize per [Localization] rules before sending.\n"
+     {l10n_short}\n"
     )
 }
 
@@ -830,6 +846,7 @@ pub(super) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(super) fn create_task() -> String {
+    let l10n_short = super::flow::L10N_DISPATCH_SHORT;
     "\
 🔒 **Pre-flight check**: have you read `skills/okx-agent-task/SKILL.md` and `skills/okx-agent-task/buyer.md`?\n\
 If not → **stop executing this playbook immediately**; first load SKILL.md per the CLAUDE.md routing rules → confirm role is buyer → read buyer.md → then come back here.\n\
@@ -961,7 +978,7 @@ After success, call `xmtp_dispatch_user` to notify the user:\n\
     + &format!("\
 - No --provider → content: \"{create_public}\"\n\
 - With --provider → content: \"{create_designated}\"\n\
-🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
+{l10n_short}\n\n\
 ===============================================================\n\
 🛑🛑🛑 STOP -- after create-task + task-attach (if any) you **MUST end this turn immediately**\n\
 ===============================================================\n\
