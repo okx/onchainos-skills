@@ -112,7 +112,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "⚠️ complete/reject are NOT in the job_submitted playbook — after receiving the user's review decision, call next-action with the corresponding pseudo-event playbook:".to_string(),
             format!("  onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId <agentId>  # After user approves review"),
             format!("  onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId <agentId>  # After user rejects review"),
-            format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <score> --task-id {job_id}  # Rate provider (collect score and content after user replies with a rating)"),
+            format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <score> --task-id {job_id}  # Auto-rate provider (agent generates score based on task details + deliverable)"),
         ],
         Status::Refused => vec![
             next_action("job_refused"),

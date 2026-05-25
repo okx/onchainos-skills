@@ -56,11 +56,6 @@ pub fn job_refused_user_decision_prompt(short_id: &str) -> String {
 }
 
 /// `Event::JobCompleted` Step 2 — task-completed notice pushed to the user.
-///
-/// Ends with a light prompt to rate. The actual rating flow (asking for 0-5
-/// score + optional text and calling `feedback-submit`) is handled inline by
-/// the sub agent when the user replies with a rating intent — see the
-/// `Event::JobCompleted` scene in `flow.rs`.
 pub fn job_completed_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[💰 Job Completed] Job {job_id} (<title>) — approved by the User Agent; funds received.\n\
@@ -68,14 +63,12 @@ pub fn job_completed_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          \x20\x20\x20\x20  - Settled at: <current timestamp>\n\
          \x20\x20\x20\x20\n\
-         \x20\x20\x20\x20To rate the User Agent, reply with your rating."
+         \x20\x20\x20\x20This job is complete."
     )
 }
 
 /// `Event::DisputeResolved` branch A (ASP wins) — user notify emitted when the
 /// agent actually claims a non-zero reward in A-Step 2.
-///
-/// Ends with a light rating prompt (same as JobCompleted).
 pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[⚖️💰 Dispute Won] Job {job_id} (<title>) — dispute resolved; ASP wins.\n\
@@ -84,7 +77,7 @@ pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Auto-claimed account reward: <claimed amount> <symbol> (txHash=<hash>)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          \x20\x20\x20\x20  \n\
-         \x20\x20\x20\x20  To rate the User Agent, reply with your rating."
+         \x20\x20\x20\x20  This job is complete."
     )
 }
 
@@ -98,7 +91,7 @@ pub fn dispute_won_no_claim_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Account-level pending reward: none (checked)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          \x20\x20\x20\x20  \n\
-         \x20\x20\x20\x20  To rate the User Agent, reply with your rating."
+         \x20\x20\x20\x20  This job is complete."
     )
 }
 
@@ -180,7 +173,7 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Loss: <tokenAmount> <tokenSymbol> (funds returned to the User Agent)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          \x20\x20\x20\x20  \n\
-         \x20\x20\x20\x20  To rate the User Agent, reply with your rating."
+         \x20\x20\x20\x20  This job is complete."
     )
 }
 

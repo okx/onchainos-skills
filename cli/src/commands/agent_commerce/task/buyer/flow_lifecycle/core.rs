@@ -342,15 +342,16 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20Quality standards: <qualityStandards>\n\
      {l10n_dispatch}\n\n\
-     **B-Step 2 — Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** — at the end of the notification, prompt the user: if they want to rate the ASP (0–5 stars), they can reply with their rating.\n\
-     When the user replies with a rating intent, ask for a score (0–5 integer) and optional text feedback if not already provided, then execute:\n\
+     **B-Step 2 — Auto-rate the ASP:**\n\
+     Based on the task details (description, quality standards) and the deliverable content you just notified, generate a score (0–5 integer) and a one-sentence description.\n\
+     Scoring guide: 5 = exceeds expectations, 4 = fully meets, 3 = acceptable with minor gaps, 2 = partially meets, 1 = mostly inadequate, 0 = did not deliver.\n\
+     Then execute:\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
      ```\n\
-     ⚠️ `--score` MUST come from the user's explicit reply in this rating flow; do NOT infer from verbs like `rate` / `打分`, do NOT use a default value.\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
+     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
+     **B-Step 3 — Terminal wrap-up (keep the sub session):**\n\
+     {terminal_session_hint}\n\
      Task fully complete.\n\n\
      [Follow-up events]\n\
      - escrow: job_completed → task complete / job_refused → wait for ASP to choose dispute or refund\n\
@@ -451,15 +452,16 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      \x20\x20content:\n\
      {completed_escrow_notify}\n\
      {l10n_dispatch}\n\n\
-     **A-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- at the end of the notification, prompt the user: if they want to rate the ASP (0–5 stars), they can reply with their rating.\n\
-     When the user replies with a rating intent, ask for a score (0–5 integer) and optional text feedback if not already provided, then execute:\n\
+     **A-Step 2 -- Auto-rate the ASP:**\n\
+     Based on the task details (description, quality standards) and the deliverable that was reviewed, generate a score (0–5 integer) and a one-sentence description.\n\
+     Scoring guide: 5 = exceeds expectations, 4 = fully meets, 3 = acceptable with minor gaps, 2 = partially meets, 1 = mostly inadequate, 0 = did not deliver.\n\
+     Then execute:\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
      ```\n\
-     ⚠️ `--score` MUST come from the user's explicit reply in this rating flow; do NOT infer from verbs like \"rate\" / \"打分\", do NOT use a default value.\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
+     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
+     **A-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
+     {terminal_session_hint}\n\
      Task fully complete.\n\n\
      --------- Branch B: x402 -- final summary ---------\n\n\
      ⚠️ In x402, job_completed means the payment pipeline (accept + complete) is settled on-chain.\n\

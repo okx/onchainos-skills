@@ -117,7 +117,7 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: x402\n\
          - Settled at: <timestamp>\n\
-         To rate the ASP, reply with your rating."
+         This job is complete."
     )
 }
 
@@ -129,7 +129,7 @@ pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
         "[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
          - Refund: <tokenAmount> <tokenSymbol>\n\
          - Outcome: ClientWins\n\
-         This job is complete. To rate the ASP, reply with your rating."
+         This job is complete."
     )
 }
 
@@ -139,7 +139,7 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
         "[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
          - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
          - Outcome: ProviderWins\n\
-         This job is complete. To rate the ASP, reply with your rating."
+         This job is complete."
     )
 }
 
