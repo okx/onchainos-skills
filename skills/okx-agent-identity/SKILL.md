@@ -323,98 +323,11 @@ Full card template, decline wording, and worked examples → `references/consent
 
 ## §Cost Disclosure (P0 — fires whenever the user asks about fees / gas / 抽成 / "扣不扣钱")
 
-This section governs **what the AI says about who pays what** when the user asks about costs — whether during a create flow, mid-flow, or as a standalone question. The source of truth is the OKX Agent platform PRD §1.7 / §F0.7 (a public-spec sponsored phase-1 commitment); never derive from the model's prior knowledge of "typical platform fee structures".
+> Read `references/cost-disclosure.md` — Phase-1 policy: OKX covers all gas for every identity operation; zero platform commission. Standard PRD line (render verbatim when topical). Forbidden phrasings. "举个例子" → run `agent search` first, never improvise.
 
-### Phase-1 gas policy
+## §Endpoint Anti-Pattern (P0 — surfaces from Endpoint Inquiry trigger in description AND from in-flow Q5 in `role-provider.md`)
 
-**所有链上动作 OKX 全包网络手续费 — 用户钱包不扣一分钱**:
-- 创建 agent / mint NFT → ✅ OKX 全包
-- 编辑 agent 字段 (`agent update`) → ✅ OKX 全包
-- 上架 / 下架 (`agent activate` / `agent deactivate`) → ✅ OKX 全包（下架不上链）
-- 评价 / 反馈 (`agent feedback-submit`) → ✅ OKX 全包
-
-User Agents paying service fees go through `okx-agent-task`'s settlement and are out of this skill's scope; this skill's CLI calls are all gas-subsidized.
-
-### Platform commission
-
-**无平台抽成 (zero platform fee)**. The Agent Service Provider (ASP) sets the `service fee` and keeps 100% of it. When a User Agent calls a service, the USDT payment goes entirely to the ASP — OKX takes no cut.
-
-### Standard line (PRD 文案约束 — render verbatim when topical)
-
-When transaction-fee / chain-action / cost topics come up, AI MUST quote this line (translated to user language) at least once per session, ideally before the first agent-creating mutation:
-
-> 中文: 「**OKX 替你出手续费（在区块链上做事的成本），钱包不扣一分钱；OnchainOS Agentic Wallet 替你直接签好交易，整个过程你的钱包都不用动。**」
->
-> English: "**OKX covers all transaction fees on your behalf (the cost of doing things on the blockchain), so your wallet is not charged a cent. OnchainOS Agentic Wallet signs the transaction for you — your wallet stays untouched throughout.**"
-
-### Anti-pattern — never emit these phrasings
-
-- ❌ "文档中未明确说明 gas 费用" / "未明确" / "未涉及"
-- ❌ "需要在实际创建时才能看到准确的 gas 预估"
-- ❌ "建议查看官方文档 / 联系 OKX 客服 / 在 XLayer 区块浏览器查看"
-- ❌ Fabricating fee categories: "平台服务费 X USDT" / "调度费" / "管理费" / "执行管理费" / "Agent 调度和执行管理"
-- ❌ Soft-hallucination wrappers: "假设例子 / 我的推测 / 实际可能完全不同 / 这只是一个示例" — even when the AI says "this is just hypothetical", users encode the number as approximate truth ("OKX 抽 40%") and propagate it.
-- ❌ Tree-style fabricated cost breakdowns: `├─ 平台服务费 X USDT  ├─ Gas 费用 X USDT  └─ 总计 X USDT`
-
-### Standard action — "举个 X USDT 的例子" / "service price example"
-
-Triggers: "举个 5 USDT 服务的例子" / "服务大概收多少" / "give me an example service at 5 USDT" / "what does a typical service charge".
-
-→ MUST first run `onchainos agent search --query "<X> USDT"` (or a service-keyword query) to pull a real marketplace agent, then explain the cost using that real agent's `fee` field. Render it as:
-- "Service fee = `<X> USDT` — 100% 归服务提供商，OKX 不抽成"
-- "手续费（创建 / 调用 / 任何链上动作）= 0，由 OKX 承担"
-- "用户支付总额 = service fee（无其他费用）"
-
-⛔ Never improvise a cost breakdown from imagination. The marketplace has real data; use it.
-
-## §Endpoint Anti-Pattern (P0 — surfaces from Endpoint Inquiry trigger in description AND from in-flow Q5 in role-provider.md)
-
-This section governs **what endpoint values the AI may suggest and which it must reject**. The skill description's "Endpoint inquiry triggers" routes here directly when the user asks endpoint questions outside an active create flow; the in-flow Q5 in `references/role-provider.md` also references this section for validation.
-
-### Endpoint absolute requirements
-
-A2MCP `endpoint` MUST be:
-1. `https://` scheme (not `http://`).
-2. **公网可达** (publicly reachable from the open internet by the buyer's agent).
-3. A real deployed service (not a placeholder / Mock URL).
-
-The CLI does NOT validate (2) or (3) — bad endpoints will be accepted and minted on-chain, then your service NFT exists permanently pointing at an unreachable URL. The skill must catch these at the suggestion / Q&A layer.
-
-### Forbidden endpoint patterns (never recommend, always reject if user offers)
-
-| Pattern | Why forbidden |
-|---|---|
-| `http://...` (no `s`) | Insecure; many buyer agents will refuse non-TLS endpoints |
-| `http://localhost` / `https://localhost` | `localhost` = buyer's own machine; buyer's agent gets connection-refused |
-| `http://127.0.0.1` / `https://127.0.0.1` | Same reason as `localhost` |
-| `http://192.168.x.x` / `192.168.*` | Private RFC-1918 IP, only reachable inside the provider's LAN |
-| `http://10.0.x.x` / `10.*` | Private RFC-1918 IP |
-| `http://172.16.x.x` ~ `172.31.x.x` | Private RFC-1918 IP |
-| `*.local` / `*.internal` | mDNS / corporate-internal hostnames, no public DNS |
-| `https://internal-api.<company>.com` | Corporate-internal domain, no public DNS |
-| Mock service URLs (Swagger UI demos / Postman Mock Server / mockable.io) | Time-limited; will expire and turn into a dead endpoint |
-| Placeholder / TBD strings ("`https://TODO.example.com`" / "暂时填这个") | Each replacement requires another on-chain `agent update` write |
-
-### When the user has no deployed endpoint yet
-
-User: "我没有 https 接口" / "我还没部署服务" / "I don't have a deployed API yet".
-
-✅ Correct response (the AI should say something like):
-
-> 中文: 「接口地址必须是公网可达的 `https://` URL — 你的服务上链（写入区块链）后，其他 agent 会**从公网调用**这个地址。如果你还没部署，可以等部署好了再创建 — 上链一次后再改接口地址需要重走一次更新流程。或者用任何能提供公网 https URL 的 PaaS（你熟悉哪个就用哪个）部署你的 MCP（标准调用接口）server，拿到正式 URL 再回来创建。」
->
-> English: "The endpoint must be a publicly reachable `https://` URL — other agents will call it from the open internet after your service is on-chain. If you haven't deployed yet, the cleanest path is to deploy first and create the agent afterwards (changing the endpoint later requires another on-chain `agent update`). Deploy your MCP (standard call protocol) server to any PaaS that gives you a public https URL (whichever you're already familiar with), then come back to create the agent with the real URL."
-
-✅ Also acceptable: stay platform-neutral and just describe the requirement (https + 公网可达 + stable). Do not push a specific vendor unless the user asks for a recommendation.
-
-⛔ Never suggest:
-- `localhost` / 127.0.0.1 / private IP "while testing"
-- `http://` without TLS, "for now"
-- Mock services / Postman Mock / Swagger UI demos
-- Placeholder strings ("先写 `https://TODO.com`，回头改")
-- "Maybe try a self-signed cert" (other agents will reject)
-
-The cost of one extra round-trip ("come back when deployed") is far below the cost of a permanent dead on-chain service NFT.
+> Read `references/endpoint-anti-pattern.md` — `https://` + publicly reachable + real deployed service required. Forbidden patterns table (localhost / private IPs / mock URLs / placeholders). "No endpoint yet" response templates.
 
 ## Pre-flight Checks
 
@@ -798,95 +711,15 @@ Every user-facing string the skill renders must match the user's language. Detec
 
 ### Choice prompts (numbered options)
 
-Whenever the user has to pick from a **bounded set of 2–5 options**, render them as a numbered list and accept the number as the reply. Open-ended fields (Name, Description, Fee amount, Description for feedback) stay free-text. Never ask "A or B?" as prose when you could render "1. A / 2. B".
-
-**Template (Chinese):**
-
-```
-<一句话提问>
-  1. <选项 1 的标签> — <一行解释，可选>
-  2. <选项 2 的标签> — <一行解释，可选>
-  3. <选项 3 的标签> — <一行解释，可选>
-回复数字 1/2/3。
-```
-
-**Template (English):**
-
-```
-<One-line question>
-  1. <Option 1 label> — <one-line explanation, optional>
-  2. <Option 2 label> — <one-line explanation, optional>
-  3. <Option 3 label> — <one-line explanation, optional>
-Reply with a number: 1/2/3.
-```
-
-**Rules:**
-
-- **Also accept the canonical spelling** as a fallback: if user replies `A2MCP` instead of `1`, accept it. But the **primary ask is numeric**.
-- **Map the number before sending to the CLI.** CLI enums accept: `--role` accepts numeric aliases (`1`/`2`/`3` — `utils.rs:162-165`), so you can pass the number straight through. `servicetype` and other enums do NOT have numeric aliases — the skill must translate `1→A2MCP`, `2→A2A` locally before invoking the CLI. Never send a raw `1` / `2` to a flag that doesn't accept it.
-- **One question per turn.** Even with numbered options the question is one turn (see `_shared/no-polling.md` and `role-playbook.md` one-question rule).
-- **Don't use numbered options for open-ended fields.** Name, description, fee amount, feedback description — these are free-form.
-- **Don't force a menu for "what's next".** Post-success suggestions (§8 of `display-formats.md`) are always a single line, never a menu (see the Bad example in §8).
-- If the user replies with something outside the enumeration (`HTTP`, `都可以`, `随便`), politely re-ask the numbered list once; never silently pick a default.
-
-**Where this pattern is used:**
-
-| Scenario | Location |
-|---|---|
-| Role selection on `create` | `SKILL.md §Core Flow: agent create (role-driven)` gate 1 |
-| Arbitrator intent disambiguation | `SKILL.md §Negative Triggers — do NOT activate this skill` |
-| Existing provider pre-check (new vs update) | `references/role-playbook.md §Pre-check` |
-| servicetype (A2MCP vs A2A) | `references/role-provider.md` Phase 2 S3 |
-| "Add another service?" loop gate | `references/role-provider.md` Phase 2 S6 |
-| Avatar upload path (attachments / generate / skip) | `references/avatar-upload.md` §Policy |
-| Which of my agents to use as feedback `--creator-id` | `references/feedback-guide.md` Step 2 |
+> Read `references/choice-prompts.md` — CN/EN numbered-list templates, rules (accept canonical spelling, map number to CLI enum, one Q/turn, no menus for open-ended), usage map table.
 
 ### One-shot capture (silent support for users who dump everything at once)
 
-Some users type their whole request in one turn: "注册一个 provider 叫 Alice，描述是做 DeFi 研究，用默认头像". The skill **silently accepts** this — it does NOT tell the user "you can type everything at once" (that just adds noise). It just captures what was unambiguous and **moves to the next unfilled question, or — if all required fields are captured — to the confirmation card** (which is still mandatory; one-shot fast-paths the Q&A, never the confirm gate — see §⛔ MANDATORY confirmation gate at the top of this file).
-
-**Rules:**
-
-1. **Silent, not advertised.** Never say "你也可以一次性输入". The preview + step-by-step Q&A remains the default surface. One-shot is a fast path users discover naturally.
-2. **Capture only unambiguous values.** If the utterance clearly separates fields (explicit labels like "名字:Alice，描述:..."; or natural phrasings the skill is confident about like "叫 Alice，做 DeFi 研究"), capture them. If the split is ambiguous ("Alice 做 DeFi 分析" — is the name `Alice` or `Alice 做 DeFi 分析`?), **capture only the clearly-unambiguous part**; leave the ambiguous field for the normal Q.
-3. **Skip answered Q's silently.** In Q1…QN, if Q_k's field is already captured, don't ask Q_k — go directly to Q_(k+1). Don't echo "name is already Alice, next is description" — just move on. The confirmation card will show everything at the end; that's where the user verifies.
-4. **Phase boundary is strict — but reference the user's earlier mention as a suggested default.** Identity-phase capture does **NOT** reach into service-phase fields. If the user said "我要注册一个服务提供商叫 Alice，做数据分析，收 10 USDT" during Phase 1:
-   - Capture `name=Alice` (or ask if ambiguous — see rule 2).
-   - **Do NOT** capture Fee=10 or any service field. The "10 USDT" is **discarded** from the Phase-1 parse — it does NOT become an internal "暂存" value the skill auto-fills with.
-   - Rationale: service field structure is complex (`servicetype` decides whether `fee`/`endpoint` are asked), cross-phase parse has many misfire modes.
-   - **UX guidance (Option A — suggestion-as-prompt).** When Phase 2 starts and the first service-name question is asked, you **MAY** quote the user's earlier mention inline as a suggested default to confirm or override. ⛔ The example below is the literal text rendered to the user — **no `Q1：` / `Q3：` prefix**, per `§UX Output Red Lines Red line 3`: `这个服务叫什么名字？（你刚提到「天气查北京」，确认就是它吗？或想改？）`. Same applies to the `servicetype` question if the user named the type in Phase 1 — **this is a Pattern A teaching context** (user is being asked to confirm a choice; the one-shot path skips the full Q3 numbered options, so this prompt may be the user's first encounter with the type concept). **Map the user's term to the long-form-with-gloss** per `references/ux-lexicon.md §Service-type` Pattern A before quoting it back: if user said `A2A` / `agent 互调` / `agent-to-agent` / `agent 通信` then quote as `服务类型？（你刚说想要 agent（智能体）通信式服务（议价 / 灵活协作），确认 2 即可；想改回 1 也行。）`; if user said `A2MCP` / `MCP 服务` / `API 接口` then quote as `服务类型？（你刚说想要 API 接口式服务（按次调用、固定价格），确认 1 即可；想改回 2 也行。）`. ⛔ Never echo the raw enum `A2MCP` / `A2A` and ⛔ never use the short form alone here (Pattern A teaching context requires the inline gloss; the short form is for Pattern B cell contexts only). This is **suggestion text in the prompt**, NOT an auto-fill: the user's **reply this turn** is the authoritative value, and if they ignore the suggestion (e.g. type a different name), use what they typed.
-   - Do NOT silently auto-fill, do NOT pre-populate Phase-2 fields from Phase-1 wording, do NOT skip the Q just because the suggested default "is probably what they meant". The discard-then-quote-as-suggestion pattern preserves the strict boundary while removing the "I have to retype something I already said" UX pain.
-5. **All fields captured → still render confirmation card.** If the one-shot utterance covered every required field for the role (identity for requester/evaluator; identity + at least one complete service for provider — but see rule 4, so provider never gets here from identity phase alone), render the confirmation card directly. The confirmation card is still mandatory (see §Core Flow gate 4 + §⛔ MANDATORY confirmation gate at the top of this file) — **never** skip straight to CLI invocation. "All fields captured" is enumerated by name in §Core Flow gate 4 as a rationalization that does NOT bypass the gate. Wait for the user's explicit `执行` / `execute` / `yes` reply on this turn before calling the tool.
-6. **Confirmation-step ambiguity.** When rendering the confirmation card after one-shot capture, if any captured value was edge-case (whitespace, punctuation, bracketed optionals), show the value verbatim and let the user reject during confirmation. Do not "clean up" silently.
-7. **One-shot + numbered choice combo.** If the user's one-shot utterance includes a choice field (e.g., "Type: A2MCP"), accept it. If they used the label instead of the number ("A2A 类型"), also accept. But when asking a choice question that the user hasn't answered yet, still use the numbered-options pattern (see §Choice prompts).
-
-**Worked examples:**
-
-- **Example A — partial one-shot, requester:** User: "注册一个买家叫 Alice". Skill captures `role=requester`, `name=Alice`. Preview → skips Q1 (name already set) → Q2: description → Q3: picture → confirmation.
-- **Example B — full one-shot, requester:** User: "注册一个买家，名字 Alice，描述做 DeFi 研究，不要头像". Skill captures `role=requester`, `name=Alice`, `description=做 DeFi 研究`, `picture=skip`. Preview → all Q's skipped → confirmation card directly.
-- **Example C — ambiguous split:** User: "provider 叫 Alice 做 DeFi 分析师". Name could be `Alice` or `Alice 做 DeFi 分析师`. Skill captures `role=provider` only (unambiguous), leaves name + description for normal Q&A. Preview → Q1 name → Q2 description → ...
-- **Example D — cross-phase leakage (strict rejection):** User: "provider 叫 Alice，做 DeFi 分析，收 10 USDT". Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discarded.** Preview → Q3 picture → identity confirmation → Phase 2 starts → its own preview → service Q1 (name) fresh.
+> Read `references/one-shot-capture.md` — 7 rules + 4 worked examples. Key: silent acceptance, capture-only-unambiguous, strict phase boundary (service fields discarded from identity-phase parse), confirmation card still mandatory when all fields captured.
 
 ### Amount Display Rules
 
-- Service `fee` is a **USDT numeric string with up to 6 decimal places** (e.g., `1.234567`, `10`, `0.5`, `0`) — the **skill** validates this before sending; the CLI itself only checks non-empty. Always show the user the human-readable form "`N USDT`" (e.g., `1.234567 USDT`, `10 USDT`). Never show raw minimal token units.
-- Service `fee` is **required for `A2MCP` and optional for `A2A`**. For `A2A` the user may either skip (skill sends `"fee": ""` — see `cli-reference.md` §1's `--service` note for why the key is always present) or supply a USDT reference price following the same format. When rendering an A2A service: if `fee` is non-empty, show it as `<N> USDT` like A2MCP; if empty / absent, show the short form `免费` / `free` in the user's language (Type=A2A on the same row already gives the negotiated-pricing context). For dedicated Fee rows in confirm/diff cards (where space allows), `（未填，双方自行协商）` / `(skipped — negotiated directly)` is also acceptable per `ux-lexicon.md §Field` "A2A 服务未填价格的渲染" rule.
-- Evaluator stake amount is owned by `okx-agent-task` and may change; **never hardcode the amount** in this skill's copy. Just point users to the staking flow at `/skills/okx-agent-task/references/evaluator-staking.md`.
-- EVM contract / agent addresses must be displayed all lowercase.
-- **Reputation is rendered as 0.00–5.00 stars (up to 2 decimal places), never as the raw 0–100 score.** The backend wire format depends on the endpoint; whether the skill needs to convert depends on what the response carries.
-  - **Backend-returned already-scaled (skill renders directly — do NOT divide):**
-    - `agent search` — each `list[*].feedbackRate` is already a 0–5 Double from the backend per `references/cli-reference.md §7` schema. Render as `★ <feedbackRate>`; `null` → `—`. **No `/20` arithmetic, no round-half-up at this layer** — backend already did it. (Also note: the array field is `list`, NOT `items` — see §7. There is no `reputation.score` / `reputation.count` on this endpoint; that shape belongs to `agent get` only.)
-  - **CLI-converted endpoints** (skill renders the value verbatim — do NOT divide again):
-    - `agent feedback-list` — CLI's `utils::convert_feedback_list_scores` already maps both top-level `average` and each `items[*].score` / `list[*].score` to 2-decimal star floats (e.g. backend `66 → 3.3`, backend `67 → 3.35`). Render directly: `★ <average>` / `★ <score>`. Earlier revisions rendered per-item as an integer bucket — that bucket rounding has been removed now that input precision is 2 decimals.
-    - `agent feedback-submit` (input) — CLI takes 0.00–5.00 stars via `--score` (up to 2 decimal places) and multiplies by 20 with round-half-up internally (`utils::parse_stars_arg`). Skill passes the user's stars straight to `--score` — no multiplication on the skill side.
-  - **Not-yet-converted endpoints** (CLI returns raw 0–100, skill still applies the conversion at render time):
-    - `agent get` — `list[*].agentList[*].reputation.score` is the 0–100 backend aggregate (note the double-layer envelope: outer `list[*]` is an accountName wrapper, agent rows live one level deeper — see `references/cli-reference.md §3`); render as `★ <score / 20 with up to 2 decimals>`.
-    - Tracked for future extension into the CLI; until then the rule below applies skill-side.
-  - **Canonical rounding rule** (used both inside the CLI's converters and by skill-side rendering for the not-yet-converted endpoints): `score / 20` rendered with **up to 2 decimal places**. Because wire is integer 0–100, division by 20 yields values with at most 2 significant decimal positions (one wire unit = 0.05 stars), so no further rounding is needed.
-    - Examples: `0 → 0`, `66 → 3.3`, `67 → 3.35`, `70 → 3.5`, `89 → 4.45`, `92 → 4.6`, `100 → 5`.
-    - A backend score of `70` always corresponds to `★ 3.5`; aggregate `89` always renders as `★ 4.45` — regardless of which side did the math. (This is a tightening from the prior integer-bucket / 1-decimal aggregate rule: now that input precision is 2 decimals, render precision matches.)
-  - **No-data**: render `—`.
-  - The raw 0–100 number appears only in CLI / backend logs and in the maintainer bash block (hidden from end users by the "Do NOT show the bash command" rule on confirmation cards). **Never** render `92 / 100` / `85 分` in any user-visible cell, post-success line, or error message.
+> Read `references/amount-display.md` — USDT fee format (6 dp), A2MCP required / A2A optional, addresses lowercase. Reputation star conversion table per endpoint (`agent search` render direct / `feedback-list` CLI-converted / `agent get` skill divides ÷20).
 
 ### Security Fundamentals
 
@@ -974,6 +807,11 @@ Workflows A–D — buyer onboarding (+ passive fallback), provider onboarding, 
 - `references/troubleshooting.md` — CLI error strings → user-friendly messages
 - `references/cross-skill-workflows.md` — Workflows A–D with data-handoff contracts
 - `references/consent-guide.md` — first-time consent card template, agree/decline response wording, worked examples
+- `references/cost-disclosure.md` — Phase-1 gas policy, zero platform commission, PRD standard line, forbidden phrasings, "举例" action
+- `references/endpoint-anti-pattern.md` — forbidden endpoint patterns, absolute requirements, "no endpoint yet" response templates
+- `references/choice-prompts.md` — CN/EN numbered-list templates, rules, usage map
+- `references/one-shot-capture.md` — 7 rules + 4 worked examples for multi-field one-shot capture
+- `references/amount-display.md` — USDT fee format, A2A/A2MCP rules, reputation star conversion table per endpoint
 
 ## Installer Checksums
 
