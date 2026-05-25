@@ -159,7 +159,7 @@ All fields ready → **identity & balance check**:
 3. Insufficient balance → warn but **do not block**.
 4. **Execute** [`okx-agent-chat/after-agent-list-changed.md`](../okx-agent-chat/after-agent-list-changed.md) to check messaging-service availability.
 
-⚠️ **Language matching**: the confirmation form field labels **MUST** match the user's conversation language. Chinese conversation → Chinese labels (标题 / 摘要 / 描述 / 支付代币 / 预算 / 最高预算 / 接单时限 / 交付时限); English conversation → English labels (Title / Summary / Description / Currency / Budget / Max Budget / Accept Deadline / Delivery Deadline). The playbook is written in English; this does NOT mean the output should be English — always match the **user's** language.
+⚠️ **Language matching**: the confirmation form field labels **MUST** match the user's conversation language. Chinese conversation → Chinese labels (标题 / 摘要 / 描述 / 支付代币 / 预算 / 最高预算 / 任务过期时间 / 预期工作时长); English conversation → English labels (Title / Summary / Description / Currency / Budget / Max Budget / Acceptance Window / Delivery Window). The playbook is written in English; this does NOT mean the output should be English — always match the **user's** language.
 
 Display the confirmation form (format see `references/display-formats.md` §3) → **end this turn** and wait for the user's explicit confirmation of **this form**. Prior confirmations of sub-questions do NOT count.
 
@@ -298,9 +298,9 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
    - The agent auto-generates `title` (≤30 chars), `description` (≥10 chars), `description-summary` (≤200 chars) based on the ServiceTitle.
    - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
    - `currency` = `tokenSymbol`.
-   - `deadline-open` / `deadline-submit`: **must be asked of the user**; do NOT auto-fill with a "reasonable default". Prompt the user: "How long should the acceptance deadline (how long after publishing before auto-closing if no one accepts) and the delivery deadline (how long after acceptance to complete) be?"
-   - ⚠️ **Language matching**: field labels MUST match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/接单时限/交付时限; English → Title/Summary/...). The playbook is in English; output must match the **user's** language.
-   - Display the full confirmation form (format see `references/display-formats.md` §3, including title / summary / description / token / budget / max-budget / acceptance deadline / delivery deadline / designated seller) → **end this turn** and wait for the user's explicit confirmation of **this form**.
+   - `deadline-open` / `deadline-submit`: **must be asked of the user**; do NOT auto-fill with a "reasonable default". Prompt the user: "How long should the acceptance window (how long after publishing before auto-closing if no one accepts) and the delivery window (how long after acceptance to complete) be?"
+   - ⚠️ **Language matching**: field labels MUST match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/任务过期时间/预期工作时长; English → Title/Summary/...). The playbook is in English; output must match the **user's** language.
+   - Display the full confirmation form (format see `references/display-formats.md` §3, including title / summary / description / token / budget / max-budget / acceptance window / delivery window / designated seller) → **end this turn** and wait for the user's explicit confirmation of **this form**.
    - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn** — the form is a question, not an answer; the user has not confirmed.
 5. **Create the task after user confirmation** (🛑 must NOT be in the same turn as step 4): `create-task` (parameters from the confirmation form) → **end this turn**, wait for `job_created`, cache `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`.
 6. **set-payment-mode** (triggered by `job_created`): `set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>` → **end this turn**, wait for `job_payment_mode_changed`.
@@ -385,7 +385,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 | provider | `set-provider` | Yes | Change alone |
 | max_budget | `set-max-budget` | No | Change alone |
 
-**Non-modifiable**: title, description, match-expiration time, delivery deadline. When the user requests modifying these, inform "This field cannot be changed after task creation."
+**Non-modifiable**: title, description, acceptance window, delivery window. When the user requests modifying these, inform "This field cannot be changed after task creation."
 
 ### 3.6.2 Step-by-step confirmation
 

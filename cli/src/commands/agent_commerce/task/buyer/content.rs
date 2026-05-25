@@ -162,7 +162,7 @@ pub fn job_auto_refunded_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobExpired` — job expired (B-7-1).
 pub fn job_expired_user_notify(job_id: &str) -> String {
     format!(
-        "Job `{job_id}` has expired (no ASP accepted before the accept deadline, or no deliverable submitted before the submit deadline). The job is now closed."
+        "Job `{job_id}` has expired (no ASP accepted before the acceptance window expired, or no deliverable submitted before the delivery window expired). The job is now closed."
     )
 }
 
