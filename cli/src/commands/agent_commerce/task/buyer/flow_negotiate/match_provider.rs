@@ -82,7 +82,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              <blank line between cards>\n\n\
              After the last card:\n\
              ---\n\
-             Please choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP; or reply with next page / public / close.\n\n\
+             Please choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP; or reply \"next\" (下一页) to see more / \"public\" (公开) / \"close\" (关闭).\n\n\
              {l10n_prompt}\n\
              {follow_playbook}\n\n\
              -> **end this turn** and wait for the user's reply to be relayed back.\n\n\

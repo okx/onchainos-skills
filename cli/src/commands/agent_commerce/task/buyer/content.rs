@@ -32,7 +32,7 @@
 
 /// `Event::JobCreated` Step 0 — user notification that the job is confirmed on-chain.
 pub fn job_created_user_notify(job_id: &str, notify_text: &str) -> String {
-    format!("Job `{job_id}` confirmed on-chain (status: Open). {notify_text}")
+    format!("Job `{job_id}` confirmed on-chain. {notify_text}")
 }
 
 /// Prompt shown when the designated ASP is offline (D-Step 1.5).
