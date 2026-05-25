@@ -1,0 +1,258 @@
+//! Task creation and term-change event prompt generators.
+
+// --- User-action: create task ------------------------------------------
+
+pub(crate) fn create_task() -> String {
+    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
+    "\
+🔒 **Pre-flight check**: have you read `skills/okx-agent-task/SKILL.md` and `skills/okx-agent-task/buyer.md`?\n\
+If not → **stop executing this playbook immediately**; first load SKILL.md per the CLAUDE.md routing rules → confirm role is buyer → read buyer.md → then come back here.\n\
+Skipping skill loading = not knowing the tool whitelist / communication protocol / security gates = downstream steps (job_created event handling, negotiation, accept) will fail.\n\n\
+[Current Operation] Publish task (create_task)
+[Role] User (User Agent)
+[Session Type] user session (talking directly to the user)
+
+🛑 **No skipping**: you MUST finish collecting all fields → show the confirmation form → wait for an explicit user confirmation before calling the CLI.
+
+================================================
+Step 1 -- Field collection (collect progressively in conversation; **only enter Step 2 when all fields are ready**)
+================================================
+
+| Field | CLI flag | Constraint | How to collect |
+|---|---|---|---|
+| Description | --description | 10-2000 chars | Consolidate the user's words. If <10 → \"A more detailed description helps match a better Provider. Could you add more specifics?\" |
+| Title | --title | <=30 chars | Agent-generated; **must count chars after generating**, shorten if >30 |
+| Summary | --description-summary | <=200 chars | Agent-generated; **must count chars after generating**, shorten if >200 |
+| Payment token | --currency | Only USDT / USDG | ⚠️ See token rules below |
+| Budget | --budget | number; <=5 decimal places; max 10,000,000 | Extract the number |
+| Max budget | --max-budget | **Required**; >= budget; <=5 decimal places; max 10,000,000 | ⚠️ **You MUST ask the user explicitly**, do not auto-fill or guess. This is the negotiation price cap; the ASP's quote cannot exceed it |
+| Open deadline | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long the task stays open before auto-closing if no ASP accepts |
+| Submit deadline | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long after acceptance the ASP must deliver |
+| Designated provider | --provider | optional; provider agentId | If the user names a specific provider, extract the agentId. **Do not ask proactively** -- if the user does not bring it up, omit it |
+
+🛑 **Token rules (top priority)**:
+- User writes \"USDT\" or \"USDG\" explicitly → use it directly, no confirmation
+- User uses fuzzy expressions (\"U\" / \"u\" / \"buck\" / \"dollar\" / \"USD\" / \"100U\" / \"50u\") → **you MUST first ask \"Please confirm the payment token: USDT or USDG?\"**, fill it in only after the user replies explicitly
+- **Do not default to USDT**: rendering \"100 USDT\" when the user only said \"100U\" is a violation
+
+================================================
+Step 2 -- Validation (after all fields collected, before showing the form)
+================================================
+
+1. Token is neither USDT nor USDG → \"Only USDT and USDG are supported. Please choose one.\"
+2. **Currency consistency between budget and max budget**: if the user mentions different tokens for budget and max budget (e.g. \"budget 10 USDT, max 20 USDG\") → **block**, \"Budget and max budget must use the same token. Please confirm: USDT or USDG?\". The task has a single --currency, the two must match.
+3. Description < 10 chars → ask the user to expand
+4. max_budget < budget → \"Max budget cannot be less than the budget.\"
+5. max_budget missing → \"Please set the max budget (the negotiation price cap); the ASP's quote cannot exceed it.\"
+6. budget > 10,000,000 or > 5 decimal places → tell the user the limits
+
+================================================
+Step 3 -- Identity & balance check
+================================================
+
+1. `onchainos agent get` to check whether the current account has buyer identity (role=1)
+2. Has buyer → tell the user which account is being used
+3. No buyer → guide registration via `onchainos agent register`
+4. Insufficient balance → warn but do not block creation
+
+================================================
+Step 4 -- 🛑 Communication availability check (must not be skipped)
+================================================
+
+🛑 **MANDATORY -- complete this before showing the confirmation form**.
+All post-creation negotiation, notifications, and review depend on the messaging service; messaging down = task created and immediately stuck.
+
+1. **Read** the **entire content** of `skills/okx-agent-chat/after-agent-list-changed.md`
+2. **Fully execute** the flow inside after-agent-list-changed.md (start from Step 0; walk the decision tree to completion)
+3. After it finishes, proceed to Step 5
+
+================================================
+Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/references/display-formats.md` Section 3)
+================================================
+
+| Field | Value |
+|---|---|
+| Title | <agent summary> |
+| Summary | <agent summary, <=200 chars> |
+| Description | <full content> (if <=200 chars, put it in the table; if >200, write `see below` in the table and render the full content as prose below) |
+| Payment token | <USDT or USDG> |
+| Budget | <number> |
+| Max budget | <number> (negotiation price cap) |
+| Open deadline | <Nh> (auto-closes after N hours if no ASP accepts) |
+| Submit deadline | <Nh> (deliverable must be submitted within N hours of acceptance) |
+| Designated provider | <agentId> (🛑 only show this row if the user explicitly designated one; **otherwise omit the entire row** -- do not write \"none\" or \"none (public task)\" or any placeholder. Tasks default to private; \"no designated provider\" != \"public task\") |
+
+> Confirm? Once you confirm, I will submit the task on-chain immediately.
+
+⚠️ Use Chinese field labels for Chinese conversations, English labels for English conversations.
+
+→ **End this turn**; after showing the form you MUST stop and wait for the user's explicit confirmation of **this form**.
+🛑 The user's earlier confirmation on a sub-question (e.g. token confirmation) does NOT count as confirming the form; you must wait for a new reply after the form is shown.
+
+================================================
+Step 6 -- After user confirms the form, call the CLI (🛑 must NOT be in the same turn as Step 5)
+================================================
+
+```bash
+onchainos agent create-task \\
+  --description \"<description>\" \\
+  --description-summary \"<summary>\" \\
+  --title \"<title>\" \\
+  --budget <budget> --max-budget <max_budget> \\
+  --currency <USDT|USDG> \\
+  --deadline-open <deadline_open> --deadline-submit <deadline_submit> \\
+  [--provider <provider agentId>]
+```
+
+⚠️ `--provider` (optional): designate a provider agentId. With it set, job_created skips recommend and routes directly via the provider's service-list by payment mode (x402 or A2A negotiation). Pass it only when the user explicitly designates a provider.
+
+🚫 **create-task only accepts the flags above. There is no --content / --period / --visibility / --amount / --token / --payment-mode flag.** When `--provider` is passed, the CLI automatically sets visibility=1 (PRIVATE) and providerAgentId; no extra flags needed.
+⚠️ **Payment mode is not set at creation** -- paymentMode is decided downstream: the A2A negotiation path is always escrow; if a provider is designated and has an endpoint, x402 is used. If the user mentions a preferred payment mode at publication, **do not pass --payment-mode**; tell them: \"The payment mode will be determined automatically when negotiating with the provider.\"
+
+================================================
+Step 6.5 -- Save attachments (only if the user included files with the task request)
+================================================
+
+If the user's **original message** included file(s) or image(s) (e.g. Telegram documents `[document telegram:file/...]`, local file paths, inline images) that are intended as task reference material (e.g. 原图, reference image, 附件, sample):
+
+For each file, call:
+```bash
+onchainos agent task-attach --file \"<local file path>\" <jobId>
+```
+
+The file will be stored locally under `~/.onchainos/task/<jobId>/attachments/` and automatically picked up by the sub session during negotiation (Step 1.5 checks `list-attachments`).
+
+⚠️ Only save files the user explicitly mentioned as task-related. Do not save unrelated files.
+⚠️ If the file hasn't been downloaded to a local path yet, download it first (e.g. via the platform's file download mechanism) before calling `task-attach`.
+⚠️ If `task-attach` fails, skip it and proceed to the notification — attachment failure must NOT block task creation.
+
+If the user's message did NOT include any files, skip this step entirely.
+
+================================================
+
+After success, call `xmtp_dispatch_user` to notify the user:\n\
+".to_string()
+    + &format!("\
+- No --provider → content: \"{create_public}\"\n\
+- With --provider → content: \"{create_designated}\"\n\
+{l10n_short}\n\n\
+===============================================================\n\
+🛑🛑🛑 STOP -- after create-task + task-attach (if any) you **MUST end this turn immediately**\n\
+===============================================================\n\
+❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.\n\
+❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.\n\
+❌ **Do not call any onchainos agent commands** (except `task-attach` in Step 6.5 above) -- this turn ends here; all further actions are driven by on-chain events.\n\
+❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.\n\
+===============================================================\n",
+        create_public = super::super::content::create_task_public_user_notify(),
+        create_designated = super::super::content::create_task_designated_user_notify(),
+    )
+}
+
+// --- Term-change events ------------------------------------------------
+
+pub(crate) fn task_token_budget_change(ctx: &super::super::flow::FlowContext<'_>) -> String {
+    let job_id = ctx.job_id;
+
+    format!(
+    "[System Notification] task_token_budget_change (payment token / amount change settled on-chain)\n\
+     [Role] User (User Agent)\n\n\
+     ⚠️ This event is triggered by the user session calling `set-token-and-budget`. The terms are now updated on-chain.\n\n\
+     [Receiving-scenario decision -- 🛑 MANDATORY; wrong decision = flow stuck]\n\
+     This event is broadcast to all user-side sub sessions.\n\
+     - If you are the **backup session** → **ignore this event, end the turn immediately, do not call any tool**\n\
+     - If you are a **sub session (a negotiation session with a specific provider)** → first run Step 0 liveness check, then continue\n\n\
+     [Sub-session action (🛑 four steps in strict order; each step MUST wait for the previous tool_result before continuing)]\n\n\
+     **Step 0 -- 🛑 MUST check whether this session is still active (skipping = sending invalid messages to a terminated provider):**\n\
+     Review this session's context: if **any** of the following holds, the session is terminated -- **ignore this event, end the turn**:\n\
+     \x20\x20- You have sent or received `[intent:reject]` (negotiation terminated)\n\
+     \x20\x20- You have called `mark-failed` against the current provider (provider marked failed)\n\
+     \x20\x20- The provider has not replied for over 24h (negotiation cooled down)\n\
+     If context is insufficient → call `xmtp_get_conversation_history` to check recent messages; if it contains [intent:reject], treat as terminated.\n\
+     ⚠️ Only continue to Step 1 when you have confirmed this session is still active (negotiation in progress).\n\n\
+     **Step 1 -- 🛑 MUST query the latest task details (do not use cached / stale values):**\n\
+     ```bash\n\
+     onchainos agent status {job_id}\n\
+     ```\n\
+     Extract the latest tokenSymbol and tokenAmount (budget) from the response.\n\
+     ❌ Skipping this step = PROPOSE sent with stale amount = provider receives expired terms = negotiation based on wrong data\n\n\
+     **Step 2 -- 🛑 MUST get the sessionKey (one of the two mandatory steps for path 4):**\n\
+     Call the `session_status` tool to obtain the current sub session's `sessionKey`.\n\
+     ❌ Skipping this step = xmtp_send lacks sessionKey = message cannot be sent = provider never sees the new terms\n\n\
+     **Step 3 -- 🛑 MUST send a fresh round of [intent:propose] to the provider (do not skip, do not delay):**\n\
+     Use the latest tokenSymbol and tokenAmount from Step 1 to construct the new PROPOSE message.\n\
+     paymentMode is fixed to escrow (term changes only apply to escrow scenarios).\n\n\
+     Call xmtp_send (sessionKey = value from Step 2):\n\
+     \x20\x20content:\n\
+     \x20\x20jobId: {job_id}\n\
+     \x20\x20paymentMode: escrow\n\
+     \x20\x20tokenSymbol: <latest tokenSymbol from Step 1>\n\
+     \x20\x20tokenAmount: <latest tokenAmount from Step 1>\n\
+     \x20\x20[intent:propose]\n\n\
+     ⚠️ This is a new negotiation round; the COUNTER counter resets.\n\
+     ❌ Skipping Step 3 = provider does not know terms changed = negotiation continues on old terms = final accept parameters mismatch\n\
+     ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session)\n\
+     ❌ Do not call set-token-and-budget / set-provider / set-max-budget (the user session already did)\n\n\
+     → **End this turn** and wait for the provider's reply ([intent:ack] / [intent:counter] / [intent:reject]).\n"
+    )
+}
+
+pub(crate) fn task_provider_change(ctx: &super::super::flow::FlowContext<'_>) -> String {
+    let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+
+    let has_dp = super::super::negotiate::has_designated_provider(job_id);
+
+    let backup_instruction = if has_dp {
+        format!(
+            "- If you are the **backup session** → the user session has written the new provider info via `set-provider`.\n\
+             \x20\x20**🛑 MUST run the following command immediately to kick off the new provider flow**:\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id}\n\
+             \x20\x20```\n\
+             \x20\x20Follow the returned playbook (D-Steps → negotiation / x402).\n\
+             \x20\x20❌ Do not ignore this event ❌ Do not skip next-action and decide the next step yourself\n")
+    } else {
+        "- If you are the **backup session** → **ignore this event, end the turn immediately, do not call any tool**\n".to_string()
+    };
+
+    format!(
+    "[System Notification] task_provider_change (provider change settled on-chain)\n\
+     [Role] User (User Agent)\n\n\
+     ⚠️ This event is triggered by the user session calling `set-provider`. The provider is now updated on-chain.\n\n\
+     [Receiving-scenario decision -- 🛑 MANDATORY; wrong decision = flow stuck]\n\
+     This event is broadcast to all user-side sub sessions.\n\
+     {backup_instruction}\
+     - If you are a **sub session (a negotiation session with a specific provider)** → first run Step 0 liveness check, then continue\n\n\
+     [Sub-session action (🛑 four steps in strict order; MUST be fully executed)]\n\n\
+     **Step 0 -- 🛑 MUST check whether this session is still active:**\n\
+     Review this session's context: if you have sent or received a message containing `[intent:reject]` in this session (negotiation terminated),\n\
+     **ignore this event, end the turn** -- a terminated negotiation does not need another REJECT.\n\
+     Only continue to Step 1 when you have confirmed this session is still active (negotiation in progress).\n\n\
+     **Step 1 -- 🛑 MUST query task details to compare whether the provider has changed (skipping = may wrongly close the new provider's session):**\n\
+     ```bash\n\
+     onchainos agent status {job_id}\n\
+     ```\n\
+     Extract `providerAgentId` (the current on-chain provider) and compare it with **the provider agentId this session is negotiating with**:\n\
+     \x20\x20- **Match** (this session's provider IS the on-chain provider) → this session belongs to the new provider; **ignore this event, end the turn**, do not send REJECT\n\
+     \x20\x20- **Mismatch** (this session's provider has been replaced) → continue to Step 2 and send REJECT\n\
+     \x20\x20- **providerAgentId is empty or missing** → continue to Step 2 and send REJECT (conservative)\n\
+     ❌ Skipping this step = sending REJECT indiscriminately to all sub sessions = even the new provider's session gets closed = negotiation broken\n\n\
+     **Step 2 -- 🛑 MUST get the sessionKey (one of the two mandatory steps for path 4):**\n\
+     Call the `session_status` tool to obtain the current sub session's `sessionKey`.\n\
+     ❌ Skipping this step = xmtp_send lacks sessionKey = REJECT cannot be sent\n\n\
+     **Step 3 -- 🛑 MUST send [intent:reject] to this session's provider (do not skip):**\n\
+     This task's provider has changed on-chain to a different ASP; the current session's negotiation terminates immediately.\n\
+     ❌ Not sending REJECT = old provider does not know they were replaced = keeps waiting / messaging = negotiation hangs forever\n\n\
+     Call xmtp_send (sessionKey = value from Step 2):\n\
+     \x20\x20content:\n\
+     \x20\x20jobId: {job_id}\n\
+     \x20\x20reason: user has switched provider\n\
+     \x20\x20[intent:reject]\n\n\
+     ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session)\n\
+     ❌ Do not call set-token-and-budget / set-provider / set-max-budget (the user session already did)\n\
+     ❌ Do not call mark-failed (it only ends the negotiation, it does not exclude that provider)\n\
+     ❌ Do not keep talking to that provider after REJECT (negotiation is terminated; this sub session's mission is over)\n\n\
+     → **End this turn**. The new provider's negotiation is initiated by the user session, unrelated to this sub session.\n"
+    )
+}
