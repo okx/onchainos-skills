@@ -277,6 +277,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             Event::NegotiateAck => "save-agreed → set-payment-mode (ACK validation → persist)",
             Event::NegotiateCounter => "xmtp_send (evaluate COUNTER → new PROPOSE or REJECT)",
             Event::AttachmentAdded => "xmtp_file_upload → xmtp_send (upload + forward attachment to provider)",
+            Event::Other(ref s) if s == "deliverable_received" => "task-deliverable-save (download + save deliverable immediately)",
             _ => "none",
         }
     );
@@ -295,6 +296,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         // ─── Task execution + arbitration + terminal states → flow_lifecycle ─────────────────
         Event::ProviderApplied => super::flow_lifecycle::provider_applied(&ctx),
         Event::JobAccepted => super::flow_lifecycle::job_accepted(&ctx),
+        Event::Other(ref s) if s == "deliverable_received" => super::flow_lifecycle::deliverable_received(&ctx),
         Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),
         Event::JobRefused => super::flow_lifecycle::job_refused(&ctx),
         Event::JobDisputed => super::flow_lifecycle::job_disputed(&ctx),

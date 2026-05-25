@@ -102,6 +102,70 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
     )
 }
 
+pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
+    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
+    let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
+
+    format!(
+    "[Current action] deliverable_received — download and persist the ASP's deliverable\n\
+     [Role] User (User Agent)\n\n\
+     🛑 This playbook fires when the ASP's a2a-agent-chat message contains `[intent:deliver]`.\n\
+     Its sole purpose is: **download → save → brief notification**. The full review card is owned by `job_submitted`.\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 0 — Load task context for save metadata**:\n\
+     ```bash\n\
+     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+     ```\n\
+     Extract and record for use in the save commands below:\n\
+     \x20\x20- `title` (task title)\n\
+     \x20\x20- `providerAgentId` (ASP agentId — the counterparty)\n\
+     \x20\x20- `providerName` (ASP display name, if available)\n\
+     \x20\x20- `tokenSymbol`, `tokenAmount`\n\
+     ⚠️ If the command fails (e.g. network error), use best-effort values from session context; a missing title does not block the save.\n\n\
+     **Step 1 — Extract deliverable metadata from the inbound `[intent:deliver]` message** and branch by type:\n\n\
+     --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret) ---\n\n\
+     Call the xmtp_file_download tool:\n\
+     \x20\x20Parameters:\n\
+     \x20\x20- fileKey, digest, salt, nonce, secret: from the ASP's message\n\
+     \x20\x20- agentId: {agent_id}\n\
+     \x20\x20- filename: (optional) save filename\n\
+     ⚠️ Before calling, print: `[buyer-xmtp] xmtp_file_download: fileKey=<fileKey>, agentId={agent_id}`\n\
+     ⚠️ After calling, print: `[buyer-xmtp] xmtp_file_download result: localPath=<returned local path>`\n\n\
+     On success, record localPath (must be a full absolute path).\n\
+     If download fails → note it; the `job_submitted` playbook will re-attempt.\n\n\
+     🛑 **IMMEDIATELY after download succeeds**, persist the deliverable (use values from Step 0):\n\
+     ```bash\n\
+     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
+       --file \"<localPath>\" --deliverable-type file --title \"<title from Step 0>\" \\\n\
+       --short-id {short_id} --file-key \"<fileKey>\" \\\n\
+       --counterparty-agent-id \"<providerAgentId from Step 0>\" --counterparty-name \"<providerName from Step 0>\" \\\n\
+       --token-symbol \"<tokenSymbol from Step 0>\" --token-amount \"<tokenAmount from Step 0>\"\n\
+     ```\n\
+     If save fails, log the error but do NOT block.\n\n\
+     --- Case B: deliverableType=text (body content between `---` separators) ---\n\n\
+     Extract the text between `---` separators; **keep the original wording in full**.\n\n\
+     🛑 **IMMEDIATELY after extraction**, write to a temp .txt file and persist (use values from Step 0):\n\
+     ```bash\n\
+     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
+       --file \"<temp .txt path>\" --deliverable-type text \\\n\
+       --title \"<title from Step 0>\" --short-id {short_id} \\\n\
+       --counterparty-agent-id \"<providerAgentId from Step 0>\" --counterparty-name \"<providerName from Step 0>\" \\\n\
+       --token-symbol \"<tokenSymbol from Step 0>\" --token-amount \"<tokenAmount from Step 0>\"\n\
+     ```\n\
+     If save fails, log the error but do NOT block.\n\n\
+     **Step 2 — Notify the user (brief; NO deliverable content)**:\n\n\
+     Call `xmtp_dispatch_user`:\n\
+     \x20\x20content: The provider has sent the deliverable; awaiting on-chain submission confirmation before entering acceptance review.\n\
+     {l10n_dispatch}\n\
+     ❌ Do NOT include the deliverable body / summary / file path in this notification — the full content is shown in the `job_submitted` review card.\n\n\
+     **Step 3 — End this turn**. Wait for the `job_submitted` system event.\n\
+     When `job_submitted` arrives, call `onchainos agent next-action --jobid {job_id} --jobStatus job_submitted --role buyer --agentId {agent_id}`.\n\
+     The `job_submitted` playbook will check for already-saved deliverables and skip re-download if found.\n"
+    )
+}
+
 pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let l10n_prompt_bold = super::super::flow::L10N_PROMPT_BOLD;
     let l10n_dispatch = super::super::flow::L10N_DISPATCH;
@@ -129,12 +193,41 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      onchainos agent status {job_id}\n\
      ```\n\
      Extract `paymentMode` (int: 1=escrow, 3=x402). The status endpoint does not return deliverableUrl; extract that from the chat history in Step 2. Get qualityStandards from `onchainos agent common context` (the value at task creation time is authoritative).\n\n\
-     **Step 2 — Fetch the deliverable content (distinguish text vs file):**\n\
-     ⚠️ The deliverable content MUST be extracted in this step and placed into Step 3's userContent — the earlier ASP message only triggered a short notification and the user has not seen the deliverable body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\
+     **Step 2 — Obtain the deliverable content (check saved first, then fallback to chat history):**\n\n\
+     ⚠️ The deliverable content MUST appear in Step 3's userContent — the user has not seen the body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\n\
+     **Step 2a — Check if deliverable was already saved** (by the earlier `deliverable_received` playbook):\n\
+     ```bash\n\
+     onchainos agent task-deliverable-list --job-id {job_id} --role buyer\n\
+     ```\n\
+     If `deliverables` array is non-empty → the deliverable has already been downloaded and saved:\n\
+     \x20\x20- Use the `path` from the first entry as `localPath`\n\
+     \x20\x20- Use the `deliverableType` from the first entry\n\
+     \x20\x20- For text deliverables, read the file content at `path` to get `deliverableText`\n\
+     \x20\x20- **Skip Step 2b entirely** (no need to re-download or re-save)\n\
+     \x20\x20- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)\n\
+     \x20\x20- From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards`; if empty, skip that line\n\
+     \x20\x20- Go to Step 3\n\n\
+     If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n\
+     **Step 2b — Fallback: fetch from chat history and save** (only if Step 2a found no saved deliverable):\n\
      First call `session_status` to get the current sub session's sessionKey (reused later; do not call it again this turn).\n\
-     Then call `xmtp_get_conversation_history` (sessionKey = the value obtained above) and do two things:\n\
-     \x20\x20a) From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards` (the review standard as of task creation); if empty, skip that line.\n\
-     \x20\x20b) Find the ASP message **carrying the `[intent:deliver]` suffix tag** (scan newest to oldest; first match is the deliverable), and branch on `deliverableType`:\n\n\
+     From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards` (the review standard as of task creation); if empty, skip that line.\n\n\
+     **Branch by paymentMode** (from Step 1):\n\n\
+     ━━━ paymentMode=x402 (3) ━━━\n\
+     In x402, the deliverable was the `replayBody` returned by `task-402-pay` in the earlier `job_payment_mode_changed` turn.\n\
+     Look for the `replayBody` value in this sub session's context (it was printed when the CLI output was processed).\n\
+     If found: write the full `replayBody` (raw endpoint response — JSON or plain text) to a temp file, then persist:\n\
+     ```bash\n\
+     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
+       --file \"<temp .txt path>\" --deliverable-type text \\\n\
+       --title \"<task title>\" --short-id {short_id} \\\n\
+       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
+     ```\n\
+     If save fails or `replayBody` is not in context, skip — the deliverable was already shown to the user during `job_payment_mode_changed`.\n\
+     Set deliverable display variables: deliverableType=text, deliverableText=<replayBodyDisplay content (the display-formatted version of replayBody)>.\n\
+     Go to Step 3.\n\n\
+     ━━━ paymentMode=escrow (1) ━━━\n\
+     Call `xmtp_get_conversation_history` (sessionKey = the value obtained above) and find the ASP message **carrying the `[intent:deliver]` suffix tag** (scan newest to oldest; first match is the deliverable), and branch on `deliverableType`:\n\n\
      --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret decryption fields) ---\n\n\
      Call the xmtp_file_download tool:\n\
      \x20\x20Parameters:\n\
@@ -150,10 +243,30 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      On success, record localPath; **it MUST be a full absolute path** (e.g. /Users/xxx/Downloads/task-staging.png).\n\
      ⚠️ **Never show only the filename** (e.g. cat-picture.png) -- the user cannot locate the file. Any later content shown to the user MUST include the full path.\n\
      If download fails → note in the display: \"file download failed, please ask the ASP to resend\".\n\
-     ⚠️ If the ASP message contains text alongside the file (e.g. \"here is the deliverable, please check\"), capture it into deliverableText as well.\n\
+     ⚠️ If the ASP message contains text alongside the file (e.g. \"here is the deliverable, please check\"), capture it into deliverableText as well.\n\n\
+     🛑 **IMMEDIATELY after download succeeds**, persist the deliverable (REQUIRED — do NOT skip; without this the file is lost on session restart):\n\
+     ```bash\n\
+     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
+       --file \"<localPath>\" --deliverable-type file --title \"<task title>\" \\\n\
+       --short-id {short_id} --file-key \"<fileKey>\" \\\n\
+       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
+     ```\n\
+     After save, update localPath to the path printed by the save command (the file has been moved to the deliverables directory).\n\
+     If save fails, log the error but do NOT block the review flow.\n\n\
      Deliverable display variables: deliverableType=file, localPath=<full path>, deliverableText=<note text, empty if none>\n\n\
      --- Case B: deliverableType=text (body content between `---` separators) ---\n\n\
-     Extract the text between `---` separators in the `[intent:deliver]` message; **keep the original wording in full**, do not truncate or summarize.\n\
+     Extract the text between `---` separators in the `[intent:deliver]` message; **keep the original wording in full**, do not truncate or summarize.\n\n\
+     🛑 **IMMEDIATELY after extraction**, persist the text deliverable (REQUIRED — do NOT skip):\n\
+     Write deliverableText to a temp .txt file, then:\n\
+     ```bash\n\
+     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
+       --file \"<temp .txt path>\" --deliverable-type text \\\n\
+       --title \"<task title>\" --short-id {short_id} \\\n\
+       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
+     ```\n\
+     If save fails, log the error but do NOT block the review flow.\n\n\
      Deliverable display variables: deliverableType=text, deliverableText=<full original text sent by the ASP>\n\n\
      **Step 3 — Branch by payment mode:**\n\n\
      --------- Branch A: escrow — enqueue review decision via `pending-decisions-v2 request` ---------\n\n\

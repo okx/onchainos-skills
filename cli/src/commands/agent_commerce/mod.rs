@@ -275,6 +275,9 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long, default_value = "")] file: String,
         #[arg(long, default_value = "Task completed, please review")] message: String,
+        /// Text deliverable content for auto-save. When non-empty and --file is empty,
+        /// the CLI writes this to a temp file and persists it as a text deliverable.
+        #[arg(long = "deliverable-text", default_value = "")] deliverable_text: String,
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")] agent_id: String,
     },
@@ -350,6 +353,32 @@ pub enum AgentCommand {
     #[command(name = "list-attachments")]
     ListAttachments {
         job_id: String,
+    },
+
+    /// Save a deliverable file to persistent local storage
+    #[command(name = "task-deliverable-save")]
+    TaskDeliverableSave {
+        #[arg(long)] job_id: String,
+        #[arg(long)] role: String,
+        #[arg(long)] file: String,
+        #[arg(long, default_value = "file")] deliverable_type: String,
+        #[arg(long)] title: String,
+        #[arg(long)] short_id: String,
+        #[arg(long = "file-key")] file_key: Option<String>,
+        #[arg(long = "token-symbol")] token_symbol: Option<String>,
+        #[arg(long = "token-amount")] token_amount: Option<String>,
+        #[arg(long = "counterparty-agent-id")] counterparty_agent_id: Option<String>,
+        #[arg(long = "counterparty-name")] counterparty_name: Option<String>,
+    },
+
+    /// List deliverables for a job or all jobs
+    #[command(name = "task-deliverable-list")]
+    TaskDeliverableList {
+        /// If provided, list deliverables for this job only
+        #[arg(long)] job_id: Option<String>,
+        #[arg(long, default_value = "buyer")] role: String,
+        /// Substring search across all jobs (only used when --job-id is omitted)
+        #[arg(long)] search: Option<String>,
     },
 
     /// Provider claims auto-complete after buyer review timeout (review_expired)
@@ -722,6 +751,35 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::ListAttachments { job_id } =>
             task::buyer::run_task(T::ListAttachments { job_id }, ctx).await,
 
+        AgentCommand::TaskDeliverableSave {
+            job_id, role, file, deliverable_type, title, short_id,
+            file_key, token_symbol, token_amount, counterparty_agent_id, counterparty_name,
+        } => {
+            let params = task::common::deliverables::SaveParams {
+                job_id: &job_id,
+                role: &role,
+                file_path: &file,
+                deliverable_type: &deliverable_type,
+                title: &title,
+                short_id: &short_id,
+                file_key: file_key.as_deref(),
+                token_symbol: token_symbol.as_deref(),
+                token_amount: token_amount.as_deref(),
+                counterparty_agent_id: counterparty_agent_id.as_deref(),
+                counterparty_name: counterparty_name.as_deref(),
+            };
+            let result = task::common::deliverables::handle_save(&params)?;
+            crate::output::success(result);
+            Ok(())
+        }
+
+        AgentCommand::TaskDeliverableList { job_id, role, search } => {
+            match job_id {
+                Some(jid) => task::common::deliverables::handle_list(&jid, &role),
+                None => task::common::deliverables::handle_list_all(&role, search.as_deref()),
+            }
+        }
+
         AgentCommand::ClaimAutoComplete { job_id, agent_id } =>
             task::provider::run_provider(
                 task::provider::ProviderCommand::ClaimAutoComplete { job_id, agent_id }, ctx,
@@ -758,9 +816,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 ctx,
             ).await,
 
-        AgentCommand::Deliver { job_id, file, message, agent_id } =>
+        AgentCommand::Deliver { job_id, file, message, deliverable_text, agent_id } =>
             task::provider::run_provider(
-                task::provider::ProviderCommand::Deliver { job_id, file, message, agent_id }, ctx,
+                task::provider::ProviderCommand::Deliver { job_id, file, message, deliverable_text, agent_id }, ctx,
             ).await,
 
         AgentCommand::AgreeRefund { job_id, agent_id } =>
@@ -1037,7 +1095,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // the agent should re-invoke next-action with message.jobStatus, so skip validation here and let
     // the WakeupNotify arm output the guidance script.
     const PSEUDO_EVENTS: &[&str] = &[
-        "create_task", "switch_provider", "attachment_added",
+        "create_task", "switch_provider", "attachment_added", "deliverable_received",
         "dispute_raise", "agree_refund", "dispute_evidence", "approve_review", "reject_review",
         "close", "set_public",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",

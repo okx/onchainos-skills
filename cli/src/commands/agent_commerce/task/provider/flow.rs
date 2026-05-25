@@ -216,10 +216,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              {send_to_peer}\n\
              {deliver_file}\n\n\
              **A-Step 3 — Run `deliver` CLI to go on-chain** (advances task state to submitted so the User Agent gets the complete entry point):\n\
+             ▸ File deliverable — pass `--file` with the **local file path** used in A-Step 1 (the CLI auto-saves it to persistent deliverable storage after on-chain success):\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"\" --message \"Task completed, please review\" --agent-id {agent_id}\n\
+             onchainos agent deliver {job_id} --file \"<local file path from A-Step 1>\" --agent-id {agent_id}\n\
              ```\n\
-             CLI internals: POST submit API → sign uopHash → broadcast on-chain.\n\n\
+             ▸ Text deliverable — pass `--file \"\"` and `--deliverable-text \"<the full deliverable text content>\"` (the CLI auto-saves the text to persistent deliverable storage):\n\
+             ```bash\n\
+             onchainos agent deliver {job_id} --file \"\" --deliverable-text \"<the full text deliverable content from A-Step 2>\" --agent-id {agent_id}\n\
+             ```\n\
+             CLI internals: POST submit API → sign uopHash → broadcast on-chain → auto-save deliverable (file via --file, text via --deliverable-text).\n\n\
              **A-Step 4 — After A-Step 3 ends this turn immediately** (the deliverable was already delivered to the User Agent in A-Step 2; when the subsequent `job_submitted` notification arrives, **observe only** — do not xmtp_send / xmtp_dispatch_user / any filler message).\n\n\
              [Follow-up events]\n\
              - On-chain task state enters submitted (the job_submitted system event may arrive; observe only, do not act) → wait for buyer complete/reject\n"
