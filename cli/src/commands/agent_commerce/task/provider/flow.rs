@@ -260,7 +260,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
                --sub-key \"<full sessionKey from session_status>\" \\\n\
                --job-id {job_id} --role provider --agent-id {agent_id} \\\n\
                --user-content \"{user_prompt_for_shell}\" \\\n\
-               --list-label \"[决策] 仲裁 / 同意退款\"\n\
+               --list-label \"[Decision] Dispute / Agree Refund\"\n\
              ```\n\
              🌐 **MANDATORY localization** — translate `--user-content` to the user's language **before** running the command. The canonical template is **English**; if the user's language is not English, you MUST translate **every** user-visible token, including:\n\
              \x20\x20• Role labels: `ASP` → `服务商`/`卖家`/role name in user's language; `User Agent` → `用户代理`/`买家`/equivalent\n\

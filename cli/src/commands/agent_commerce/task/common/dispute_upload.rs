@@ -48,13 +48,13 @@ pub async fn handle_upload_evidence(
     );
 
     if text_clean.is_none() && image_paths.is_empty() {
-        bail!("必须提供 --text（非空白）或 --image 之一");
+        bail!("at least one of --text (non-blank) or --image must be provided");
     }
     // Length precheck before escaping — more intuitive than post-escape, and short-circuits large pastes.
     if let Some(t) = text_clean.as_deref() {
         if t.len() > MAX_TEXT_BYTES {
             bail!(
-                "--text 过长：{} 字节，上限 {} 字节",
+                "--text too long: {} bytes, limit is {} bytes",
                 t.len(),
                 MAX_TEXT_BYTES
             );
@@ -76,14 +76,14 @@ pub async fn handle_upload_evidence(
             .map(|s| s.to_lowercase())
             .unwrap_or_default();
         if !ALLOWED_IMG_EXTS.contains(&ext.as_str()) {
-            bail!("不支持的图片格式: {p}（仅支持 {ALLOWED_IMG_EXTS:?}）");
+            bail!("unsupported image format: {p} (allowed: {ALLOWED_IMG_EXTS:?})");
         }
         let bytes = fs::read(path)
             .await
-            .map_err(|e| anyhow::anyhow!("读取文件 {p} 失败: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("failed to read file {p}: {e}"))?;
         if bytes.len() > MAX_IMAGE_BYTES {
             bail!(
-                "图片 {p} 过大：{} 字节 ({:.1} MB)，单文件上限 20 MB",
+                "image {p} too large: {} bytes ({:.1} MB), max 20 MB per file",
                 bytes.len(),
                 bytes.len() as f64 / 1_048_576.0
             );
@@ -165,13 +165,13 @@ pub async fn handle_upload_evidence(
         .raw_post_with_identity(&path, body, &content_type, agent_id)
         .await?;
 
-    println!("✓ 证据已上传（链下，1h 准备期内生效）");
+    println!("✓ Evidence uploaded (off-chain, effective within 1h preparation window)");
     println!("  jobId:  {job_id}");
     if let Some(t) = text_clean.as_deref() {
-        println!("  文本:   {t}");
+        println!("  text:   {t}");
     }
     if !image_paths.is_empty() {
-        println!("  图片数: {}", image_paths.len());
+        println!("  images: {}", image_paths.len());
     }
     Ok(())
 }

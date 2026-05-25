@@ -31,15 +31,15 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
 
     let t = &resp;
     let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
-    println!("任务状态: {}", t["statusStr"].as_str().unwrap_or("?"));
+    println!("Task status: {}", t["statusStr"].as_str().unwrap_or("?"));
     println!("  jobId:    {job_id}");
-    println!("  标题:     {}", t["title"].as_str().unwrap_or("?"));
-    println!("  预算:     {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
-    println!("  买家:     {}", t["buyerAgentId"].as_str().unwrap_or("?"));
+    println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
+    println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
+    println!("  buyer:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
     if let Some(pid) = t["providerAgentId"].as_str() {
-        println!("  卖家:     {pid}");
+        println!("  provider: {pid}");
     }
-    println!("  更新时间: {}", t["updateTime"].as_str().unwrap_or("?"));
+    println!("  updated:  {}", t["updateTime"].as_str().unwrap_or("?"));
     Ok(())
 }
 
@@ -59,7 +59,7 @@ pub async fn handle_list(
     let resp = client.get_with_identity(&path, &agent_id).await?;
     let tasks = resp["list"].as_array().cloned().unwrap_or_default();
     let total = resp["total"].as_u64().unwrap_or(0);
-    println!("任务列表（共 {total} 个，第 {page} 页）：");
+    println!("Task list ({total} total, page {page}):");
     for t in &tasks {
         let sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
         println!("  [{}] {} — {} {}",

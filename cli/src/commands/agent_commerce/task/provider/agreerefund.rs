@@ -19,7 +19,7 @@ pub async fn handle_agree_refund(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
     }
     let (account_id, address) = signing::resolve_wallet(None, None)?;
     let body = serde_json::json!({});
@@ -46,12 +46,12 @@ pub async fn handle_agree_refund(
         None,
     );
 
-    println!("✓ 已同意退款，等待链上确认（job_refunded）");
+    println!("✓ Agreed to refund, waiting for on-chain confirmation (job_refunded)");
     println!("  txHash: {tx_hash}");
     println!();
-    println!("⚠️  下一步由系统通知驱动，不要主动给买家发消息：");
-    println!("    - 禁止立即调 `xmtp_send` 告诉买家 \"已同意退款\" 等文字");
-    println!("    - 链上确认后会收到 `job_refunded` 系统通知");
-    println!("    - 收到通知后再调 `onchainos agent next-action --jobid {job_id} --jobStatus job_refunded --role provider`");
+    println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
+    println!("    - Do NOT call `xmtp_send` to tell the buyer \"refund agreed\" or similar");
+    println!("    - You will receive a `job_refunded` system notification after on-chain confirmation");
+    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --jobStatus job_refunded --role provider`");
     Ok(())
 }

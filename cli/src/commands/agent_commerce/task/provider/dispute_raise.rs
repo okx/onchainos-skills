@@ -24,7 +24,7 @@ pub async fn handle_dispute_raise(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
     }
     let (account_id, address) = signing::resolve_wallet(None, None)?;
 
@@ -33,7 +33,7 @@ pub async fn handle_dispute_raise(
     let task_resp = client
         .get_with_identity(&client.task_path(job_id), agent_id)
         .await
-        .context("dispute raise: 拉取任务详情失败（保证金预检前置）")?;
+        .context("dispute raise: failed to fetch task details (deposit precheck)")?;
     let task_amount: f64 = task_resp["tokenAmount"]
         .as_str()
         .unwrap_or("0")
@@ -45,7 +45,7 @@ pub async fn handle_dispute_raise(
         common::ensure_sufficient_balance(required, token_symbol)
             .await
             .context(format!(
-                "发起仲裁需要保证金 ≥ 任务金额 5%（{required} {token_symbol}，任务金额 {task_amount} {token_symbol}）"
+                "Raising a dispute requires a deposit >= 5% of the task amount ({required} {token_symbol}; task amount {task_amount} {token_symbol})"
             ))?;
     }
 
@@ -55,13 +55,13 @@ pub async fn handle_dispute_raise(
     let approve_resp = client.post_with_identity(
         &client.endpoint(job_id, "dispute/approve"), &body, agent_id,
     ).await
-        .context("dispute raise (阶段 1): dispute/approve 接口请求失败")?;
+        .context("dispute raise (stage 1): dispute/approve API request failed")?;
 
     let approve_tx = signing::sign_uop_and_broadcast(
         client, &approve_resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&approve_resp), agent_id,
     ).await
-        .context("dispute raise (阶段 1): approve 上链失败")?;
+        .context("dispute raise (stage 1): approve on-chain broadcast failed")?;
 
     audit::log(
         "cli",
@@ -77,15 +77,15 @@ pub async fn handle_dispute_raise(
         None,
     );
 
-    println!("✓ 仲裁阶段 1: approve 上链 (token 授权给 dispute 合约)");
-    println!("  原因记录: {reason}");
+    println!("✓ Dispute stage 1: approve on-chain (token approved to the dispute contract)");
+    println!("  Reason logged: {reason}");
     println!("  txHash: {approve_tx}");
     println!();
-    println!("⚠️  阶段 1 已完成，**结束本轮 turn**，等待链上 `dispute_approved` 系统通知：");
-    println!("    - 禁止立即给买家 xmtp_send 任何「已发起仲裁」消息");
-    println!("    - 禁止在同一 turn 内连续调 `dispute confirm`");
-    println!("    - 收到 `dispute_approved` 通知后调：");
+    println!("⚠️  Stage 1 complete — **end this turn** and wait for the on-chain `dispute_approved` system notification:");
+    println!("    - Do NOT call xmtp_send to tell the buyer \"dispute raised\" or similar");
+    println!("    - Do NOT call `dispute confirm` in the same turn");
+    println!("    - Once you receive the `dispute_approved` notification, run:");
     println!("      onchainos agent next-action --jobid {job_id} --jobStatus dispute_approved --role provider --agentId {agent_id}");
-    println!("      next-action 会输出阶段 2 剧本（调 dispute confirm 触发实际仲裁）");
+    println!("      next-action will output the stage 2 script (calling dispute confirm to trigger the actual dispute)");
     Ok(())
 }

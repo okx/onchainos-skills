@@ -29,7 +29,7 @@ pub fn fmt_unix_secs(secs: Option<i64>) -> String {
 pub fn json_str(obj: &serde_json::Value, key: &str) -> Result<String> {
     obj[key]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("响应缺少 {key} 字段"))
+        .ok_or_else(|| anyhow::anyhow!("response missing field: {key}"))
         .map(|s| s.to_string())
 }
 
@@ -41,9 +41,9 @@ pub fn json_u64(obj: &serde_json::Value, key: &str) -> Result<u64> {
     if let Some(s) = obj[key].as_str() {
         return s
             .parse()
-            .map_err(|_| anyhow::anyhow!("{key} 解析 u64 失败: {s}"));
+            .map_err(|_| anyhow::anyhow!("failed to parse {key} as u64: {s}"));
     }
-    bail!("响应缺少 {key} 字段")
+    bail!("response missing field: {key}")
 }
 
 // ─── Token lookup ───────────────────────────────────────────────────────
@@ -54,14 +54,14 @@ pub fn json_u64(obj: &serde_json::Value, key: &str) -> Result<u64> {
 pub async fn fetch_token_detail(client: &mut TaskApiClient, symbol: &str, agent_id: &str) -> Result<(String, u32)> {
     let path = format!("/priapi/v1/aieco/task/tokenDetail?symbol={symbol}");
     let resp = client.get_with_agent_id(&path, agent_id).await
-        .map_err(|e| anyhow::anyhow!("查询 tokenDetail 失败 (symbol={symbol}): {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to query tokenDetail (symbol={symbol}): {e}"))?;
     let address = resp["address"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("tokenDetail 响应缺少 address 字段"))?
+        .ok_or_else(|| anyhow::anyhow!("tokenDetail response missing address field"))?
         .to_string();
     let decimals = resp["decimals"]
         .as_u64()
-        .ok_or_else(|| anyhow::anyhow!("tokenDetail 响应缺少 decimals 字段"))? as u32;
+        .ok_or_else(|| anyhow::anyhow!("tokenDetail response missing decimals field"))? as u32;
     Ok((address, decimals))
 }
 
@@ -81,10 +81,10 @@ pub async fn resolve_payment_mode(
             let payment_mode_int = task_resp["paymentMode"].as_i64().unwrap_or(0) as i32;
             let mode = PaymentMode::from_int(payment_mode_int);
             if mode == PaymentMode::None {
-                eprintln!("⚠ 任务 paymentMode={payment_mode_int}，无法识别支付方式，默认使用 escrow");
+                eprintln!("⚠ task paymentMode={payment_mode_int}, unrecognized payment mode, defaulting to escrow");
                 Ok(PaymentMode::Escrow)
             } else {
-                eprintln!("ℹ --payment-mode 未传入，使用任务详情 paymentMode: {} ({payment_mode_int})", mode.as_str());
+                eprintln!("ℹ --payment-mode not provided, using task detail paymentMode: {} ({payment_mode_int})", mode.as_str());
                 Ok(mode)
             }
         }
@@ -95,26 +95,26 @@ pub async fn resolve_payment_mode(
 pub fn parse_composite_fee(fee: &str) -> Result<(f64, String)> {
     let fee = fee.trim();
     if fee.is_empty() {
-        bail!("x402: service fee 字段为空");
+        bail!("x402: service fee field is empty");
     }
     let parts: Vec<&str> = fee.split_whitespace().collect();
     match parts.len() {
         2 => {
             let amt: f64 = parts[0].parse()
-                .map_err(|_| anyhow::anyhow!("x402: fee 金额解析失败: {}", parts[0]))?;
+                .map_err(|_| anyhow::anyhow!("x402: failed to parse fee amount: {}", parts[0]))?;
             Ok((amt, parts[1].to_string()))
         }
         1 => {
             let numeric_end = fee.find(|c: char| c.is_alphabetic()).unwrap_or(fee.len());
             if numeric_end >= fee.len() {
-                bail!("x402: fee 字段只有金额没有币种: {fee}，无法确定支付代币");
+                bail!("x402: fee field contains only amount without token symbol: {fee}, unable to determine payment token");
             }
             let amt: f64 = fee[..numeric_end].parse()
-                .map_err(|_| anyhow::anyhow!("x402: fee 金额解析失败: {fee}"))?;
+                .map_err(|_| anyhow::anyhow!("x402: failed to parse fee amount: {fee}"))?;
             let sym = fee[numeric_end..].to_string();
             Ok((amt, sym))
         }
-        _ => bail!("x402: fee 格式无法解析: {fee}"),
+        _ => bail!("x402: unable to parse fee format: {fee}"),
     }
 }
 
@@ -138,8 +138,8 @@ pub async fn resolve_x402_params(
     // Tier 1: all CLI flags provided.
     if let (Some(ep), Some(sym), Some(amt_str)) = (cli_endpoint, cli_token_symbol, cli_token_amount) {
         let amt: f64 = amt_str.parse()
-            .map_err(|_| anyhow::anyhow!("--token-amount 格式错误: {amt_str}"))?;
-        eprintln!("ℹ x402: 使用 CLI 参数 endpoint={ep}, token={sym}, amount={amt}");
+            .map_err(|_| anyhow::anyhow!("--token-amount format error: {amt_str}"))?;
+        eprintln!("ℹ x402: using CLI params endpoint={ep}, token={sym}, amount={amt}");
         return Ok(X402ServiceParams {
             endpoint: ep.to_string(),
             fee_amount: amt,
@@ -154,7 +154,7 @@ pub async fn resolve_x402_params(
             cached_provider_agent_id = pi.provider_agent_id.clone();
             if let Some(svc) = pi.services.first() {
                 if !svc.endpoint.is_empty() && svc.fee_amount > 0.0 && !svc.fee_token_symbol.is_empty() {
-                    eprintln!("ℹ x402: 使用 recommend 缓存 endpoint={}, token={}, amount={}",
+                    eprintln!("ℹ x402: using recommend cache endpoint={}, token={}, amount={}",
                         svc.endpoint, svc.fee_token_symbol, svc.fee_amount);
                     return Ok(X402ServiceParams {
                         endpoint: cli_endpoint.unwrap_or(&svc.endpoint).to_string(),
@@ -167,10 +167,10 @@ pub async fn resolve_x402_params(
                     });
                 }
             }
-            eprintln!("⚠ x402: recommend 缓存中 services 为空或字段缺失，尝试 service-list API");
+            eprintln!("⚠ x402: recommend cache services empty or fields missing, falling back to service-list API");
         }
-        Ok(None) => eprintln!("⚠ x402: recommend 缓存无当前 provider，尝试 service-list API"),
-        Err(e) => eprintln!("⚠ x402: 读取 recommend 缓存失败 ({e})，尝试 service-list API"),
+        Ok(None) => eprintln!("⚠ x402: recommend cache has no current provider, falling back to service-list API"),
+        Err(e) => eprintln!("⚠ x402: failed to read recommend cache ({e}), falling back to service-list API"),
     }
 
     // Tier 3: identity service-list API (prefer the input arg, otherwise the cached provider_agent_id).
@@ -179,7 +179,7 @@ pub async fn resolve_x402_params(
         .map(|s| s.to_string())
         .unwrap_or(cached_provider_agent_id);
     if resolved_id.is_empty() {
-        anyhow::bail!("无法确定 provider agentId：recommend 缓存为空且未传入 --provider-agent-id");
+        anyhow::bail!("unable to determine provider agentId: recommend cache is empty and --provider-agent-id was not provided");
     }
     let params = fetch_x402_service_from_identity(&resolved_id).await?;
     Ok(X402ServiceParams {
@@ -196,27 +196,27 @@ pub async fn resolve_x402_params(
 /// Query a provider's A2MCP service info via `onchainos agent service-list`.
 async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X402ServiceParams> {
     let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("unable to determine executable path: {e}"))?;
     let output = tokio::process::Command::new(&exe)
         .args(["agent", "service-list", "--agent-id", provider_agent_id])
         .output()
         .await
-        .map_err(|e| anyhow::anyhow!("调用 agent service-list --agent-id {provider_agent_id} 失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to call agent service-list --agent-id {provider_agent_id}: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("x402 service-list 查询失败 (exit {}): {stderr}", output.status);
+        bail!("x402 service-list query failed (exit {}): {stderr}", output.status);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let body: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow::anyhow!("解析 service-list 输出失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to parse service-list output: {e}"))?;
 
     let services = body["data"].as_array()
         .or_else(|| body["data"]["services"].as_array())
         .or_else(|| body["data"]["list"].as_array())
         .ok_or_else(|| anyhow::anyhow!(
-            "x402: service-list 响应中未找到 services 数组，provider={provider_agent_id}"
+            "x402: services array not found in service-list response, provider={provider_agent_id}"
         ))?;
 
     let svc = services.iter()
@@ -227,18 +227,18 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
             stype.eq_ignore_ascii_case("A2MCP")
         })
         .ok_or_else(|| anyhow::anyhow!(
-            "x402: provider {provider_agent_id} 无 A2MCP 类型服务"
+            "x402: provider {provider_agent_id} has no A2MCP service"
         ))?;
 
     let endpoint = svc["endpoint"].as_str()
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("x402: service-list 中 A2MCP 服务 endpoint 为空"))?
+        .ok_or_else(|| anyhow::anyhow!("x402: A2MCP service endpoint is empty in service-list"))?
         .to_string();
 
     let (fee_amount, fee_token_symbol) = if let Some(amt) = svc["feeAmount"].as_f64() {
         let sym = svc["feeTokenSymbol"].as_str()
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("x402: service-list 中 feeAmount 存在但 feeTokenSymbol 缺失，无法确定支付代币"))?
+            .ok_or_else(|| anyhow::anyhow!("x402: feeAmount present but feeTokenSymbol missing in service-list, unable to determine payment token"))?
             .to_string();
         (amt, sym)
     } else {
@@ -246,7 +246,7 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
         parse_composite_fee(fee_str)?
     };
 
-    eprintln!("ℹ x402: 从 service-list API 获取 endpoint={endpoint}, token={fee_token_symbol}, amount={fee_amount}");
+    eprintln!("ℹ x402: retrieved from service-list API endpoint={endpoint}, token={fee_token_symbol}, amount={fee_amount}");
     Ok(X402ServiceParams { endpoint, fee_amount, fee_token_symbol })
 }
 
@@ -273,21 +273,21 @@ fn normalize_token_symbol(s: &str) -> String {
 /// to a "top up gas" issue.
 pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<()> {
     let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("unable to determine executable path: {e}"))?;
 
     let output = tokio::process::Command::new(&exe)
         .args(["wallet", "balance", "--chain", XLAYER_CHAIN_INDEX])
         .output()
         .await
-        .map_err(|e| anyhow::anyhow!("余额查询失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("balance query failed: {e}"))?;
 
     if !output.status.success() {
-        bail!("余额查询失败（exit {}），请检查登录态", output.status);
+        bail!("balance query failed (exit {}), please check login status", output.status);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow::anyhow!("解析余额查询结果失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to parse balance query result: {e}"))?;
 
     let currency_norm = normalize_token_symbol(currency);
     let details = parsed["data"]["details"].as_array();
@@ -311,9 +311,9 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
                             .unwrap_or(0.0);
                         if balance < required {
                             bail!(
-                                "业务代币余额不足（USDT/USDG）：当前 XLayer {symbol} 余额为 {balance}，\
-                                 需要 {required} {currency}。请通过 okx-dex-swap 充值 {currency}。\
-                                 注意：gas 由平台 paymaster 支付，无需准备 OKB / native"
+                                "Insufficient business token balance (USDT/USDG): current XLayer {symbol} balance is {balance}, \
+                                 need {required} {currency}. Please top up {currency} via okx-dex-swap. \
+                                 Note: gas is paid by the platform paymaster, no OKB / native required"
                             );
                         }
                         return Ok(());
@@ -324,7 +324,7 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
     }
 
     bail!(
-        "未查到 XLayer 上的业务代币 {currency} 余额，请确认账户已持有该代币并通过 okx-dex-swap 充值后重试。\
-         注意：gas 由平台 paymaster 支付，无需准备 OKB / native"
+        "Business token {currency} balance not found on XLayer. Please confirm the account holds this token and top up via okx-dex-swap before retrying. \
+         Note: gas is paid by the platform paymaster, no OKB / native required"
     );
 }

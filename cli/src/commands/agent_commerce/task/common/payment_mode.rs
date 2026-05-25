@@ -43,12 +43,12 @@ impl PaymentMode {
         }
     }
 
-    /// Human-readable description (Chinese display label).
+    /// Human-readable description.
     pub fn desc(&self) -> &'static str {
         match self {
-            Self::None => "未设置",
-            Self::Escrow => "担保支付（Escrow）",
-            Self::X402 => "x402 按需微支付",
+            Self::None => "not set",
+            Self::Escrow => "escrow payment",
+            Self::X402 => "x402 on-demand micropayment",
         }
     }
 }

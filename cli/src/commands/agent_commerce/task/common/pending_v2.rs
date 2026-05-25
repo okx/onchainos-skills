@@ -95,7 +95,7 @@ fn task_dir() -> Result<PathBuf> {
     let base = match std::env::var("ONCHAINOS_HOME") {
         Ok(p) if !p.is_empty() => PathBuf::from(p),
         _ => {
-            let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?;
+            let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("unable to determine HOME directory"))?;
             home.join(".onchainos")
         }
     };
@@ -605,14 +605,14 @@ fn handle_list(format: ListFormat) -> Result<()> {
             if evicted > 0 {
                 let ttl_days = load_global_ttl().as_secs() / (24 * 60 * 60);
                 println!(
-                    "ℹ️ 距上次查看,已自动清理 {} 条超过 {} 天未处理的决策。\n",
+                    "ℹ️ Since last check, {} decision(s) older than {} days were auto-cleaned.\n",
                     evicted, ttl_days,
                 );
             }
             if q.entries.is_empty() {
                 println!("(no pending decisions)");
             } else {
-                println!("当前 {} 条待处理:\n", q.entries.len());
+                println!("{} pending decision(s):\n", q.entries.len());
                 println!("| # | Active | Role     | Job             | Label                            |");
                 println!("|---|--------|----------|-----------------|----------------------------------|");
                 for (i, e) in q.entries.iter().enumerate() {
@@ -928,16 +928,16 @@ fn playbook_error(msg: &str) -> String {
 fn playbook_stale_relist(snap: &DisplaySnapshot, reason: &str) -> String {
     let mut list = String::new();
     if snap.items.is_empty() {
-        list.push_str("队列已空,无需选择。\n");
+        list.push_str("Queue is empty, no selection needed.\n");
     } else {
         list.push_str(&format!(
-            "您刚才的选择已失效({})。当前列表:\n\n",
+            "Your previous selection is stale ({}). Current list:\n\n",
             reason
         ));
         for it in &snap.items {
             list.push_str(&format!("{}. {}\n", it.index, it.list_label));
         }
-        list.push_str(&format!("\n回复数字 1-{} 重新选择。\n", snap.items.len()));
+        list.push_str(&format!("\nReply with a number 1-{} to re-select.\n", snap.items.len()));
     }
     format!(
         "The previous selection is stale. In your assistant response, render the following list VERBATIM:\n\n\
