@@ -417,6 +417,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SaveAgreed { .. } => "save-agreed".into(),
         AgentCommand::MarkFailed { .. } => "mark-failed".into(),
         AgentCommand::MyAgents { .. } => "my-agents".into(),
+        AgentCommand::ActiveTasks { .. } => "active-tasks".into(),
         AgentCommand::Profile { .. } => "profile".into(),
         AgentCommand::PendingDecisionsV2(_) => "pending-decisions-v2".into(),
     }

@@ -184,8 +184,8 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      Payment: escrow\n\
      \n\
      Choose:\n\
-     A. Approve the deliverable → reply `A` or `approve` / `通过`\n\
-     B. Reject the deliverable (please state your reason) → reply `B reason: <...>` or `reject reason: <...>` / `拒绝, 理由: <...>`\n\
+     A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
+     B. Reject the deliverable (please state your reason) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
      ```\n\n\
      ▸ deliverableType=text:\n\
      ```\n\
@@ -198,8 +198,8 @@ pub(super) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      Payment: escrow\n\
      \n\
      Choose:\n\
-     A. Approve the deliverable → reply `A` or `approve` / `通过`\n\
-     B. Reject the deliverable (please state your reason) → reply `B reason: <...>` or `reject reason: <...>` / `拒绝, 理由: <...>`\n\
+     A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
+     B. Reject the deliverable (please state your reason) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
      ```\n\n\
      Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
      ===============================================================\n\

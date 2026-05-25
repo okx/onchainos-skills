@@ -340,6 +340,25 @@ fn handle_request(
     list_label: String,
     llm_content: Option<String>,
 ) -> Result<()> {
+    // Reject hallucinated sub_key shapes early. The only valid sub_key is the
+    // full XMTP sessionKey returned by `session_status` — anything else (e.g.
+    // `review-<jobId>`, the bare jobId, a label) silently breaks `xmtp_dispatch_session`
+    // routing later because xmtp's session registry cannot resolve it. Real
+    // incident: a Minimax model skipped `session_status` and made up
+    // `--sub-key "review-<jobId>"`; the relay never reached the actual sub.
+    if let Err(msg) = validate_sub_key(&sub_key, &job_id) {
+        anyhow::bail!(
+            "Invalid --sub-key: {}\n\n\
+             The only valid value is the full XMTP sessionKey for the current sub session, e.g.:\n  \
+             agent:main:okx-a2a:group:okx-xmtp:my=0x...&to=0x...&job=<jobId>&gid=...\n\n\
+             Fix: call `session_status` (xmtp tool) FIRST to obtain the current sessionKey, \
+             then pass the verbatim returned string as --sub-key. Do NOT invent prefixes \
+             (`review-`, `decision-`, the jobId alone, list labels, …) — they will silently \
+             break dispatch routing.",
+            msg
+        );
+    }
+
     let _lock = acquire_lock()?;
     let mut q = read_queue()?;
     ensure_invariant_and_evict(&mut q);
@@ -422,7 +441,27 @@ fn handle_resolve(user_reply: String) -> Result<()> {
 
     let active_idx = q.entries.iter().position(|e| e.status == Status::Active);
     let Some(active_idx) = active_idx else {
-        print!("{}", playbook_error_no_active());
+        // Two sub-cases to distinguish, otherwise we silently swallow user decisions:
+        //   a) Truly empty queue → the reply IS just normal chat; end the turn.
+        //   b) Selection mode (0 active + N queued, after a prior resolve consumed the
+        //      last active and left ≥2 queued): the user's reply belongs to one of the
+        //      pending decisions but they haven't picked which yet. Returning
+        //      "this is normal chat" here was the bug — it told master to drop the reply,
+        //      so the queued subs never got their relay. Instead, refresh the snapshot
+        //      and ask the user to pick via stale_relist.
+        if q.entries.iter().any(|e| e.status == Status::Queued) {
+            let new_snap = build_snapshot(&q);
+            write_snapshot_atomic(&new_snap)?;
+            print!(
+                "{}",
+                playbook_stale_relist(
+                    &new_snap,
+                    "queue is in selection mode — please pick a number first, then re-send your decision"
+                )
+            );
+        } else {
+            print!("{}", playbook_error_no_active());
+        }
         return Ok(());
     };
 
@@ -618,6 +657,29 @@ fn short_job_id(job_id: &str) -> String {
     }
 }
 
+/// Validate that `sub_key` is a real XMTP sessionKey rather than a hallucinated
+/// stand-in like `review-<jobId>` / the bare jobId / a list label. Required
+/// shape: starts with `agent:`, contains `&job=<job_id>`, contains `&gid=`.
+fn validate_sub_key(sub_key: &str, job_id: &str) -> std::result::Result<(), String> {
+    if !sub_key.starts_with("agent:") {
+        return Err(format!(
+            "expected a sessionKey starting with `agent:`, got `{}`",
+            sub_key
+        ));
+    }
+    let expected_job = format!("&job={}", job_id);
+    if !sub_key.contains(&expected_job) {
+        return Err(format!(
+            "sessionKey does not contain `{}` — sub_key's job must match --job-id",
+            expected_job
+        ));
+    }
+    if !sub_key.contains("&gid=") {
+        return Err("sessionKey missing `&gid=` segment".to_string());
+    }
+    Ok(())
+}
+
 // ─── Playbook generators ──────────────────────────────────────────────
 
 /// Resolve the llmContent string for a push-type playbook.
@@ -629,12 +691,11 @@ fn resolve_llm_content(entry: &PendingEntry) -> String {
     }
     format!(
         "[USER_DECISION_REQUEST][sub_key: {}][job: {}][role: {}]\n\n\
-         ⚠️ **This llmContent block is for YOUR (user-session LLM's) instructions only — invisible to the user.** Render ONLY the userContent block below to the user; do **NOT** echo / paraphrase / summarize / include any part of this llmContent (including the HARDSTOP, routing rules, or this very note) in your response to the user. The user sees the userContent verbatim and nothing else.\n\n\
-         Phase 1 (THIS turn): Render userContent below verbatim to the user. End the turn. Do NOT call any tool.\n\n\
-         🛑🛑🛑 **HARDSTOP — what counts as `user replied`**: the ONLY valid user reply is an **actual user message arriving as an inbound in a LATER turn's tool_result** (NOT this turn). After rendering userContent, you MUST end the turn; the user has NOT spoken yet. Your own thinking / narration / paraphrasing the userContent options does **NOT** count as the user replying. **Specifically forbidden**: synthesizing a decision from the option list; reusing prior chat messages / task title / earlier inbound as a user decision; fabricating or hallucinating user wording. If in this turn there is no genuine user-input inbound, **`resolve` is forbidden — full stop, no exceptions**. Violating this rule = on-chain action executed without the user actually choosing = **potential escrow loss**.\n\n\
-         Phase 2 (NEXT turn, when the user actually replies):\n\
-           - Defer keyword ({}) → just end the turn; do NOT call resolve.\n\
-           - Otherwise → call `onchainos agent pending-decisions-v2 resolve --user-reply \"<verbatim user wording, no interpretation, no translation>\"` **exactly once**. After CLI returns the relay playbook, execute its Step 1 once and end the turn. Repeated `resolve` calls cause sub to receive N identical relays → event-recursion loop.",
+         Check the most recent message in context:\n\
+         \x20\x20• tool_result (card just sent) → END TURN. Do NOT call resolve.\n\
+         \x20\x20• fresh user_message (user actually replied):\n\
+         \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
+         \x20\x20\x20\x20· else → `resolve --user-reply \"<verbatim, no interpretation>\"`",
         entry.sub_key,
         entry.job_id,
         entry.role,
@@ -662,19 +723,21 @@ fn playbook_wait(position: usize) -> String {
     )
 }
 
-/// Queued + re-prompt: a genuinely new sub_key landed in the queue. The new
-/// queued sub pushes **its own user_content** (with a "🆕 queued, please answer
-/// the active one first" wrapper) via `xmtp_prompt_user`. The llmContent points
-/// at the ACTIVE entry's sub_key so any user reply still routes (via `resolve`)
-/// to the active decision — the single-active invariant is preserved.
+/// Queued + re-prompt: a genuinely new sub_key landed in the queue. Re-surface
+/// **the ACTIVE decision's full content** to the user (it may have scrolled off
+/// under intermediate chat), with a short "another decision queued" notice on
+/// top. The user-visible decision in this prompt is the ACTIVE one — answering
+/// it routes to the active sub via `resolve` (single-active invariant). The new
+/// queued entry is only mentioned by its label as a heads-up; its full content
+/// will auto-display later when the active resolves.
 ///
-/// Why this design: the sub-C LLM has its own `--user-content` from `request`
-/// and naturally wants to push that. If we tried to make sub-C re-push the
-/// active card's content (which belongs to a different sub), most LLMs ignore
-/// the playbook and push their own content anyway. Aligning with the LLM's
-/// natural inclination + wrapping the content with queued context is the
-/// compliant path. User clearly sees: "new decision arrived (preview below),
-/// answer the active one first; this one will re-show once you finish that".
+/// Why this design: the user complained that an earlier variant which showed
+/// the NEW (queued) decision's full content + told the user "answer the active
+/// first" was confusing — the user reads the visible decision and replies to
+/// it, but resolve routes to a DIFFERENT (active) decision the user can't see,
+/// so the dispatched sessionKey looks "wrong" from the user's perspective.
+/// Showing the active's content keeps the visible-decision and routed-decision
+/// aligned.
 fn playbook_wait_with_reprompt(
     active: &PendingEntry,
     new_entry: &PendingEntry,
@@ -685,38 +748,31 @@ fn playbook_wait_with_reprompt(
     // `resolve` always targets the active, regardless of which sub displayed
     // the prompt. This preserves the single-active invariant.
     let llm_content = resolve_llm_content(active);
-    // Canonical English wrapper. Sub LLM is responsible for translating the
-    // wrapper lines (the 🆕 header + the closing divider) to the user's
-    // language before xmtp_prompt_user. The embedded new_entry.user_content is
-    // already in the user's language (sub-C localized at request time); do NOT
-    // re-translate it.
+    // Canonical English wrapper. Sub LLM translates the wrapper lines (the 🆕
+    // top notice + the `─── Current active decision ───` divider) to match the
+    // embedded active card's language. The embedded `active.user_content` is
+    // already in the user's language (sub-A localized at request time when the
+    // active was first pushed); do NOT re-translate it. The `new_entry.list_label`
+    // is sub-provided and already localized too; do NOT translate it.
     let user_content_wrapped = format!(
-        "🆕 **A new decision just arrived (queued — position {} of {} total).** \
-         Another decision is currently active and waiting for your reply — \
-         **please answer the active decision first** (shown earlier in the chat); \
-         this queued one will auto-display once you finish that.\n\n\
-         ─────────── Preview of this queued decision ───────────\n\
+        "🆕 **A new decision arrived (queued: \"{}\") — {} pending decisions in total. \
+         Please answer the active decision below first; the queued one will auto-display \
+         once you finish this.**\n\n\
+         ─────────── Current active decision ───────────\n\
          {}",
-        queued_position, total_pending, new_entry.user_content,
+        new_entry.list_label, total_pending, active.user_content,
     );
     format!(
-        "Your decision is queued (position {}). Push your own card to the user with a 'queued, answer the \
-         active one first' wrapper so the user knows it's pending behind the active decision. The user's \
-         reply (if any) routes to the ACTIVE entry via `pending-decisions-v2 resolve`, NOT to yours; your \
-         queued card will be auto-rendered later when active resolves.\n\n\
-         🌐🌐🌐 **MANDATORY LOCALIZATION — translate the wrapper BEFORE calling xmtp_prompt_user**:\n\
-         The userContent block below is in **canonical English**, but the embedded card text (between the \
-         `─── Preview ───` dividers) is **already in the user's language** (the sub localized it when calling \
-         `request`). Inspect the embedded card's language and **translate the English wrapper lines to match** \
-         — i.e. the `🆕 A new decision just arrived (queued — position X of Y total). Another decision is \
-         currently active and waiting for your reply — please answer the active decision first (shown earlier \
-         in the chat); this queued one will auto-display once you finish that.` opener AND the `─── Preview of \
-         this queued decision ───` divider. Keep the embedded card text intact (do NOT re-translate).\n\
-         Examples: if the embedded card is in Chinese, translate the wrapper to Chinese. If Japanese, \
-         translate to Japanese. If Spanish, translate to Spanish. Do NOT leave the wrapper in English when \
-         the embedded card is non-English — the user will see a confusing bilingual mix.\n\n\
-         After localizing the wrapper, call xmtp_prompt_user with the resulting arguments. Do NOT modify the \
-         llmContent. Do NOT call any other tool first or after. End the turn after the tool returns 'sent'.\n\n\
+        "Your decision is queued (position {}). The user has another decision currently active — re-surface \
+         that ACTIVE decision's card via `xmtp_prompt_user`, with a short notice on top that a new decision \
+         is queued. The user answers the ACTIVE card; their reply routes (via `pending-decisions-v2 resolve`) \
+         to the active entry's sub. Your queued card will be auto-rendered later when the active resolves.\n\n\
+         🌐 **LOCALIZE FIRST**: the two English header lines in userContent below (the `🆕 A new decision \
+         arrived...` top notice AND the `─── Current active decision ───` divider) must be translated to the \
+         **same language as the embedded active decision text** before xmtp_prompt_user. Keep the embedded \
+         active card text intact (do NOT re-translate). Do NOT send mixed-language userContent.\n\n\
+         Call xmtp_prompt_user with the EXACT arguments below (after applying the header translation). End \
+         the turn after the tool returns 'sent'. Do NOT call any other tool first or after.\n\n\
          tool: xmtp_prompt_user\n\
          llmContent:\n{}\n\
          userContent:\n{}\n",
@@ -728,11 +784,13 @@ fn playbook_wait_with_reprompt(
 
 fn playbook_relay_only(sub_key: &str, relay_content: &str) -> String {
     format!(
-        "Relay user's decision, then end the turn.\n\n\
+        "Relay the user's decision to the just-resolved sub session, then end the turn.\n\n\
          tool: xmtp_dispatch_session\n\
          sessionKey: {}\n\
          content: {}\n\n\
-         ⚠️ Call `xmtp_dispatch_session` **exactly once** — when the tool returns `Message dispatched` = success = **immediately terminate all subsequent tool calls in this turn** (no more `xmtp_dispatch_session` / `xmtp_send` / `xmtp_dispatch_user` / `Exec`). Repeated calls (even with identical sessionKey / content) cause sub to receive N identical relays → event-recursion loop. **Violating this rule = potential escrow loss**.\n",
+         ⚠️ Call `xmtp_dispatch_session` **exactly once** — when the tool returns 'Message dispatched' = end \
+         the turn immediately (no more xmtp / Exec calls). Repeated calls cause sub to receive N identical \
+         relays → event-recursion loop. Skipping it = sub never gets the user's decision = task stalls.\n",
         sub_key, relay_content
     )
 }
@@ -753,22 +811,19 @@ fn playbook_relay_and_render(
     );
     format!(
         "Execute the following in order WITHIN THIS TURN. End the turn after Step 2.\n\n\
-         🛑🛑🛑 **Step 2 is `xmtp_prompt_user` (rendering), NOT another `resolve` call**. Do NOT call \
-         `onchainos agent pending-decisions-v2 resolve` again in this turn. The next `resolve` call should \
-         only happen in a FUTURE turn, after the user actually replies to the prompt rendered in Step 2. \
-         Calling resolve twice in one turn = the newly-promoted active gets drained instantly = potential \
-         escrow loss (relay dispatched for a decision the user never saw).\n\n\
-         Step 1 — Relay user's decision to the just-resolved sub session (call `xmtp_dispatch_session` **exactly once**; repeated calls = sub receives N relays = event-recursion loop = potential escrow loss):\n\
+         🛑 **Step 2 is `xmtp_prompt_user` (rendering), NOT another `resolve` call**. Do NOT call \
+         `pending-decisions-v2 resolve` again in this turn — the next resolve only happens in a FUTURE \
+         turn after the user replies to the prompt rendered in Step 2.\n\n\
+         Step 1 — Relay the user's decision to the just-resolved sub session (call `xmtp_dispatch_session` \
+         exactly once; repeated calls = sub receives N relays):\n\
            tool: xmtp_dispatch_session\n\
            sessionKey: {}\n\
            content: {}\n\n\
-         Step 2 — Auto-render the only remaining decision (this is `xmtp_prompt_user` ONLY — do NOT call resolve here).\n\
-         🌐🌐🌐 **MANDATORY LOCALIZATION** for Step 2: the transition header `✓ Previous decision handled. Here's the \
-         next pending one:` is **canonical English**. The embedded next-decision text is **already in the user's \
-         language**. Inspect the embedded text and **translate the transition header to match** before xmtp_prompt_user. \
-         If embedded is Chinese → translate header to Chinese (e.g. `✓ 上一项已处理完。下面是下一条待决策:`); if \
-         Japanese → Japanese; etc. Do NOT leave the header in English when the embedded text is non-English. Keep \
-         the embedded text intact (do NOT re-translate).\n\n\
+         Step 2 — Auto-render the only remaining decision.\n\
+         🌐 **LOCALIZE FIRST**: the transition header `✓ Previous decision handled. Here's the next pending \
+         one:` is canonical English; translate it to match the embedded next-decision's language before \
+         xmtp_prompt_user. Keep the embedded next-decision text intact (do NOT re-translate). Do NOT send \
+         mixed-language userContent.\n\n\
            tool: xmtp_prompt_user\n\
            llmContent:\n{}\n\
            userContent:\n{}\n",
@@ -798,36 +853,53 @@ fn playbook_relay_and_list(
     ));
     format!(
         "Execute the following in order WITHIN THIS TURN. End the turn after Step 2.\n\n\
-         🛑🛑🛑 **Do NOT call `pending-decisions-v2 resolve` again in this turn** — the next CLI call should be \
-         `pending-decisions-v2 pick --index N` (in a FUTURE turn, after the user types a number to select from \
-         the list rendered in Step 2). Multiple resolves in one turn = queue drained = potential escrow loss.\n\n\
-         Step 1 — Relay user's decision to the just-resolved sub session (call `xmtp_dispatch_session` **exactly once**; repeated calls = sub receives N relays = event-recursion loop = potential escrow loss):\n\
+         🛑 **Do NOT call `pending-decisions-v2 resolve` again in this turn** — the next CLI call is \
+         `pending-decisions-v2 pick --index N` (in a FUTURE turn, after the user types a number).\n\n\
+         Step 1 — Relay the user's decision to the just-resolved sub session (call `xmtp_dispatch_session` \
+         exactly once):\n\
            tool: xmtp_dispatch_session\n\
            sessionKey: {}\n\
            content: {}\n\n\
-         Step 2 — In your assistant response, render the list below VERBATIM (this is text rendering ONLY, NOT a resolve call).\n\
-                  Do NOT add commentary / change order / change format. Do NOT call any tool.\n\
-         🌐 LOCALIZE FIRST: the list header (`✓ Previous decision handled...`) and footer (`Reply with a number...`) \
-         are canonical English — translate them to the user's language. The list items (`N. <label>`) are sub-provided \
-         and already localized; do NOT re-translate them.\n\n\
+         Step 2 — Render the list below VERBATIM to the user in your assistant response (text rendering only; \
+         do NOT call any tool for Step 2).\n\
+         🌐 **LOCALIZE FIRST**: the English header (`✓ Previous decision handled...`) and footer (`Reply with \
+         a number...`) must be translated to the user's language before rendering. The list items \
+         (`N. <label>`) are sub-provided and already localized; keep them intact.\n\n\
          Verbatim:\n\"\"\"\n{}\"\"\"\n\n\
-         After rendering, end the turn.\n\n\
-         ⚠️ Next user reply routing (future turn):\n\
-           - Number 1-{} → `onchainos agent pending-decisions-v2 pick --index <N>`\n\
-           - Defer keyword ({}) → just end the turn\n\
-           - Else → `onchainos agent pending-decisions-v2 resolve --user-reply \"<verbatim>\"`\n",
+         ⚠️ Next user reply routing (future turn — the queue is now in **selection mode**: 0 active + {} queued):\n\
+           - Number 1-{} → `onchainos agent pending-decisions-v2 pick --index <N>` (this promotes the chosen entry to Active and renders its card)\n\
+           - Defer keyword ({}) → just end the turn (the list will re-render later when the user comes back)\n\
+           - Else → **DO NOT call `resolve`** — there is no active entry to resolve in selection mode. Instead, render this text to the user (translated to their language):\n\
+             \"\"\"\n\
+             I see your message \"<user verbatim>\" but {} decisions are still waiting; please pick one by number (1-{}) first, then I'll relay your answer to that one.\n\
+             \n\
+             [re-render the list above verbatim]\n\
+             \"\"\"\n\
+           ❌ NEVER call `resolve` while the queue has 0 active entries — it will return a stale-relist playbook (since v2.1 the CLI heals this case instead of dropping the reply, but it still costs a round-trip).\n",
         resolved_sub_key,
         relay_content,
         list,
         snap.items.len(),
+        snap.items.len(),
         DEFER_KEYWORDS.join(" / "),
+        snap.items.len(),
+        snap.items.len(),
     )
 }
 
 fn playbook_render(entry: &PendingEntry) -> String {
     let llm_content = resolve_llm_content(entry);
     format!(
-        "Render the user's selected decision:\n\n\
+        "Render the user's selected decision. Call `xmtp_prompt_user` ONCE with the EXACT arguments below, \
+         then **END THE TURN IMMEDIATELY**.\n\n\
+         🛑🛑🛑 **DO NOT call `resolve` in this same turn**. The user's earlier message in this turn (e.g. \
+         the digit `1`, `2`, `选 1`, etc.) was the **pick index** — NOT a decision content. Re-using it as \
+         `--user-reply` would relay a nonsensical digit to the freshly-promoted sub session, corrupting the \
+         decision flow. Real incident: user typed `1` to choose decision #1, master rendered the card, then \
+         immediately called `resolve --user-reply \"1\"` — the digit `1` was sent as the answer to decision \
+         #1, which expected something like `approve` / `reject reason: ...`.\n\n\
+         The real decision content will arrive in a **FUTURE turn** as a fresh user_message after the user \
+         reads the rendered card. Wait for that.\n\n\
          tool: xmtp_prompt_user\n\
          llmContent:\n{}\n\
          userContent:\n{}\n",
@@ -837,7 +909,11 @@ fn playbook_render(entry: &PendingEntry) -> String {
 }
 
 fn playbook_error_no_active() -> String {
-    "There is no active pending decision to resolve. The user's reply is likely a normal chat message.\n\
+    // Reached only when the queue is truly empty (0 active + 0 queued).
+    // Selection-mode (0 active + N>0 queued) is handled separately in handle_resolve
+    // and returns a stale_relist playbook instead.
+    "The pending-decisions queue is empty — there is no decision to resolve. \
+     The user's reply is just a normal chat message; handle it as such.\n\
      Do NOT call any xmtp tool. End the turn now.\n"
         .to_string()
 }

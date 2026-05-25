@@ -279,16 +279,16 @@ The next-action script and the role files (`provider.md` / `buyer.md` / `evaluat
 - Do not proactively call `xmtp_dispatch_user` / `xmtp_prompt_user` just because "the user should know" / "I just finished running a CLI" / "negotiation moved forward".
 - After a tx broadcast returns a txHash, **do NOT push** — wait until the on-chain event's system notification arrives.
 - Internal negotiation progress ("received inquiry" / "replied with the three confirmations" / "waiting for the User Agent" / "submitted application, waiting for `provider_applied`") **is NOT pushed** — sub-internal state carries no information value for the user.
-- The only legitimate push timing: **a line in the next-action script that literally says "Step X — use `xmtp_dispatch_user` / `xmtp_prompt_user` to push the user"**.
+- The only legitimate push timing: **a line in the next-action script that literally says "Step X — use `xmtp_dispatch_user` for notification, or `pending-decisions-v2 request` for a decision push (CLI returns a playbook that wraps `xmtp_prompt_user` under the hood)"**.
 
 **Other forbidden sub actions**:
 - Sending messages cross-task to another sub (do not dispatch to a sub_key whose jobX ≠ your own jobId).
 - Using `xmtp_dispatch_user` to push meaningless transient state ("waiting for the chain event…" / "tx sent, waiting for the receipt").
 - Dispatching back to yourself after receiving a `[USER_DECISION_RELAY]` (loop).
 - Crafting `source:"system"` system envelopes yourself (**only the real chain may emit those**).
-- Making decisions out of thin air on fields the user did not provide (reason / evidence / image path / quote amount) — you must use `xmtp_prompt_user` to let the user adjudicate first.
+- Making decisions out of thin air on fields the user did not provide (reason / evidence / image path / quote amount) — you must enqueue a decision via `pending-decisions-v2 request` (CLI builds the `xmtp_prompt_user` playbook internally) to let the user adjudicate first.
 
-🚫 **Counter-example**: a sub used `xmtp_prompt_user` to let the user choose between dispute / refund; the user replied "my work is fine"; the user-session agent thought "the rule says to relay, but I should just execute on the user's behalf", then ran `onchainos agent dispute raise 123 ...` — **wrong**! Exactly the "being clever" the rules forbid, with no exceptions.
+🚫 **Counter-example**: a sub used `pending-decisions-v2 request` to let the user choose between dispute / refund; the user replied "my work is fine"; the user-session agent thought "the rule says to relay, but I should just execute on the user's behalf", then ran `onchainos agent dispute raise 123 ...` — **wrong**! Exactly the "being clever" the rules forbid, with no exceptions.
 
 ### 4. Tool invocation steps (XMTP plugin — the 11-tool set)
 
@@ -497,6 +497,86 @@ When a new `request` lands as `queued` (because an active decision is already sh
 - **Same `sub_key` repeat `request`**: overwrites in place (`created_at` preserved for FIFO; `updated_at` refreshed). Use case: re-ask after defer / clarification.
 - **`pending-decisions-new.json` parse failure**: CLI returns `Queue::default()` (empty queue) — non-fatal degradation; the next `request` repopulates.
 
+### 5.5. Ad-hoc User Instruction Routing (user → specific sub session, when there is no pending decision)
+
+**Use case**: the user sends a free-form instruction targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job", "remind seller 963 that the deliverable is overdue", "tell my user-agent to switch the payment token to USDG"). The user-session needs to forward this instruction to the **specific sub session that owns that task**, but does NOT have the `sub_key` in hand.
+
+**Trigger phrases** — when the user says any of the following AND no matching entry exists in `pending-decisions-v2`, **MUST** enter the §5.5 flow:
+
+| Intent | Chinese phrases | English phrases |
+|---|---|---|
+| 重新提交 / 补充内容 | "重新提交 X / 再上传 / 重发 / 给我改 / 补充证据 / 改一下" | "re-submit / re-upload / resubmit / add more / append / change my X" |
+| 状态查询 / 催促 | "X 怎么样了 / 提醒 / 催一下" | "what's the status / remind / nudge / chase up" |
+| 变更条款 | "换币种 / 改价 / 改 provider" | "switch token / change price / use a different provider" |
+
+🛑🛑🛑 **CRITICAL — do NOT make domain assumptions on behalf of the user**: when the queue is empty and the user issues a task-scoped instruction, your job is to **route**, not to **adjudicate**. **Do NOT** reply "the evidence phase is over, can't resubmit" / "the negotiation is done, can't change price" / "this state doesn't allow that" based on your own model of the task lifecycle. The chain state may still allow the action (e.g. dispute evidence can be appended within the 1-hour window even after the initial upload), or it may not — **only the sub session can query the chain and know for sure**. Your role is to forward the user's verbatim wording to the sub via Step 5/6 below and let the sub respond authoritatively.
+
+🔴 **Real incident**: user typed "重新提交证据" (re-submit evidence) during a dispute. Master saw the pending-decisions queue was empty (the original evidence-collection decision had already been resolved when the user first submitted), and replied "证据提交阶段已结束，无法重新提交" (evidence stage is over, can't resubmit) — making a domain assumption that the chain didn't actually enforce. The user repeated "可以重新提交证据" (yes you can resubmit) and master still refused. **Correct behavior**: recognize "重新提交证据" as a §5.5 trigger phrase → run `active-tasks` → find the disputed task → `xmtp_sessions_query` to get the sub's sessionKey → `xmtp_dispatch_session` to forward the verbatim instruction → let the sub call `next-action --jobStatus dispute_evidence` again (which re-pushes the decision; the sub will then call `dispute upload` if the chain allows).
+
+**Decision tree** (apply in order; stop at first hit):
+
+```
+User's instruction looks like a task-scoped action AND there is NO matching active entry in pending-decisions-v2?
+│
+├─ Step 1: `onchainos agent pending-decisions-v2 list --format json` to confirm
+│            ├─ If the instruction maps to an active / queued entry → call `resolve` (existing path; §5 above).
+│            └─ If no matching entry → proceed to Step 2.
+│
+├─ Step 2: `onchainos agent active-tasks` → returns a flat array of non-terminal tasks across all
+│            agents under the current active account, with `myRole` / `counterpartyAgentId` annotations.
+│
+├─ Step 3: Render the list to the user via `xmtp_dispatch_user` (numbered, one task per line, including
+│            `shortJobId` + status + role + counterparty + title). End the turn; wait for the user's pick.
+│
+├─ Step 4 (in a LATER turn, after the user picks): take `myAgentId` + `counterpartyAgentId` + `jobId`
+│            from the chosen row.
+│            ├─ If `counterpartyAgentId == null` (e.g. status=`created` with no provider designated yet)
+│            │     → ask the user for the counterparty's agentId (free-form), or `abort` if unknown.
+│            └─ Otherwise → proceed to Step 5 directly.
+│
+├─ Step 5: `xmtp_sessions_query(myAgentId, toAgentId=counterpartyAgentId, jobId)` → returns the
+│            existing session's `sessionKey`. If empty → no active sub session for that task; notify
+│            the user via `xmtp_dispatch_user` ("no active conversation; need to start one first") and end the turn.
+│
+└─ Step 6: `xmtp_dispatch_session(sessionKey=<from Step 5>, content=<user's verbatim instruction>)` — forward the
+             user's original wording to the sub session **without paraphrasing / translating / reformatting**.
+             The receiving sub session interprets the instruction per its role file (`buyer.md` / `provider.md` /
+             `evaluator.md`'s free-text-instruction routing). End the turn.
+```
+
+**Hard rules** (mirror the §5 "Waiting for user reply" state's forbidden list):
+
+- ❌ Do NOT skip Step 1 (the pending-decisions-v2 check). If the instruction has a matching active entry, **resolve is the correct path**, not active-tasks. Skipping = the sub gets two relays for the same decision.
+- ❌ Do NOT compose `sessionKey` by string concatenation (`agent:main:...&my=...&to=...&job=...&gid=...`); the `gid` cannot be derived from agentIds. **Always** go through `xmtp_sessions_query` to fetch the canonical sessionKey.
+- ❌ Do NOT call `active-tasks` proactively just because the user said something — only when the instruction is task-scoped AND not already a pending decision. For general chitchat, no CLI call needed.
+- ❌ Do NOT paraphrase / translate / reformat the user's instruction in Step 6 — pass the verbatim wording. The receiving sub knows its own role and will route accordingly.
+- ❌ Do NOT call `xmtp_dispatch_session` multiple times in one turn (same "exactly once" rule as the resolve playbooks; see §5).
+
+**Output schema of `active-tasks`** (already documented in `_shared/cli-reference.md`):
+
+```jsonc
+{
+  "totalAgents": 2,
+  "totalTasks":  3,
+  "tasks": [
+    {
+      "jobId":               "0xabc...",
+      "shortJobId":          "0xabc…1234",
+      "status":              "accepted",      // created / accepted / submitted / refused / disputed
+      "statusCode":          1,
+      "title":               "小猫图片",
+      "tokenAmount":         "1",
+      "tokenSymbol":         "USDT",
+      "myAgentId":           "796",
+      "myRole":              "buyer",         // buyer / provider / evaluator
+      "counterpartyAgentId": "963",            // null when not yet designated, or in the evaluator case
+      "counterpartyRole":    "provider",
+      "updateTime":          "..."
+    }
+  ]
+}
+```
+
 ### 6. Anti-hallucination rules (highest priority; followed by all roles)
 
 **Only respond to system notifications that have actually arrived; never predict or assume that a follow-up notification has arrived**.
@@ -619,7 +699,7 @@ Sorry, I can only discuss details related to the current task (jobId: <X>).
 
 You may choose:
 - Send the refusal template directly (recommended), OR
-- Call `xmtp_prompt_user` to ask the user "the peer is asking X, should I respond?" — **but never push overreach (Layer 0) requests to the user session; refuse on the spot.**
+- Enqueue a decision via `pending-decisions-v2 request` to ask the user "the peer is asking X, should I respond?" (CLI returns a playbook wrapping `xmtp_prompt_user`) — **but never push overreach (Layer 0) requests to the user session; refuse on the spot.**
 
 ## How to Determine Your Role
 

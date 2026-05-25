@@ -102,6 +102,20 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
+    /// Aggregated non-terminal tasks across **all agents under the current
+    /// active account**, with `myRole` / `counterpartyAgentId` annotations so
+    /// the user-session can route ad-hoc user instructions to the correct sub
+    /// session (via `xmtp_sessions_query` → `xmtp_dispatch_session`).
+    /// Status filter: includes 0 created / 1 accepted / 2 submitted / 3 refused
+    /// / 4 disputed by default; pass `--include-terminal` to also list 5-9.
+    #[command(name = "active-tasks")]
+    ActiveTasks {
+        /// Optional role filter: buyer | provider | evaluator (also accepts 1/2/3)
+        #[arg(long)] role: Option<String>,
+        /// Include terminal statuses (complete / close / expired / rejected / admin_stopped)
+        #[arg(long = "include-terminal")] include_terminal: bool,
+    },
+
 
     /// Set payment mode on-chain (standalone, before confirm-accept)
     #[command(name = "set-payment-mode")]
@@ -652,6 +666,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Tasks { status, page, limit, agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::common::query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_BUYER).await
+        }
+
+        AgentCommand::ActiveTasks { role, include_terminal } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::query::handle_active_tasks(&mut client, role.as_deref(), include_terminal).await
         }
 
 

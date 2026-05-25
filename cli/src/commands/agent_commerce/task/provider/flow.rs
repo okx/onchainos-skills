@@ -76,7 +76,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     // Two fixed prefix lines at the top of the output: localization rule + protocol
     // version handshake. version_prefix uses format! to inject the current
     // TASK_MIN_VERSION constant so the script auto-updates when the constant bumps.
-    let localization_prefix = "[Localization] All `content:` / `userContent:` templates below are samples — translate to the user's language before `xmtp_dispatch_user` / `xmtp_prompt_user`.\n\n";
+    let localization_prefix = "\
+[Localization] All `content:` / `userContent:` templates below are **canonical text, NOT samples**. Strict rules:\n\
+(1) Fill `<...>` placeholders with real values from context; every other word stays unchanged in shape.\n\
+(2) Do NOT add information, time estimates, promises, or details not present in the template.\n\
+(3) Do NOT rephrase, summarize, or embellish the template — its wording is intentional.\n\
+(4) For English-speaking users: use the English template verbatim (after placeholder fills).\n\
+(5) For non-English users: translate into the user's language while preserving ALL field labels, data values, structure, and line breaks — translation must be faithful, not creative.\n\
+(6) **Every user-visible English token must be translated**, including role labels (`ASP` → 服务商/卖家/equivalent; `User Agent` → 用户代理/买家/equivalent), field labels (`Job` → 任务; `Choose` → 请选择; `reply` → 回复), option body (`File a dispute` → 发起仲裁; `Agree to refund` → 同意退款), and reply hint quotes (in Chinese: switch ASCII `'...'` to CJK `「...」`).\n\
+🔴 Real incident: Chinese user saw `[Job 0xabc... — you are the ASP] ...` rendered with `Job` and `ASP` still in English because the sub treated them as proper nouns — they are not, they are user-visible labels and must be translated.\n\n";
     let version_prefix = format!(
         "[Protocol version] When calling `xmtp_send`, the `payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
     );
@@ -254,7 +262,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
                --user-content \"{user_prompt_for_shell}\" \\\n\
                --list-label \"[决策] 仲裁 / 同意退款\"\n\
              ```\n\
-             🌐 **Localize `--user-content` first** if the user's language is not Chinese (the default template is in Chinese). The `--list-label` can stay Chinese — it's an internal-facing summary.\n\n\
+             🌐 **MANDATORY localization** — translate `--user-content` to the user's language **before** running the command. The canonical template is **English**; if the user's language is not English, you MUST translate **every** user-visible token, including:\n\
+             \x20\x20• Role labels: `ASP` → `服务商`/`卖家`/role name in user's language; `User Agent` → `用户代理`/`买家`/equivalent\n\
+             \x20\x20• Field labels: `Job` → `任务`/equivalent; `Choose` → `请选择`/equivalent; `reply` → `回复`/equivalent\n\
+             \x20\x20• Option body: `File a dispute` → `发起仲裁`; `Agree to refund` → `同意退款`\n\
+             \x20\x20• Reply hints (the phrases inside quotes): `'file dispute, reason: <reason>'` → `「发起仲裁，理由：<具体原因>」` (note: also switch ASCII single-quotes to CJK 「」 brackets in Chinese)\n\
+             🔴 **Real incident**: a Chinese user saw the rendered card with `ASP` and `Job` still in English because the sub didn't recognize these as user-visible tokens. The `--list-label` is internal-facing and can stay in any language (the user doesn't see it).\n\n\
              Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
              **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
              Inspect the verbatim text and route to the next on-chain action (treat the match as case-insensitive; trim surrounding whitespace / punctuation before matching):\n\
@@ -262,7 +275,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - Verbatim is exactly `B` / `b` / `选B` / `选b` / `我选B` / `Choose B` / `option B`, OR contains `同意退款` / `agree refund` / `refund OK` / `退款` → call `onchainos agent next-action --jobid {job_id} --jobStatus agree_refund --role provider --agentId {agent_id}`\n\
              - Otherwise (user replied something unrelated) → call `pending-decisions-v2 request` again with a clarifying userContent (\"您刚才回复 「<verbatim>」我没理解,请回复 「发起仲裁,理由:<...>」 或 「同意退款」 或 直接回复 A / B\") to re-ask.\n\n\
              ⚠️ Decision must be made within 24h; otherwise funds are auto-refunded to the User Agent.\n",
-                user_prompt_for_shell = user_prompt.replace('"', "\\\""),
+                user_prompt_for_shell = user_prompt.replace('\'', "'\\''"),
             )
         }
 
@@ -434,7 +447,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
                --user-content \"{user_prompt_for_shell}\" \\\n\
                --list-label \"[Decision {short_id}] Submit Arbitration Evidence\"\n\
              ```\n\
-             🌐 **Localize `--user-content` AND `--list-label` to the user's language** before running (canonical English samples above).\n\n\
+             🌐 **MANDATORY localization** — the canonical `--user-content` template is **English**. Before running, translate **every** user-visible token in `--user-content` to the user's language, including role labels (`ASP`/`User Agent`), field labels (`Job`/`Choose`/`reply`), and reply hint quotes (in Chinese: switch ASCII `'...'` to CJK `「...」`). The `--list-label` can stay in any language (internal-facing, user doesn't see it). Real incident: Chinese user saw `ASP` and `Job` untranslated in the card because the sub treated them as proper nouns.\n\n\
              Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
              **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
              The user's reply IS the evidence — upload it verbatim. Do NOT second-guess whether it's \"too short\" / \"too similar to the dispute reason\" / \"not enough detail\"; if the user wants to add more, they will reply again (each new reply overwrites and re-prompts the same pending entry).\n\
@@ -489,7 +502,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x201) `[intent:propose]` (buyer → provider)\n\
              \x20\x202) `[intent:ack]` or `[intent:counter]` (provider → buyer) or `[intent:reject]` (either side rejects)\n\
              \x20\x203) `[intent:confirm]` (buyer → provider, echoing all fields verbatim)\n\
-             \x20\x20⚡ Either side may send `[intent:reject]` at any time to terminate negotiation (includes jobId + reason); after receiving it **do not reply**; negotiation ends.\n\n\
+             \x20\x20⚡ `[intent:reject]` is **soft-terminal**: sending it ends THIS round (do not auto-reply / do not chase the other side after sending). **But the negotiation thread is NOT permanently closed**:\n\
+             \x20\x20\x20\x20- If the OTHER side comes back with a NEW `[intent:propose]` (materially different terms — e.g. higher price after you rejected a low one), treat it as **negotiation reopened**: call `next-action --jobStatus job_created` again, re-evaluate the new fields, and proceed with the normal Propose → Ack → Confirm flow (ACK if acceptable, COUNTER if still off, [intent:reject] again only if still unacceptable).\n\
+             \x20\x20\x20\x20- If the other side just sends natural-language follow-up (e.g. \"can you reconsider 0.5 USDT?\") after your reject, you may reply naturally and continue Step 3 first-round negotiation; the prior [intent:reject] does NOT mean ignore them forever.\n\
+             \x20\x20\x20\x20- The thread is only **truly dead** when BOTH sides have sent [intent:reject] AND no follow-up arrives, OR when the chain emits `job_closed` / `job_expired`.\n\n\
              apply can only run **after `[intent:confirm]` has been received** (any other inbound does NOT count — including the three questions, the free-form invitation, the User Agent's `agree / accept` natural-language reply, and even the User Agent natural-language `please apply`).\n\n\
              In other words, **the inbound you received in the same turn determines what you can do**:\n\
              \x20\x20• Received a free-form invitation from the User Agent → you can only `xmtp_send` the three questions (Step 3 below); **do NOT apply**\n\
@@ -538,11 +554,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              The output includes [Your identity] (name, profileDescription) + [Task details] (with the `visibility` field) + a `Professional matching check` block.\n\n\
              **Step 2 — Branch by visibility + professional match**:\n\n\
-             ━━━━━━━━━ Branch A: visibility = Public (visibility=0) — proactively contact the User Agent ━━━━━━━━━\n\n\
-             A-Step 1: call `xmtp_start_conversation` to create the group and the session:\n\
+             ━━━━━━━━━ Branch A: visibility = Public (visibility=0) ━━━━━━━━━\n\n\
+             A-Step 0 — Determine who initiates: **was this turn triggered by an a2a-agent-chat inbound from the User Agent** (`sender.role===1`)?\n\
+             \x20\x20• YES → the group + session already exist (the User Agent created them when sending the inquiry); **skip A-Step 1 entirely** and go straight to A-Step 2 / Step 3 using the inbound's `sessionKey`. Do NOT call `xmtp_start_conversation` again — it would create a duplicate group.\n\
+             \x20\x20• NO (you arrived here because the user said \"take task X\" or similar; there is no inbound a2a-agent-chat envelope in this turn's tool_result) → run A-Step 1 to create the group proactively.\n\n\
+             A-Step 1 (only when YOU initiate): call `xmtp_start_conversation` to create the group and the session:\n\
              \x20\x20Params: myAgentId={agent_id}, toAgentId=<task.buyerAgentId> (from context), jobId={job_id}\n\
              \x20\x20On success returns sessionKey + xmtpGroupId.\n\n\
-             A-Step 2: once the group is created, **fall through directly to Step 3 below to run the first negotiation round** (Step 3 ends with the full `xmtp_send` signature + content guidance).\n\n\
+             A-Step 2: once the group exists (whether YOU created it in A-Step 1 or the User Agent created it earlier), **fall through directly to Step 3 below to run the first negotiation round** (Step 3 ends with the full `xmtp_send` signature + content guidance).\n\n\
              ━━━━━━━━━ Branch B: visibility = Private (visibility=1) — passive wait ━━━━━━━━━\n\n\
              B-Step 1: **Do NOT create the group proactively**. Wait for the User Agent's a2a-agent-chat envelope to arrive first (only the User Agent has permission to designate a provider).\n\
              \x20\x20End this turn; wait for the next inbound to arrive, then run Step 3 (three-item negotiation).\n\
@@ -554,8 +573,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 3 — First negotiation round (natural language; you may counter-offer / express paymentMode preference):**\n\n\
              🔍 **Mandatory pre-Step-3 self-check** (defend against literal-pattern induction):\n\
              \x20\x201. What message did I just receive from the User Agent?\n\
-             \x20\x20\x20• Free-form inquiry / [intent:propose] / [intent:counter] / [intent:confirm] / natural-language follow-up → ✅ go negotiate; xmtp_send may only contain a text stance or the literal `[intent:*]`\n\
-             \x20\x20\x20• `[intent:reject]` → User Agent terminated negotiation; **do not reply**; end this turn\n\
+             \x20\x20\x20• Free-form inquiry / [intent:propose] / [intent:counter] / [intent:confirm] / natural-language follow-up (**including any follow-up new price after you previously sent a natural-language refusal or counter** — User Agent re-quoting = continuing negotiation, NOT terminated) → ✅ go negotiate; xmtp_send may only contain a text stance or the literal `[intent:*]`\n\
+             \x20\x20\x20• `[intent:reject]` (literal marker from User Agent) → this specific round ends; **do not reply** to the [intent:reject] itself; end this turn. BUT [intent:reject] is **soft-terminal** — if the User Agent's NEXT message (in a later turn) is a fresh `[intent:propose]` with materially different terms, that means they're reopening; resume negotiation per the normal decision criteria. Your OWN previous natural-language rejection / counter-offer also does NOT terminate the negotiation; if the User Agent comes back with a new price (higher / same / lower), you MUST re-evaluate.\n\
              \x20\x20\x20• `job_accepted` system notification → ❌ that's the JobAccepted arm, not JobCreated; immediately re-call next-action\n\
              \x20\x202. Am I about to call any external tool (wttr.in / search / image generation, etc.) to produce work content?\n\
              \x20\x20\x20• Yes → ❌ stop; this violates the negotiation-phase iron rule; switch to Step-3 text negotiation\n\
@@ -568,20 +587,30 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20• Whether the workload is worth that price\n\
              \x20\x20• How far the User Agent's offer is from the price for the same kind of service in your profile (service-list in context)\n\
              \x20\x20• The A2A negotiation path is fixed to escrow (escrowed); funds are protected by the contract\n\n\
-             💰 **Iron rule for pricing — look at the `registration price` field of that service in the service-list in context**:\n\
-             \x20\x20• Registration price **non-zero** (e.g. `registration price 0.01 USDT (anchor for negotiation)`) → **anchor on the registration price**, counter within ±30%. Below 50% of registration price → reject directly; above 200% of registration price → that's a rip-off.\n\
-             \x20\x20• Registration price **not set** (e.g. `registration price not set (estimate by workload; don't pull numbers from thin air)`) → estimate by task workload, **do not pull a number from thin air**:\n\
-             \x20\x20\x20\x20- ✅ Reference comparable tasks / the User Agent's offer / task complexity for a reasonable estimate\n\
+             💰 **Iron rule for pricing — you are the SELLER; your goal is `the higher the price the better`**:\n\n\
+             ⚠️ **ASYMMETRIC rule (do NOT apply ±30% symmetrically)** — the seller's reaction depends on which SIDE of registration price the User Agent's offer lands on:\n\n\
+             \x20\x20**Registration price NON-ZERO** (e.g. `registration price 1 USDT (anchor for negotiation)`):\n\
+             \x20\x20\x20\x20a) User Agent's offer **≥ registration price** → **ACCEPT directly** (or send [intent:ack] when received as [intent:propose]). You are the seller; a higher offer = more profit. **NEVER counter DOWN.** 🔴 Real incident: registration 1 USDT, User Agent offered 2 USDT, provider's agent applied a symmetric `±30%` rule and countered DOWN to 1.3 USDT → wasted negotiation rounds and lost ~0.7 USDT profit. The agent should have ACK'd 2 USDT immediately.\n\
+             \x20\x20\x20\x20b) User Agent's offer is **between ~70% of registration and registration price** → can ACK if you're willing to take a small discount, OR counter UP to your registration price.\n\
+             \x20\x20\x20\x20c) User Agent's offer is **< 70% of registration** → counter UP to your floor (registration × 0.7~1.0, your choice). After 2 rounds of counter-up with no convergence → [intent:reject].\n\
+             \x20\x20\x20\x20d) User Agent's offer is **< 30% of registration** → directly [intent:reject] (price too far below floor to negotiate meaningfully); only do this on your SECOND attempt; the first time, still counter UP to floor.\n\n\
+             \x20\x20**Registration price NOT SET** (e.g. `registration price not set (estimate by workload; don't pull numbers from thin air)`):\n\
+             \x20\x20\x20\x20- ✅ Reference comparable tasks / the User Agent's offer / task complexity for a reasonable estimate. **If the User Agent's offer is already at-or-above your workload estimate → ACCEPT; never counter down.**\n\
              \x20\x20\x20\x20- ❌ Don't blindly throw out something like 100 USDT\n\
              \x20\x20\x20\x20- ❌ Don't self-discount to 0 / free — see the iron rule above: `price is always asked, never assumed`\n\
-             \x20\x20\x20\x20- Simple query tasks (1 API call / 1 datum) typically 0.001–0.05 USDT; complex tasks (multi-step / long text generation / reports) 0.05–1 USDT; deep research > 1 USDT requires solid justification\n\n\
+             \x20\x20\x20\x20- Simple query tasks (1 API call / 1 datum) typically 0.001–0.05 USDT; complex tasks (multi-step / long text generation / reports) 0.05–1 USDT; deep research > 1 USDT requires solid justification.\n\n\
+             🛑 **The one exception where you may counter DOWN**: if the User Agent's offer is absurdly high (e.g. 100× of comparable workload) AND the task is small enough that you'd feel uncomfortable accepting (ethical / reputation concern), you may counter down to a fair-market price. **This is rare**; default behavior for high offers is ACCEPT.\n\n\
              Based on the above, one `xmtp_send` expresses three things (**NOT a mechanical three-choice; bring your own stance**):\n\
              \x20\x201) Capability / acceptance criteria: can you do it, any follow-up questions\n\
-             \x20\x202) **Price stance**: accept original price / counter (state the new price + a brief reason, e.g. `workload assessment is closer to X USDT; the original price is on the low side`) / outright reject\n\
+             \x20\x202) **Price stance — DEFAULT to COUNTER, NOT REJECT** when the User Agent's price differs from your expectation:\n\
+             \x20\x20\x20• Accept original price (only when User Agent's price ≥ your registration price)\n\
+             \x20\x20\x20• Counter (state YOUR desired price + a brief reason; e.g. `0.1 USDT 太低,我注册价 1 USDT,愿意做到 0.7 USDT`) — this is the default response for ANY price disagreement, **even if the User Agent's offer is far below your registration price (e.g. 10%)**. You **counter with YOUR floor price** and let the User Agent decide whether to raise; you do NOT walk away.\n\
+             \x20\x20\x20• Outright reject (use `[intent:reject]` only when): ① capability mismatch (you genuinely cannot do this task) OR ② User Agent has already counter-offered twice and you still can't agree on floor price. **Do NOT `[intent:reject]` just because the first offer is too low** — that's the normal state of negotiation, counter instead.\n\
              \x20\x203) **paymentMode stance**: the A2A negotiation path is fixed to escrow (escrowed)\n\n\
              Style sample (natural language; do NOT shoehorn into a template):\n\
-             \x20\x20`I can do this; acceptance criteria are fine. I think 0.01 USDT is low; based on workload I'd like 0.05 USDT; escrowed payment is appropriate to avoid disputes later. If you agree, please send [intent:propose].`\n\n\
+             \x20\x20`I can do this; acceptance criteria are fine. 0.1 USDT 比我注册价 1 USDT 低不少;基于工作量我可以做到 0.7 USDT,escrowed 支付适合避免后续争议。如同意请发 [intent:propose] 锁定参数。`\n\n\
              ⚠️ Counter-offer reference: within service-list unit price × (1 ± 30%) usually goes through; absurd quotes (× 5+) get you swapped out by the User Agent directly.\n\n\
+             🛑🛑🛑 **Anti-pattern — do NOT abandon negotiation after one low offer**: 🔴 real incident — registered price 1 USDT, User Agent's first offer 0.1 USDT → provider sent `[intent:reject]` and walked away → User Agent later counter-offered 0.5 USDT and then 1 USDT but provider's agent thought \"I already rejected, conversation over\" and stayed silent → task stuck. **Correct behavior**: counter with YOUR floor price in natural language, end the turn, wait for the User Agent's next message. If the User Agent's next message has a new price (whether higher / same / lower) — even after you sent natural-language refusal earlier — you MUST call `next-action --jobStatus job_created` again and re-evaluate. \"I refused in natural language\" or \"my desired price wasn't met yet\" is NOT a reason to ignore the User Agent's follow-up — only literal `[intent:reject]` from EITHER side terminates negotiation.\n\n\
              {send_to_peer}\n\
              <natural-language splicing of 1) 2) 3) above as the three-item negotiation stance>\n\n\
              **Step 3.5 — Handling the User Agent's structured [intent:propose] proposal:**\n\n\
@@ -596,10 +625,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              On receiving [intent:propose], **verify field by field + apply value judgment**:\n\
              - Whether tokenSymbol matches the task details; the ASP may propose a different token but both sides must explicitly agree\n\
              - Whether tokenAmount / paymentMode are consistent with the stance you expressed in Step 3; if you counter-offered in Step 3, check whether the User Agent's amount in [intent:propose] is a reasonable midpoint\n\n\
-             **Decision criteria (bring agency; do not just accept)**:\n\
-             \x20\x20• Price is within ±10% of your expectation; paymentMode no hard conflict → ACK\n\
-             \x20\x20• Price still off (User Agent did not adopt your counter / counter margin too small) → COUNTER and keep negotiating; do NOT reluctantly ACK and accept a bad deal\n\
-             \x20\x20• paymentMode is opposite to the preference you expressed in Step 3, and amount is non-trivial → COUNTER to change paymentMode\n\n\
+             **Decision criteria (asymmetric — you are the seller; higher price = better):**\n\
+             \x20\x20• User Agent's tokenAmount **≥ your expectation** (or ≥ registration price) → **ACK directly**; do NOT counter down. Higher offer = more profit; accept and lock the deal.\n\
+             \x20\x20• User Agent's tokenAmount is **slightly below your expectation** (within ~10% gap) and paymentMode has no hard conflict → can ACK if acceptable, OR COUNTER UP one more round (your call).\n\
+             \x20\x20• User Agent's tokenAmount is **materially below your expectation** (>10% gap; User Agent did not adopt your Step 3 counter / counter margin too small) → COUNTER UP and keep negotiating; do NOT reluctantly ACK and accept a bad deal.\n\
+             \x20\x20• paymentMode is opposite to the preference you expressed in Step 3, and amount is non-trivial → COUNTER to change paymentMode.\n\n\
+             🛑 **Reminder: NEVER counter DOWN from a high offer**. If the User Agent gives more than you asked for, that is the deal closing — ACK immediately. Countering down here is a bug pattern; one real incident lost ~0.7 USDT this way (see Step 3 iron rule above).\n\n\
              ▸ **Agree to everything** → call xmtp_send to reply with **[intent:ack]** (you MUST use this format strictly, echoing every field verbatim):\n\
              \x20\x20content=\n\
              \x20\x20jobId: <exactly as in PROPOSE>\n\
@@ -740,7 +771,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
                --user-content \"{user_prompt_for_shell}\" \\\n\
                --list-label \"[Decision {short_id}] Submit Now / Let Timeout\"\n\
              ```\n\
-             🌐 **Localize `--user-content` AND `--list-label` to the user's language** before running (canonical English samples above).\n\n\
+             🌐 **MANDATORY localization** — the canonical `--user-content` template is **English**. Before running, translate **every** user-visible token in `--user-content` to the user's language, including role labels (`ASP`/`User Agent`), field labels (`Job`/`Choose`/`reply`), option body (`Submit Now`/`Let Timeout`), and reply hint quotes (in Chinese: switch ASCII `'...'` to CJK `「...」`). The `--list-label` can stay in any language (internal-facing). Real incident: Chinese user saw `ASP` and `Job` untranslated.\n\n\
              Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now. Do NOT `xmtp_send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
              **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
              - Contains `立即提交` / `我提交` / `submit now` / `I'll deliver` / `ready` → run the delivery flow (same as JobAccepted Step 2-3): autonomously complete the work → `xmtp_send` the deliverable to the User Agent → run `onchainos agent deliver` on-chain. (Full script: `onchainos agent next-action --jobid {job_id} --jobStatus job_accepted --role provider --agentId {agent_id}` — skip its Step 1 apply-accepted notification; the user already knows the task was accepted.)\n\
@@ -823,7 +854,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              Follow the returned script for what to do in the current status.\n\n\
              **Step 3 — Idempotency self-check (avoid re-prompting the user)**:\n\
-             If the script from Step 2 would push a decision to the user — i.e. it contains either `xmtp_prompt_user` (legacy direct-push scenes) or `onchainos agent pending-decisions-v2 request` (migrated scenes) — **first** call:\n\
+             If the script from Step 2 would push a decision to the user — i.e. it contains `onchainos agent pending-decisions-v2 request` — **first** call:\n\
              ```bash\n\
              onchainos agent pending-decisions-v2 list --format json\n\
              ```\n\

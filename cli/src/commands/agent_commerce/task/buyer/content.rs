@@ -247,7 +247,7 @@ pub fn refuse_expired_user_notify(job_id: &str) -> String {
 /// `Event::ReviewDeadlineWarn` — review deadline prompt (B-7-7, `xmtp_prompt_user.userContent`).
 pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String {
     format!(
-        "[Job {short_id} — you are the User Agent] [⏰ Review Deadline Warning] Job `{job_id}` — the review deadline is approaching.\n\
+        "[Job {short_id} — you are the User Agent] [⏰ Review Deadline Warning] Job {job_id} — the review deadline is approaching.\n\
          After expiry, the ASP can auto-claim the funds.\n\
          Please decide soon:\n\
          A. Approve the deliverable\n\
@@ -401,8 +401,8 @@ pub fn escalation_cli_failed_notify(job_id: &str) -> String {
          - Current status: <status>\n\
          \n\
          Choose how to proceed:\n\
-         A. Retry → reply `A` or `retry`\n\
-         B. Don't prompt again (you'll handle manually) → reply `B` or `dismiss`\n\
-         C. Provide a new instruction → describe what to change (e.g. `change --token-symbol to USDT and retry`)"
+         A. Retry → reply 'A' or 'retry'\n\
+         B. Don't prompt again (you'll handle manually) → reply 'B' or 'dismiss'\n\
+         C. Provide a new instruction → describe what to change (e.g. 'change --token-symbol to USDT and retry')"
     )
 }

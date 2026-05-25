@@ -62,8 +62,8 @@ pub fn check_and_consume(job_id: &str) -> Result<()> {
         Ok(content) if content.trim() == "pending" => {
             bail!(
                 "用户尚未做验收决策（review-gate = pending）。\
-                 请先通过 xmtp_prompt_user 获取用户验收决策，\
-                 再调 next-action --jobStatus approve_review 拿验收剧本。"
+                 请先通过 `onchainos agent pending-decisions-v2 request` 入队验收决策并等待用户回复，\
+                 收到 `[USER_DECISION_RELAY] decision: <verbatim>` 后再调 next-action --jobStatus approve_review 拿验收剧本。"
             );
         }
         Ok(content) => {

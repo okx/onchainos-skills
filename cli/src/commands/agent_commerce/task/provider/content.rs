@@ -50,8 +50,8 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
 pub fn job_refused_user_decision_prompt(short_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[Job {short_id} — you are the ASP] The User Agent rejected the deliverable. Choose:\n\
-         \x20\x20\x20\x20A. File a dispute → reply `file dispute, reason: <reason>`\n\
-         \x20\x20\x20\x20B. Agree to refund → reply `agree to refund`"
+         \x20\x20\x20\x20A. File a dispute → reply 'file dispute, reason: <reason>'\n\
+         \x20\x20\x20\x20B. Agree to refund → reply 'agree to refund'"
     )
 }
 
@@ -140,9 +140,9 @@ pub fn escalation_cli_failed_notify(job_id: &str) -> String {
          - Current status: <status>\n\
          \n\
          Choose how to proceed:\n\
-         A. Retry → reply `A` or `retry`\n\
-         B. Don't prompt again (you'll handle manually) → reply `B` or `dismiss`\n\
-         C. Provide a new instruction → describe what to change (e.g. `change --token-symbol to USDT and retry`)"
+         A. Retry → reply 'A' or 'retry'\n\
+         B. Don't prompt again (you'll handle manually) → reply 'B' or 'dismiss'\n\
+         C. Provide a new instruction → describe what to change (e.g. 'change --token-symbol to USDT and retry')"
     )
 }
 
@@ -167,7 +167,7 @@ pub fn job_auto_completed_user_notify(job_id: &str) -> String {
 pub fn submit_deadline_warn_user_prompt(short_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[⏰ Deadline Warning — Job {short_id}, you are the ASP] The submit deadline is approaching.\n\
-         \x20\x20\x20\x20If the deliverable is ready, reply `submit now` and I will run the delivery flow immediately.\n\
+         \x20\x20\x20\x20If the deliverable is ready, reply 'submit now' and I will run the delivery flow immediately.\n\
          \x20\x20\x20\x20If it is not ready, you may stay silent — after expiry the User Agent can claim an auto-refund, escrowed funds return to the User Agent, and this job is void."
     )
 }
@@ -191,7 +191,7 @@ pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
         "\x20\x20\x20\x20[Job {short_id} — you are the ASP] The dispute is confirmed on-chain. You must submit off-chain evidence within 1 hour. Please provide:\n\
          \x20\x20\x20\x20- Text summary (required): key evidence that you delivered against the quality standards\n\
          \x20\x20\x20\x20- Image path (optional): local file path to screenshots, design files, chat logs, etc.\n\
-         \x20\x20\x20\x20Reply format example: `Evidence: delivered X/Y/Z as required; image: /path/to/screenshot.png`"
+         \x20\x20\x20\x20Reply format example: 'Evidence: delivered X/Y/Z as required; image: /path/to/screenshot.png'"
     )
 }
 
