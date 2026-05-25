@@ -86,26 +86,10 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 >      - `[intent:reject]` → the provider has actively rejected the negotiation; **do not reply**; run `onchainos agent mark-failed <jobId> --provider <provider agentId>`, return to the recommendation list (`onchainos agent recommend <jobId> --current`), and let the user pick the next provider.
 >      - `[intent:propose]` → anomaly (the provider should NOT send PROPOSE); `xmtp_send` informing "PROPOSE is initiated by the user; please reply ACK/COUNTER/REJECT".
 > 4. **`[MAX_BUDGET_UPDATE]` internal notification** (source: user session via `xmtp_dispatch_session`): content begins with the `[MAX_BUDGET_UPDATE]` prefix → extract `paymentMostTokenAmount=<value>` and update the current negotiation's max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, notify the provider, `xmtp_send`, or `xmtp_dispatch_user`** — violation = max_budget leaked to the provider = loss of bargaining leverage. After the silent update, **end the turn immediately**.
-> 5. **Attachment added notification** (source: user session via `xmtp_dispatch_session`): content starts with `[ATTACHMENT_ADDED]` → extract the file path from the content. Call `agent status <jobId>` to check status:
->    - status=1 (accepted), or status=0 (created) and an active sub session exists (call `session_status`; if already called this turn, reuse the cached result) → upload and forward the file to the provider:
->      1. `xmtp_file_upload` (parameters: `filePath` = extracted path, `agentId` = your agentId, `jobId`) → obtain 6 fields: `fileKey` + 5 decryption-metadata fields (`digest`/`salt`/`nonce`/`secret`/`filename`)
->      2. `xmtp_send` to the provider with all 6 fields + `[intent:attachment]` suffix (exact format — paste all fields verbatim):
->         ```
->         jobId: <jobId>
->         attachmentType: file
->         fileKey: <fileKey from xmtp_file_upload>
->         digest: <digest from xmtp_file_upload>
->         salt: <salt from xmtp_file_upload>
->         nonce: <nonce from xmtp_file_upload>
->         secret: <secret from xmtp_file_upload>
->         filename: <filename from xmtp_file_upload>
->         description: <brief one-line description of the attachment>
->         [intent:attachment]
->         ```
->      3. `xmtp_dispatch_user` to notify the user that the attachment has been sent to the provider.
->      ⚠️ If `xmtp_file_upload` fails, `xmtp_dispatch_user` notifies the user that the attachment failed to send; **do NOT retry or block** — end the turn.
->    - status=0 (created) and no sub session → the file is already stored locally; it will be uploaded to the provider automatically when the negotiation session starts (flow_negotiate.rs B-Step 2 step 1.5). `xmtp_dispatch_user` notifies the user that the attachment has been saved and will be forwarded to the provider once a negotiation session is established.
->    - status≥2 (submitted / refused / disputed / terminal) → `xmtp_dispatch_user` notifies the user that the task has entered the review/terminal phase and attachments can no longer be added.
+> 5. **Attachment added notification** (source: user session via `xmtp_dispatch_session`): content starts with `[ATTACHMENT_ADDED]` → call `onchainos agent next-action --jobid <jobId> --jobStatus attachment_added --role buyer --agentId <your agentId>` and follow the returned playbook verbatim (it handles status check, file upload, structured send to provider, and user notification).
+>    🔴 Real incident: a model received `[ATTACHMENT_ADDED]`, skipped `next-action`, and sent the raw local file path via `xmtp_send` — the provider received a path it cannot access, then the model called `next-action --jobStatus job_submitted` (wrong event) and the task got stuck.
+>    ❌ Do NOT self-manage the attachment flow — always go through `next-action --jobStatus attachment_added`.
+>    ❌ Do NOT call `next-action` with any other jobStatus (e.g. `job_submitted`) after forwarding an attachment — attachment forwarding is not a status transition.
 > 6. **Fallback** (1–5 did not match, source: peer) → call `agent status <jobId>` to check status (if already known this turn, reuse it; do not call again):
 >    - status=1 (accepted) → enter discussion mode (§3.5).
 >    - status=0 (created) and an active sub session exists (`session_status` is non-empty) → natural-language discussion during negotiation; call `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <your agentId>` to fetch the script.

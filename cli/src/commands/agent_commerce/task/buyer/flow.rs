@@ -276,6 +276,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             Event::NegotiateReply => "xmtp_send (evaluate provider natural-language reply)",
             Event::NegotiateAck => "save-agreed → set-payment-mode (ACK validation → persist)",
             Event::NegotiateCounter => "xmtp_send (evaluate COUNTER → new PROPOSE or REJECT)",
+            Event::AttachmentAdded => "xmtp_file_upload → xmtp_send (upload + forward attachment to provider)",
             _ => "none",
         }
     );
@@ -322,6 +323,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::Other(ref s) if s == "create_task" => super::flow_lifecycle::create_task(),
         Event::Other(ref s) if s == "close" => super::flow_lifecycle::close_task(&ctx),
         Event::Other(ref s) if s == "set_public" => super::flow_lifecycle::set_public(&ctx),
+        Event::AttachmentAdded => super::flow_lifecycle::attachment_added(&ctx),
         Event::TaskTokenBudgetChange => super::flow_lifecycle::task_token_budget_change(&ctx),
         Event::TaskProviderChange => super::flow_lifecycle::task_provider_change(&ctx),
 

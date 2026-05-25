@@ -1,4 +1,4 @@
-//! Task creation and term-change event prompt generators.
+//! Task creation, attachment forwarding, and term-change event prompt generators.
 
 // --- User-action: create task ------------------------------------------
 
@@ -146,6 +146,67 @@ After success, call `xmtp_dispatch_user` to notify the user:\n\
 ===============================================================\n",
         create_public = super::super::content::create_task_public_user_notify(),
         create_designated = super::super::content::create_task_designated_user_notify(),
+    )
+}
+
+// --- Attachment forwarding ---------------------------------------------
+
+pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> String {
+    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
+    let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
+    let attachment_template = super::super::content::attachment_file_to_seller(job_id);
+
+    format!(
+    "[Trigger] attachment_added (user session dispatched `[ATTACHMENT_ADDED]` — a file was saved locally and must be uploaded + forwarded to the provider)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **This is the ONLY correct path for forwarding attachments. Do not improvise.**\n\
+     🔴 Real incident: a Minimax model received `[ATTACHMENT_ADDED]`, skipped `xmtp_file_upload`, and sent the raw local file path via `xmtp_send` — \
+     the provider received a path like `/Users/.../attachments/photo.jpg` which it cannot access. Then the model called `next-action --jobStatus job_submitted` (wrong event) and the task got stuck.\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 1 — Extract the file path:**\n\
+     The `[ATTACHMENT_ADDED]` message content has the format: `[ATTACHMENT_ADDED] <absolute file path>`.\n\
+     Extract the file path (everything after the prefix). This is a **local** file that has NOT been sent to the provider yet.\n\n\
+     **Step 2 — Check task status:**\n\
+     ```bash\n\
+     onchainos agent status {job_id}\n\
+     ```\n\
+     Read `status` (int) and branch:\n\n\
+     --------- Branch A: status=1 (accepted) OR status=0 (created) with an active sub session ---------\n\n\
+     **A-Step 1 — Upload the file (encrypted):**\n\
+     Call `xmtp_file_upload`:\n\
+     \x20\x20- filePath: <extracted path from Step 1>\n\
+     \x20\x20- agentId: {agent_id}\n\
+     \x20\x20- jobId: {job_id}\n\
+     → On success you receive 6 fields: `fileKey`, `digest`, `salt`, `nonce`, `secret`, `filename`.\n\n\
+     ⚠️ If `xmtp_file_upload` fails → call xmtp_dispatch_user to notify the user that the attachment failed to send; **do NOT retry or block** — end the turn.\n\n\
+     **A-Step 2 — Forward to the provider via `xmtp_send`:**\n\
+     Send to the provider with **all 6 fields** + `[intent:attachment]` suffix (exact format — paste all fields verbatim):\n\
+     ```\n\
+     {attachment_template}\n\
+     ```\n\
+     ❌ Do NOT send the local file path — the provider cannot access your filesystem.\n\
+     ❌ Do NOT omit any of the 6 encryption fields — the provider needs all of them to decrypt the file.\n\
+     🛑 **VERBATIM COPY — every field value (especially `secret`, `digest`, `salt`, `nonce`) must be pasted in FULL, character-for-character from `xmtp_file_upload` output. These are base64/hex strings that can be 40-200+ characters long. Do NOT truncate, abbreviate, or replace any part with `...` or ellipsis — even a single missing character = decryption failure.**\n\
+     🔴 Real incident: a model abbreviated `secret: SHUJoA...dqE=` (replaced the middle with `...`), the provider could not decrypt the file and the task stalled.\n\n\
+     **A-Step 3 — Notify the user:**\n\
+     Call xmtp_dispatch_user:\n\
+     \x20\x20content: [Job {short_id}] Attachment sent to the ASP.\n\
+     {l10n_short}\n\n\
+     → **End this turn.**\n\n\
+     --------- Branch B: status=0 (created) and NO active sub session ---------\n\n\
+     The file is already stored locally under `~/.onchainos/task/<jobId>/attachments/`.\n\
+     It will be uploaded to the provider automatically when the negotiation session starts.\n\n\
+     Call xmtp_dispatch_user:\n\
+     \x20\x20content: [Job {short_id}] Attachment saved. It will be forwarded to the ASP once a negotiation session is established.\n\
+     {l10n_short}\n\n\
+     → **End this turn.**\n\n\
+     --------- Branch C: status≥2 (submitted / refused / disputed / terminal) ---------\n\n\
+     Call xmtp_dispatch_user:\n\
+     \x20\x20content: [Job {short_id}] The task has entered the review/terminal phase — attachments can no longer be added.\n\
+     {l10n_short}\n\n\
+     → **End this turn.**\n"
     )
 }
 

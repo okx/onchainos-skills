@@ -308,11 +308,11 @@ pub fn attachment_file_to_seller(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
          attachmentType: file\n\
-         fileKey: <fileKey from xmtp_file_upload>\n\
-         digest: <digest from xmtp_file_upload>\n\
-         salt: <salt from xmtp_file_upload>\n\
-         nonce: <nonce from xmtp_file_upload>\n\
-         secret: <secret from xmtp_file_upload>\n\
+         fileKey: <fileKey from xmtp_file_upload — FULL value, no truncation>\n\
+         digest: <digest — FULL hex string, no truncation>\n\
+         salt: <salt — FULL base64 string, no truncation>\n\
+         nonce: <nonce — FULL base64 string, no truncation>\n\
+         secret: <secret — FULL base64 string, no truncation (can be 100+ chars)>\n\
          filename: <filename from xmtp_file_upload>\n\
          description: <brief one-line description of the attachment>\n\
          [intent:attachment]"

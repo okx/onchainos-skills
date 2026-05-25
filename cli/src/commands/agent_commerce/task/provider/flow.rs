@@ -871,7 +871,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         | Event::NegotiateCounter => "[System notification] negotiate_* (buyer-side negotiation relay event; not the provider's concern)\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
-        Event::SwitchProvider => "[System notification] switch_provider (buyer-side provider-switch event; not the provider's concern)\n\
+        Event::SwitchProvider | Event::AttachmentAdded => "[System notification] buyer-side event; not the provider's concern.\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
         Event::Other(ref other) => format!(

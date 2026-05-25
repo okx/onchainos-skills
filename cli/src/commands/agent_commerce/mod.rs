@@ -1037,7 +1037,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // the agent should re-invoke next-action with message.jobStatus, so skip validation here and let
     // the WakeupNotify arm output the guidance script.
     const PSEUDO_EVENTS: &[&str] = &[
-        "create_task", "switch_provider",
+        "create_task", "switch_provider", "attachment_added",
         "dispute_raise", "agree_refund", "dispute_evidence", "approve_review", "reject_review",
         "close", "set_public",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
