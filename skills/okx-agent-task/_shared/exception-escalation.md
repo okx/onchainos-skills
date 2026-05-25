@@ -22,26 +22,43 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
    ```
 3. **End the current turn** and wait for the user's reply
 
-## 2. CLI errors are never retried — push to the user session immediately
+## 2. CLI errors are never retried — enqueue an error decision via pending-decisions-v2
 
 **Trigger conditions**: any `onchainos agent <cmd>` subcommand returns non-zero / `ok:false` / parse failure / backend API returns non-zero `code`
 
 **Action**:
-1. **Do not retry** — running the same command again will almost certainly produce the same result, just wasting a turn
-2. Call `xmtp_dispatch_user` to push to the user:
+1. **Do not retry inside the sub** — running the same command again will almost certainly produce the same result, just wasting a turn
+2. Get the current sessionKey via `session_status` (if not already cached this turn — see Hard Rule 6)
+3. Enqueue an error-decision via `pending-decisions-v2 request`, using the canonical `escalation_cli_failed_notify` template (localized to the user's language) as `--user-content`:
+   ```bash
+   onchainos agent pending-decisions-v2 request \
+     --sub-key "<sessionKey>" \
+     --job-id <jobId> --role <role> --agent-id <agentId> \
+     --user-content "<localized error decision card — see template below>" \
+     --list-label "[Error <short jobId>] CLI failed"
    ```
-   [⚠️ CLI error] Task <jobId>
-   - Command: onchainos agent <cmd> ...
-   - Error: <one-sentence summary of stderr / error field>
-   - Current task status: <status>
-   - Suggest human intervention
+   The user-facing card looks like:
    ```
-3. Wait for the user to **explicitly give a new instruction** (change parameters / switch commands / skip this step) before retrying
+   [⚠️ Operation Failed] Task <jobId>
+   - Action: <e.g. submit deliverable / recommend providers>
+   - Error: <one-sentence summary>
+   - Current status: <status>
+
+   Choose how to proceed:
+   A. Retry → reply `A` or `retry`
+   B. Don't prompt again (you'll handle manually) → reply `B` or `dismiss`
+   C. Provide a new instruction → describe what to change
+   ```
+4. Follow the playbook the CLI returns verbatim, then end the turn
+5. When `[USER_DECISION_RELAY] decision: <verbatim>` arrives in a later turn, route:
+   - `A` / `选A` / `retry` / `重试` / `try again` → re-run the same command **once**; if it fails again, enqueue another error decision (do NOT auto-loop)
+   - `B` / `选B` / `dismiss` / `不再提示` / `skip prompts` → end the turn; the user is taking manual control of this step
+   - Otherwise → interpret the verbatim as a new instruction (e.g. `change --token-symbol to USDT and retry`) and execute accordingly
 
 **Only exception (auto-retry once)**:
-- JWT expired (error message contains `JWT verification failed` / `JWT expired` / `unauthorized` with `code=3001`) → refresh login state and retry once; on continued failure, fall through to the §2 standard flow and push to the user
+- JWT expired (error message contains `JWT verification failed` / `JWT expired` / `unauthorized` with `code=3001`) → refresh login state and retry once; on continued failure, fall through to the standard pending-decisions-v2 flow above
 
-**Network timeout / connection error does NOT qualify as an exception** — push to the user via §2 standard flow and let the user decide whether to retry. Blindly retrying network flakes = pushing repeatedly inside the same turn, which overlaps with the §4 anti-pattern.
+**Network timeout / connection error does NOT qualify as an exception** — go through the pending-decisions-v2 flow above and let the user decide. Blindly retrying network flakes = pushing repeatedly inside the same turn, which overlaps with the §4 anti-pattern.
 
 **Role-specific exception (evaluator)**: `vote-commit` / `vote-reveal` / `arbitration-claim` are penalized at 0.3% stake the moment the commit / reveal window closes, so the sub is allowed up to 3 internal retries — this is a hard constraint forced by the dispute economic model; see `references/evaluator-decision-rubric.md` §6 for details. Other evaluator commands (`stake` / `unstake-*` / `info` / `download` etc.) still follow the §2 standard flow. Buyer / provider have no such exception.
 

@@ -14,7 +14,7 @@ use anyhow::{bail, Result};
 use std::path::PathBuf;
 
 fn gate_path(job_id: &str) -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?;
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("unable to determine HOME directory"))?;
     let dir = home.join(".onchainos").join("task").join(job_id);
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("review-gate"))
@@ -37,15 +37,15 @@ pub fn mark_approved(job_id: &str) -> Result<()> {
         }
         Ok(content) => {
             bail!(
-                "review-gate 状态异常：期望 pending，实际 '{}'。\
-                 请先走 next-action --jobStatus job_submitted 流程。",
+                "review-gate state error: expected 'pending', got '{}'. \
+                 Please run next-action --jobStatus job_submitted first.",
                 content.trim()
             );
         }
         Err(_) => {
             bail!(
-                "review-gate 文件不存在（未经过 job_submitted 流程）。\
-                 请先调 next-action --jobStatus job_submitted --role buyer。"
+                "review-gate file does not exist (job_submitted flow was not executed). \
+                 Please call next-action --jobStatus job_submitted --role buyer first."
             );
         }
     }
@@ -61,19 +61,19 @@ pub fn check_and_consume(job_id: &str) -> Result<()> {
         }
         Ok(content) if content.trim() == "pending" => {
             bail!(
-                "用户尚未做验收决策（review-gate = pending）。\
-                 请先通过 xmtp_prompt_user 获取用户验收决策，\
-                 再调 next-action --jobStatus approve_review 拿验收剧本。"
+                "User has not made a review decision yet (review-gate = pending). \
+                 Please enqueue a review decision via `onchainos agent pending-decisions-v2 request` and wait for the user's reply. \
+                 After receiving `[USER_DECISION_RELAY] decision: <verbatim>`, call next-action --jobStatus approve_review to get the review playbook."
             );
         }
         Ok(content) => {
-            bail!("review-gate 状态异常：'{}'", content.trim());
+            bail!("review-gate state error: '{}'", content.trim());
         }
         Err(_) => {
             bail!(
-                "review-gate 文件不存在，escrow 模式下必须先走 \
-                 next-action --jobStatus job_submitted 验收流程。\
-                 禁止直接调用 complete。"
+                "review-gate file does not exist. In escrow mode you must run \
+                 next-action --jobStatus job_submitted review flow first. \
+                 Direct calls to complete are not allowed."
             );
         }
     }

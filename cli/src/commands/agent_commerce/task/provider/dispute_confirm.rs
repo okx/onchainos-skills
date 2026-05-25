@@ -20,7 +20,7 @@ pub async fn handle_dispute_confirm(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
     }
     let (account_id, address) = signing::resolve_wallet(None, None)?;
     let body = serde_json::json!({});
@@ -28,13 +28,13 @@ pub async fn handle_dispute_confirm(
     let dispute_resp = client.post_with_identity(
         &client.endpoint(job_id, "dispute"), &body, agent_id,
     ).await
-        .context("dispute confirm (阶段 2): dispute 接口请求失败")?;
+        .context("dispute confirm (stage 2): dispute API request failed")?;
 
     let dispute_tx = signing::sign_uop_and_broadcast(
         client, &dispute_resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&dispute_resp), agent_id,
     ).await
-        .context("dispute confirm (阶段 2): dispute 上链失败")?;
+        .context("dispute confirm (stage 2): dispute on-chain broadcast failed")?;
 
     audit::log(
         "cli",
@@ -49,11 +49,11 @@ pub async fn handle_dispute_confirm(
         None,
     );
 
-    println!("✓ 仲裁阶段 2: dispute 上链");
+    println!("✓ Dispute stage 2: dispute on-chain");
     println!("  txHash: {dispute_tx}");
     println!();
-    println!("⚠️  阶段 2 已完成，**结束本轮 turn**，等待链上 `job_disputed` 系统通知：");
-    println!("    - 禁止立即给买家 xmtp_send 任何「已发起仲裁」消息");
-    println!("    - 收到 `job_disputed` 通知后再走证据上传剧本");
+    println!("⚠️  Stage 2 complete — **end this turn** and wait for the on-chain `job_disputed` system notification:");
+    println!("    - Do NOT call xmtp_send to tell the buyer \"dispute raised\" or similar");
+    println!("    - Once you receive the `job_disputed` notification, proceed with the evidence upload script");
     Ok(())
 }

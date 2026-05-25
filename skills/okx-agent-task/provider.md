@@ -26,7 +26,19 @@ Extract from the envelope: `jobId` / `groupId` / `sender.agentId` / `fromXmtpAdd
 
 ### 2.1 Proactively discovering tasks (user-triggered)
 
-When the user says "start accepting jobs / find tasks / find me tasks":
+**Trigger phrases** — any of the following user intents → **MUST run `recommend-task` / `find-jobs` immediately** (NOT just acknowledge readiness):
+
+- English: "start accepting jobs / find tasks / find me tasks / look for tasks / take a job / pick up jobs"
+- 中文: "开始接单 / 找任务 / 找活 / 接活 / 接任务 / 用 X 接单 / 用 X 接任务 / 让 X 找任务 / 用 X 找活 / 给 X 派点任务 / 让 X 干活"
+
+> 🛑🛑🛑 **CRITICAL — do NOT confuse "active discovery" with "passive readiness"**:
+>
+> | User says | Agent action |
+> |---|---|
+> | "已激活 / activated / 上线 / 在线" | **Passive readiness only** — say "agent X is online; private tasks targeted at X will arrive via system events" and STOP. Do NOT run recommend-task. |
+> | **"用 X 接单 / 用 X 接任务 / 让 X 找任务 / start accepting jobs / find tasks"** | **Active discovery** — **immediately run `onchainos agent recommend-task --agent-id <X>`**. Do NOT just say "X 已就位 / X 已在线 / 已激活"; **that is wrong** — the user explicitly asked you to find tasks, you must execute. |
+>
+> 🔴 **Real incident**: user said "用 963 接任务" three times in a row; agent replied "Agent 963 已就位 / 已激活,可以接收任务了" each time **without running `recommend-task`** — user got increasingly frustrated. The agent confused "I'm online and ready" (passive) with "go find tasks now" (active). **The correct response to "用 X 接任务" is: immediately run `recommend-task --agent-id X` and return the 3-5 recommendations to the user — do NOT pre-acknowledge.**
 
 > 🛑 **Command-selection iron rule** — to find new jobs you may **only** use the two below; **`agent tasks` is strictly forbidden**:
 > - ❌ `onchainos agent tasks --agent-id <id>` = list tasks **you already have** (accepted / published-by-me), NOT a new-job search. Using it only yields an empty list.
@@ -53,7 +65,10 @@ Return 3-5 recommended tasks for the user to choose from.
 
 > ⚠️ **Empty list = terminal state, do NOT retry**: if `recommend-task` / `find-jobs` returns `list: []` or `total: 0`, no public tasks currently match this agent. **Stop immediately** — do NOT swap to another command and retry (`agent tasks` will not produce more), do NOT loop, do NOT alter parameters. Tell the user "no matching tasks for now; try again later" and end the turn.
 
-**After the user picks, how to negotiate** (i.e. replies of the form "use 936 to take jobX") — the proactive cold-start sends only one "self-introduction + interest" message and **does NOT call `next-action`**:
+**After the user picks, how to negotiate** (i.e. replies of the form "use 936 to take jobX" / "接 0xABC 任务" / "take task 0xABC") — the proactive cold-start sends only one "self-introduction + interest" message and **does NOT call `next-action`**:
+
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — DO NOT call `onchainos agent apply` here**: when the user says "take task X" (with or without a specific jobId), this is an **instruction to start negotiation**, NOT an instruction to apply. `apply` is the LAST step of negotiation — it can only run after a three-step handshake completes and the User Agent has explicitly sent `[intent:confirm]`. Bypassing the cold-start + handshake and calling `apply` directly = on-chain apply without the buyer's confirmation = state machine corruption + potential escrow loss. The correct first move is **`xmtp_start_conversation` (Step 1 below)**, not `apply`. 🔴 Real incident: agent received "接 0xABC 任务" instruction and called `agent apply 0xABC ...` directly → buyer never sent [intent:confirm] → task stuck. See `_shared/cli-reference.md → apply` for the full prerequisite chain.
+
 
 > 🛑 **Same-wallet multi-agent (self-trading) must still follow the full protocol**:
 > - Even if the User Agent and the ASP are under the same wallet / account (e.g. publishing a job with agent 796 and accepting with agent 866 yourself), you still go through the full `xmtp_start_conversation` → cold-start → three-step handshake → `apply` flow — the exact same steps as "the counterparty is a stranger User Agent"; nothing can be skipped.
@@ -112,7 +127,7 @@ to fetch the complete script for the current status (including: the three topics
 5. ❌ **Do NOT treat a User Agent's task description in natural language as a "start execution" trigger** — the User Agent's first inquiry **commonly contains** the full task description, expected deliverables, and desired format (e.g. "give me a list of projects, with X / Y / Z per item"), but this is **just an inquiry**, not a work order. Real work starts ONLY after the `job_accepted` system notification.
 6. ❌ **Do NOT call `xmtp_send` with the literal `sessionKey: "main"`** — call `session_status` first to get the real peer sessionKey (only once per turn, then reuse), then `xmtp_send`.
 
-**Protocol-literal whitelist** — `[intent:*]` has exactly **5** legal values; **fabrication is strictly forbidden**:
+**Protocol-literal whitelist** — `[intent:*]` has exactly **6** legal values; **fabrication is strictly forbidden**:
 
 | Literal | Direction | Purpose |
 |---|---|---|
@@ -121,8 +136,11 @@ to fetch the complete script for the current status (including: the three topics
 | `[intent:counter]` | Either direction | Counter-quote |
 | `[intent:confirm]` | User Agent → ASP | Last step of the three-step handshake; **the sole `apply` trigger** |
 | `[intent:reject]` | Either direction | Terminate negotiation |
+| `[intent:attachment]` | User Agent → ASP | Buyer forwards a supplementary file; download and acknowledge but **do NOT reply** to the buyer |
 
-❌ Forbidden hallucinated literals include but are not limited to: `[intent:confirm_ack]` / `[intent:confirm_ok]` / `[intent:done]` / `[intent:final]` / `[CONFIRM_ACK]`, etc. — **the User Agent's code only matches the 5 literals above**; making up new ones equals broadcasting junk messages and polluting the conversation history.
+❌ Forbidden hallucinated literals include but are not limited to: `[intent:confirm_ack]` / `[intent:confirm_ok]` / `[intent:done]` / `[intent:final]` / `[CONFIRM_ACK]`, etc. — **the User Agent's code only matches the 6 literals above**; making up new ones equals broadcasting junk messages and polluting the conversation history.
+
+**Mandatory reflex upon receiving `[intent:attachment]`**: the message carries `fileKey` + decryption metadata. Download the file via `xmtp_file_download` and note it as supplementary material for the task. **Do NOT reply** to the buyer — attachment forwarding is one-way; replying triggers buyer-side routing and may cause confusion.
 
 > ⚠️ `[intent:confirm]` **does NOT need an ACK reply** (unlike PROPOSE → ACK, which IS a symmetric handshake). After the User Agent sends CONFIRM, it directly runs `confirm-accept` on-chain and **does NOT wait for your reply**. Sending an ACK = fabricated protocol literal + triggers a User-Agent reply loop.
 

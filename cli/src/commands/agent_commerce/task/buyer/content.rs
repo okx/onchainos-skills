@@ -9,8 +9,10 @@
 //!    skill names (`okx-agent-identity` etc.) / backend method names (`claimAutoComplete` etc.).
 //!    **Literals in this file are English** (aligned with the PM Review translation baseline;
 //!    source: `https://okg-block.sg.larksuite.com/docx/YSHcdZaWmo2KofxaHRuloeBYgme` §1),
-//!    serving as the source-of-truth for sub agent LOCALIZATION_PREFIX translation — English users
-//!    see them as-is; non-English users get an equivalent conversational translation from the sub agent.
+//!    serving as the canonical content for sub agent localization — English users see them
+//!    verbatim (after `<...>` placeholder fills); non-English users get a faithful translation
+//!    that preserves all field labels, data values, and structure (see `localization_prefix`
+//!    in flow.rs for the strict rules).
 //!    Terminology: Job (not Task), User Agent, ASP (Agent Service Provider),
 //!    escrow / x402 lowercase, agentId in camelCase for data fields.
 //!    Label format: `[Label]` bracket prefix (e.g. `[Job Accepted]`).
@@ -30,7 +32,7 @@
 
 /// `Event::JobCreated` Step 0 — user notification that the job is confirmed on-chain.
 pub fn job_created_user_notify(job_id: &str, notify_text: &str) -> String {
-    format!("Job `{job_id}` confirmed on-chain (status: Open). {notify_text}")
+    format!("Job `{job_id}` confirmed on-chain. {notify_text}")
 }
 
 /// Prompt shown when the designated ASP is offline (D-Step 1.5).
@@ -85,9 +87,9 @@ pub fn job_refused_user_notify(job_id: &str, title: &str) -> String {
 // ── Event::JobDisputed ─────────────────────────────────────────────
 
 /// `Event::JobDisputed` Step 1 — evidence collection prompt (B-5-3, `xmtp_prompt_user.userContent`).
-pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
+pub fn job_disputed_user_evidence_prompt(short_id: &str, title: &str) -> String {
     format!(
-        "[Job {short_id} — you are the User Agent] The dispute is confirmed on-chain. You must submit off-chain evidence within 1 hour. Please provide:\n\
+        "[Job {short_id} — {title} — you are the User Agent] The dispute is confirmed on-chain. You must submit off-chain evidence within 1 hour. Please provide:\n\
          - Text summary (required): key evidence that the deliverable failed the quality standards\n\
          - Image path (optional): local file path to screenshots, chat logs, etc.\n\
          Reply format example: \"Evidence: the deliverable is missing X/Y/Z; image: /path/to/screenshot.png\""
@@ -245,7 +247,7 @@ pub fn refuse_expired_user_notify(job_id: &str) -> String {
 /// `Event::ReviewDeadlineWarn` — review deadline prompt (B-7-7, `xmtp_prompt_user.userContent`).
 pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String {
     format!(
-        "[Job {short_id} — you are the User Agent] [⏰ Review Deadline Warning] Job `{job_id}` — the review deadline is approaching.\n\
+        "[Job {short_id} — you are the User Agent] [⏰ Review Deadline Warning] Job {job_id} — the review deadline is approaching.\n\
          After expiry, the ASP can auto-claim the funds.\n\
          Please decide soon:\n\
          A. Approve the deliverable\n\
@@ -291,7 +293,30 @@ pub fn wakeup_resume_user_notify(job_id: &str) -> String {
 
 /// `provider_conversation` B-Step 4 — no more ASPs pending (B-7-14).
 pub fn no_more_sellers_user_notify(job_id: &str) -> String {
-    format!("Job `{job_id}` — no more pending ASPs. Wait for new ASPs to reach out, or adjust the job description.")
+    format!("[Job `{job_id}` — you are the User Agent] All pending ASPs have been contacted; none remaining. Choose next step:")
+}
+
+// ── Attachment (buyer → provider) ──────────────────────────────────
+
+/// File attachment `xmtp_send` content sent from the buyer sub session
+/// to the provider sub session.
+///
+/// The 6 fields (`fileKey` / `digest` / `salt` / `nonce` / `secret` /
+/// `filename`) come from `xmtp_file_upload`; the provider sub agent
+/// parses them and calls `xmtp_file_download` to fetch the file.
+pub fn attachment_file_to_seller(job_id: &str) -> String {
+    format!(
+        "jobId: {job_id}\n\
+         attachmentType: file\n\
+         fileKey: <fileKey from xmtp_file_upload — FULL value, no truncation>\n\
+         digest: <digest — FULL hex string, no truncation>\n\
+         salt: <salt — FULL base64 string, no truncation>\n\
+         nonce: <nonce — FULL base64 string, no truncation>\n\
+         secret: <secret — FULL base64 string, no truncation (can be 100+ chars)>\n\
+         filename: <filename from xmtp_file_upload>\n\
+         description: <brief one-line description of the attachment>\n\
+         [intent:attachment]"
+    )
 }
 
 // ── Escalation (preamble anomaly escalation) ───────────────────────
@@ -301,7 +326,83 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
     format!("[⚠️ Protocol Misalignment] Job `{job_id}` — the remote agent repeatedly sends messages that do not match the current flow. Replies have stopped. Please intervene manually to continue.")
 }
 
+// ── x402 replay result (job_payment_mode_changed) ────────────────
+
+/// x402 replay success — deliverable received, awaiting on-chain confirmation.
+pub fn x402_replay_success_user_notify(job_id: &str) -> String {
+    format!(
+        "[x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
+         ASP agentId: <providerAgentId>\n\
+         Amount: <tokenAmount> <tokenSymbol>\n\
+         ---Deliverable---\n\
+         <replayBodyDisplay value from CLI output — pass through in full, do not truncate or summarize>\n\
+         ---End of deliverable---\n\
+         Waiting for on-chain confirmation. The job will auto-complete once confirmed."
+    )
+}
+
+/// x402 replay failure — accepted but endpoint replay failed.
+pub fn x402_replay_fail_user_notify(job_id: &str) -> String {
+    format!(
+        "[x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
+         HTTP status: <replayStatus>\n\
+         Error: <replayBody>\n\
+         Auto-complete will not run after `job_accepted`. Please give a new instruction; the agent will not auto-retry."
+    )
+}
+
+// ── complete failure (job_accepted x402 branch) ──────────────────
+
+/// x402 complete command failed — notify user with retry command.
+pub fn complete_failed_user_notify(job_id: &str) -> String {
+    format!(
+        "[⚠️ Complete Failed] Job `{job_id}` — the completion step failed. \
+         Please retry later or reply with a new instruction."
+    )
+}
+
+// ── create_task notification ─────────────────────────────────────
+
+/// create_task success — no designated provider.
+pub fn create_task_public_user_notify() -> String {
+    "Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
+     Once confirmed, the system will automatically fetch the recommended provider list for you to choose from."
+        .to_string()
+}
+
+/// create_task success — with designated provider.
+pub fn create_task_designated_user_notify() -> String {
+    "Task submitted; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); \
+     awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider."
+        .to_string()
+}
+
+// ── pending_list empty (provider_conversation) ───────────────────
+
+/// provider_conversation — user chose "skip all" pending ASPs.
+pub fn skip_all_pending_user_notify(job_id: &str) -> String {
+    format!("Job `{job_id}` — all pending ASPs have been skipped. You can wait for new ASPs to reach out, or reply \"close\" to close the task.")
+}
+
+/// provider_conversation — pending list is empty; no ASPs to contact.
+pub fn pending_list_empty_user_notify() -> String {
+    "There are no ASPs to contact right now. You can wait for new ASPs to reach out, or reply \"close\" to close the task."
+        .to_string()
+}
+
+// ── Escalation (preamble anomaly escalation) ───────────────────────
+
 /// Preamble escalation hard rule 2) CLI execution error (B-6-2).
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
-    format!("[⚠️ CLI Error] Job `{job_id}` <action summary> failed. Please review and give a new instruction; the agent will not auto-retry.")
+    format!(
+        "[⚠️ Operation Failed] Task `{job_id}`\n\
+         - Action: <e.g. recommend providers / submit review / pay via x402>\n\
+         - Error: <one-sentence summary of stderr / error field>\n\
+         - Current status: <status>\n\
+         \n\
+         Choose how to proceed:\n\
+         A. Retry → reply 'A' or 'retry'\n\
+         B. Don't prompt again (you'll handle manually) → reply 'B' or 'dismiss'\n\
+         C. Provide a new instruction → describe what to change (e.g. 'change --token-symbol to USDT and retry')"
+    )
 }

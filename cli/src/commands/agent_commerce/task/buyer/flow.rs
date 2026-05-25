@@ -12,9 +12,62 @@ use crate::commands::agent_commerce::task::common::config::TASK_MIN_VERSION;
 use crate::commands::agent_commerce::task::common::pending::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
-/// Injected at the tail of every `xmtp_prompt_user` llmContent to constrain user-session behavior.
-/// Prevents the user agent from generating extra summaries / cards / duplicate messages beyond rendering userContent.
-pub(super) const PROMPT_USER_SESSION_CONSTRAINT: &str = "\n⚠️ **user session sole action = relay**: only render userContent to the user (verbatim, no rewriting, no appending, no extra summary/card/interpretation), wait for the user's actual input then relay it back to the sub session — do NOT execute task CLI yourself / do NOT xmtp_send to provider / do NOT xmtp_dispatch_user multiple notifications — relay once and end the turn.";
+// ── Localization constants (shared across flow_negotiate / flow_lifecycle) ────
+//
+// Each constant produces byte-for-byte identical output when interpolated via
+// `format!("{CONST}")` — zero prompt-level risk.
+
+pub(super) const LOCALIZATION_PREFIX: &str = "\
+[Localization] All `content:` / `userContent:` templates below are **canonical text, NOT samples**. Strict rules:\n\
+(1) Fill `<...>` placeholders with real values from context; every other word stays unchanged.\n\
+(2) Do NOT add information, time estimates, promises, or details not present in the template.\n\
+(3) Do NOT rephrase, summarize, or embellish the template — its wording is intentional.\n\
+(4) For English-speaking users: use the English template verbatim (after placeholder fills).\n\
+(5) For non-English users: translate into the user's language while preserving ALL field labels, data values, structure, and line breaks — translation must be faithful, not creative.\n\
+(6) Field labels in tables/confirmation forms MUST also match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/接单时限/交付时限; English → Title/Summary/Description/Currency/Budget/Max Budget/Accept Deadline/Delivery Deadline).\n\
+🔴 Real incident: a model treated the template as a loose \"sample\", translated English to Chinese in an English environment, and fabricated \"预计1-2小时内交付\" (estimated 1-2h delivery) — information that did not exist in the template. The user received inaccurate information.\n\n";
+
+pub(super) const L10N_DISPATCH: &str = "\
+🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).";
+
+pub(super) const L10N_DISPATCH_SHORT: &str = "\
+🌐 Canonical template — localize per [Localization] rules before sending.";
+
+pub(super) const L10N_PROMPT: &str = "\
+🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).";
+
+pub(super) const L10N_PROMPT_BOLD: &str = "\
+🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** before running (rule 4: English users → verbatim; rule 5: non-English → faithful translation keeping all field labels, data values, and structure).";
+
+// ── Shared prompt fragments (pending-decisions / playbook / routing) ──────────
+
+pub(super) const SESSION_STATUS_HINT: &str = "\
+First call `session_status` to get the current sessionKey (only once per turn). Then run:";
+
+pub(super) const FOLLOW_PLAYBOOK: &str = "\
+Follow the playbook the CLI returns verbatim. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself.";
+
+pub(super) const FOLLOW_PLAYBOOK_SHORT: &str = "\
+Follow the playbook the CLI returns verbatim.";
+
+pub(super) const FOLLOW_PLAYBOOK_END_TURN: &str = "\
+Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.";
+
+pub(super) const ABC_KEYWORD_ROUTE: &str = "\
+After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask via `pending-decisions-v2 request`.";
+
+pub(super) fn pending_cmd(job_id: &str, agent_id: &str, list_label: &str) -> String {
+    format!("onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"{list_label}\"")
+}
+
+pub(super) fn idempotency_check(job_id: &str) -> String {
+    format!("\
+**Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
+```bash\n\
+onchainos agent pending-decisions-v2 list --format json\n\
+```\n\
+If `entries[]` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue.\n")
+}
 
 /// Shared context parameter pack across all event handler functions.
 pub(super) struct FlowContext<'a> {
@@ -115,12 +168,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol version handshake.
     // version_prefix uses format! to inject the current TASK_MIN_VERSION value, so playbooks auto-update when the constant is bumped.
-    let localization_prefix = "[Localization] All `content:` / `userContent:` templates below are samples — translate to the user's language before `xmtp_dispatch_user` / `xmtp_prompt_user`. Field labels in tables/confirmation forms MUST also match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/接单时限/交付时限; English → Title/Summary/Description/Currency/Budget/Max Budget/Accept Deadline/Delivery Deadline). This playbook is written in English; output language follows the **user**, not the playbook.\n\n";
+    let localization_prefix = LOCALIZATION_PREFIX;
     let version_prefix = format!(
         "[Protocol version] When calling `xmtp_send`, the `payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
     );
 
-    // Short jobId, used on the first line of xmtp_prompt_user userContent as the `[Task <shortID> you as buyer]` prefix.
+    // Short jobId, used in pending-decisions-v2 request --user-content / --list-label as the `[Job <shortID>]` prefix.
     // Serves as a dual disambiguation anchor for the user and user agent when multiple prompts run concurrently. See SKILL.md Session Communication Contract 5.
     let short_id = short_job_id(job_id);
 
@@ -164,33 +217,28 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
     let context_preamble = format!(
         "🔒 If `skills/okx-agent-task/SKILL.md Session Communication Contract` has not been read this turn → read it first before continuing (envelope whitelist / xmtp_send two-step / xmtp_dispatch_user·xmtp_prompt_user push-to-user iron rules). The steps below will reference its sections (3 / 4 / 5 / 6).\n\n\
          ⚠️ **Hard exception escalation rules** (apply in any scenario, see _shared/exception-escalation.md + buyer.md):\n\
-         \x20\x201) Protocol misunderstanding (counterpart still repeats after ≥1 clarification in the same flow) → **stop replying to counterpart**, call `xmtp_dispatch_user`, content=`{escalation_protocol_misread}`, end turn\n\
-         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**, call `xmtp_dispatch_user`, content=`{escalation_cli_failed}`, wait for new user instructions. **Exception**: JWT expired (msg contains `JWT verification failed`/`unauthorized`) auto-relogin once; network timeout also pushes to user, never blind-retry\n\
+         \x20\x201) Protocol misunderstanding (counterpart still repeats after ≥1 clarification in the same flow) → **stop replying to counterpart**, call `xmtp_dispatch_user`, content=`{escalation_protocol_misread}` (🌐 localize per [Localization] rules), end turn\n\
+         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**; enqueue an error decision via `pending-decisions-v2 request` (first `session_status` to get sessionKey if not cached this turn; `--user-content` = `{escalation_cli_failed}` localized per [Localization] rules; `--list-label` = `[Error <short jobId>] CLI failed`). Follow the playbook the CLI returns. After receiving `[USER_DECISION_RELAY] decision: <verbatim>`, route: verbatim is `A` / `选A` / `retry` / `重试` / `try again` → re-run the same command once (if it fails again, enqueue another error decision; do NOT loop); verbatim is `B` / `选B` / `dismiss` / `不再提示` / `skip prompts` → end the turn, user takes manual control of this step; otherwise → interpret the verbatim as a new instruction (e.g. `change --token-symbol to USDT and retry`) and execute. **Exception**: JWT expired (msg contains `JWT verification failed` / `unauthorized`) → re-login once automatically; on continued failure, fall back to the standard pending-decisions-v2 flow. Network timeout — also enqueue via pending-decisions-v2; do not blind-retry\n\
          \x20\x203) ❌ **Absolutely forbidden to broadcast technical error details to the counterpart**: CLI command names / backend field names / stderr summaries / `bug`/`command:`/`error:` must never go into xmtp_send to the counterpart. At most send a single line 'please wait, confirming details' or do not notify the counterpart at all.\n\
          \x20\x204) ❌ **Do not repeat xmtp_send in the same turn**: when the playbook says 'send one message' → after the tool returns 'sent' once, that **counts as success**, and **do not call xmtp_send to the same counterpart a second time within this turn**. Do not resend just because the message may be unclear — resending = spam + triggering a loop on the counterpart. Wait for the next inbound.\n\
          \x20\x205) ❌ **apply is a provider action**: in the escrow path, `apply` is executed by the provider, the buyer must never call `onchainos agent apply`. The buyer first calls `set-payment-mode`, then executes `confirm-accept` after receiving the provider's application notice. ⚠️ When the user says 'have XXX take the job' / 'let XXX accept it' → they mean 'pick this provider', the correct action is `next-action --provider <agentId>`, **not apply**.\n\
          \x20\x206) ❌ **Call `session_status` at most once per turn**: sessionKey is stable within a turn, reuse the result after one call. Repeated calls = sign of an infinite loop, stop immediately.\n\
-         \x20\x207) ❌ **`xmtp_prompt_user` must be paired before/after with `pending-decisions`** (unique key = jobId+role+agentId triple, rule source `SKILL.md §Session Communication Contract 5`):\n\
-         \x20\x20\x20\x20• Before calling `xmtp_prompt_user`: `onchainos agent pending-decisions add --sub-key <sessionKey> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"<brief after first line of userContent>\" --user-content \"<full userContent>\"`\n\
-         \x20\x20\x20\x20• After parsing `[USER_DECISION_RELAY]` and before calling next-action: `onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}`\n\
-         \x20\x20\x20\x20Missing `add` → when the user replies, this decision cannot be looked up and cannot be relayed back to this session;\n\
-         \x20\x20\x20\x20Missing `remove` → stale entry becomes a zombie, the next `xmtp_prompt_user` call gets misrouted, and the user reply is delivered to the wrong session.\n\
-         \x20\x208) ❌ **No technical jargon in user-visible content**: the content of `xmtp_dispatch_user` and the userContent of `xmtp_prompt_user` are shown directly to the user, **do NOT write** tool names (`xmtp_*`) / event names (`provider_applied`/`job_*`/`dispute_resolved` etc.) / status names (English enums like `open`/`accepted`/`disputed`) / CLI flags (`--*`) / skill names (`okx-agent-identity` / `§Feedback Submit` etc.) / status field names (`jobStatus`/`paymentMode` etc.) — always use **natural expressions in the user's language** (Chinese users see 「担保/x402, 验收期超时, 任务已完成」, English users see equivalent conversational wording like 'escrowed payment/x402, review window expired, task completed', the sub agent replaces them during LOCALIZATION_PREFIX translation). `xmtp_send` to the provider in the same turn follows the same rule.\n\
+         \x20\x206b) ❌ **Do NOT confuse the counterpart's `role` with your own**: when you call `agent profile` / `agent get` on the **provider's** agentId (e.g. online-status check, provider validation), the `role` field in the response belongs to **that agent**, NOT to you. You are **always the buyer** (`--role buyer`) throughout the buyer playbook. Only read the specific field the playbook asks for (e.g. `onlineStatus`); ignore the provider's `role`. 🔴 Real incident: buyer sub called `agent get --agent-ids 802` to check provider info, saw `role: 1` in the response, mistakenly treated it as its own role, passed `--role provider` to `next-action`, and the task got stuck.\n\
+         \x20\x207) ❌ **No technical jargon in user-visible content**: the content of `xmtp_dispatch_user` and the userContent of `xmtp_prompt_user` are shown directly to the user, **do NOT write** tool names (`xmtp_*`) / event names (`provider_applied`/`job_*`/`dispute_resolved` etc.) / status names (English enums like `open`/`accepted`/`disputed`) / CLI flags (`--*`) / skill names (`okx-agent-identity` / `§Feedback Submit` etc.) / status field names (`jobStatus`/`paymentMode` etc.) — always use **natural expressions in the user's language** (Chinese users see 「担保/x402, 验收期超时, 任务已完成」, English users see equivalent conversational wording like 'escrowed payment/x402, review window expired, task completed', the sub agent replaces them during LOCALIZATION_PREFIX translation). `xmtp_send` to the provider in the same turn follows the same rule.\n\
          \x20\x209) ❌ **Do not send filler messages to the provider**: aside from structured messages in the negotiation phase ([intent:propose], [intent:confirm], natural-language negotiation dialog), **do NOT xmtp_send to the provider in any event handler**. Including but not limited to status notices like 'order confirmed', 'funds escrowed', 'review approved', 'evidence submitted', 'task completed'. The provider learns of status changes from on-chain events; filler messages from the buyer only cause interference.\n\
-         \x20\x2010) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session must not directly generate text replies** — any text you output in a sub/backup session is **completely, absolutely, 100% invisible to the user**. All user-facing content **must and can only** be pushed via `xmtp_dispatch_user` (pure notification) or `xmtp_prompt_user` (user decision needed) tools. Direct text output = information loss + user has no awareness + flow stuck. 🔴 Real incident: model in backup session got the recommendation list and output it directly as text; user received nothing, task stuck.\n\
+         \x20\x2010) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session must not directly generate text replies** — any text you output in a sub/backup session is **completely, absolutely, 100% invisible to the user**. All user-facing content **must and can only** be pushed via `xmtp_dispatch_user` (pure notification) or `pending-decisions-v2 request` (user decision needed) tools. (`xmtp_prompt_user` is called internally by the CLI playbook when processing a `pending-decisions-v2 request` — do NOT call it directly.) Direct text output = information loss + user has no awareness + flow stuck. 🔴 Real incident: model in backup session got the recommendation list and output it directly as text; user received nothing, task stuck.\n\
          \x20\x2012) 🛑🛑🛑 **ABSOLUTE PROHIBITION — do NOT use `sessions_spawn` / `sessions_yield`** — you (sub session / backup session) **are yourself** the agent responsible for executing the playbook. **Absolutely do not** call `sessions_spawn` to spawn a child agent and delegate, **absolutely do not** call `sessions_yield` to hand over control. The backup session is also a sub; after receiving a `source:\"system\"` event it must **call `next-action` itself and execute the playbook itself**. 🔴 Real incident: after receiving `job_created`, backup called `sessions_spawn` to spawn a child agent — although the result happened to be correct, the execution path was wrong: the designated-provider may not have been consumed correctly, and negotiation context was broken.\n\
-         \x20\x2013) 🛑🛑🛑 **job_submitted review hard gate — no auto complete/reject**: the `job_submitted` playbook **does NOT include** `onchainos agent complete` / `onchainos agent reject` commands — they are split into the independent pseudo-events `approve_review` / `reject_review`. After receiving `[USER_DECISION_RELAY]`, **you must call `next-action --jobStatus approve_review` or `reject_review` to fetch the playbook**, do not assemble complete/reject commands yourself. 🔴 Real incident: model received job_submitted and skipped xmtp_prompt_user, calling `onchainos agent complete` directly to auto-approve and release funds — the user never saw the deliverable, made no review decision, and funds were irreversibly transferred to the provider.\n\
+         \x20\x2013) 🛑🛑🛑 **job_submitted review hard gate — no auto complete/reject**: the `job_submitted` playbook **does NOT include** `onchainos agent complete` / `onchainos agent reject` commands — they are split into the independent pseudo-events `approve_review` / `reject_review`. After receiving `[USER_DECISION_RELAY]`, **you must call `next-action --jobStatus approve_review` or `reject_review` to fetch the playbook**, do not assemble complete/reject commands yourself. 🔴 Real incident: model received job_submitted and skipped the `pending-decisions-v2 request` review push, calling `onchainos agent complete` directly to auto-approve and release funds — the user never saw the deliverable, made no review decision, and funds were irreversibly transferred to the provider.\n\
          \x20\x2014) 🛑 **Negotiation evaluation must come first — do not skip evaluation and reject directly**: after receiving the provider's reply, you **must complete the evaluation first** (`common context` to obtain budget/max_budget → extract quote/capability info → judge by the decision matrix) **before** sending any `xmtp_send`. Skipping evaluation and replying or rejecting directly = decision without basis. 🔴 Real incident: model received the provider's first quote, skipped evaluation, and within 1 second auto-sent a 'skills mismatch' rejection — the provider's quote was within budget and skills matched perfectly, but the model made the call without reading the reply content.\n\
-         \x20\x2015) 🛑🛑🛑 **ABSOLUTE PROHIBITION — when receiving `[USER_DECISION_RELAY]`, you must execute in place, never forward**: when you (sub/backup session) receive a message starting with `[USER_DECISION_RELAY][intent:...]`, it is **a user decision relayed from the user session for you to execute** — you are the target session, you are the executor. **You must**: first `pending-decisions remove` (rule 7), then parse the intent tag and execute the corresponding action:\n\
+         \x20\x2015) 🛑🛑🛑 **ABSOLUTE PROHIBITION — when receiving `[USER_DECISION_RELAY]`, you must execute in place, never forward**: when you (sub/backup session) receive a message starting with `[USER_DECISION_RELAY]`, it is **a user decision relayed from the user session for you to execute**. Two relay shapes coexist depending on the scene's emission style; the queue entry was already cleared by `resolve` in the user-session — no manual remove needed; just parse the content and execute.\n\
+         \x20\x20\x20\x20• Default shape: `[USER_DECISION_RELAY] decision: <user verbatim>` → keyword-route to `next-action --jobStatus <pseudo_event>` per the source scene's Step 2 (review / dispute / deadline scenes).\n\
+         \x20\x20\x20\x20• Intent-tag shape: `[USER_DECISION_RELAY][intent:TAG] user said: <verbatim>` (or `... agentId=...` etc.) → route by the explicit tag below (negotiation scenes):\n\
          \x20\x20\x20\x20▸ `[intent:PICK_PROVIDER agentId=X]` → `onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider X`\n\
          \x20\x20\x20\x20▸ `[intent:NEXT_PAGE]` → paginate (recommend next page)\n\
          \x20\x20\x20\x20▸ `[intent:SET_PUBLIC]` → `onchainos agent set-public {job_id}`\n\
          \x20\x20\x20\x20▸ `[intent:CLOSE_TASK]` → `onchainos agent close {job_id}`\n\
          \x20\x20\x20\x20▸ `[intent:VIEW_RECOMMEND]` → `onchainos agent recommend {job_id} --agent-id {agent_id}`\n\
-         \x20\x20\x20\x20▸ `[intent:APPROVE_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}`\n\
-         \x20\x20\x20\x20▸ `[intent:REJECT_REVIEW]` → `onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId {agent_id}`\n\
-         \x20\x20\x20\x20▸ `[intent:SUBMIT_EVIDENCE]` → `onchainos agent next-action --jobid {job_id} --jobStatus dispute_evidence --role buyer --agentId {agent_id}`\n\
-         \x20\x20\x20\x20▸ `[intent:ACCEPT_X402_PRICE]` → continue the x402 payment flow (**no xmtp_start_conversation / B-Step group creation**): first `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` to get paymentMostTokenAmount for the DX-Step 3 budget check; if within budget → execute A-Step 3 `onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <x402 tokenSymbol> --token-amount <x402 amountHuman> --endpoint <endpoint>`; if exceeded → xmtp_prompt_user to inform the user of the over-budget and guide them through choices A/B/C\n\
+         \x20\x20\x20\x20▸ `[intent:ACCEPT_X402_PRICE]` → continue the x402 payment flow (**no xmtp_start_conversation / B-Step group creation**): first `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` to get paymentMostTokenAmount for the DX-Step 3 budget check; if within budget → execute A-Step 3 `onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <x402 tokenSymbol> --token-amount <x402 amountHuman> --endpoint <endpoint>`; if exceeded → enqueue user decision via `pending-decisions-v2 request` (A/B/C choices: specify ASP / public / close)\n\
          \x20\x20\x20\x20▸ `[intent:REJECT_X402_PRICE]` → x402 price rejected, guide user to switch provider (mark-failed + recommend or A/B/C options)\n\
          \x20\x20\x20\x20▸ `[intent:SKIP_ALL_PROVIDERS]` → end the switch-provider flow\n\
          \x20\x20\x20\x20**Absolutely do not** call `xmtp_dispatch_session` to forward `[USER_DECISION_RELAY]` content to any session (including yourself) — you are the final receiver, forwarding = infinite loop. 🔴 Real incident: backup session (Minimax) received `[USER_DECISION_RELAY][intent:PICK_PROVIDER agentId=806]` and did not execute next-action, but instead called xmtp_dispatch_session to forward the same message to itself (agent:main:okx-a2a:group:backup), forming an infinite loop and the task got stuck.\n\n\
@@ -219,15 +267,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             Event::JobCreated => "xmtp_start_conversation (create group) → xmtp_send (send negotiation message)",
             Event::ProviderApplied => "(no action) wait for job_accepted",
             Event::JobAccepted => "xmtp_dispatch_user (notify accept success)",
-            Event::JobSubmitted => "xmtp_prompt_user (forward deliverable, request review decision)",
+            Event::JobSubmitted => "pending-decisions-v2 request (forward deliverable, request review decision)",
             Event::JobRefused => "xmtp_dispatch_user (notify rejection on-chain) → wait for provider decision",
-            Event::JobDisputed => "xmtp_prompt_user (forward arbitration notice, request evidence)",
+            Event::JobDisputed => "pending-decisions-v2 request (forward arbitration notice, request evidence)",
             Event::DisputeResolved => "xmtp_dispatch_user (notify arbitration result)",
             Event::JobRefunded => "xmtp_dispatch_user (notify refund complete)",
             Event::JobAutoRefunded => "xmtp_dispatch_user (claimAutoRefund tx receipt)",
             Event::NegotiateReply => "xmtp_send (evaluate provider natural-language reply)",
             Event::NegotiateAck => "save-agreed → set-payment-mode (ACK validation → persist)",
             Event::NegotiateCounter => "xmtp_send (evaluate COUNTER → new PROPOSE or REJECT)",
+            Event::AttachmentAdded => "xmtp_file_upload → xmtp_send (upload + forward attachment to provider)",
             _ => "none",
         }
     );
@@ -274,6 +323,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::Other(ref s) if s == "create_task" => super::flow_lifecycle::create_task(),
         Event::Other(ref s) if s == "close" => super::flow_lifecycle::close_task(&ctx),
         Event::Other(ref s) if s == "set_public" => super::flow_lifecycle::set_public(&ctx),
+        Event::AttachmentAdded => super::flow_lifecycle::attachment_added(&ctx),
         Event::TaskTokenBudgetChange => super::flow_lifecycle::task_token_budget_change(&ctx),
         Event::TaskProviderChange => super::flow_lifecycle::task_provider_change(&ctx),
 

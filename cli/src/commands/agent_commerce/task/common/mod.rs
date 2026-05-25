@@ -15,6 +15,7 @@ pub mod dispute_upload;
 pub mod network;
 pub mod payment_mode;
 pub mod pending;
+pub mod pending_v2;
 pub mod query;
 pub mod review_gate;
 pub mod state_machine;
@@ -98,7 +99,6 @@ struct TaskDetail {
     category_codes: Option<Vec<String>>,
     chain_id: Option<i32>,
     min_credit_score: Option<f64>,
-    designated_provider: Option<String>,
     buyer_agent_address: Option<String>,
     buyer_agent_id: Option<String>,
     provider_agent_address: Option<String>,
@@ -661,18 +661,18 @@ fn flatten_my_agents(data: &serde_json::Value, my_owner: &str) -> Vec<serde_json
 // ─── Status descriptions ────────────────────────────────────────────────
 fn status_desc(s: &str) -> &str {
     match s {
-        "init"      => "初始化中（等待上链确认）",
-        "created"   => "等待接单（Created）",
-        "accepted"  => "已接单，卖家执行中（Accepted）",
-        "submitted" => "卖家已提交交付，等待买家验收（Submitted）",
-        "refused"   => "买家拒绝验收，冻结期内可申请仲裁（Refused）",
-        "disputed"      => "仲裁进行中（Disputed）",
-        "admin_stopped" => "管理员已停止任务（AdminStopped）",
-        "completed" | "complete" => "任务已完成，款项已释放（Complete）",
-        "rejected"  => "仲裁结束，任务关闭（Rejected）",
-        "close"     => "买家主动关闭（Close）",
-        "expired"   => "任务已过期（Expired）",
-        _           => "未知状态",
+        "init"      => "Initializing (awaiting on-chain confirmation)",
+        "created"   => "Awaiting acceptance (Created)",
+        "accepted"  => "Accepted; ASP executing (Accepted)",
+        "submitted" => "ASP submitted deliverable; awaiting User Agent review (Submitted)",
+        "refused"   => "User Agent rejected deliverable; arbitration possible within freeze period (Refused)",
+        "disputed"      => "Arbitration in progress (Disputed)",
+        "admin_stopped" => "Admin stopped the task (AdminStopped)",
+        "completed" | "complete" => "Task completed; funds released (Complete)",
+        "rejected"  => "Arbitration concluded; task closed (Rejected)",
+        "close"     => "User Agent closed the task (Close)",
+        "expired"   => "Task expired (Expired)",
+        _           => "Unknown status",
     }
 }
 
@@ -691,7 +691,7 @@ fn available_actions(role: &str, status: &str, job_id: &str) -> Vec<String> {
         Some(Role::Provider)  => super::provider::flow::available_actions(&status, job_id),
         Some(Role::Evaluator) => super::evaluator::flow::available_actions(&status, job_id),
         None => vec![
-            format!("onchainos agent status {job_id}         # 查询最新任务状态"),
+            format!("onchainos agent status {job_id}         # query latest task status"),
         ],
     }
 }
@@ -713,10 +713,10 @@ async fn run_context(
 ) -> Result<()> {
     // Validate role.
     if !["buyer", "provider", "evaluator"].contains(&role) {
-        bail!("--role 必须是 buyer / provider / evaluator");
+        bail!("--role must be buyer / provider / evaluator");
     }
     if agent_id.is_empty() {
-        bail!("--agent-id 必填：beta 后端要求 agenticId header 非空");
+        bail!("--agent-id is required (beta backend requires non-empty agenticId header)");
     }
 
     // Fetch task details from the backend. The base url is resolved internally by TaskApiClient::new
@@ -725,11 +725,11 @@ async fn run_context(
     let resp_val = client
         .get_with_identity(&client.task_path(job_id), agent_id)
         .await
-        .map_err(|e| anyhow::anyhow!("无法获取任务详情: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to get task detail: {e}"))?;
 
     // Backend spec: the response `data` is a flat task object directly (WalletApiClient already strips body["data"]).
     let task: TaskDetail = serde_json::from_value(resp_val)
-        .map_err(|e| anyhow::anyhow!("解析响应失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to parse response: {e}"))?;
 
     // Fetch the agent's own profile: name / profileDescription / agentWalletAddress / communicationAddress.
     // All three roles need this — the "Your identity" block displays wallet + communication addresses;
@@ -753,9 +753,9 @@ async fn build_context(
 
     let role_enum = state_machine::Role::parse(role);
     let role_cn = match role_enum {
-        Some(state_machine::Role::Buyer)     => "买家（Client）",
-        Some(state_machine::Role::Provider)  => "卖家（Provider）",
-        Some(state_machine::Role::Evaluator) => "仲裁者（Evaluator）",
+        Some(state_machine::Role::Buyer)     => "User Agent",
+        Some(state_machine::Role::Provider)  => "Agent Service Provider (ASP)",
+        Some(state_machine::Role::Evaluator) => "Evaluator Agent",
         None                                 => role,
     };
 
@@ -768,66 +768,63 @@ async fn build_context(
     let status_text = format!("{status_str} — {}", status_desc(&status_str));
 
     // ── Role declaration ─────────────────────────────────────────────────
-    out.push_str(&format!("你是任务系统中的{role_cn}。\n\n"));
+    out.push_str(&format!("You are the {role_cn} in the task system.\n\n"));
 
     // ── Identity info ────────────────────────────────────────────────────
     // Wallet / communication addresses come from `agent get` lookup (fetch_agent_profile);
     // buyerAgentAddress / providerAgentAddress in the task detail are still used in the
-    // "Buyer info" / "Seller info" blocks below.
-    out.push_str("【你的身份】\n");
-    out.push_str(&format!("- 角色：{role_cn}\n"));
-    out.push_str(&format!("- AgentID：{agent_id}\n"));
+    // "User Agent info" / "ASP info" blocks below.
+    out.push_str("[Your Identity]\n");
+    out.push_str(&format!("- Role: {role_cn}\n"));
+    out.push_str(&format!("- AgentID: {agent_id}\n"));
     if let Some(w) = &profile.agent_wallet_address {
-        out.push_str(&format!("- 钱包地址：{w}\n"));
+        out.push_str(&format!("- Wallet address: {w}\n"));
     }
     if let Some(c) = &profile.communication_address {
-        out.push_str(&format!("- 通信地址：{c}\n"));
+        out.push_str(&format!("- Communication address: {c}\n"));
     }
     if let Some(n) = &profile.name {
-        out.push_str(&format!("- 名称：{n}\n"));
+        out.push_str(&format!("- Name: {n}\n"));
     }
     if let Some(d) = &profile.profile_description {
-        out.push_str(&format!("- 描述：{d}\n"));
+        out.push_str(&format!("- Description: {d}\n"));
     }
     out.push('\n');
 
     // ── Task details ─────────────────────────────────────────────────────
-    out.push_str("【任务详情】\n");
-    out.push_str(&format!("- 任务ID：{}\n", task.job_id));
+    out.push_str("[Task Details]\n");
+    out.push_str(&format!("- Job ID: {}\n", task.job_id));
     if let Some(tid) = task.task_id {
-        out.push_str(&format!("- 内部ID：{tid}\n"));
+        out.push_str(&format!("- Internal ID: {tid}\n"));
     }
-    out.push_str(&format!("- 标题：{}\n", task.title));
-    out.push_str(&format!("- 描述：{}\n", task.description));
+    out.push_str(&format!("- Title: {}\n", task.title));
+    out.push_str(&format!("- Description: {}\n", task.description));
 
-    let amount = task.token_amount.as_deref().unwrap_or("未设置");
+    let amount = task.token_amount.as_deref().unwrap_or("not set");
     let token  = task.token_address.as_deref().unwrap_or("");
     let symbol = task.token_symbol.as_deref().unwrap_or("UNKNOWN");
-    out.push_str(&format!("- 创建预算：{amount} {symbol} （token: {token}）\n"));
+    out.push_str(&format!("- Budget: {amount} {symbol} (token: {token})\n"));
     if let Some(max_amt) = &task.payment_most_token_amount {
-        out.push_str(&format!("- 最高预算（paymentMostTokenAmount）：{max_amt} {symbol}\n"));
+        out.push_str(&format!("- 🔒 INTERNAL max budget (paymentMostTokenAmount): {max_amt} {symbol} ← for internal decisions only; NEVER include in any message sent to the ASP\n"));
     }
 
     let pm = task.payment_mode.unwrap_or(0);
     out.push_str(&format!(
-        "- 支付方式（paymentType={}）：{}\n",
+        "- Payment mode (paymentType={}): {}\n",
         pm,
         payment_mode_desc(pm)
     ));
     let visibility = match task.visibility {
-        Some(0) => "公开（Public）",
-        Some(1) => "私有（Private）",
-        _       => "未知",
+        Some(0) => "Public",
+        Some(1) => "Private",
+        _       => "Unknown",
     };
-    out.push_str(&format!("- 可见性：{visibility}\n"));
+    out.push_str(&format!("- Visibility: {visibility}\n"));
     if let Some(chain) = task.chain_id {
-        out.push_str(&format!("- 链：chainId={chain}\n"));
+        out.push_str(&format!("- Chain: chainId={chain}\n"));
     }
     if let Some(score) = task.min_credit_score {
-        out.push_str(&format!("- 最低信用分要求：{score}\n"));
-    }
-    if let Some(dp) = &task.designated_provider {
-        out.push_str(&format!("- 指定卖家：{dp}\n"));
+        out.push_str(&format!("- Min credit score: {score}\n"));
     }
     if let Some(ec) = &task.expire_config {
         if let (Some(open_sec), Some(acc_sec)) = (
@@ -835,42 +832,42 @@ async fn build_context(
             ec.get("acceptedExpireSec").and_then(|v| v.as_u64()),
         ) {
             out.push_str(&format!(
-                "- 有效期：接单时限 {}h，交付时限 {}h\n",
+                "- Expiry: accept deadline {}h, delivery deadline {}h\n",
                 open_sec / 3600,
                 acc_sec / 3600
             ));
         }
     }
-    out.push_str(&format!("- 创建时间：{}\n", fmt_unix_secs(task.create_time)));
-    out.push_str(&format!("- 更新时间：{}\n", fmt_unix_secs(task.update_time)));
+    out.push_str(&format!("- Created: {}\n", fmt_unix_secs(task.create_time)));
+    out.push_str(&format!("- Updated: {}\n", fmt_unix_secs(task.update_time)));
     out.push('\n');
 
     // ── Current status ───────────────────────────────────────────────────
-    out.push_str("【当前状态】\n");
+    out.push_str("[Current Status]\n");
     out.push_str(&format!("- {status_text}\n"));
     out.push('\n');
 
-    // ── Buyer info ───────────────────────────────────────────────────────
-    out.push_str("【买家信息】\n");
+    // ── User Agent info ─────────────────────────────────────────────────
+    out.push_str("[User Agent Info]\n");
     match (&task.buyer_agent_id, &task.buyer_agent_address) {
         (Some(id), Some(addr)) => {
-            out.push_str(&format!("- AgentID：{id}\n"));
-            out.push_str(&format!("- 通信地址：{addr}\n"));
+            out.push_str(&format!("- AgentID: {id}\n"));
+            out.push_str(&format!("- Communication address: {addr}\n"));
         }
-        (Some(id), None) => out.push_str(&format!("- AgentID：{id}\n")),
-        _ => out.push_str("- 信息未知\n"),
+        (Some(id), None) => out.push_str(&format!("- AgentID: {id}\n")),
+        _ => out.push_str("- Unknown\n"),
     }
     out.push('\n');
 
-    // ── Seller info ──────────────────────────────────────────────────────
-    out.push_str("【卖家信息】\n");
+    // ── ASP info ──────────────────────────────────────────────────────────
+    out.push_str("[ASP Info]\n");
     match (&task.provider_agent_id, &task.provider_agent_address) {
         (Some(id), Some(addr)) => {
-            out.push_str(&format!("- AgentID：{id}\n"));
-            out.push_str(&format!("- 通信地址：{addr}\n"));
+            out.push_str(&format!("- AgentID: {id}\n"));
+            out.push_str(&format!("- Communication address: {addr}\n"));
         }
-        (Some(id), None) => out.push_str(&format!("- AgentID：{id}\n")),
-        _ => out.push_str("- 尚未匹配卖家\n"),
+        (Some(id), None) => out.push_str(&format!("- AgentID: {id}\n")),
+        _ => out.push_str("- No ASP matched yet\n"),
     }
     // ── Capability-match check (provider + created status only) ─────────
     // Source of truth: service-list (the agent's registered service catalogue).
@@ -882,14 +879,14 @@ async fn build_context(
         && task_status == state_machine::Status::Created
     {
         let services = fetch_agent_services(profile.agent_id.as_deref().unwrap_or("")).await;
-        out.push_str("【⚠️ 第一步：专业匹配检查（必做，不得跳过）】\n");
+        out.push_str("[⚠️ Step 1: Capability Match Check (mandatory, do not skip)]\n");
         if services.is_empty() {
-            out.push_str("- 你的服务列表（service-list）：**空** —— 没有注册任何服务\n");
+            out.push_str("- Your service list (service-list): **empty** — no services registered\n");
             if let Some(desc) = &profile.profile_description {
-                out.push_str(&format!("- 备用参考·Provider 描述：{desc}\n"));
+                out.push_str(&format!("- Fallback reference — ASP description: {desc}\n"));
             }
         } else {
-            out.push_str("- 你的服务列表（service-list，**专业匹配 + 报价锚的真相来源**）：\n");
+            out.push_str("- Your service list (service-list, **source of truth for capability match + quote anchor**):\n");
             for (i, svc) in services.iter().enumerate() {
                 let name = svc.name.as_deref().unwrap_or("(no name)");
                 let desc = svc.description.as_deref().unwrap_or("(no description)");
@@ -897,29 +894,29 @@ async fn build_context(
                 // fee field: non-zero positive value displays "registered price X USDT" as the negotiation anchor;
                 // unset / 0 / empty displays "unset" so the agent estimates by workload.
                 let fee_hint = match nonzero_fee(&svc.fee) {
-                    Some(f) => format!("注册价 {f} USDT(协商以此为锚)"),
-                    None => "注册价未设置(按工作量估,不要瞎要价)".to_string(),
+                    Some(f) => format!("registered fee {f} USDT (use as negotiation anchor)"),
+                    None => "registered fee not set (estimate by workload; do not overcharge)".to_string(),
                 };
                 out.push_str(&format!("  {}. [{stype}] {name}: {desc} — {fee_hint}\n", i + 1));
             }
             if let Some(desc) = &profile.profile_description {
-                out.push_str(&format!("- 备用参考·Provider 描述：{desc}\n"));
+                out.push_str(&format!("- Fallback reference — ASP description: {desc}\n"));
             }
         }
-        out.push_str(&format!("- 任务标题：{}\n", task.title));
-        out.push_str(&format!("- 任务描述：{}\n", task.description));
+        out.push_str(&format!("- Task title: {}\n", task.title));
+        out.push_str(&format!("- Task description: {}\n", task.description));
         out.push('\n');
-        out.push_str("判断规则（**只要任意一项服务**和任务领域吻合就算匹配；只有**所有**服务都对不上才判定不匹配）：\n");
-        out.push_str("- ✅ 服务列表里**任意一项**和任务领域吻合 → 匹配，进入下方「按可见性分流」继续协商\n");
-        out.push_str("- ❌ 服务列表为空 / 所有服务都和任务领域明显不符（如全是猫图生成 vs 任务是合约审计）→ **必须拒绝**：\n");
-        out.push_str("  1. 调用 `xmtp_send` 工具发送拒绝消息（模板如下）\n");
-        out.push_str("  2. **禁止**执行 onchainos agent apply 或任何后续操作\n\n");
-        out.push_str("拒绝回复模板（通过 `xmtp_send` 工具发送，`content` 字段 = 下方纯自然语言正文）：\n");
+        out.push_str("Match rules (**any single service** matching the task domain counts as a match; only when **all** services fail to match is it a mismatch):\n");
+        out.push_str("- ✅ **Any one service** in the list matches the task domain → match; proceed to the visibility-based routing below\n");
+        out.push_str("- ❌ Service list is empty / all services clearly mismatched with the task domain (e.g. all cat-image generation vs task is contract audit) → **must reject**:\n");
+        out.push_str("  1. Call `xmtp_send` to send a rejection message (template below)\n");
+        out.push_str("  2. **Do NOT** execute onchainos agent apply or any further operations\n\n");
+        out.push_str("Rejection reply template (send via `xmtp_send`; `content` field = the plain natural-language body below):\n");
         let summary = if services.is_empty() {
             profile
                 .profile_description
                 .clone()
-                .unwrap_or_else(|| "未注册任何服务".to_string())
+                .unwrap_or_else(|| "no services registered".to_string())
         } else {
             services
                 .iter()
@@ -928,53 +925,53 @@ async fn build_context(
                 .join(" / ")
         };
         out.push_str(&format!(
-            "抱歉，此任务（{}）不在我目前提供的服务范围（{}）内，无法承接。祝您找到合适的卖家。\n\n",
+            "Sorry, this task ({}) is outside my current service scope ({}); I cannot take it on. Best of luck finding the right ASP.\n\n",
             task.title, summary
         ));
-        out.push_str("注意：`content` 是纯自然语言正文，不要加任何 text header（如 `jobId: / 来自: ... / 类型: REPLY` 之类）。XMTP 插件会自动把 content 包装成 a2a-agent-chat envelope。\n\n");
+        out.push_str("Note: `content` is plain natural-language body; do not add any text headers (e.g. `jobId: / from: ... / type: REPLY`). The XMTP plugin automatically wraps content into an a2a-agent-chat envelope.\n\n");
 
         // Once capability matching passes, branch by task.visibility to give different action guidance (VisibilityEnum: 0=PUBLIC / 1=PRIVATE).
         let buyer_id = task.buyer_agent_id.as_deref().unwrap_or("<task.buyerAgentId>");
-        let agent_id_hint = profile.agent_id.as_deref().unwrap_or("<你的agentId>");
-        out.push_str("【⚠️ 第二步：按可见性分流（匹配通过才走这里）】\n\n");
+        let agent_id_hint = profile.agent_id.as_deref().unwrap_or("<yourAgentId>");
+        out.push_str("[⚠️ Step 2: Route by Visibility (only if match passed)]\n\n");
         if task.visibility == Some(0) {
-            // Public task → provider proactively creates the group + sends the cold-start opener (does not call next-action).
-            out.push_str("当前任务**可见性 = 公开（Public）** → 你需要**主动联系买家发起协商**：\n\n");
-            out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 skills/okx-agent-task/SKILL.md Session Communication Contract §4.7）：\n");
+            // Public task → ASP proactively creates the group + sends the cold-start opener (does not call next-action).
+            out.push_str("Current task **visibility = Public** → you must **proactively contact the User Agent to initiate negotiation**:\n\n");
+            out.push_str("1. Call `xmtp_start_conversation` to create a group + sub session (see skills/okx-agent-task/SKILL.md Session Communication Contract §4.7):\n");
             out.push_str(&format!(
-                "   - 参数：`myAgentId={agent_id_hint}`，`toAgentId={buyer_id}`（买家 agentId），`jobId={}`\n",
+                "   - Args: `myAgentId={agent_id_hint}`, `toAgentId={buyer_id}` (User Agent's agentId), `jobId={}`\n",
                 task.job_id
             ));
-            out.push_str("   - 成功返回 `sessionKey`（新 sub 的 key，下面 step 2 直接用，**不要再调 `session_status`**——bootstrap 阶段 `session_status` 可能返回当前所在 user session 的 key，会拿错）+ `xmtpGroupId`\n");
-            out.push_str("2. **直接 `xmtp_send` 一条冷启动开场白**（自然语言模板，详见 `provider.md §2.1 末尾「用户选定后怎么协商」`）：\n");
+            out.push_str("   - Returns `sessionKey` (the new sub's key — use it directly in step 2; **do NOT call `session_status`** — during bootstrap it may return the current user session's key, which is wrong) + `xmtpGroupId`\n");
+            out.push_str("2. **Send a cold-start opener via `xmtp_send`** (natural-language template; see `provider.md §2.1 end — \"how to negotiate after user selects\"`):\n");
             out.push_str(&format!(
-                "   - 内容只是：自我介绍 + 看到了「{}」任务 + 我能做 + 问买家预算 / 验收标准 / 支付方式偏好\n",
+                "   - Content: self-introduction + noticed the \"{}\" task + I can do it + ask the User Agent about budget / acceptance criteria / payment mode preference\n",
                 task.title
             ));
-            out.push_str("   - ❌ **首条禁止报具体价格**（service-list 注册价 / 工作量估算的判断等买家回信后再走 next-action）\n");
-            out.push_str("   - ❌ **首条禁止产工作内容 / 杜撰协议字面量**（`[INTEREST]` / `[CONTACT_INIT]` 等都是幻觉）\n");
-            out.push_str("   - **本 turn 在这里结束**，等买家回信。买家回信后**才**调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <agentId>` 拿协商剧本。\n\n");
-            out.push_str("🛑 **必须用 `xmtp_send`，禁止用 `xmtp_dispatch_session` / `xmtp_dispatch_user` / `xmtp_prompt_user` 替代**——给 peer agent 发 a2a-agent-chat 业务消息**只有 `xmtp_send` 一种路径**。看到「建立协商通道 / 派发到 sub / dispatch」这种语感**也只能选 `xmtp_send`**。`xmtp_dispatch_session` 是 user→sub `[USER_DECISION_RELAY]` 决策回传专用，跟协商首条 a2a-agent-chat 形态完全不符。\n\n");
+            out.push_str("   - ❌ **Do NOT quote a specific price in the first message** (service-list registered fee / workload estimation judgment waits until the User Agent replies → then call next-action)\n");
+            out.push_str("   - ❌ **Do NOT produce work content / fabricate protocol literals** (`[INTEREST]` / `[CONTACT_INIT]` etc. are hallucinations)\n");
+            out.push_str("   - **This turn ends here**; wait for the User Agent's reply. Only **after** the User Agent replies call `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <agentId>` to get the negotiation playbook.\n\n");
+            out.push_str("🛑 **Must use `xmtp_send`; do NOT substitute `xmtp_dispatch_session` / `xmtp_dispatch_user` / `xmtp_prompt_user`** — sending a2a-agent-chat business messages to a peer agent uses **only `xmtp_send`**. Even if the intent feels like \"establish negotiation channel / dispatch to sub\", **the only valid tool is `xmtp_send`**. `xmtp_dispatch_session` is exclusively for user→sub `[USER_DECISION_RELAY]` decision relay and does not match the a2a-agent-chat shape at all.\n\n");
         } else {
-            // Private task → provider passively waits for the buyer to reach out first.
-            out.push_str("当前任务**可见性 = 私有（Private）** → 你**不要主动建群**：\n\n");
-            out.push_str("- 私有任务由买家选定 provider，必须**等买家先发** a2a-agent-chat envelope（你才有联系对方的入口）\n");
-            out.push_str("- 收到买家首条 inquire + 专业匹配通过后，**必须先调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <agentId>` 拿协商首回合剧本**，再按剧本输出去 `xmtp_send`——不要凭这里简版自己拼协商内容\n");
-            out.push_str("- **禁止**调 `xmtp_start_conversation` 主动建群——私有任务没有这个权限\n\n");
+            // Private task → ASP passively waits for the User Agent to reach out first.
+            out.push_str("Current task **visibility = Private** → **do NOT proactively create a group**:\n\n");
+            out.push_str("- Private tasks are assigned by the User Agent; you must **wait for the User Agent to send first** a2a-agent-chat envelope (that is your entry point to contact them)\n");
+            out.push_str("- After receiving the User Agent's first inquiry + passing capability match, **you must first call `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <agentId>` to get the first-round negotiation playbook**, then follow it to `xmtp_send` — do not compose negotiation content from this abbreviated version\n");
+            out.push_str("- **Do NOT** call `xmtp_start_conversation` to create a group — private tasks do not have this permission\n\n");
         }
 
         // First-round negotiation hint (shared by public / private) — only semantic anti-patterns go here;
         // the actual three-step handshake + price judgment script is provided by next-action.
-        out.push_str("📌 **协商首回合本质：你是去『问 + 表态』，不是『自我确认』**\n");
-        out.push_str("- 任务能力 / 验收标准：能不能做、有没有补充问题\n");
-        out.push_str("- 价格立场：原价是否合理；偏低就**还价**（明确报新价 + 理由），不要机械接受\n");
-        out.push_str("- paymentMode 立场：A2A 协商路径固定 escrow（担保）\n\n");
-        out.push_str("❌ **禁止自我 confirm 措辞**：不要在 `xmtp_send` content 里写「我确认以下三项 / 三项确认完毕 / 我接受 / 我将立即 apply / 我将提交接单申请」。三项是要**问**买家的，发完等 buyer 的 `[intent:propose]` 才进下一步握手——具体三步握手剧本（[intent:propose] → [intent:ack] → [intent:confirm]）由 next-action 给出，**这里不能跳过 next-action 直接 apply**（已发生过线上事故）。\n\n");
+        out.push_str("📌 **First-round negotiation essence: you are there to 'ask + state your position', NOT 'self-confirm'**\n");
+        out.push_str("- Task capability / acceptance criteria: can you do it? any follow-up questions?\n");
+        out.push_str("- Price position: is the original price reasonable? If too low, **counter-offer** (state a new price + reason); do not mechanically accept\n");
+        out.push_str("- paymentMode position: A2A negotiation path is fixed to escrow\n\n");
+        out.push_str("❌ **Do NOT use self-confirm wording**: do not write in `xmtp_send` content things like \"I confirm the following three items / three items confirmed / I accept / I will apply immediately / I will submit the acceptance request\". The three items are to **ask** the User Agent; after sending, wait for the User Agent's `[intent:propose]` before the next handshake step — the specific three-step handshake playbook ([intent:propose] → [intent:ack] → [intent:confirm]) is provided by next-action; **you must not skip next-action and apply directly** (this has caused production incidents).\n\n");
     }
 
     // ── Next actions ─────────────────────────────────────────────────────
     let actions = available_actions(role, &status_str, &task.job_id);
-    out.push_str("【下一步动作】（先调 next-action 拿当前 status 的完整剧本，按剧本走，不要绕过 next-action 直接调 CLI）\n");
+    out.push_str("[Next Actions] (call next-action first to get the full playbook for the current status; follow the playbook — do not bypass next-action and call CLI directly)\n");
     for a in &actions {
         out.push_str(&format!("- {a}\n"));
     }
@@ -988,9 +985,9 @@ async fn build_context(
         _           => "",
     };
     if !skill_file.is_empty() {
-        out.push_str("【⚠️ 必须立即执行】\n");
+        out.push_str("[⚠️ Must Execute Immediately]\n");
         out.push_str(&format!(
-            "请立即读取角色指南 skills/okx-agent-task/{skill_file}（与 skills/okx-agent-task/SKILL.md 同目录），该文件包含完整的协商规则和接单流程。\n"
+            "Read the role guide skills/okx-agent-task/{skill_file} (same directory as skills/okx-agent-task/SKILL.md) immediately; it contains the complete negotiation rules and acceptance flow.\n"
         ));
     }
 

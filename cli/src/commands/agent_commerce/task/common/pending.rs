@@ -94,7 +94,7 @@ struct PendingFile {
 }
 
 fn pending_path() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?;
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("failed to get HOME directory"))?;
     // Aligned with ~/.onchainos/task/<jobId>/ negotiation/arbitration state directories; all task-level state lives under task/.
     let dir = home.join(".onchainos").join("task");
     std::fs::create_dir_all(&dir)?;
@@ -120,7 +120,7 @@ fn read_pending() -> Result<PendingFile> {
             ));
             let _ = std::fs::copy(&path, &backup);
             eprintln!(
-                "[pending] pending-decisions.json 解析失败 ({e})，已备份到 {} 并重置",
+                "[pending] pending-decisions.json parse failed ({e}), backed up to {} and reset",
                 backup.display()
             );
             Ok(PendingFile::default())
@@ -159,7 +159,7 @@ pub fn short_job_id(job_id: &str) -> String {
 
 fn validate_role(role: &str) -> Result<()> {
     if !["buyer", "provider", "evaluator"].contains(&role) {
-        bail!("--role 必须是 buyer / provider / evaluator，当前: {role}");
+        bail!("--role must be buyer / provider / evaluator, got: {role}");
     }
     Ok(())
 }
@@ -180,16 +180,16 @@ pub async fn run(cmd: PendingDecisionsCommand) -> Result<()> {
         } => {
             validate_role(&role)?;
             if sub_key.trim().is_empty() {
-                bail!("--sub-key 不能为空");
+                bail!("--sub-key cannot be empty");
             }
             if job_id.trim().is_empty() {
-                bail!("--job-id 不能为空");
+                bail!("--job-id cannot be empty");
             }
             if agent_id.trim().is_empty() {
-                bail!("--agent-id 不能为空（唯一键第三维度，多 agent 钱包必填）");
+                bail!("--agent-id cannot be empty (third dimension of unique key, required for multi-agent wallets)");
             }
             if ttl <= 0 {
-                bail!("--ttl 必须是正数（秒），当前: {ttl}");
+                bail!("--ttl must be a positive number (seconds), got: {ttl}");
             }
 
             let mut pf = read_pending()?;
@@ -229,7 +229,7 @@ pub async fn run(cmd: PendingDecisionsCommand) -> Result<()> {
         PendingDecisionsCommand::Remove { job_id, role, agent_id } => {
             validate_role(&role)?;
             if agent_id.trim().is_empty() {
-                bail!("--agent-id 不能为空（唯一键第三维度，多 agent 钱包必填）");
+                bail!("--agent-id cannot be empty (third dimension of unique key, required for multi-agent wallets)");
             }
             let mut pf = read_pending()?;
             cleanup_expired(&mut pf);
@@ -264,7 +264,7 @@ pub async fn run(cmd: PendingDecisionsCommand) -> Result<()> {
             match format.as_str() {
                 "text" => {
                     if filtered.is_empty() {
-                        println!("(当前无待决策)");
+                        println!("(no pending decisions)");
                     } else {
                         for (i, e) in filtered.iter().enumerate() {
                             println!(
@@ -286,7 +286,7 @@ pub async fn run(cmd: PendingDecisionsCommand) -> Result<()> {
                         "count": count,
                     }));
                 }
-                other => bail!("--format 必须是 json 或 text，当前: {other}"),
+                other => bail!("--format must be json or text, got: {other}"),
             }
             Ok(())
         }
@@ -334,8 +334,8 @@ mod tests {
             short_job_id: "0x3938…cdef".to_string(),
             role: "buyer".to_string(),
             agent_id: "100".to_string(),
-            summary: "测试摘要".to_string(),
-            user_content: "[Task 0x3938…cdef you as buyer] 测试内容".to_string(),
+            summary: "test summary".to_string(),
+            user_content: "[Task 0x3938…cdef you as buyer] test content".to_string(),
             created_at: 1700000000,
             expires_at: 1700086400,
         };
@@ -344,6 +344,6 @@ mod tests {
         assert!(json.contains("\"user_content\":"));
         let back: PendingEntry = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.agent_id, "100");
-        assert_eq!(back.user_content, "[Task 0x3938…cdef you as buyer] 测试内容");
+        assert_eq!(back.user_content, "[Task 0x3938…cdef you as buyer] test content");
     }
 }

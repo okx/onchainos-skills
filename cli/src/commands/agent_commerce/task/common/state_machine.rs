@@ -283,6 +283,11 @@ pub enum Event {
     /// (without waiting for the on-chain task_provider_change confirmation).
     SwitchProvider,
 
+    // ── Attachment relay event (buyer-local dispatch, no status change) ─
+    /// User session dispatched `[ATTACHMENT_ADDED]`; sub session uploads + forwards the file to the provider.
+    /// Can fire in Created (with active sub session) or Accepted — multi-status, so freshness check is skipped.
+    AttachmentAdded,
+
     // ── Negotiation relay events (buyer-local dispatch, no status change) ─
     /// Provider's natural-language reply (no [intent:*] marker); buyer.md Route 4 → negotiate_reply.
     NegotiateReply,
@@ -357,6 +362,8 @@ impl Event {
             "task_provider_change"      => Event::TaskProviderChange,
             // User-session pseudo events
             "switch_provider"           => Event::SwitchProvider,
+            // Attachment relay (buyer-local dispatch)
+            "attachment_added"          => Event::AttachmentAdded,
             // Negotiation relay (buyer-local dispatch)
             "negotiate_reply"           => Event::NegotiateReply,
             "negotiate_ack"             => Event::NegotiateAck,
@@ -406,6 +413,7 @@ impl Event {
             Event::TaskTokenBudgetChange  => "task_token_budget_change",
             Event::TaskProviderChange    => "task_provider_change",
             Event::SwitchProvider         => "switch_provider",
+            Event::AttachmentAdded        => "attachment_added",
             Event::NegotiateReply         => "negotiate_reply",
             Event::NegotiateAck           => "negotiate_ack",
             Event::NegotiateCounter       => "negotiate_counter",
@@ -416,23 +424,23 @@ impl Event {
 
     pub fn failure_label(&self) -> &'static str {
         match self {
-            Event::JobAutoRefunded    => "自动退款失败",
-            Event::JobClosed          => "关闭失败",
-            Event::JobVisibilityChanged  => "可见性切换失败",
-            Event::JobPaymentModeChanged => "支付模式切换失败",
-            Event::TaskTokenBudgetChange => "支付条款变更失败",
-            Event::TaskProviderChange    => "卖家变更失败",
-            Event::JobAutoCompleted   => "自动完成失败",
-            Event::RewardClaimed      => "奖励领取失败",
-            Event::DisputeApproved    => "仲裁发起失败",
-            Event::Staked             => "质押失败",
-            Event::UnstakeRequested   => "解质押失败",
-            Event::UnstakeClaimed     => "解质押领取失败",
-            Event::UnstakeCancelled   => "取消解质押失败",
-            Event::StakeStopped       => "停止质押失败",
-            Event::CooldownEntered    => "冷却期进入失败",
-            Event::Slashed            => "罚没交易失败",
-            _                         => "交易失败",
+            Event::JobAutoRefunded    => "auto-refund failed",
+            Event::JobClosed          => "close failed",
+            Event::JobVisibilityChanged  => "visibility toggle failed",
+            Event::JobPaymentModeChanged => "payment mode switch failed",
+            Event::TaskTokenBudgetChange => "payment terms change failed",
+            Event::TaskProviderChange    => "provider change failed",
+            Event::JobAutoCompleted   => "auto-complete failed",
+            Event::RewardClaimed      => "reward claim failed",
+            Event::DisputeApproved    => "dispute initiation failed",
+            Event::Staked             => "staking failed",
+            Event::UnstakeRequested   => "unstake failed",
+            Event::UnstakeClaimed     => "unstake claim failed",
+            Event::UnstakeCancelled   => "unstake cancellation failed",
+            Event::StakeStopped       => "stop staking failed",
+            Event::CooldownEntered    => "cooldown entry failed",
+            Event::Slashed            => "slash transaction failed",
+            _                         => "transaction failed",
         }
     }
 }
@@ -486,6 +494,9 @@ pub fn status_when_event(e: &Event) -> Status {
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
         | Event::StakeStopped                                               => Status::Other("staking".to_string()),
         Event::RewardClaimed                                                     => Status::Other("reward_claimed".to_string()),
+        // attachment_added is dispatched by the user session; can fire at Created or Accepted —
+        // multi-status, so freshness check is skipped via PSEUDO_EVENTS; placeholder here.
+        Event::AttachmentAdded                                                  => Status::Other("attachment".to_string()),
         // wake-up is a pass-through event; the real status lives in envelope.message.jobStatus.
         // Return a placeholder status here — agents must not drive next-action with wakeup_notify.
         Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),

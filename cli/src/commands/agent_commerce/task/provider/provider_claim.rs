@@ -24,7 +24,7 @@ pub async fn handle_claim_auto_complete(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
     }
     let (account_id, address) = signing::resolve_wallet(None, None)?;
     let body = serde_json::json!({});
@@ -51,11 +51,11 @@ pub async fn handle_claim_auto_complete(
         None,
     );
 
-    println!("✓ 已发起超时领取（claimAutoComplete），等待链上确认（job_completed）");
+    println!("✓ Timeout claim submitted (claimAutoComplete), waiting for on-chain confirmation (job_completed)");
     println!("  txHash: {tx_hash}");
     println!();
-    println!("⚠️  下一步由系统通知驱动：");
-    println!("    - 链上确认后会收到 `job_completed` 系统通知（资金已释放给你）");
-    println!("    - 收到通知后再调 `onchainos agent next-action --jobid {job_id} --jobStatus job_completed --role provider`");
+    println!("⚠️  Next steps are driven by system notifications:");
+    println!("    - You will receive a `job_completed` system notification after on-chain confirmation (funds released to you)");
+    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --jobStatus job_completed --role provider`");
     Ok(())
 }

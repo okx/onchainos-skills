@@ -45,7 +45,7 @@ pub fn resolve_wallet(
     address: Option<&str>,
 ) -> Result<(String, String)> {
     let wallets = crate::wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
+        .ok_or_else(|| anyhow::anyhow!("not logged in; run `onchainos wallet auth` first"))?;
 
     let (resolved_acct, addr_info) = resolve_address(&wallets, address, XLAYER_CHAIN_NAME)?;
 
@@ -70,7 +70,7 @@ pub async fn resolve_wallet_and_agent_for_task(
     let local_agent_id = if let Some(id) = explicit_agent_id {
         id.to_string()
     } else {
-        resolve_agent_by_role(AGENT_ROLE_BUYER, "buyer（买家）", None)
+        resolve_agent_by_role(AGENT_ROLE_BUYER, "buyer", None)
             .await
             .map(|(id, _)| id)
             .unwrap_or_default()
@@ -80,7 +80,7 @@ pub async fn resolve_wallet_and_agent_for_task(
 
     let buyer_address = resp["buyerAgentAddress"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("任务详情缺少 buyerAgentAddress 字段"))?;
+        .ok_or_else(|| anyhow::anyhow!("task detail missing buyerAgentAddress field"))?;
 
     let buyer_agent_id = resp["buyerAgentId"]
         .as_str()
@@ -99,7 +99,7 @@ pub async fn resolve_wallet_and_agent_for_provider(
     job_id: &str,
 ) -> Result<(String, String, String)> {
     // First fetch provider agentId from local identity list, used for GET request with agenticId header
-    let local_agent_id = resolve_agent_by_role(AGENT_ROLE_PROVIDER, "provider（卖家）", None)
+    let local_agent_id = resolve_agent_by_role(AGENT_ROLE_PROVIDER, "provider", None)
         .await
         .map(|(id, _)| id)
         .unwrap_or_default();
@@ -147,17 +147,17 @@ async fn resolve_agent_by_role(
         }
         let agent_id = agent["agentId"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
+            .ok_or_else(|| anyhow::anyhow!("Agent missing agentId field"))?
             .to_string();
         return Ok((agent_id, owner.to_string()));
     }
 
     if wallet_address.is_some() {
         bail!(
-            "当前钱包没有 {role_label} 身份（ownerAddress 不匹配），请切换钱包或先注册"
+            "current wallet has no {role_label} identity (ownerAddress mismatch); switch wallet or register first"
         )
     } else {
-        bail!("当前账户没有 {role_label} 身份，请先注册")
+        bail!("current account has no {role_label} identity; register first")
     }
 }
 
@@ -177,7 +177,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
 ) -> Result<(String, String, String)> {
     let id = agent_id.trim();
     if id.is_empty() {
-        bail!("agent_id 不能为空（必须传 envelope 顶层 agentId）");
+        bail!("agent_id must not be empty (envelope top-level agentId required)");
     }
 
     let owner = fetch_my_agent_by_id(id)
@@ -201,7 +201,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
             Some("fetch_my_agent_by_id returned no agentWalletAddress"),
         );
         bail!(
-            "无法获取 agentId={id} 的钱包地址；请确认该 agentId 在 `onchainos agent get` 中可查"
+            "cannot get wallet address for agentId={id}; verify the agentId exists in `onchainos agent get`"
         );
     }
 
@@ -220,7 +220,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
             Some(&msg),
         );
         anyhow::anyhow!(
-            "agentId={id} 对应钱包 {owner} 不在本地（{msg}）"
+            "agentId={id} wallet {owner} not found locally ({msg})"
         )
     })?;
     Ok((account_id, address, id.to_string()))
@@ -230,9 +230,9 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
 /// On failure returns Ok(String::new()) without blocking the caller.
 pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
     let label = match role_code {
-        1 => "buyer（买家）",
-        2 => "provider（卖家）",
-        3 => "evaluator（仲裁者）",
+        1 => "buyer",
+        2 => "provider",
+        3 => "evaluator",
         _ => "unknown",
     };
     Ok(resolve_agent_by_role(role_code, label, None)
@@ -257,11 +257,11 @@ pub async fn sign_uop_and_broadcast(
     agent_id: &str,
 ) -> Result<String> {
     if uop_data.is_null() {
-        bail!("后端未返回 uopData，无法签名上链");
+        bail!("backend did not return uopData; cannot sign and broadcast");
     }
 
     let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
-        .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to parse uopData: {e}"))?;
 
     // Simulation-failure guard: backend returns non-empty uopData but executeResult=false means
     // on-chain estimateGas already reverted (contract check failed / insufficient balance / insufficient approve, etc.);
@@ -278,7 +278,7 @@ pub async fn sign_uop_and_broadcast(
         } else {
             unsigned.execute_error_msg.clone()
         };
-        bail!("交易模拟失败（链上 estimateGas revert，与 gas / native 余额无关）: {}", err_msg);
+        bail!("transaction simulation failed (on-chain estimateGas reverted, unrelated to gas/native balance): {}", err_msg);
     }
 
     let mut broadcast_body = build_broadcast_body(
@@ -297,7 +297,7 @@ pub async fn sign_uop_and_broadcast(
     });
 
     let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
-        .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
 
     Ok(bc_resp[0]["txHash"]
         .as_str()
@@ -321,11 +321,11 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
     vote: u8,
 ) -> Result<String> {
     if uop_data.is_null() {
-        bail!("后端未返回 uopData，无法签名上链");
+        bail!("backend did not return uopData; cannot sign and broadcast");
     }
 
     let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
-        .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to parse uopData: {e}"))?;
 
     let exec_ok = match &unsigned.execute_result {
         Value::Bool(b) => *b,
@@ -338,7 +338,7 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
         } else {
             unsigned.execute_error_msg.clone()
         };
-        bail!("交易模拟失败（链上 estimateGas revert，与 gas / native 余额无关）: {}", err_msg);
+        bail!("transaction simulation failed (on-chain estimateGas reverted, unrelated to gas/native balance): {}", err_msg);
     }
 
     let mut broadcast_body = build_broadcast_body(
@@ -359,7 +359,7 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
     });
 
     let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
-        .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
 
     Ok(bc_resp[0]["txHash"]
         .as_str()
@@ -381,11 +381,11 @@ pub async fn sign_uop_and_broadcast_with_payment(
     payment_verify: Value,
 ) -> Result<String> {
     if uop_data.is_null() {
-        bail!("后端未返回 uopData，无法签名上链");
+        bail!("backend did not return uopData; cannot sign and broadcast");
     }
 
     let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
-        .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to parse uopData: {e}"))?;
 
     let exec_ok = match &unsigned.execute_result {
         Value::Bool(b) => *b,
@@ -398,7 +398,7 @@ pub async fn sign_uop_and_broadcast_with_payment(
         } else {
             unsigned.execute_error_msg.clone()
         };
-        bail!("交易模拟失败（链上 estimateGas revert，与 gas / native 余额无关）: {}", err_msg);
+        bail!("transaction simulation failed (on-chain estimateGas reverted, unrelated to gas/native balance): {}", err_msg);
     }
 
     let mut broadcast_body = build_broadcast_body(
@@ -418,7 +418,7 @@ pub async fn sign_uop_and_broadcast_with_payment(
     });
 
     let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
-        .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
 
     Ok(bc_resp[0]["txHash"]
         .as_str()
@@ -429,9 +429,9 @@ pub async fn sign_uop_and_broadcast_with_payment(
 /// Sign an EIP-712 digest with the session key and return a hex signature string.
 pub fn sign_digest_with_session_key(digest: &str) -> Result<String> {
     let session = crate::wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
+        .ok_or_else(|| anyhow::anyhow!("not logged in; run `onchainos wallet auth` first"))?;
     let session_key = crate::keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
+        .map_err(|_| anyhow::anyhow!("not logged in; run `onchainos wallet auth` first"))?;
 
     let signing_seed =
         crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
@@ -442,13 +442,13 @@ pub fn sign_digest_with_session_key(digest: &str) -> Result<String> {
 /// Sign EIP-712 typedData and return the final ECDSA signature hex.
 /// Delegates to `agentic_wallet::sign::eip712_sign_raw` (gen-msg-hash → ed25519 → sign-msg).
 pub async fn sign_typed_data(typed_data: &Value, from_address: &str) -> Result<String> {
-    eprintln!("[debug] sign_typed_data 入参: from={from_address}, typedData primaryType={}", typed_data["primaryType"]);
+    eprintln!("[debug] sign_typed_data input: from={from_address}, typedData primaryType={}", typed_data["primaryType"]);
     let sig = crate::commands::agentic_wallet::sign::eip712_sign_raw(
         typed_data,
         XLAYER_CHAIN_INDEX,
         from_address,
     ).await?;
-    eprintln!("[debug] sign_typed_data 返回签名: {sig}");
+    eprintln!("[debug] sign_typed_data returned signature: {sig}");
     Ok(sig)
 }
 
@@ -476,11 +476,11 @@ pub async fn task_dual_sign_and_broadcast(
     let pre_url = client.endpoint(job_id, pre_action);
     let pre_body = serde_json::json!({ "deadline": deadline });
     let pre_resp = client.post_with_identity(&pre_url, &pre_body, agent_id).await
-        .map_err(|e| anyhow::anyhow!("{pre_action} 请求失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("{pre_action} request failed: {e}"))?;
 
     let typed_data = &pre_resp["typedData"];
     if typed_data.is_null() {
-        bail!("{pre_action} 未返回 typedData");
+        bail!("{pre_action} did not return typedData");
     }
     let nonce = pre_resp["nonce"].as_str().unwrap_or("");
 
@@ -507,7 +507,7 @@ pub async fn task_dual_sign_and_broadcast(
 
     let main_url = client.endpoint(job_id, main_action);
     let main_resp = client.post_with_identity(&main_url, &main_body, agent_id).await
-        .map_err(|e| anyhow::anyhow!("{main_action} 请求失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("{main_action} request failed: {e}"))?;
 
     // Step 4: Sign uopHash + broadcast
     let biz_type = extract_biz_type(&main_resp);

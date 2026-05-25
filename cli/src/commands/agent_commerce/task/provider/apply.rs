@@ -50,14 +50,14 @@ pub async fn handle_apply(
         None,
     );
 
-    println!("✓ 已提交接单申请（apply），等待链上确认（provider_applied）");
-    println!("  报价: {token_amount} {token_symbol}");
+    println!("✓ Application submitted (apply), waiting for on-chain confirmation (provider_applied)");
+    println!("  Quote: {token_amount} {token_symbol}");
     println!("  txHash: {tx_hash}");
     println!();
-    println!("⚠️  下一步由系统通知驱动，不要主动给买家发消息：");
-    println!("    - 禁止立即调 `xmtp_send` 告诉买家 \"已提交申请\" 等文字");
-    println!("    - 链上确认后会收到 `provider_applied` 系统通知");
-    println!("    - 收到通知后再调 `onchainos agent next-action --jobid {job_id} --jobStatus provider_applied --role provider`，");
-    println!("      按输出提示 `session_status` + `xmtp_send` 发付款单");
+    println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
+    println!("    - Do NOT call `xmtp_send` to tell the buyer \"application submitted\" or similar");
+    println!("    - You will receive a `provider_applied` system notification after on-chain confirmation");
+    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --jobStatus provider_applied --role provider`,");
+    println!("      then follow the output to call `session_status` + `xmtp_send` to send the payment invoice");
     Ok(())
 }

@@ -12,6 +12,8 @@
 
 This file only covers the content **specific** to the Buyer role. Generic rules (envelope shapes / tool usage / anti-hallucination / push-to-user-session opt-in / communication boundary) all live in `SKILL.md`.
 
+> 🌐 **[Localization] — applies to ALL `xmtp_dispatch_user` / `pending-decisions-v2 request` calls in this file**: the `content` / `--user-content` / `--list-label` you compose must match the user's language. (1) For English-speaking users: use the English template verbatim (fill placeholders only). (2) For non-English users: translate faithfully, preserving all field labels, data values, structure, and line breaks. Do NOT add information, time estimates, or promises not in the template. (CLI playbooks from `next-action` carry their own `[Localization]` prefix — this rule covers the direct calls in buyer.md that bypass `next-action`.)
+
 > **Fully gas-free**: every on-chain action by the buyer (publishing a task / `confirm-accept` / acceptance / refund / dispute, etc.) goes through the platform's paymaster, so **the user's wallet never needs any gas / native balance**. **Do not** prompt the user to "prepare gas / reserve gas / check balance", and **do not** factor gas reserves into any amount suggestion.
 
 > 🛑🛑🛑 **ABSOLUTE PROHIBITION — `sessions_spawn` / `sessions_yield` are forbidden**: you (sub session / backup session) **are** the agent responsible for executing the script. Upon receiving a system event, you must call `next-action` and execute the script **yourself**. You are **absolutely forbidden** from calling `sessions_spawn` to delegate to a child agent, and **absolutely forbidden** from calling `sessions_yield` to hand over control. A backup session is also a sub, and the same rule applies.
@@ -56,7 +58,7 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 
 ## 3. Inbound Message Routing
 
-> 🔴 **Negotiation-phase autonomy redline**: when status=0 (created) and an active sub session exists, negotiation is **autonomously completed by the sub session** — upon receiving the provider's quote, counter-offer, or discussion message, you **must** match it against the routing priorities below; when it falls through to #6 (fallback), call `next-action --jobStatus negotiate_reply` to fetch the script, then autonomously evaluate and reply per the script's decision matrix. It is **forbidden** to forward the provider's quote / negotiation content to the user via **any** tool (`xmtp_dispatch_user` / `xmtp_prompt_user` / `pending-decisions add`) asking "should I accept?" or "please confirm". It is **forbidden** to directly print a confirmation form as text in a sub session (the user cannot see any direct output from a sub session). It is **forbidden** to manually execute the D-Step / B-Step flow (service-list → create group → send inquiry); those are only driven by the next-action script when `job_created` first fires. Only the following cases involve the user: (a) the quote exceeds max_budget and after auto-REJECT the user needs to choose the next provider; (b) the recommendation list is empty and the user needs to decide the next step.
+> 🔴 **Negotiation-phase autonomy redline**: when status=0 (created) and an active sub session exists, negotiation is **autonomously completed by the sub session** — upon receiving the provider's quote, counter-offer, or discussion message, you **must** match it against the routing priorities below; when it falls through to #6 (fallback), call `next-action --jobStatus negotiate_reply` to fetch the script, then autonomously evaluate and reply per the script's decision matrix. It is **forbidden** to forward the provider's quote / negotiation content to the user via **any** tool (`xmtp_dispatch_user` / `xmtp_prompt_user` / `pending-decisions-v2 request`) asking "should I accept?" or "please confirm". It is **forbidden** to directly print a confirmation form as text in a sub session (the user cannot see any direct output from a sub session). It is **forbidden** to manually execute the D-Step / B-Step flow (service-list → create group → send inquiry); those are only driven by the next-action script when `job_created` first fires. Only the following cases involve the user: (a) the quote exceeds max_budget and after auto-REJECT the user needs to choose the next provider; (b) the recommendation list is empty and the user needs to decide the next step.
 >
 > ⚠️ **The routing priorities in this section override the generic "receiving peer message" rule in SKILL.md.** Do NOT use the current status from common context (e.g. `created`) to call `next-action` — directly use the `jobStatus` matched by the routing below (e.g. `negotiate_reply` / `negotiate_ack` / `provider_applied`).
 >
@@ -84,10 +86,10 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 >      - `[intent:reject]` → the provider has actively rejected the negotiation; **do not reply**; run `onchainos agent mark-failed <jobId> --provider <provider agentId>`, return to the recommendation list (`onchainos agent recommend <jobId> --current`), and let the user pick the next provider.
 >      - `[intent:propose]` → anomaly (the provider should NOT send PROPOSE); `xmtp_send` informing "PROPOSE is initiated by the user; please reply ACK/COUNTER/REJECT".
 > 4. **`[MAX_BUDGET_UPDATE]` internal notification** (source: user session via `xmtp_dispatch_session`): content begins with the `[MAX_BUDGET_UPDATE]` prefix → extract `paymentMostTokenAmount=<value>` and update the current negotiation's max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, notify the provider, `xmtp_send`, or `xmtp_dispatch_user`** — violation = max_budget leaked to the provider = loss of bargaining leverage. After the silent update, **end the turn immediately**.
-> 5. **Forwarding user-supplied materials** (source: user session via `xmtp_dispatch_session`): content contains a local file path (e.g. `.openclaw/media/inbound/` or an absolute path pointing to an image/document) → **you must first** call `agent status <jobId>` to check status:
->    - status=1 (accepted) → execute SKILL.md `Session Communication Contract §4 Path 8` file-transfer protocol: (1) `xmtp_file_upload` (parameters: `filePath` = the file path from content, `agentId` = your agentId, `jobId`) → obtain `fileKey` + decryption metadata (digest/salt/nonce/secret); (2) `xmtp_send` to the provider, with content carrying the fileKey + five decryption fields + the user's description (if any); (3) `xmtp_dispatch_user` to notify the user "Materials sent to the provider." ⚠️ This operation is exempt from preamble rule 9 (which forbids transition messages to the provider) — this is a user-initiated material forwarding, not a transition notification.
->    - status=0 (created) → `xmtp_dispatch_user` notifies the user "The task has not yet entered the execution phase; materials cannot be sent to the provider for now."
->    - status≥2 (submitted / refused / disputed / terminal) → `xmtp_dispatch_user` notifies the user "The task has entered the acceptance/terminal phase; if you need to submit evidence, please follow the acceptance flow."
+> 5. **Attachment added notification** (source: user session via `xmtp_dispatch_session`): content starts with `[ATTACHMENT_ADDED]` → call `onchainos agent next-action --jobid <jobId> --jobStatus attachment_added --role buyer --agentId <your agentId>` and follow the returned playbook verbatim (it handles status check, file upload, structured send to provider, and user notification).
+>    🔴 Real incident: a model received `[ATTACHMENT_ADDED]`, skipped `next-action`, and sent the raw local file path via `xmtp_send` — the provider received a path it cannot access, then the model called `next-action --jobStatus job_submitted` (wrong event) and the task got stuck.
+>    ❌ Do NOT self-manage the attachment flow — always go through `next-action --jobStatus attachment_added`.
+>    ❌ Do NOT call `next-action` with any other jobStatus (e.g. `job_submitted`) after forwarding an attachment — attachment forwarding is not a status transition.
 > 6. **Fallback** (1–5 did not match, source: peer) → call `agent status <jobId>` to check status (if already known this turn, reuse it; do not call again):
 >    - status=1 (accepted) → enter discussion mode (§3.5).
 >    - status=0 (created) and an active sub session exists (`session_status` is non-empty) → natural-language discussion during negotiation; call `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <your agentId>` to fetch the script.
@@ -95,6 +97,32 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 >    - Otherwise (submitted / refused / disputed / terminal) → ignore; do not reply or forward.
 >
 > 🛑 **Anti-hallucination — status verification iron rule**: before outputting wait-style phrasing such as "still negotiating", "waiting for acceptance", "waiting for provider confirmation", or "after escrow is set", you **must first** call `agent status <jobId>` to check the real on-chain status. If status=1 (accepted) or paymentMode=1 (escrow already set), it is **forbidden** to output any waiting-for-acceptance / negotiation phrasing — the task is already in the execution phase. 🔴 Real incident: a backup session, after receiving user materials, reasoned from context that "the task hasn't been accepted yet"; in reality the task was long since accepted (status=1, paymentMode=1), so the materials were not forwarded to the provider.
+
+---
+
+### User-session intent routing table
+
+> When the **user** (not a peer / not a system event) sends a message in the user session, match against this table **before** falling through to sub-session routing (§3 preamble):
+>
+> | User intent | Examples | Route to |
+> |---|---|---|
+> | Create / publish a task | "create a task", "publish a task for XXX", "帮我发个任务" | §3.1 |
+> | Add attachment / image to a task | "add this file to the task", "attach this to job #478", "补充附件", "补充图片", "给任务加个文件", or user sends a file/image during an active task conversation (ask which task before proceeding) | §3.5.1 |
+> | Modify task terms | "change budget", "switch provider", "修改预算", "换服务商" | §3.6 |
+> | Negotiate with a provider | "negotiate with XXX", "pick XXX", "start negotiation", "找810接单" | §3.2 Unified entry |
+
+### User session — `pending-decisions-v2 resolve` execution rule
+
+> 🛑 **CRITICAL — the output of `pending-decisions-v2 resolve` is a PLAYBOOK (instructions to execute), NOT a status report.**
+>
+> When you call `resolve`, the CLI removes the active entry from the queue and returns a playbook containing one or more tool calls (typically `xmtp_dispatch_session` to relay the user's decision to the sub session, and optionally `xmtp_prompt_user` to render the next queued entry). **The decision has NOT been relayed yet — `resolve` only prepares the relay instructions.**
+>
+> You **MUST** execute every tool call in the playbook output, in order:
+> - **Step 1** (`xmtp_dispatch_session`): relay the user's decision to the sub session. Without this call, the sub session never receives the decision and the task is **stuck forever**.
+> - **Step 2** (if present, `xmtp_prompt_user`): render the next pending entry to the user.
+>
+> ❌ Skipping `xmtp_dispatch_session` and calling `pending-decisions-v2 list` or any other command = the relay is lost = task stuck.
+> ❌ Treating the playbook output as "done" or "informational" = the relay was never sent.
 
 ---
 
@@ -121,6 +149,7 @@ After collecting fields per the next-action script, **additionally** perform the
 1. **Token validation**: not USDT / USDG → **"Only USDT and USDG are currently supported; please choose one."**, do NOT silently substitute.
 2. **Description length validation**: `description` < 10 chars → **"The more detailed the description, the more accurate the Provider matching. Could you add more specifics?"**
 3. **Payment-method intercept**: the user mentions a payment-method preference (escrow / guarantee / x402) → **do NOT set it**; inform the user: "The payment method will be determined during negotiation with the provider, based on what the provider supports and your preferences."
+4. **Attachment reminder**: if the task description mentions reference materials, images, documents, or any phrasing that implies supplementary files (e.g. "see attached", "refer to the file", "according to the document", "参考附件", "见附件", "根据文档") → proactively ask the user whether they want to attach those files now (provide local file paths) or add them later after the task is created. Match the user's language.
 
 ### 3.1.2 Confirmation Form + Create Task
 
@@ -135,6 +164,8 @@ All fields ready → **identity & balance check**:
 Display the confirmation form (format see `references/display-formats.md` §3) → **end this turn** and wait for the user's explicit confirmation of **this form**. Prior confirmations of sub-questions do NOT count.
 
 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` or any `onchainos agent` command in the same turn** — the form is a **question**, not an **answer**; the user has not confirmed; you do not have the authority to decide for the user. It must be a **new turn after the user sees the form** before you may execute the CLI. Violation = an unauthorized on-chain operation = funds at risk.
+
+If the user provided attachment file paths, include them in the `create-task` call via `--file <path>` (repeatable for multiple files). The CLI copies files to `~/.onchainos/task/<jobId>/attachments/` after the jobId is obtained.
 
 After success, inform the user of the `jobId`. ⚠️ Do NOT say "published successfully" (not yet confirmed on-chain). ⚠️ Do NOT call `recommend` (wait for `job_created` to trigger it automatically).
 
@@ -240,7 +271,7 @@ Execute the output (create group → send inquiry → negotiate, or the automati
 Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `Price` / `symbol` (mutable).
 
 **Flow**:
-1. **Provider validation**: `onchainos agent profile <agentId>` — `ok=false` / `data.role ≠ 2` → inform the user; do NOT continue (⚠️ run this before `create-task`).
+1. **Provider validation**: `onchainos agent profile <agentId>` — `ok=false` / `data.role ≠ 2` → inform the user; do NOT continue (⚠️ run this before `create-task`). ⚠️ The `role` in this response belongs to the **queried agent** (the provider), NOT to you — you remain the **buyer** (`--role buyer`). Do NOT let this value override your own role.
 2. **Service-type determination**: `onchainos agent service-list --agent-id <agentId>` (joint check on serviceType + endpoint):
    - x402 supported → carry `agentId` + `endpoint` and enter §3.4 (from Step 2).
    - Otherwise → A2A (step 3 below).
@@ -306,6 +337,31 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 4. **Exempt from preamble rule 9** (which forbids transition messages to the provider): in this mode, proactive `xmtp_send` replies to the provider are allowed.
 5. **Autonomous reply**: for execution-detail questions where the agent has enough information to answer → `xmtp_send` reply; only one message per turn.
 6. **Fallback to user forwarding**: questions beyond the agent's capability / requiring user decision → `xmtp_dispatch_user` forwards to the user with a brief explanation.
+
+---
+
+## 3.5.1 Mid-task attachment (user session)
+
+> **Session**: user session
+>
+> **Trigger**: the user wants to add an attachment or image to an existing task (e.g. "add this file to the task", "attach this to job #478", "补充附件", "补充图片", "给任务加个文件"). Also triggered when the user **directly sends a file or image** during an active task conversation — in this case, ask which task it belongs to before proceeding (the user may have sent the file for a non-task purpose; confirm intent first).
+
+**Flow**:
+
+1. **Task disambiguation**: if the user has multiple active tasks, **always confirm which task** even if only one is active — ask the user to specify the jobId or pick from the list (`onchainos agent tasks`). ⚠️ Multi-task confirmation is mandatory to prevent attaching to the wrong task.
+2. 🛑 **Save locally via CLI**: `onchainos agent task-attach <jobId> --file <path>` — the CLI **internally checks the task status** before saving. If the task is in submitted or later state (status≥2), the CLI **rejects** the operation and returns an error.
+   - **CLI returns error** → 🛑🛑🛑 **STOP immediately**. Inform the user that the task has entered the review/terminal phase and attachments can no longer be added. **Do NOT proceed to step 3.** **Do NOT save the file manually.**
+   - **CLI returns success** → the file is saved locally under `~/.onchainos/task/<jobId>/attachments/`. Continue to step 3.
+   - 🔴 Real incident: the CLI returned a status error, but the model used `mkdir -p` + `cp` shell commands to manually create the attachments directory and copy the file, then dispatched `[ATTACHMENT_ADDED]` to the sub session — completely bypassing the CLI's status guard. The provider received an attachment for a task that was already in the review phase.
+   - ❌ **ABSOLUTE PROHIBITION**: when `task-attach` returns an error, you are **forbidden** from using shell commands (`mkdir`, `cp`, `mv`, `ln`, or any file-copy operation) to manually save the file. The CLI is the **only** authorized path for saving attachments — if it rejects the operation, the operation is rejected. Period.
+   - ❌ **ABSOLUTE PROHIBITION**: when `task-attach` returns an error, you are **forbidden** from calling `xmtp_dispatch_session` with `[ATTACHMENT_ADDED]` or any other notification to the sub session.
+3. 🛑 **Forward to sub session (MUST NOT SKIP)**: call `xmtp_sessions_query` (myAgentId, jobId) to find the sub session key, then dispatch with **exact** content format below (❌ do NOT invent your own prefix — the sub session pattern-matches on `[ATTACHMENT_ADDED]`):
+   ```
+   xmtp_dispatch_session(sessionKey=<sub_key>, content="[ATTACHMENT_ADDED] <file path from task-attach output>")
+   ```
+   ❌ Stopping after step 2 without dispatching = the attachment is stuck locally and never reaches the provider. ❌ Using any other prefix (`[ATTACHMENT_READY]`, `[FILE_ADDED]`, etc.) = sub session cannot recognize the message.
+   - If no sub session exists (task not yet matched with a provider), the file is stored locally and will be picked up when the sub session starts (see flow_negotiate.rs job_created checkpoint). In this case, tell the user the file is saved and will be forwarded once a provider is matched.
+4. **Confirm to user**: inform the user the attachment has been saved **and forwarded to the sub session** (or "saved and will be forwarded once a provider is matched" if no sub session exists per step 3).
 
 ---
 

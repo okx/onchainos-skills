@@ -22,7 +22,7 @@ pub async fn handle_find_jobs() -> Result<()> {
     // shells out to `onchainos agent get` and filters by XLayer ownerAddress.
     let agent_list = fetch_my_agents().await;
     if agent_list.is_empty() {
-        println!("⚠ 当前钱包没有已注册的 Agent。请先 `onchainos agent create --role provider ...` 创建一个。");
+        println!("⚠ No registered Agents found for the current wallet. Please create one first with `onchainos agent create --role provider ...`.");
         return Ok(());
     }
 
@@ -36,12 +36,12 @@ pub async fn handle_find_jobs() -> Result<()> {
         .collect();
 
     if online_providers.is_empty() {
-        println!("⚠ 没有在线的 Provider Agent。");
-        println!("  共 {} 个 Agent，但 status != 1（在线）或 role != 2（provider）", agent_list.len());
+        println!("⚠ No online Provider Agents found.");
+        println!("  Total {} Agent(s), but status != 1 (online) or role != 2 (provider)", agent_list.len());
         return Ok(());
     }
 
-    println!("发现 {} 个在线 Provider Agent，开始为每个匹配任务...\n", online_providers.len());
+    println!("Found {} online Provider Agent(s), matching tasks for each...\n", online_providers.len());
 
     // Step 3: call recommend-task for each online provider agent
     let mut task_client = TaskApiClient::new();
@@ -55,7 +55,7 @@ pub async fn handle_find_jobs() -> Result<()> {
         let desc = agent["profileDescription"].as_str().unwrap_or("(no description)");
 
         println!("━━━ Agent {agent_id} ({name}) ━━━");
-        println!("  描述: {desc}");
+        println!("  Description: {desc}");
 
         match fetch_tasks_for_agent(&mut task_client, agent_id).await {
             Ok(tasks) => {
@@ -64,7 +64,7 @@ pub async fn handle_find_jobs() -> Result<()> {
                 summary.push((agent_id.to_string(), name.to_string(), tasks.len()));
             }
             Err(e) => {
-                println!("  ⚠ 拉取失败: {e}");
+                println!("  ⚠ Fetch failed: {e}");
                 summary.push((agent_id.to_string(), name.to_string(), 0));
             }
         }
@@ -72,17 +72,17 @@ pub async fn handle_find_jobs() -> Result<()> {
     }
 
     // Step 4: summary
-    println!("═══ 汇总 ═══");
+    println!("═══ Summary ═══");
     for (id, name, n) in &summary {
-        println!("  Agent {id} ({name}): {n} 个任务");
+        println!("  Agent {id} ({name}): {n} task(s)");
     }
-    println!("  合计：{total_tasks} 个任务");
+    println!("  Total: {total_tasks} task(s)");
     println!();
-    println!("⚠️  给 LLM agent 的硬规则（必读）：");
-    println!("    1. **必须按 agent 分组完整呈现给用户**——上面每个 `━━━ Agent X (...) ━━━` 段落对应一个卖家 agent，全部列给用户看，不要挑一个 agent 总结");
-    println!("    2. **0 任务的 agent 也要列出**——这通常是后端匹配异常的信号，需要让用户知道（例：「Agent 410 (天气小助手3): 0 个任务」要保留）");
-    println!("    3. **禁止 LLM 自己挑「最佳推荐」**——不要根据 agent 描述/任务内容自作主张排序或筛选；展示给用户原始 per-agent 分组结果");
-    println!("    4. **让用户决定**：呈现完后等用户说「用 <agentId> 接 <jobId>」再启动接单流程，不要替用户选");
+    println!("⚠️  Hard rules for the LLM agent (must read):");
+    println!("    1. **Present results grouped by agent in full** — each `━━━ Agent X (...) ━━━` section above corresponds to one provider agent; show all of them to the user, do not cherry-pick one agent to summarize");
+    println!("    2. **List agents with 0 tasks too** — this is typically a signal of backend matching anomalies and the user needs to know (e.g., \"Agent 410 (WeatherHelper3): 0 task(s)\" should be kept)");
+    println!("    3. **Do NOT pick a \"best recommendation\"** — do not sort or filter based on agent description/task content on your own; present the raw per-agent grouped results to the user");
+    println!("    4. **Let the user decide**: after presenting, wait for the user to say \"use <agentId> to accept <jobId>\" before starting the accept flow — do not choose for the user");
 
     Ok(())
 }
@@ -100,7 +100,7 @@ async fn fetch_tasks_for_agent(
 
 fn print_tasks(tasks: &[Value]) {
     if tasks.is_empty() {
-        println!("  （无匹配任务）");
+        println!("  (no matching tasks)");
         return;
     }
     for (i, t) in tasks.iter().enumerate() {
@@ -108,7 +108,7 @@ fn print_tasks(tasks: &[Value]) {
         let token_addr = t["tokenAddress"].as_str().unwrap_or("");
         let token_sym = t["tokenSymbol"].as_str().unwrap_or("UNKNOWN");
         println!(
-            "  {}. jobId={} | {} | 预算 {} {} (token: {})",
+            "  {}. jobId={} | {} | Budget {} {} (token: {})",
             i + 1,
             t["jobId"].as_str().unwrap_or("?"),
             t["title"].as_str().unwrap_or("?"),

@@ -66,6 +66,8 @@ pub enum AgentCommand {
         #[arg(long)] title: Option<String>,
         /// Specified provider agentId (skip recommend, negotiate directly with this provider or x402 accept)
         #[arg(long)] provider: Option<String>,
+        /// Local file paths to attach to the task after creation.
+        #[arg(long = "file")] attachments: Option<Vec<String>>,
     },
 
     /// Get recommended providers for a task
@@ -98,6 +100,20 @@ pub enum AgentCommand {
         #[arg(long, default_value = "1")]  page: u32,
         #[arg(long, default_value = "20")] limit: u32,
         #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
+
+    /// Aggregated non-terminal tasks across **all agents under the current
+    /// active account**, with `myRole` / `counterpartyAgentId` annotations so
+    /// the user-session can route ad-hoc user instructions to the correct sub
+    /// session (via `xmtp_sessions_query` → `xmtp_dispatch_session`).
+    /// Status filter: includes 0 created / 1 accepted / 2 submitted / 3 refused
+    /// / 4 disputed by default; pass `--include-terminal` to also list 5-9.
+    #[command(name = "active-tasks")]
+    ActiveTasks {
+        /// Optional role filter: buyer | provider | evaluator (also accepts 1/2/3)
+        #[arg(long)] role: Option<String>,
+        /// Include terminal statuses (complete / close / expired / rejected / admin_stopped)
+        #[arg(long = "include-terminal")] include_terminal: bool,
     },
 
 
@@ -322,6 +338,20 @@ pub enum AgentCommand {
         agent_id: Option<String>,
     },
 
+    /// Attach a local file to a task
+    #[command(name = "task-attach")]
+    TaskAttach {
+        job_id: String,
+        /// Path to the file to attach
+        #[arg(long = "file")]
+        file_path: String,
+    },
+    /// List attachments for a task
+    #[command(name = "list-attachments")]
+    ListAttachments {
+        job_id: String,
+    },
+
     /// Provider claims auto-complete after buyer review timeout (review_expired)
     #[command(name = "claim-auto-complete")]
     ClaimAutoComplete {
@@ -342,6 +372,12 @@ pub enum AgentCommand {
     /// `Session communication contract 5. pending-decisions`.
     #[command(name = "pending-decisions", subcommand)]
     PendingDecisions(task::common::pending::PendingDecisionsCommand),
+
+    /// Pending-decisions v2 — redesigned queue with single-active invariant +
+    /// sessionKey primary key + LLM-playbook output. Coexists with v1 during
+    /// migration. Design doc: https://okg-block.sg.larksuite.com/docx/URN9d8q49oYAJnxH6BYlYTkUgkd
+    #[command(name = "pending-decisions-v2", subcommand)]
+    PendingDecisionsV2(task::common::pending_v2::PendingDecisionsV2Command),
 
     // ── Task system (Evaluator Agent) ────────────────────────────────────────
     // Historically wrapped as `Evaluator(EvaluatorCommand)`; flattened to the top level in 2026-05
@@ -608,11 +644,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, provider,
+            deadline_open, deadline_submit, title, provider, attachments,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider,
+                deadline_open, deadline_submit, title, provider, attachments,
             }, ctx,
         ).await,
 
@@ -630,6 +666,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Tasks { status, page, limit, agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::common::query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_BUYER).await
+        }
+
+        AgentCommand::ActiveTasks { role, include_terminal } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::query::handle_active_tasks(&mut client, role.as_deref(), include_terminal).await
         }
 
 
@@ -675,6 +716,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::buyer::run_task(T::SetProvider { job_id, provider_agent_id, agent_id }, ctx).await,
         AgentCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
             task::buyer::run_task(T::SetMaxBudget { job_id, max_budget, agent_id }, ctx).await,
+
+        AgentCommand::TaskAttach { job_id, file_path } =>
+            task::buyer::run_task(T::TaskAttach { job_id, file_path }, ctx).await,
+        AgentCommand::ListAttachments { job_id } =>
+            task::buyer::run_task(T::ListAttachments { job_id }, ctx).await,
 
         AgentCommand::ClaimAutoComplete { job_id, agent_id } =>
             task::provider::run_provider(
@@ -729,6 +775,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::PendingDecisions(c) =>
             task::common::pending::run(c).await,
+
+        AgentCommand::PendingDecisionsV2(c) =>
+            task::common::pending_v2::run(c).await,
 
         // ── Evaluator Agent flat dispatch ───────────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {
@@ -988,7 +1037,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // the agent should re-invoke next-action with message.jobStatus, so skip validation here and let
     // the WakeupNotify arm output the guidance script.
     const PSEUDO_EVENTS: &[&str] = &[
-        "create_task", "switch_provider",
+        "create_task", "switch_provider", "attachment_added",
         "dispute_raise", "agree_refund", "dispute_evidence", "approve_review", "reject_review",
         "close", "set_public",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",

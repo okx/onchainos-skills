@@ -23,7 +23,7 @@ pub async fn handle_deliver(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
     }
 
     // Precondition: job must be accepted (buyer has confirm-accept, on-chain job_accepted notification received) before delivery.
@@ -32,7 +32,7 @@ pub async fn handle_deliver(
     let status_int = task_resp["status"]
         .as_i64()
         .and_then(|n| i32::try_from(n).ok())
-        .ok_or_else(|| anyhow::anyhow!("任务详情缺少 status 字段，无法判定能否交付"))?;
+        .ok_or_else(|| anyhow::anyhow!("Task detail missing status field, cannot determine delivery eligibility"))?;
     let status = Status::from_int(status_int);
     if status != Status::Accepted {
         audit::log(
@@ -49,9 +49,9 @@ pub async fn handle_deliver(
             Some("status != accepted(1)"),
         );
         bail!(
-            "deliver 拒绝执行：任务当前 status = {} ({}), 必须为 accepted (1) 才能交付。\n\
-             如果你刚 apply，需要等买家 confirm-accept 上链，收到 `job_accepted` 系统通知后再 deliver。\n\
-             不要主动 xmtp_send 催买家——买家 confirm-accept 是用户决策，由对方 user session 推进。",
+            "Deliver rejected: current task status = {} ({}), must be accepted (1) before delivery.\n\
+             If you just applied, wait for the buyer to confirm-accept on-chain and receive the `job_accepted` system notification before delivering.\n\
+             Do NOT call xmtp_send to rush the buyer — confirm-accept is a user decision driven by the buyer's session.",
             status_int,
             status.as_str(),
         );
@@ -87,12 +87,12 @@ pub async fn handle_deliver(
         None,
     );
 
-    println!("✓ 交付物已提交，等待链上确认（job_submitted）");
+    println!("✓ Deliverable submitted, waiting for on-chain confirmation (job_submitted)");
     println!("  txHash: {tx_hash}");
     println!();
-    println!("⚠️  下一步由系统通知驱动，不要主动给买家发消息：");
-    println!("    - 禁止立即调 `xmtp_send` 告诉买家 \"交付物已上链，请验收\" 等文字");
-    println!("    - 链上确认后会收到 `job_submitted` 系统通知");
-    println!("    - 收到通知后再调 `onchainos agent next-action --jobid {job_id} --jobStatus job_submitted --role provider`");
+    println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
+    println!("    - Do NOT call `xmtp_send` to tell the buyer \"deliverable is on-chain, please review\" or similar");
+    println!("    - You will receive a `job_submitted` system notification after on-chain confirmation");
+    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --jobStatus job_submitted --role provider`");
     Ok(())
 }

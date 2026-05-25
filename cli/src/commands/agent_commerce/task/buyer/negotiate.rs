@@ -337,11 +337,24 @@ pub fn load_failed(job_id: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Clean up the state files (called after accept success; also removes `designated-provider.json`).
+/// Clean up negotiation state files (called after accept success).
+/// Preserves the `attachments/` subdirectory — those files are uploaded
+/// during `job_accepted` (Step 1.5) which runs after `confirm-accept`.
 pub fn cleanup(job_id: &str) -> Result<()> {
     let dir = state_dir(job_id)?;
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)?;
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+        if ft.is_file() {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    let attachments_dir = dir.join("attachments");
+    if !attachments_dir.exists() {
+        let _ = std::fs::remove_dir(&dir);
     }
     Ok(())
 }

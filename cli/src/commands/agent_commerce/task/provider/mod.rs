@@ -174,7 +174,7 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
         // so a dedicated wrapper file is unnecessary.
         ProviderCommand::Claimable { agent_id } => {
             if agent_id.is_empty() {
-                bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+                bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
             }
             let has_nonzero =
                 common_claim::fetch_and_print_claimable(&mut client, &agent_id).await?;
@@ -190,15 +190,15 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
                 None,
             );
             if has_nonzero {
-                println!("\nnext: 有可领奖励 — 跑 `onchainos agent provider-claim-rewards --agent-id {agent_id}` 一次性提走。");
+                println!("\nnext: Claimable rewards available — run `onchainos agent provider-claim-rewards --agent-id {agent_id}` to withdraw all at once.");
             } else {
-                println!("\n(当前无待领奖励)");
+                println!("\n(No pending rewards at this time)");
             }
             Ok(())
         }
         ProviderCommand::ClaimRewards { agent_id } => {
             if agent_id.is_empty() {
-                bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+                bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
             }
             let (account_id, address) = signing::resolve_wallet(None, None)?;
             let tx_hash =
@@ -217,7 +217,7 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             );
             println!("✓ reward claim submitted (account={address})");
             println!("  txHash: {tx_hash}");
-            println!("note: 一次性领取所有已结算争议的奖励，到账金额会在链上确认后通知。");
+            println!("note: All settled dispute rewards are claimed in one go; the credited amount will be notified after on-chain confirmation.");
             Ok(())
         }
     }
