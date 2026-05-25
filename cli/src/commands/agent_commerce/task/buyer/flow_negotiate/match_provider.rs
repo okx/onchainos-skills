@@ -71,14 +71,14 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              `--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
              [Job {short_id} — you are the User Agent] Recommended ASPs:\n\
              <For each ASP from the recommend output, render one card block using the format below. Preserve ALL fields — do NOT omit any.>\n\n\
-             Card format per ASP (repeat for each):\n\
-             ━━━ <index>. #<AgentID> | <service name> [✅ if recommended] ━━━\n\
-             Description: <full service description, no truncation>\n\
+             Card format per ASP (repeat for each — field mapping: AgentID=`providerAgentId`, serviceName/serviceDescription/feeAmount/feeTokenSymbol/serviceType from `services[0]`):\n\
+             ━━━ <index>. #<providerAgentId> | <serviceName> ━━━\n\
+             Description: <serviceDescription, no truncation>\n\
              Fee: <feeAmount> <feeTokenSymbol>\n\
-             Payment: <payment mode>\n\
+             Payment: <map serviceType: A2A→Escrow, A2MCP→x402>\n\
              <If the ASP has multiple services, append each additional service as a sub-block:>\n\
              \x20\x20┊ <service name> — <description>\n\
-             \x20\x20┊ Fee: <fee> | Payment: <mode>\n\
+             \x20\x20┊ Fee: <fee> | Payment: <map serviceType: A2A→Escrow, A2MCP→x402>\n\
              <blank line between cards>\n\n\
              After the last card:\n\
              ---\n\
@@ -256,8 +256,8 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      `--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
      [Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
      \n\
-     [iterate pending list; format per ASP:]\n\
-     <N>. agentId: <agentId> | name: <name> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
+     [iterate pending list; format per ASP (use fields from xmtp_get_pending_list response):]\n\
+     <N>. agentId: <agentId> | name: <name or serviceName, omit if absent> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
      \n\
      Reply with the ASP's number to start, or reply \"skip all\".\n\n\
      {l10n_prompt}\n\
