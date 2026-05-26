@@ -4,25 +4,30 @@
 >
 > The state machine itself is payment-mode-agnostic — for payment details see [`payment-modes.md`](./payment-modes.md); for entry differences see [`entry-points.md`](./entry-points.md).
 >
-> **Important layering**: this system strictly distinguishes between **task status** (Status, 8 real enums) and **system events** (Event, 35 total). **Events are not states** — some events are transient (don't change status, e.g. `provider_applied` / `dispute_approved`), some trigger state transitions, and some are entirely decoupled from task status (e.g. staking events).
+> **Important layering**: this system strictly distinguishes between **task status** (Status, 11 real enums) and **system events** (Event, 35 total). **Events are not states** — some events are transient (don't change status, e.g. `provider_applied` / `dispute_approved`), some trigger state transitions, and some are entirely decoupled from task status (e.g. staking events).
 
 ---
 
-## 1. Task Status (8 real enums)
+## 1. Task Status (11 real enums)
 
 Backend `status` int field → local `Status` enum mapping (`state_machine.rs::Status::from_int`):
 
 | int | string | enum | Meaning | Entry event |
 |---|---|---|---|---|
+| `-1` | `init` | `Status::Init` | Internal initialization state | — |
 | `0` | `created` | `Status::Created` | Task on-chain, awaiting acceptance | `job_created` |
 | `1` | `accepted` | `Status::Accepted` | Buyer confirmed acceptance (funds escrowed) | `job_accepted` |
 | `2` | `submitted` | `Status::Submitted` | Provider deliverable on-chain | `job_submitted` |
 | `3` | `refused` | `Status::Refused` | Buyer rejected deliverable; 24h decision window (dispute / agree-refund) | `job_refused` |
 | `4` | `disputed` | `Status::Disputed` | Dispute in progress (evidence period + commit/reveal) | `job_disputed` |
-| `5` | `complete` | `Status::Completed` | Terminal: task completed (normal acceptance / dispute won by provider / review timeout auto-complete) | `job_completed` or `job_auto_completed` |
-| `6` | `refunded` | `Status::Refunded` | Terminal: funds refunded to buyer (agree-refund / dispute won by buyer / submit/refuse timeout auto-refund) | `job_refunded` or `job_auto_refunded` |
-| `7` | `close` | `Status::Other("status_7")` | Terminal: buyer proactively closed during `created` stage | `job_closed` |
+| `5` | `admin_stopped` | `Status::AdminStopped` | Terminal: admin-stopped by the platform | — |
+| `6` | `completed` | `Status::Completed` | Terminal: task completed (normal acceptance / dispute won by provider / review timeout auto-complete) | `job_completed` or `job_auto_completed` |
+| `7` | `close` | `Status::Close` | Terminal: buyer proactively closed during `created` stage | `job_closed` |
+| `8` | `expired` | `Status::Expired` | Terminal: open stage timeout, auto-closed by backend | `job_expired` |
+| `9` | `rejected` | `Status::Rejected` | Terminal: funds refunded to buyer (agree-refund / dispute won by buyer / submit/refuse timeout auto-refund) | `job_refunded` or `job_auto_refunded` |
 
+> ⚠️ **`Status::Rejected` (int 9) is the "refunded" terminal state** — backend naming is `REJECTED`, but in the task flow it means funds have been returned to the buyer. The Mermaid diagram below uses `refunded` as the friendly name for this state.
+>
 > ⚠️ **There is no `applied` status** — `provider_applied` is an event; when it fires, status is still `created`. Similarly when `dispute_approved` fires, status is still `refused` (dispute phase 1 approve). Events are just "what just happened" — they don't necessarily change status.
 
 ---
