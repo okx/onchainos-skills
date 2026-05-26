@@ -364,11 +364,19 @@ async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -
 
 // ─── `agent upload` ───────────────────────────────────────────────────────
 
+const MAX_UPLOAD_BYTES: usize = 1024 * 1024; // 1 MB
+
 async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let client = wallet_client(ctx)?;
     let file = require_non_empty(args.file.as_deref(), "--file")?;
     let bytes = fs::read(file).with_context(|| format!("failed to read file: {file}"))?;
+    if bytes.len() > MAX_UPLOAD_BYTES {
+        bail!(
+            "file size {} bytes exceeds the 1 MB limit — please downscale the image and retry",
+            bytes.len()
+        );
+    }
     let filename = std::path::Path::new(file)
         .file_name()
         .and_then(|name| name.to_str())

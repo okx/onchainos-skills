@@ -16,16 +16,14 @@ Chinese:
 ```
 好，开始注册新用户身份。接下来会收集以下基本信息：
   1. 名称
-  2. 描述（可选）
-  3. 头像（可选）
+  2. 头像（可选）
 ```
 
 English:
 ```
 Got it — starting a new User Agent registration. We'll collect:
   1. Name
-  2. Description (optional)
-  3. Profile photo (optional)
+  2. Profile photo (optional)
 ```
 
 The preview is **declarative**, not imperative — it describes what's next but does NOT ask for all three at once. See `role-playbook.md §STRICT — Preview ≠ multi-field ask`. Immediately follow the preview with a blank line and the first question — rendered in natural language with **no `Q1：` / `Q1:` prefix** (see `SKILL.md §UX Output Red Lines Red line 3` and `references/ux-lexicon.md`).
@@ -39,8 +37,9 @@ The `Q1 / Q2 / Q3` column labels below are **maintainer-internal indexes**. The 
 | Q | Chinese prompt | English prompt | Validation | On failure |
 |---|---|---|---|---|
 | Q1 | `这个用户身份叫什么名字？` + 4 segments | `What's the name of this User Agent?` + 4 segments | non-empty, CN ≤ 30 文字 / EN ≤ 64 chars | re-ask once with a shorter example |
-| Q2 | `用一句话描述这个用户身份（可选，回车 / "跳过" 即不填）。` + 4 segments | `Describe this User Agent in a sentence (optional — press enter or reply "skip" to leave blank).` + 4 segments | optional; if supplied, CN ≤ 500 文字 / EN ≤ 500 chars | only re-ask if the supplied value is suspicious; empty / "skip" is accepted as-is |
-| Q3 | `头像呢？用默认还是上传一张？` + Choice prompt (see `avatar-upload.md`) | `Profile photo? Use the default or upload one?` + Choice prompt | — | skip → backend default photo |
+| Q2 | `头像呢？用默认还是上传一张？` + Choice prompt (see `avatar-upload.md`) | `Profile photo? Use the default or upload one?` + Choice prompt | — | skip → backend default photo |
+
+> **Description — do NOT prompt, do NOT show in confirmation card when absent.** For User Agent, skip the description question entirely. If the user volunteers a description in the same message as the name (one-shot capture), accept and record it AND include a `描述` row in the confirmation card for that run; if not volunteered, omit the `描述` row from the confirmation card entirely (do NOT render "未填" or "(not set)") and send `ProfileDescription: ""` on-chain silently. Do NOT ask "描述（可选）" / "description (optional)" in any turn.
 
 No service questions. No staking. (Signing address is never asked — the CLI always uses the current wallet's selected XLayer address; `--address` does not exist.)
 
@@ -48,8 +47,8 @@ No service questions. No staking. (Signing address is never asked — the CLI al
 
 | User input | Action |
 |---|---|
-| "叫 Alice" | Record `name=Alice`; next turn asks description only. |
-| "描述你帮我来一个" | Decline politely — description is publicly searchable, the user should own the wording. Offer an example to anchor: "可以写成 `做 DeFi 研究，经常购买数据服务`，你改成合适的再发我。" |
+| "叫 Alice" | Record `name=Alice`; next turn asks for profile photo. |
+| "描述你帮我来一个" | Decline — User Agent description is not prompted for and is optional. Tell the user it will be left blank by default; if they want to add one, they can include it now in the same message. Do NOT offer example wording or guidance on what to write. |
 | "我要一个用户身份叫 Alice，做 DeFi 研究" / "I want a User Agent named Alice, focused on DeFi research" | Capture `name=Alice` + `description=做 DeFi 研究` in one turn. Still render the confirmation table with each field on its own row. |
 | "给我加个 5 USDT 的服务" | Explain: 用户身份不带服务；如果要对外收费请改注册服务提供商 (ASP)。不要把 service 拼进 requester 的 create。 |
 
@@ -59,7 +58,17 @@ No service questions. No staking. (Signing address is never asked — the CLI al
 
 Show the two-column table (`display-formats.md` §Create/Update Diff → Create variant) in the user's language. Render ONE variant — never bilingual.
 
-Chinese variant:
+Chinese variant (user did NOT volunteer a description — omit 描述 row):
+
+| 字段 | 值 |
+|---|---|
+| 角色 | 用户 |
+| 名字 | Alice |
+| 头像 | 默认 |
+
+> 确认无误回复 "执行" 即可。
+
+Chinese variant (user volunteered a description via one-shot capture — include 描述 row):
 
 | 字段 | 值 |
 |---|---|
@@ -69,9 +78,18 @@ Chinese variant:
 | 头像 | 默认 |
 
 > 确认无误回复 "执行" 即可。
-> 用户跳过描述时，「描述」行渲染为 `未填`（不要写空白 / 短横）；CLI 会上链 `ProfileDescription: ""`。
 
-English variant:
+English variant (user did NOT volunteer a description — omit Description row):
+
+| Field | Value |
+|---|---|
+| Role | User Agent |
+| Name | Alice |
+| Profile photo | default |
+
+> Reply "execute" to run it.
+
+English variant (user volunteered a description via one-shot capture — include Description row):
 
 | Field | Value |
 |---|---|
@@ -81,7 +99,6 @@ English variant:
 | Profile photo | default |
 
 > Reply "execute" to run it.
-> When the user skips description, render the Description row as `(not set)` (not blank, not a dash); the CLI sends `ProfileDescription: ""` on-chain.
 
 **Do NOT show the bash command** unless the user explicitly asks ("把命令给我看" / "show me the CLI"). Confirmation cards are field-only.
 
