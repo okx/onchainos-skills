@@ -12,47 +12,6 @@ metadata:
 
 Wallet operations: authentication, balance, token transfers, transaction history, and smart contract calls.
 
-## Step 0 — Re-route check (run before every other step)
-
-Before running any `onchainos wallet` command, classify the user's intent.
-
-### A. Named DApp + action verb → re-route to `okx-dapp-discovery`
-
-Strong signal — a third-party protocol is explicitly named and the user wants to act on it.
-
-- DApp names: Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Lido, ether.fi, GMX, Kamino, Orca, Meteora, Clanker, Uniswap, pump.fun
-- Action verbs (EN/ZH): buy, sell, swap, deposit (into protocol), stake, borrow, lend, long, short, claim, farm, snipe, 买/卖/换/存/质押/借/做多/做空/狙击/挖矿
-
-Examples that MUST re-route to `okx-dapp-discovery`:
-- "deposit USDC into Aave", "long ETH on Hyperliquid", "stake ETH on Lido", "claim rewards on Morpho", "在 Curve 上把 USDC 换成 USDT"
-
-### B. Trade verb on a token (with or without protocol-native token) → defer to `okx-dex-swap`
-
-Trade verbs (buy / sell / swap / trade / exchange / 买 / 卖 / 换) are not wallet operations. Even when a protocol-native token (HYPE, HLP, CAKE, eETH, stETH, etc.) appears, the prompt is ambiguous between a DEX swap and a DApp-plugin route — let `okx-dex-swap` evaluate, since its own Step 0 will chain into `okx-dapp-discovery` if appropriate.
-
-Examples:
-- "buy HYPE", "swap to eETH", "sell my CAKE", "买 LDO" → invoke `okx-dex-swap` with the original prompt; do NOT directly invoke `okx-dapp-discovery` from here.
-
-### C. Pure wallet operation → stay
-
-Stay in this skill when the prompt is one of:
-- Auth: login, OTP verify, add/switch/status/logout account, export wallet/mnemonic
-- Read: balance, assets, holdings, addresses, history, tx status — including reads on protocol-native tokens ("show my HYPE balance", "how much stETH do I have")
-- Direct send/sign: `send X to <address>`, transfer, pay, top up, sign-message, personalSign, EIP-712, TEE signing
-- Wallet-side approval: `approve <token>` alone (one-off ERC-20 approval primitive, not paired with a swap/stake action)
-- Gas Station: any question about Gas Station, EIP-7702, stablecoin gas, default gas token, revoke 7702
-
-### Disambiguating edge cases
-
-- "deposit X into Aave / HLP / Morpho" → A (re-route to dapp-discovery; protocol named)
-- "deposit / receive into my wallet" → C (top-up to wallet address)
-- "approve HYPE" alone → C (ERC-20 approval primitive)
-- "approve and swap HYPE on Hyperliquid" → A (the action is the swap on Hyperliquid)
-- "buy HYPE" → B (no DApp named, trade verb; defer to dex-swap)
-- "send HYPE to my friend" → C (transfer is a wallet op)
-
-If you have already started running commands and only then realise A or B applies, halt and invoke the correct skill — do not finish the wallet operation.
-
 ## Instruction Priority
 
 This document uses tagged blocks to indicate rule severity. In case of conflict, higher priority wins:

@@ -1,9 +1,9 @@
 ---
 name: okx-dapp-discovery
 description: |
-  Plugin router for 20 supported third-party DeFi protocols (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Lido, ether.fi, GMX, Kamino, Orca, Meteora, Clanker, pump.fun, Uniswap) and their protocol-native tokens (HYPE, HLP, eETH, weETH, stETH, wstETH, LDO, GHO, CAKE, CRV, COMP, RAY, ETHFI, GLP, kToken, PT-* / YT-*, $CLANKER). Resolves the named DApp/token to the right plugin, installs it, and forwards the user's prompt — the plugin owns the actual trade/bet/transfer.
+  Plugin router for 20 third-party DeFi protocols (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Lido, ether.fi, GMX, Kamino, Orca, Meteora, Clanker, pump.fun, Uniswap) and their protocol-native tokens (HYPE, HLP, eETH, weETH, stETH, wstETH, LDO, GHO, CAKE, CRV, COMP, RAY, ETHFI, GLP, kToken, PT-* / YT-*, $CLANKER). Resolves DApp/token → plugin → installs → forwards.
 
-  Fires on: (1) named DApp + action verb (swap/deposit/stake/long/borrow/buy/sell/snipe/farm/claim, EN or ZH 买/卖/换/存/质押/借/做多/做空/狙击); (2) comparison of two-or-more supported DApps with intent to choose ("Aave vs Compound for stables", "Lido vs ether.fi"); (3) Polymarket UpDown intent (`<COIN> 5min updown`, `<COIN> 5 分钟涨跌`, `预测市场`, `place a bet on Polymarket`); (4) protocol-native token alone with action verb ("deposit USDC into HLP", "PT-stETH on Pendle"); (5) pump.fun WRITE verbs (buy/sell/snipe/ape/swap or 买/卖/狙击/梭哈/帮我买). See body for anti-trigger / disambiguation rules.
+  Fires on: (1) named DApp + action verb (swap/deposit/stake/long/borrow/buy/sell/snipe/farm/claim, EN or ZH 买/卖/换/存/质押/借/做多/做空/狙击); (2) 2+ DApp comparison ("Aave vs Compound", "Lido vs ether.fi"); (3) Polymarket UpDown (`<COIN> 5min updown`, `5 分钟涨跌`, `预测市场`); (4) protocol-native token + action verb ("deposit USDC into HLP", "PT-stETH on Pendle"); (5) pump.fun WRITE verbs (buy/sell/snipe/ape/swap or 买/卖/狙击/梭哈/帮我买). See body for full rules.
 license: MIT
 metadata:
   author: okx
@@ -501,25 +501,31 @@ Example user-facing message (catalog probe failed for an unknown DApp "Foo"):
 
 If the prompt contains **any** of:
 - a supported DApp name from the Plugin Resolver Table (in any language — Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Clanker, pump.fun, Lido, GMX, ether.fi, Kamino, Orca, Meteora, and Chinese / abbreviated forms 薄饼, 曲线协议, 虎鲸, 流星协议, etc.), OR
-- a protocol-native token from the carve-out table above (HYPE, HLP, CAKE, veCAKE, CRV, crvUSD, COMP, RAY, ORCA, MET, ETHFI, LDO, GLP, esGMX, GHO, eETH, weETH, stETH, wstETH, aToken, kToken, PT-*, YT-*, $CLANKER, etc.), OR
+- a protocol-native token from the protocol-native token table above (HYPE, HLP, CAKE, veCAKE, CRV, crvUSD, COMP, RAY, ORCA, MET, ETHFI, LDO, GLP, esGMX, GHO, eETH, weETH, stETH, wstETH, aToken, kToken, PT-*, YT-*, $CLANKER, etc.), OR
 - a Polymarket-native phrase (`<COIN> 5min/15min/5 分钟/15 分钟`, `5 分钟涨跌`, `updown market`, `<COIN> up or down` for COIN ∈ {BTC, ETH, SOL, XRP, BNB, DOGE, HYPE})
 
 …then this skill wins regardless of any generic verb (swap / 兑换 / 换成 / stake / 质押 / lend / 借 / borrow / deposit / 存 / withdraw / 取 / LP / 加流动性 / farm / 挖矿 / mint / 发币 / make liquidity / pool / 池子 / 仓位 / 多单 / 空单).
 
 **Apply Rules 1 or 2 directly with the matching plugin** — do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, `okx-dex-market`, `okx-onchain-gateway`, or any other generic skill.
 
-**Swap-destination carve-out (Rule 0 exception):** when the verb is `swap` / `exchange` / `换成` / `兑换` (DEX-style verbs) AND a protocol-native token appears as the swap *destination* (the token the user wants to receive), defer to `okx-dex-swap` instead of installing the native protocol's plugin. The user wants the token in their wallet, not the protocol's stake/mint/deposit flow.
+**Swap-pair carve-out (Rule 0 exception):** when the verb is a market-side DEX verb (`swap` / `exchange` / `sell` / `换成` / `兑换` / `卖` / `卖掉换`) AND a protocol-native token appears on **either side** of the pair (as source OR destination) against a generic ticker (ETH / BTC / USDC / USDT / SOL / BNB / ...), AND **no explicit DApp name** appears in the prompt, defer to `okx-dex-swap` instead of installing the native protocol's plugin. The user wants a market route in or out of the position, not the protocol's stake/mint/deposit/wrap flow. (When the user explicitly names a DApp — "on Lido", "在 Curve 上" — Rule 0 still wins regardless of which side the protocol-native token is on; see "Examples that this rule fixes" below.)
 
 | Goes to `okx-dex-swap` (not Rule 0) | Goes to Rule 0 (use the protocol) |
 |---|---|
 | "swap USDC for stETH" | "stake ETH for stETH" / "stake on Lido" |
+| "swap stETH to USDC" | "unstake stETH on Lido for ETH" |
 | "swap to wstETH" | "wrap stETH into wstETH" |
 | "swap 100 USDC for HYPE" | "deposit USDC into HLP" / "open ETH long on Hyperliquid" |
+| "sell my HYPE for USDC" | "supply HYPE to HLP" |
 | "swap SOL to RAY" | "provide liquidity in RAY/SOL pool on Raydium" |
 | "swap BNB for CAKE" | "stake CAKE on PancakeSwap" / "use Syrup Pool" |
+| "sell CAKE for BNB" | "stake CAKE in Syrup Pool" |
 | "swap USDC for crvUSD" | "deposit into 3pool on Curve" |
 
-**Heuristic:** if the user's intent is *acquiring* the token, route to swap. If the intent is *using* the token's protocol functionality (stake / mint / deposit / borrow / LP / open position / wrap), route to Rule 0.
+**Heuristic** — three categories of intent:
+- *Acquiring* a protocol-native token via market (`swap … for/to <native>`) → dex-swap
+- *Disposing* of a protocol-native token via market (`swap <native> to/for <generic>`, `sell <native>`) → dex-swap
+- *Using* the token's protocol functionality (`stake` / `mint` / `deposit` / `borrow` / `LP` / `open position` / `wrap` / `unwrap` / `unstake` / `redeem`) → Rule 0
 
 **Rule 0 vs Rule 3b precedence:** Rule 3b (discussion / comparison without action verb) takes precedence over Rule 0 when no action verb is present in the prompt. So "Tell me about Pendle" → Rule 3b clarify, NOT Rule 0 install. "Buy PT-stETH on Pendle" → Rule 0 install (action verb present).
 
