@@ -107,7 +107,7 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 > | User intent | Examples | Route to |
 > |---|---|---|
 > | Create / publish a task | "create a task", "publish a task for XXX", "帮我发个任务" | §3.1 |
-> | Add attachment / image to a task | "add this file to the task", "attach this to job #478", "补充附件", "补充图片", "给任务加个文件", or user sends a file/image during an active task conversation (ask which task before proceeding) | §3.5.1 |
+> | Add attachment / image to a task | "add this file to the task", "attach this to job #478", "补充附件", "补充图片", "补充材料", "给任务加个文件", "把这个文件加到任务里", "给任务补充一下", "发个文件给卖家", "send this file to the provider", "upload file to task", or user sends a file/image during an active task conversation (ask which task before proceeding) | §3.5.1 |
 > | Modify task terms | "change budget", "switch provider", "修改预算", "换服务商" | §3.6 |
 > | Negotiate with a provider | "negotiate with XXX", "pick XXX", "start negotiation", "找810接单" | §3.2 Unified entry |
 
@@ -149,7 +149,7 @@ After collecting fields per the next-action script, **additionally** perform the
 1. **Token validation**: not USDT / USDG → **"Only USDT and USDG are currently supported; please choose one."**, do NOT silently substitute.
 2. **Description length validation**: `description` < 10 chars → **"The more detailed the description, the more accurate the Provider matching. Could you add more specifics?"**
 3. **Payment-method intercept**: the user mentions a payment-method preference (escrow / guarantee / x402) → **do NOT set it**; inform the user: "The payment method will be determined during negotiation with the provider, based on what the provider supports and your preferences."
-4. **Attachment reminder**: if the task description mentions reference materials, images, documents, or any phrasing that implies supplementary files (e.g. "see attached", "refer to the file", "according to the document", "参考附件", "见附件", "根据文档") → proactively ask the user whether they want to attach those files now (provide local file paths) or add them later after the task is created. Match the user's language.
+4. **Attachment reminder**: if the task description mentions reference materials, images, documents, or any phrasing that implies supplementary files (e.g. "see attached", "refer to the file", "according to the document", "as shown in the image", "参考附件", "见附件", "根据文档", "参照图片", "如图", "详见文件", "附上了", "这是文件") → proactively ask the user whether they want to attach those files now (provide local file paths) or add them later after the task is created. Match the user's language.
 
 ### 3.1.2 Confirmation Form + Create Task
 
@@ -344,7 +344,13 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 
 > **Session**: user session
 >
-> **Trigger**: the user wants to add an attachment or image to an existing task (e.g. "add this file to the task", "attach this to job #478", "补充附件", "补充图片", "给任务加个文件"). Also triggered when the user **directly sends a file or image** during an active task conversation — in this case, ask which task it belongs to before proceeding (the user may have sent the file for a non-task purpose; confirm intent first).
+> **Trigger**: the user wants to add an attachment or image to an existing task. Match by any of the following patterns:
+>
+> | Language | Trigger keywords / phrases |
+> |---|---|
+> | Chinese | 补充附件, 补充图片, 补充材料, 给任务加个文件, 把这个文件加到任务里, 给任务补充一下, 发个文件给卖家, 加个图片, 传个文件, 上传文件到任务 |
+> | English | add file to task, attach this to job, send file to provider, upload file to task, add attachment, add image, attach image |
+> | Implicit | User **directly sends a file or image** during an active task conversation (ask which task before proceeding — the user may have sent the file for a non-task purpose; confirm intent first) |
 
 **Flow**:
 
