@@ -131,9 +131,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "  ▸ x402 funds were already paid in the accept phase".to_string(),
             "⚠️ Keep the sub session (do not close), for later reference.".to_string(),
         ],
-        Status::Rejected => vec![
+        Status::Failed => vec![
             next_action("job_refunded"),
-            "(terminal) Task is REJECTED — **funds refunded to user**".to_string(),
+            "(terminal) Task is FAILED — **funds refunded to user**".to_string(),
             "  ▸ Provider agreed to refund (agree-refund) / auto-refund → funds returned along the original path".to_string(),
             "  ▸ Arbitration buyer wins (dispute_resolved buyer-wins) → refund".to_string(),
             "⚠️ Keep the sub session (do not close), for later reference.".to_string(),
@@ -152,7 +152,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "Task is initializing (waiting for on-chain confirmation) → waiting for job_created event".to_string(),
         ],
         Status::Other(s) => vec![
-            format!("Current task status=`{s}` is not in the set of statuses the buyer cares about (open / accepted / submitted / refused / disputed / completed / rejected / close / expired / admin_stopped)"),
+            format!("Current task status=`{s}` is not in the set of statuses the buyer cares about (open / accepted / submitted / refused / disputed / completed / failed / close / expired / admin_stopped)"),
             "→ No task-level action required for this role, wait for the next relevant chain event / user decision before handling".to_string(),
             "→ **Do NOT** repeatedly run `agent status` / `agent common context` (the result will be the same), end this turn".to_string(),
         ],

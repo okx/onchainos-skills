@@ -1126,10 +1126,10 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     let actual_str = actual.as_str().to_string();
 
     // DisputeResolved special case: when the arbitration verdict lands on-chain, the actual status
-    // may be Completed (provider wins) or Rejected (buyer wins); the exact direction can't be inferred
+    // may be Completed (provider wins) or Failed (buyer wins); the exact direction can't be inferred
     // from the event alone — as long as `actual` is one of these two, treat it as valid.
     let dispute_resolved_ok = matches!(event, Event::DisputeResolved)
-        && matches!(actual, Status::Completed | Status::Rejected);
+        && matches!(actual, Status::Completed | Status::Failed);
 
     eprintln!(
         "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",

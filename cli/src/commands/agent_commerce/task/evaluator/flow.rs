@@ -7,7 +7,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 
     match status {
         Status::Disputed => vec![next_action("evaluator_selected")],
-        Status::Completed | Status::Rejected => vec![next_action("dispute_resolved")],
+        Status::Completed | Status::Failed => vec![next_action("dispute_resolved")],
         _ => vec![
             format!("Current task status=`{}` → evaluator has no task-level action; just wait for the next relevant chain event.", status.as_str()),
             "→ **Do not** rerun `agent status` / `agent common context` (the result will be identical); end this turn.".to_string(),

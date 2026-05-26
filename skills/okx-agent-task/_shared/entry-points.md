@@ -49,8 +49,8 @@ onchainos agent create-task \
 
 ## Termination rules (entry-related)
 
-- **`created` stage timeout** → auto-transitions to `rejected` (`job_refunded`); no refund since funds were never escrowed
-- **Buyer-initiated close** (only during `created`) → `onchainos agent close <jobId>` → `rejected`
+- **`created` stage timeout** → auto-transitions to `failed` (`job_refunded`); no refund since funds were never escrowed
+- **Buyer-initiated close** (only during `created`) → `onchainos agent close <jobId>` → `failed`
 - Once the task enters `applied`, it must follow the state-machine flow downstream — it cannot be simply closed
 
 ## Special scenarios
@@ -62,4 +62,4 @@ The recommendation list may return multiple providers. Buyer should contact one 
 Each jobId is an independent state machine, mutually unaffected. A provider may accept multiple tasks in parallel.
 
 ### Task re-publishing
-After a failure (rejected) the buyer can create a new task and re-publish — this generates a new jobId; the old jobId is never reused.
+After a failure (failed) the buyer can create a new task and re-publish — this generates a new jobId; the old jobId is never reused.

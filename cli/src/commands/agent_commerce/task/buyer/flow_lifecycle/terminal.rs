@@ -292,7 +292,7 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
      You should not run a playbook with `wakeup_notify` as --jobStatus -- this playbook is only a guide.\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 1 -- Read the real status from the envelope**:\n\
-     From the wakeup_notify envelope that triggered this turn, read `message.jobStatus` (e.g. `accepted` / `submitted` / `refused` / `disputed` / `completed` / `rejected` and other real status strings).\n\n\
+     From the wakeup_notify envelope that triggered this turn, read `message.jobStatus` (e.g. `accepted` / `submitted` / `refused` / `disputed` / `completed` / `failed` and other real status strings).\n\n\
      **Step 2 -- Re-call next-action with the real status to fetch the current playbook**:\n\
      ```bash\n\
      onchainos agent next-action --jobid {job_id} --jobStatus <value of message.jobStatus> --role buyer --agentId {agent_id}\n\

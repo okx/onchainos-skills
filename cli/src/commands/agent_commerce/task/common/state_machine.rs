@@ -46,7 +46,7 @@ impl Role {
 ///
 /// Aligns with backend `TaskStatusEnum`:
 /// INIT=-1, CREATED=0, ACCEPTED=1, SUBMITTED=2, REFUSED=3, DISPUTED=4,
-/// ADMINSTOPPED=5, COMPLETE=6, CLOSE=7, EXPIRED=8, REJECTED=9.
+/// ADMINSTOPPED=5, COMPLETE=6, CLOSE=7, EXPIRED=8, FAILED=9.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Init,         // -1
@@ -59,7 +59,7 @@ pub enum Status {
     Completed,    // 6
     Close,        // 7
     Expired,      // 8
-    Rejected,     // 9
+    Failed,       // 9
     /// A status string returned by the backend that this enum does not recognize (tolerantly preserved as-is).
     Other(String),
 }
@@ -78,7 +78,7 @@ impl Status {
             "completed" | "complete"             => Status::Completed,
             "close" | "closed"                   => Status::Close,
             "expired"                            => Status::Expired,
-            "rejected"                           => Status::Rejected,
+            "failed"                             => Status::Failed,
             other                                => Status::Other(other.to_string()),
         }
     }
@@ -95,14 +95,14 @@ impl Status {
             Status::Completed    => "completed",
             Status::Close        => "close",
             Status::Expired      => "expired",
-            Status::Rejected     => "rejected",
+            Status::Failed       => "failed",
             Status::Other(s)     => s.as_str(),
         }
     }
 
     /// Backend `TaskStatusEnum` int mapping:
     /// -1=INIT / 0=CREATED / 1=ACCEPTED / 2=SUBMITTED / 3=REFUSED / 4=DISPUTED /
-    /// 5=ADMINSTOPPED / 6=COMPLETE / 7=CLOSE / 8=EXPIRED / 9=REJECTED.
+    /// 5=ADMINSTOPPED / 6=COMPLETE / 7=CLOSE / 8=EXPIRED / 9=FAILED.
     pub fn from_int(n: i32) -> Self {
         match n {
             -1 => Status::Init,
@@ -115,7 +115,7 @@ impl Status {
              6 => Status::Completed,
              7 => Status::Close,
              8 => Status::Expired,
-             9 => Status::Rejected,
+             9 => Status::Failed,
             other => Status::Other(format!("status_{other}")),
         }
     }
@@ -126,7 +126,7 @@ impl Status {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Status::Completed | Status::Close | Status::Expired | Status::Rejected,
+            Status::Completed | Status::Close | Status::Expired | Status::Failed,
         )
     }
 }
@@ -471,11 +471,11 @@ pub fn status_when_event(e: &Event) -> Status {
         // review_expired only means the review window has ended; task is still submitted —
         // must wait for the provider's claimAutoComplete to enter completed
         Event::ReviewExpired                                                => Status::Submitted,
-        // Backend TaskStatusEnum: 6=COMPLETE (funds released to provider), 9=REJECTED (funds returned to buyer).
+        // Backend TaskStatusEnum: 6=COMPLETE (funds released to provider), 9=FAILED (funds returned to buyer).
         // The two terminal states are distinguished directly by the event.
         Event::JobCompleted | Event::JobAutoCompleted                       => Status::Completed,
-        Event::JobRefunded | Event::JobAutoRefunded                         => Status::Rejected,
-        // DisputeResolved depends on the verdict (buyer-wins → Rejected; seller-wins → Completed);
+        Event::JobRefunded | Event::JobAutoRefunded                         => Status::Failed,
+        // DisputeResolved depends on the verdict (buyer-wins → Failed; seller-wins → Completed);
         // not determinable from the event alone — default to Completed and callers should prefer `agent status`.
         Event::DisputeResolved  => Status::Completed,
         // Arbitration sub state machine: all events fire while task=disputed
@@ -506,8 +506,8 @@ pub fn status_when_event(e: &Event) -> Status {
 
 /// The **canonical** entry event that drove the task into this status.
 /// - Status::Completed canonical = JobCompleted (happy-path acceptance / arbitration seller-wins)
-/// - Status::Rejected canonical = JobRefunded (refund / arbitration buyer-wins)
-/// - DisputeResolved is not canonical (the same event may land on either Completed or Rejected)
+/// - Status::Failed canonical = JobRefunded (refund / arbitration buyer-wins)
+/// - DisputeResolved is not canonical (the same event may land on either Completed or Failed)
 pub fn entry_event(s: &Status) -> Option<Event> {
     match s {
         Status::Init         => None,
@@ -520,7 +520,7 @@ pub fn entry_event(s: &Status) -> Option<Event> {
         Status::Completed    => Some(Event::JobCompleted),
         Status::Close        => Some(Event::JobClosed),
         Status::Expired      => Some(Event::JobExpired),
-        Status::Rejected     => Some(Event::JobRefunded),
+        Status::Failed       => Some(Event::JobRefunded),
         Status::Other(_)     => None,
     }
 }
@@ -545,11 +545,11 @@ mod tests {
     fn status_event_roundtrip() {
         // entry_event(s) → e ; status_when_event(e) must round-trip back to s.
         // Status::AdminStopped has no client-side entry event (entry_event returns None); skip.
-        // Status::Completed → JobCompleted; Status::Rejected → JobRefunded (buyer-wins / refund).
+        // Status::Completed → JobCompleted; Status::Failed → JobRefunded (buyer-wins / refund).
         for s in [
             Status::Created, Status::Accepted, Status::Submitted, Status::Refused,
             Status::Disputed, Status::Completed, Status::Close, Status::Expired,
-            Status::Rejected,
+            Status::Failed,
         ] {
             let e = entry_event(&s).expect("non-Other status should have entry event");
             assert_eq!(status_when_event(&e), s, "entry_event/status_when_event mismatch for {:?}", s);

@@ -670,7 +670,7 @@ fn status_desc(s: &str) -> &str {
         "disputed"      => "Arbitration in progress (Disputed)",
         "admin_stopped" => "Admin stopped the task (AdminStopped)",
         "completed" | "complete" => "Task completed; funds released (Complete)",
-        "rejected"  => "Arbitration concluded; task closed (Rejected)",
+        "failed"    => "Arbitration concluded; task closed (Failed)",
         "close"     => "User Agent closed the task (Close)",
         "expired"   => "Task expired (Expired)",
         _           => "Unknown status",

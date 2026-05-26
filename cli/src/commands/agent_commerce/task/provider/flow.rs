@@ -38,9 +38,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "  ▸ Arbitration ruled in ASP's favor (dispute_resolved seller-wins) → escrow funds released".to_string(),
             "Sub session can be closed.".to_string(),
         ],
-        Status::Rejected => vec![
+        Status::Failed => vec![
             next_action("job_refunded"),
-            "(Terminal state) Task REJECTED — **funds refunded to the User Agent**".to_string(),
+            "(Terminal state) Task FAILED — **funds refunded to the User Agent**".to_string(),
             "  ▸ You agreed to refund (agree-refund) / auto-refund → funds returned to User Agent".to_string(),
             "  ▸ Arbitration ruled in User Agent's favor (dispute_resolved buyer-wins) → refund".to_string(),
             "Sub session can be closed.".to_string(),
@@ -58,7 +58,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "Task is initializing (awaiting on-chain confirmation) → waiting for job_created event.".to_string(),
         ],
         Status::Other(s) => vec![
-            format!("Current task status=`{s}` is not in the provider's state set of interest (open / accepted / submitted / refused / disputed / completed / rejected / close / expired / admin_stopped)"),
+            format!("Current task status=`{s}` is not in the provider's state set of interest (open / accepted / submitted / refused / disputed / completed / failed / close / expired / admin_stopped)"),
             "→ No task-level action required for this role; wait for the next relevant on-chain event / user decision before acting.".to_string(),
             "→ **Do NOT** rerun `agent status` / `agent common context` (results are the same); end this turn.".to_string(),
         ],
@@ -377,7 +377,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              [Role] ASP (Agent Service Provider)\n\n\
              ⚠️ **Determining win/loss**: read `message.jobStatus` from the system notification envelope you just received:\n\
              - `jobStatus = \"complete\"` → **you (provider) won**; funds released to you\n\
-             - `jobStatus = \"rejected\"` → **you (provider) lost**; funds refunded to the User Agent\n\
+             - `jobStatus = \"failed\"` → **you (provider) lost**; funds refunded to the User Agent\n\
              [Your next action (branch by win/loss)]\n\n\
              ⚠️ Do NOT send `xmtp_send` `ruling supports party X` filler to the User Agent — both sides receive the `dispute_resolved` system event.\n\n\
              ━━━━━━━━━━━━━ Branch A: jobStatus=complete (ASP won) ━━━━━━━━━━━━━\n\n\
@@ -409,7 +409,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from A-Step 3 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
-             ━━━━━━━━━━━━━ Branch B: jobStatus=rejected (ASP lost) ━━━━━━━━━━━━━\n\n\
+             ━━━━━━━━━━━━━ Branch B: jobStatus=failed (ASP lost) ━━━━━━━━━━━━━\n\n\
              **B-Step 1 — Use `xmtp_dispatch_user` to notify the user of the loss**:\n\n\
              From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId.\n\
              ⚠️ Same as A-Step 3 — content plain natural language; no technical jargon.\n\
@@ -861,7 +861,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              You should NOT use `wakeup_notify` as --jobStatus to run the script — this script is just for guidance.\n\n\
              [Your next action (strict order)]\n\n\
              **Step 1 — Read the real status from the envelope**:\n\
-             From the wakeup_notify envelope that triggered this turn, read the `message.jobStatus` field (e.g. `accepted` / `submitted` / `refused` / `disputed` / `completed` / `rejected`, etc. — the real status string).\n\n\
+             From the wakeup_notify envelope that triggered this turn, read the `message.jobStatus` field (e.g. `accepted` / `submitted` / `refused` / `disputed` / `completed` / `failed`, etc. — the real status string).\n\n\
              **Step 2 — Use the real status to call next-action and fetch the current script**:\n\
              ```bash\n\
              onchainos agent next-action --jobid {job_id} --jobStatus <value of the message.jobStatus field> --role provider --agentId {agent_id}\n\

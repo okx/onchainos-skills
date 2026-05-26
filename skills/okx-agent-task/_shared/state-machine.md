@@ -24,9 +24,9 @@ Backend `status` int field → local `Status` enum mapping (`state_machine.rs::S
 | `6` | `completed` | `Status::Completed` | Terminal: task completed (normal acceptance / dispute won by provider / review timeout auto-complete) | `job_completed` or `job_auto_completed` |
 | `7` | `close` | `Status::Close` | Terminal: buyer proactively closed during `created` stage | `job_closed` |
 | `8` | `expired` | `Status::Expired` | Terminal: open stage timeout, auto-closed by backend | `job_expired` |
-| `9` | `rejected` | `Status::Rejected` | Terminal: funds refunded to buyer (agree-refund / dispute won by buyer / submit/refuse timeout auto-refund) | `job_refunded` or `job_auto_refunded` |
+| `9` | `failed` | `Status::Failed` | Terminal: funds refunded to buyer (agree-refund / dispute won by buyer / submit/refuse timeout auto-refund) | `job_refunded` or `job_auto_refunded` |
 
-> ⚠️ **`Status::Rejected` (int 9) is the "refunded" terminal state** — backend naming is `REJECTED`, but in the task flow it means funds have been returned to the buyer. The Mermaid diagram below uses `refunded` as the friendly name for this state.
+> ⚠️ **`Status::Failed` (int 9) is the "refunded" terminal state** — backend naming is `FAILED`, and in the task flow it means funds have been returned to the buyer. The Mermaid diagram below uses `refunded` as the friendly name for this state.
 >
 > ⚠️ **There is no `applied` status** — `provider_applied` is an event; when it fires, status is still `created`. Similarly when `dispute_approved` fires, status is still `refused` (dispute phase 1 approve). Events are just "what just happened" — they don't necessarily change status.
 

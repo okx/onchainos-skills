@@ -128,14 +128,14 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user of the arbitration result; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      **Step 1 -- Decide winner**: read `message.jobStatus` from the system notification envelope:\n\
-     - `jobStatus = \"rejected\"` → **user wins**\n\
+     - `jobStatus = \"failed\"` → **user wins**\n\
      - `jobStatus = \"complete\"` → **user loses**\n\
      - other values (e.g. `disputed`) → cannot decide directly; run Step 1.5 to query task details\n\n\
-     **Step 1.5 (only when jobStatus is not rejected/complete) -- Query task details for the actual status:**\n\
+     **Step 1.5 (only when jobStatus is not failed/complete) -- Query task details for the actual status:**\n\
      ```bash\n\
      onchainos agent status {job_id}\n\
      ```\n\
-     Decide by the returned `jobStatus` field: `rejected` = user wins, `complete` = user loses.\n\n\
+     Decide by the returned `jobStatus` field: `failed` = user wins, `complete` = user loses.\n\n\
      **Step 2 -- Fetch task info:**\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
@@ -143,7 +143,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      Extract {title_in_extract}tokenAmount, tokenSymbol.\n\
      [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade — user wins: `[Dispute Won] Job `{job_id}` — dispute resolved; User Agent wins.` / user loses: `[Dispute Lost] Job `{job_id}` — dispute resolved; ASP wins.` — the user MUST still receive a notification.\n\n\
      **Step 3 -- Call xmtp_dispatch_user to notify the user of the arbitration outcome (branch by winner):**\n\n\
-     -------------- User wins (jobStatus=rejected) --------------\n\
+     -------------- User wins (jobStatus=failed) --------------\n\
      content:\n\
      {dispute_won}\n\n\
      -------------- User loses (jobStatus=complete) --------------\n\
