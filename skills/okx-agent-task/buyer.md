@@ -97,6 +97,8 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 >    - status=0 (created) and no sub session → `xmtp_dispatch_user` forwards the provider's message to the user.
 >    - Otherwise (submitted / refused / disputed / terminal) → ignore; do not reply or forward.
 >
+> 🛑 **Buyer cannot initiate arbitration**: if the user asks to "发起仲裁" / "start a dispute" / "open arbitration", inform them: the buyer side cannot initiate arbitration directly. The correct path is to **reject the deliverable** (refuse) — after rejection, the ASP has 24 hours to decide whether to open a dispute. If the ASP does not dispute within 24h, the system auto-refunds. Do NOT call `dispute_raise` or any dispute CLI on the buyer side — `dispute_raise` is an ASP-only action.
+>
 > 🛑 **Anti-hallucination — status verification iron rule**: before outputting wait-style phrasing such as "still negotiating", "waiting for acceptance", "waiting for provider confirmation", or "after escrow is set", you **must first** call `agent status <jobId>` to check the real on-chain status. If status=1 (accepted) or paymentMode=1 (escrow already set), it is **forbidden** to output any waiting-for-acceptance / negotiation phrasing — the task is already in the execution phase. 🔴 Real incident: a backup session, after receiving user materials, reasoned from context that "the task hasn't been accepted yet"; in reality the task was long since accepted (status=1, paymentMode=1), so the materials were not forwarded to the provider.
 
 ---
