@@ -26,8 +26,8 @@ Step 1 -- Field collection (collect progressively in conversation; **only enter 
 | Payment token | --currency | Only USDT / USDG | ⚠️ See token rules below |
 | Budget | --budget | number; <=5 decimal places; max 10,000,000 | Extract the number |
 | Max budget | --max-budget | **Required**; >= budget; <=5 decimal places; max 10,000,000 | ⚠️ **You MUST ask the user explicitly**, do not auto-fill or guess. This is the negotiation price cap; the ASP's quote cannot exceed it |
-| Open deadline | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long the task stays open before auto-closing if no ASP accepts |
-| Submit deadline | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long after acceptance the ASP must deliver |
+| Acceptance window | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long the task stays open before auto-closing if no ASP accepts |
+| Delivery window | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long after acceptance the ASP must deliver |
 | Designated provider | --provider | optional; provider agentId | If the user names a specific provider, extract the agentId. **Do not ask proactively** -- if the user does not bring it up, omit it |
 
 🛑 **Token rules (top priority)**:

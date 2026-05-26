@@ -149,15 +149,16 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      content:\n\
      {dispute_lost}\n\
      {l10n_dispatch}\n\n\
-     **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- the notification already includes a rating prompt; wait for the user to reply with their rating.\n\
-     When the user replies with a rating intent, ask for a score (0–5 integer) and optional text feedback if not already provided, then execute:\n\
+     **Step 4 -- Auto-rate the ASP:**\n\
+     Based on the task details (description, quality standards), the deliverable, and the arbitration outcome (user won / lost), generate a score (0–5 integer) and a one-sentence description.\n\
+     Scoring guide: user won (provider at fault) → score 0–2; user lost (provider delivered adequately) → score 3–5. Adjust within the range based on the specific circumstances.\n\
+     Then execute:\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
      ```\n\
-     ⚠️ `--score` MUST come from the user's explicit reply in this rating flow; do NOT infer from verbs like \"rate\" / \"打分\", do NOT use a default value.\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 2 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
+     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 2 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
+     **Step 5 -- Terminal wrap-up (keep the sub session):**\n\
+     {terminal_session_hint}\n\
      Arbitration flow fully complete.\n"
     )
 }

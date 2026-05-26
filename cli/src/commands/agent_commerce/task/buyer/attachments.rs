@@ -30,6 +30,17 @@ pub async fn handle_task_attach(client: &mut TaskApiClient, job_id: &str, file_p
     if !src.exists() {
         bail!("file not found: {file_path}");
     }
+
+    const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+    let file_size = std::fs::metadata(src)?.len();
+    if file_size > MAX_FILE_SIZE {
+        let size_mb = file_size as f64 / (1024.0 * 1024.0);
+        bail!(
+            "file too large: {size_mb:.1} MB (max 100 MB). \
+             Please compress or resize the file before adding it as an attachment."
+        );
+    }
+
     let file_name = src.file_name()
         .ok_or_else(|| anyhow::anyhow!("invalid file path: {file_path}"))?;
 

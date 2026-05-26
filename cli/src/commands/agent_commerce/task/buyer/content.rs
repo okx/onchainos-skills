@@ -117,7 +117,7 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: x402\n\
          - Settled at: <timestamp>\n\
-         To rate the ASP, reply with your rating."
+         This job is complete."
     )
 }
 
@@ -129,7 +129,7 @@ pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
         "[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
          - Refund: <tokenAmount> <tokenSymbol>\n\
          - Outcome: ClientWins\n\
-         This job is complete. To rate the ASP, reply with your rating."
+         This job is complete."
     )
 }
 
@@ -139,7 +139,7 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
         "[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
          - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
          - Outcome: ProviderWins\n\
-         This job is complete. To rate the ASP, reply with your rating."
+         This job is complete."
     )
 }
 
@@ -162,7 +162,7 @@ pub fn job_auto_refunded_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobExpired` — job expired (B-7-1).
 pub fn job_expired_user_notify(job_id: &str) -> String {
     format!(
-        "Job `{job_id}` has expired (no ASP accepted before the accept deadline, or no deliverable submitted before the submit deadline). The job is now closed."
+        "Job `{job_id}` has expired (no ASP accepted before the acceptance window expired, or no deliverable submitted before the delivery window expired). The job is now closed."
     )
 }
 

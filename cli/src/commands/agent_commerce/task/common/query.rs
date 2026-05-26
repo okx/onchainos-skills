@@ -104,7 +104,7 @@ fn role_name(code: i64) -> &'static str {
 /// 0 created / 1 accepted / 2 submitted / 3 refused / 4 disputed.
 /// Terminal (excluded by default): 5 admin_stopped / 6 complete / 7 close / 8 expired / 9 rejected.
 fn is_non_terminal(code: i64) -> bool {
-    matches!(code, 0 | 1 | 2 | 3 | 4)
+    matches!(code, 0..=4)
 }
 
 fn short_job_id(jid: &str) -> String {

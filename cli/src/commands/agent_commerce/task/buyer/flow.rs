@@ -24,7 +24,7 @@ pub(super) const LOCALIZATION_PREFIX: &str = "\
 (3) Do NOT rephrase, summarize, or embellish the template — its wording is intentional.\n\
 (4) For English-speaking users: use the English template verbatim (after placeholder fills).\n\
 (5) For non-English users: translate into the user's language while preserving ALL field labels, data values, structure, and line breaks — translation must be faithful, not creative.\n\
-(6) Field labels in tables/confirmation forms MUST also match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/接单时限/交付时限; English → Title/Summary/Description/Currency/Budget/Max Budget/Accept Deadline/Delivery Deadline).\n\
+(6) Field labels in tables/confirmation forms MUST also match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/任务过期时间/预期工作时长; English → Title/Summary/Description/Currency/Budget/Max Budget/Acceptance Window/Delivery Window).\n\
 🔴 Real incident: a model treated the template as a loose \"sample\", translated English to Chinese in an English environment, and fabricated \"预计1-2小时内交付\" (estimated 1-2h delivery) — information that did not exist in the template. The user received inaccurate information.\n\n";
 
 pub(super) const L10N_DISPATCH: &str = "\
@@ -112,7 +112,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "⚠️ complete/reject are NOT in the job_submitted playbook — after receiving the user's review decision, call next-action with the corresponding pseudo-event playbook:".to_string(),
             format!("  onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId <agentId>  # After user approves review"),
             format!("  onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId <agentId>  # After user rejects review"),
-            format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <score> --task-id {job_id}  # Rate provider (collect score and content after user replies with a rating)"),
+            format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <score> --task-id {job_id}  # Auto-rate provider (agent generates score based on task details + deliverable)"),
         ],
         Status::Refused => vec![
             next_action("job_refused"),
@@ -277,6 +277,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             Event::NegotiateAck => "save-agreed → set-payment-mode (ACK validation → persist)",
             Event::NegotiateCounter => "xmtp_send (evaluate COUNTER → new PROPOSE or REJECT)",
             Event::AttachmentAdded => "xmtp_file_upload → xmtp_send (upload + forward attachment to provider)",
+            Event::Other(ref s) if s == "deliverable_received" => "task-deliverable-save (download + save deliverable immediately)",
             _ => "none",
         }
     );
@@ -295,6 +296,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         // ─── Task execution + arbitration + terminal states → flow_lifecycle ─────────────────
         Event::ProviderApplied => super::flow_lifecycle::provider_applied(&ctx),
         Event::JobAccepted => super::flow_lifecycle::job_accepted(&ctx),
+        Event::Other(ref s) if s == "deliverable_received" => super::flow_lifecycle::deliverable_received(&ctx),
         Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),
         Event::JobRefused => super::flow_lifecycle::job_refused(&ctx),
         Event::JobDisputed => super::flow_lifecycle::job_disputed(&ctx),

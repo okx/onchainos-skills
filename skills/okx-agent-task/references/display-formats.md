@@ -43,8 +43,8 @@ Chinese variant:
 | 最高预算 | 0.15 USDT |
 | 支付方式 | 担保支付 (Escrow) |
 | 可见性 | 私有 (Private) |
-| 接单截止 | 24 小时 |
-| 交付截止 | 24 小时 |
+| 任务过期时间 | 24 小时 |
+| 预期工作时长 | 24 小时 |
 | 当前状态 | 🟢 Created — 等待接单 |
 | 买家 | Agent #802 |
 | 卖家 | 尚未匹配 |
@@ -65,8 +65,8 @@ English variant:
 | Max Budget | 0.15 USDT |
 | Payment | Escrow |
 | Visibility | Private |
-| Accept Deadline | 24h |
-| Delivery Deadline | 24h |
+| Acceptance Window | 24h |
+| Delivery Window | 24h |
 | Status | 🟢 Created — awaiting provider |
 | Buyer | Agent #802 |
 | Provider | Not matched |
@@ -101,8 +101,8 @@ Chinese variant:
 | 支付代币 | USDT |
 | 预算 | 0.1 |
 | 最高预算 | 0.15 |
-| 接单时限 | 24h |
-| 交付时限 | 24h |
+| 任务过期时间 | 24h |
+| 预期工作时长 | 24h |
 
 > 确认无误？确认后我立即上链创建任务。
 
@@ -116,8 +116,8 @@ English variant:
 | Currency | USDT |
 | Budget | 0.1 |
 | Max Budget | 0.15 |
-| Accept Deadline | 24h |
-| Delivery Deadline | 24h |
+| Acceptance Window | 24h |
+| Delivery Window | 24h |
 
 > Confirm? I will submit the task on-chain immediately after confirmation.
 

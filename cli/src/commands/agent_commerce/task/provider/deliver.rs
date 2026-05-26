@@ -18,8 +18,8 @@ use crate::commands::agent_commerce::task::signing;
 pub async fn handle_deliver(
     client: &mut TaskApiClient,
     job_id: &str,
-    _file: &str,
-    _message: &str,
+    file: &str,
+    deliverable_text: &str,
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
@@ -59,8 +59,7 @@ pub async fn handle_deliver(
 
     let (account_id, address) = signing::resolve_wallet(None, None)?;
     // Backend spec: submit endpoint accepts an `evidenceHash` field; for now pass an empty string placeholder (offchain
-    // evidence is uploaded multipart via /evidence/upload — no hash is provided at submit stage). file/message are
-    // kept as CLI input placeholders only; not put on-chain.
+    // evidence is uploaded multipart via /evidence/upload — no hash is provided at submit stage).
     let body = serde_json::json!({
         "evidenceHash": "",
     });
@@ -86,6 +85,66 @@ pub async fn handle_deliver(
         ]),
         None,
     );
+
+    // Auto-save deliverable to persistent storage.
+    // Runs after on-chain success so a failed save never blocks the deliver flow.
+    let title = task_resp["title"].as_str().unwrap_or("(untitled)");
+    let token_symbol = task_resp["tokenSymbol"].as_str();
+    let token_amount = task_resp["tokenAmount"].as_str();
+    let buyer_agent_id = task_resp["buyerAgentId"].as_str();
+    let short_id = if job_id.len() > 12 {
+        format!("{}…", &job_id[..8])
+    } else {
+        job_id.to_string()
+    };
+
+    if !file.is_empty() {
+        // File deliverable: move the file to persistent storage.
+        let src = std::path::Path::new(file);
+        if src.exists() {
+            let params = super::super::common::deliverables::SaveParams {
+                job_id,
+                role: "provider",
+                file_path: file,
+                deliverable_type: "file",
+                title,
+                short_id: &short_id,
+                file_key: None,
+                token_symbol,
+                token_amount,
+                counterparty_agent_id: buyer_agent_id,
+                counterparty_name: None,
+            };
+            match super::super::common::deliverables::handle_save(&params) {
+                Ok(r) => eprintln!("[deliver] deliverable auto-saved: {}", r.path),
+                Err(e) => eprintln!("[deliver] deliverable auto-save failed (non-blocking): {e}"),
+            }
+        }
+    } else if !deliverable_text.is_empty() {
+        // Text deliverable: write deliverable_text content to a temp file and save.
+        let tmp_dir = std::env::temp_dir();
+        let tmp_path = tmp_dir.join(format!("deliverable_{}.txt", chrono::Local::now().format("%Y%m%d%H%M%S")));
+        if let Ok(()) = std::fs::write(&tmp_path, deliverable_text) {
+            let tmp_str = tmp_path.display().to_string();
+            let params = super::super::common::deliverables::SaveParams {
+                job_id,
+                role: "provider",
+                file_path: &tmp_str,
+                deliverable_type: "text",
+                title,
+                short_id: &short_id,
+                file_key: None,
+                token_symbol,
+                token_amount,
+                counterparty_agent_id: buyer_agent_id,
+                counterparty_name: None,
+            };
+            match super::super::common::deliverables::handle_save(&params) {
+                Ok(r) => eprintln!("[deliver] text deliverable auto-saved: {}", r.path),
+                Err(e) => eprintln!("[deliver] text deliverable auto-save failed (non-blocking): {e}"),
+            }
+        }
+    }
 
     println!("✓ Deliverable submitted, waiting for on-chain confirmation (job_submitted)");
     println!("  txHash: {tx_hash}");

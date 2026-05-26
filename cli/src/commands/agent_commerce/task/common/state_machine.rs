@@ -208,7 +208,7 @@ pub enum Event {
     /// DisputeSettled arbitration verdict (status enters completed or refunded; notifies buyer/provider/voters
     /// to call /claimable + /claim to collect rewards).
     DisputeResolved,
-    /// Task expired (no accept before the accept deadline, or no submit before the submit deadline;
+    /// Task expired (no accept before the acceptance window, or no submit before the delivery window;
     /// notifies buyer to close and reclaim funds).
     JobExpired,
     /// TaskMarket.close on-chain / Close tx result (notifies the initiating client).
@@ -261,7 +261,7 @@ pub enum Event {
     JobAutoRefunded,
 
     // ── Deadline reminders (warn class, no status change) ─────────────
-    /// Escrow accept→submit nearing-deadline reminder (notifies provider to submit).
+    /// Escrow delivery-window nearing-deadline reminder (notifies provider to submit).
     SubmitDeadlineWarn,
     /// Escrow submit→complete nearing-deadline reminder (notifies buyer to complete).
     ReviewDeadlineWarn,

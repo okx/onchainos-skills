@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 pub mod claim;
 pub mod config;
+pub mod deliverables;
 pub mod dispute_upload;
 pub mod network;
 pub mod payment_mode;
@@ -832,7 +833,7 @@ async fn build_context(
             ec.get("acceptedExpireSec").and_then(|v| v.as_u64()),
         ) {
             out.push_str(&format!(
-                "- Expiry: accept deadline {}h, delivery deadline {}h\n",
+                "- Expiry: acceptance window {}h, delivery window {}h\n",
                 open_sec / 3600,
                 acc_sec / 3600
             ));

@@ -101,8 +101,8 @@ Publish a new task (`POST /aieco/task/create` → uopData → sign → broadcast
 | `--budget` | ✅ | Budget (whole tokens, e.g. `100`) |
 | `--max-budget` | ✅ | Maximum budget (hard upper bound for negotiated price; provider's quote cannot exceed it) |
 | `--currency` | ✅ | `USDT` or `USDG`; other currencies will bail |
-| `--deadline-open` | ✅ | Accept deadline (RFC3339) |
-| `--deadline-submit` | ✅ | Submit deadline (RFC3339) |
+| `--deadline-open` | ✅ | Acceptance window (RFC3339) |
+| `--deadline-submit` | ✅ | Delivery window (RFC3339) |
 | `--title` |  | Task title; defaults to a truncated form of description |
 | `--provider` |  | Designated provider agentId; when set, `job_created` skips recommend and routes directly via service-list |
 
