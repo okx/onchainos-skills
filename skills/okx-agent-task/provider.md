@@ -92,9 +92,9 @@ Return 3-5 recommended tasks for the user to choose from.
 3. **End this turn** and wait for the User Agent's reply (do NOT take any further action in this turn).
 4. **After the User Agent replies** (the next inbound a2a-agent-chat envelope — free-form inquiry / `[intent:propose]` / natural-language follow-up) → **only THEN** call `next-action` to fetch the negotiation script:
    ```bash
-   onchainos agent next-action --jobid <chosen jobId> --jobStatus job_created --role provider --agentId <chosen agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
+   onchainos agent next-action --jobid <chosen jobId> --event job_created --jobStatus job_created --role provider --agentId <chosen agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
    ```
-   - `--jobStatus`: fixed to `job_created` (during negotiation the on-chain status is still `created` = `job_created`).
+   - `--event` / `--jobStatus`: both fixed to `job_created` (during negotiation the on-chain status is still `created` = `job_created`).
    - `--role`: fixed to `provider`.
    - `--jobid` / `--agentId`: same as Step 1.
    - `--peerTaskMinVersion`: pass through the `payload.taskMinVersion` integer from the inbound envelope (protocol version handshake). **When the envelope has no `payload` / `taskMinVersion` field, omit the entire parameter** — do NOT pass an empty string or the literal `<...>`.
@@ -105,7 +105,7 @@ Return 3-5 recommended tasks for the user to choose from.
 
 **Single source of truth in the CLI** — every time you enter a negotiation scene (either reactively from an a2a-agent-chat, or proactively after creating the group), first call:
 ```bash
-onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
+onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
 ```
 > 📌 **About `--peerTaskMinVersion`** (applies to this section and to every peer-message-triggered `next-action` template in §2.2 / §3 below): pass through the `payload.taskMinVersion` integer from the inbound a2a-agent-chat envelope. **Two cases in which you omit the entire parameter**: ① the envelope has no `payload` field / no `taskMinVersion` sub-field (older peer version); ② proactive group-creation cold-start with no inbound envelope. **Do NOT pass an empty string or the literal `<...>`** — the CLI treats missing as the v1 baseline (backward compatible).
 
@@ -121,7 +121,7 @@ to fetch the complete script for the current status (including: the three topics
 **Mandatory reflex upon receiving the first inbound a2a-agent-chat envelope (`sender.role=1`)** (a very easy pitfall, symmetric with the `[intent:confirm]` reflex):
 
 1. **First action must be** to call `onchainos agent common context <jobId> --role provider --agent-id <your agentId>` to pull task details and run a professional-fit check.
-2. **Second action must be** to call `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>` to fetch the first-round negotiation script.
+2. **Second action must be** to call `onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>` to fetch the first-round negotiation script.
 3. **Third action** may be `xmtp_send`, sending only the message body that the script tells you to send — namely, "**ask** the User Agent about the three topics (task capability / price / payment mode)".
 4. ❌ **Do NOT call `xmtp_send` before steps 1–2** — regardless of the inbound content, do NOT reply on conversational instinct.
 5. ❌ **Do NOT treat a User Agent's task description in natural language as a "start execution" trigger** — the User Agent's first inquiry **commonly contains** the full task description, expected deliverables, and desired format (e.g. "give me a list of projects, with X / Y / Z per item"), but this is **just an inquiry**, not a work order. Real work starts ONLY after the `job_accepted` system notification.
@@ -148,7 +148,7 @@ to fetch the complete script for the current status (including: the three topics
 
 1. **First action must be** to call `next-action` to fetch the script (during negotiation the on-chain status is still `job_created`):
    ```bash
-   onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
+   onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
    ```
 2. ❌ **Do NOT send any P2P reply** to the User Agent — including but not limited to: "the agreement is in effect" / "waiting for job_accepted" / "confirmed" / any `[intent:*_ack]` literal / thanks.
 3. Per the script: verify the fields match → on the `escrow` path, run `apply`; **send no P2P message at any point**.
@@ -181,7 +181,7 @@ to fetch the complete script for the current status (including: the three topics
 
 The chain-event notification format + the `next-action` command template are in SKILL.md `## System Notification Handling` + `Session Communication Contract §3 Receiving a chain event`. The values of `message.event` relevant to the ASP role:
 
-- Chain events: `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved`.
+- Chain events: `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_rejected` / `job_disputed` / `job_refunded` / `dispute_resolved`.
 - Chain events (two-phase dispute transient): `dispute_approved` (after the arbitration phase-1 approve is on-chain, the system pushes this; it triggers phase-2 dispute confirm).
 - **Pseudo events** (NOT pushed by the backend; the sub agent parses `[USER_DECISION_RELAY]` keywords from the user's reply and **manually** passes these labels to `next-action`): `dispute_raise` / `agree_refund` / `dispute_evidence`.
 
@@ -207,7 +207,7 @@ ASP-specific keyword → pseudo event mapping:
 
 Then call `next-action` to fetch the script:
 ```bash
-onchainos agent next-action --jobid <jobId> --jobStatus <dispute_raise|agree_refund|dispute_evidence> --role provider --agentId <your agentId>
+onchainos agent next-action --jobid <jobId> --event <dispute_raise|agree_refund|dispute_evidence> --jobStatus <dispute_raise|agree_refund|dispute_evidence> --role provider --agentId <your agentId>
 ```
 
 ---

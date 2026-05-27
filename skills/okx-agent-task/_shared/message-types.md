@@ -95,7 +95,7 @@ State-machine event notifications pushed by the chain to the sub session. **Only
 | `agentId` (top-level) | string | **Receiver's** agent ID (i.e. "which agent am I"); for multi-agent wallets this is how the wallet signature is located, and it **must** be passed verbatim to `next-action --agentId` and to every task CLI's `--agent-id` |
 | `message.source` | string | Fixed `"system"` — the envelope shape discriminator (**a key field activating this skill**: the `source:"system"` + `event` + `jobId` triple identifies the system-notification shape) |
 | `message.event` | string | One of 35 event enum values (`provider_applied` / `job_accepted` / `job_submitted` / … / `evaluator_selected` / `staked` / `submit_deadline_warn` etc.). The full list + state-machine impact is in [`state-machine.md`](./state-machine.md) |
-| `message.jobStatus` | string | The current on-chain status (`created` / `accepted` / `submitted` / `refused` / `disputed` / `completed` / `refunded` / `close`). **Note**: `event` is an action and `jobStatus` is a state — some "transient events" (e.g. `provider_applied`) don't change status, so `event` ≠ `jobStatus`. **`next-action --jobStatus` prefers `event`; only fall back to `message.jobStatus` when event is missing** |
+| `message.jobStatus` | string | The current on-chain status (`created` / `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `refunded` / `close`). **Note**: `event` is an action and `jobStatus` is a state — some "transient events" (e.g. `provider_applied`) don't change status, so `event` ≠ `jobStatus`. **Pass `message.event` to `next-action --event`; pass `message.jobStatus` to `next-action --jobStatus` (fall back to the event name when `message.jobStatus` is absent)** |
 | `message.jobId` | string (0x…) | On-chain task ID |
 | `message.description` | string | Backend-attached description (may be empty; the agent generally doesn't depend on this field for decisions) |
 | `message.timestamp` | int (Unix sec) | Backend push timestamp |
@@ -127,7 +127,7 @@ See SKILL.md `## Activation` (the MANDATORY three steps for `source:"system"` ev
 |---|---|---|---|
 | 2a | `xmtp_dispatch_user(content)` | **No mandatory prefix**; plain natural-language notification; optionally a leading `[tag emoji] ...` summary line | User-session agent shows the message to the user, calls no tools |
 | 2b | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` must contain `[USER_DECISION_REQUEST][sub_key: <full string>][job: <id>] <relay instruction>`; `userContent` is plain natural language shown to the user | User-session agent uses `userContent` to display the question; once the user replies, follows the `llmContent` instruction to call `xmtp_dispatch_session(sessionKey=<sub_key>, content="[USER_DECISION_RELAY] ...")` |
-| 3 | `xmtp_dispatch_session(sessionKey, content)` | `content` must start literally with `[USER_DECISION_RELAY] decision: ` (exact 32-character prefix, ASCII colon, trailing single space) | Sub agent parses keywords (agree refund / raise dispute / evidence / …) → calls `next-action --jobStatus <pseudo_event>` |
+| 3 | `xmtp_dispatch_session(sessionKey, content)` | `content` must start literally with `[USER_DECISION_RELAY] decision: ` (exact 32-character prefix, ASCII colon, trailing single space) | Sub agent parses keywords (agree refund / raise dispute / evidence / …) → calls `next-action --event <pseudo_event> --jobStatus <pseudo_event>` |
 
 > Paths 1 / 4 (chain → sub / sub ↔ peer sub) use real envelopes — see §1 / §2 above.
 

@@ -31,6 +31,7 @@ pub async fn handle_agree_refund(
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), agent_id,
+        None,
     ).await?;
 
     audit::log(
@@ -52,6 +53,6 @@ pub async fn handle_agree_refund(
     println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
     println!("    - Do NOT call `xmtp_send` to tell the buyer \"refund agreed\" or similar");
     println!("    - You will receive a `job_refunded` system notification after on-chain confirmation");
-    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --jobStatus job_refunded --role provider`");
+    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event job_refunded --jobStatus job_refunded --role provider`");
     Ok(())
 }

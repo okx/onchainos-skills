@@ -14,13 +14,19 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
+const MAX_REASON_CHARS: usize = 2000;
+
 pub async fn handle_dispute_confirm(
     client: &mut TaskApiClient,
     job_id: &str,
+    reason: &str,
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
         bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+    }
+    if reason.chars().count() > MAX_REASON_CHARS {
+        bail!("Dispute reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
     }
     let (account_id, address) = signing::resolve_wallet(None, None)?;
     let body = serde_json::json!({});
@@ -30,9 +36,11 @@ pub async fn handle_dispute_confirm(
     ).await
         .context("dispute confirm (stage 2): dispute API request failed")?;
 
+    let reason_json = serde_json::json!({ "reason": reason });
     let dispute_tx = signing::sign_uop_and_broadcast(
         client, &dispute_resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&dispute_resp), agent_id,
+        Some(&reason_json),
     ).await
         .context("dispute confirm (stage 2): dispute on-chain broadcast failed")?;
 

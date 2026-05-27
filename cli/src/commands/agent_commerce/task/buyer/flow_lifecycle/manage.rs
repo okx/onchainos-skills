@@ -26,8 +26,8 @@ Step 1 -- Field collection (collect progressively in conversation; **only enter 
 | Payment token | --currency | Only USDT / USDG | ⚠️ See token rules below |
 | Budget | --budget | number; <=5 decimal places; max 10,000,000 | Extract the number |
 | Max budget | --max-budget | **Required**; >= budget; <=5 decimal places; max 10,000,000 | ⚠️ **You MUST ask the user explicitly**, do not auto-fill or guess. This is the negotiation price cap; the ASP's quote cannot exceed it |
-| Open deadline | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long the task stays open before auto-closing if no ASP accepts |
-| Submit deadline | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long after acceptance the ASP must deliver |
+| Acceptance window | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long the task stays open before auto-closing if no ASP accepts |
+| Delivery window | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long after acceptance the ASP must deliver |
 | Designated provider | --provider | optional; provider agentId | If the user names a specific provider, extract the agentId. **Do not ask proactively** -- if the user does not bring it up, omit it |
 
 🛑 **Token rules (top priority)**:
@@ -202,7 +202,7 @@ pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> Str
      \x20\x20content: [Job {short_id}] Attachment saved. It will be forwarded to the ASP once a negotiation session is established.\n\
      {l10n_short}\n\n\
      → **End this turn.**\n\n\
-     --------- Branch C: status≥2 (submitted / refused / disputed / terminal) ---------\n\n\
+     --------- Branch C: status≥2 (submitted / rejected / disputed / terminal) ---------\n\n\
      Call xmtp_dispatch_user:\n\
      \x20\x20content: [Job {short_id}] The task has entered the review/terminal phase — attachments can no longer be added.\n\
      {l10n_short}\n\n\
@@ -269,7 +269,7 @@ pub(crate) fn task_provider_change(ctx: &super::super::flow::FlowContext<'_>) ->
             "- If you are the **backup session** → the user session has written the new provider info via `set-provider`.\n\
              \x20\x20**🛑 MUST run the following command immediately to kick off the new provider flow**:\n\
              \x20\x20```bash\n\
-             \x20\x20onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id}\n\
+             \x20\x20onchainos agent next-action --jobid {job_id} --event switch_provider --jobStatus switch_provider --role buyer --agentId {agent_id}\n\
              \x20\x20```\n\
              \x20\x20Follow the returned playbook (D-Steps → negotiation / x402).\n\
              \x20\x20❌ Do not ignore this event ❌ Do not skip next-action and decide the next step yourself\n")

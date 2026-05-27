@@ -17,6 +17,8 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::{self, network::task_api_client::TaskApiClient};
 use crate::commands::agent_commerce::task::signing;
 
+const MAX_REASON_CHARS: usize = 2000;
+
 pub async fn handle_dispute_raise(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -25,6 +27,9 @@ pub async fn handle_dispute_raise(
 ) -> Result<()> {
     if agent_id.is_empty() {
         bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+    }
+    if reason.chars().count() > MAX_REASON_CHARS {
+        bail!("Dispute reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
     }
     let (account_id, address) = signing::resolve_wallet(None, None)?;
 
@@ -60,6 +65,7 @@ pub async fn handle_dispute_raise(
     let approve_tx = signing::sign_uop_and_broadcast(
         client, &approve_resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&approve_resp), agent_id,
+        None,
     ).await
         .context("dispute raise (stage 1): approve on-chain broadcast failed")?;
 
@@ -85,7 +91,7 @@ pub async fn handle_dispute_raise(
     println!("    - Do NOT call xmtp_send to tell the buyer \"dispute raised\" or similar");
     println!("    - Do NOT call `dispute confirm` in the same turn");
     println!("    - Once you receive the `dispute_approved` notification, run:");
-    println!("      onchainos agent next-action --jobid {job_id} --jobStatus dispute_approved --role provider --agentId {agent_id}");
+    println!("      onchainos agent next-action --jobid {job_id} --event dispute_approved --jobStatus dispute_approved --role provider --agentId {agent_id}");
     println!("      next-action will output the stage 2 script (calling dispute confirm to trigger the actual dispute)");
     Ok(())
 }

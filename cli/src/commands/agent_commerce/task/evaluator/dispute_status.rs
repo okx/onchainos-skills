@@ -15,7 +15,7 @@
 //! `selectedVoter=null`).
 //!
 //! Four hard gates (AND):
-//! 1. `taskStatus` must not be a terminal status — 6 Completed / 7 Close / 8 Expired / 9 Rejected.
+//! 1. `taskStatus` must not be a terminal status — 6 Completed / 7 Close / 8 Expired / 9 Failed.
 //! 2. Input `round_num` must equal `currentRound` (envelope lagging behind the real on-chain round = stale).
 //! 3. `disputeRoundStatus` must be 1 (CommitPhase) — commit window already closed / not yet open → voting gets slashed.
 //! 4. `selectedVoter` must be non-null (this account is not the selected juror for this round).
@@ -58,7 +58,7 @@ pub struct DisputeStatusResponse {
     #[serde(default)]
     pub selected_voter: Option<IgnoredAny>,
     /// Current state of the task main state machine. The sample always carries an
-    /// integer (terminal states also give a number like 9 Rejected), never null,
+    /// integer (terminal states also give a number like 9 Failed), never null,
     /// so a bare `i32` + `default` is fine.
     #[serde(default)]
     pub task_status: i32,

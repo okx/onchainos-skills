@@ -2,31 +2,31 @@
 
 use super::super::flow::FlowContext;
 
-pub(crate) fn job_refused(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
 
-    let refused_notify = super::super::content::job_refused_user_notify(job_id, title_display);
+    let rejected_notify = super::super::content::job_rejected_user_notify(job_id, title_display);
     format!(
-    "[Current Status] job_refused (user rejection settled on-chain; awaiting ASP decision)\n\
+    "[Current Status] job_rejected (user rejection settled on-chain; awaiting ASP decision)\n\
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user that rejection is settled; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed:**\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed** ({l10n_short}):\n\n\
      content:\n\
-     {refused_notify}\n\
-     {l10n_short}\n\n\
+     {rejected_notify}\n\n\
      **Step 2 -- Silently wait for the ASP's decision:**\n\n\
      ⚠️ **Do not send any xmtp_send message to the ASP**. The ASP has 24h to decide:\n\
      - Open a dispute → you will receive job_disputed\n\
      - Agree to refund → you will receive job_refunded\n\
      - 24h timeout → system auto-refunds, you will receive job_refunded\n\n\
+     ⚠️ **The buyer cannot initiate arbitration** — only the ASP can open a dispute. If the user asks \"can I start a dispute?\", reply: the buyer side does not support initiating arbitration; please wait for the ASP's decision (up to 24h; if no dispute is raised, auto-refund).\n\n\
      After Step 1 → **end this turn** and wait for the next system event.\n\n\
      [Follow-up events]\n\
-     - job_disputed → submit user evidence (Scene 6)\n\
+     - job_disputed → submit user evidence\n\
      - job_refunded → refund complete\n"
     )
 }
@@ -69,7 +69,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      {l10n_prompt_bold}\n\n\
      {follow_end}\n\n\
      **Step 2 — After user-session relays as system envelope** (`event: \"user_decision_job_disputed\"`, `message.data: <user's verbatim evidence text>`):\n\
-     Call `onchainos agent next-action --jobid {job_id} --jobStatus user_decision_job_disputed --role buyer --agentId {agent_id} --data \"<message.data>\"` — CLI returns a routing playbook pointing to the `dispute_evidence` upload script. The data field IS the evidence; pass it verbatim through (do NOT second-guess length / similarity / detail).\n\n\
+     Call `onchainos agent next-action --jobid {job_id} --event user_decision_job_disputed --jobStatus user_decision_job_disputed --role buyer --agentId {agent_id} --data \"<message.data>\"` — CLI returns a routing playbook pointing to the `dispute_evidence` upload script. The data field IS the evidence; pass it verbatim through (do NOT second-guess length / similarity / detail).\n\n\
      ⚠️ Evidence MUST be submitted within 1 hour, otherwise it expires.\n",
         evidence_prompt_for_shell = evidence_prompt.replace('"', "\\\""),
     )
@@ -113,7 +113,7 @@ pub(crate) fn dispute_evidence(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH;
+    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -127,37 +127,37 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user of the arbitration result; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      **Step 1 -- Decide winner**: read `message.jobStatus` from the system notification envelope:\n\
-     - `jobStatus = \"rejected\"` → **user wins**\n\
+     - `jobStatus = \"failed\"` → **user wins**\n\
      - `jobStatus = \"complete\"` → **user loses**\n\
      - other values (e.g. `disputed`) → cannot decide directly; run Step 1.5 to query task details\n\n\
-     **Step 1.5 (only when jobStatus is not rejected/complete) -- Query task details for the actual status:**\n\
+     **Step 1.5 (only when jobStatus is not failed/complete) -- Query task details for the actual status:**\n\
      ```bash\n\
      onchainos agent status {job_id}\n\
      ```\n\
-     Decide by the returned `jobStatus` field: `rejected` = user wins, `complete` = user loses.\n\n\
+     Decide by the returned `jobStatus` field: `failed` = user wins, `complete` = user loses.\n\n\
      **Step 2 -- Fetch task info:**\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
      Extract {title_in_extract}tokenAmount, tokenSymbol.\n\
      [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade — user wins: `[Dispute Won] Job `{job_id}` — dispute resolved; User Agent wins.` / user loses: `[Dispute Lost] Job `{job_id}` — dispute resolved; ASP wins.` — the user MUST still receive a notification.\n\n\
-     **Step 3 -- Call xmtp_dispatch_user to notify the user of the arbitration outcome (branch by winner):**\n\n\
-     -------------- User wins (jobStatus=rejected) --------------\n\
+     **Step 3 -- Call xmtp_dispatch_user to notify the user of the arbitration outcome** ({l10n_dispatch}) — branch by winner:\n\n\
+     -------------- User wins (jobStatus=failed) --------------\n\
      content:\n\
      {dispute_won}\n\n\
      -------------- User loses (jobStatus=complete) --------------\n\
      content:\n\
-     {dispute_lost}\n\
-     {l10n_dispatch}\n\n\
-     **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     ⚠️ **Do not auto-rate** -- the notification already includes a rating prompt; wait for the user to reply with their rating.\n\
-     When the user replies with a rating intent, ask for a score (0–5 integer) and optional text feedback if not already provided, then execute:\n\
+     {dispute_lost}\n\n\
+     **Step 4 -- Auto-rate the ASP:**\n\
+     Based on the task details (description, quality standards), the deliverable, and the arbitration outcome (user won / lost), generate a score (0–5 integer) and a one-sentence description.\n\
+     Scoring guide: user won (provider at fault) → score 0–2; user lost (provider delivered adequately) → score 3–5. Adjust within the range based on the specific circumstances.\n\
+     Then execute:\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} [--description \"<optional text>\"]\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
      ```\n\
-     ⚠️ `--score` MUST come from the user's explicit reply in this rating flow; do NOT infer from verbs like \"rate\" / \"打分\", do NOT use a default value.\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 2 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
+     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 2 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
+     **Step 5 -- Terminal wrap-up (keep the sub session):**\n\
+     {terminal_session_hint}\n\
      Arbitration flow fully complete.\n"
     )
 }

@@ -3,7 +3,7 @@
 use super::super::flow::FlowContext;
 
 pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH;
+    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
@@ -19,20 +19,20 @@ pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>) -> String {
      **Step 1 - read the `visibility` field from the system notification envelope:**\n\
      - `visibility=0` -> public\n\
      - `visibility=1` -> private\n\n\
-     **Step 2 - call xmtp_dispatch_user to notify the user that visibility has changed:**\n\
+     **Step 2 - call xmtp_dispatch_user to notify the user that visibility has changed** ({l10n_dispatch}):\n\
      content:\n\
      \x20\x20- visibility=0 -> {visibility_public}\n\
-     \x20\x20- visibility=1 -> {visibility_private}\n\
-     {l10n_dispatch}\n\n\
+     \x20\x20- visibility=1 -> {visibility_private}\n\n\
      ⚠️ After switching to public, do **NOT** request the recommended ASP list (recommend); the user just waits for ASPs to reach out.\n\
      -> **end this turn**.\n"
     )
 }
 
 pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH;
+    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
 
@@ -67,10 +67,8 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      \x20\x20[intent:confirm]\n\n\
      ⚠️ **Do NOT** bypass with natural language like \"please apply / please accept\" - the ASP's flow.rs treats the `[intent:confirm]` literal as the only apply trigger; natural-language instructions **will not be recognized**.\n\
      ⚠️ apply is an ASP action; the user does not execute apply.\n\n\
-     **Step 4 - notify the user:**\n\
-     Call xmtp_dispatch_user:\n\
-     \x20\x20content: {payment_escrow_notify}\n\
-     {l10n_dispatch}\n\n\
+     **Step 4 - notify the user via xmtp_dispatch_user** ({l10n_dispatch}):\n\
+     \x20\x20content: {payment_escrow_notify}\n\n\
      -> **end this turn** and wait for the ASP's XMTP message announcing the apply (handled by buyer.md routing priority #2).\n\n\
      ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\
      From the previous set-payment-mode / x402-check output, extract endpoint, acceptsJson, feeTokenSymbol, feeAmount, providerAgentId.\n\n\
@@ -85,30 +83,38 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
      ```\n\
      Extract `acceptsJson`, `tokenSymbol` (= feeTokenSymbol), `amountHuman` (= feeAmount).\n\n\
-     **x402 stage 1.5 - notify the user that payment is in progress (before task-402-pay):**\n\
-     Call xmtp_dispatch_user:\n\
-     \x20\x20content: {x402_paying}\n\
-     {l10n_dispatch}\n\n\
+     **x402 stage 1.5 - notify the user that payment is in progress via xmtp_dispatch_user** ({l10n_dispatch}):\n\
+     \x20\x20content: {x402_paying}\n\n\
      **x402 stage 2 - sign + direct/accept + endpoint replay (atomic command):**\n\
      ```bash\n\
      onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
      ```\n\
      Internally executes: x402_pay signing -> direct/accept on-chain -> assemble payment header -> replay endpoint.\n\
      Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, signature, authorization, sessionCert, txHash }}\n\n\
-     **x402 stage 2 Step 3 - check replay result and notify the user:**\n\
-     Call xmtp_dispatch_user with the following content template (branch by `replaySuccess`):\n\n\
+     **x402 stage 2 Step 2.5 — persist the deliverable when replaySuccess=true** (skip if replaySuccess=false):\n\n\
+     The replay result only lives in session context; without saving it is lost after context compaction or session end.\n\
+     Write `replayBody` (the raw endpoint response — JSON or plain text; full content, no truncation) to a temp file, then call:\n\
+     ```bash\n\
+     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
+       --file \"<temp .txt path>\" --deliverable-type text \\\n\
+       --title \"<task title from common context>\" --short-id {short_id} \\\n\
+       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
+     ```\n\
+     ⚠️ `--title` and counterparty fields: use values from `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` (already called in the parameter-loss fallback above, or from session context).\n\
+     If save fails, log the error but do NOT block — the user notification in the next step is more important.\n\n\
+     **x402 stage 2 Step 3 - check replay result and notify the user via xmtp_dispatch_user** ({l10n_dispatch}) — branch by `replaySuccess`:\n\n\
      ▸ replaySuccess=true:\n\
      {x402_replay_ok}\n\n\
      ▸ replaySuccess=false:\n\
-     {x402_replay_fail}\n\
-     {l10n_dispatch}\n\n\
+     {x402_replay_fail}\n\n\
      🛑 The `replayBodyDisplay` field contains the deliverable content; when replaySuccess=true it **must** be included in full.\n\
      🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data the ASP returned.\n\n\
      -> **end this turn** and wait for the `job_accepted` system notification.\n\n\
      🛑🛑🛑 **Iron rule (MANDATORY) after receiving `job_accepted`**:\n\
      After the `job_accepted` system event arrives, you **must** call:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --jobStatus job_accepted --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --jobid {job_id} --event job_accepted --jobStatus job_accepted --role buyer --agentId {agent_id}\n\
      ```\n\
      Follow the returned script (the script will guide you to run `onchainos agent complete`).\n\
      ❌ **Absolutely forbidden**: re-running this turn's `x402-check` / `task-402-pay` / `xmtp_dispatch_user` - those completed in this turn; re-running causes double payment or duplicate notification.\n\
@@ -169,7 +175,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
      \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
      \x20\x20\x20\x20- Verbatim is `A` / `选A` / contains `推荐` / `recommend` / `列表` / `list` → `onchainos agent recommend {job_id} --agent-id {agent_id}` then show the list via `pending-decisions-v2 request` (same format as Step 2 in job_created)\n\
-     \x20\x20\x20\x20- Verbatim is `B` / `选B` / contains `指定` / `specify` or looks like an agentId → `onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId>`\n\
+     \x20\x20\x20\x20- Verbatim is `B` / `选B` / contains `指定` / `specify` or looks like an agentId → `onchainos agent next-action --jobid {job_id} --event job_created --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId>`\n\
      \x20\x20\x20\x20- Verbatim is `C` / `选C` / contains `关闭` / `close` / `取消` → `onchainos agent close {job_id}`\n\
      \x20\x20\x20\x20- Otherwise → `pending-decisions-v2 request` again with clarifying userContent to re-ask.\n\n\
      **Step 3 - reply to the ASP (depends on Step 2 evaluation):**\n\n\

@@ -38,6 +38,7 @@ pub async fn handle_set_token_and_budget(
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
+        None,
     ).await?;
 
     audit::log(
@@ -86,6 +87,7 @@ pub async fn handle_set_provider(
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
+        None,
     ).await?;
 
     super::negotiate::save_designated_provider(job_id, provider_agent_id)?;
@@ -108,7 +110,7 @@ pub async fn handle_set_provider(
     println!("  providerAgentId: {provider_agent_id}");
     println!("  txHash: {tx_hash}");
     println!();
-    println!("Next: onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id} --provider {provider_agent_id}");
+    println!("Next: onchainos agent next-action --jobid {job_id} --event switch_provider --jobStatus switch_provider --role buyer --agentId {agent_id} --provider {provider_agent_id}");
     Ok(())
 }
 

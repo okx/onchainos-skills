@@ -275,6 +275,9 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long, default_value = "")] file: String,
         #[arg(long, default_value = "Task completed, please review")] message: String,
+        /// Text deliverable content for auto-save. When non-empty and --file is empty,
+        /// the CLI writes this to a temp file and persists it as a text deliverable.
+        #[arg(long = "deliverable-text", default_value = "")] deliverable_text: String,
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")] agent_id: String,
     },
@@ -352,6 +355,32 @@ pub enum AgentCommand {
         job_id: String,
     },
 
+    /// Save a deliverable file to persistent local storage
+    #[command(name = "task-deliverable-save")]
+    TaskDeliverableSave {
+        #[arg(long)] job_id: String,
+        #[arg(long)] role: String,
+        #[arg(long)] file: String,
+        #[arg(long, default_value = "file")] deliverable_type: String,
+        #[arg(long)] title: String,
+        #[arg(long)] short_id: String,
+        #[arg(long = "file-key")] file_key: Option<String>,
+        #[arg(long = "token-symbol")] token_symbol: Option<String>,
+        #[arg(long = "token-amount")] token_amount: Option<String>,
+        #[arg(long = "counterparty-agent-id")] counterparty_agent_id: Option<String>,
+        #[arg(long = "counterparty-name")] counterparty_name: Option<String>,
+    },
+
+    /// List deliverables for a job or all jobs
+    #[command(name = "task-deliverable-list")]
+    TaskDeliverableList {
+        /// If provided, list deliverables for this job only
+        #[arg(long)] job_id: Option<String>,
+        #[arg(long, default_value = "buyer")] role: String,
+        /// Substring search across all jobs (only used when --job-id is omitted)
+        #[arg(long)] search: Option<String>,
+    },
+
     /// Provider claims auto-complete after buyer review timeout (review_expired)
     #[command(name = "claim-auto-complete")]
     ClaimAutoComplete {
@@ -377,8 +406,11 @@ pub enum AgentCommand {
     // to align with the buyer/provider style. The `agent evaluator <sub>` form is no longer supported;
     // see the file header comment in `evaluator/mod.rs` for per-command correspondence.
 
-    /// Fetch dispute evidence (text + images downloaded locally so multimodal agents can view them).
-    /// Backend resolves the active dispute round from jobId — CLI does not need disputeId.
+    /// Fetch dispute evidence: each side's `reason` (provider = dispute-raise reason; client =
+    /// reject-delivery reason), `texts[]` (free text), and `files[]` (any file type, downloaded
+    /// locally **without extensions** — the evaluator agent probes type itself via `file
+    /// --mime-type` per the playbook). Backend resolves the active dispute round from jobId —
+    /// CLI does not need disputeId.
     ///
     /// Internal precondition gate (merged from the former `dispute-status`): before fetching/downloading
     /// evidence, validate that `taskStatus` is non-terminal / `--round-num` == on-chain currentRound /
@@ -397,32 +429,23 @@ pub enum AgentCommand {
         round_num: String,
     },
     /// Commit a vote (Phase 1 of commit-reveal). vote: 0 = Approve (Client wins), 1 = Reject (Provider wins).
-    /// Body sent to backend is only `{ vote }` — reason is NOT part of the API (lives in agent session memory).
-    /// Backend resolves the active dispute round from jobId.
+    /// Body sent to backend carries `{ vote, reason }`. Backend resolves the active dispute round from jobId.
     #[command(name = "vote-commit")]
     VoteCommit {
         job_id: String,
         #[arg(long)]
         vote: u8,
+        /// Full verdict markdown produced by Step 5 per the Verdict template defined in
+        /// `references/evaluator-decision-rubric.md` (whichever heading the user-customized
+        /// rubric uses to define it; required). Sent to backend in the commit body as the
+        /// on-chain audit trail — findings of fact, evidence citations, reasoning, the lot.
+        /// Flatten to a single line with `\n` / `\t` / `\r` / `\\` / `\"` escapes (CLI
+        /// unescapes before transport); escape `"` / `` ` `` / `$` to survive the shell.
+        #[arg(long = "reason")]
+        reason: String,
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
         agent_id: String,
-    },
-    /// Persist the evaluator's verdict markdown to `<evidence_dir>/verdict.md` as a
-    /// local audit trail. Called AFTER `vote-commit` succeeds; vote is already on-chain.
-    /// Idempotent (overwrites). Failure should be ignored by the caller.
-    /// `--verdict` optional: if omitted (rubric did not define a verdict template), writes a
-    /// placeholder note instead so the audit slot is never empty.
-    /// Hidden from `--help` (internal flow.rs orchestration only; users shouldn't invoke directly).
-    #[command(name = "vote-record", hide = true)]
-    VoteRecord {
-        job_id: String,
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        /// Verdict markdown content (multi-line OK; pass via shell heredoc). Optional.
-        #[arg(long = "verdict")]
-        verdict: Option<String>,
     },
     /// Reveal a previously-committed vote (Phase 2 of commit-reveal). Driven by the
     /// `reveal_started` system event. CLI sends an empty body `{}` — backend reads
@@ -525,7 +548,12 @@ pub enum AgentCommand {
     NextAction {
         /// Accepts both `--jobid` (legacy camelCase) and `--job-id` (kebab)
         #[arg(long = "jobid", alias = "job-id")] job_id: String,
-        /// Accepts both `--jobStatus` (legacy) and `--job-status` (kebab)
+        /// envelope `message.event` — required. Currently drives playbook routing **only for
+        /// `--role evaluator`** (event-based routing pilot); buyer/provider still route via
+        /// `--jobStatus` (legacy path) but must also pass this field so callers learn the new
+        /// contract.
+        #[arg(long = "event")] event: String,
+        /// Accepts both `--jobStatus` (legacy) and `--job-status` (kebab).
         #[arg(long = "jobStatus", alias = "job-status")] job_status: String,
         /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab)
         #[arg(long = "agentId", alias = "agent-id")] agent_id: String,
@@ -619,6 +647,56 @@ pub enum AgentCommand {
         /// Agent IDs to notify (comma-separated, or pass --agent-ids multiple times)
         #[arg(long, value_delimiter = ',')]
         agent_ids: Vec<String>,
+    },
+
+    /// Search the public task marketplace (POST /priapi/v1/aieco/task/job/search).
+    ///
+    /// All filters are optional; passing none returns the whole pool paginated.
+    ///
+    /// Examples:
+    ///   onchainos agent task-search --keyword "audit smart contract" --status 0 --order-by amount_asc
+    ///   onchainos agent task-search --amount-min 10 --amount-max 500 --page 1 --page-size 20
+    #[command(name = "task-search")]
+    TaskSearch {
+        /// Caller agent ID (sent as `agenticId` header).
+        #[arg(long = "agent-id")]
+        agent_id: String,
+
+        /// Full-text keyword (matches title / description).
+        #[arg(long)]
+        keyword: Option<String>,
+
+        /// Minimum task budget (human-readable, decimal-applied).
+        #[arg(long = "amount-min")]
+        amount_min: Option<f64>,
+
+        /// Maximum task budget (human-readable, decimal-applied).
+        #[arg(long = "amount-max")]
+        amount_max: Option<f64>,
+
+        /// Task statuses to include (repeatable / comma-separated). 0=OPEN, 1=ACCEPTED, 2=SUBMITTED, ...
+        #[arg(long, value_delimiter = ',')]
+        status: Vec<i32>,
+
+        /// Sort order — one of `create_time_desc` / `create_time_asc` / `amount_desc` / `amount_asc`.
+        #[arg(long = "order-by")]
+        order_by: Option<task::common::search::TaskSearchOrderBy>,
+
+        /// Filter by create time (unix milliseconds) — lower bound.
+        #[arg(long = "create-time-start")]
+        create_time_start: Option<i64>,
+
+        /// Filter by create time (unix milliseconds) — upper bound.
+        #[arg(long = "create-time-end")]
+        create_time_end: Option<i64>,
+
+        /// Page (1-based). Defaults to 1.
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+
+        /// Page size. Defaults to 20.
+        #[arg(long = "page-size", default_value_t = 20)]
+        page_size: u32,
     },
 }
 
@@ -721,6 +799,35 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::ListAttachments { job_id } =>
             task::buyer::run_task(T::ListAttachments { job_id }, ctx).await,
 
+        AgentCommand::TaskDeliverableSave {
+            job_id, role, file, deliverable_type, title, short_id,
+            file_key, token_symbol, token_amount, counterparty_agent_id, counterparty_name,
+        } => {
+            let params = task::common::deliverables::SaveParams {
+                job_id: &job_id,
+                role: &role,
+                file_path: &file,
+                deliverable_type: &deliverable_type,
+                title: &title,
+                short_id: &short_id,
+                file_key: file_key.as_deref(),
+                token_symbol: token_symbol.as_deref(),
+                token_amount: token_amount.as_deref(),
+                counterparty_agent_id: counterparty_agent_id.as_deref(),
+                counterparty_name: counterparty_name.as_deref(),
+            };
+            let result = task::common::deliverables::handle_save(&params)?;
+            crate::output::success(result);
+            Ok(())
+        }
+
+        AgentCommand::TaskDeliverableList { job_id, role, search } => {
+            match job_id {
+                Some(jid) => task::common::deliverables::handle_list(&jid, &role),
+                None => task::common::deliverables::handle_list_all(&role, search.as_deref()),
+            }
+        }
+
         AgentCommand::ClaimAutoComplete { job_id, agent_id } =>
             task::provider::run_provider(
                 task::provider::ProviderCommand::ClaimAutoComplete { job_id, agent_id }, ctx,
@@ -757,9 +864,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 ctx,
             ).await,
 
-        AgentCommand::Deliver { job_id, file, message, agent_id } =>
+        AgentCommand::Deliver { job_id, file, message, deliverable_text, agent_id } =>
             task::provider::run_provider(
-                task::provider::ProviderCommand::Deliver { job_id, file, message, agent_id }, ctx,
+                task::provider::ProviderCommand::Deliver { job_id, file, message, deliverable_text, agent_id }, ctx,
             ).await,
 
         AgentCommand::AgreeRefund { job_id, agent_id } =>
@@ -780,12 +887,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
             task::evaluator::info::handle_info(&mut c, &job_id, &agent_id, &round_num).await
         }
-        AgentCommand::VoteCommit { job_id, vote, agent_id } => {
+        AgentCommand::VoteCommit { job_id, vote, reason, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::commit::handle_commit(&mut c, &job_id, vote, &agent_id).await
-        }
-        AgentCommand::VoteRecord { job_id, agent_id, verdict } => {
-            task::evaluator::record::handle_record(&job_id, &agent_id, verdict.as_deref()).await
+            task::evaluator::commit::handle_commit(&mut c, &job_id, vote, &reason, &agent_id).await
         }
         AgentCommand::VoteReveal { job_id, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
@@ -831,9 +935,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title, provider, peer_task_min_version, data } => {
+        AgentCommand::NextAction { job_id, event, job_status, agent_id, role, code, job_title, provider, peer_task_min_version, data } => {
             eprintln!(
-                "[next-action] received system notification: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
+                "[next-action] received system notification: job_id={job_id}, event={event}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
                 title = job_title.as_deref().unwrap_or("(none)"),
                 provider = provider.as_deref().unwrap_or("(none)"),
                 peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
@@ -956,12 +1060,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         Some(vec![
                             format!("jobId={job_id}"),
                             format!("agentId={agent_id}"),
+                            format!("event={event}"),
                             format!("jobStatus={job_status}"),
                             format!("code={code}"),
                         ]),
                         None,
                     );
-                    task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id)
+                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id, title_ref)
                 }
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };
@@ -1011,6 +1116,35 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::WakeupNotify { agent_ids } =>
             chat::run(chat::ChatCommand::WakeupNotify { agent_ids }, ctx).await,
+
+        AgentCommand::TaskSearch {
+            agent_id,
+            keyword,
+            amount_min,
+            amount_max,
+            status,
+            order_by,
+            create_time_start,
+            create_time_end,
+            page,
+            page_size,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::search::handle_task_search(
+                &mut client,
+                &agent_id,
+                keyword.as_deref(),
+                amount_min,
+                amount_max,
+                &status,
+                order_by.as_ref(),
+                create_time_start,
+                create_time_end,
+                page,
+                page_size,
+            )
+            .await
+        }
     }
 }
 
@@ -1033,11 +1167,11 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // the agent should re-invoke next-action with message.jobStatus, so skip validation here and let
     // the WakeupNotify arm output the guidance script.
     const PSEUDO_EVENTS: &[&str] = &[
-        "create_task", "switch_provider", "attachment_added",
+        "create_task", "switch_provider", "attachment_added", "deliverable_received",
         "dispute_raise", "agree_refund", "dispute_evidence", "approve_review", "reject_review",
         "close", "set_public",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
-        "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "slashed", "cooldown_entered", "round_failed",
+        "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "vote_commit_deadline_warn", "cooldown_entered", "round_failed",
         "reward_claimed",
         "wakeup_notify",
     ];
@@ -1064,10 +1198,10 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     let actual_str = actual.as_str().to_string();
 
     // DisputeResolved special case: when the arbitration verdict lands on-chain, the actual status
-    // may be Completed (provider wins) or Rejected (buyer wins); the exact direction can't be inferred
+    // may be Completed (provider wins) or Failed (buyer wins); the exact direction can't be inferred
     // from the event alone — as long as `actual` is one of these two, treat it as valid.
     let dispute_resolved_ok = matches!(event, Event::DisputeResolved)
-        && matches!(actual, Status::Completed | Status::Rejected);
+        && matches!(actual, Status::Completed | Status::Failed);
 
     eprintln!(
         "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",
@@ -1082,7 +1216,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
         "🛑 **状态脱节，剧本已 block**（next-action 入参与任务真实状态不一致，不输出步骤防止你按 stale event 上链）\n\n\
          - 你传的 jobStatus/event = `{job_status_or_event}`，对应任务状态应为 `{expected_str}`\n\
          - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\n\
-         **必须做**：重调 next-action 并传 `--jobStatus {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\
+         **必须做**：重调 next-action 并传 `--event {actual_str} --jobStatus {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\
          **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 xmtp_dispatch_user 推用户。\n",
         expected_str = expected.as_str(),
     ))

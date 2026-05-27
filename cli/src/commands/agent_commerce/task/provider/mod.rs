@@ -60,6 +60,10 @@ pub enum ProviderCommand {
         file: String,
         #[arg(long, default_value = "Task completed, please review")]
         message: String,
+        /// Text deliverable content for auto-save. When non-empty and --file is empty,
+        /// the CLI writes this to a temp file and persists it as a text deliverable.
+        #[arg(long = "deliverable-text", default_value = "")]
+        deliverable_text: String,
         /// Provider agentId (required). Beta backend rejects an empty agenticId header → 3001 auth fail;
         /// the providerAgentId field in job detail may be null, so reverse lookup is unreliable.
         #[arg(long = "agent-id")]
@@ -126,6 +130,8 @@ pub enum DisputeCommand {
     /// The `dispute_approved` system notification must have been received first. After completion, wait for the `job_disputed` notification.
     Confirm {
         job_id: String,
+        #[arg(long)]
+        reason: String,
         /// Provider agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
@@ -154,8 +160,8 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
             apply::handle_apply(&mut client, &job_id, &token_amount, &token_symbol, &agent_id).await,
-        ProviderCommand::Deliver { job_id, file, message, agent_id } =>
-            deliver::handle_deliver(&mut client, &job_id, &file, &message, &agent_id).await,
+        ProviderCommand::Deliver { job_id, file, message: _, deliverable_text, agent_id } =>
+            deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id).await,
         ProviderCommand::AgreeRefund { job_id, agent_id } =>
             agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
         ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
@@ -228,8 +234,8 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         DisputeCommand::Raise { job_id, reason, agent_id } =>
             dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await,
-        DisputeCommand::Confirm { job_id, agent_id } =>
-            dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &agent_id).await,
+        DisputeCommand::Confirm { job_id, reason, agent_id } =>
+            dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id).await,
         DisputeCommand::Upload { job_id, agent_id, text, images } =>
             dispute_upload::handle_upload_evidence(
                 &mut client, &job_id, &agent_id, text.as_deref(), &images,

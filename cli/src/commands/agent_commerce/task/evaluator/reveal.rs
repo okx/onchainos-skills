@@ -52,6 +52,7 @@ pub async fn handle_reveal(
         job_id,
         signing::extract_biz_type(&resp),
         &agent_id,
+        None,
     )
     .await?;
 

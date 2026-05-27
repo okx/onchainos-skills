@@ -36,6 +36,7 @@ pub async fn handle_claim_auto_complete(
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), agent_id,
+        None,
     ).await?;
 
     audit::log(
@@ -56,6 +57,6 @@ pub async fn handle_claim_auto_complete(
     println!();
     println!("⚠️  Next steps are driven by system notifications:");
     println!("    - You will receive a `job_completed` system notification after on-chain confirmation (funds released to you)");
-    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --jobStatus job_completed --role provider`");
+    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event job_completed --jobStatus job_completed --role provider`");
     Ok(())
 }

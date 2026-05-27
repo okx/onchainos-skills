@@ -72,10 +72,10 @@ pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
     )
 }
 
-// ── Event::JobRefused ──────────────────────────────────────────────
+// ── Event::JobRejected ─────────────────────────────────────────────
 
-/// `Event::JobRefused` Step 1 — user notification that the rejection is confirmed on-chain.
-pub fn job_refused_user_notify(job_id: &str, title: &str) -> String {
+/// `Event::JobRejected` Step 1 — user notification that the rejection is confirmed on-chain.
+pub fn job_rejected_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "[Rejection Confirmed] The deliverable for **{title}** (`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
          The ASP has 24 hours to choose: file a dispute or agree to a refund.\n\
@@ -116,7 +116,7 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: x402\n\
          - Settled at: <timestamp>\n\
-         To rate the ASP, reply with your rating."
+         This job is complete."
     )
 }
 
@@ -128,7 +128,7 @@ pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
         "[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
          - Refund: <tokenAmount> <tokenSymbol>\n\
          - Outcome: ClientWins\n\
-         This job is complete. To rate the ASP, reply with your rating."
+         This job is complete."
     )
 }
 
@@ -138,7 +138,7 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
         "[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
          - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
          - Outcome: ProviderWins\n\
-         This job is complete. To rate the ASP, reply with your rating."
+         This job is complete."
     )
 }
 
@@ -161,7 +161,7 @@ pub fn job_auto_refunded_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobExpired` — job expired (B-7-1).
 pub fn job_expired_user_notify(job_id: &str) -> String {
     format!(
-        "Job `{job_id}` has expired (no ASP accepted before the accept deadline, or no deliverable submitted before the submit deadline). The job is now closed."
+        "Job `{job_id}` has expired (no ASP accepted before the acceptance window expired, or no deliverable submitted before the delivery window expired). The job is now closed."
     )
 }
 
@@ -232,10 +232,10 @@ pub fn submit_expired_user_notify(job_id: &str) -> String {
     )
 }
 
-// ── Event::RefuseExpired ───────────────────────────────────────────
+// ── Event::RejectExpired ───────────────────────────────────────────
 
-/// `Event::RefuseExpired` — ASP missed the dispute deadline (B-7-6).
-pub fn refuse_expired_user_notify(job_id: &str) -> String {
+/// `Event::RejectExpired` — ASP missed the dispute deadline (B-7-6).
+pub fn reject_expired_user_notify(job_id: &str) -> String {
     format!(
         "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund has been requested; funds will return to your wallet."
     )
