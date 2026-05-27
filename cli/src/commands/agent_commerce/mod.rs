@@ -549,6 +549,12 @@ pub enum AgentCommand {
         /// pseudo events that don't originate from a peer envelope.
         #[arg(long = "peerTaskMinVersion", alias = "peer-task-min-version")]
         peer_task_min_version: Option<u32>,
+        /// User's decision payload from a `user_decision_*` relay envelope's
+        /// `message.data` field (the user's verbatim reply to a pending decision,
+        /// e.g. `A` / `approve` / `通过` / `agree to refund`). Required when
+        /// `--jobStatus` starts with `user_decision_`; ignored otherwise.
+        #[arg(long)]
+        data: Option<String>,
     },
 
     // Chat
@@ -825,7 +831,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title, provider, peer_task_min_version } => {
+        AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title, provider, peer_task_min_version, data } => {
             eprintln!(
                 "[next-action] received system notification: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
                 title = job_title.as_deref().unwrap_or("(none)"),
@@ -923,7 +929,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id)
+                    task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id, data.as_deref())
                 }
                 "buyer" | "client" => {
                     crate::audit::log(
@@ -939,7 +945,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id, title_ref)
+                    task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id, title_ref, data.as_deref())
                 }
                 "evaluator" => {
                     crate::audit::log(

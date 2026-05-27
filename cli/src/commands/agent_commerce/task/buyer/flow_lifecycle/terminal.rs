@@ -153,15 +153,13 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
        --sub-key \"<full sessionKey from session_status>\" \\\n\
        --job-id {job_id} --role buyer --agent-id {agent_id} \\\n\
        --user-content \"{review_deadline_prompt_for_shell}\" \\\n\
-       --list-label \"[Decision {short_id}] Approve / Reject (deadline soon)\"\n\
+       --list-label \"[Decision {short_id}] Approve / Reject (deadline soon)\" \\\n\
+       --source-event review_deadline_warn\n\
      ```\n\
      {l10n_prompt_bold}\n\n\
      {follow_end}\n\n\
-     **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
-     Inspect the verbatim text (case-insensitive; trim whitespace/punctuation) and route:\n\
-     - Verbatim is `A` / `a` / `选A` / `1` / `Choose A` / `option A`, OR contains `通过` / `同意` / `满意` / `验收` / `接受` / `approve` / `accept` / `agree` → call `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}` for the approve playbook (which runs `onchainos agent complete`).\n\
-     - Verbatim is `B` / `b` / `选B` / `2` / `Choose B` / `option B`, OR contains `拒绝` / `不通过` / `不满意` / `不接受` / `reject` / `refuse` → call `onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId {agent_id}` (extract the reason from the verbatim after `理由` / `reason` / `因为`; if not stated, default to `did not meet acceptance criteria`).\n\
-     - Otherwise (unrelated reply) → call `pending-decisions-v2 request` again with a clarifying userContent (\"您刚才回复 「<verbatim>」我没理解,请回复 「通过」 或 「拒绝, 理由: <...>」 或 直接回复 A / B\") to re-ask.\n",
+     **Step 2 — After user-session relays as system envelope** (`event: \"user_decision_review_deadline_warn\"`, `message.data: <user's verbatim reply>`):\n\
+     Call `onchainos agent next-action --jobid {job_id} --jobStatus user_decision_review_deadline_warn --role buyer --agentId {agent_id} --data \"<message.data>\"` — CLI returns a routing playbook that maps the user's intent (`A` / `通过` / `approve` / 同意 / 接受 → `approve_review`; `B` / `拒绝` / `reject` → `reject_review`; ambiguous → re-ask via pending-decisions-v2 request). Follow the returned routing.\n",
         review_deadline_prompt_for_shell = review_deadline_prompt.replace('"', "\\\""),
     )
 }

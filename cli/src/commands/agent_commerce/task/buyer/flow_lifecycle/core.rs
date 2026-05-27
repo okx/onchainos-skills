@@ -163,7 +163,8 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
        --sub-key \"<full sessionKey from session_status>\" \\\n\
        --job-id {job_id} --role buyer --agent-id {agent_id} \\\n\
        --user-content \"<deliverable card + A/B options, see templates below>\" \\\n\
-       --list-label \"[Decision {short_id}] Approve / Reject\"\n\
+       --list-label \"[Decision {short_id}] Approve / Reject\" \\\n\
+       --source-event job_submitted\n\
      ```\n\
      {l10n_prompt_bold}\n\n\
      `--user-content` template (canonical English; localize before passing) — split by deliverableType:\n\n\
@@ -198,12 +199,9 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      ===============================================================\n\
      🛑🛑🛑 STOP — after running `pending-decisions-v2 request` and following its returned playbook (one `xmtp_prompt_user` call) in Step 3, you **MUST end this turn**\n\
      ===============================================================\n\
-     This playbook ends here for Step 3. In a later turn, upon receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session, continue with Step 4 below.\n\n\
-     **Step 4 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
-     Inspect the verbatim text (case-insensitive; trim whitespace/punctuation) and route:\n\
-     - Verbatim is `A` / `a` / `选A` / `1` / `Choose A` / `option A`, OR contains `通过` / `同意` / `满意` / `验收` / `接受` / `approve` / `accept` / `agree` → call `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}` for the approve playbook (which will run `onchainos agent complete`).\n\
-     - Verbatim is `B` / `b` / `选B` / `2` / `Choose B` / `option B`, OR contains `拒绝` / `不通过` / `不满意` / `不接受` / `reject` / `refuse` → call `onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId {agent_id}` (extract the reason from the verbatim after `理由` / `reason` / `因为`; if not stated, default to `did not meet acceptance criteria`).\n\
-     - Otherwise (unrelated reply) → call `pending-decisions-v2 request` again with a clarifying userContent (\"您刚才回复 「<verbatim>」我没理解,请回复 「通过」 或 「拒绝, 理由: <...>」 或 直接回复 A / B\") to re-ask.\n\n\
+     This playbook ends here for Step 3. In a later turn, when user-session relays the reply as a system envelope (`event: \"user_decision_job_submitted\"`, `message.data: <verbatim>`), continue with Step 4 below.\n\n\
+     **Step 4 — After user-session relays as system envelope** (`event: \"user_decision_job_submitted\"`, `message.data: <user's verbatim reply>`):\n\
+     Call `onchainos agent next-action --jobid {job_id} --jobStatus user_decision_job_submitted --role buyer --agentId {agent_id} --data \"<message.data>\"` — CLI returns a routing playbook that maps the user's intent (`A` / `通过` / `approve` / 同意 / 接受 → `approve_review`; `B` / `拒绝` / `reject` → `reject_review`; ambiguous → re-ask via pending-decisions-v2 request). Follow the returned routing.\n\n\
      ===============================================================\n\
      🔴🔴🔴 ABSOLUTE PROHIBITION when routing in Step 4:\n\
      ❌ Do NOT skip `next-action` and call `onchainos agent complete` / `onchainos agent reject` directly — the `job_submitted` playbook deliberately splits approve/reject into independent pseudo-events; without the playbook from next-action you will miss internal pre-complete / pre-refuse signature steps and funds will stay locked.\n\

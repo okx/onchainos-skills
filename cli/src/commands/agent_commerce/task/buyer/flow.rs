@@ -163,7 +163,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 ///
 /// The `job_status` parameter accepts both event names (job_created / provider_applied / ...)
 /// and status names (open / submitted / ...), uniformly parsed by state_machine.
-pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_title: Option<&str>) -> String {
+pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol version handshake.
@@ -224,7 +224,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         "🔒 If `skills/okx-agent-task/SKILL.md Session Communication Contract` has not been read this turn → read it first before continuing (envelope whitelist / xmtp_send two-step / xmtp_dispatch_user·xmtp_prompt_user push-to-user iron rules). The steps below will reference its sections (3 / 4 / 5 / 6).\n\n\
          ⚠️ **Hard exception escalation rules** (apply in any scenario, see _shared/exception-escalation.md + buyer.md):\n\
          \x20\x201) Protocol misunderstanding (counterpart still repeats after ≥1 clarification in the same flow) → **stop replying to counterpart**, call `xmtp_dispatch_user`, content=`{escalation_protocol_misread}` (🌐 localize per [Localization] rules), end turn\n\
-         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**; enqueue an error decision via `pending-decisions-v2 request` (first `session_status` to get sessionKey if not cached this turn; `--user-content` = `{escalation_cli_failed}` localized per [Localization] rules; `--list-label` = `[Error <short jobId>] CLI failed`). Follow the playbook the CLI returns. After receiving `[USER_DECISION_RELAY] decision: <verbatim>`, route: verbatim is `A` / `选A` / `retry` / `重试` / `try again` → re-run the same command once (if it fails again, enqueue another error decision; do NOT loop); verbatim is `B` / `选B` / `dismiss` / `不再提示` / `skip prompts` → end the turn, user takes manual control of this step; otherwise → interpret the verbatim as a new instruction (e.g. `change --token-symbol to USDT and retry`) and execute. **Exception**: JWT expired (msg contains `JWT verification failed` / `unauthorized`) → re-login once automatically; on continued failure, fall back to the standard pending-decisions-v2 flow. Network timeout — also enqueue via pending-decisions-v2; do not blind-retry\n\
+         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**; enqueue an error decision via `pending-decisions-v2 request` with `--source-event cli_failed` (first `session_status` to get sessionKey if not cached this turn; `--user-content` = `{escalation_cli_failed}` localized per [Localization] rules; `--list-label` = `[Error <short jobId>] CLI failed`). Follow the playbook the CLI returns. After the user-session relays the reply back as a system envelope (`event:\"user_decision_cli_failed\"`, `message.data:<user verbatim>`), call `next-action --jobStatus user_decision_cli_failed --data \"<message.data>\"` — the returned playbook does the LLM semantic mapping (retry / dismiss / new-instruction) and tells you what to do. **Exception**: JWT expired (msg contains `JWT verification failed` / `unauthorized`) → re-login once automatically; on continued failure, fall back to the standard pending-decisions-v2 flow. Network timeout — also enqueue via pending-decisions-v2; do not blind-retry\n\
          \x20\x203) ❌ **Absolutely forbidden to broadcast technical error details to the counterpart**: CLI command names / backend field names / stderr summaries / `bug`/`command:`/`error:` must never go into xmtp_send to the counterpart. At most send a single line 'please wait, confirming details' or do not notify the counterpart at all.\n\
          \x20\x204) ❌ **Do not repeat xmtp_send in the same turn**: when the playbook says 'send one message' → after the tool returns 'sent' once, that **counts as success**, and **do not call xmtp_send to the same counterpart a second time within this turn**. Do not resend just because the message may be unclear — resending = spam + triggering a loop on the counterpart. Wait for the next inbound.\n\
          \x20\x205) ❌ **apply is a provider action**: in the escrow path, `apply` is executed by the provider, the buyer must never call `onchainos agent apply`. The buyer first calls `set-payment-mode`, then executes `confirm-accept` after receiving the provider's application notice. ⚠️ When the user says 'have XXX take the job' / 'let XXX accept it' → they mean 'pick this provider', the correct action is `next-action --provider <agentId>`, **not apply**.\n\
@@ -341,8 +341,55 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         | Event::Slashed
         | Event::StakeStopped
         | Event::CooldownEntered
-        | Event::DisputeApproved
-        | Event::Other(_) => super::flow_lifecycle::staked_and_unknown(event.as_str(), job_id),
+        | Event::DisputeApproved => super::flow_lifecycle::staked_and_unknown(event.as_str(), job_id),
+
+        // ─── user_decision_* relay router (buyer-side scenes) ───
+        // User-decision relays arrive as system-shaped envelopes with
+        // `event = "user_decision_<source_event>"` and `message.data = <user's verbatim reply>`.
+        // CLI returns a routing playbook that lists the candidate pseudo-events with
+        // natural-language descriptions; the sub agent's LLM decides which one the
+        // user actually meant — no hardcoded keyword tables, pure semantic mapping.
+        Event::Other(ref s) if s.starts_with("user_decision_") => {
+            let source = s["user_decision_".len()..].to_string();
+            let reply = data.unwrap_or("").trim();
+            match source.as_str() {
+                "job_submitted" | "review_deadline_warn" => format!(
+                    "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
+                     **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
+                     Two options:\n\
+                     \x20\x20• **`approve_review`** — user accepts the deliverable (typical intents: A / 通过 / 同意 / 满意 / 接受 / 验收 / approve / accept / agree / OK / 行 / 可以 — anything meaning satisfaction with the deliverable).\n\
+                     \x20\x20• **`reject_review`** — user rejects and wants revisions/refund (typical intents: B / 拒绝 / 不通过 / 不满意 / 不接受 / reject / refuse / 不行 / 不达标 — anything meaning dissatisfaction; extract the reason if the user provided one after `理由` / `reason` / `因为`).\n\n\
+                     If the user's reply clearly maps to one of these → call:\n\
+                     ```bash\n\
+                     onchainos agent next-action --jobid {job_id} --jobStatus <approve_review|reject_review> --role buyer --agentId {agent_id}\n\
+                     ```\n\
+                     If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--sub-key` and `--source-event {source}`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
+                ),
+                "job_disputed" => format!(
+                    "[User decision relay] source_event=`job_disputed`, user's verbatim reply: `{reply}`\n\n\
+                     The user's reply **is** the evidence content (text + optional image path). Route directly to:\n\
+                     ```bash\n\
+                     onchainos agent next-action --jobid {job_id} --jobStatus dispute_evidence --role buyer --agentId {agent_id}\n\
+                     ```\n\
+                     Extract any image path from the reply (e.g. `image: /path/to/screenshot.png`) and pass it through to the upload step per the dispute_evidence playbook.\n"
+                ),
+                "cli_failed" => format!(
+                    "[User decision relay] source_event=`cli_failed`, user's verbatim reply: `{reply}`\n\n\
+                     The original `onchainos agent <cmd>` failed and you asked the user how to proceed. **Semantic mapping** — decide what the user means and act accordingly (no on-chain action by default):\n\n\
+                     \x20\x20• **Retry** — user wants you to re-run the same CLI command (typical intents: A / 选A / retry / 重试 / try again / 再来一次 / 再试一次). Action: re-execute the **exact same** CLI you previously ran (same args, same job_id). If it fails again, do NOT loop — enqueue **one more** `pending-decisions-v2 request --source-event cli_failed` and end the turn.\n\
+                     \x20\x20• **Dismiss** — user takes manual control of this step (typical intents: B / 选B / dismiss / 不再提示 / skip prompts / 我自己处理 / let me handle it). Action: end the turn. Do not re-prompt; the user owns this step now.\n\
+                     \x20\x20• **New instruction** — user gives a corrective instruction in natural language (e.g. `把 token-symbol 改成 USDT 再试` / `change --token-symbol to USDT and retry` / `用 endpoint https://... 重试` / `先 cancel 那个 unstake`). Action: parse the modification, rebuild the CLI invocation with the user's adjustment, and execute once. Treat the result as a fresh attempt (success → continue the original scene; failure → enqueue another `cli_failed` decision).\n\n\
+                     ⚠️ Do NOT execute any on-chain action that wasn't part of the original failed command — the user reply only authorizes retry/edit of the failed step, not unrelated new actions.\n\
+                     ⚠️ If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event cli_failed`. **`--user-content` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
+                ),
+                _ => format!(
+                    "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n\n\
+                     **Manual routing required** — inspect the scene context (call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if needed) and decide semantically which pseudo-event the user's reply maps to. Then call `onchainos agent next-action --jobid {job_id} --jobStatus <chosen-pseudo-event> --role buyer --agentId {agent_id}`.\n"
+                ),
+            }
+        }
+
+        Event::Other(_) => super::flow_lifecycle::staked_and_unknown(event.as_str(), job_id),
     };
 
     let core = if job_status == "create_task" || job_status == "switch_provider" {

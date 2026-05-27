@@ -62,8 +62,10 @@ pub fn check_and_consume(job_id: &str) -> Result<()> {
         Ok(content) if content.trim() == "pending" => {
             bail!(
                 "User has not made a review decision yet (review-gate = pending). \
-                 Please enqueue a review decision via `onchainos agent pending-decisions-v2 request` and wait for the user's reply. \
-                 After receiving `[USER_DECISION_RELAY] decision: <verbatim>`, call next-action --jobStatus approve_review to get the review playbook."
+                 Please enqueue a review decision via `onchainos agent pending-decisions-v2 request --source-event job_submitted ...` and wait for the user's reply. \
+                 After the user-session relays the reply back as a system envelope (`event:\"user_decision_job_submitted\"`, `message.data:<user verbatim>`), \
+                 call `next-action --jobid <jobId> --jobStatus user_decision_job_submitted --role buyer --agentId <agentId> --data \"<message.data>\"` — \
+                 the returned playbook will instruct you to call `next-action --jobStatus approve_review` (when the user approves) or `reject_review` (when the user rejects)."
             );
         }
         Ok(content) => {

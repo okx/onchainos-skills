@@ -62,6 +62,18 @@ struct PendingEntry {
     /// `serde(default)` keeps backward-compat with existing on-disk JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     llm_content_override: Option<String>,
+    /// Originating chain event for this decision (e.g. `job_submitted` /
+    /// `job_refused` / `job_disputed` / `submit_deadline_warn`). At resolve
+    /// time the CLI emits a system-shaped relay envelope with
+    /// `event = "user_decision_<source_event>"`, so the receiving sub session
+    /// can dispatch to its existing `next-action --jobStatus user_decision_<X>`
+    /// handler — no string-prefix parsing, no keyword-mapping in the sub.
+    ///
+    /// Optional for backward compatibility: if absent at resolve time, the CLI
+    /// falls back to a generic `user_decision` event (still system-shaped,
+    /// sub handles via a default branch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_event: Option<String>,
     status: Status,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -282,6 +294,13 @@ pub enum PendingDecisionsV2Command {
         /// lifecycle stays managed by CLI.
         #[arg(long = "llm-content")]
         llm_content: Option<String>,
+        /// Originating chain event for this decision (e.g. `job_submitted` /
+        /// `job_refused` / `job_disputed` / `submit_deadline_warn`). At resolve
+        /// time the CLI emits a system-shaped relay envelope with
+        /// `event = "user_decision_<source_event>"`. Sub then routes via its
+        /// existing `next-action --jobStatus user_decision_<X>` handler.
+        #[arg(long = "source-event")]
+        source_event: Option<String>,
     },
 
     /// (user-session) Resolve the current active decision with user's reply.
@@ -332,7 +351,8 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             user_content,
             list_label,
             llm_content,
-        } => handle_request(sub_key, job_id, role, agent_id, user_content, list_label, llm_content),
+            source_event,
+        } => handle_request(sub_key, job_id, role, agent_id, user_content, list_label, llm_content, source_event),
         PendingDecisionsV2Command::Resolve { user_reply } => handle_resolve(user_reply),
         PendingDecisionsV2Command::Pick { index } => handle_pick(index),
         PendingDecisionsV2Command::List { format } => handle_list(format),
@@ -350,6 +370,7 @@ fn handle_request(
     user_content: String,
     list_label: String,
     llm_content: Option<String>,
+    source_event: Option<String>,
 ) -> Result<()> {
     // Reject hallucinated sub_key shapes early. The only valid sub_key is the
     // full XMTP sessionKey returned by `session_status` — anything else (e.g.
@@ -413,6 +434,7 @@ fn handle_request(
         user_content: user_content.clone(),
         list_label,
         llm_content_override: llm_content,
+        source_event,
         status: new_status.clone(),
         created_at: original_created_at,
         updated_at: Utc::now(),
@@ -477,18 +499,36 @@ fn handle_resolve(user_reply: String) -> Result<()> {
     };
 
     let active = q.entries.remove(active_idx);
-    // Two relay shapes coexist:
-    //  - v1 intent-tag scenes (e.g. JobRefused with `--llm-content` instructing the user-session
-    //    to call `resolve --user-reply "[intent:CODE] user said: ..."`): concat directly so the
-    //    final content is `[USER_DECISION_RELAY][intent:CODE] user said: ...` — sub-side flow.rs
-    //    Step 2 branches on `[intent:CODE]`.
-    //  - default v2 scenes (raw verbatim user wording): prepend `decision: ` so the content is
-    //    `[USER_DECISION_RELAY] decision: <verbatim>` — matches the documented skill prefix.
-    let relay_content = if user_reply.starts_with("[intent:") {
-        format!("[USER_DECISION_RELAY]{}", user_reply)
-    } else {
-        format!("[USER_DECISION_RELAY] decision: {}", user_reply)
+    // Relay content is a system-shaped envelope: same JSON skeleton the chain
+    // uses for events (`source: "system"`, `event`, `jobId`, ...), so the
+    // receiving sub session can dispatch it via its existing `next-action`
+    // handler without any string-prefix parsing or keyword-mapping.
+    //
+    // event = "user_decision_<source_event>" (e.g. "user_decision_job_submitted").
+    // If --source-event was not provided at request time, falls back to the
+    // generic "user_decision" — sub handles via a default branch.
+    let relay_event = match &active.source_event {
+        Some(se) => format!("user_decision_{}", se),
+        None => "user_decision".to_string(),
     };
+    let relay_envelope = serde_json::json!({
+        "agentId": active.agent_id,
+        "message": {
+            "event": relay_event,
+            "data": user_reply,
+            "code": 0,
+            "description": "Read okx-agent-task/SKILL.md if you don't know the context",
+            "source": "system",
+            "jobId": active.job_id,
+            "role": active.role,
+            "timestamp": Utc::now().timestamp(),
+        }
+    });
+    let relay_content = serde_json::to_string(&relay_envelope)
+        .unwrap_or_else(|_| format!(
+            "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":\"{}\",\"source\":\"system\",\"jobId\":\"{}\"}}}}",
+            active.agent_id, relay_event, user_reply, active.job_id
+        ));
 
     let queued: Vec<&PendingEntry> = q
         .entries
@@ -820,41 +860,40 @@ fn playbook_wait_with_reprompt(
     queued_position: usize,
 ) -> String {
     let total_pending = queued_position + 1;
-    // llmContent routes future user reply to the ACTIVE entry — user-session's
-    // `resolve` always targets the active, regardless of which sub displayed
-    // the prompt. This preserves the single-active invariant.
-    let llm_content = resolve_llm_content(active);
     // Canonical English wrapper. Sub LLM translates the wrapper lines (the 🆕
     // top notice + the `─── Current active decision ───` divider) to match the
     // embedded active card's language. The embedded `active.user_content` is
     // already in the user's language (sub-A localized at request time when the
     // active was first pushed); do NOT re-translate it. The `new_entry.list_label`
     // is sub-provided and already localized too; do NOT translate it.
-    let user_content_wrapped = format!(
+    let dispatch_content = format!(
         "🆕 **A new decision arrived (queued: \"{}\") — {} pending decisions in total. \
          Please answer the active decision below first; the queued one will auto-display \
          once you finish this.**\n\n\
          ─────────── Current active decision ───────────\n\
-         {}",
+         {}\n\n\
+         💡 Tip: reply `查看决策列表` / `决策项` / `show decision list` / `list decisions` \
+         (or any similar phrase asking for pending decisions) at any time to see all pending decisions.",
         new_entry.list_label, total_pending, active.user_content,
     );
     format!(
         "Your decision is queued (position {}). The user has another decision currently active — re-surface \
-         that ACTIVE decision's card via `xmtp_prompt_user`, with a short notice on top that a new decision \
-         is queued. The user answers the ACTIVE card; their reply routes (via `pending-decisions-v2 resolve`) \
-         to the active entry's sub. Your queued card will be auto-rendered later when the active resolves.\n\n\
-         🌐 **LOCALIZE FIRST**: the two English header lines in userContent below (the `🆕 A new decision \
-         arrived...` top notice AND the `─── Current active decision ───` divider) must be translated to the \
-         **same language as the embedded active decision text** before xmtp_prompt_user. Keep the embedded \
-         active card text intact (do NOT re-translate). Do NOT send mixed-language userContent.\n\n\
-         Call xmtp_prompt_user with the EXACT arguments below (after applying the header translation). End \
-         the turn after the tool returns 'sent'. Do NOT call any other tool first or after.\n\n\
-         tool: xmtp_prompt_user\n\
-         llmContent:\n{}\n\
-         userContent:\n{}\n",
+         that ACTIVE decision's card via `xmtp_dispatch_user` (pure notification, no llmContent needed: the \
+         active entry already has its own context in the queue). The user answers the ACTIVE card; their \
+         reply routes (via `pending-decisions-v2 resolve` in the user-session) to the active entry's sub. \
+         Your queued card will be auto-rendered later when the active resolves.\n\n\
+         🌐 **LOCALIZE FIRST**: the three English wrapper lines in content below (the `🆕 A new decision \
+         arrived...` top notice, the `─── Current active decision ───` divider, AND the `💡 Tip: reply 查看决策列表 ...` \
+         footer) must be translated to the **same language as the embedded active decision text** before \
+         xmtp_dispatch_user. Keep the embedded active card text and the literal command keywords (`查看决策列表` / \
+         `决策项` / `show decision list` / `list decisions`) intact — those are recognized commands. Do NOT send \
+         mixed-language content.\n\n\
+         Call `xmtp_dispatch_user` with the EXACT content below (after applying the header translation). End \
+         the turn after the tool returns. Do NOT call any other tool first or after.\n\n\
+         tool: xmtp_dispatch_user\n\
+         content:\n{}\n",
         queued_position,
-        indent(&llm_content, "  "),
-        indent(&user_content_wrapped, "  "),
+        indent(&dispatch_content, "  "),
     )
 }
 
@@ -866,7 +905,11 @@ fn playbook_relay_only(sub_key: &str, relay_content: &str) -> String {
          content: {}\n\n\
          ⚠️ Call `xmtp_dispatch_session` **exactly once** — when the tool returns 'Message dispatched' = end \
          the turn immediately (no more xmtp / Exec calls). Repeated calls cause sub to receive N identical \
-         relays → event-recursion loop. Skipping it = sub never gets the user's decision = task stalls.\n",
+         relays → event-recursion loop. Skipping it = sub never gets the user's decision = task stalls.\n\n\
+         🛑 **CONSUMPTION MARKER** — The user's reply has been DISPATCHED above and is **already consumed**. \
+         Do NOT call `pending-decisions-v2 resolve` again with the same reply (now or in any later turn). \
+         Do NOT reference it as the answer to any subsequently-rendered card. Future decisions need a \
+         FRESH user_message — wait for the user to type something new.\n",
         sub_key, relay_content
     )
 }
@@ -876,37 +919,25 @@ fn playbook_relay_and_render(
     relay_content: &str,
     next: &PendingEntry,
 ) -> String {
-    let llm_content = resolve_llm_content(next);
-    // Canonical English transition prefix so the user knows "previous handled,
-    // next coming". Sub LLM must translate this prefix to the user's language
-    // before xmtp_prompt_user (the embedded next.user_content is already in the
-    // user's language — do NOT re-translate it).
     let next_user_content = format!(
         "✓ Previous decision handled. Here's the next pending one:\n\n{}",
         next.user_content,
     );
     format!(
         "Execute the following in order WITHIN THIS TURN. End the turn after Step 2.\n\n\
-         🛑 **Step 2 is `xmtp_prompt_user` (rendering), NOT another `resolve` call**. Do NOT call \
-         `pending-decisions-v2 resolve` again in this turn — the next resolve only happens in a FUTURE \
-         turn after the user replies to the prompt rendered in Step 2.\n\n\
-         Step 1 — Relay the user's decision to the just-resolved sub session (call `xmtp_dispatch_session` \
-         exactly once; repeated calls = sub receives N relays):\n\
+         🛑 Do NOT call `pending-decisions-v2 resolve` again in this turn — the next resolve only happens in a FUTURE turn after the user replies to the card rendered in Step 2.\n\n\
+         Step 1 — Relay the user's decision to the just-resolved sub session (call `xmtp_dispatch_session` exactly once; repeated calls = sub receives N relays):\n\
            tool: xmtp_dispatch_session\n\
            sessionKey: {}\n\
            content: {}\n\n\
-         Step 2 — Auto-render the only remaining decision.\n\
-         🌐 **LOCALIZE FIRST**: the transition header `✓ Previous decision handled. Here's the next pending \
-         one:` is canonical English; translate it to match the embedded next-decision's language before \
-         xmtp_prompt_user. Keep the embedded next-decision text intact (do NOT re-translate). Do NOT send \
-         mixed-language userContent.\n\n\
-           tool: xmtp_prompt_user\n\
-           llmContent:\n{}\n\
-           userContent:\n{}\n",
+         🛑 **CONSUMPTION MARKER** — The user's reply has been DISPATCHED in Step 1 and is **already consumed**. The card rendered in Step 2 below is a NEW decision; the just-consumed reply is NOT its answer. Do NOT pass that consumed reply to any subsequent `resolve` / `dispatch_session` call.\n\n\
+         Step 2 — Render the next decision card to the user as your assistant response (text rendering only — do NOT call any tool).\n\
+         🌐 Translate the English transition header `✓ Previous decision handled. Here's the next pending one:` to match the embedded next-decision's language. Keep the embedded next-decision text intact (do NOT re-translate). Do NOT render mixed-language content.\n\n\
+         Verbatim text to render:\n\"\"\"\n{}\"\"\"\n\n\
+         When the user replies in a FUTURE turn, call `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording>\"` (defer keyword → end turn). CLI consumes the active entry and emits a system envelope to the sub.\n",
         resolved_sub_key,
         relay_content,
-        indent(&llm_content, "    "),
-        indent(&next_user_content, "    "),
+        next_user_content,
     )
 }
 
@@ -936,6 +967,9 @@ fn playbook_relay_and_list(
            tool: xmtp_dispatch_session\n\
            sessionKey: {}\n\
            content: {}\n\n\
+         🛑 **CONSUMPTION MARKER** — The user's reply has been DISPATCHED in Step 1 and is **already consumed**. \
+         The list rendered in Step 2 below requires the user to type a NEW number (`1`-`N`) or defer keyword. \
+         The just-consumed reply is NOT a pick selection; do NOT pass it to `pick --index` or any subsequent CLI.\n\n\
          Step 2 — Render the list below VERBATIM to the user in your assistant response (text rendering only; \
          do NOT call any tool for Step 2).\n\
          🌐 **LOCALIZE FIRST**: the English header (`✓ Previous decision handled...`) and footer (`Reply with \
@@ -964,14 +998,13 @@ fn playbook_relay_and_list(
 }
 
 fn playbook_render(entry: &PendingEntry) -> String {
-    let llm_content = resolve_llm_content(entry);
     format!(
-        "Render the user's selected decision. Call `xmtp_prompt_user` ONCE with the EXACT arguments below, then END THE TURN.\n\n\
-         tool: xmtp_prompt_user\n\
-         llmContent:\n{}\n\
-         userContent:\n{}\n",
-        indent(&llm_content, "  "),
-        indent(&entry.user_content, "  "),
+        "Render the selected decision card to the user as your assistant response (text rendering only — do NOT call any tool). End the turn after rendering.\n\n\
+         🌐 If the user's language is not English, translate the card per [Localization] rules before rendering (do NOT add/remove content; keep `jobId` / data values intact).\n\n\
+         Verbatim text to render:\n\
+         \"\"\"\n{}\"\"\"\n\n\
+         When the user replies in a FUTURE turn, call `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording>\"` (defer keyword → end turn). CLI consumes the active entry and emits a system envelope to the sub session; the business flow continues there.\n",
+        entry.user_content,
     )
 }
 
