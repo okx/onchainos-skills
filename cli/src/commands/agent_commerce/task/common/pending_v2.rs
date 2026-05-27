@@ -478,7 +478,7 @@ fn handle_resolve(user_reply: String) -> Result<()> {
 
     let active = q.entries.remove(active_idx);
     // Two relay shapes coexist:
-    //  - v1 intent-tag scenes (e.g. JobRefused with `--llm-content` instructing the user-session
+    //  - v1 intent-tag scenes (e.g. JobRejected with `--llm-content` instructing the user-session
     //    to call `resolve --user-reply "[intent:CODE] user said: ..."`): concat directly so the
     //    final content is `[USER_DECISION_RELAY][intent:CODE] user said: ...` — sub-side flow.rs
     //    Step 2 branches on `[intent:CODE]`.

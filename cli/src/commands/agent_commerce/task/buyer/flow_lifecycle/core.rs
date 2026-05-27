@@ -354,7 +354,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      {terminal_session_hint}\n\
      Task fully complete.\n\n\
      [Follow-up events]\n\
-     - escrow: job_completed → task complete / job_refused → wait for ASP to choose dispute or refund\n\
+     - escrow: job_completed → task complete / job_rejected → wait for ASP to choose dispute or refund\n\
      - x402: flow ends here\n"
     )
 }
@@ -411,7 +411,7 @@ pub(crate) fn reject_review(ctx: &FlowContext<'_>) -> String {
      \x20\x20→ Task status becomes Rejected; the ASP can open a dispute within 24h.\n\
      \x20\x20⚠️ **The buyer cannot initiate arbitration** — only the ASP can. If the user asks, explain: after rejection the ASP decides whether to dispute; if the ASP does not dispute within 24h, the system auto-refunds.\n\n\
      ⚠️ **Do not xmtp_send any message to the ASP** (e.g. \"rejected\"); the ASP learns via on-chain events.\n\n\
-     After Step 1 → **end this turn** and wait for the `job_refused` system notification.\n"
+     After Step 1 → **end this turn** and wait for the `job_rejected` system notification.\n"
     )
 }
 

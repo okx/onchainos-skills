@@ -72,10 +72,10 @@ pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
     )
 }
 
-// ── Event::JobRefused ──────────────────────────────────────────────
+// ── Event::JobRejected ─────────────────────────────────────────────
 
-/// `Event::JobRefused` Step 1 — user notification that the rejection is confirmed on-chain.
-pub fn job_refused_user_notify(job_id: &str, title: &str) -> String {
+/// `Event::JobRejected` Step 1 — user notification that the rejection is confirmed on-chain.
+pub fn job_rejected_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "[Rejection Confirmed] The deliverable for **{title}** (`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
          The ASP has 24 hours to choose: file a dispute or agree to a refund.\n\
@@ -232,10 +232,10 @@ pub fn submit_expired_user_notify(job_id: &str) -> String {
     )
 }
 
-// ── Event::RefuseExpired ───────────────────────────────────────────
+// ── Event::RejectExpired ───────────────────────────────────────────
 
-/// `Event::RefuseExpired` — ASP missed the dispute deadline (B-7-6).
-pub fn refuse_expired_user_notify(job_id: &str) -> String {
+/// `Event::RejectExpired` — ASP missed the dispute deadline (B-7-6).
+pub fn reject_expired_user_notify(job_id: &str) -> String {
     format!(
         "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund has been requested; funds will return to your wallet."
     )

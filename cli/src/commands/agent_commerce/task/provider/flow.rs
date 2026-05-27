@@ -27,9 +27,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Accepted => vec![next_action("job_accepted")],
         Status::Submitted => vec![
             next_action("job_submitted"),
-            "(Passive wait) Awaiting User Agent review: job_completed → task complete; job_refused → enter arbitration / refund decision.".to_string(),
+            "(Passive wait) Awaiting User Agent review: job_completed → task complete; job_rejected → enter arbitration / refund decision.".to_string(),
         ],
-        Status::Rejected => vec![next_action("job_refused")],
+        Status::Rejected => vec![next_action("job_rejected")],
         Status::Disputed => vec![next_action("job_disputed")],
         Status::Completed => vec![
             next_action("job_completed"),
@@ -247,14 +247,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - **End this turn directly**; wait for the User Agent to complete/reject and trigger the next event\n\n\
              [Follow-up events]\n\
              - Received `job_completed` (review passed) → `onchainos agent next-action --jobid {job_id} --jobStatus job_completed --role provider --agentId {agent_id}`\n\
-             - Received `job_refused`   (User Agent rejected) → `onchainos agent next-action --jobid {job_id} --jobStatus job_refused --role provider --agentId {agent_id}`\n"
+             - Received `job_rejected`  (User Agent rejected) → `onchainos agent next-action --jobid {job_id} --jobStatus job_rejected --role provider --agentId {agent_id}`\n"
         ),
 
         // ─── Scene 6: User Agent rejected the deliverable ─────────────────────────────────
-        Event::JobRefused => {
-            let user_prompt = super::content::job_refused_user_decision_prompt(&short_id);
+        Event::JobRejected => {
+            let user_prompt = super::content::job_rejected_user_decision_prompt(&short_id);
             format!(
-            "[Current state] job_refused (User Agent rejected the deliverable)\n\
+            "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the decision (dispute vs refund) to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `xmtp_dispatch_user`)**.\n\
              `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → the decision flow deadlocks. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `xmtp_prompt_user` (with llmContent + userContent) so the user session can relay the decision back. Direct text output in this sub session = user doesn't see it + relay channel broken + 24h timeout → auto-refund.\n\
@@ -708,7 +708,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         // ─── Buyer-driven timeout events; no provider action needed ─────
         Event::JobExpired
         | Event::SubmitExpired
-        | Event::RefuseExpired
+        | Event::RejectExpired
         | Event::ReviewDeadlineWarn => format!(
             "[System notification] {event} (User Agent-side timeout event; not the provider's concern)\n\
              [Role] ASP (Agent Service Provider)\n\n\

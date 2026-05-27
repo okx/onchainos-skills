@@ -2,22 +2,22 @@
 
 use super::super::flow::FlowContext;
 
-pub(crate) fn job_refused(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
 
-    let refused_notify = super::super::content::job_refused_user_notify(job_id, title_display);
+    let rejected_notify = super::super::content::job_rejected_user_notify(job_id, title_display);
     format!(
-    "[Current Status] job_refused (user rejection settled on-chain; awaiting ASP decision)\n\
+    "[Current Status] job_rejected (user rejection settled on-chain; awaiting ASP decision)\n\
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user that rejection is settled; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed:**\n\n\
      content:\n\
-     {refused_notify}\n\
+     {rejected_notify}\n\
      {l10n_short}\n\n\
      **Step 2 -- Silently wait for the ASP's decision:**\n\n\
      ⚠️ **Do not send any xmtp_send message to the ASP**. The ASP has 24h to decide:\n\
@@ -27,7 +27,7 @@ pub(crate) fn job_refused(ctx: &FlowContext<'_>) -> String {
      ⚠️ **The buyer cannot initiate arbitration** — only the ASP can open a dispute. If the user asks \"can I start a dispute?\", reply: the buyer side does not support initiating arbitration; please wait for the ASP's decision (up to 24h; if no dispute is raised, auto-refund).\n\n\
      After Step 1 → **end this turn** and wait for the next system event.\n\n\
      [Follow-up events]\n\
-     - job_disputed → submit user evidence (Scene 6)\n\
+     - job_disputed → submit user evidence\n\
      - job_refunded → refund complete\n"
     )
 }

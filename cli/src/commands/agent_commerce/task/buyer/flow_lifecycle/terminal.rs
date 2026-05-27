@@ -107,11 +107,11 @@ pub(crate) fn submit_expired(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-pub(crate) fn refuse_expired(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
-    let refuse_expired = super::super::content::refuse_expired_user_notify(job_id);
+    let reject_expired = super::super::content::reject_expired_user_notify(job_id);
     format!(
     "[System Notification] ASP arbitration window expired\n\
      [Role] User (User Agent)\n\n\
@@ -122,7 +122,7 @@ pub(crate) fn refuse_expired(ctx: &FlowContext<'_>) -> String {
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
      **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
-     content: \"{refuse_expired}\"\n\
+     content: \"{reject_expired}\"\n\
      {l10n_short}\n"
     )
 }

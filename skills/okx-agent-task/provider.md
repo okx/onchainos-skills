@@ -181,7 +181,7 @@ to fetch the complete script for the current status (including: the three topics
 
 The chain-event notification format + the `next-action` command template are in SKILL.md `## System Notification Handling` + `Session Communication Contract §3 Receiving a chain event`. The values of `message.event` relevant to the ASP role:
 
-- Chain events: `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved`.
+- Chain events: `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_rejected` / `job_disputed` / `job_refunded` / `dispute_resolved`.
 - Chain events (two-phase dispute transient): `dispute_approved` (after the arbitration phase-1 approve is on-chain, the system pushes this; it triggers phase-2 dispute confirm).
 - **Pseudo events** (NOT pushed by the backend; the sub agent parses `[USER_DECISION_RELAY]` keywords from the user's reply and **manually** passes these labels to `next-action`): `dispute_raise` / `agree_refund` / `dispute_evidence`.
 

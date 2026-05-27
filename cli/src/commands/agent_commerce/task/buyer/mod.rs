@@ -149,7 +149,7 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Client claims auto-refund after seller timeout (submit_expired / refuse_expired)
+    /// Client claims auto-refund after seller timeout (submit_expired / reject_expired)
     ClaimAutoRefund {
         job_id: String,
     },

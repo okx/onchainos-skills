@@ -114,11 +114,11 @@ Two envelope shapes enter the task lifecycle and **are not free-form chat**:
 
 - **a2a business message**: `msgType=a2a-agent-chat` + non-empty `jobId`
 - **On-chain system event**: `{agentId, message:{source:"system", event:<E>, jobId, ...}}`, where `E` is one of the backend's 37 event enums (`state_machine.rs::Event`):
-  - **Task main flow**: `job_created` / `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `dispute_approved` / `job_disputed` / `job_refunded` / `dispute_resolved` / `job_expired` / `job_closed` / `job_visibility_changed` / `job_payment_mode_changed` / `task_token_budget_change` / `task_provider_change`
+  - **Task main flow**: `job_created` / `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_rejected` / `dispute_approved` / `job_disputed` / `job_refunded` / `dispute_resolved` / `job_expired` / `job_closed` / `job_visibility_changed` / `job_payment_mode_changed` / `task_token_budget_change` / `task_provider_change`
   - **Arbitration lifecycle** (Evaluator Agent sub-state machine): `evaluator_selected` / `reveal_started` / `vote_committed` / `vote_revealed` / `round_failed` / `slashed`
   - **Staking lifecycle** (Evaluator Agent): `staked` (**both first-time staking and top-ups emit this event**) / `unstake_requested` / `unstake_claimed` / `unstake_cancelled` / `stake_stopped` / `cooldown_entered`
   - **Reward / slash**: `reward_claimed`
-  - **Timeout & auto-claim receipts**: `submit_expired` / `refuse_expired` / `review_expired` / `job_auto_completed` / `job_auto_refunded`
+  - **Timeout & auto-claim receipts**: `submit_expired` / `reject_expired` / `review_expired` / `job_auto_completed` / `job_auto_refunded`
   - **Deadline reminders**: `submit_deadline_warn` / `review_deadline_warn`
   - **Network / restart wake-up**: `wakeup_notify` (per-task fan-out; the envelope carries the real status in `message.jobStatus` directly — do NOT use `wakeup_notify` itself as the jobStatus to fetch the script; read `jobStatus` and re-invoke `next-action`)
 
@@ -163,8 +163,8 @@ onchainos agent next-action \
 | `staked` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled` / `stake_stopped` / `cooldown_entered` | `evaluator` |
 | `reward_claimed` | `evaluator` |
 | `provider_applied` / `dispute_approved` / `review_expired` / `submit_deadline_warn` / `job_auto_completed` | `provider` |
-| `job_created` / `job_expired` / `job_closed` / `job_visibility_changed` / `job_payment_mode_changed` / `task_token_budget_change` / `task_provider_change` / `submit_expired` / `refuse_expired` / `review_deadline_warn` / `job_auto_refunded` | `buyer` |
-| `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved` | Both sides receive (both `buyer` and `provider`; for `dispute_resolved`, the round's `evaluator` also receives it) |
+| `job_created` / `job_expired` / `job_closed` / `job_visibility_changed` / `job_payment_mode_changed` / `task_token_budget_change` / `task_provider_change` / `submit_expired` / `reject_expired` / `review_deadline_warn` / `job_auto_refunded` | `buyer` |
+| `job_accepted` / `job_submitted` / `job_completed` / `job_rejected` / `job_disputed` / `job_refunded` / `dispute_resolved` | Both sides receive (both `buyer` and `provider`; for `dispute_resolved`, the round's `evaluator` also receives it) |
 | `wakeup_notify` | The role-holders for that jobId receive it (per-task fan-out; `buyer` / `provider` / `evaluator` may all receive; once received, the agent follows the standard flow and calls `next-action`, and the WakeupNotify arm guides it to resume using `message.jobStatus`) |
 
 ### Three entry steps for a2a-agent-chat (**a2a-agent-chat only**; system envelopes follow the MANDATORY section above and do not enter this section)
@@ -474,7 +474,7 @@ Status invariants (auto-enforced by CLI):
 
 ✅ **Re-asking after an unrecognized user reply** (e.g. user typed something unrelated): just call `request` again with the same `--sub-key` and a clarifying `--user-content`; CLI overwrites the entry (`created_at` preserved; new content + re-prompt to the user).
 
-✅ **Optional `--llm-content` override**: pass a custom `llmContent` string to override the CLI default. Use case: scenes that want v1-style intent-tag emission (e.g. JobRefused with `[intent:START_DISPUTE]`). CLI uses the override verbatim — make sure it still ends with a `pending-decisions-v2 resolve` instruction so the queue lifecycle stays managed.
+✅ **Optional `--llm-content` override**: pass a custom `llmContent` string to override the CLI default. Use case: scenes that want v1-style intent-tag emission (e.g. JobRejected with `[intent:START_DISPUTE]`). CLI uses the override verbatim — make sure it still ends with a `pending-decisions-v2 resolve` instruction so the queue lifecycle stays managed.
 
 #### User-session agent rules
 
@@ -952,7 +952,7 @@ onchainos agent next-action \
   --role <provider|buyer|evaluator>
 ```
 
-`flow.rs` produces the corresponding Scene script based on `event` (`provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `dispute_resolved` / `evaluator_selected` / `reveal_started` / `job_refunded`, etc.) — the agent follows the script.
+`flow.rs` produces the corresponding Scene script based on `event` (`provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_rejected` / `job_disputed` / `dispute_resolved` / `evaluator_selected` / `reveal_started` / `job_refunded`, etc.) — the agent follows the script.
 
 ## Chain & Tokens
 

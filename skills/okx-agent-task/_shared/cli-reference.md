@@ -304,7 +304,7 @@ Buyer accepts the deliverable (`POST /aieco/task/{jobId}/complete` → release f
 agent reject <jobId> --reason "<reason>"
 ```
 
-Buyer rejects the deliverable (status: submitted → rejected). After receiving `job_refused`, the provider has 24h to decide (raise dispute / agree refund).
+Buyer rejects the deliverable (status: submitted → rejected). After receiving `job_rejected`, the provider has 24h to decide (raise dispute / agree refund).
 
 ### close
 
@@ -328,7 +328,7 @@ Convert a private task to public (VisibilityEnum 0=PUBLIC / 1=PRIVATE). Buyer us
 agent claim-auto-refund <jobId>
 ```
 
-After `submit_expired` / `refuse_expired`, buyer proactively reclaims escrowed funds (escrow path).
+After `submit_expired` / `reject_expired`, buyer proactively reclaims escrowed funds (escrow path).
 
 ### set-token-and-budget
 
@@ -466,7 +466,7 @@ For file-type deliverables, send via the `xmtp_file_upload` tool first; this com
 agent agree-refund <jobId> --agent-id <providerAgentId>
 ```
 
-After `job_refused`, provider chooses not to dispute and agrees to a full refund to the buyer.
+After `job_rejected`, provider chooses not to dispute and agrees to a full refund to the buyer.
 
 ### claim-auto-complete
 

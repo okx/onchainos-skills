@@ -197,7 +197,7 @@ pub enum Event {
     /// Buyer complete on-chain / arbitration approve (status enters completed; notifies provider).
     JobCompleted,
     /// Buyer reject on-chain (status enters rejected; notifies provider to choose between arbitration / refund).
-    JobRefused,
+    JobRejected,
     /// Arbitration phase-1 (approve) on-chain (status remains rejected; pass-through event;
     /// notifies the initiating provider to proceed to phase-2 dispute confirm).
     DisputeApproved,
@@ -251,7 +251,7 @@ pub enum Event {
     /// Submit timeout — no delivery (notifies buyer to call claimAutoRefund).
     SubmitExpired,
     /// After reject, the provider failed to raise arbitration in time (notifies buyer to call claimAutoRefund).
-    RefuseExpired,
+    RejectExpired,
     /// Review timeout (after provider submit, the buyer did not confirm; notifies provider to call claimAutoComplete).
     ReviewExpired,
     // ── Auto-complete / auto-refund tx receipts ──────────────────────
@@ -322,7 +322,7 @@ impl Event {
             "job_accepted"              => Event::JobAccepted,
             "job_submitted"             => Event::JobSubmitted,
             "job_completed"             => Event::JobCompleted,
-            "job_refused"               => Event::JobRefused,
+            "job_rejected"              => Event::JobRejected,
             "dispute_approved"          => Event::DisputeApproved,
             "job_disputed"              => Event::JobDisputed,
             "job_refunded"              => Event::JobRefunded,
@@ -346,7 +346,7 @@ impl Event {
             "reward_claimed"            => Event::RewardClaimed,
             // Timeouts
             "submit_expired"            => Event::SubmitExpired,
-            "refuse_expired"            => Event::RefuseExpired,
+            "reject_expired"            => Event::RejectExpired,
             "review_expired"            => Event::ReviewExpired,
             // Auto-complete / auto-refund tx receipts
             "job_auto_completed"        => Event::JobAutoCompleted,
@@ -381,7 +381,7 @@ impl Event {
             Event::JobAccepted            => "job_accepted",
             Event::JobSubmitted           => "job_submitted",
             Event::JobCompleted           => "job_completed",
-            Event::JobRefused             => "job_refused",
+            Event::JobRejected            => "job_rejected",
             Event::DisputeApproved        => "dispute_approved",
             Event::JobDisputed            => "job_disputed",
             Event::JobRefunded            => "job_refunded",
@@ -402,7 +402,7 @@ impl Event {
             Event::UnstakeCancelled       => "unstake_cancelled",
             Event::RewardClaimed          => "reward_claimed",
             Event::SubmitExpired          => "submit_expired",
-            Event::RefuseExpired          => "refuse_expired",
+            Event::RejectExpired          => "reject_expired",
             Event::ReviewExpired          => "review_expired",
             Event::JobAutoCompleted       => "job_auto_completed",
             Event::JobAutoRefunded        => "job_auto_refunded",
@@ -462,7 +462,7 @@ pub fn status_when_event(e: &Event) -> Status {
         | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
-        Event::JobRefused | Event::RefuseExpired                             => Status::Rejected,
+        Event::JobRejected | Event::RejectExpired                             => Status::Rejected,
         // submit_expired: provider did not submit; status is still accepted (never entered submitted)
         Event::SubmitExpired                                                => Status::Accepted,
         // dispute_approved is a pass-through event; status is still rejected (dispute phase 1, not yet truly disputed)
@@ -514,7 +514,7 @@ pub fn entry_event(s: &Status) -> Option<Event> {
         Status::Created         => Some(Event::JobCreated),
         Status::Accepted     => Some(Event::JobAccepted),
         Status::Submitted    => Some(Event::JobSubmitted),
-        Status::Rejected     => Some(Event::JobRefused),
+        Status::Rejected     => Some(Event::JobRejected),
         Status::Disputed     => Some(Event::JobDisputed),
         Status::AdminStopped => None,
         Status::Completed    => Some(Event::JobCompleted),
