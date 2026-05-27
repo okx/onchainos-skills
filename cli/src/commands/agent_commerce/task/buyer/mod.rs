@@ -6,7 +6,7 @@
 //! - `negotiate.rs`    — negotiation (scene 2, agent sub session)
 //! - `accept.rs`       — confirm accept + fund (scene 3)
 //! - `complete.rs`     — confirm completion (scene 5)
-//! - `refuse.rs`       — reject deliverable (scene 6)
+//! - `reject.rs`       — reject deliverable (scene 6)
 //! - `close.rs`        — close task (scene 7) + claim arbitration reward
 //! - `changepublic.rs` — set to Public (scene 8)
 //!
@@ -27,7 +27,7 @@ mod flow_negotiate;
 pub(crate) mod negotiate;
 mod query;
 mod recommend;
-mod refuse;
+mod reject;
 mod set_terms;
 mod x402_flow;
 
@@ -283,7 +283,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>
-            refuse::handle_reject(&mut client, &job_id, &reason).await,
+            reject::handle_reject(&mut client, &job_id, &reason).await,
         TaskCommand::Close { job_id, agent_id } =>
             close::handle_close(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::SetPublic { job_id, agent_id } =>
