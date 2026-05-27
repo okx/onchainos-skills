@@ -42,7 +42,7 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20{follow_playbook}\n\
              \x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
-             \x20\x20- Verbatim is `A` / `选A`, or contains `指定` / `specify` or looks like an agentId → extract agentId → `onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId>`\n\
+             \x20\x20- Verbatim is `A` / `选A`, or contains `指定` / `specify` or looks like an agentId → extract agentId → `onchainos agent next-action --jobid {job_id} --event job_created --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId>`\n\
              \x20\x20- Verbatim is `B` / `选B`, or contains `公开` / `public` → `onchainos agent set-public {job_id}`\n\
              \x20\x20- Verbatim is `C` / `选C`, or contains `关闭` / `close` / `取消` → `onchainos agent close {job_id}`\n\
              \x20\x20- Otherwise → `pending-decisions-v2 request` again with clarifying userContent to re-ask.\n\
@@ -119,7 +119,7 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20Inspect the CLI output (JSON) of set-payment-mode:\n\
              \x20\x20- Output contains `\"alreadySet\": true` (paymentMode is already on-chain so the on-chain call was skipped) -> **do NOT wait for `job_payment_mode_changed`**;\n\
              \x20\x20\x20\x20no event will fire on-chain. **Within this same turn, immediately execute the x402 flow for job_payment_mode_changed**:\n\
-             \x20\x20\x20\x20call `onchainos agent next-action --jobid {job_id} --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (task-402-pay).\n\
+             \x20\x20\x20\x20call `onchainos agent next-action --jobid {job_id} --event job_payment_mode_changed --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (task-402-pay).\n\
              \x20\x20- Output contains `\"confirming\": true` (normal on-chain submission in flight) -> **end this turn** and wait for the `job_payment_mode_changed` system notification.\n\n\
              - **No service or no endpoint (no x402 support)** -> enter **B-Step 1** to create a chat and negotiate.")
 }
@@ -296,11 +296,11 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              Inspect the CLI output (JSON) of set-payment-mode:\n\
              - Output contains `\"alreadySet\": true` (paymentMode already on-chain so the call was skipped) -> **do NOT wait for `job_payment_mode_changed`**;\n\
              \x20\x20no event will fire on-chain. **Within this same turn, immediately execute the escrow flow for job_payment_mode_changed**:\n\
-             \x20\x20call `onchainos agent next-action --jobid {job_id} --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (xmtp_send [intent:confirm]).\n\
+             \x20\x20call `onchainos agent next-action --jobid {job_id} --event job_payment_mode_changed --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (xmtp_send [intent:confirm]).\n\
              - Output contains `\"confirming\": true` (normal on-chain submission in flight) -> continue to Step 6.3.\n\
              ⚠️ **NEVER** xmtp_send [intent:confirm] while the on-chain call is still confirming - the ASP would apply on seeing [intent:confirm], but the on-chain paymentMode is still in the mempool / unconfirmed, so apply would fail or behave inconsistently. [intent:confirm] must only be sent after the `job_payment_mode_changed` event confirms paymentMode on-chain.\n\n\
              **Step 6.3 - executed only when `confirming`: end this turn** and wait for the `job_payment_mode_changed` system notification.\n\n\
-             (New turn) On receiving `job_payment_mode_changed` -> call next-action --jobStatus job_payment_mode_changed -> per script, xmtp_send [intent:confirm] to the ASP. The ASP sees CONFIRM -> apply (escrow); on-chain paymentMode is already in place.\n\n\
+             (New turn) On receiving `job_payment_mode_changed` -> call next-action --event job_payment_mode_changed --jobStatus job_payment_mode_changed -> per script, xmtp_send [intent:confirm] to the ASP. The ASP sees CONFIRM -> apply (escrow); on-chain paymentMode is already in place.\n\n\
              ━━━━━━━━━ Negotiation failed / switching ASP ━━━━━━━━━\n\n\
              Current ASP timed out (5 min) / COUNTER rounds exceeded (>=3) / received `[intent:reject]` / negotiation failed -> first xmtp_send `[intent:reject]` (reason: timeout / round limit / failure cause) to the ASP, then switch:\n\
              \x20\x20{fallback_lines}\n\

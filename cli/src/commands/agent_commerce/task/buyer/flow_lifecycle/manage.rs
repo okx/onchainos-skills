@@ -269,7 +269,7 @@ pub(crate) fn task_provider_change(ctx: &super::super::flow::FlowContext<'_>) ->
             "- If you are the **backup session** → the user session has written the new provider info via `set-provider`.\n\
              \x20\x20**🛑 MUST run the following command immediately to kick off the new provider flow**:\n\
              \x20\x20```bash\n\
-             \x20\x20onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id}\n\
+             \x20\x20onchainos agent next-action --jobid {job_id} --event switch_provider --jobStatus switch_provider --role buyer --agentId {agent_id}\n\
              \x20\x20```\n\
              \x20\x20Follow the returned playbook (D-Steps → negotiation / x402).\n\
              \x20\x20❌ Do not ignore this event ❌ Do not skip next-action and decide the next step yourself\n")

@@ -110,7 +110,7 @@ pub async fn handle_set_provider(
     println!("  providerAgentId: {provider_agent_id}");
     println!("  txHash: {tx_hash}");
     println!();
-    println!("Next: onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id} --provider {provider_agent_id}");
+    println!("Next: onchainos agent next-action --jobid {job_id} --event switch_provider --jobStatus switch_provider --role buyer --agentId {agent_id} --provider {provider_agent_id}");
     Ok(())
 }
 

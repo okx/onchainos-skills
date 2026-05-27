@@ -91,7 +91,7 @@ pub async fn handle_dispute_raise(
     println!("    - Do NOT call xmtp_send to tell the buyer \"dispute raised\" or similar");
     println!("    - Do NOT call `dispute confirm` in the same turn");
     println!("    - Once you receive the `dispute_approved` notification, run:");
-    println!("      onchainos agent next-action --jobid {job_id} --jobStatus dispute_approved --role provider --agentId {agent_id}");
+    println!("      onchainos agent next-action --jobid {job_id} --event dispute_approved --jobStatus dispute_approved --role provider --agentId {agent_id}");
     println!("      next-action will output the stage 2 script (calling dispute confirm to trigger the actual dispute)");
     Ok(())
 }

@@ -392,7 +392,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         // Evaluator (flat — 见 agent_commerce/mod.rs)
         AgentCommand::EvidenceInfo { .. } => "evidence-info".into(),
         AgentCommand::VoteCommit { .. } => "vote-commit".into(),
-        AgentCommand::VoteRecord { .. } => "vote-record".into(),
         AgentCommand::VoteReveal { .. } => "vote-reveal".into(),
         AgentCommand::ArbitrationClaim { .. } => "arbitration-claim".into(),
         AgentCommand::ArbitrationClaimable { .. } => "arbitration-claimable".into(),
@@ -420,6 +419,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::PendingDecisionsV2(_) => "pending-decisions-v2".into(),
         AgentCommand::TaskDeliverableSave { .. } => "task-deliverable-save".into(),
         AgentCommand::TaskDeliverableList { .. } => "task-deliverable-list".into(),
+        AgentCommand::TaskSearch { .. } => "task-search".into(),
     }
 }
 

@@ -16,7 +16,6 @@ pub mod flow;
 pub mod helpers;
 pub mod info;
 pub mod my_stake;
-pub mod record;
 pub mod reveal;
 pub mod stake;
 pub mod staking_config;

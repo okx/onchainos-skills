@@ -20,7 +20,7 @@ use crate::commands::agent_commerce::task::common::state_machine::Status;
 /// corresponding to the status.
 pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     let next_action = |evt: &str| {
-        format!("**Next step (mandatory)** → `onchainos agent next-action --jobid {job_id} --jobStatus {evt} --role provider --agentId <agentId>` to fetch the full script for the current status, and **follow the script strictly**.\n  ⚠️ **Do NOT** infer CLI commands directly from the status name (apply / deliver / dispute raise / agree-refund / dispute upload, etc.) — the script typically prefixes steps such as `xmtp_prompt_user` / `xmtp_send` / `pending-decisions-v2 request`; skipping them causes incidents (this has happened before).")
+        format!("**Next step (mandatory)** → `onchainos agent next-action --jobid {job_id} --event {evt} --jobStatus {evt} --role provider --agentId <agentId>` to fetch the full script for the current status, and **follow the script strictly**.\n  ⚠️ **Do NOT** infer CLI commands directly from the status name (apply / deliver / dispute raise / agree-refund / dispute upload, etc.) — the script typically prefixes steps such as `xmtp_prompt_user` / `xmtp_send` / `pending-decisions-v2 request`; skipping them causes incidents (this has happened before).")
     };
     match status {
         Status::Created => vec![next_action("job_created")],
@@ -247,8 +247,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - **Just observe silently**; do NOT call xmtp_send / xmtp_file_upload / xmtp_dispatch_user / xmtp_prompt_user\n\
              - **End this turn directly**; wait for the User Agent to complete/reject and trigger the next event\n\n\
              [Follow-up events]\n\
-             - Received `job_completed` (review passed) → `onchainos agent next-action --jobid {job_id} --jobStatus job_completed --role provider --agentId {agent_id}`\n\
-             - Received `job_rejected`  (User Agent rejected) → `onchainos agent next-action --jobid {job_id} --jobStatus job_rejected --role provider --agentId {agent_id}`\n"
+             - Received `job_completed` (review passed) → `onchainos agent next-action --jobid {job_id} --event job_completed --jobStatus job_completed --role provider --agentId {agent_id}`\n\
+             - Received `job_rejected`  (User Agent rejected) → `onchainos agent next-action --jobid {job_id} --event job_rejected --jobStatus job_rejected --role provider --agentId {agent_id}`\n"
         ),
 
         // ─── Scene 6: User Agent rejected the deliverable ─────────────────────────────────
@@ -275,8 +275,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
              **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
              Inspect the verbatim text and route to the next on-chain action (treat the match as case-insensitive; trim surrounding whitespace / punctuation before matching):\n\
-             - Verbatim is exactly `A` / `a` / `选A` / `选a` / `我选A` / `Choose A` / `option A`, OR contains `发起仲裁` / `dispute` / `start arbitration` / `不接受` / `我做的没问题` → call `onchainos agent next-action --jobid {job_id} --jobStatus dispute_raise --role provider --agentId {agent_id}` (extract the reason from the verbatim after `理由` / `reason` / `因为`; if not stated — e.g. user only typed `A` — default to \"completed per acceptance criteria\")\n\
-             - Verbatim is exactly `B` / `b` / `选B` / `选b` / `我选B` / `Choose B` / `option B`, OR contains `同意退款` / `agree refund` / `refund OK` / `退款` → call `onchainos agent next-action --jobid {job_id} --jobStatus agree_refund --role provider --agentId {agent_id}`\n\
+             - Verbatim is exactly `A` / `a` / `选A` / `选a` / `我选A` / `Choose A` / `option A`, OR contains `发起仲裁` / `dispute` / `start arbitration` / `不接受` / `我做的没问题` → call `onchainos agent next-action --jobid {job_id} --event dispute_raise --jobStatus dispute_raise --role provider --agentId {agent_id}` (extract the reason from the verbatim after `理由` / `reason` / `因为`; if not stated — e.g. user only typed `A` — default to \"completed per acceptance criteria\")\n\
+             - Verbatim is exactly `B` / `b` / `选B` / `选b` / `我选B` / `Choose B` / `option B`, OR contains `同意退款` / `agree refund` / `refund OK` / `退款` → call `onchainos agent next-action --jobid {job_id} --event agree_refund --jobStatus agree_refund --role provider --agentId {agent_id}`\n\
              - Otherwise (user replied something unrelated) → call `pending-decisions-v2 request` again with a clarifying userContent (\"您刚才回复 「<verbatim>」我没理解,请回复 「发起仲裁,理由:<...>」 或 「同意退款」 或 直接回复 A / B\") to re-ask.\n\n\
              ⚠️ Decision must be made within 24h; otherwise funds are auto-refunded to the User Agent.\n",
                 user_prompt_for_shell = user_prompt.replace('\'', "'\\''"),
@@ -464,7 +464,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
              **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
              The user's reply IS the evidence — upload it verbatim. Do NOT second-guess whether it's \"too short\" / \"too similar to the dispute reason\" / \"not enough detail\"; if the user wants to add more, they will reply again (each new reply overwrites and re-prompts the same pending entry).\n\
-             Call `onchainos agent next-action --jobid {job_id} --jobStatus dispute_evidence --role provider --agentId {agent_id}` for the upload script, and pass the verbatim text + any image paths the user provided through to the upload step.\n\n\
+             Call `onchainos agent next-action --jobid {job_id} --event dispute_evidence --jobStatus dispute_evidence --role provider --agentId {agent_id}` for the upload script, and pass the verbatim text + any image paths the user provided through to the upload step.\n\n\
              ⚠️ Must submit evidence within 1 hour; expires after that.\n",
                 user_prompt_for_shell = user_prompt.replace('"', "\\\""),
             )
@@ -516,7 +516,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x202) `[intent:ack]` or `[intent:counter]` (provider → buyer) or `[intent:reject]` (either side rejects)\n\
              \x20\x203) `[intent:confirm]` (buyer → provider, echoing all fields verbatim)\n\
              \x20\x20⚡ `[intent:reject]` is **soft-terminal**: sending it ends THIS round (do not auto-reply / do not chase the other side after sending). **But the negotiation thread is NOT permanently closed**:\n\
-             \x20\x20\x20\x20- If the OTHER side comes back with a NEW `[intent:propose]` (materially different terms — e.g. higher price after you rejected a low one), treat it as **negotiation reopened**: call `next-action --jobStatus job_created` again, re-evaluate the new fields, and proceed with the normal Propose → Ack → Confirm flow (ACK if acceptable, COUNTER if still off, [intent:reject] again only if still unacceptable).\n\
+             \x20\x20\x20\x20- If the OTHER side comes back with a NEW `[intent:propose]` (materially different terms — e.g. higher price after you rejected a low one), treat it as **negotiation reopened**: call `next-action --event job_created --jobStatus job_created` again, re-evaluate the new fields, and proceed with the normal Propose → Ack → Confirm flow (ACK if acceptable, COUNTER if still off, [intent:reject] again only if still unacceptable).\n\
              \x20\x20\x20\x20- If the other side just sends natural-language follow-up (e.g. \"can you reconsider 0.5 USDT?\") after your reject, you may reply naturally and continue Step 3 first-round negotiation; the prior [intent:reject] does NOT mean ignore them forever.\n\
              \x20\x20\x20\x20- The thread is only **truly dead** when BOTH sides have sent [intent:reject] AND no follow-up arrives, OR when the chain emits `job_closed` / `job_expired`.\n\n\
              apply can only run **after `[intent:confirm]` has been received** (any other inbound does NOT count — including the three questions, the free-form invitation, the User Agent's `agree / accept` natural-language reply, and even the User Agent natural-language `please apply`).\n\n\
@@ -623,7 +623,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              Style sample (natural language; do NOT shoehorn into a template):\n\
              \x20\x20`I can do this; acceptance criteria are fine. 0.1 USDT 比我注册价 1 USDT 低不少;基于工作量我可以做到 0.7 USDT,escrowed 支付适合避免后续争议。如同意请发 [intent:propose] 锁定参数。`\n\n\
              ⚠️ Counter-offer reference: within service-list unit price × (1 ± 30%) usually goes through; absurd quotes (× 5+) get you swapped out by the User Agent directly.\n\n\
-             🛑🛑🛑 **Anti-pattern — do NOT abandon negotiation after one low offer**: 🔴 real incident — registered price 1 USDT, User Agent's first offer 0.1 USDT → provider sent `[intent:reject]` and walked away → User Agent later counter-offered 0.5 USDT and then 1 USDT but provider's agent thought \"I already rejected, conversation over\" and stayed silent → task stuck. **Correct behavior**: counter with YOUR floor price in natural language, end the turn, wait for the User Agent's next message. If the User Agent's next message has a new price (whether higher / same / lower) — even after you sent natural-language refusal earlier — you MUST call `next-action --jobStatus job_created` again and re-evaluate. \"I refused in natural language\" or \"my desired price wasn't met yet\" is NOT a reason to ignore the User Agent's follow-up — only literal `[intent:reject]` from EITHER side terminates negotiation.\n\n\
+             🛑🛑🛑 **Anti-pattern — do NOT abandon negotiation after one low offer**: 🔴 real incident — registered price 1 USDT, User Agent's first offer 0.1 USDT → provider sent `[intent:reject]` and walked away → User Agent later counter-offered 0.5 USDT and then 1 USDT but provider's agent thought \"I already rejected, conversation over\" and stayed silent → task stuck. **Correct behavior**: counter with YOUR floor price in natural language, end the turn, wait for the User Agent's next message. If the User Agent's next message has a new price (whether higher / same / lower) — even after you sent natural-language refusal earlier — you MUST call `next-action --event job_created --jobStatus job_created` again and re-evaluate. \"I refused in natural language\" or \"my desired price wasn't met yet\" is NOT a reason to ignore the User Agent's follow-up — only literal `[intent:reject]` from EITHER side terminates negotiation.\n\n\
              {send_to_peer}\n\
              <natural-language splicing of 1) 2) 3) above as the three-item negotiation stance>\n\n\
              **Step 3.5 — Handling the User Agent's structured [intent:propose] proposal:**\n\n\
@@ -787,7 +787,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              🌐 Translate `--user-content` AND `--list-label` to the user's language (signal = user's OWN typed messages this session; default English if unsure). See [Localization] above for token mapping.\n\n\
              Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now. Do NOT `xmtp_send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
              **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
-             - Contains `立即提交` / `我提交` / `submit now` / `I'll deliver` / `ready` → run the delivery flow (same as JobAccepted Step 2-3): autonomously complete the work → `xmtp_send` the deliverable to the User Agent → run `onchainos agent deliver` on-chain. (Full script: `onchainos agent next-action --jobid {job_id} --jobStatus job_accepted --role provider --agentId {agent_id}` — skip its Step 1 apply-accepted notification; the user already knows the task was accepted.)\n\
+             - Contains `立即提交` / `我提交` / `submit now` / `I'll deliver` / `ready` → run the delivery flow (same as JobAccepted Step 2-3): autonomously complete the work → `xmtp_send` the deliverable to the User Agent → run `onchainos agent deliver` on-chain. (Full script: `onchainos agent next-action --jobid {job_id} --event job_accepted --jobStatus job_accepted --role provider --agentId {agent_id}` — skip its Step 1 apply-accepted notification; the user already knows the task was accepted.)\n\
              - Otherwise (user replied something unrelated or chose to let it timeout) → end the turn. Let it time out via submit_expired into auto-refund.\n\n\
              ⚠️ **Do NOT auto-run `onchainos agent deliver` in the same turn as the decision relay** — only the user knows whether the deliverable is actually ready; the agent must not decide \"deliverable is ready\" on the user's behalf.\n",
                 user_prompt_for_shell = user_prompt.replace('"', "\\\""),
@@ -799,7 +799,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         | Event::RevealStarted
         | Event::VoteCommitted
         | Event::VoteRevealed
-        | Event::RoundFailed => format!(
+        | Event::RoundFailed
+        | Event::VoteCommitDeadlineWarn => format!(
             "[System notification] {event} (arbitration-internal event; handled by the evaluator)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              [Recommendation] Observe silently. After the `dispute_resolved` notification arrives, call next-action to wrap up.\n",
@@ -820,7 +821,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         | Event::UnstakeRequested
         | Event::UnstakeClaimed
         | Event::UnstakeCancelled
-        | Event::Slashed
         | Event::StakeStopped
         | Event::CooldownEntered => format!(
             "[System notification] {event} (evaluator staking lifecycle tx receipt; not the provider's concern)\n\
@@ -863,7 +863,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              From the wakeup_notify envelope that triggered this turn, read the `message.jobStatus` field (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed`, etc. — the real status string).\n\n\
              **Step 2 — Use the real status to call next-action and fetch the current script**:\n\
              ```bash\n\
-             onchainos agent next-action --jobid {job_id} --jobStatus <value of the message.jobStatus field> --role provider --agentId {agent_id}\n\
+             onchainos agent next-action --jobid {job_id} --event <value of the message.jobStatus field> --jobStatus <value of the message.jobStatus field> --role provider --agentId {agent_id}\n\
              ```\n\
              Follow the returned script for what to do in the current status.\n\n\
              **Step 3 — Idempotency self-check (avoid re-prompting the user)**:\n\

@@ -153,8 +153,8 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
      {follow_end}\n\n\
      **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
      Inspect the verbatim text (case-insensitive; trim whitespace/punctuation) and route:\n\
-     - Verbatim is `A` / `a` / `选A` / `1` / `Choose A` / `option A`, OR contains `通过` / `同意` / `满意` / `验收` / `接受` / `approve` / `accept` / `agree` → call `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}` for the approve playbook (which runs `onchainos agent complete`).\n\
-     - Verbatim is `B` / `b` / `选B` / `2` / `Choose B` / `option B`, OR contains `拒绝` / `不通过` / `不满意` / `不接受` / `reject` / `refuse` → call `onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId {agent_id}` (extract the reason from the verbatim after `理由` / `reason` / `因为`; if not stated, default to `did not meet acceptance criteria`).\n\
+     - Verbatim is `A` / `a` / `选A` / `1` / `Choose A` / `option A`, OR contains `通过` / `同意` / `满意` / `验收` / `接受` / `approve` / `accept` / `agree` → call `onchainos agent next-action --jobid {job_id} --event approve_review --jobStatus approve_review --role buyer --agentId {agent_id}` for the approve playbook (which runs `onchainos agent complete`).\n\
+     - Verbatim is `B` / `b` / `选B` / `2` / `Choose B` / `option B`, OR contains `拒绝` / `不通过` / `不满意` / `不接受` / `reject` / `refuse` → call `onchainos agent next-action --jobid {job_id} --event reject_review --jobStatus reject_review --role buyer --agentId {agent_id}` (extract the reason from the verbatim after `理由` / `reason` / `因为`; if not stated, default to `did not meet acceptance criteria`).\n\
      - Otherwise (unrelated reply) → call `pending-decisions-v2 request` again with a clarifying userContent (\"您刚才回复 「<verbatim>」我没理解,请回复 「通过」 或 「拒绝, 理由: <...>」 或 直接回复 A / B\") to re-ask.\n",
         review_deadline_prompt_for_shell = review_deadline_prompt.replace('"', "\\\""),
     )
@@ -282,7 +282,7 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
      From the wakeup_notify envelope that triggered this turn, read `message.jobStatus` (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed` and other real status strings).\n\n\
      **Step 2 -- Re-call next-action with the real status to fetch the current playbook**:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --jobStatus <value of message.jobStatus> --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --jobid {job_id} --event <value of message.jobStatus> --jobStatus <value of message.jobStatus> --role buyer --agentId {agent_id}\n\
      ```\n\
      Follow the returned playbook for what to do at the current status.\n\n\
      **Step 3 -- Idempotency self-check (avoid re-prompting the user)**:\n\

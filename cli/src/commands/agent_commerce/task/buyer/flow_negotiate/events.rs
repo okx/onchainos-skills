@@ -114,7 +114,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      🛑🛑🛑 **Iron rule (MANDATORY) after receiving `job_accepted`**:\n\
      After the `job_accepted` system event arrives, you **must** call:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --jobStatus job_accepted --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --jobid {job_id} --event job_accepted --jobStatus job_accepted --role buyer --agentId {agent_id}\n\
      ```\n\
      Follow the returned script (the script will guide you to run `onchainos agent complete`).\n\
      ❌ **Absolutely forbidden**: re-running this turn's `x402-check` / `task-402-pay` / `xmtp_dispatch_user` - those completed in this turn; re-running causes double payment or duplicate notification.\n\
@@ -175,7 +175,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
      \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
      \x20\x20\x20\x20- Verbatim is `A` / `选A` / contains `推荐` / `recommend` / `列表` / `list` → `onchainos agent recommend {job_id} --agent-id {agent_id}` then show the list via `pending-decisions-v2 request` (same format as Step 2 in job_created)\n\
-     \x20\x20\x20\x20- Verbatim is `B` / `选B` / contains `指定` / `specify` or looks like an agentId → `onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId>`\n\
+     \x20\x20\x20\x20- Verbatim is `B` / `选B` / contains `指定` / `specify` or looks like an agentId → `onchainos agent next-action --jobid {job_id} --event job_created --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId>`\n\
      \x20\x20\x20\x20- Verbatim is `C` / `选C` / contains `关闭` / `close` / `取消` → `onchainos agent close {job_id}`\n\
      \x20\x20\x20\x20- Otherwise → `pending-decisions-v2 request` again with clarifying userContent to re-ask.\n\n\
      **Step 3 - reply to the ASP (depends on Step 2 evaluation):**\n\n\
