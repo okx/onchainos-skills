@@ -419,6 +419,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::PendingDecisionsV2(_) => "pending-decisions-v2".into(),
         AgentCommand::TaskDeliverableSave { .. } => "task-deliverable-save".into(),
         AgentCommand::TaskDeliverableList { .. } => "task-deliverable-list".into(),
+        AgentCommand::TaskSearch { .. } => "task-search".into(),
     }
 }
 

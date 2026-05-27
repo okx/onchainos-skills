@@ -81,6 +81,7 @@ When dealing with integer values of any of the fields below, **look up the table
 | Know which tools each session (user / sub) state machine allows | Below Session Communication Contract sections 2 / 3 |
 | Look up the meaning and transitions of the 35 events / 8 statuses | [`_shared/state-machine.md`](./_shared/state-machine.md) |
 | Look up CLI args / required-or-optional / defaults | [`_shared/cli-reference.md`](./_shared/cli-reference.md) |
+| Browse / filter the public task marketplace (keyword / budget / status) | `agent task-search` — see [`_shared/cli-reference.md`](./_shared/cli-reference.md#task-search) |
 | Handle CLI errors / backend error codes | [`references/troubleshooting.md`](./references/troubleshooting.md) |
 | Negotiation / accept confirmation / review / starting a dispute (User Agent scenes) | [`buyer.md`](./buyer.md) |
 | Applying / negotiating / delivering / agreeing to refund (ASP scenes) | [`provider.md`](./provider.md) |

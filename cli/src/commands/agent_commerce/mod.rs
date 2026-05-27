@@ -642,6 +642,56 @@ pub enum AgentCommand {
         #[arg(long, value_delimiter = ',')]
         agent_ids: Vec<String>,
     },
+
+    /// Search the public task marketplace (POST /priapi/v1/aieco/task/job/search).
+    ///
+    /// All filters are optional; passing none returns the whole pool paginated.
+    ///
+    /// Examples:
+    ///   onchainos agent task-search --keyword "audit smart contract" --status 0 --order-by amount_asc
+    ///   onchainos agent task-search --amount-min 10 --amount-max 500 --page 1 --page-size 20
+    #[command(name = "task-search")]
+    TaskSearch {
+        /// Caller agent ID (sent as `agenticId` header).
+        #[arg(long = "agent-id")]
+        agent_id: String,
+
+        /// Full-text keyword (matches title / description).
+        #[arg(long)]
+        keyword: Option<String>,
+
+        /// Minimum task budget (human-readable, decimal-applied).
+        #[arg(long = "amount-min")]
+        amount_min: Option<f64>,
+
+        /// Maximum task budget (human-readable, decimal-applied).
+        #[arg(long = "amount-max")]
+        amount_max: Option<f64>,
+
+        /// Task statuses to include (repeatable / comma-separated). 0=OPEN, 1=ACCEPTED, 2=SUBMITTED, ...
+        #[arg(long, value_delimiter = ',')]
+        status: Vec<i32>,
+
+        /// Sort order — one of `create_time_desc` / `create_time_asc` / `amount_desc` / `amount_asc`.
+        #[arg(long = "order-by")]
+        order_by: Option<task::common::search::TaskSearchOrderBy>,
+
+        /// Filter by create time (unix milliseconds) — lower bound.
+        #[arg(long = "create-time-start")]
+        create_time_start: Option<i64>,
+
+        /// Filter by create time (unix milliseconds) — upper bound.
+        #[arg(long = "create-time-end")]
+        create_time_end: Option<i64>,
+
+        /// Page (1-based). Defaults to 1.
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+
+        /// Page size. Defaults to 20.
+        #[arg(long = "page-size", default_value_t = 20)]
+        page_size: u32,
+    },
 }
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
@@ -1060,6 +1110,35 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::WakeupNotify { agent_ids } =>
             chat::run(chat::ChatCommand::WakeupNotify { agent_ids }, ctx).await,
+
+        AgentCommand::TaskSearch {
+            agent_id,
+            keyword,
+            amount_min,
+            amount_max,
+            status,
+            order_by,
+            create_time_start,
+            create_time_end,
+            page,
+            page_size,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::search::handle_task_search(
+                &mut client,
+                &agent_id,
+                keyword.as_deref(),
+                amount_min,
+                amount_max,
+                &status,
+                order_by.as_ref(),
+                create_time_start,
+                create_time_end,
+                page,
+                page_size,
+            )
+            .await
+        }
     }
 }
 

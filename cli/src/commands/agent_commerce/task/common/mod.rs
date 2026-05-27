@@ -18,6 +18,7 @@ pub mod payment_mode;
 pub mod pending_v2;
 pub mod query;
 pub mod review_gate;
+pub mod search;
 pub mod state_machine;
 pub mod util;
 pub mod version_notice;
