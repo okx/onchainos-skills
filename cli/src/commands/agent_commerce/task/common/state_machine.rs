@@ -257,7 +257,7 @@ pub enum Event {
     // ── Auto-complete / auto-refund tx receipts ──────────────────────
     /// Provider's claimAutoComplete tx on-chain result (after review timeout the provider pulls funds; notifies provider).
     JobAutoCompleted,
-    /// Buyer's claimAutoRefund tx on-chain result (after submit/refuse timeout the buyer pulls funds back; notifies buyer).
+    /// Buyer's claimAutoRefund tx on-chain result (after submit/reject timeout the buyer pulls funds back; notifies buyer).
     JobAutoRefunded,
 
     // ── Deadline reminders (warn class, no status change) ─────────────

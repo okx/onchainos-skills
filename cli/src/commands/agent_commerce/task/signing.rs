@@ -4,7 +4,7 @@
 //! All on-chain write operations go through one of these flows:
 //!
 //! - [`sign_uop_and_broadcast`] — sign uopData + broadcast (caller already has uopData)
-//! - [`task_dual_sign_and_broadcast`] — dual-sign for complete/refuse
+//! - [`task_dual_sign_and_broadcast`] — dual-sign for complete/reject
 //!   (pre-endpoint → sign typedData → main endpoint → sign uopHash → broadcast)
 
 use anyhow::{bail, Result};
@@ -462,7 +462,7 @@ pub async fn sign_typed_data(typed_data: &Value, from_address: &str) -> Result<S
     Ok(sig)
 }
 
-/// Dual-sign flow for complete/refuse.
+/// Dual-sign flow for complete/reject.
 ///
 /// 1. Compute `deadline = now + 1800`
 /// 2. POST `pre-{action}` with `{ deadline }` + identity headers → typedData + nonce
