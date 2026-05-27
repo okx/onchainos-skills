@@ -92,7 +92,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              🛑🛑🛑 ABSOLUTE MANDATORY — call `next-action` FIRST. This is the ONLY action allowed.\n\
              ===============================================================\n\
              ```bash\n\
-             onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId picked by user>\n\
+             onchainos agent next-action --jobid {job_id} --event job_created --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId picked by user>\n\
              ```\n\
              Then execute the returned playbook — it contains ALL subsequent instructions.\n\
              ===============================================================\n\
@@ -171,7 +171,7 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
         Some(id) => id.clone(),
         None => {
             return format!("[Error] switch_provider is missing the --provider argument.\n\
-                 Please call again: onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id} --provider <new ASP agentId>\n");
+                 Please call again: onchainos agent next-action --jobid {job_id} --event switch_provider --jobStatus switch_provider --role buyer --agentId {agent_id} --provider <new ASP agentId>\n");
         }
     };
 

@@ -392,7 +392,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         // Evaluator (flat — 见 agent_commerce/mod.rs)
         AgentCommand::EvidenceInfo { .. } => "evidence-info".into(),
         AgentCommand::VoteCommit { .. } => "vote-commit".into(),
-        AgentCommand::VoteRecord { .. } => "vote-record".into(),
         AgentCommand::VoteReveal { .. } => "vote-reveal".into(),
         AgentCommand::ArbitrationClaim { .. } => "arbitration-claim".into(),
         AgentCommand::ArbitrationClaimable { .. } => "arbitration-claimable".into(),

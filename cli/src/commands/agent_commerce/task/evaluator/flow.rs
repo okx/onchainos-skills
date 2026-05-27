@@ -1,15 +1,16 @@
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
 pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
+    let status_str = status.as_str();
     let next_action = |evt: &str| {
-        format!("**Next required action** → `onchainos agent next-action --jobid {job_id} --jobStatus {evt} --role evaluator --agentId <agentId>` (fetch the full playbook for the current status; **follow the playbook**, do not bypass next-action and call the CLI below directly).")
+        format!("**Next required action** → `onchainos agent next-action --jobid {job_id} --event {evt} --jobStatus {status_str} --role evaluator --agentId <agentId>` (fetch the full playbook for the current status; **follow the playbook**, do not bypass next-action and call the CLI below directly).")
     };
 
     match status {
         Status::Disputed => vec![next_action("evaluator_selected")],
         Status::Completed | Status::Failed => vec![next_action("dispute_resolved")],
         _ => vec![
-            format!("Current task status=`{}` → evaluator has no task-level action; just wait for the next relevant chain event.", status.as_str()),
+            format!("Current task status=`{status_str}` → evaluator has no task-level action; just wait for the next relevant chain event."),
             "→ **Do not** rerun `agent status` / `agent common context` (the result will be identical); end this turn.".to_string(),
         ],
     }
@@ -17,21 +18,21 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 
 const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` templates below are samples — translate to the user's language before `xmtp_dispatch_user`.\n\n";
 
-pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
-    if let Some(s) = staking_next_action(job_id, job_status, agent_id) {
+pub fn generate_next_action(job_id: &str, event: &str, agent_id: &str, job_title: Option<&str>) -> String {
+    if let Some(s) = staking_next_action(job_id, event, agent_id) {
         return format!("{LOCALIZATION_PREFIX}{s}");
     }
-    if let Some(s) = dispute_next_action(job_id, job_status, agent_id) {
+    if let Some(s) = dispute_next_action(job_id, event, agent_id, job_title) {
         return format!("{LOCALIZATION_PREFIX}{s}");
     }
     format!(
-        "[unknown event or status={job_status} at jobId={job_id} ignored.\n
+        "[unknown event={event} at jobId={job_id} ignored.\n
          Do not pull context; do not guess other notifications.\n"
     )
 }
 
-fn staking_next_action(_job_id: &str, job_status: &str, _agent_id: &str) -> Option<String> {
-    let body = match job_status {
+fn staking_next_action(_job_id: &str, event: &str, _agent_id: &str) -> Option<String> {
+    let body = match event {
         "staked" => "[Current Event] staked\n\n\
              [Step 1] Run `onchainos agent my-stake --agent-id <your agentId>` to get `activeStake`.\n\
              [Step 2] Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
@@ -71,54 +72,111 @@ fn staking_next_action(_job_id: &str, job_status: &str, _agent_id: &str) -> Opti
     Some(body)
 }
 
-fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Option<String> {
-    let body = match job_status {
+fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, job_title: Option<&str>) -> Option<String> {
+    // When the envelope's `message.title` is forwarded here, inline it everywhere the playbook
+    // displays the task title. When absent, the position renders empty and the playbook's
+    // `taskTitle missing` fallback bullet tells the agent how to degrade the header.
+    let task_title = job_title.filter(|s| !s.is_empty());
+    let title_display: &str = task_title.unwrap_or_default();
+    let has_title = task_title.is_some();
+
+    let body = match event {
         "evaluator_selected" => format!(
             "[Current Status] evaluator_selected\n\n\
              **Step 1 — Routing check:**\n\n\
              ⚠️ Immediately after the calls in 1.1 / 1.2, print the entire returned `sessionKey` verbatim in this turn's output (no truncation, no abbreviation); subsequent comparison MUST be based on the two printed lines.\n\n\
-             **1.1** Call `xmtp_start_evaluate_conversation` with `myAgentId=<envelope top-level agentId>`, `jobId={job_id}`. Print:\n\
+             **1.1** Call `xmtp_start_evaluate_conversation` with `myAgentId={agent_id}`, `jobId={job_id}`. Print:\n\
              `[evaluator-routing] arbKey=<entire sessionKey returned by this xmtp_start_evaluate_conversation call>`\n\n\
              **1.2** Call `session_status`. Print:\n\
              `[evaluator-routing] currentKey=<entire sessionKey returned by this session_status call>`\n\n\
              **1.3** Compare the two `[evaluator-routing]` lines above character-by-character (don't go by impression — base it on the two printed lines):\n\
              - Exact match → proceed to Step 2.\n\
              - Any character differs → call `xmtp_dispatch_session` (`sessionKey=arbKey`, `content=<the entire current inbound envelope as a JSON string>`, **insert all fields verbatim, no rewriting**), then **end this turn**.\n\n\
-             **Step 2 — Extract `jobId`, top-level `agentId` (your evaluator agentId), and top-level `roundNum` from the inbound envelope.**\n\
-             If any of `jobId` / top-level `agentId` / `roundNum` is missing, abort this turn immediately and output `missing jobId/agentId/roundNum in payload; abort` log.\n\
-             **Step 3 — Notify the user that you've been selected as a juror:**\n\n\
+             **Step 2 — Notify the user that you've been selected as a juror:**\n\n\
+             Extract from `message`: `budget` / `token`, `commitDeadline` (epoch seconds), `agentName`. Any of these may be absent.\n\
+             Render `commitDeadline` (epoch seconds) into the user's local time as `commitDeadlineLocal`, and compute `hoursLeft` = `max(0, ceil((commitDeadline - now_epoch_seconds) / 3600))`.\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20You've been selected as a juror for Job jobId={job_id}. Your agent will automatically review evidence, vote, and reveal in the background — no action needed from you.\n\n\
-             **Step 4 — Fetch evidence:**\n\
+             \x20\x20\x20\x20Your Agent <agentName> has been selected as juror for task [{title_display}]\n\
+             \x20\x20\x20\x20Task title: {title_display}\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20Amount: <budget> <token>\n\
+             \x20\x20\x20\x20⏰ Key deadline\n\
+             \x20\x20\x20\x20Your Agent must vote within <hoursLeft> hours\n\n\
+             [Field-missing fallbacks] Apply each independently — do **not** invent placeholders.\n\
+             {agentname_fallback}\n\
+             {title_fallback_line}
+             - `budget` / `token` missing → drop the `Amount:` line.\n\
+             - `commitDeadline` missing or `hoursLeft` is 0 → drop the entire `⏰ Key deadline` block.\n\
+             **Step 3 — Fetch evidence (`--round-num` comes from the envelope's top-level `roundNum`; if missing, abort this turn and log `missing roundNum in payload; abort`):**\n\
              ```bash\n\
-             onchainos agent evidence-info <jobId> --agent-id <envelope top-level agentId> --round-num <envelope top-level roundNum>\n\
+             onchainos agent evidence-info {job_id} --agent-id {agent_id} --round-num <envelope top-level roundNum>\n\
              ```\n\n\
-             Evidence JSON top-level: `{{ title, description, provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`. `description` / `title` is the task's original definition; `texts[]` is text evidence; `images[]` is already downloaded — each item has `localPath` (absolute path; use it to open the image).\n\n\
-             **Post-evidence hard constraints**:\n\
-             - An image item with a `downloadError` field = that evidence is **considered missing**\n\
-             - **Do not** scan local disk for replacement files; a missing `localPath` means the CLI already knows the image is unavailable\n\
-             - **Do not** retry `evidence-info` hoping it downloads next time (internally already retried 3 times) — mark this image as missing\n"
+             Evidence JSON top-level: `{{ title, description, provider: {{reason, texts[], files[]}}, client: {{reason, texts[], files[]}} }}`. `description` / `title` is the task's original definition. Per side: `reason` is the party's stated motivation (`provider.reason` = why arbitration was raised; `client.reason` = why delivery was rejected); `texts[]` is free-text evidence; `files[]` is **any file type** (image / PDF / video / archive / unknown binary), already downloaded — each item has `localPath` (absolute path; **the local file has NO extension** — CLI deliberately leaves type detection to the agent).\n\n\
+             **Post-evidence hard constraints** (only the rules the agent could not infer on its own — tool choice / commands are the agent's call):\n\
+             - `files[]` items arrive **without extensions** by design; probe the type yourself (`file --mime-type`, hexdump, whatever) and use whatever tools you have to inspect each one. If you rename a file to give it an extension, **update the `localPath` you cite in the verdict**.\n\
+             - **Never vote blindly on an item you could not inspect.** If a file is unreadable for any reason (unsupported format, conversion failed, archive contents inaccessible, download error), cite it in the verdict as `<short reason> — contents unreviewable` and apply the rubric's evidence-missing rule for that item.\n\
+             - **Do not recurse into nested archives** (zip-in-tar-in-gz etc.). One extraction layer at most; deeper = treat as unreviewable.\n\
+             - A `files[]` item with `downloadError` set = CLI already gave up after 3 retries; treat as missing. Do not re-run `evidence-info` and do not scan local disk for replacements.\n",
+            agentname_fallback = if has_title {
+                format!("- `agentName` missing → degrade header to `You have been selected as juror for task [{title_display}]`.")
+            } else {
+                "- `agentName` missing → degrade header to `You have been selected as juror`.".to_string()
+            },
+            title_fallback_line = if has_title { "" } else { "- `taskTitle` missing → drop the `Task title:` line.\n" },
         ),
 
         "vote_committed" => format!(
             "[Current Status] vote_committed\n\n\
+             Extract from `message`: `vote` (0 or 1). Map vote to who the agent supports:\n\
+             - `vote = 0` (Approve) → supports **Client**\n\
+             - `vote = 1` (Reject) → supports **Provider**\n\
              Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20Your agent has committed its vote on-chain for Job jobId={job_id}. Waiting for the reveal phase to begin — no action needed from you.\n"
+             \x20\x20\x20\x20Arbitration vote committed for task [{title_display}] · waiting for Reveal\n\
+             \x20\x20\x20\x20Task title: {title_display}\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20🗳️ Your Agent supports: <Provider | Client>\n\n\
+             [Field-missing fallbacks]\n\
+             {title_fallback_line}
+             - `vote` missing → drop the `🗳️ Your Agent supports:` line entirely; do NOT guess Provider/Client.\n",
+            title_fallback_line = if has_title { "" } else { "- `taskTitle` missing → degrade header to `Arbitration vote committed · waiting for Reveal` and drop the `Task title:` line.\n" },
+        ),
+
+        "vote_commit_deadline_warn" => format!(
+            "[Current Status] vote_commit_deadline_warn\n\n\
+             Compute `commitDeadlineLocal` from `commitDeadline` (local time) and `minutesLeft` = `max(0, ceil((commitDeadline - now_epoch_seconds) / 60))`. Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
+             Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20⏰ URGENT: Arbitration vote for task [{title_display}] is about to close\n\
+             \x20\x20\x20\x20Task title: {title_display}\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20Commit deadline: <commitDeadlineLocal> (<minutesLeft> minutes remaining)\n\
+             \x20\x20\x20\x20Status: Agent has not committed yet\n\
+             \x20\x20\x20\x20🚨 Timeout consequences:\n\
+             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps> (≈<slashAmount> OKB)\n\
+             \x20\x20\x20\x20• Enter a <cooldownHours>h cooldown during which you cannot be selected\n\
+             \x20\x20\x20\x20• Miss the base validation fee\n\
+             \x20\x20\x20\x20⚡ Have the Agent vote immediately\n\n\
+             [Field-missing fallbacks]\n\
+             {title_fallback_line}
+             - `commitDeadline` missing → drop the `Commit deadline:` line.\n\
+             - `slashTimeoutBps` / `slashAmount` missing → drop the `• Stake slashed` bullet.\n\
+             - `slashedCooldownSeconds` missing → drop the `• Enter a ... cooldown` bullet.\n",
+            title_fallback_line = if has_title { "" } else { "- `taskTitle` missing → degrade header to `⏰ URGENT: Arbitration vote about to close` and drop the `Task title:` line.\n             " },
         ),
 
         "reveal_started" => format!(
             "[Current Status] reveal_started\n\n\
-             **Step 1 — Extract `jobId` and `agentId` from the inbound envelope top level** (if `jobId` missing → output `missing jobId in payload; abort` log and end this turn).\n\n\
-             **Step 2 — Notify the user that the reveal phase has started:**\n\n\
+             **Step 1 — Notify the user that the reveal phase has started:**\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20The reveal phase has started for Job jobId={job_id}. Your agent is revealing the vote on-chain in the background — no action needed from you.\n\n\
-             **Step 3 — Execute reveal:**\n\
+             **Step 2 — Execute reveal:**\n\
              ```bash\n\
-             onchainos agent vote-reveal <jobId> --agent-id <envelope top-level agentId>\n\
+             onchainos agent vote-reveal {job_id} --agent-id {agent_id}\n\
              ```\n\n\
              [Error mapping]\n\
              - `canReveal=false` → CLI has already pre-checked and rejected; no retry needed. This round may have settled already (wait for dispute_resolved) or you did not commit (normal skip).\n\
@@ -134,31 +192,50 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              \x20\x20\x20\x20Your agent has revealed its vote on-chain for Job jobId={job_id}. Waiting for the dispute resolution result — no action needed from you.\n"
         ),
 
-        "dispute_resolved" => "[Current Status] dispute_resolved\n\n\
-             [Step 1] Extract `agentId` and `jobId` from the envelope top level.\n\n\
-             [Step 2] Call `arbitration-claimable` to check if this account has rewards to claim (pass envelope top-level `agentId`):\n\
-             ```bash\n\
-             onchainos agent arbitration-claimable --agent-id <envelope top-level agentId>\n\
-             ```\n\
-             The output's last line is a stable marker `hasClaimable: yes` or `hasClaimable: no`. **Decide based on this line only**; do not parse amount yourself.\n\
-             - `hasClaimable: no` → skip Step 3 (you were not in the majority this round; you may receive a slashed event)\n\
-             - `hasClaimable: yes` → proceed to Step 3 to claim\n\n\
-             [Step 3] Immediately claim rewards:\n\
-             ```bash\n\
-             onchainos agent arbitration-claim --agent-id <envelope top-level agentId>\n\
-             ```\n\
-             ⚠️ Account-level pull mode: aside from `--agent-id`, do not pass any other business parameters; pull all pending rewards from all settled disputes at once (empty body).\n\
-             Retry up to 3 times on failure. The actual credit confirmation will be communicated to the user via a later `reward_claimed` event.\n".to_string(),
-
-        "slashed" => format!(
-            "[Current Status] slashed\n\n\
-             ⚠️ envelope.message only contains `event / jobId / timestamp / source / description` — no amount / reason. Do not fabricate or guess from other fields.\n\n\
-             [Step 1] Run `onchainos agent my-stake --agent-id <your agentId>` to get the post-slash `activeStake`.\n\
-             [Step 2] Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
+        "dispute_resolved" => format!(
+            "[Current Status] dispute_resolved\n\n\
+             Extract from `message`: `vote` (0 or 1), `jobStatus` (`completed` = provider won / `rejected` = client won), `slashMinorityBps` + `slashAmount` (lost branch only). Any of these may be absent.\n\
+             Derive the outcome:\n\
+             - `vote = 0` (Approve) → you backed **Client**; you win iff `jobStatus = rejected`\n\
+             - `vote = 1` (Reject) → you backed **Provider**; you win iff `jobStatus = completed`\n\
+             - otherwise → you lost (minority)\n\
+             If `vote` is missing → abort this turn and log `missing vote; abort`.\n\n\
+             ━━━━━━━━━━━━━ Branch A: WON ━━━━━━━━━━━━━\n\n\
+             Compute `winningSide` from `jobStatus` (`completed` → `Provider`; `rejected` → `Client`).\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20Your stake has been slashed on Job jobId={job_id}. Remaining activeStake is <my-stake.activeStake> OKB.\n\n\
-             [my-stake failure fallback] Drop numeric fields and degrade to `Your stake has been slashed on Job jobId={job_id}.`\n"
+             \x20\x20\x20\x20🎉 Arbitration result for task [{title_display}]: your vote aligned with the majority — reward eligible\n\
+             \x20\x20\x20\x20Task title: {title_display}\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20Your vote: backed <winningSide> ✓ aligned with majority\n\n\
+             Pull claimable then claim:\n\
+             ```bash\n\
+             onchainos agent arbitration-claimable --agent-id {agent_id}\n\
+             ```\n\
+             The last line is the stable marker `hasClaimable: yes | no`. Decide on that line only; do not parse amounts.\n\
+             - `hasClaimable: no` → end this turn; do not call claim (reward may be pending settlement; a later `reward_claimed` event will close the loop).\n\
+             - `hasClaimable: yes` →\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent arbitration-claim --agent-id {agent_id}\n\
+             \x20\x20```\n\
+             \x20\x20⚠️ Account-level pull: aside from `--agent-id`, pass no other business params. Retry up to 3 times on failure. Final credit confirmation arrives via the later `reward_claimed` event.\n\n\
+             ━━━━━━━━━━━━━ Branch B: LOST ━━━━━━━━━━━━━\n\n\
+             Compute `losingSide` from `vote` (0 → `Client`; 1 → `Provider`).\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20⚠️ Arbitration result for task [{title_display}]: your vote disagreed with the majority — slash penalty incoming\n\
+             \x20\x20\x20\x20Task title: {title_display}\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20Your vote: backed <losingSide> ✗ opposed majority\n\
+             \x20\x20\x20\x20🚫 Penalty applied\n\
+             \x20\x20\x20\x20• Stake slashed <slashMinorityBps>: <slashAmount> OKB\n\n\
+             Lost branch ends this turn; do not call `arbitration-claim` (nothing to claim). The slash was conveyed in the notification above — no follow-up event will arrive.\n\n\
+             [Field-missing fallbacks]\n\
+             {title_fallback_line}
+             - `slashMinorityBps` / `slashAmount` missing → drop the `🚫 Penalty applied` block.\n",
+            title_fallback_line = if has_title { "" } else {
+                "- `taskTitle` missing → degrade Branch A header to `🎉 Arbitration result: your vote aligned with the majority — reward eligible`; degrade Branch B header to `⚠️ Arbitration result: your vote disagreed with the majority — slash penalty incoming`; both branches drop the `Task title:` line."
+            },
         ),
 
         "cooldown_entered" => "[Current Status] cooldown_entered\n\n\
@@ -169,9 +246,24 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              \x20\x20\x20\x20You've entered the absence cooldown period; you won't be selected as a juror before <my-stake.cooldownEndsAt local time>.\n\n\
              [my-stake failure fallback] Drop numeric fields and degrade to `You've entered the absence cooldown period and won't be selected as a juror during this period.`\n".to_string(),
 
-        "round_failed" =>
+        "round_failed" => format!(
             "[Current Status] round_failed\n\n\
-             [Action] None; do not notify the user.\n".to_string(),
+             Extract from `message`: `abstainCount`, `totalSlashed`, `slashTimeoutBps`, `revealCount`.\n\n\
+             Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20⚖️ Task [{title_display}] arbitration round invalidated\n\
+             \x20\x20\x20\x20Task title: {title_display}\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20Tally: no side reached ≥ 50%\n\
+             \x20\x20\x20\x20💰 Abstain-slash pool distribution\n\
+             \x20\x20\x20\x20• Source: <abstainCount> abstainers × <slashTimeoutBps> = <totalSlashed> OKB total\n\
+             \x20\x20\x20\x20• Split evenly among <revealCount> revealers\n\n\
+             [Field-missing fallbacks]\n\
+             {title_fallback_line}\n\
+             - Any of `abstainCount` / `totalSlashed` / `slashTimeoutBps` / `revealCount` missing → drop the `💰 Abstain-slash pool distribution` block.\n",
+            title_fallback_line = if has_title { "" } else { "- `taskTitle` missing → degrade header to `⚖️ Arbitration round invalidated` and drop the `Task title:` line." },
+        ),
 
         "reward_claimed" => "[Current Status] reward_claimed\n\n\
              Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
@@ -184,50 +276,38 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
     Some(body)
 }
 
-/// Step 5-7 of the `evaluator_selected` playbook, intended to be appended to
+/// Step 4-5 of the `evaluator_selected` playbook, intended to be appended to
 /// `evidence-info` stdout instead of returned by `next-action`.
 ///
 /// Rationale: when next-action's evaluator_selected body included the full
-/// vote-commit / vote-record CLI templates, a weak LLM could pattern-match the
-/// command line and skip Step 4 (evidence-info) + Step 5 (rubric read). By
-/// printing these steps only after evidence has actually been fetched, the LLM
-/// physically cannot see the vote-commit invocation template until it has
-/// pulled the evidence.
-pub fn evaluator_selected_post_evidence_steps(job_id: &str) -> String {
+/// vote-commit CLI template, a weak LLM could pattern-match the command line
+/// and skip Step 3 (evidence-info) + Step 4 (rubric read). By printing these
+/// steps only after evidence has actually been fetched, the LLM physically
+/// cannot see the vote-commit invocation template until it has pulled the
+/// evidence.
+pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> String {
     format!(
-        "**Step 5 — Render the verdict per `references/evaluator-decision-rubric.md`:**\n\
+        "**Step 4 — Render the verdict per `references/evaluator-decision-rubric.md`:**\n\
          - **Prerequisite — file readability check**: read `references/evaluator-decision-rubric.md`.\n\
          \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Push the user via `xmtp_dispatch_user` then end the turn:\n\n\
          tool: xmtp_dispatch_user\n\
          content:\n\
          \x20\x20\x20\x20Arbitration aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
          \x20\x20\x20\x20⚠️ commit window timeout will slash your stake — please restore the file as soon as possible.\n\n\
-         - Read success and evidence already output → produce the final `vote` and verdict per the rules therein.\n\n\
-         **Step 6 — Execute commit (also pass envelope top-level `agentId` to `--agent-id`):**\n\
+         - Read success and evidence already output → produce the final `vote` and the verdict markdown per the rubric's Verdict section (whichever heading defines the verdict template).\n\n\
+         **Step 5 — Execute commit:**\n\
+         - **Flatten the entire verdict markdown into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; pass via `--reason`:\n\
          ```bash\n\
-         onchainos agent vote-commit <jobId> --vote <0|1> --agent-id <envelope top-level agentId>\n\
+         onchainos agent vote-commit {job_id} --vote <0|1> --reason \"Verdict\\n\\nJob ID: {job_id}\\nvote: <0|1>\\nFindings of fact: 1. ...\\nEvidence citations: ...\\nReasoning: ...\" --agent-id {agent_id}\n\
          ```\n\
          ⚠️ **Only 0 (Approve / Client wins) or 1 (Reject / Provider wins) — skip is forbidden**.\n\
          ⚠️ **The `<0|1>` value MUST come from Step 5** — it is the binary vote that Step 5 derived by applying `references/evaluator-decision-rubric.md` (whatever decision procedure that document defines) to the evidence. Do **not** commit a vote that bypassed Step 5 — guessing / pattern-matching / averaging a value here violates the rubric and produces an unfounded ruling.\n\
-         Retry up to 3 times on failure (CRITICAL — closing of the commit window triggers timeout slashing). `voter has already committed` counts as success — proceed to Step 6.5.\n\
-         Body only carries `vote`.\n\n\
-         **Step 6.5 — Persist verdict to disk (local audit redundancy; run after commit):**\n\
-         - Verdict generated per rubric §3 template → **flatten the entire verdict markdown into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; then pass via `--verdict`:\n\
-         \x20\x20```bash\n\
-         \x20\x20onchainos agent vote-record <jobId> --agent-id <envelope top-level agentId> --verdict \"Verdict\\n\\nJob ID: <jobId>\\nvote: <0|1>\\nFindings of fact: 1. ...\\nEvidence citations: ...\\nReasoning: ...\"\n\
-         \x20\x20```\n\
-         \x20\x20CLI un-escapes `\\n` → newline, `\\t` → tab, `\\r` → CR, `\\\\` → `\\`, `\\\"` → `\"` before writing to disk; `verdict.md` stays human-readable multi-line markdown for later audit.\n\
-         - **Character taboos inside the `--verdict` value** (otherwise the shell will corrupt the argument before the CLI even sees it):\n\
+         ⚠️ **`--reason` is the full verdict produced by Step 5**. Empty / whitespace-only values are rejected by the CLI. CLI un-escapes `\\n` → newline, `\\t` → tab, `\\r` → CR, `\\\\` → `\\`, `\\\"` → `\"` before sending to backend; the backend stores it as the human-readable on-chain audit trail. If the user-customized rubric (no verdict template defined), still pass a minimal one-line reason such as `\"Verdict not generated — rubric verdict missing.\"` \n\
+         - **Character taboos inside the `--reason` value** (otherwise the shell will corrupt the argument before the CLI even sees it):\n\
          \x20\x20- `\"` (double quote) → escape as `\\\"`\n\
          \x20\x20- `` ` `` (backtick) → either replace with `'` (single quote) or escape as `` \\` ``; an unescaped backtick triggers shell command substitution\n\
          \x20\x20- `$` → escape as `\\$` to prevent shell variable expansion\n\
          \x20\x20- Real newlines / tabs / CRs → **must** use `\\n` / `\\t` / `\\r` escapes; never embed a literal newline (the command will break across lines)\n\
-         - User-customized rubric does not define §3 template, no verdict generated this round → omit `--verdict`; the CLI auto-writes a placeholder:\n\
-         \x20\x20```bash\n\
-         \x20\x20onchainos agent vote-record <jobId> --agent-id <envelope top-level agentId>\n\
-         \x20\x20```\n\
-         Failure: **do not retry, do not push user session, do not block** — go directly to Step 7 (vote is already on-chain; disk persistence is only local audit redundancy).\n\n\
-         **Step 7 — Output one log line then end this turn:**\n\n\
-         > Committed jobId=<jobId> vote=<0|1>\n"
+         Retry up to 3 times on failure (CRITICAL — closing of the commit window triggers timeout slashing).\n"
     )
 }

@@ -5,19 +5,55 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
+/// Restore the single-line shell-safe `--reason` argument back into multi-line
+/// markdown: `\n` → newline, `\t` → tab, `\r` → CR, `\\` → `\`, `\"` → `"`.
+/// Unknown `\<x>` sequences pass through verbatim (forward-compat).
+///
+/// Design motivation: let the LLM compress the verdict into a single-line
+/// `--reason "..."` argument, bypassing bash heredoc / cross-platform shell
+/// pitfalls; backend receives properly-newlined markdown for audit display.
+fn unescape_reason(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 pub async fn handle_commit(
     client: &mut TaskApiClient,
     job_id: &str,
     vote: u8,
+    reason: &str,
     agent_id: &str,
 ) -> Result<()> {
     if vote != 0 && vote != 1 {
         bail!("--vote must be 0 (Approve, Client wins) or 1 (Reject, Provider wins)");
     }
+    let reason = unescape_reason(reason.trim());
+    if reason.trim().is_empty() {
+        bail!("--reason must not be empty");
+    }
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
-    let body = serde_json::json!({ "vote": vote });
+    let body = serde_json::json!({ "vote": vote, "voteReport": reason });
     let path = client.endpoint(job_id, "vote/commit");
     let resp = client.post_with_identity(
         &path,
@@ -50,6 +86,7 @@ pub async fn handle_commit(
             format!("jobId={job_id}"),
             format!("agentId={agent_id}"),
             format!("vote={vote}"),
+            format!("reasonLen={}", reason.chars().count()),
             format!("commitHash={commit_hash}"),
             format!("txHash={tx_hash}"),
         ]),
@@ -64,4 +101,38 @@ pub async fn handle_commit(
     }
     println!("  txHash:     {tx_hash}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unescape_reason;
+
+    #[test]
+    fn unescape_newline_tab_cr() {
+        assert_eq!(unescape_reason("line1\\nline2"), "line1\nline2");
+        assert_eq!(unescape_reason("col1\\tcol2"), "col1\tcol2");
+        assert_eq!(unescape_reason("dos\\r\\nstyle"), "dos\r\nstyle");
+    }
+
+    #[test]
+    fn unescape_backslash_and_quote() {
+        assert_eq!(unescape_reason("path\\\\to\\\\file"), "path\\to\\file");
+        assert_eq!(unescape_reason("He said \\\"hi\\\""), "He said \"hi\"");
+    }
+
+    #[test]
+    fn unknown_escape_passes_through() {
+        assert_eq!(unescape_reason("foo\\qbar"), "foo\\qbar");
+        assert_eq!(unescape_reason("foo\\"), "foo\\");
+    }
+
+    #[test]
+    fn realistic_verdict_roundtrip() {
+        let raw = "Verdict\\n\\nJob ID: 0xabc\\nvote: 1\\nReasoning: per #3, client submitted no evidence.";
+        let out = unescape_reason(raw);
+        assert!(out.starts_with("Verdict\n\n"));
+        assert!(out.contains("\nvote: 1\n"));
+        assert!(out.ends_with("no evidence."));
+        assert!(!out.contains("\\n"));
+    }
 }

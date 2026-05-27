@@ -110,7 +110,7 @@ For the full `event → --role` routing table see SKILL.md `## Activation`. The 
 | `vote_committed` | The evaluator who issued the commit | commit tx receipt |
 | `vote_revealed` | The evaluator who issued the reveal | reveal tx receipt |
 | `round_failed` | Both sides + the round's evaluators | DisputeInvalidated on chain (insufficient votes / no reveals); wait for the next round |
-| `slashed` | The slashed evaluator | VoterStaking.Slashed on chain (passive event, no user tx) |
+| `vote_commit_deadline_warn` | The selected-but-not-yet-committed evaluator | Warn class (no status change); backend fires when the commit window is closing and this evaluator has not committed yet. Envelope carries `commitDeadline` + slashing params; playbook re-kicks the vote flow. |
 
 ### 3.4 Staking / reward events (**decoupled from task status**)
 
@@ -138,7 +138,7 @@ For the full event → --role routing see SKILL.md `## Activation`; below is the
 
 - **Buyer**: `job_created` → negotiation → `job_accepted` (own confirmation) → `job_submitted` → `job_completed` / `job_rejected` → (if rejected) wait for provider's decision → `job_disputed` or `job_refunded`
 - **Provider**: a2a-agent-chat inquiry → `provider_applied` (escrow) → `job_accepted` → `job_submitted` → `job_rejected` / `job_completed` → (if rejected) `dispute_approved` → `job_disputed` → `dispute_resolved`
-- **Evaluator**: `evaluator_selected` → commit → `reveal_started` → reveal → `dispute_resolved` → `reward_claimed` or `slashed`
+- **Evaluator**: `evaluator_selected` → commit → `reveal_started` → reveal → `dispute_resolved` → `reward_claimed` (winning side) or no follow-up event (losing side; slash conveyed in the prior `dispute_resolved` payload)
 
 ---
 
@@ -170,4 +170,4 @@ The response contains `[Current State]` (status string + description) and `[Curr
 
 - Status enum: `cli/src/commands/agent_commerce/task/common/state_machine.rs::Status`
 - Event enum (35 entries): same file, `Event` enum
-- `status_when_event(event)` / `entry_event(status)`: bidirectional mapping functions; the agent does not need to replicate them — just call `agent next-action --jobStatus <event>` and let the CLI route
+- `status_when_event(event)` / `entry_event(status)`: bidirectional mapping functions; the agent does not need to replicate them — just call `agent next-action --event <event> --jobStatus <status_or_event>` and let the CLI route

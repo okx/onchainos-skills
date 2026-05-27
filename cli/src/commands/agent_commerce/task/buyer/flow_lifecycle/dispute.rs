@@ -70,7 +70,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      {follow_end}\n\n\
      **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
      The user's reply IS the evidence — upload it verbatim. Do NOT second-guess whether it's \"too short\" / \"too similar to the dispute reason\" / \"not enough detail\"; if the user wants to add more, they will reply again (each new reply overwrites and re-prompts the same pending entry).\n\
-     Call `onchainos agent next-action --jobid {job_id} --jobStatus dispute_evidence --role buyer --agentId {agent_id}` for the upload script, and pass the verbatim text + any image paths the user provided through to the upload step.\n\n\
+     Call `onchainos agent next-action --jobid {job_id} --event dispute_evidence --jobStatus dispute_evidence --role buyer --agentId {agent_id}` for the upload script, and pass the verbatim text + any image paths the user provided through to the upload step.\n\n\
      ⚠️ Evidence MUST be submitted within 1 hour, otherwise it expires.\n",
         evidence_prompt_for_shell = evidence_prompt.replace('"', "\\\""),
     )

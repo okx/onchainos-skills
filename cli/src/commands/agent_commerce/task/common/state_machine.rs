@@ -230,8 +230,12 @@ pub enum Event {
     /// DisputeInvalidated — current round invalidated (insufficient votes / nobody revealed, etc.;
     /// notifies buyer/provider/round-evaluators to wait for the next round).
     RoundFailed,
-    /// VoterStaking.Slashed on-chain (no user tx triggers this; notifies the slashed evaluator).
-    Slashed,
+    /// Commit-window nearing-deadline reminder for an evaluator that has been selected but has not yet
+    /// committed a vote (warn class; no status change; backend only fires when commit is still pending).
+    /// Envelope carries `commitDeadline` (epoch seconds) + slashing params (`slashTimeoutBps`,
+    /// `slashedCooldownSeconds`, `slashAmount`) so the playbook can render the urgency notice and
+    /// kick off the full vote flow.
+    VoteCommitDeadlineWarn,
 
     // ── Staking lifecycle (evaluator) ─────────────────────────────────
     /// VoterStaking.Staked on-chain (**both first-time stake and additional increaseStake emit this event**;
@@ -337,7 +341,7 @@ impl Event {
             "vote_committed"            => Event::VoteCommitted,
             "vote_revealed"             => Event::VoteRevealed,
             "round_failed"              => Event::RoundFailed,
-            "slashed"                   => Event::Slashed,
+            "vote_commit_deadline_warn" => Event::VoteCommitDeadlineWarn,
             // Staking lifecycle (first-time / additional both map to Staked — the real backend only emits one `staked` event)
             "staked"                    => Event::Staked,
             "unstake_requested"         => Event::UnstakeRequested,
@@ -395,7 +399,7 @@ impl Event {
             Event::VoteCommitted          => "vote_committed",
             Event::VoteRevealed           => "vote_revealed",
             Event::RoundFailed            => "round_failed",
-            Event::Slashed                => "slashed",
+            Event::VoteCommitDeadlineWarn => "vote_commit_deadline_warn",
             Event::Staked                 => "staked",
             Event::UnstakeRequested       => "unstake_requested",
             Event::UnstakeClaimed         => "unstake_claimed",
@@ -439,7 +443,6 @@ impl Event {
             Event::UnstakeCancelled   => "unstake cancellation failed",
             Event::StakeStopped       => "stop staking failed",
             Event::CooldownEntered    => "cooldown entry failed",
-            Event::Slashed            => "slash transaction failed",
             _                         => "transaction failed",
         }
     }
@@ -481,7 +484,8 @@ pub fn status_when_event(e: &Event) -> Status {
         // Arbitration sub state machine: all events fire while task=disputed
         Event::EvaluatorSelected | Event::VoteCommitted
         | Event::RevealStarted | Event::VoteRevealed
-        | Event::Slashed | Event::CooldownEntered | Event::RoundFailed      => Status::Disputed,
+        | Event::CooldownEntered | Event::RoundFailed
+        | Event::VoteCommitDeadlineWarn                                     => Status::Disputed,
         // Reminder class (no status change; task stays in its current status)
         Event::SubmitDeadlineWarn                                           => Status::Accepted,
         Event::ReviewDeadlineWarn                                           => Status::Submitted,
