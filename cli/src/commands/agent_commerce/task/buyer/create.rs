@@ -245,6 +245,7 @@ pub async fn handle_create(
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
         &job_id, 1, &buyer_agent_id,
+        None,
     ).await?;
 
     audit::log(

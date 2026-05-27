@@ -36,6 +36,7 @@ pub async fn handle_complete(
             client, job_id, "pre-complete", "complete",
             None,
             &account_id, &address, &agent_id,
+            None,
         ).await?;
 
         audit::log(
@@ -64,6 +65,7 @@ pub async fn handle_complete(
         let tx_hash = signing::sign_uop_and_broadcast(
             client, &resp["uopData"], &account_id, &address,
             job_id, signing::extract_biz_type(&resp), &agent_id,
+            None,
         ).await?;
 
         audit::log(

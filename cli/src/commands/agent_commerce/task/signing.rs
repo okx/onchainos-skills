@@ -247,6 +247,7 @@ pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
 /// The API request is performed by the caller via `TaskApiClient`.
 ///
 /// `biz_context` marks the business scenario (TaskAccept / DisputeCreate etc.) and is sent with the broadcast request so the backend can distinguish them.
+#[allow(clippy::too_many_arguments)]
 pub async fn sign_uop_and_broadcast(
     client: &mut TaskApiClient,
     uop_data: &Value,
@@ -255,6 +256,7 @@ pub async fn sign_uop_and_broadcast(
     job_id: &str,
     biz_type: i64,
     agent_id: &str,
+    biz_context_extra: Option<&Value>,
 ) -> Result<String> {
     if uop_data.is_null() {
         bail!("backend did not return uopData; cannot sign and broadcast");
@@ -291,10 +293,18 @@ pub async fn sign_uop_and_broadcast(
         false,
     )
     .await?;
-    broadcast_body["bizContext"] = serde_json::json!({
+    let mut biz_ctx = serde_json::json!({
         "jobId": job_id,
         "bizType": biz_type,
     });
+    if let Some(extra) = biz_context_extra {
+        if let (Some(ctx_obj), Some(extra_obj)) = (biz_ctx.as_object_mut(), extra.as_object()) {
+            for (k, v) in extra_obj {
+                ctx_obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    broadcast_body["bizContext"] = biz_ctx;
 
     let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
         .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
@@ -469,6 +479,7 @@ pub async fn task_dual_sign_and_broadcast(
     account_id: &str,
     address: &str,
     agent_id: &str,
+    biz_context_extra: Option<&Value>,
 ) -> Result<BroadcastResult> {
     let deadline = chrono::Utc::now().timestamp() + 1800;
 
@@ -513,6 +524,7 @@ pub async fn task_dual_sign_and_broadcast(
     let biz_type = extract_biz_type(&main_resp);
     let tx_hash = sign_uop_and_broadcast(
         client, &main_resp["uopData"], account_id, address, job_id, biz_type, agent_id,
+        biz_context_extra,
     ).await?;
 
     Ok(BroadcastResult { api_response: main_resp, tx_hash })
