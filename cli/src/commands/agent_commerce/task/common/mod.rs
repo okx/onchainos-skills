@@ -14,7 +14,6 @@ pub mod config;
 pub mod dispute_upload;
 pub mod network;
 pub mod payment_mode;
-pub mod pending;
 pub mod pending_v2;
 pub mod query;
 pub mod review_gate;

@@ -9,7 +9,7 @@
 //! - `flow_lifecycle.rs` — task execution + arbitration + terminal states
 
 use crate::commands::agent_commerce::task::common::config::TASK_MIN_VERSION;
-use crate::commands::agent_commerce::task::common::pending::short_job_id;
+use crate::commands::agent_commerce::task::common::util::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
 // ── Localization constants (shared across flow_negotiate / flow_lifecycle) ────
@@ -206,9 +206,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
     // `xmtp_dispatch_user` / `xmtp_prompt_user` — this file no longer uses dispatch_session to push to the user.
     // ──────────────────────────────────────────────────────────────────────
     let terminal_session_hint = if crate::commands::agent_commerce::task::common::config::KEEP_CONVERSATION_ON_TERMINAL {
-        "⚠️ **Do NOT `xmtp_delete_conversation`** — keep the conversation history for later reference."
+        "ℹ️ Task is at a terminal state. Clean up the stale pending decision entry but keep the conversation:\n\
+         \x20\x201. Call `session_status` to fetch the current sub `sessionKey`.\n\
+         \x20\x202. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"<sessionKey from step 1>\"` to remove any leftover pending decision entry (otherwise it waits 7-day TTL and pollutes the queue).\n\
+         ⚠️ **Do NOT call `xmtp_delete_conversation`** — keep the conversation history for later reference."
     } else {
-        "ℹ️ Task is at a terminal state, you may call `xmtp_delete_conversation` to release conversation resources (no further events)."
+        "ℹ️ Task is at a terminal state; to fully release session resources (no further events expected):\n\
+         \x20\x201. Call `session_status` to fetch the current sub `sessionKey`.\n\
+         \x20\x202. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"<sessionKey from step 1>\"` to clean up any pending decision entry for this sub (otherwise it waits 7-day TTL).\n\
+         \x20\x203. Call `xmtp_delete_conversation` with `sessionKey=<sessionKey from step 1>` to close the conversation."
     };
 
     let escalation_protocol_misread = super::content::escalation_protocol_misread_notify(job_id);

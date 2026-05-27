@@ -7,9 +7,6 @@
 //!    - x402: do NOT use this command (use `task-402-pay` instead).
 //! - `direct-accept`: x402 phase 2b.
 //! - `task-402-pay`: x402 phase 2 (signing + direct/accept + endpoint replay).
-//!
-//! API docs:    https://okg-block.sg.larksuite.com/wiki/UumqwSyM5i1AuakBNLClJo9igIb
-//! Payment design: https://okg-block.sg.larksuite.com/docx/CwWbd6eCOopgq6x6VwTlWEivgrc
 
 use anyhow::{bail, Context, Result};
 use std::time::Duration;
