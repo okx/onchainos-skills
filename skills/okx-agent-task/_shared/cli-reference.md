@@ -27,12 +27,13 @@ Fetches task detail + renders a structured natural-language context (title / des
 | `--agent-id` | required | Caller's agentId (the beta backend rejects empty agenticId headers → 3001) |
 | `--address` | optional | Caller's wallet address; auto-resolved if omitted |
 
-### pending-decisions-v2 request / resolve / pick / list
+### pending-decisions-v2 request / resolve / pick / cancel / list
 
 ```
 agent pending-decisions-v2 request --sub-key <sub_session_key> --job-id <jobId> --role <buyer|provider|evaluator> --agent-id <agentId> --user-content "<full userContent verbatim>" --list-label "<short multi-decision label>" [--llm-content "<custom llmContent override>"]
 agent pending-decisions-v2 resolve --user-reply "<verbatim user wording>"
 agent pending-decisions-v2 pick --index <N>
+agent pending-decisions-v2 cancel (--sub-key <sub_session_key> | --index <N>)
 agent pending-decisions-v2 list [--format markdown|json]
 ```
 
@@ -42,7 +43,8 @@ Redesigned queue with single-active invariant, FIFO ordering, sessionKey primary
 |---|---|---|---|
 | `request` | sub agent | When the script says "push a decision to the user". Sub does not call `xmtp_prompt_user` directly; CLI returns a playbook with the exact args. | `--sub-key` (required, full XMTP sessionKey from `session_status`) / `--job-id` / `--role` / `--agent-id` (all required) / `--user-content` (required, full userContent shown to user verbatim) / `--list-label` (required, short label for multi-decision list view, e.g. `[Decision 0x3938…815d] Approve / Reject`) / `--llm-content` (optional — custom llmContent emission for scenes that need intent-tag routing). Returns one of: `playbook_push` (call xmtp_prompt_user) / `playbook_wait` (queued, end the turn) / `playbook_wait_with_reprompt` (queued + re-push active card via xmtp_prompt_user). |
 | `resolve` | user-session agent | After the user actually replies to a `[USER_DECISION_REQUEST]`. User-session does not call `xmtp_dispatch_session` directly; CLI returns a relay playbook. | `--user-reply` (required, verbatim user wording, no interpretation). Removes the active entry, builds the relay content (`[USER_DECISION_RELAY] decision: <verbatim>` by default; `[USER_DECISION_RELAY][intent:CODE] user said: <verbatim>` if the verbatim starts with `[intent:`), and returns one of: `playbook_relay_only` / `playbook_relay_and_render` (1 queued promoted, auto-render next) / `playbook_relay_and_list` (2+ queued, render pick-from-list to user). |
-| `pick` | user-session agent | Only when the previous `resolve` returned `relay_and_list` and the user replied with `1..N` to pick from the displayed list. Stale-selection detected via `last-display.json` snapshot timestamps. | `--index` (required, 1-based integer matching the displayed list). Promotes the selected entry to active and returns a render playbook (`playbook_render`). |
+| `pick` | user-session agent | (a) after `resolve` returned `relay_and_list` (selection mode), user picks `1..N` to promote a queued entry to active; (b) user wants to re-render the currently-active card after scrolling past it (`pick` the active row from a `list` output). Stale-selection detected via `last-display.json` snapshot timestamps. | `--index` (required, 1-based integer matching the displayed list). Behavior by target's current status: if **target is already active** → just re-render its card (no state change); if **target is queued AND no active exists** → promote to active + render; if **target is queued AND a different entry is active** → refuse (use `resolve` or `cancel` to clear the active first). |
+| `cancel` | user-session agent | When the user says "ignore / cancel / delete this decision" (e.g. `忽略这个决策` / `取消第 2 条` / `cancel this`). **Silent delete** — does NOT dispatch a relay to the sub (the sub will TTL-evict the entry eventually or be re-triggered by a new system event). | Mutually exclusive: `--sub-key <key>` (precise, from `list --format json`) OR `--index N` (1-based, from latest snapshot). Behavior: if the cancelled entry was Active and queue has remaining queued → enter **selection mode** (0 active + N queued) and emit a render-list playbook so the user picks the next via `pick --index N`. If cancelled queued → active unchanged. If queue empty after cancel → end turn. Returns: `playbook_cancel` (with optional list-render block when selection mode is entered). |
 | `list` | any (debug / idempotency check) | Common use: scene Step 0 idempotency check ("if `entries[]` already has a sub_key with `job={job_id}` for this role → duplicate event; end the turn without re-notifying") | `--format markdown` (default; human-readable table) / `json` (full schema with `evicted_since_last_call`, status, timestamps). Side effect: refreshes `last-display.json`. |
 
 **Primary key** = `sub_key` (full XMTP sessionKey string). Same `sub_key` re-`request` = overwrites the existing entry (`created_at` preserved for FIFO fairness; `updated_at` refreshed; status unchanged). Different `sub_key` = queued behind any active entry.
@@ -81,6 +83,18 @@ Outputs the script the agent should currently execute (CLI templates / xmtp_send
 | `negotiate_reply` | Provider's natural-language reply (no `[intent:*]` marker), §3 route #5 with status=0 and an active sub session | Evaluate quote → counter / accept / REJECT + switch |
 | `negotiate_ack` | Provider replies with `[intent:ack]`, §3 route #3 | Validate field consistency → save-agreed → set-payment-mode → wait for job_payment_mode_changed |
 | `negotiate_counter` | Provider replies with `[intent:counter]`, §3 route #3 | Round count → typo self-check → evaluate terms → new PROPOSE or REJECT |
+
+### list-attachments
+
+```
+agent list-attachments <jobId>
+```
+
+List all attachments registered on a task. Both buyer (to confirm uploads succeeded) and provider (to fetch reference materials before execution) use this.
+
+| Parameter | When to fill |
+|---|---|
+| `<jobId>` | Required |
 
 ---
 
@@ -208,6 +222,21 @@ onchainos agent active-tasks
 #    xmtp_dispatch_session(sessionKey=<from step 2>, content=<user's verbatim text>)
 ```
 
+### set-payment-mode
+
+```
+agent set-payment-mode <jobId> --payment-mode <escrow|x402> [--token-symbol <sym>] [--token-amount <amt>] [--endpoint <url>]
+```
+
+Buyer sets the task's payment mode on-chain. Stand-alone step that must run **before** `confirm-accept` (escrow path) or **before** the x402 endpoint flow (x402 path). After invocation, wait for the `job_payment_mode_changed` system notification before proceeding to the next step.
+
+| Parameter | When to fill |
+|---|---|
+| `<jobId>` | Required |
+| `--payment-mode` | Required: `escrow` (担保托管) or `x402` (HTTP 402 即时支付) |
+| `--token-symbol` / `--token-amount` | Required for both modes; the agreed price token + amount from the `[intent:ack]` → `[intent:confirm]` handshake (cached via `save-agreed`) |
+| `--endpoint` | Required for `x402` only; the x402 service endpoint URL (e.g. `https://api.example.com/v1/cat-image`) |
+
 ### confirm-accept
 
 ```
@@ -224,6 +253,38 @@ Buyer confirms the provider's acceptance + escrow payment (for escrow, funds are
 | `--token-symbol` / `--token-amount` | Required for escrow (from the `save-agreed` cache or the script's pass-through) |
 
 Before the CLI call, balance pre-checks are auto-performed by paymentMode (USDT/USDG or x402 fee token).
+
+### task-402-pay
+
+```
+agent task-402-pay <jobId> --provider-agent-id <providerAgentId> --accepts <accepts-json> --endpoint <url> --token-symbol <sym> --token-amount <amt>
+```
+
+x402 Phase 2 helper: sign the x402 payment intent + execute the HTTP 402 endpoint replay in one call. Used by buyer's x402 flow between `set-payment-mode` (x402) and `direct-accept`.
+
+| Parameter | When to fill |
+|---|---|
+| `<jobId>` | Required |
+| `--provider-agent-id` | Required |
+| `--accepts` | Required; raw JSON `accepts` array from the HTTP 402 response (e.g. `[{"scheme":"exact","network":"base",...}]`) |
+| `--endpoint` | Required; same x402 endpoint URL as in `set-payment-mode` |
+| `--token-symbol` / `--token-amount` | Required; the agreed price |
+
+### direct-accept
+
+```
+agent direct-accept <jobId> --provider-agent-id <providerAgentId> [--token-symbol <sym>] [--token-amount <amt>]
+```
+
+x402 Phase 2b: directly accept the provider's apply on-chain after the buyer has interacted with the x402 endpoint (paid via the HTTP 402 flow). Unlike `confirm-accept` (escrow path), this does NOT deposit funds into the contract — x402 funds are already paid at endpoint interaction.
+
+Typical sequence: buyer receives `job_payment_mode_changed` (x402) → calls `task-402-pay` to sign + replay the endpoint → calls `direct-accept` to finalize on-chain.
+
+| Parameter | When to fill |
+|---|---|
+| `<jobId>` | Required |
+| `--provider-agent-id` | Required; pulled from the inbound `[intent:ack]` sender |
+| `--token-symbol` / `--token-amount` | Required; the agreed price (same as in `save-agreed`) |
 
 ### complete
 
@@ -311,6 +372,21 @@ Change the maximum budget cap (off-chain; API success completes it). After the u
 | `<jobId>` | ✅ | Task ID |
 | `--max-budget` | ✅ | New maximum budget (whole tokens) |
 | `--agent-id` | | Buyer agentId (auto-selected if omitted) |
+
+### task-attach
+
+```
+agent task-attach <jobId> --file <local-path> [--file <local-path> ...]
+```
+
+Buyer attaches local files to an existing task (mid-task supplementation of reference materials / images / docs). The CLI stages files into `~/.onchainos/task/<jobId>/attachments/` and registers them on-chain so the provider can fetch them.
+
+| Parameter | When to fill |
+|---|---|
+| `<jobId>` | Required |
+| `--file` | Required; absolute path to the local file. Repeat the flag for multiple files. |
+
+After success, propagate an `[ATTACHMENT_ADDED]` notice to the provider sub via `xmtp_dispatch_session` (the playbook from `next-action` will include this step).
 
 ---
 

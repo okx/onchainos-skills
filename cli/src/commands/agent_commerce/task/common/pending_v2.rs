@@ -1,9 +1,6 @@
 //! Pending-decisions v2 — redesigned queue with single-active invariant,
 //! implicit state machine, sessionKey primary key, and LLM-playbook output.
 //!
-//! See the design doc at:
-//!   https://okg-block.sg.larksuite.com/docx/URN9d8q49oYAJnxH6BYlYTkUgkd
-//!
 //! Files (all under `~/.onchainos/task/`, separate from v1):
 //! - `pending-decisions-new.json` — queue data
 //! - `pending-decisions-new.lock` — fs2 flock file
@@ -304,6 +301,19 @@ pub enum PendingDecisionsV2Command {
         #[arg(long, default_value = "markdown")]
         format: ListFormat,
     },
+
+    /// (user-session) Silently cancel a pending decision (the sub is NOT notified;
+    /// it will eventually TTL-evict or be retriggered by a new system event).
+    /// Pass exactly one of --sub-key or --index to identify the target.
+    /// If the cancelled entry was Active, the oldest Queued entry is auto-promoted.
+    Cancel {
+        /// Cancel by full XMTP sessionKey (precise).
+        #[arg(long = "sub-key", conflicts_with = "index")]
+        sub_key: Option<String>,
+        /// Cancel by 1-based index from the latest `list` / snapshot.
+        #[arg(long, conflicts_with = "sub_key")]
+        index: Option<usize>,
+    },
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -326,6 +336,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
         PendingDecisionsV2Command::Resolve { user_reply } => handle_resolve(user_reply),
         PendingDecisionsV2Command::Pick { index } => handle_pick(index),
         PendingDecisionsV2Command::List { format } => handle_list(format),
+        PendingDecisionsV2Command::Cancel { sub_key, index } => handle_cancel(sub_key, index),
     }
 }
 
@@ -527,11 +538,6 @@ fn handle_pick(index: usize) -> Result<()> {
     let mut q = read_queue()?;
     ensure_invariant_and_evict(&mut q);
 
-    if q.entries.iter().any(|e| e.status == Status::Active) {
-        print!("{}", playbook_error("There is already an active decision; resolve it first before picking from list."));
-        return Ok(());
-    }
-
     let snapshot = read_snapshot();
     if index == 0 || index > snapshot.items.len() {
         let new_snap = build_snapshot(&q);
@@ -567,9 +573,80 @@ fn handle_pick(index: usize) -> Result<()> {
         }
     }
 
-    q.entries[entry_idx].status = Status::Active;
-    write_queue_atomic(&q)?;
+    // Three cases by current status:
+    //   (a) The picked entry IS already active → re-render its card (no state change).
+    //       User likely wants to re-see the card after scrolling past it.
+    //   (b) The picked entry is queued AND no active exists → promote it (selection-mode flow).
+    //   (c) The picked entry is queued AND a different entry is active → refuse; user must
+    //       resolve/cancel the active first to avoid silently dropping it.
+    let already_active = q.entries[entry_idx].status == Status::Active;
+    if !already_active {
+        let other_active = q.entries.iter().any(|e| e.status == Status::Active);
+        if other_active {
+            print!(
+                "{}",
+                playbook_error(
+                    "There is already a different active decision. Resolve or cancel it first before picking a queued entry."
+                )
+            );
+            return Ok(());
+        }
+        q.entries[entry_idx].status = Status::Active;
+        write_queue_atomic(&q)?;
+    }
     print!("{}", playbook_render(&q.entries[entry_idx]));
+    Ok(())
+}
+
+fn handle_cancel(
+    sub_key: Option<String>,
+    index: Option<usize>,
+) -> Result<()> {
+    let _lock = acquire_lock()?;
+    let mut q = read_queue()?;
+    ensure_invariant_and_evict(&mut q);
+
+    // Resolve target sub_key (one of --sub-key / --index)
+    let target_sub_key = match (sub_key, index) {
+        (Some(sk), None) => sk,
+        (None, Some(idx)) => {
+            let snapshot = read_snapshot();
+            if idx == 0 || idx > snapshot.items.len() {
+                let new_snap = build_snapshot(&q);
+                write_snapshot_atomic(&new_snap)?;
+                print!(
+                    "{}",
+                    playbook_stale_relist(&new_snap, "cancel index out of range")
+                );
+                return Ok(());
+            }
+            snapshot.items[idx - 1].sub_key.clone()
+        }
+        (Some(_), Some(_)) => bail!("--sub-key and --index are mutually exclusive"),
+        (None, None) => bail!("must provide either --sub-key or --index"),
+    };
+
+    // Locate + remove
+    let Some(entry_idx) = q.entries.iter().position(|e| e.sub_key == target_sub_key) else {
+        print!(
+            "{}",
+            playbook_error(&format!(
+                "no pending decision found for sub_key: {}",
+                target_sub_key
+            ))
+        );
+        return Ok(());
+    };
+    let removed = q.entries.remove(entry_idx);
+    let was_active = removed.status == Status::Active;
+
+    // Refresh snapshot so a subsequent `pick --index N` resolves correctly
+    // when the user chooses the next decision from the remaining list.
+    let snap = build_snapshot(&q);
+    write_snapshot_atomic(&snap)?;
+    write_queue_atomic(&q)?;
+
+    print!("{}", playbook_cancel(&removed, was_active, &snap));
     Ok(())
 }
 
@@ -691,11 +768,10 @@ fn resolve_llm_content(entry: &PendingEntry) -> String {
     }
     format!(
         "[USER_DECISION_REQUEST][sub_key: {}][job: {}][role: {}]\n\n\
-         Check the most recent message in context:\n\
-         \x20\x20• tool_result (card just sent) → END TURN. Do NOT call resolve.\n\
-         \x20\x20• fresh user_message (user actually replied):\n\
+         Step 1 — Card was just delivered via `xmtp_prompt_user`. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
+         Step 2 — When the user actually replies (next turn):\n\
          \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
-         \x20\x20\x20\x20· else → `resolve --user-reply \"<verbatim, no interpretation>\"`",
+         \x20\x20\x20\x20· else → run `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording — no interpretation, no translation>\"` exactly once, then follow the relay playbook it returns.",
         entry.sub_key,
         entry.job_id,
         entry.role,
@@ -890,22 +966,69 @@ fn playbook_relay_and_list(
 fn playbook_render(entry: &PendingEntry) -> String {
     let llm_content = resolve_llm_content(entry);
     format!(
-        "Render the user's selected decision. Call `xmtp_prompt_user` ONCE with the EXACT arguments below, \
-         then **END THE TURN IMMEDIATELY**.\n\n\
-         🛑🛑🛑 **DO NOT call `resolve` in this same turn**. The user's earlier message in this turn (e.g. \
-         the digit `1`, `2`, `选 1`, etc.) was the **pick index** — NOT a decision content. Re-using it as \
-         `--user-reply` would relay a nonsensical digit to the freshly-promoted sub session, corrupting the \
-         decision flow. Real incident: user typed `1` to choose decision #1, master rendered the card, then \
-         immediately called `resolve --user-reply \"1\"` — the digit `1` was sent as the answer to decision \
-         #1, which expected something like `approve` / `reject reason: ...`.\n\n\
-         The real decision content will arrive in a **FUTURE turn** as a fresh user_message after the user \
-         reads the rendered card. Wait for that.\n\n\
+        "Render the user's selected decision. Call `xmtp_prompt_user` ONCE with the EXACT arguments below, then END THE TURN.\n\n\
          tool: xmtp_prompt_user\n\
          llmContent:\n{}\n\
          userContent:\n{}\n",
         indent(&llm_content, "  "),
         indent(&entry.user_content, "  "),
     )
+}
+
+fn playbook_cancel(
+    removed: &PendingEntry,
+    was_active: bool,
+    snap_after: &DisplaySnapshot,
+) -> String {
+    let mut out = String::new();
+
+    out.push_str(&format!(
+        "Cancelled pending decision: sub_key={}, status_before={}, job={}, role={}. Sub session is NOT notified (silent cancel); it will TTL-evict eventually or be retriggered by a new system event.\n\n",
+        removed.sub_key,
+        if was_active { "active" } else { "queued" },
+        removed.job_id,
+        removed.role,
+    ));
+
+    if snap_after.items.is_empty() {
+        out.push_str("Queue is now empty. End the turn.\n");
+        return out;
+    }
+
+    if was_active {
+        // Active was removed → queue now has 0 active + N queued.
+        // Do NOT auto-promote; render the remaining list so the user picks next.
+        let mut list = String::new();
+        list.push_str(&format!(
+            "✓ Previous decision cancelled. {} more pending — please pick one to answer next:\n\n",
+            snap_after.items.len()
+        ));
+        for it in &snap_after.items {
+            list.push_str(&format!("{}. {}\n", it.index, it.list_label));
+        }
+        list.push_str(&format!(
+            "\nReply with a number 1-{} to choose, or say `later` to defer.\n",
+            snap_after.items.len()
+        ));
+
+        out.push_str(&format!(
+            "Render the list below VERBATIM in your assistant response (text rendering only; do NOT call any tool).\n\
+             🌐 Translate the English header / footer to the user's language; keep the `N. <label>` items intact (already localized).\n\n\
+             Verbatim:\n\"\"\"\n{}\"\"\"\n\n\
+             ⚠️ Next user reply routing (future turn — queue is in **selection mode**: 0 active + {} queued):\n\
+             \x20\x20- Number 1-{} → `onchainos agent pending-decisions-v2 pick --index <N>` (promotes the chosen entry to active and renders its card)\n\
+             \x20\x20- Defer keyword ({}) → end the turn\n\
+             \x20\x20- Else → DO NOT call resolve (no active entry); re-render the list and ask the user to pick by number.\n",
+            list,
+            snap_after.items.len(),
+            snap_after.items.len(),
+            DEFER_KEYWORDS.join(" / "),
+        ));
+    } else {
+        out.push_str("Active entry was NOT affected (the cancelled entry was queued, not active). End the turn.\n");
+    }
+
+    out
 }
 
 fn playbook_error_no_active() -> String {
