@@ -110,6 +110,7 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 > | User intent | Examples | Route to |
 > |---|---|---|
 > | Create / publish a task | "create a task", "publish a task for XXX", "帮我发个任务" | §3.1 |
+> | Draft operations | "save as draft", "保存草稿", "草稿列表", "draft list", "编辑草稿", "update draft", "删除草稿", "delete draft", "发布草稿", "publish draft" | §3.1.4 |
 > | Add attachment / image to a task | "add this file to the task", "attach this to job #478", "补充附件", "补充图片", "补充材料", "给任务加个文件", "把这个文件加到任务里", "给任务补充一下", "发个文件给卖家", "send this file to the provider", "upload file to task", or user sends a file/image during an active task conversation (ask which task before proceeding) | §3.5.1 |
 > | Modify task terms | "change budget", "switch provider", "修改预算", "换服务商" | §3.6 |
 > | Negotiate with a provider | "negotiate with XXX", "pick XXX", "start negotiation", "找810接单" | §3.2 Unified entry |
@@ -186,6 +187,65 @@ After success, inform the user of the `jobId`. ⚠️ Do NOT say "published succ
 | Budget > 10,000,000 | "Per-task budget may not exceed 10,000,000." |
 | Deadline out of range | Inform the user of the range limits. |
 | create-task tx failure | Check network status and guide a retry. |
+
+### 3.1.4 Draft tasks (save, edit, list, delete, publish)
+
+> **Session**: user session
+
+**Draft status**: `status = -1` (off-chain). Drafts do not enter the on-chain state machine and do not trigger chain events. Only after `draft publish` does the task enter the normal `job_created` → buyer flow.
+
+**Trigger**: "save as draft" / "保存草稿" / "草稿列表" / "draft list" / "编辑草稿" / "update draft" / "删除草稿" / "delete draft" / "发布草稿" / "publish draft"
+
+#### Save as draft (from create-task flow or standalone)
+
+The create-task playbook (§3.1.2) includes a draft branch — after displaying the confirmation form (Step 5), if the user says "save as draft" / "先保存草稿" instead of confirming, the agent calls:
+
+```bash
+onchainos agent draft create --title <title> [--description <desc>] [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--deadline-open <dur>] [--deadline-submit <dur>] [--provider <agentId>] [--file <path> ...]
+```
+
+Only `--title` is required; other fields are optional. Fields present are validated (same rules as `create-task`). After success, notify the user with the `jobId` — the draft can be edited or published later.
+
+Users can also create a draft standalone (without going through the full create-task field collection) by providing at minimum a title.
+
+#### List drafts
+
+```bash
+onchainos agent draft list [--page 1] [--limit 20]
+```
+
+Displays a table: `jobId` / `Title` / `Budget` / `Status` (all drafts show `📝 Draft`). See `references/display-formats.md §1.1`.
+
+#### Update a draft
+
+```bash
+onchainos agent draft update <jobId> [--title <txt>] [--description <txt>] [--budget <num>] ...
+```
+
+Partial update; at least one field must change. Validation rules match `draft create`.
+
+#### Delete a draft
+
+```bash
+onchainos agent draft delete <jobId>
+```
+
+Permanent deletion (off-chain only).
+
+#### Publish a draft
+
+Before calling `draft publish`, the agent should check the draft's completeness:
+
+1. Call `onchainos agent status <jobId>` to fetch the draft detail.
+2. Verify all required fields are present: title, description (≥ 20 chars), budget (> 0), max-budget (≥ budget), currency (USDT/USDG), both deadlines in range.
+3. If fields are missing → guide the user to fill them via `draft update` first.
+4. All fields complete → call:
+
+```bash
+onchainos agent draft publish <jobId>
+```
+
+The CLI performs its own validation as a safety net. After a successful publish, the task enters the normal `job_created` flow (recommend → negotiate). The `jobId` is preserved — attachments saved during the draft phase carry over.
 
 ---
 

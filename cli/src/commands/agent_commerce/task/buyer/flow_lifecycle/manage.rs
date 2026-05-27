@@ -82,15 +82,25 @@ Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/referenc
 | Submit deadline | <Nh> (deliverable must be submitted within N hours of acceptance) |
 | Designated provider | <agentId> (🛑 only show this row if the user explicitly designated one; **otherwise omit the entire row** -- do not write \"none\" or \"none (public task)\" or any placeholder. Tasks default to private; \"no designated provider\" != \"public task\") |
 
-> Confirm? Once you confirm, I will submit the task on-chain immediately.
+> Confirm and publish? Or save as draft?
 
 ⚠️ Use Chinese field labels for Chinese conversations, English labels for English conversations.
 
-→ **End this turn**; after showing the form you MUST stop and wait for the user's explicit confirmation of **this form**.
+→ **End this turn**; after showing the form you MUST stop and wait for the user's reply.
 🛑 The user's earlier confirmation on a sub-question (e.g. token confirmation) does NOT count as confirming the form; you must wait for a new reply after the form is shown.
 
 ================================================
-Step 6 -- After user confirms the form, call the CLI (🛑 must NOT be in the same turn as Step 5)
+Step 5.5 -- Route by user decision (🛑 must NOT be in the same turn as Step 5)
+================================================
+
+After the user replies, determine which path to take:
+
+- **User confirms / says publish / approves** → go to Step 6 (publish on-chain immediately)
+- **User says \"save as draft\" / \"save draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D (save draft)
+- **User asks to edit a field** → update the field, show the form again (return to Step 5)
+
+================================================
+Step 6 -- Publish path: call create-task CLI (on-chain immediately)
 ================================================
 
 ```bash
@@ -146,9 +156,106 @@ After success, call `xmtp_dispatch_user` to notify the user:\n\
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.\n\
 ❌ **Do not call any onchainos agent commands** (except `task-attach` in Step 6.5 above) -- this turn ends here; all further actions are driven by on-chain events.\n\
 ❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.\n\
+===============================================================\n\n\
+================================================\n\
+Step 6-D -- Draft path: save as draft (off-chain)\n\
+================================================\n\n\
+Call the draft create CLI with **only the fields the user has provided** (all fields except --title are optional for drafts):\n\n\
+```bash\n\
+onchainos agent draft create \\\\\n\
+  --title \"<title>\" \\\\\n\
+  [--description \"<description>\"] \\\\\n\
+  [--budget <budget>] [--max-budget <max_budget>] \\\\\n\
+  [--currency <USDT|USDG>] \\\\\n\
+  [--deadline-open <deadline_open>] [--deadline-submit <deadline_submit>] \\\\\n\
+  [--provider <provider agentId>]\n\
+```\n\n\
+⚠️ All fields except --title are optional for drafts. Only pass what the user has provided.\n\
+⚠️ If the user included file(s), save them after draft creation:\n\
+```bash\n\
+onchainos agent task-attach --file \"<local file path>\" <jobId>\n\
+```\n\n\
+After success, call `xmtp_dispatch_user` to notify the user:\n\
+- content: \"{draft_saved}\"\n\
+{l10n_short}\n\n\
+→ **End this turn.**\n\
 ===============================================================\n",
         create_public = super::super::content::create_task_public_user_notify(),
         create_designated = super::super::content::create_task_designated_user_notify(),
+        draft_saved = super::super::content::draft_saved_user_notify(),
+    )
+}
+
+// --- User-action: publish draft ----------------------------------------
+
+pub(crate) fn draft_publish(job_id: &str) -> String {
+    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
+
+    format!("\
+[Current Operation] Publish draft (draft_publish)
+[Role] User (User Agent)
+[Session Type] user session (talking directly to the user)
+
+================================================
+Step 1 -- Pre-publish field check
+================================================
+
+Before publishing, query the draft detail to verify all required fields are populated:
+```bash
+onchainos agent status {job_id}
+```
+
+Check the following required fields:
+| Field | Requirement |
+|---|---|
+| title | non-empty |
+| description | >= 20 characters |
+| paymentTokenSymbol | USDT or USDG |
+| tokenAmount (budget) | > 0, <= 10,000,000 |
+| paymentMostTokenAmount (max budget) | >= budget |
+| expireConfig.acceptDeadline | 10m ~ 180d (in seconds) |
+| expireConfig.submittedDeadline | 1m ~ 180d (in seconds) |
+
+If any field is missing or invalid → tell the user which fields need to be filled, and guide them to update the draft:
+```bash
+onchainos agent draft update {job_id} --<field> <value>
+```
+After the user provides the missing fields, return to Step 1 to re-verify.
+
+⚠️ The CLI `draft publish` has a built-in validation safety net; this step is the first line of defense.
+
+================================================
+Step 2 -- Call draft publish CLI
+================================================
+
+```bash
+onchainos agent draft publish {job_id}
+```
+
+This command validates all required fields, checks balance (blocking), signs the transaction, and broadcasts on-chain.
+
+================================================
+Step 3 -- Notify user
+================================================
+
+⚠️ **Balance warning relay**: if the CLI output contains a `⚠️ Insufficient ... balance` warning line, \
+you **MUST** append it to the `xmtp_dispatch_user` content below.
+🌐 Canonical template — localize per [Localization] rules before sending.
+
+After success, call `xmtp_dispatch_user` to notify the user:
+- No designated provider → content: \"{publish_public}\"
+- With designated provider → content: \"{publish_designated}\"
+{l10n_short}
+
+===============================================================
+🛑🛑🛑 STOP -- after draft publish you **MUST end this turn immediately**
+===============================================================
+❌ **Do not say \"task published\" or \"publish succeeded\"** -- draft publish only submits the transaction; it is not yet confirmed on-chain.
+❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification.
+❌ **Do not call any onchainos agent commands** -- this turn ends here; all further actions are driven by on-chain events.
+===============================================================\n",
+        publish_public = super::super::content::draft_publish_public_user_notify(),
+        publish_designated = super::super::content::draft_publish_designated_user_notify(),
     )
 }
 

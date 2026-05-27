@@ -18,15 +18,16 @@ use crate::commands::agent_commerce::task::signing;
 
 // ─── Constants ───────────────────────────────────────────────────────────
 
-const MAX_BUDGET: f64 = 10_000_000.0;
-const MIN_DESCRIPTION_CHARS: usize = 20;
-const MAX_DESCRIPTION_CHARS: usize = 2000;
-const MAX_BUDGET_DECIMALS: usize = 5;
-const MAX_SUMMARY_CHARS: usize = 200;
-const ACCEPT_MIN: u64 = 10 * 60;
-const ACCEPT_MAX: u64 = 180 * 86400;
-const SUBMIT_MIN: u64 = 60;
-const SUBMIT_MAX: u64 = 180 * 86400;
+pub const MAX_BUDGET: f64 = 10_000_000.0;
+pub const MIN_DESCRIPTION_CHARS: usize = 20;
+pub const MAX_DESCRIPTION_CHARS: usize = 2000;
+pub const MAX_BUDGET_DECIMALS: usize = 5;
+pub const MAX_SUMMARY_CHARS: usize = 200;
+pub const ACCEPT_MIN: u64 = 10 * 60;
+pub const ACCEPT_MAX: u64 = 180 * 86400;
+pub const SUBMIT_MIN: u64 = 60;
+pub const SUBMIT_MAX: u64 = 180 * 86400;
+pub const MAX_TITLE_CHARS: usize = 30;
 
 // ─── Parameter struct ────────────────────────────────────────────────────
 
@@ -93,9 +94,9 @@ impl CreateTaskParams {
         }
 
         let title = match &self.title {
-            Some(t) if t.chars().count() > 30 => t.chars().take(30).collect(),
+            Some(t) if t.chars().count() > MAX_TITLE_CHARS => t.chars().take(MAX_TITLE_CHARS).collect(),
             Some(t) => t.clone(),
-            None => self.description.chars().take(30).collect(),
+            None => self.description.chars().take(MAX_TITLE_CHARS).collect(),
         };
         let summary = match &self.description_summary {
             Some(s) if s.chars().count() > MAX_SUMMARY_CHARS => s.chars().take(MAX_SUMMARY_CHARS).collect(),
@@ -117,7 +118,7 @@ impl CreateTaskParams {
 
 // ─── Validation helpers ─────────────────────────────────────────────────
 
-fn parse_duration_secs(s: &str) -> Result<u64> {
+pub fn parse_duration_secs(s: &str) -> Result<u64> {
     let s = s.trim();
     if let Some(d) = s.strip_suffix('d') {
         Ok(d.parse::<u64>()? * 86400)
@@ -144,7 +145,7 @@ pub fn normalize_currency(currency: &str) -> Result<String> {
     }
 }
 
-fn validate_budget(budget: f64) -> Result<()> {
+pub fn validate_budget(budget: f64) -> Result<()> {
     if budget <= 0.0 {
         bail!("budget must be greater than 0");
     }
@@ -154,7 +155,7 @@ fn validate_budget(budget: f64) -> Result<()> {
     Ok(())
 }
 
-fn validate_budget_decimals(budget: f64) -> Result<()> {
+pub fn validate_budget_decimals(budget: f64) -> Result<()> {
     let s = format!("{budget}");
     if let Some(dot_pos) = s.find('.') {
         let frac = s[dot_pos + 1..].trim_end_matches('0');

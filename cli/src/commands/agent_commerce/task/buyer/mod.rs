@@ -21,6 +21,7 @@ mod close;
 mod complete;
 mod content;
 mod create;
+pub mod draft;
 pub mod flow;
 mod flow_lifecycle;
 mod flow_negotiate;
@@ -310,6 +311,118 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::Payment { job_id, agent_id } =>
             query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
 
+    }
+}
+
+// ─── Draft subcommands ───────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+pub enum DraftCommand {
+    /// Save a new task draft (off-chain)
+    Create {
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        budget: Option<f64>,
+        #[arg(long = "max-budget")]
+        max_budget: Option<f64>,
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long = "deadline-open")]
+        deadline_open: Option<String>,
+        #[arg(long = "deadline-submit")]
+        deadline_submit: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long = "file")]
+        attachments: Option<Vec<String>>,
+    },
+    /// List my drafts
+    List {
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+    /// Update a draft's fields (partial update)
+    Update {
+        job_id: String,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        budget: Option<f64>,
+        #[arg(long = "max-budget")]
+        max_budget: Option<f64>,
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long = "deadline-open")]
+        deadline_open: Option<String>,
+        #[arg(long = "deadline-submit")]
+        deadline_submit: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    /// Delete a draft
+    Delete {
+        job_id: String,
+    },
+    /// Publish a draft on-chain (validates all required fields, signs, broadcasts)
+    Publish {
+        job_id: String,
+    },
+}
+
+pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
+    let mut client = TaskApiClient::new();
+
+    match cmd {
+        DraftCommand::Create {
+            title, description, budget, max_budget, currency,
+            deadline_open, deadline_submit, provider, attachments,
+        } => {
+            draft::handle_draft_create(
+                &mut client,
+                &title,
+                description.as_deref(),
+                budget,
+                max_budget,
+                currency.as_deref(),
+                deadline_open.as_deref(),
+                deadline_submit.as_deref(),
+                provider.as_deref(),
+                attachments.as_deref(),
+            ).await
+        }
+        DraftCommand::List { page, limit } => {
+            draft::handle_draft_list(&mut client, page, limit).await
+        }
+        DraftCommand::Update {
+            job_id, title, description, budget, max_budget, currency,
+            deadline_open, deadline_submit, provider,
+        } => {
+            draft::handle_draft_update(
+                &mut client,
+                &job_id,
+                title.as_deref(),
+                description.as_deref(),
+                budget,
+                max_budget,
+                currency.as_deref(),
+                deadline_open.as_deref(),
+                deadline_submit.as_deref(),
+                provider.as_deref(),
+            ).await
+        }
+        DraftCommand::Delete { job_id } => {
+            draft::handle_draft_delete(&mut client, &job_id).await
+        }
+        DraftCommand::Publish { job_id } => {
+            draft::handle_draft_publish(&mut client, &job_id).await
+        }
     }
 }
 

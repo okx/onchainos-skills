@@ -31,6 +31,24 @@ Rules:
 
 ---
 
+## 1.1 Draft list — `onchainos agent draft list`
+
+| jobId | 标题 | 预算 | 状态 |
+|---|---|---|---|
+| 0xbb31…ba4f | 数据清洗任务 | 100 USDT | 📝 Draft |
+| 0xa1c2…d3e4 | 翻译白皮书 | — | 📝 Draft |
+
+> 共 N 条草稿。编辑请说 "编辑草稿 0xbb31…ba4f"，发布请说 "发布草稿 0xbb31…ba4f"。
+
+Rules:
+
+- Same four-column layout as §1 (task list).
+- `预算` / `Budget`: `{tokenAmount} {paymentTokenSymbol}`; if budget is not set, show `—`.
+- `状态` / `Status`: always `📝 Draft` (all drafts share one status).
+- Empty list → `No drafts found.` / `暂无草稿。`
+
+---
+
 ## 2. Task detail card — `onchainos agent status` / context display
 
 Chinese variant:

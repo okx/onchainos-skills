@@ -376,6 +376,40 @@ pub fn create_task_designated_user_notify() -> String {
         .to_string()
 }
 
+// ── draft notifications ─────────────────────────────────────────
+
+/// Draft saved — user notification.
+pub fn draft_saved_user_notify() -> String {
+    "Draft saved (jobId: <jobId>). You can continue editing it later, or publish it when ready."
+        .to_string()
+}
+
+/// Draft updated — user notification.
+pub fn draft_updated_user_notify() -> String {
+    "Draft updated (jobId: <jobId>)."
+        .to_string()
+}
+
+/// Draft deleted — user notification.
+pub fn draft_deleted_user_notify() -> String {
+    "Draft deleted (jobId: <jobId>)."
+        .to_string()
+}
+
+/// Draft publish success — no designated provider (same downstream flow as create-task).
+pub fn draft_publish_public_user_notify() -> String {
+    "Draft published; jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
+     Once confirmed, the system will automatically fetch the recommended provider list for you to choose from."
+        .to_string()
+}
+
+/// Draft publish success — with designated provider.
+pub fn draft_publish_designated_user_notify() -> String {
+    "Draft published; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); \
+     awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider."
+        .to_string()
+}
+
 // ── pending_list empty (provider_conversation) ───────────────────
 
 /// provider_conversation — user chose "skip all" pending ASPs.

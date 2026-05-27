@@ -391,6 +391,10 @@ pub enum AgentCommand {
     },
 
     // ── Task system (sub-groups) ────────────────────────────────────────────
+    /// Draft task commands: create, list, update, delete, publish
+    #[command(subcommand)]
+    Draft(task::buyer::DraftCommand),
+
     /// Dispute actions (provider): raise, evidence, info, upload
     #[command(subcommand)]
     Dispute(task::provider::DisputeCommand),
@@ -821,6 +825,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
 
         // ── Sub-groups ──────────────────────────────────────────────
+        AgentCommand::Draft(c) =>
+            task::buyer::run_draft(c, ctx).await,
+
         AgentCommand::Dispute(c) =>
             task::provider::run_dispute(c, ctx).await,
 

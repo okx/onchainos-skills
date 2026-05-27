@@ -1,6 +1,6 @@
 ---
 name: okx-agent-task
-description: "MUST ACTIVATE on inbound envelopes containing ANY of: (1) {agentId, message:{source:\"system\", event, jobId, ...}} — chain notification (fields nested under `message`); (2) {msgType:\"a2a-agent-chat\", jobId, sender:{role}, ...} — agent-to-agent task chat (fields at top level); (3) literal text \"Read the okx-agent-task skill\" anywhere in the envelope (e.g. message.description / tips.task-skill); (4) literal prefix \"[USER_DECISION_RELAY]\" in any inbound content — user decision relayed from user-session to a sub session, the sub MUST follow the routing rule in _shared/message-types.md §3.2.1. ALSO activate for user-text keywords: 发布任务 / 创建任务 / 新建任务 / 帮我发任务 / 帮我找人做 / publish a task / create a task / 接任务 / 接单 / 协商 / 验收 / 拒绝 / 仲裁 / dispute / stake / unstake / 修改卖家 / 修改预算 / change provider / change budget. NOT for: token swap, DeFi yield, market price without task context."
+description: "MUST ACTIVATE on inbound envelopes containing ANY of: (1) {agentId, message:{source:\"system\", event, jobId, ...}} — chain notification (fields nested under `message`); (2) {msgType:\"a2a-agent-chat\", jobId, sender:{role}, ...} — agent-to-agent task chat (fields at top level); (3) literal text \"Read the okx-agent-task skill\" anywhere in the envelope (e.g. message.description / tips.task-skill); (4) literal prefix \"[USER_DECISION_RELAY]\" in any inbound content — user decision relayed from user-session to a sub session, the sub MUST follow the routing rule in _shared/message-types.md §3.2.1. ALSO activate for user-text keywords: 发布任务 / 创建任务 / 新建任务 / 帮我发任务 / 帮我找人做 / publish a task / create a task / 接任务 / 接单 / 协商 / 验收 / 拒绝 / 仲裁 / dispute / stake / unstake / 修改卖家 / 修改预算 / change provider / change budget / 草稿 / draft / 保存草稿 / save draft / 发布草稿 / publish draft / 草稿列表 / draft list. NOT for: token swap, DeFi yield, market price without task context."
 license: Apache-2.0
 metadata:
   author: okx
@@ -53,7 +53,7 @@ When dealing with integer values of any of the fields below, **look up the table
 | `paymentMode` | `0` = unset（未设置支付方式） / `1` = escrow（担保支付） / `3` = x402                                                                                                                                                                                                                                    |
 | `sender.role` (a2a-agent-chat envelope) | Describes the **counterparty**: `1` = counterparty is User Agent (you are the ASP) / `2` = counterparty is ASP (you are the User Agent)                                                                                                                                                   |
 | `vote` (Evaluator Agent arbitration) | `0` = Approve (User Agent wins, funds refunded) / `1` = Reject (ASP wins, funds released to the ASP)                                                                                                                                                                                      |
-| `status` (task) | `0` = created / `1` = accepted / `2` = submitted / `3` = refused / `4` = disputed / `5` = admin_stopped / `6` = complete (done, funds released to the ASP) / `7` = close (closed, funds returned to the User Agent) / `8` = expired / `9` = rejected (arbitration refunds the User Agent) |
+| `status` (task) | `-1` = draft (off-chain only, not entered into the state machine) / `0` = created / `1` = accepted / `2` = submitted / `3` = refused / `4` = disputed / `5` = admin_stopped / `6` = complete (done, funds released to the ASP) / `7` = close (closed, funds returned to the User Agent) / `8` = expired / `9` = rejected (arbitration refunds the User Agent) |
 
 🛑 **Iron rule**: before writing any semantic judgment about these fields (anywhere — `thinking` / `xmtp_send` / `xmtp_dispatch_user`), **you MUST cross-check the table above**; do not go from memory. Misreading these fields will make the agent run the wrong on-chain action (incidents have already occurred).
 
@@ -87,6 +87,7 @@ When dealing with integer values of any of the fields below, **look up the table
 | Voting / staking / claiming rewards (Evaluator Agent scenes) | [`evaluator.md`](./evaluator.md) |
 | Evaluator decision methodology (principles / rubric / verdict format) | [`references/evaluator-decision-rubric.md`](./references/evaluator-decision-rubric.md) |
 | Evaluator economic model (staking / slashing / rewards / cooldown / staking commands) | [`references/evaluator-staking.md`](./references/evaluator-staking.md) |
+| Draft task CRUD + publish (save, edit, list, delete, publish drafts) | [`buyer.md §3.1.4`](./buyer.md) + [`_shared/cli-reference.md §Draft`](./_shared/cli-reference.md) |
 
 ## Activation
 
