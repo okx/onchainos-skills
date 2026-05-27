@@ -32,7 +32,7 @@ pub(crate) fn provider_applied(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH;
+    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
@@ -55,10 +55,9 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n\
      **Step 2 -- Branch by payment mode:**\n\n\
      --------- Branch A: escrow ---------\n\n\
-     Call xmtp_dispatch_user to notify the user that accept succeeded:\n\
+     Call xmtp_dispatch_user to notify the user that accept succeeded ({l10n_dispatch}):\n\
      \x20\x20content:\n\
-     {accepted_escrow_notify}\n\
-     {l10n_dispatch}\n\n\
+     {accepted_escrow_notify}\n\n\
      [Follow-up events]\n\
      - job_submitted → review the deliverable\n\n\
      --------- Branch B: x402 ---------\n\n\
@@ -77,16 +76,13 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ⚠️ **Do not notify the user** -- the deliverable was already sent after task-402-pay; the final summary is owned by the job_completed event.\n\n\
      ⚠️ **complete failure fallback**: if `onchainos agent complete` returns an error (CLI output contains `\"ok\": false` or stderr error),\n\
      call xmtp_dispatch_user to notify the user and provide a retry command:\n\
-     \x20\x20content: {complete_failed}\n\
-     {l10n_short}\n\
+     \x20\x20content ({l10n_short}): {complete_failed}\n\
      → **End this turn** and wait for user retry or a wakeup_notify event.\n\n\
      **B-Branch 2: replaySuccess=false (only take this branch when replaySuccess=false is explicitly found in context)**\n\n\
      ⚠️ **Do not run complete** -- the user did not receive the deliverable.\n\n\
-     **B-Step 2 -- Notify the user of replay failure:**\n\
-     Call xmtp_dispatch_user:\n\
+     **B-Step 2 -- Notify the user of replay failure via xmtp_dispatch_user** ({l10n_short}):\n\
      \x20\x20content:\n\
-     {accepted_x402_fail}\n\
-     {l10n_short}\n\n\
+     {accepted_x402_fail}\n\n\
      [Follow-up events]\n\
      - replaySuccess=true / default: job_completed → final confirmation\n\
      - replaySuccess=false: wait for user instructions (retry or close task)\n\n\
@@ -156,9 +152,8 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      ```\n\
      If save fails, log the error but do NOT block.\n\n\
      **Step 2 — Notify the user (brief; NO deliverable content)**:\n\n\
-     Call `xmtp_dispatch_user`:\n\
+     Call `xmtp_dispatch_user` ({l10n_dispatch}):\n\
      \x20\x20content: The provider has sent the deliverable; awaiting on-chain submission confirmation before entering acceptance review.\n\
-     {l10n_dispatch}\n\
      ❌ Do NOT include the deliverable body / summary / file path in this notification — the full content is shown in the `job_submitted` review card.\n\n\
      **Step 3 — End this turn**. Wait for the `job_submitted` system event.\n\
      When `job_submitted` arrives, call `onchainos agent next-action --jobid {job_id} --jobStatus job_submitted --role buyer --agentId {agent_id}`.\n\
@@ -168,7 +163,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
 
 pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let l10n_prompt_bold = super::super::flow::L10N_PROMPT_BOLD;
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH;
+    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
@@ -278,7 +273,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
        --user-content \"<deliverable card + A/B options, see templates below>\" \\\n\
        --list-label \"[Decision {short_id}] Approve / Reject\"\n\
      ```\n\
-     {l10n_prompt_bold}\n\n\
+     {l10n_prompt_bold}\n\
      `--user-content` template (canonical English; localize before passing) — split by deliverableType:\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
@@ -325,7 +320,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      ===============================================================\n\n\
      --------- Branch B: x402 — notify the user (no rejection allowed) ---------\n\n\
      ⚠️ In x402 funds are already paid at job_accepted; the user **cannot reject the deliverable**, just notify.\n\n\
-     **B-Step 1 — Call xmtp_dispatch_user to notify the user (split by deliverableType):**\n\n\
+     **B-Step 1 — Call xmtp_dispatch_user to notify the user** ({l10n_dispatch}) — split by deliverableType:\n\n\
      \x20\x20▸ deliverableType=file:\n\
      \x20\x20content:\n\
      \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
@@ -340,8 +335,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20<deliverableText full content, no truncation, no summarization>\n\
      \x20\x20---End of deliverable---\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20Quality standards: <qualityStandards>\n\
-     {l10n_dispatch}\n\n\
+     \x20\x20Quality standards: <qualityStandards>\n\n\
      **B-Step 2 — Auto-rate the ASP:**\n\
      Based on the task details (description, quality standards) and the deliverable content you just notified, generate a score (0–5 integer) and a one-sentence description.\n\
      Scoring guide: 5 = exceeds expectations, 4 = fully meets, 3 = acceptable with minor gaps, 2 = partially meets, 1 = mostly inadequate, 0 = did not deliver.\n\
@@ -418,7 +412,7 @@ pub(crate) fn reject_review(ctx: &FlowContext<'_>) -> String {
 // --- Terminal states ---------------------------------------------------
 
 pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH;
+    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -449,10 +443,9 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ❌ Do NOT output the notification as text — it will be trapped in the backup session and the user will never see it.\n\
      ⚠️ txHash: find the txHash (format 0x...) from the earlier `onchainos agent complete` CLI output in this sub session context.\n\
      If not in context (e.g. auto-complete or other non-active-approval scenarios), omit the on-chain receipt line.\n\
-     ✅ Call xmtp_dispatch_user with the following content parameter (replace placeholders with real values):\n\
+     ✅ Call xmtp_dispatch_user ({l10n_dispatch}) with the following content parameter (replace placeholders with real values):\n\
      \x20\x20content:\n\
-     {completed_escrow_notify}\n\
-     {l10n_dispatch}\n\n\
+     {completed_escrow_notify}\n\n\
      **A-Step 2 -- Auto-rate the ASP:**\n\
      Based on the task details (description, quality standards) and the deliverable that was reviewed, generate a score (0–5 integer) and a one-sentence description.\n\
      Scoring guide: 5 = exceeds expectations, 4 = fully meets, 3 = acceptable with minor gaps, 2 = partially meets, 1 = mostly inadequate, 0 = did not deliver.\n\
@@ -471,10 +464,9 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      🛑🛑🛑 You are in a **sub session (backup)**. Any text you output here is invisible to the user.\n\
      The ONLY way to reach the user is the `xmtp_dispatch_user` tool call.\n\
      ❌ Do NOT output the notification as text — it will be trapped in the backup session and the user will never see it.\n\
-     ✅ Call xmtp_dispatch_user with the following content parameter (replace placeholders with real values from Step 1):\n\
+     ✅ Call xmtp_dispatch_user ({l10n_dispatch}) with the following content parameter (replace placeholders with real values from Step 1):\n\
      \x20\x20content:\n\
-     {completed_x402_notify}\n\
-     {l10n_dispatch}\n\n\
+     {completed_x402_notify}\n\n\
      **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\

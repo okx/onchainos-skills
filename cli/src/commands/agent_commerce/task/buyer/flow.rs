@@ -27,9 +27,6 @@ pub(super) const LOCALIZATION_PREFIX: &str = "\
 (6) Field labels in tables/confirmation forms MUST also match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/任务过期时间/预期工作时长; English → Title/Summary/Description/Currency/Budget/Max Budget/Acceptance Window/Delivery Window).\n\
 🔴 Real incident: a model treated the template as a loose \"sample\", translated English to Chinese in an English environment, and fabricated \"预计1-2小时内交付\" (estimated 1-2h delivery) — information that did not exist in the template. The user received inaccurate information.\n\n";
 
-pub(super) const L10N_DISPATCH: &str = "\
-🌐 Canonical template — localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).";
-
 pub(super) const L10N_DISPATCH_SHORT: &str = "\
 🌐 Canonical template — localize per [Localization] rules before sending.";
 

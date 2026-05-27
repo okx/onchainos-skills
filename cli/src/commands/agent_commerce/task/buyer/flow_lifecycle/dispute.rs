@@ -15,10 +15,9 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user that rejection is settled; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed:**\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed** ({l10n_short}):\n\n\
      content:\n\
-     {rejected_notify}\n\
-     {l10n_short}\n\n\
+     {rejected_notify}\n\n\
      **Step 2 -- Silently wait for the ASP's decision:**\n\n\
      ⚠️ **Do not send any xmtp_send message to the ASP**. The ASP has 24h to decide:\n\
      - Open a dispute → you will receive job_disputed\n\
@@ -114,7 +113,7 @@ pub(crate) fn dispute_evidence(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH;
+    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -142,14 +141,13 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Extract {title_in_extract}tokenAmount, tokenSymbol.\n\
      [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade — user wins: `[Dispute Won] Job `{job_id}` — dispute resolved; User Agent wins.` / user loses: `[Dispute Lost] Job `{job_id}` — dispute resolved; ASP wins.` — the user MUST still receive a notification.\n\n\
-     **Step 3 -- Call xmtp_dispatch_user to notify the user of the arbitration outcome (branch by winner):**\n\n\
+     **Step 3 -- Call xmtp_dispatch_user to notify the user of the arbitration outcome** ({l10n_dispatch}) — branch by winner:\n\n\
      -------------- User wins (jobStatus=failed) --------------\n\
      content:\n\
      {dispute_won}\n\n\
      -------------- User loses (jobStatus=complete) --------------\n\
      content:\n\
-     {dispute_lost}\n\
-     {l10n_dispatch}\n\n\
+     {dispute_lost}\n\n\
      **Step 4 -- Auto-rate the ASP:**\n\
      Based on the task details (description, quality standards), the deliverable, and the arbitration outcome (user won / lost), generate a score (0–5 integer) and a one-sentence description.\n\
      Scoring guide: user won (provider at fault) → score 0–2; user lost (provider delivered adequately) → score 3–5. Adjust within the range based on the specific circumstances.\n\

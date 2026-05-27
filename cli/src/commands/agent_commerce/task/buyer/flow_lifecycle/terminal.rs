@@ -13,10 +13,9 @@ pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user that the refund completed; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund completed:**\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund completed** ({l10n_short}):\n\n\
      content:\n\
-     {refunded_notify}\n\
-     {l10n_short}\n\n\
+     {refunded_notify}\n\n\
      **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Refund flow fully complete.\n"
@@ -37,10 +36,9 @@ pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user the refund has arrived; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund has arrived:**\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund has arrived** ({l10n_short}):\n\n\
      content:\n\
-     {auto_refunded_notify}\n\
-     {l10n_short}\n\n\
+     {auto_refunded_notify}\n\n\
      **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Refund flow fully complete.\n"
@@ -56,9 +54,8 @@ pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
     "[Current Status] job_expired (task expired; no ASP accepted or no submission)\n\
      [Role] User (User Agent)\n\n\
      [Your next actions]\n\n\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the task expired:**\n\
-     \x20\x20content: {expired_notify}\n\
-     {l10n_short}\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the task expired** ({l10n_short}):\n\
+     \x20\x20content: {expired_notify}\n\n\
      This task reached a terminal state; the flow ends.\n"
     )
 }
@@ -76,9 +73,8 @@ pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user:**\n\
-     \x20\x20content: {closed_notify}\n\
-     {l10n_short}\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
+     \x20\x20content: {closed_notify}\n\n\
      **Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Close flow ends.\n"
@@ -101,9 +97,8 @@ pub(crate) fn submit_expired(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
-     **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
-     content: \"{submit_expired}\"\n\
-     {l10n_short}\n"
+     **Step 2 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
+     content: \"{submit_expired}\"\n"
     )
 }
 
@@ -121,9 +116,8 @@ pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
-     **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
-     content: \"{reject_expired}\"\n\
-     {l10n_short}\n"
+     **Step 2 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
+     content: \"{reject_expired}\"\n"
     )
 }
 
@@ -176,10 +170,9 @@ pub(crate) fn review_expired(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user the review window expired; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions]\n\n\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the review window expired:**\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the review window expired** ({l10n_short}):\n\
      \x20\x20content:\n\
-     {review_expired}\n\
-     {l10n_short}\n\n\
+     {review_expired}\n\n\
      **Step 2** -- Wait for the `job_auto_completed` system notification and then wrap up.\n"
     )
 }
@@ -198,10 +191,9 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user the task auto-completed; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed:**\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed** ({l10n_short}):\n\
      \x20\x20content:\n\
-     {auto_completed_notify}\n\
-     {l10n_short}\n\n\
+     {auto_completed_notify}\n\n\
      {terminal_session_hint}\n"
     )
 }
@@ -220,10 +212,8 @@ pub(crate) fn close_task(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent close {job_id}\n\
      ```\n\n\
-     **Step 2 -- Notify the user:**\n\
-     Call xmtp_dispatch_user:\n\
-     content: \"{close_notify}\"\n\
-     {l10n_short}\n"
+     **Step 2 -- Notify the user via xmtp_dispatch_user** ({l10n_short}):\n\
+     content: \"{close_notify}\"\n"
     )
 }
 
@@ -239,10 +229,8 @@ pub(crate) fn set_public(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent set-public {job_id}\n\
      ```\n\n\
-     **Step 2 -- Notify the user:**\n\
-     Call xmtp_dispatch_user:\n\
-     content: \"{set_public_notify}\"\n\
-     {l10n_short}\n"
+     **Step 2 -- Notify the user via xmtp_dispatch_user** ({l10n_short}):\n\
+     content: \"{set_public_notify}\"\n"
     )
 }
 
@@ -274,9 +262,8 @@ pub(crate) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the reward has arrived:**\n\
-     \x20\x20content: {reward_claimed}\n\
-     {l10n_short}\n"
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the reward has arrived** ({l10n_short}):\n\
+     \x20\x20content: {reward_claimed}\n"
     )
 }
 
