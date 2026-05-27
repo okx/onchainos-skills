@@ -328,3 +328,42 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
          Note: gas is paid by the platform paymaster, no OKB / native required"
     );
 }
+
+// ─── jobId formatting ───────────────────────────────────────────────────
+
+/// Short jobId: first 6 + … + last 4 characters. A 0x... hex value yields `0x1b76…1be1`;
+/// a long string ID yields `task-0…long`. Returned as-is if ≤ 12 characters.
+pub fn short_job_id(job_id: &str) -> String {
+    if job_id.chars().count() <= 12 {
+        return job_id.to_string();
+    }
+    let chars: Vec<char> = job_id.chars().collect();
+    let head: String = chars.iter().take(6).collect();
+    let tail: String = chars.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    format!("{head}…{tail}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_job_id_hex_64() {
+        assert_eq!(
+            short_job_id("0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1"),
+            "0x1b76…1be1"
+        );
+    }
+
+    #[test]
+    fn short_job_id_passthrough() {
+        assert_eq!(short_job_id("0x12"), "0x12");
+        assert_eq!(short_job_id("task-1"), "task-1");
+        assert_eq!(short_job_id("task-001-12"), "task-001-12");
+    }
+
+    #[test]
+    fn short_job_id_long_string() {
+        assert_eq!(short_job_id("task-001-very-long"), "task-0…long");
+    }
+}

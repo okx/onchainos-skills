@@ -366,16 +366,9 @@ pub enum AgentCommand {
     #[command(subcommand)]
     Dispute(task::provider::DisputeCommand),
 
-    /// Pending user decisions registry — sub agent calls `add` before
-    /// `xmtp_prompt_user` and `remove` after parsing `[USER_DECISION_RELAY]`;
-    /// user session agent calls `list` before rendering. See SKILL.md
-    /// `Session communication contract 5. pending-decisions`.
-    #[command(name = "pending-decisions", subcommand)]
-    PendingDecisions(task::common::pending::PendingDecisionsCommand),
-
-    /// Pending-decisions v2 — redesigned queue with single-active invariant +
-    /// sessionKey primary key + LLM-playbook output. Coexists with v1 during
-    /// migration. Design doc: https://okg-block.sg.larksuite.com/docx/URN9d8q49oYAJnxH6BYlYTkUgkd
+    /// Pending-decisions v2 — single-active queue with sessionKey primary key
+    /// and LLM-playbook output. Design doc:
+    /// https://okg-block.sg.larksuite.com/docx/URN9d8q49oYAJnxH6BYlYTkUgkd
     #[command(name = "pending-decisions-v2", subcommand)]
     PendingDecisionsV2(task::common::pending_v2::PendingDecisionsV2Command),
 
@@ -772,9 +765,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Sub-groups ──────────────────────────────────────────────
         AgentCommand::Dispute(c) =>
             task::provider::run_dispute(c, ctx).await,
-
-        AgentCommand::PendingDecisions(c) =>
-            task::common::pending::run(c).await,
 
         AgentCommand::PendingDecisionsV2(c) =>
             task::common::pending_v2::run(c).await,
