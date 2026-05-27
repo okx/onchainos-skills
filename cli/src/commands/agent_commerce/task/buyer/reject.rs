@@ -4,12 +4,14 @@
 //!
 //! Flow: `pre-refuse(orderId, deadline)` → sign digest → `refuse(signatureData + reason)` → sign uopHash → broadcast.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
+
+const MAX_REASON_CHARS: usize = 2000;
 
 /// reject/refuse — reject review.
 pub async fn handle_reject(
@@ -17,13 +19,19 @@ pub async fn handle_reject(
     job_id: &str,
     reason: &str,
 ) -> Result<()> {
+    if reason.chars().count() > MAX_REASON_CHARS {
+        bail!("Reject reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
+    }
+
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
+    let reason_json = serde_json::json!({ "reason": reason });
     let result = signing::task_dual_sign_and_broadcast(
         client, job_id, "pre-refuse", "refuse",
-        Some(&serde_json::json!({ "reason": reason })),
+        None,
         &account_id, &address, &agent_id,
+        Some(&reason_json),
     ).await?;
 
     audit::log(

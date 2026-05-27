@@ -130,6 +130,8 @@ pub enum DisputeCommand {
     /// The `dispute_approved` system notification must have been received first. After completion, wait for the `job_disputed` notification.
     Confirm {
         job_id: String,
+        #[arg(long)]
+        reason: String,
         /// Provider agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
@@ -232,8 +234,8 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         DisputeCommand::Raise { job_id, reason, agent_id } =>
             dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await,
-        DisputeCommand::Confirm { job_id, agent_id } =>
-            dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &agent_id).await,
+        DisputeCommand::Confirm { job_id, reason, agent_id } =>
+            dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id).await,
         DisputeCommand::Upload { job_id, agent_id, text, images } =>
             dispute_upload::handle_upload_evidence(
                 &mut client, &job_id, &agent_id, text.as_deref(), &images,
