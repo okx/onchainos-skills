@@ -106,7 +106,7 @@ Do not retry.
 | Status is still `created` after `apply` is on-chain | apply is a transient event — it **does not** change the status | Wait for the buyer's `confirm-accept` to fire `job_accepted` — only then does it enter `accepted` |
 | Did not receive `reveal_started` after `vote-commit` | The reveal phase only starts after the commit window closes (commit + reveal total 24h) | Silently wait — do not retry commit |
 | Received `provider_applied` but the User Agent did not | Backend rule: the `provider_applied` system notification is **only sent to the ASP** | The User Agent learns via inbound a2a-agent-chat (the "I've applied" message from the ASP) and immediately calls `confirm-accept` (see SKILL.md `Session Communication Contract §6 Anti-hallucination rules` User-Agent exception) |
-| Status is still `refused` after `dispute_approved` | dispute approve is a transient event (arbitration phase 1; not truly disputed yet) | Wait for phase 2 `dispute confirm` + `job_disputed` notification |
+| Status is still `rejected` after `dispute_approved` | dispute approve is a transient event (arbitration phase 1; not truly disputed yet) | Wait for phase 2 `dispute confirm` + `job_disputed` notification |
 
 ## 9. Diagnostics collection
 

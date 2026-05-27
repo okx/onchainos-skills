@@ -45,7 +45,7 @@ impl Role {
 /// derive locally via [`Status::from_int`].
 ///
 /// Aligns with backend `TaskStatusEnum`:
-/// INIT=-1, CREATED=0, ACCEPTED=1, SUBMITTED=2, REFUSED=3, DISPUTED=4,
+/// INIT=-1, CREATED=0, ACCEPTED=1, SUBMITTED=2, REJECTED=3, DISPUTED=4,
 /// ADMINSTOPPED=5, COMPLETE=6, CLOSE=7, EXPIRED=8, FAILED=9.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
@@ -53,7 +53,7 @@ pub enum Status {
     Created,      // 0 (backend original is OPEN; renamed to avoid ambiguity with "public" visibility)
     Accepted,     // 1
     Submitted,    // 2
-    Refused,      // 3
+    Rejected,     // 3
     Disputed,     // 4
     AdminStopped, // 5
     Completed,    // 6
@@ -72,7 +72,7 @@ impl Status {
             "created" | "open"                   => Status::Created,
             "accepted"                           => Status::Accepted,
             "submitted"                          => Status::Submitted,
-            "refused"                            => Status::Refused,
+            "rejected"                           => Status::Rejected,
             "disputed"                           => Status::Disputed,
             "admin_stopped" | "adminstopped"     => Status::AdminStopped,
             "completed" | "complete"             => Status::Completed,
@@ -89,7 +89,7 @@ impl Status {
             Status::Created      => "created",
             Status::Accepted     => "accepted",
             Status::Submitted    => "submitted",
-            Status::Refused      => "refused",
+            Status::Rejected     => "rejected",
             Status::Disputed     => "disputed",
             Status::AdminStopped => "admin_stopped",
             Status::Completed    => "completed",
@@ -101,7 +101,7 @@ impl Status {
     }
 
     /// Backend `TaskStatusEnum` int mapping:
-    /// -1=INIT / 0=CREATED / 1=ACCEPTED / 2=SUBMITTED / 3=REFUSED / 4=DISPUTED /
+    /// -1=INIT / 0=CREATED / 1=ACCEPTED / 2=SUBMITTED / 3=REJECTED / 4=DISPUTED /
     /// 5=ADMINSTOPPED / 6=COMPLETE / 7=CLOSE / 8=EXPIRED / 9=FAILED.
     pub fn from_int(n: i32) -> Self {
         match n {
@@ -109,7 +109,7 @@ impl Status {
              0 => Status::Created,
              1 => Status::Accepted,
              2 => Status::Submitted,
-             3 => Status::Refused,
+             3 => Status::Rejected,
              4 => Status::Disputed,
              5 => Status::AdminStopped,
              6 => Status::Completed,
@@ -196,9 +196,9 @@ pub enum Event {
     JobSubmitted,
     /// Buyer complete on-chain / arbitration approve (status enters completed; notifies provider).
     JobCompleted,
-    /// Buyer reject on-chain (status enters refused; notifies provider to choose between arbitration / refund).
+    /// Buyer reject on-chain (status enters rejected; notifies provider to choose between arbitration / refund).
     JobRefused,
-    /// Arbitration phase-1 (approve) on-chain (status remains refused; pass-through event;
+    /// Arbitration phase-1 (approve) on-chain (status remains rejected; pass-through event;
     /// notifies the initiating provider to proceed to phase-2 dispute confirm).
     DisputeApproved,
     /// Either party's dispute-raise on-chain (status enters disputed; notifies both buyer + provider to upload evidence).
@@ -250,7 +250,7 @@ pub enum Event {
     // ── Timeout events ────────────────────────────────────────────────
     /// Submit timeout — no delivery (notifies buyer to call claimAutoRefund).
     SubmitExpired,
-    /// After refuse, the provider failed to raise arbitration in time (notifies buyer to call claimAutoRefund).
+    /// After reject, the provider failed to raise arbitration in time (notifies buyer to call claimAutoRefund).
     RefuseExpired,
     /// Review timeout (after provider submit, the buyer did not confirm; notifies provider to call claimAutoComplete).
     ReviewExpired,
@@ -462,11 +462,11 @@ pub fn status_when_event(e: &Event) -> Status {
         | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
-        Event::JobRefused | Event::RefuseExpired                             => Status::Refused,
+        Event::JobRefused | Event::RefuseExpired                             => Status::Rejected,
         // submit_expired: provider did not submit; status is still accepted (never entered submitted)
         Event::SubmitExpired                                                => Status::Accepted,
-        // dispute_approved is a pass-through event; status is still refused (dispute phase 1, not yet truly disputed)
-        Event::DisputeApproved                                              => Status::Refused,
+        // dispute_approved is a pass-through event; status is still rejected (dispute phase 1, not yet truly disputed)
+        Event::DisputeApproved                                              => Status::Rejected,
         Event::JobDisputed                                                  => Status::Disputed,
         // review_expired only means the review window has ended; task is still submitted —
         // must wait for the provider's claimAutoComplete to enter completed
@@ -514,7 +514,7 @@ pub fn entry_event(s: &Status) -> Option<Event> {
         Status::Created         => Some(Event::JobCreated),
         Status::Accepted     => Some(Event::JobAccepted),
         Status::Submitted    => Some(Event::JobSubmitted),
-        Status::Refused      => Some(Event::JobRefused),
+        Status::Rejected     => Some(Event::JobRefused),
         Status::Disputed     => Some(Event::JobDisputed),
         Status::AdminStopped => None,
         Status::Completed    => Some(Event::JobCompleted),
@@ -547,7 +547,7 @@ mod tests {
         // Status::AdminStopped has no client-side entry event (entry_event returns None); skip.
         // Status::Completed → JobCompleted; Status::Failed → JobRefunded (buyer-wins / refund).
         for s in [
-            Status::Created, Status::Accepted, Status::Submitted, Status::Refused,
+            Status::Created, Status::Accepted, Status::Submitted, Status::Rejected,
             Status::Disputed, Status::Completed, Status::Close, Status::Expired,
             Status::Failed,
         ] {

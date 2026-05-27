@@ -53,13 +53,13 @@ When dealing with integer values of any of the fields below, **look up the table
 | `paymentMode` | `0` = unset（未设置支付方式） / `1` = escrow（担保支付） / `3` = x402                                                                                                                                                                                                                                    |
 | `sender.role` (a2a-agent-chat envelope) | Describes the **counterparty**: `1` = counterparty is User Agent (you are the ASP) / `2` = counterparty is ASP (you are the User Agent)                                                                                                                                                   |
 | `vote` (Evaluator Agent arbitration) | `0` = Approve (User Agent wins, funds refunded) / `1` = Reject (ASP wins, funds released to the ASP)                                                                                                                                                                                      |
-| `status` (task) | `0` = created / `1` = accepted / `2` = submitted / `3` = refused / `4` = disputed / `5` = admin_stopped / `6` = complete (done, funds released to the ASP) / `7` = close (closed, funds returned to the User Agent) / `8` = expired / `9` = failed (arbitration refunds the User Agent) |
+| `status` (task) | `0` = created / `1` = accepted / `2` = submitted / `3` = rejected / `4` = disputed / `5` = admin_stopped / `6` = complete (done, funds released to the ASP) / `7` = close (closed, funds returned to the User Agent) / `8` = expired / `9` = failed (arbitration refunds the User Agent) |
 
 🛑 **Iron rule**: before writing any semantic judgment about these fields (anywhere — `thinking` / `xmtp_send` / `xmtp_dispatch_user`), **you MUST cross-check the table above**; do not go from memory. Misreading these fields will make the agent run the wrong on-chain action (incidents have already occurred).
 
 ## Core Architecture (must understand)
 
-- **Task state machine**: `created → accepted → submitted → completed/refused → disputed → completed/refunded/close`, **8 statuses + 35 events**, **events ≠ statuses** (e.g. `provider_applied` / `dispute_approved` are transient events that do not change `status`). See [`_shared/state-machine.md`](./_shared/state-machine.md).
+- **Task state machine**: `created → accepted → submitted → completed/rejected → disputed → completed/refunded/close`, **8 statuses + 35 events**, **events ≠ statuses** (e.g. `provider_applied` / `dispute_approved` are transient events that do not change `status`). See [`_shared/state-machine.md`](./_shared/state-machine.md).
 - **Trigger model**: on-chain events are pushed to the sub session via an XMTP `source:"system"` envelope; the agent calls `next-action` to fetch the script and executes it step by step. Direct user instructions flow through the user session → `xmtp_dispatch_session` to relay to the sub. See the 4 valid paths in the Session Communication Contract below.
 - **Role routing**: for each inbound, identify the role first (for a2a-agent-chat, infer from `sender.role`; for a system envelope, call `onchainos agent profile <top-level agentId>` and read the `role` field directly), then read the corresponding role file (`buyer.md` / `provider.md` / `evaluator.md`) and execute the role-specific scene.
 - **Payment modes**: `escrow` (escrowed payment) / `x402` (per-call micropayment), chosen by the User Agent at `confirm-accept`. See [`_shared/payment-modes.md`](./_shared/payment-modes.md).
@@ -562,7 +562,7 @@ User's instruction looks like a task-scoped action AND there is NO matching acti
     {
       "jobId":               "0xabc...",
       "shortJobId":          "0xabc…1234",
-      "status":              "accepted",      // created / accepted / submitted / refused / disputed
+      "status":              "accepted",      // created / accepted / submitted / rejected / disputed
       "statusCode":          1,
       "title":               "小猫图片",
       "tokenAmount":         "1",

@@ -114,7 +114,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId <agentId>  # After user rejects review"),
             format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <score> --task-id {job_id}  # Auto-rate provider (agent generates score based on task details + deliverable)"),
         ],
-        Status::Refused => vec![
+        Status::Rejected => vec![
             next_action("job_refused"),
             "(passive wait) Provider decides within 24h: job_disputed → enter arbitration evidence; job_refunded → refund".to_string(),
         ],
@@ -152,7 +152,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "Task is initializing (waiting for on-chain confirmation) → waiting for job_created event".to_string(),
         ],
         Status::Other(s) => vec![
-            format!("Current task status=`{s}` is not in the set of statuses the buyer cares about (open / accepted / submitted / refused / disputed / completed / failed / close / expired / admin_stopped)"),
+            format!("Current task status=`{s}` is not in the set of statuses the buyer cares about (open / accepted / submitted / rejected / disputed / completed / failed / close / expired / admin_stopped)"),
             "→ No task-level action required for this role, wait for the next relevant chain event / user decision before handling".to_string(),
             "→ **Do NOT** repeatedly run `agent status` / `agent common context` (the result will be the same), end this turn".to_string(),
         ],

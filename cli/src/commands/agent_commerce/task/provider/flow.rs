@@ -29,7 +29,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_submitted"),
             "(Passive wait) Awaiting User Agent review: job_completed → task complete; job_refused → enter arbitration / refund decision.".to_string(),
         ],
-        Status::Refused => vec![next_action("job_refused")],
+        Status::Rejected => vec![next_action("job_refused")],
         Status::Disputed => vec![next_action("job_disputed")],
         Status::Completed => vec![
             next_action("job_completed"),
@@ -58,7 +58,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "Task is initializing (awaiting on-chain confirmation) → waiting for job_created event.".to_string(),
         ],
         Status::Other(s) => vec![
-            format!("Current task status=`{s}` is not in the provider's state set of interest (open / accepted / submitted / refused / disputed / completed / failed / close / expired / admin_stopped)"),
+            format!("Current task status=`{s}` is not in the provider's state set of interest (open / accepted / submitted / rejected / disputed / completed / failed / close / expired / admin_stopped)"),
             "→ No task-level action required for this role; wait for the next relevant on-chain event / user decision before acting.".to_string(),
             "→ **Do NOT** rerun `agent status` / `agent common context` (results are the same); end this turn.".to_string(),
         ],
@@ -861,7 +861,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              You should NOT use `wakeup_notify` as --jobStatus to run the script — this script is just for guidance.\n\n\
              [Your next action (strict order)]\n\n\
              **Step 1 — Read the real status from the envelope**:\n\
-             From the wakeup_notify envelope that triggered this turn, read the `message.jobStatus` field (e.g. `accepted` / `submitted` / `refused` / `disputed` / `completed` / `failed`, etc. — the real status string).\n\n\
+             From the wakeup_notify envelope that triggered this turn, read the `message.jobStatus` field (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed`, etc. — the real status string).\n\n\
              **Step 2 — Use the real status to call next-action and fetch the current script**:\n\
              ```bash\n\
              onchainos agent next-action --jobid {job_id} --jobStatus <value of the message.jobStatus field> --role provider --agentId {agent_id}\n\

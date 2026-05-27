@@ -38,7 +38,7 @@ onchainos agent deliver <jobId> --file "<url>" --message "<msg>"
 | escrow | submitted → completed (after accepting the deliverable) | `onchainos agent complete <jobId>` | Contract pre-complete two-sided signing → auto-release escrowed funds to provider |
 | x402 | submitted → completed | `onchainos agent complete <jobId>` | Funds were already paid at the accept stage; complete only changes status |
 
-### `refuse` (submitted → refused, escrow only)
+### `reject` (submitted → rejected, escrow only)
 
 ⚠️ **Only escrow supports rejection**. For x402, funds were already paid at the accept stage.
 
@@ -58,7 +58,7 @@ The dispute flow is payment-mode-agnostic:
 | Dimension | escrow | x402 |
 |---|---|---|
 | Buyer default risk (receive and don't pay) | ❌ None (contract automatic) | ❌ None (already paid) |
-| Provider default risk | Protected by refuse / dispute | Protected by refuse (but x402 funds are already paid) |
+| Provider default risk | Protected by reject / dispute | Protected by reject (but x402 funds are already paid) |
 | On-chain transaction count | Many (pre + main + broadcast) | Minimal |
 | Gas cost | High | Low |
 

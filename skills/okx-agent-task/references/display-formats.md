@@ -27,7 +27,7 @@ Rules:
 - `jobId`: short-form + internal id.
 - `标题` / `Title`: truncate to 20 chars with `…`.
 - `预算` / `Budget`: `{tokenAmount} {paymentTokenSymbol}`.
-- `状态` / `Status`: emoji prefix + status string. Emoji mapping: 🟢 Created, 🔵 Accepted, 📦 Submitted, ❌ Refused, ⚖️ Disputed, ✅ Complete, 🔒 Closed, ⏰ Expired.
+- `状态` / `Status`: emoji prefix + status string. Emoji mapping: 🟢 Created, 🔵 Accepted, 📦 Submitted, ❌ Rejected, ⚖️ Disputed, ✅ Complete, 🔒 Closed, ⏰ Expired.
 
 ---
 

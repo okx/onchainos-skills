@@ -40,7 +40,7 @@ pub async fn handle_reject(
         None,
     );
 
-    println!("✓ Review rejected (reason: {reason}); status → refused.");
+    println!("✓ Review rejected (reason: {reason}); status → rejected.");
     println!("  The provider has 24 hours to file for arbitration.");
     println!("  txHash: {}", result.tx_hash);
     Ok(())
