@@ -7,7 +7,7 @@
 //! without having to reason over the entire document.
 
 use crate::commands::agent_commerce::task::common::config::TASK_MIN_VERSION;
-use crate::commands::agent_commerce::task::common::pending::short_job_id;
+use crate::commands::agent_commerce::task::common::util::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
 /// The next step the ASP should take under a given status (used at the tail of
@@ -77,14 +77,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     // version handshake. version_prefix uses format! to inject the current
     // TASK_MIN_VERSION constant so the script auto-updates when the constant bumps.
     let localization_prefix = "\
-[Localization] All `content:` / `userContent:` templates below are **canonical text, NOT samples**. Strict rules:\n\
-(1) Fill `<...>` placeholders with real values from context; every other word stays unchanged in shape.\n\
-(2) Do NOT add information, time estimates, promises, or details not present in the template.\n\
-(3) Do NOT rephrase, summarize, or embellish the template — its wording is intentional.\n\
-(4) For English-speaking users: use the English template verbatim (after placeholder fills).\n\
-(5) For non-English users: translate into the user's language while preserving ALL field labels, data values, structure, and line breaks — translation must be faithful, not creative.\n\
-(6) **Every user-visible English token must be translated**, including role labels (`ASP` → 服务商/卖家/equivalent; `User Agent` → 用户代理/买家/equivalent), field labels (`Job` → 任务; `Choose` → 请选择; `reply` → 回复), option body (`File a dispute` → 发起仲裁; `Agree to refund` → 同意退款), and reply hint quotes (in Chinese: switch ASCII `'...'` to CJK `「...」`).\n\
-🔴 Real incident: Chinese user saw `[Job 0xabc... — you are the ASP] ...` rendered with `Job` and `ASP` still in English because the sub treated them as proper nouns — they are not, they are user-visible labels and must be translated.\n\n";
+[Localization] Rules for `content:` / `userContent:` / `--list-label` templates below:\n\
+(1) **User language signal = user's OWN typed messages in this session ONLY.** Playbook examples / agent output / envelope fields are NOT signals. If unsure → default English.\n\
+(2) Fill `<...>` placeholders with real values; do NOT add / rephrase / embellish content not in the template.\n\
+(3) English user → template verbatim. Non-English user → faithful translation, covering every user-visible token: role labels (ASP/User Agent), field labels (Job/Choose/reply), option body, reply-hint quotes (Chinese: `'...'` → 「...」), AND `--list-label` (user picks from this label in selection mode).\n\
+🔴 Past bugs: (a) Chinese user saw `Job`/`ASP` left in English; (b) `--list-label` left in English on a Chinese card; (c) English user got a Chinese card because the sub mistook playbook examples as a language signal.\n\n";
     let version_prefix = format!(
         "[Protocol version] When calling `xmtp_send`, the `payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
     );
@@ -140,9 +137,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     // retain-vs-release policy is governed by common::config::KEEP_CONVERSATION_ON_TERMINAL —
     // change the default by modifying that const.
     let terminal_session_hint = if crate::commands::agent_commerce::task::common::config::KEEP_CONVERSATION_ON_TERMINAL {
-        "⚠️ **Do NOT call `xmtp_delete_conversation`** — keep the conversation history for later reference."
+        "ℹ️ Task is in terminal state. Clean up the stale pending decision entry but keep the conversation:\n\
+         \x20\x201. Call `session_status` to fetch the current sub `sessionKey`.\n\
+         \x20\x202. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"<sessionKey from step 1>\"` to remove any leftover pending decision entry (otherwise it waits 7-day TTL and pollutes the queue).\n\
+         ⚠️ **Do NOT call `xmtp_delete_conversation`** — keep the conversation history for later reference."
     } else {
-        "ℹ️ Task is in terminal state; you may call `xmtp_delete_conversation` to release session resources (no follow-up events)."
+        "ℹ️ Task is in terminal state; to fully release session resources (no follow-up events expected):\n\
+         \x20\x201. Call `session_status` to fetch the current sub `sessionKey`.\n\
+         \x20\x202. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"<sessionKey from step 1>\"` to clean up any pending decision entry for this sub (otherwise it waits 7-day TTL).\n\
+         \x20\x203. Call `xmtp_delete_conversation` with `sessionKey=<sessionKey from step 1>` to close the conversation."
     };
 
     // User-facing content templates for the preamble's exception-escalation hard rules
@@ -267,12 +270,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
                --user-content \"{user_prompt_for_shell}\" \\\n\
                --list-label \"[Decision] Dispute / Agree Refund\"\n\
              ```\n\
-             🌐 **MANDATORY localization** — translate `--user-content` to the user's language **before** running the command. The canonical template is **English**; if the user's language is not English, you MUST translate **every** user-visible token, including:\n\
-             \x20\x20• Role labels: `ASP` → `服务商`/`卖家`/role name in user's language; `User Agent` → `用户代理`/`买家`/equivalent\n\
-             \x20\x20• Field labels: `Job` → `任务`/equivalent; `Choose` → `请选择`/equivalent; `reply` → `回复`/equivalent\n\
-             \x20\x20• Option body: `File a dispute` → `发起仲裁`; `Agree to refund` → `同意退款`\n\
-             \x20\x20• Reply hints (the phrases inside quotes): `'file dispute, reason: <reason>'` → `「发起仲裁，理由：<具体原因>」` (note: also switch ASCII single-quotes to CJK 「」 brackets in Chinese)\n\
-             🔴 **Real incident**: a Chinese user saw the rendered card with `ASP` and `Job` still in English because the sub didn't recognize these as user-visible tokens. The `--list-label` is internal-facing and can stay in any language (the user doesn't see it).\n\n\
+             🌐 Translate `--user-content` AND `--list-label` to the user's language (signal = user's OWN typed messages this session; default English if unsure). See [Localization] above for token mapping.\n\n\
              Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
              **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
              Inspect the verbatim text and route to the next on-chain action (treat the match as case-insensitive; trim surrounding whitespace / punctuation before matching):\n\
@@ -461,7 +459,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
                --user-content \"{user_prompt_for_shell}\" \\\n\
                --list-label \"[Decision {short_id}] Submit Arbitration Evidence\"\n\
              ```\n\
-             🌐 **MANDATORY localization** — the canonical `--user-content` template is **English**. Before running, translate **every** user-visible token in `--user-content` to the user's language, including role labels (`ASP`/`User Agent`), field labels (`Job`/`Choose`/`reply`), and reply hint quotes (in Chinese: switch ASCII `'...'` to CJK `「...」`). The `--list-label` can stay in any language (internal-facing, user doesn't see it). Real incident: Chinese user saw `ASP` and `Job` untranslated in the card because the sub treated them as proper nouns.\n\n\
+             🌐 Translate `--user-content` AND `--list-label` to the user's language (signal = user's OWN typed messages this session; default English if unsure). See [Localization] above for token mapping.\n\n\
              Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
              **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
              The user's reply IS the evidence — upload it verbatim. Do NOT second-guess whether it's \"too short\" / \"too similar to the dispute reason\" / \"not enough detail\"; if the user wants to add more, they will reply again (each new reply overwrites and re-prompts the same pending entry).\n\
@@ -785,7 +783,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
                --user-content \"{user_prompt_for_shell}\" \\\n\
                --list-label \"[Decision {short_id}] Submit Now / Let Timeout\"\n\
              ```\n\
-             🌐 **MANDATORY localization** — the canonical `--user-content` template is **English**. Before running, translate **every** user-visible token in `--user-content` to the user's language, including role labels (`ASP`/`User Agent`), field labels (`Job`/`Choose`/`reply`), option body (`Submit Now`/`Let Timeout`), and reply hint quotes (in Chinese: switch ASCII `'...'` to CJK `「...」`). The `--list-label` can stay in any language (internal-facing). Real incident: Chinese user saw `ASP` and `Job` untranslated.\n\n\
+             🌐 Translate `--user-content` AND `--list-label` to the user's language (signal = user's OWN typed messages this session; default English if unsure). See [Localization] above for token mapping.\n\n\
              Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now. Do NOT `xmtp_send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
              **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
              - Contains `立即提交` / `我提交` / `submit now` / `I'll deliver` / `ready` → run the delivery flow (same as JobAccepted Step 2-3): autonomously complete the work → `xmtp_send` the deliverable to the User Agent → run `onchainos agent deliver` on-chain. (Full script: `onchainos agent next-action --jobid {job_id} --jobStatus job_accepted --role provider --agentId {agent_id}` — skip its Step 1 apply-accepted notification; the user already knows the task was accepted.)\n\

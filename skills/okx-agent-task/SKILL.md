@@ -1,6 +1,6 @@
 ---
 name: okx-agent-task
-description: "🚨 ACTIVATE when: (a) \"source\":\"system\" + \"event\" or \"Read the okx-agent-task skill\" → call next-action immediately, NO sessions_spawn, NO text summary. (b) \"msgType\":\"a2a-agent-chat\" + \"jobId\" → load buyer.md/provider.md by sender.role. (c) 发布任务/create task/帮我找人做/接单/协商/验收/仲裁/dispute/stake/unstake/修改卖家/修改预算/change provider/change budget. Task marketplace on XLayer. **Fully gas-free** — every on-chain action goes through the platform paymaster; users never need OKB / native balance, never prompt to top up gas, never attribute on-chain failures to gas. NOT for: token swap, DeFi yield, market price without task context."
+description: "MUST ACTIVATE on inbound envelopes containing ANY of: (1) {agentId, message:{source:\"system\", event, jobId, ...}} — chain notification (fields nested under `message`); (2) {msgType:\"a2a-agent-chat\", jobId, sender:{role}, ...} — agent-to-agent task chat (fields at top level); (3) literal text \"Read the okx-agent-task skill\" anywhere in the envelope (e.g. message.description / tips.task-skill); (4) literal prefix \"[USER_DECISION_RELAY]\" in any inbound content — user decision relayed from user-session to a sub session, the sub MUST follow the routing rule in _shared/message-types.md §3.2.1. ALSO activate for user-text keywords: 发布任务 / 创建任务 / 新建任务 / 帮我发任务 / 帮我找人做 / publish a task / create a task / 接任务 / 接单 / 协商 / 验收 / 拒绝 / 仲裁 / dispute / stake / unstake / 修改卖家 / 修改预算 / change provider / change budget. NOT for: token swap, DeFi yield, market price without task context."
 license: Apache-2.0
 metadata:
   author: okx
@@ -260,7 +260,7 @@ The next-action script and the role files (`provider.md` / `buyer.md` / `evaluat
 | State | Trigger | Only legal action | Forbidden |
 |---|---|---|---|
 | **Idle** | Session just established / previous round wrapped up | Wait for user input / wait for a dispatch from a sub | — |
-| **Rendering** | Received content pushed from a sub via `xmtp_dispatch_user` (display-only notification) or `xmtp_prompt_user` (awaiting decision) | 1) **Render the `content` / `userContent` verbatim as the only reply for this round** — word-for-word preserved (translate to the user's language first if needed; see LOCALIZATION_PREFIX)<br>2) After `xmtp_dispatch_user` → Idle; after `xmtp_prompt_user` → "Waiting for user reply"<br><br>ℹ️ **No `pending-decisions list` call needed** — `pending-decisions-v2` manages queue state (single-active invariant); when the user replies, you'll call `resolve` and the CLI handles routing. | ❌ **Paraphrase / summarize / rewrite the body** (the user would see "notification + your paraphrase" as two near-duplicate messages)<br>❌ **Adding greetings / closers** ("Got it", "is there anything else I can help with?", "let me know if you have other questions" — none of these)<br>❌ **Any** `xmtp_dispatch_session` (do not even ack / "OK" / send short replies — the sub would receive a duplicate message, BUG-6)<br>❌ `onchainos agent ...` CLIs (you do NOT need to call any task CLI in this state — `pending-decisions-v2` auto-manages the queue)<br>❌ `web_fetch` / `exec`<br>❌ Re-activating the task skill to drive the flow |
+| **Rendering** | Received content pushed from a sub via `xmtp_dispatch_user` (display-only notification) or `xmtp_prompt_user` (awaiting decision) | 1) **Render the `content` / `userContent` verbatim as the only reply for this round** — word-for-word preserved (translate to the user's language first if needed; see LOCALIZATION_PREFIX)<br>2) After `xmtp_dispatch_user` → Idle; after `xmtp_prompt_user` → "Waiting for user reply"<br><br>ℹ️ `pending-decisions-v2` manages queue state automatically (single-active invariant); when the user replies, you'll call `resolve` and the CLI handles routing. | ❌ **Paraphrase / summarize / rewrite the body** (the user would see "notification + your paraphrase" as two near-duplicate messages)<br>❌ **Adding greetings / closers** ("Got it", "is there anything else I can help with?", "let me know if you have other questions" — none of these)<br>❌ **Any** `xmtp_dispatch_session` (do not even ack / "OK" / send short replies — the sub would receive a duplicate message, BUG-6)<br>❌ `onchainos agent ...` CLIs (you do NOT need to call any task CLI in this state — `pending-decisions-v2` auto-manages the queue)<br>❌ `web_fetch` / `exec`<br>❌ Re-activating the task skill to drive the flow |
 | **Waiting for user reply** | The previous message from the sub was an `xmtp_prompt_user` containing the `[USER_DECISION_REQUEST]` marker | 1) Render `userContent` to the user → **end this turn and wait for the real user input** (**no** `dispatch_session` / `resolve` in the same turn)<br>2) Once the **real** user input arrives (new turn): call `onchainos agent pending-decisions-v2 resolve --user-reply "<verbatim user reply, no interpretation, no translation>"` **exactly once** → follow the relay playbook the CLI returns verbatim (one `xmtp_dispatch_session` call; if there are queued entries the playbook also auto-renders the next one) → give the user a short confirmation → go Idle.<br><br>ℹ️ CLI handles queue routing (single-active invariant); you no longer need to manually look up entries or pick from a list. If multiple decisions queue up, the CLI's resolve playbook will either auto-render the next or emit a pick-from-list prompt automatically. | ❌ **Fabricating a user decision in the same turn and calling resolve directly** — `[USER_DECISION_REQUEST]` is a **question**, not an **answer**; the sub is waiting for real user input, not your guesswork (see `_shared/message-types.md §3.1.1 anti-patterns`; incidents have happened)<br>❌ Skipping steps and executing task CLIs directly (`dispute raise` / `agree-refund` / `complete` / `reject` / `apply`)<br>❌ **Fabricating system envelopes** like `job_refunded` / `job_completed` yourself (BUG-7)<br>❌ Calling `resolve` more than once<br>❌ Calling `xmtp_dispatch_session` manually (the CLI's resolve playbook tells you the exact `sessionKey` + `content` to dispatch — do not hand-craft)<br>❌ "Let me check for the user first" — calling `status` / `common context` |
 
 **Cannot find `[sub_key: ...]`**: respond with "sub session identifier is missing; please re-initiate the task flow", and **do not guess, do not fall back to executing yourself**.
@@ -308,7 +308,7 @@ All three roles (User Agent / ASP / Evaluator Agent) follow this uniformly.
 - Invocation: `xmtp_dispatch_user`, with `content` = plain natural language (the semantics already imply "push to user, no decision required"; **no** `[STATUS_NOTIFY]` wrapper tag is needed).
 - The tool automatically finds the most recently active non-XMTP user session and delivers; the user-session agent renders it to the user and calls no other tool.
 
-**Path 2b: sub → user, awaiting user decision (pending-decisions flow)**:
+**Path 2b: sub → user, awaiting user decision (pending-decisions-v2 flow)**:
 - Push only when the script says user adjudication is required (dispute / refund / evidence / review, etc.).
 - **Sub does NOT call `xmtp_prompt_user` directly. Instead, sub enqueues via `pending-decisions-v2 request`** (the CLI manages queue lifecycle: single-active invariant, FIFO ordering, auto-reprompt on new arrival, TTL eviction):
   ```bash
@@ -325,7 +325,7 @@ All three roles (User Agent / ASP / Evaluator Agent) follow this uniformly.
   - `playbook_wait_with_reprompt` (status=queued, cooldown due) → "Re-push the active decision card so it isn't buried by intermediate chat" (CLI provides the rebuilt `xmtp_prompt_user` args).
 - Sub's only role: follow whatever playbook the CLI returns verbatim, then end the turn. Sub never hand-crafts `llmContent` or calls `xmtp_dispatch_session` directly.
 
-**Path 3: user → sub, relaying the user's decision back (pending-decisions resolve flow)**:
+**Path 3: user → sub, relaying the user's decision back (pending-decisions-v2 resolve flow)**:
 - ⚠️ This subsection describes the **default user → sub user-decision-relay usage**; the Evaluator Agent arbitration routing is the sole exception (envelope forwarded as-is into the arbitration sub, callable from a non-user session as well) — see the "single exception for path 3 (Evaluator Agent arbitration routing)" above + `evaluator.md §1` / `flow.rs Step 0`. The "only the user session" / "must use the `[USER_DECISION_RELAY]` prefix" constraints below **only apply to the default usage**.
 - Only the user-session agent (sessionKey does not contain `:group:` or `:evaluate:`), only in the "Waiting for user reply" state, only after the user actually replies.
 - **User-session does NOT call `xmtp_dispatch_session` directly. Instead, user-session calls `pending-decisions-v2 resolve`**:
@@ -333,7 +333,7 @@ All three roles (User Agent / ASP / Evaluator Agent) follow this uniformly.
   onchainos agent pending-decisions-v2 resolve --user-reply "<verbatim user wording, no interpretation, no translation>"
   ```
 - The CLI:
-  1. Removes the active entry from the queue (auto-cleanup; you do NOT call `pending-decisions remove` yourself).
+  1. Removes the active entry from the queue (auto-cleanup; you never manually edit the queue).
   2. Builds the relay `content`:
      - Default: `[USER_DECISION_RELAY] decision: <user verbatim>`
      - If `--user-reply` starts with `[intent:` (intent-tag scenes where sub provided `--llm-content` with intent emission instructions): `[USER_DECISION_RELAY][intent:CODE] user said: <verbatim>` (CLI auto-detects the `[intent:` prefix and concatenates without the `decision: ` filler).
@@ -349,7 +349,7 @@ All three roles (User Agent / ASP / Evaluator Agent) follow this uniformly.
 **Path 5: `xmtp_delete_conversation` close a sub session (**not called by default**)**:
 - **Current policy**: sub sessions are **retained** after reaching a terminal state; `xmtp_delete_conversation` is not called — this keeps history available for later review / proactive retries. Every terminal-state arm in `provider/flow.rs` explicitly says "⚠️ do NOT `xmtp_delete_conversation`".
 - The tool itself is available, but only call it when you have **explicit user instruction** "close this sub"; the script defaults to never calling it.
-- When called: first `session_status` to fetch the current sub `sessionKey`, then `xmtp_delete_conversation`.
+- When called (full cleanup): (1) `session_status` to fetch the current sub `sessionKey`; (2) `onchainos agent pending-decisions-v2 cancel --sub-key "<sessionKey>"` to remove any pending decision entry for this sub (otherwise it waits the 7-day TTL); (3) `xmtp_delete_conversation` with `sessionKey=<sessionKey>` to close the conversation. Steps (2) and (3) are paired — never delete the conversation without also cancelling the pending entry, or the sub will be gone while the entry lingers.
 - **Forbidden**:
   - Deleting a user session (the tool itself will refuse, but do not try).
   - Auto-closing a sub upon terminal state (retention is the default policy).
@@ -460,16 +460,17 @@ Status invariants (auto-enforced by CLI):
 
 | Command | Caller | When |
 |---|---|---|
-| `agent pending-decisions-v2 request --sub-key ... --job-id ... --role <...> --agent-id ... --user-content "..." --list-label "..." [--llm-content "..."]` | Sub agent | When the script says "push a decision to the user" (replaces the v1 `xmtp_prompt_user` + `pending-decisions add` pair). CLI returns a playbook (push / wait / wait_with_reprompt) — follow it verbatim. |
-| `agent pending-decisions-v2 resolve --user-reply "<verbatim>"` | User-session agent | After the user actually replies to a `[USER_DECISION_REQUEST]` (replaces the v1 manual `pending-decisions list` + `xmtp_dispatch_session` pair). CLI removes the active entry, builds the relay content, and returns a relay playbook (relay_only / relay_and_render / relay_and_list) — follow it verbatim. |
-| `agent pending-decisions-v2 pick --index <N>` | User-session agent | Only when the previous `resolve` returned `relay_and_list` (2+ queued) and the user replied with a number `1..N` to pick from the list. CLI promotes the selected entry to active and emits a render playbook. |
+| `agent pending-decisions-v2 request --sub-key ... --job-id ... --role <...> --agent-id ... --user-content "..." --list-label "..." [--llm-content "..."]` | Sub agent | When the script says "push a decision to the user". CLI returns a playbook (push / wait / wait_with_reprompt) — follow it verbatim. |
+| `agent pending-decisions-v2 resolve --user-reply "<verbatim>"` | User-session agent | After the user actually replies to a `[USER_DECISION_REQUEST]`. CLI removes the active entry, builds the relay content, and returns a relay playbook (relay_only / relay_and_render / relay_and_list) — follow it verbatim. |
+| `agent pending-decisions-v2 pick --index <N>` | User-session agent | (a) after `resolve` returned `relay_and_list`, user picks `1..N` to promote a queued entry to active; (b) user picks the already-active row to re-render its card (e.g. scrolled past it). CLI behavior by target status: target=active → re-render only (no state change); target=queued + no active → promote + render; target=queued + a different active exists → refuse (resolve or cancel the active first). |
+| `agent pending-decisions-v2 cancel --sub-key <key> \| --index <N>` | User-session agent | When the user says "ignore / cancel / delete this decision". Silent delete (sub is NOT notified; TTL-evicts in 7d). If the cancelled entry was active and queued entries remain, enters selection mode and emits a render-list playbook. Also used by terminal-state cleanup (paired with `xmtp_delete_conversation`). |
 | `agent pending-decisions-v2 list [--format markdown\|json]` | Any (debug / idempotency check) | Inspect the current queue without changing state. Common use: scene Step 0 idempotency check ("if `entries[]` already has a sub_key with `job={job_id}` for this role → duplicate event; end the turn without re-notifying"). |
 
 #### Sub agent rules
 
 ✅ **Sub only calls `request`** — never hand-crafts `llmContent` or calls `xmtp_prompt_user` / `xmtp_dispatch_session` directly. CLI builds the `llmContent` (with HARDSTOP rules + Phase 1/2 instructions) and returns a playbook telling sub exactly how to push to the user.
 
-✅ **No manual `pending-decisions remove`**: CLI auto-removes the active entry when user-session calls `resolve`. By the time sub re-enters via `next-action --jobStatus <pseudo_event>`, the entry is already gone.
+✅ **No manual queue editing**: CLI auto-removes the active entry when user-session calls `resolve`. By the time sub re-enters via `next-action --jobStatus <pseudo_event>`, the entry is already gone.
 
 ✅ **Re-asking after an unrecognized user reply** (e.g. user typed something unrelated): just call `request` again with the same `--sub-key` and a clarifying `--user-content`; CLI overwrites the entry (`created_at` preserved; new content + re-prompt to the user).
 

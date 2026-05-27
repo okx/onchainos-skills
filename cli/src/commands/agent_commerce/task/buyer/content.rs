@@ -7,8 +7,7 @@
 //!    Rule: **no technical jargon** — tool names (`xmtp_*`) / event names (`provider_applied`/`job_*` etc.) /
 //!    status names (English enums like `Open`/`accepted` are kept as doc-reserved literals) / CLI flags (`--*`) /
 //!    skill names (`okx-agent-identity` etc.) / backend method names (`claimAutoComplete` etc.).
-//!    **Literals in this file are English** (aligned with the PM Review translation baseline;
-//!    source: `https://okg-block.sg.larksuite.com/docx/YSHcdZaWmo2KofxaHRuloeBYgme` §1),
+//!    **Literals in this file are English** (aligned with the PM Review translation baseline),
 //!    serving as the canonical content for sub agent localization — English users see them
 //!    verbatim (after `<...>` placeholder fills); non-English users get a faithful translation
 //!    that preserves all field labels, data values, and structure (see `localization_prefix`
