@@ -130,6 +130,9 @@ If the user's message did NOT include any files, skip this step entirely.
 
 ================================================
 
+⚠️ **Balance warning relay**: if the CLI output contains a `⚠️ Insufficient ... balance` warning line, \
+you **MUST** append it to the `xmtp_dispatch_user` content below.\n\
+🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
 After success, call `xmtp_dispatch_user` to notify the user:\n\
 ".to_string()
     + &format!("\

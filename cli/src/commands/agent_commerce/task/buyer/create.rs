@@ -201,7 +201,16 @@ pub async fn handle_create(
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
     eprintln!("[task-create] buyer identity check passed (agentId: {buyer_agent_id})");
 
-    common::ensure_sufficient_balance(params.budget, &validated.currency).await?;
+    let balance_warning = match common::ensure_sufficient_balance(params.budget, &validated.currency).await {
+        Err(e) => {
+            eprintln!("[task-create] ⚠ balance warning: {e}");
+            Some(format!(
+                "⚠️ Insufficient {} balance on XLayer (need {} {}). Task created, but payment may fail later — please top up via swap.",
+                validated.currency, params.budget, validated.currency,
+            ))
+        }
+        Ok(()) => None,
+    };
 
     let (account_id, address) = signing::resolve_wallet(None, None)?;
 
@@ -272,6 +281,10 @@ pub async fn handle_create(
         println!("  Designated provider: {provider_id} (skip recommend, direct routing)");
     }
     println!();
+    if let Some(ref warning) = balance_warning {
+        println!();
+        println!("{warning}");
+    }
     if params.provider.is_some() {
         println!("Next: wait for the job_created notification; the designated provider's service will be queried and routed automatically.");
     } else {
