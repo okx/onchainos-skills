@@ -49,7 +49,7 @@ pub async fn fetch_permit2_allowance(
 ) -> Result<U256> {
     let rpc_url = rpc_url_for_chain(chain_index).ok_or_else(|| {
         anyhow!(
-            "no RPC endpoint configured for chain {} — Permit2 allowance pre-check is only wired up for X Layer (196) right now",
+            "no RPC endpoint configured for chain {} — Permit2 allowance pre-check unavailable",
             chain_index
         )
     })?;

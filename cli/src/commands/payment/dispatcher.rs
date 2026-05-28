@@ -484,39 +484,7 @@ async fn cmd_pay(accepts_json: &str, from: Option<&str>) -> Result<()> {
         serde_json::from_str(accepts_json).context("--accepts must be a valid JSON array")?;
     let (proof, _entry) =
         payment_flow::sign_payment_with_preference(&accepts, from, None, None).await?;
-    let out = match proof {
-        payment_flow::PaymentProof::Eip3009 {
-            signature,
-            authorization,
-            session_cert,
-        } => {
-            let mut v = json!({
-                "signature": signature,
-                "authorization": authorization,
-            });
-            if let Some(cert) = session_cert {
-                v["sessionCert"] = json!(cert);
-            }
-            v
-        }
-        payment_flow::PaymentProof::Permit2 {
-            signature,
-            permit2_authorization,
-        } => json!({
-            "signature": signature,
-            "permit2Authorization": permit2_authorization,
-        }),
-        payment_flow::PaymentProof::Upto {
-            signature,
-            permit2_authorization,
-            session_cert,
-        } => json!({
-            "signature": signature,
-            "permit2Authorization": permit2_authorization,
-            "sessionCert": session_cert,
-        }),
-    };
-    output::success(out);
+    output::success(proof.to_pay_json());
     Ok(())
 }
 
@@ -1470,10 +1438,6 @@ async fn cmd_mpp_session_open(
             "hash mode (feePayer=false) requires --salt: the same bytes32 you \
              passed to your on-chain `escrow.open(...)` call (0x + 64 hex chars)"
         ),
-        // Symmetric with the `tx_hash.is_some() && fee_payer` guard a few
-        // blocks below: a flag passed in the wrong mode almost always
-        // signals the user misread methodDetails.feePayer — fail loudly
-        // rather than silently substitute a random salt.
         (true, Some(_)) => bail!(
             "--salt is only valid when challenge.methodDetails.feePayer=false \
              (hash mode); transaction mode generates its own salt during \
@@ -1486,6 +1450,10 @@ async fn cmd_mpp_session_open(
             format!("0x{}", hex::encode(s))
         }
     };
+    // Reject wrong-mode --tx-hash before the TEE round-trip below.
+    if fee_payer && tx_hash.is_some() {
+        bail!("--tx-hash is only valid when challenge.methodDetails.feePayer=false");
+    }
     // authorizedSigner must be the 0x0 sentinel (not payer). The contract
     // sentinel means "payer is the voucher signer"; the same value goes into
     // both the channelId hash and the EIP-3009 nonce. Passing payer triggers
@@ -1572,10 +1540,6 @@ async fn cmd_mpp_session_open(
             "wallet": payer_addr,
         }));
         return Ok(());
-    }
-
-    if tx_hash.is_some() {
-        bail!("--tx-hash is only valid when challenge.methodDetails.feePayer=false");
     }
 
     // Transaction mode: TEE sign EIP-3009 for deposit

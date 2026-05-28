@@ -180,35 +180,3 @@ async fn tee_sign_eip712(
         .map(str::to_string)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn signature_inputs_compile() {
-        let exact_input = ExactPermit2Input {
-            token: "0x0",
-            amount: "0",
-            spender: "0x0",
-            nonce: "0",
-            deadline: "0",
-            witness_to: "0x0",
-            witness_valid_after: "0",
-            chain_id: 1,
-        };
-        let _ = std::mem::size_of_val(&exact_input);
-
-        let upto_input = UptoPermit2Input {
-            token: "0x0",
-            amount: "0",
-            spender: "0x0",
-            nonce: "0",
-            deadline: "0",
-            witness_to: "0x0",
-            witness_facilitator: "0x0",
-            witness_valid_after: "0",
-            chain_id: 1,
-        };
-        let _ = std::mem::size_of_val(&upto_input);
-    }
-}

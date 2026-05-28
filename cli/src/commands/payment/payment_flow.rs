@@ -146,6 +146,46 @@ pub enum PaymentProof {
     },
 }
 
+impl PaymentProof {
+    /// Wire-shape JSON emitted by `onchainos payment pay`. The exact top-level
+    /// keys here are the routing inputs the agent dispatcher branches on, so
+    /// any rename / restructure here is a breaking change for the skill.
+    pub fn to_pay_json(&self) -> Value {
+        match self {
+            PaymentProof::Eip3009 {
+                signature,
+                authorization,
+                session_cert,
+            } => {
+                let mut v = json!({
+                    "signature": signature,
+                    "authorization": authorization,
+                });
+                if let Some(cert) = session_cert {
+                    v["sessionCert"] = json!(cert);
+                }
+                v
+            }
+            PaymentProof::Permit2 {
+                signature,
+                permit2_authorization,
+            } => json!({
+                "signature": signature,
+                "permit2Authorization": permit2_authorization,
+            }),
+            PaymentProof::Upto {
+                signature,
+                permit2_authorization,
+                session_cert,
+            } => json!({
+                "signature": signature,
+                "permit2Authorization": permit2_authorization,
+                "sessionCert": session_cert,
+            }),
+        }
+    }
+}
+
 /// Select the best accepts entry.
 ///
 /// If the user has saved a default payment asset (via
@@ -388,37 +428,40 @@ pub async fn sign_payment_with_preference(
         scheme_lower == "exact" && asset_transfer_method.as_deref() == Some("permit2");
 
     if is_upto || is_exact_permit2 {
-        let allowance = crate::permit2_rpc::fetch_permit2_allowance(
+        let required: alloy_primitives::U256 = params.amount.parse().with_context(|| {
+            format!("invalid required amount (decimal uint256): {}", params.amount)
+        })?;
+        match crate::permit2_rpc::fetch_permit2_allowance(
             &chain_index,
             &params.asset,
             payer_addr,
         )
         .await
-        .with_context(|| {
-            format!(
-                "failed to pre-check Permit2 allowance on chain {}",
-                chain_index
-            )
-        })?;
-        let required: alloy_primitives::U256 = params.amount.parse().with_context(|| {
-            format!("invalid required amount (decimal uint256): {}", params.amount)
-        })?;
-        if allowance < required {
-            bail!(
+        {
+            Ok(allowance) if allowance < required => bail!(
                 "Permit2 allowance insufficient on token {} for chain {}. \
                  Current allowance is {}, but this payment needs {}. \
                  The buyer must first call \
-                 IERC20.approve(0x000000000022D473030F116dDEE9F6B43aC78BA3, MAX) once \
+                 IERC20.approve({}, MAX) once \
                  before any x402 Permit2 payment can be settled.",
-                params.asset, chain_index, allowance, required
-            );
+                params.asset,
+                chain_index,
+                allowance,
+                required,
+                crate::chains::PERMIT2_ADDRESS
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!(
+                "Warning: Permit2 allowance pre-check unavailable on chain {chain_index} ({e:#}); falling back to on-chain settle revert"
+            ),
         }
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
-        // Backdate by 600s to absorb clock skew between client and chain.
-        let valid_after = now.saturating_sub(600).to_string();
+        let valid_after = now
+            .saturating_sub(crate::permit2_types::CLOCK_SKEW_BACKDATE_SECS)
+            .to_string();
         let deadline = now
             .checked_add(params.max_timeout_seconds)
             .ok_or_else(|| anyhow!("Permit2 deadline overflow"))?
@@ -1138,6 +1181,73 @@ mod tests {
         assert_eq!(PaymentTier::from_server_str("other"), None);
         assert_eq!(PaymentTier::Basic.as_key(), "basic");
         assert_eq!(PaymentTier::Premium.as_key(), "premium");
+    }
+
+    #[test]
+    fn to_pay_json_eip3009_without_session_cert() {
+        let proof = PaymentProof::Eip3009 {
+            signature: "sig-eip3009".into(),
+            authorization: json!({"from": "0xA", "to": "0xB"}),
+            session_cert: None,
+        };
+        let v = proof.to_pay_json();
+        assert_eq!(v["signature"], "sig-eip3009");
+        assert_eq!(v["authorization"], json!({"from": "0xA", "to": "0xB"}));
+        let obj = v.as_object().expect("top-level must be an object");
+        let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, ["authorization", "signature"]);
+    }
+
+    #[test]
+    fn to_pay_json_eip3009_with_session_cert_for_aggr_deferred() {
+        let proof = PaymentProof::Eip3009 {
+            signature: "sig-eip3009".into(),
+            authorization: json!({}),
+            session_cert: Some("cert-aggr".into()),
+        };
+        let v = proof.to_pay_json();
+        assert_eq!(v["sessionCert"], "cert-aggr");
+        let obj = v.as_object().expect("top-level must be an object");
+        let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, ["authorization", "sessionCert", "signature"]);
+    }
+
+    #[test]
+    fn to_pay_json_permit2_emits_permit2authorization_only() {
+        let proof = PaymentProof::Permit2 {
+            signature: "0xdeadbeef".into(),
+            permit2_authorization: json!({"from": "0xA", "spender": "0x402085…0001"}),
+        };
+        let v = proof.to_pay_json();
+        assert_eq!(v["signature"], "0xdeadbeef");
+        assert_eq!(v["permit2Authorization"]["spender"], "0x402085…0001");
+        let obj = v.as_object().expect("top-level must be an object");
+        let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+        keys.sort();
+        // Exactly these two keys — no `authorization`, no `sessionCert`.
+        assert_eq!(keys, ["permit2Authorization", "signature"]);
+    }
+
+    #[test]
+    fn to_pay_json_upto_emits_permit2authorization_and_sessioncert() {
+        let proof = PaymentProof::Upto {
+            signature: "base64sig".into(),
+            permit2_authorization: json!({"witness": {"facilitator": "0xF"}}),
+            session_cert: "cert-upto".into(),
+        };
+        let v = proof.to_pay_json();
+        assert_eq!(v["signature"], "base64sig");
+        assert_eq!(v["permit2Authorization"]["witness"]["facilitator"], "0xF");
+        assert_eq!(v["sessionCert"], "cert-upto");
+        let obj = v.as_object().expect("top-level must be an object");
+        let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+        keys.sort();
+        // Skill dispatcher routes upto via `permit2Authorization` (checked
+        // before `sessionCert`); both must be present at the top level so
+        // either qualifier resolves correctly.
+        assert_eq!(keys, ["permit2Authorization", "sessionCert", "signature"]);
     }
 
     #[test]

@@ -5,6 +5,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Seconds to backdate `witness.validAfter` to absorb clock skew between
+/// the client clock and the chain's block time. Callers that build a
+/// `Permit2Witness` must subtract this from `now` when setting `valid_after`.
+pub const CLOCK_SKEW_BACKDATE_SECS: u64 = 600;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Permit2Permitted {
     pub token: String,
@@ -15,7 +20,8 @@ pub struct Permit2Permitted {
 #[serde(rename_all = "camelCase")]
 pub struct Permit2Witness {
     pub to: String,
-    /// Lower bound on block time. Set to `now - 600` to absorb clock skew.
+    /// Lower bound on block time. Set to `now - CLOCK_SKEW_BACKDATE_SECS`
+    /// to absorb clock skew.
     pub valid_after: String,
 }
 

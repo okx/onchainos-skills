@@ -45,9 +45,9 @@ Unified entry point for three payment paths, distinguished by HTTP signature: **
 
 | Triggered by | Load |
 |---|---|
-| 402 with `PAYMENT-REQUIRED` header (v2) or `x402Version` body field (v1), CLI output carries `authorization` field (no `sessionCert`, no `permit2Authorization`) | `references/exact.md` |
-| 402 with `PAYMENT-REQUIRED` header (v2) or `x402Version` body field (v1), CLI output carries `sessionCert` field | `references/aggr_deferred.md` |
 | 402 with `PAYMENT-REQUIRED` header (v2) or `x402Version` body field (v1), CLI output carries `permit2Authorization` field (covers `exact + Permit2` and `upto` schemes) | `references/upto.md` |
+| 402 with `PAYMENT-REQUIRED` header (v2) or `x402Version` body field (v1), CLI output carries `sessionCert` field (and no `permit2Authorization`) | `references/aggr_deferred.md` |
+| 402 with `PAYMENT-REQUIRED` header (v2) or `x402Version` body field (v1), CLI output carries `authorization` field (no `sessionCert`, no `permit2Authorization`) | `references/exact.md` |
 | 402 with `WWW-Authenticate: Payment`, `intent="charge"` | `references/charge.md` |
 | 402 with `WWW-Authenticate: Payment`, `intent="session"` (also: any mid-session op on a `channel_id`) | `references/session.md` |
 | User mentions a paymentId / `a2a_...` link / "create payment link" | `references/a2a_charge.md` |
@@ -199,7 +199,7 @@ onchainos wallet status
 
 | Path | Action |
 |---|---|
-| **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1) | Run `onchainos payment pay --accepts '<JSON.stringify(decoded.accepts)>'`. When the response comes back, branch by which field is present in the CLI output:<br>• `sessionCert` present → load **`references/aggr_deferred.md`** for header assembly + replay (Ed25519 session-key path)<br>• `permit2Authorization` present → load **`references/upto.md`** for header assembly + replay (covers both `exact + Permit2` and `upto` scheme)<br>• otherwise (`authorization` present) → load **`references/exact.md`** for header assembly + replay (EIP-3009 path)<br>If the user picked the local-key fallback, run `onchainos payment pay-local` instead and load **`references/exact.md`** (only scheme this fallback supports). |
+| **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1) | Run `onchainos payment pay --accepts '<JSON.stringify(decoded.accepts)>'`. When the response comes back, branch by which field is present in the CLI output (check in this order — `upto` carries both `permit2Authorization` and `sessionCert`):<br>• `permit2Authorization` present → load **`references/upto.md`** for header assembly + replay (covers both `exact + Permit2` and `upto` scheme)<br>• `sessionCert` present (and no `permit2Authorization`) → load **`references/aggr_deferred.md`** for header assembly + replay (Ed25519 session-key path)<br>• otherwise (`authorization` present) → load **`references/exact.md`** for header assembly + replay (EIP-3009 path)<br>If the user picked the local-key fallback, run `onchainos payment pay-local` instead and load **`references/exact.md`** (only scheme this fallback supports). |
 | **`WWW-Authenticate: Payment`, `intent="charge"`** | Load **`references/charge.md`** at "Decide mode". |
 | **`WWW-Authenticate: Payment`, `intent="session"`** | Load **`references/session.md`** at "Phase S1: Open Channel" (or jump to S2 / S2b / S3 if the user is mid-session with an active `channel_id`). |
 
