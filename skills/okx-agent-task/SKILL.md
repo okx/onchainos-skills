@@ -145,6 +145,7 @@ onchainos agent next-action \
   --event <message.event>
   --role <provider|buyer|evaluator>    # call `onchainos agent profile <envelope's top-level agentId>` and read the `role` field
   --agentId <envelope's top-level agentId>  # pass through verbatim — used to locate the signing account in multi-account setups
+  --jobTitle <message.jobTitle>        # pass through if present in the envelope; saves a common-context API call for title
 ```
 
 > 🚨 **MANDATORY — "first action" is a non-negotiable hard requirement**: after receiving a `source:"system"` envelope, **your first tool call MUST be `next-action`** (apart from the `agent get` needed to identify the role). Any other tool call before that is **strictly forbidden** — especially **`sessions_spawn`** (most common violation, see counter-example 5), `session_status`, task-status queries, historical-task listings, `common context`, or any kind of lookup. There is **no** "let me get a sense of the situation before deciding whether to call next-action" scenario — the answer is **always "invoke immediately"**, with zero exceptions and no room for negotiation. Violating this rule = task flow stalls + user funds frozen. **This applies uniformly to every sub session** — task sub / evaluate sub / backup sub, no exceptions.
