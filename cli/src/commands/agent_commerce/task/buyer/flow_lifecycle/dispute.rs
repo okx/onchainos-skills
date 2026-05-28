@@ -83,7 +83,7 @@ pub(crate) fn dispute_evidence(ctx: &FlowContext<'_>) -> String {
     "[Current Action] Upload arbitration evidence\n\
      [Role] User (User Agent)\n\n\
      **Step 1 -- Extract evidence content from the user's relay:**\n\
-     Routed in via `[USER_DECISION_RELAY] decision: <user verbatim>`. The verbatim text IS the evidence (the pending-decisions-v2 entry was already cleared by `resolve` in the user-session) — extract:\n\
+     Routed in via the `--data` argument on next-action (system envelope `event:\"user_decision_job_disputed\"`, `message.data:<user verbatim>`). The verbatim text IS the evidence (the pending-decisions-v2 entry was already cleared by `resolve` in the user-session) — extract:\n\
      - Text summary → the text portion the user wrote\n\
      - Image path (if the user provided a local file path) → `--image` parameter\n\
      **At least one** of text and image is required.\n\n\
