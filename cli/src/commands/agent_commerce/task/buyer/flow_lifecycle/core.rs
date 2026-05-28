@@ -336,16 +336,17 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20Quality standards: <qualityStandards>\n\n\
      **B-Step 2 — Auto-rate the ASP:**\n\
-     Based on the task details (description, quality standards) and the deliverable content you just notified, generate a score (0–5 integer) and a one-sentence description.\n\
-     Scoring guide: 5 = exceeds expectations, 4 = fully meets, 3 = acceptable with minor gaps, 2 = partially meets, 1 = mostly inadequate, 0 = did not deliver.\n\
+     Based on the deliverable content vs the task description and quality standards, generate:\n\
+     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
+     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
      Then execute:\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
      **B-Step 2.5 — Notify the user of the submitted rating** ({l10n_dispatch}):\n\
      After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
-     ✅ content (fill `<score>` and `<description>` with the values you just used in B-Step 2):\n\
+     ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
      {rating_notify}\n\n\
      **B-Step 3 — Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
@@ -451,16 +452,17 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      \x20\x20content:\n\
      {completed_escrow_notify}\n\n\
      **A-Step 2 -- Auto-rate the ASP:**\n\
-     Based on the task details (description, quality standards) and the deliverable that was reviewed, generate a score (0–5 integer) and a one-sentence description.\n\
-     Scoring guide: 5 = exceeds expectations, 4 = fully meets, 3 = acceptable with minor gaps, 2 = partially meets, 1 = mostly inadequate, 0 = did not deliver.\n\
+     Based on the deliverable that was reviewed vs the task description and quality standards, generate:\n\
+     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
+     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
      Then execute:\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
      **A-Step 2.5 -- Notify the user of the submitted rating** ({l10n_dispatch}):\n\
      After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
-     ✅ content (fill `<score>` and `<description>` with the values you just used in A-Step 2):\n\
+     ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in A-Step 2; fill `<title>` from task context):\n\
      {rating_notify}\n\n\
      **A-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\

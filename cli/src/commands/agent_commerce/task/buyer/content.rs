@@ -147,9 +147,9 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
 /// User notification after the buyer agent auto-rates the ASP.
 pub fn rating_submitted_user_notify(job_id: &str) -> String {
     format!(
-        "[Rating Submitted] Job `{job_id}` — your agent has rated the ASP.\n\
-         - Score: <score>/5 ★\n\
-         - Evaluation: <description>"
+        "[📝 Rating Submitted] Task <title> (`{job_id}`) — rated.\n\
+         Score: <score> / 5.00\n\
+         💬 Comment: <description>"
     )
 }
 

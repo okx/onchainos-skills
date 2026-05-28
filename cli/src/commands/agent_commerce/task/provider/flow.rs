@@ -352,17 +352,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
              content:\n\
              {user_notify}\n\n\
              **Step 3 — Auto-rate the User Agent (buyer):**\n\
-             Based on the task details (description, requirements clarity, communication) and the overall collaboration experience, generate a score (0–5 integer) and a one-sentence description.\n\
-             Scoring guide: 5 = excellent buyer (clear requirements, timely responses), 4 = good, 3 = acceptable, 2 = vague requirements or slow, 1 = problematic, 0 = abusive/non-responsive.\n\
+             Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
+             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent buyer (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
+             \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
              Then execute:\n\
              ```bash\n\
-             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
+             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from Step 1 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 3.5 — Notify the user of the submitted rating**:\n\
              After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             ✅ content (fill `<score>` and `<description>` with the values you just used in Step 3):\n\
+             ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
              {rating_notify}\n\n\
              **Step 4 — Terminal wrap-up (keep the sub session):**\n\
              {terminal_session_hint}\n\
@@ -406,17 +407,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
              \x20\x20Nothing to claim:\n\
              {dispute_won_no_claim}\n\n\
              **A-Step 4 — Auto-rate the User Agent (buyer):**\n\
-             Based on the task details and the overall collaboration (requirements clarity, communication, dispute outcome — you won), generate a score (0–5 integer) and a one-sentence description.\n\
-             Scoring guide: provider won dispute → buyer was likely at fault; score 0–3 depending on severity. If the dispute was a misunderstanding, score higher.\n\
+             Based on the task description, requirements clarity, communication, and dispute outcome (you won), generate:\n\
+             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: provider won dispute → buyer was likely at fault; 0.00–3.00 depending on severity. If the dispute was a misunderstanding, score higher.\n\
+             \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
              Then execute:\n\
              ```bash\n\
-             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
+             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from A-Step 3 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **A-Step 4.5 — Notify the user of the submitted rating**:\n\
              After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             ✅ content (fill `<score>` and `<description>` with the values you just used in A-Step 4):\n\
+             ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in A-Step 4; fill `<title>` from task context):\n\
              {rating_notify}\n\n\
              ━━━━━━━━━━━━━ Branch B: jobStatus=failed (ASP lost) ━━━━━━━━━━━━━\n\n\
              **B-Step 1 — Use `xmtp_dispatch_user` to notify the user of the loss**:\n\n\
@@ -427,17 +429,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
              content:\n\
              {dispute_lost}\n\n\
              **B-Step 2 — Auto-rate the User Agent (buyer):**\n\
-             Based on the task details and the dispute outcome (you lost — buyer's rejection was upheld), generate a score (0–5 integer) and a one-sentence description.\n\
-             Scoring guide: provider lost dispute → buyer was likely right; score 3–5. Adjust based on whether the dispute felt fair.\n\
+             Based on the task description, requirements clarity, and dispute outcome (you lost — buyer's rejection was upheld), generate:\n\
+             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: provider lost dispute → buyer was likely right; 3.00–5.00. Adjust based on whether the dispute felt fair.\n\
+             \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
              Then execute:\n\
              ```bash\n\
-             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
+             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from B-Step 1 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **B-Step 2.5 — Notify the user of the submitted rating**:\n\
              After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             ✅ content (fill `<score>` and `<description>` with the values you just used in B-Step 2):\n\
+             ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
              {rating_notify}\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
              {terminal_session_hint}\n"

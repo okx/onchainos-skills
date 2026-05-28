@@ -150,16 +150,17 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      content:\n\
      {dispute_lost}\n\n\
      **Step 4 -- Auto-rate the ASP:**\n\
-     Based on the task details (description, quality standards), the deliverable, and the arbitration outcome (user won / lost), generate a score (0–5 integer) and a one-sentence description.\n\
-     Scoring guide: user won (provider at fault) → score 0–2; user lost (provider delivered adequately) → score 3–5. Adjust within the range based on the specific circumstances.\n\
+     Based on the deliverable vs the task description, quality standards, and the arbitration outcome (user won / lost), generate:\n\
+     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: user won (provider at fault) → 0.00–2.00; user lost (provider delivered adequately) → 3.00–5.00. Adjust within the range based on specific circumstances.\n\
+     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
      Then execute:\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 2 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
      **Step 4.5 -- Notify the user of the submitted rating** ({l10n_dispatch}):\n\
      After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
-     ✅ content (fill `<score>` and `<description>` with the values you just used in Step 4):\n\
+     ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 4; fill `<title>` from task context):\n\
      {rating_notify}\n\n\
      **Step 5 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
