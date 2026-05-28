@@ -501,9 +501,11 @@ agent draft update <jobId> [--title <txt>] [--description <txt>] [--description-
 
 Partial update of a draft. At least one field must be provided. Validation rules are the same as `draft create` (validate only provided fields).
 
+⚠️ `<jobId>` is a **positional argument**, NOT a `--job-id` flag.
+
 | Parameter | Required | Description |
 |---|---|---|
-| `<jobId>` | ✅ | Draft job ID |
+| `<jobId>` | ✅ | Draft job ID (positional, not a flag) |
 | (all other flags) | | Same as `draft create`; only provided fields are updated |
 
 ### draft delete
@@ -512,11 +514,13 @@ Partial update of a draft. At least one field must be provided. Validation rules
 agent draft delete <jobId>
 ```
 
+⚠️ `<jobId>` is a **positional argument**, NOT a `--job-id` flag.
+
 Delete a draft permanently (off-chain only; no on-chain effect).
 
 | Parameter | Required | Description |
 |---|---|---|
-| `<jobId>` | ✅ | Draft job ID |
+| `<jobId>` | ✅ | Draft job ID (positional, not a flag) |
 
 ### draft publish
 
@@ -524,11 +528,13 @@ Delete a draft permanently (off-chain only; no on-chain effect).
 agent draft publish <jobId>
 ```
 
+⚠️ `<jobId>` is a **positional argument**, NOT a `--job-id` flag.
+
 Publish a draft on-chain. The CLI fetches the draft detail, validates all required fields (title, description ≥ 20 chars, budget > 0, max-budget ≥ budget, currency, both deadlines in range), performs a blocking balance check, then signs and broadcasts the transaction. The `jobId` is preserved — attachments saved under `~/.onchainos/task/<jobId>/attachments/` carry over without migration.
 
 | Parameter | Required | Description |
 |---|---|---|
-| `<jobId>` | ✅ | Draft job ID |
+| `<jobId>` | ✅ | Draft job ID (positional, not a flag) |
 
 After publish, the task enters the normal `job_created` → buyer flow (recommend → negotiate).
 

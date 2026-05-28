@@ -244,7 +244,7 @@ Before calling `draft publish`, the agent must verify all publish-required field
 2. Verify all required fields: title, description (≥ 20 chars), summary, budget (> 0), max-budget (≥ budget), currency (USDT/USDG), both deadlines in range.
 3. If fields are missing → show a table with all fields (filled values shown, missing fields marked `❌ Required`). For user-provided fields (description, budget, currency, deadlines), guide the user to provide them — **do NOT auto-fill**. For title and summary, agent auto-generates from description if description is present.
 4. After the user provides all missing fields → call `onchainos agent draft update <jobId> --<field> <value> ...` to persist the new values.
-5. Then call `onchainos agent draft publish <jobId>`.
+5. Then call `onchainos agent draft publish <jobId>` (⚠️ `<jobId>` is a **positional argument**, NOT `--job-id`).
 
 The CLI performs its own validation as a safety net. After a successful publish, the task enters the normal `job_created` flow (recommend → negotiate). The `jobId` is preserved — attachments saved during the draft phase carry over.
 

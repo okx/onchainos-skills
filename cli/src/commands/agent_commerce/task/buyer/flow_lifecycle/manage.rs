@@ -267,6 +267,7 @@ Step 3 -- Call draft publish CLI
 ```bash
 onchainos agent draft publish {job_id}
 ```
+⚠️ `{job_id}` is a **positional argument**, NOT a flag. Do NOT use `--job-id`.
 
 This command validates all required fields, checks balance (blocking), signs the transaction, and broadcasts on-chain.
 
