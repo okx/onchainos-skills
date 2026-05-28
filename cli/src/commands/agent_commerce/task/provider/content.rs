@@ -165,6 +165,15 @@ pub fn submit_deadline_warn_user_prompt(short_id: &str) -> String {
     )
 }
 
+/// User notification after the provider agent auto-rates the buyer.
+pub fn rating_submitted_user_notify(job_id: &str) -> String {
+    format!(
+        "\x20\x20\x20\x20[Rating Submitted] Job {job_id} (<title>) — your agent has rated the User Agent.\n\
+         \x20\x20\x20\x20  - Score: <score>/5 ★\n\
+         \x20\x20\x20\x20  - Evaluation: <description>"
+    )
+}
+
 /// `Event::DisputeResolved` branch B (ASP loses) — B-Step 1 user notify.
 pub fn dispute_lost_user_notify(job_id: &str) -> String {
     format!(

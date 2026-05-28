@@ -122,6 +122,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
 
     let dispute_won = super::super::content::dispute_won_user_notify(job_id, title_display);
     let dispute_lost = super::super::content::dispute_lost_user_notify(job_id, title_display);
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
     format!(
     "[Current Status] dispute_resolved (arbitration ruling issued)\n\
      [Role] User (User Agent)\n\n\
@@ -156,6 +157,10 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 2 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
+     **Step 4.5 -- Notify the user of the submitted rating** ({l10n_dispatch}):\n\
+     After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
+     ✅ content (fill `<score>` and `<description>` with the values you just used in Step 4):\n\
+     {rating_notify}\n\n\
      **Step 5 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Arbitration flow fully complete.\n"

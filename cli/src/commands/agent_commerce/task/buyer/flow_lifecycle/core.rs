@@ -170,6 +170,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let terminal_session_hint = ctx.terminal_session_hint;
     let follow_end = super::super::flow::FOLLOW_PLAYBOOK_END_TURN;
     let idem_check = super::super::flow::idempotency_check(job_id);
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
 
     format!(
     "[Current Status] job_submitted (ASP has submitted the deliverable)\n\
@@ -342,6 +343,10 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
+     **B-Step 2.5 — Notify the user of the submitted rating** ({l10n_dispatch}):\n\
+     After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
+     ✅ content (fill `<score>` and `<description>` with the values you just used in B-Step 2):\n\
+     {rating_notify}\n\n\
      **B-Step 3 — Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\n\
@@ -419,6 +424,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
 
     let completed_escrow_notify = super::super::content::job_completed_escrow_user_notify(job_id, title_display);
     let completed_x402_notify = super::super::content::job_completed_x402_user_notify(job_id, title_display);
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
     format!(
     "[Current Status] job_completed (task payment pipeline complete)\n\
      [Role] User (User Agent)\n\n\
@@ -452,6 +458,10 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-5> --task-id {job_id} --description \"<one-sentence evaluation>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
+     **A-Step 2.5 -- Notify the user of the submitted rating** ({l10n_dispatch}):\n\
+     After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
+     ✅ content (fill `<score>` and `<description>` with the values you just used in A-Step 2):\n\
+     {rating_notify}\n\n\
      **A-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\n\

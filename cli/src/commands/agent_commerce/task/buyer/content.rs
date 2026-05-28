@@ -142,6 +142,17 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
     )
 }
 
+// ── Auto-rating notification ──────────────────────────────────────
+
+/// User notification after the buyer agent auto-rates the ASP.
+pub fn rating_submitted_user_notify(job_id: &str) -> String {
+    format!(
+        "[Rating Submitted] Job `{job_id}` — your agent has rated the ASP.\n\
+         - Score: <score>/5 ★\n\
+         - Evaluation: <description>"
+    )
+}
+
 // ── Event::JobRefunded ─────────────────────────────────────────────
 
 /// `Event::JobRefunded` — refund settled (B-5-1).
