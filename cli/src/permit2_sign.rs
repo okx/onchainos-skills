@@ -27,6 +27,26 @@ use crate::wallet_store;
 
 type Signature = String;
 
+/// HPKE-decrypt the session signing seed and Ed25519-sign `msg_hash`.
+/// Returns `(signature_b64, session_cert)`. Seed material is zeroized as
+/// soon as it's no longer needed.
+fn session_sign_msg_hash(msg_hash: &str) -> Result<(String, String)> {
+    let session = wallet_store::load_session()?.ok_or_else(|| {
+        anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
+    })?;
+    let session_key = keyring_store::get("session_key")
+        .map_err(|_| anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
+
+    let mut signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
+    let mut signing_seed_b64 = B64.encode(signing_seed.as_slice());
+    signing_seed.zeroize();
+    let signature_b64 = crate::crypto::ed25519_sign_hex(msg_hash, &signing_seed_b64)?;
+    signing_seed_b64.zeroize();
+
+    Ok((signature_b64, session.session_cert))
+}
+
 pub async fn sign_exact_permit2(
     chain_index: &str,
     payer_addr: &str,
@@ -63,19 +83,7 @@ pub async fn sign_upto_permit2_session(
 ) -> Result<(UptoPermit2Payload, String)> {
     let typed_data = build_upto_permit2_typed_data(input);
     let msg_hash = tee_gen_msg_hash(chain_index, &typed_data).await?;
-
-    let session = wallet_store::load_session()?.ok_or_else(|| {
-        anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
-    })?;
-    let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
-
-    let mut signing_seed =
-        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
-    let mut signing_seed_b64 = B64.encode(signing_seed.as_slice());
-    signing_seed.zeroize();
-    let signature_b64 = crate::crypto::ed25519_sign_hex(&msg_hash, &signing_seed_b64)?;
-    signing_seed_b64.zeroize();
+    let (signature_b64, session_cert) = session_sign_msg_hash(&msg_hash)?;
 
     let payload = UptoPermit2Payload {
         signature: signature_b64,
@@ -95,7 +103,7 @@ pub async fn sign_upto_permit2_session(
             },
         },
     };
-    Ok((payload, session.session_cert))
+    Ok((payload, session_cert))
 }
 
 /// POST `gen-msg-hash` with EIP-712 typed-data; returns `0x`-prefixed msgHash.
@@ -139,25 +147,14 @@ async fn tee_sign_eip712(
     let msg_hash = tee_gen_msg_hash(chain_index, typed_data).await?;
 
     let access_token = ensure_tokens_refreshed().await?;
-    let session = wallet_store::load_session()?.ok_or_else(|| {
-        anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
-    })?;
-    let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
-
-    let mut signing_seed =
-        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
-    let mut signing_seed_b64 = B64.encode(signing_seed.as_slice());
-    signing_seed.zeroize();
-    let session_signature = crate::crypto::ed25519_sign_hex(&msg_hash, &signing_seed_b64)?;
-    signing_seed_b64.zeroize();
+    let (session_signature, session_cert) = session_sign_msg_hash(&msg_hash)?;
 
     let mut client = WalletApiClient::new()?;
 
     let sign_body = json!({
         "chainIndex":  chain_index,
         "from":        payer_addr,
-        "sessionCert": &session.session_cert,
+        "sessionCert": session_cert,
         "payload": [{
             "signType":         "eip712",
             "message":          typed_data,
