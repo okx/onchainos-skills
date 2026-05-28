@@ -289,8 +289,16 @@ The next-action script and the role files (`provider.md` / `buyer.md` / `evaluat
 - Dispatching back to yourself after receiving a `[USER_DECISION_RELAY]` (loop).
 - Crafting `source:"system"` system envelopes yourself (**only the real chain may emit those**).
 - Making decisions out of thin air on fields the user did not provide (reason / evidence / image path / quote amount) — you must enqueue a decision via `pending-decisions-v2 request` (CLI builds the `xmtp_prompt_user` playbook internally) to let the user adjudicate first.
+  **Scope: buyer / provider roles only.** The evaluator role does NOT use `pending-decisions-v2 request` for any chain-event notification. Complete evaluator event list (14 events, all notification-only):
+  - **Staking series**: `staked` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled` / `stake_stopped`
+  - **Arbitration series**: `evaluator_selected` / `vote_committed` / `vote_commit_deadline_warn` / `reveal_started` / `vote_revealed` / `dispute_resolved` / `cooldown_entered` / `round_failed` / `reward_claimed`
+
+  Arbitration outcomes are settled by the chain and the agent's own rubric-driven `vote-commit` — the user has no decision power here. For all 14 events above, use the `tool:` line each next-action body literally names (always `xmtp_dispatch_user`).
+  (Exception: the cross-role CLI-failure escalation in `_shared/exception-escalation.md §2` still uses `pending-decisions-v2 request`; that's an operational fault path, not a chain event.)
 
 🚫 **Counter-example**: a sub used `pending-decisions-v2 request` to let the user choose between dispute / refund; the user replied "my work is fine"; the user-session agent thought "the rule says to relay, but I should just execute on the user's behalf", then ran `onchainos agent dispute raise 123 ...` — **wrong**! Exactly the "being clever" the rules forbid, with no exceptions.
+
+🛑 **Hard rule — never substitute `pending-decisions-v2 request` for `xmtp_dispatch_user`**: when the next-action body literally says `tool: xmtp_dispatch_user`, call `xmtp_dispatch_user` — do NOT "upgrade" it to `pending-decisions-v2 request` on the reasoning that "the event involves vote / Provider / Client / outcome / amount fields". 
 
 ### 4. Tool invocation steps (XMTP plugin — the 11-tool set)
 
