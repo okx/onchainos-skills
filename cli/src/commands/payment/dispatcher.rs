@@ -18,9 +18,9 @@ pub enum PaymentCommand {
     /// Sign a payment authorization for an HTTP 402-gated resource (from `accepts[]`) and return the proof
     #[command(name = "pay")]
     X402Pay {
-        /// JSON accepts array from the 402 response (decoded.accepts).
-        /// The CLI selects the best scheme automatically
-        /// (prefers "exact", falls back to "aggr_deferred", then first entry).
+        /// JSON accepts array from the 402 response. CLI auto-selects the
+        /// best scheme (exact > aggr_deferred > first entry; Permit2 / upto
+        /// routes emit `permit2Authorization`).
         #[arg(long)]
         accepts: String,
         /// Payer address (optional, defaults to selected account)
@@ -78,7 +78,7 @@ pub enum PaymentCommand {
 pub enum SessionCommand {
     /// Open a payment channel.
     /// - feePayer=true (default): TEE-sign EIP-3009 deposit + initial voucher, emit transaction payload.
-    /// - feePayer=false: require --tx-hash for the open tx you broadcast; still TEE-sign initial voucher.
+    /// - feePayer=false: require --tx-hash AND --salt for the open tx you broadcast; still TEE-sign initial voucher.
     Open {
         /// Full WWW-Authenticate header value from 402 response
         #[arg(long)]
@@ -93,6 +93,11 @@ pub enum SessionCommand {
         /// Required when challenge.methodDetails.feePayer=false.
         #[arg(long)]
         tx_hash: Option<String>,
+        /// Hash mode only: the bytes32 salt (0x + 64 hex) you passed to
+        /// `escrow.open(...)` on-chain. Required with `--tx-hash`; mismatch
+        /// produces a channelId reject. Ignored in transaction mode.
+        #[arg(long)]
+        salt: Option<String>,
         /// Initial voucher cumulativeAmount (atomic units). Default "0" (no prepay).
         /// Takes priority over --prepay-first when both given.
         #[arg(long)]
@@ -231,11 +236,26 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             let accepts_val: Value =
                 serde_json::from_str(&accepts).context("--accepts must be a valid JSON array")?;
             let (proof, _entry) = payment_flow::sign_payment_local(&accepts_val, None).await?;
-            output::success(json!({
-                "signature": proof.signature,
-                "authorization": proof.authorization,
-            }));
-            Ok(())
+            // Local-key path only supports EIP-3009 (no TEE session).
+            match proof {
+                payment_flow::PaymentProof::Eip3009 {
+                    signature,
+                    authorization,
+                    ..
+                } => {
+                    output::success(json!({
+                        "signature": signature,
+                        "authorization": authorization,
+                    }));
+                    Ok(())
+                }
+                payment_flow::PaymentProof::Permit2 { .. } | payment_flow::PaymentProof::Upto { .. } => {
+                    Err(anyhow!(
+                        "eip3009-sign produced a Permit2/upto proof, which it should never do — \
+                         this debug command only supports EIP-3009 local signing"
+                    ))
+                }
+            }
         }
         PaymentCommand::Default { action } => cmd_default(action),
         PaymentCommand::A2aPay { command } => a2a_pay::execute(command).await,
@@ -250,6 +270,7 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
                 deposit,
                 from,
                 tx_hash,
+                salt,
                 initial_cum,
                 prepay_first,
             } => {
@@ -258,6 +279,7 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
                     &deposit,
                     from.as_deref(),
                     tx_hash.as_deref(),
+                    salt.as_deref(),
                     initial_cum.as_deref(),
                     prepay_first,
                 )
@@ -462,14 +484,7 @@ async fn cmd_pay(accepts_json: &str, from: Option<&str>) -> Result<()> {
         serde_json::from_str(accepts_json).context("--accepts must be a valid JSON array")?;
     let (proof, _entry) =
         payment_flow::sign_payment_with_preference(&accepts, from, None, None).await?;
-    let mut out = json!({
-        "signature": proof.signature,
-        "authorization": proof.authorization,
-    });
-    if let Some(cert) = proof.session_cert {
-        out["sessionCert"] = json!(cert);
-    }
-    output::success(out);
+    output::success(proof.to_pay_json());
     Ok(())
 }
 
@@ -1183,6 +1198,20 @@ fn random_nonce_hex() -> String {
     format!("0x{}", hex::encode(n))
 }
 
+/// Validate and canonicalize a user-supplied bytes32 hex argument
+/// (e.g. `--salt`). Accepts both `0x...` and bare `...`; returns the
+/// `0x` + 64-lowercase-hex canonical form.
+fn normalize_bytes32_hex(value: &str, label: &str) -> Result<String> {
+    let body = value.trim_start_matches("0x");
+    if body.len() != 64 {
+        bail!("{label} must be 32 bytes (0x + 64 hex chars), got {} chars", body.len());
+    }
+    if !body.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("{label} contains non-hex characters");
+    }
+    Ok(format!("0x{}", body.to_ascii_lowercase()))
+}
+
 /// onchainos payment charge: Charge single payment.
 /// - feePayer=true (default): TEE-sign EIP-3009, emit TransactionPayload (+ splits if present).
 /// - feePayer=false: require --tx-hash, emit HashPayload (client self-broadcasts).
@@ -1358,12 +1387,16 @@ async fn cmd_mpp_charge(
 
 /// onchainos payment session open: Open payment channel.
 /// - feePayer=true (default): TEE-sign EIP-3009 deposit + initial voucher → transaction payload.
-/// - feePayer=false: require --tx-hash of the client-broadcast open tx; still TEE-sign initial voucher.
+/// - feePayer=false: require --tx-hash AND --salt of the client-broadcast open tx;
+///   the salt MUST match the one passed to `escrow.open(...)` on-chain so we can
+///   reproduce the channelId. Initial voucher is still TEE-signed.
+#[allow(clippy::too_many_arguments)]
 async fn cmd_mpp_session_open(
     challenge_header: &str,
     deposit: &str,
     from: Option<&str>,
     tx_hash: Option<&str>,
+    salt_arg: Option<&str>,
     initial_cum_arg: Option<&str>,
     prepay_first: bool,
 ) -> Result<()> {
@@ -1396,13 +1429,31 @@ async fn cmd_mpp_session_open(
     let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
     let payer_addr = payer_addr.as_str();
 
-    // Generate salt + compute channelId (needed for both modes — voucher signature binds to it)
-    let salt = {
-        use rand::RngCore;
-        let mut s = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut s);
-        format!("0x{}", hex::encode(s))
+    // hash mode: client already broadcast escrow.open(salt=X); CLI must
+    // recompute channelId with the SAME X, so --salt is required.
+    // transaction mode: nothing on-chain yet, fresh OS-random is fine.
+    let salt = match (fee_payer, salt_arg) {
+        (false, Some(s)) => normalize_bytes32_hex(s, "--salt")?,
+        (false, None) => bail!(
+            "hash mode (feePayer=false) requires --salt: the same bytes32 you \
+             passed to your on-chain `escrow.open(...)` call (0x + 64 hex chars)"
+        ),
+        (true, Some(_)) => bail!(
+            "--salt is only valid when challenge.methodDetails.feePayer=false \
+             (hash mode); transaction mode generates its own salt during \
+             `escrow.openWithAuthorization(...)`. Drop --salt or switch modes."
+        ),
+        (true, None) => {
+            use rand::RngCore;
+            let mut s = [0u8; 32];
+            rand::rngs::OsRng.fill_bytes(&mut s);
+            format!("0x{}", hex::encode(s))
+        }
     };
+    // Reject wrong-mode --tx-hash before the TEE round-trip below.
+    if fee_payer && tx_hash.is_some() {
+        bail!("--tx-hash is only valid when challenge.methodDetails.feePayer=false");
+    }
     // authorizedSigner must be the 0x0 sentinel (not payer). The contract
     // sentinel means "payer is the voucher signer"; the same value goes into
     // both the channelId hash and the EIP-3009 nonce. Passing payer triggers
@@ -1449,15 +1500,11 @@ async fn cmd_mpp_session_open(
         // Hash mode: client already broadcast the open tx, just wrap the hash
         let hash = tx_hash.ok_or_else(|| {
             anyhow!(
-                "challenge.methodDetails.feePayer=false requires --tx-hash (broadcast open tx yourself first)"
+                "hash mode (feePayer=false) requires --tx-hash (broadcast \
+                 `escrow.open(...)` yourself first)"
             )
         })?;
-        if !hash.starts_with("0x")
-            || hash.len() != 66
-            || !hash[2..].chars().all(|c| c.is_ascii_hexdigit())
-        {
-            bail!("--tx-hash must be 0x + 64 hex chars");
-        }
+        let hash = normalize_bytes32_hex(hash, "--tx-hash")?;
         // authorizedSigner omitted = payer (both contract and SDK resolve
         // 0x0 / omitted to payer; channelId derivation matches).
         //
@@ -1493,10 +1540,6 @@ async fn cmd_mpp_session_open(
             "wallet": payer_addr,
         }));
         return Ok(());
-    }
-
-    if tx_hash.is_some() {
-        bail!("--tx-hash is only valid when challenge.methodDetails.feePayer=false");
     }
 
     // Transaction mode: TEE sign EIP-3009 for deposit
