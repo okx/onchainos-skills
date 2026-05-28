@@ -144,6 +144,7 @@ Rules:
 - The summary always goes inside the table.
 - When the description is ≤ 200 chars, put it in the table; when > 200 chars, write `见下方` / `See below` in that row and render the full text as prose under the table.
 - Do not display the acceptance criteria field.
+- Do NOT add a Visibility / 可见性 row — visibility is not set at creation time and does not belong in the creation form.
 - Chinese/English field labels match user language.
 - If attachments are present, add a row: `附件` / `Attachments` with the file count and names (e.g. `2 files: spec.pdf, mockup.png`).
 - Footer must be a blockquote asking for confirmation.

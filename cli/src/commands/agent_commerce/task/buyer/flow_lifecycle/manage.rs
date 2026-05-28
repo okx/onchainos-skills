@@ -13,6 +13,7 @@ Skipping skill loading = not knowing the tool whitelist / communication protocol
 [Session Type] user session (talking directly to the user)
 
 🛑 **No skipping**: you MUST finish collecting all fields → show the confirmation form → wait for an explicit user confirmation before calling the CLI.
+❌ **Do NOT use `draft create` + `draft publish` as a substitute for `create-task`** — they are completely different flows. `create-task` publishes the task on-chain in one step. The draft flow (`draft create` → `draft update` → `draft publish`) is ONLY for when the user explicitly says \"save as draft\". If the user says \"publish a task\" / \"发布任务\" / \"create a task\", you MUST use `create-task` (Step 6), NOT the draft path.
 💡 **Draft shortcut**: if the user says \"save as draft\" / \"先保存草稿\" / \"草稿\" at ANY point during field collection, **jump to Step 6-D**. Draft requires `--description` (≥20 chars, user-provided); `--title` and `--description-summary` are agent-generated from description. If description is missing or <20 chars, ask the user to provide/expand it before saving.
 
 ================================================
@@ -90,6 +91,8 @@ Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/referenc
 | Delivery window | <Nh> (deliverable must be submitted within N hours of acceptance) |
 | Designated provider | <agentId> (🛑 only show this row if the user explicitly designated one; **otherwise omit the entire row** -- do not write \"none\" or \"none (public task)\" or any placeholder. Tasks default to private; \"no designated provider\" != \"public task\") |
 
+🚫 **The form MUST contain ONLY the fields listed above.** Do NOT add a Visibility / 可见性 row — visibility is not set at creation time.
+
 > Confirm and publish? Or save as draft?
 
 ⚠️ Use Chinese field labels for Chinese conversations, English labels for English conversations.
@@ -113,8 +116,10 @@ After the user replies, determine which path to take:
 - **Ambiguous reply** (e.g. \"OK\" without context, or unrelated text) → ask the user to clarify: publish on-chain now, or save as draft?
 
 ================================================
-Step 6 -- Publish path: call create-task CLI (on-chain immediately)
+Step 6 -- ✅ DEFAULT Publish path: call create-task CLI (on-chain immediately)
 ================================================
+🟢 **This is the default path** — when the user confirms the form (or says \"publish\" / \"发布\"), use `create-task` below.
+❌ Do NOT call `draft create` here — `draft create` is only for Step 6-D when the user explicitly asks for a draft.
 
 ```bash
 onchainos agent create-task \\
@@ -173,7 +178,8 @@ After success, call `xmtp_dispatch_user` to notify the user:\n\
 ===============================================================\n\n\
 ================================================\n\
 Step 6-D -- Draft path: save as draft (off-chain)\n\
-================================================\n\n\
+================================================\n\
+🛑 **ONLY enter this step if the user EXPLICITLY said \"save as draft\" / \"草稿\" / \"先保存\"**. If the user said \"publish\" / \"发布\" / \"confirm\" / confirmed the form → you are in the WRONG step; go back to Step 6.\n\n\
 Step 6-D.1 -- Check required fields for draft creation\n\n\
 Draft creation requires `--description` (≥ 20 chars, user-provided), `--title` (agent-generated from description, ≤ 30 chars), and `--description-summary` (agent-generated from description, ≤ 200 chars).\n\n\
 Check whether the user has provided a description (≥ 20 chars). If not, ask the user to provide or expand it.\n\
