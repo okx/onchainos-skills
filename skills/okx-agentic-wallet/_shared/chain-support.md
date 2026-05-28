@@ -4,13 +4,14 @@
 
 The CLI accepts human-readable chain names and resolves them automatically.
 
-## Wallet address creation (6 chains)
+## Wallet address creation (7 chains)
 
-The following 6 chains support **wallet address creation** (i.e., you can generate a wallet address on these chains):
+The following 7 chains support **wallet address creation** (i.e., you can generate a wallet address on these chains):
 
 | Chain | Name | chainIndex |
 |---|---|---|
 | XLayer | `xlayer` | `196` |
+| XLayer Testnet | `xlayer_test` | `1952` |
 | Solana | `solana` | `501` |
 | Ethereum | `ethereum` | `1` |
 | Base | `base` | `8453` |
