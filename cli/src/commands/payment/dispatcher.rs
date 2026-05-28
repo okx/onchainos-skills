@@ -18,9 +18,9 @@ pub enum PaymentCommand {
     /// Sign a payment authorization for an HTTP 402-gated resource (from `accepts[]`) and return the proof
     #[command(name = "pay")]
     X402Pay {
-        /// JSON accepts array from the 402 response (decoded.accepts).
-        /// The CLI selects the best scheme automatically
-        /// (prefers "exact", falls back to "aggr_deferred", then first entry).
+        /// JSON accepts array from the 402 response. CLI auto-selects the
+        /// best scheme (exact > aggr_deferred > first entry; Permit2 / upto
+        /// routes emit `permit2Authorization`).
         #[arg(long)]
         accepts: String,
         /// Payer address (optional, defaults to selected account)
@@ -236,11 +236,26 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             let accepts_val: Value =
                 serde_json::from_str(&accepts).context("--accepts must be a valid JSON array")?;
             let (proof, _entry) = payment_flow::sign_payment_local(&accepts_val, None).await?;
-            output::success(json!({
-                "signature": proof.signature,
-                "authorization": proof.authorization,
-            }));
-            Ok(())
+            // Local-key path only supports EIP-3009 (no TEE session).
+            match proof {
+                payment_flow::PaymentProof::Eip3009 {
+                    signature,
+                    authorization,
+                    ..
+                } => {
+                    output::success(json!({
+                        "signature": signature,
+                        "authorization": authorization,
+                    }));
+                    Ok(())
+                }
+                payment_flow::PaymentProof::Permit2 { .. } | payment_flow::PaymentProof::Upto { .. } => {
+                    Err(anyhow!(
+                        "eip3009-sign produced a Permit2/upto proof, which it should never do — \
+                         this debug command only supports EIP-3009 local signing"
+                    ))
+                }
+            }
         }
         PaymentCommand::Default { action } => cmd_default(action),
         PaymentCommand::A2aPay { command } => a2a_pay::execute(command).await,
@@ -469,13 +484,38 @@ async fn cmd_pay(accepts_json: &str, from: Option<&str>) -> Result<()> {
         serde_json::from_str(accepts_json).context("--accepts must be a valid JSON array")?;
     let (proof, _entry) =
         payment_flow::sign_payment_with_preference(&accepts, from, None, None).await?;
-    let mut out = json!({
-        "signature": proof.signature,
-        "authorization": proof.authorization,
-    });
-    if let Some(cert) = proof.session_cert {
-        out["sessionCert"] = json!(cert);
-    }
+    let out = match proof {
+        payment_flow::PaymentProof::Eip3009 {
+            signature,
+            authorization,
+            session_cert,
+        } => {
+            let mut v = json!({
+                "signature": signature,
+                "authorization": authorization,
+            });
+            if let Some(cert) = session_cert {
+                v["sessionCert"] = json!(cert);
+            }
+            v
+        }
+        payment_flow::PaymentProof::Permit2 {
+            signature,
+            permit2_authorization,
+        } => json!({
+            "signature": signature,
+            "permit2Authorization": permit2_authorization,
+        }),
+        payment_flow::PaymentProof::Upto {
+            signature,
+            permit2_authorization,
+            session_cert,
+        } => json!({
+            "signature": signature,
+            "permit2Authorization": permit2_authorization,
+            "sessionCert": session_cert,
+        }),
+    };
     output::success(out);
     Ok(())
 }

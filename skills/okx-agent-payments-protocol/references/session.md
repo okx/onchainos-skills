@@ -303,7 +303,15 @@ CLI signs an EIP-712 Voucher(channelId, final_cum) via TEE — same signing path
 Authorization: <authorization_header>
 ```
 
-Seller settles on-chain (transfers `final_cum` to merchant, refunds the rest to payer) and returns a receipt. **Clear session state** — channel is closed.
+Seller settles on-chain (transfers `final_cum` to merchant, refunds the rest to payer) and returns a `Payment-Receipt` header (base64-encoded JSON). Decode with:
+
+```bash
+echo '<header value>' | base64 -d | jq .
+```
+
+关键字段：`status` / `transaction`（on-chain tx hash，S3.4 报给用户用）/ `chainId`。
+
+**Clear session state** — channel is closed.
 
 ### S3.4: Confirm to user
 
