@@ -61,18 +61,36 @@ The skill does not run its own preview / yes-no gate; trust is delegated upstrea
 onchainos payment a2a-pay pay --payment-id <paymentId>
 ```
 
-The CLI fetches the on-server challenge, TEE-signs the EIP-3009 authorization, and submits the credential. The successful response shape:
+The CLI fetches the on-server challenge, TEE-signs the EIP-3009 authorization, and submits the credential. Two outcomes:
+
+**Accepted** — `ok:true`, exit code 0:
 
 ```json
 {
-  "payment_id":   "a2a_xxx",
-  "status":       "<status>",
-  "tx_hash":      "<hash or null>",
-  "valid_after":  0,
-  "valid_before": 1746000000,
-  "signature":    "0x..."
+  "ok": true,
+  "data": {
+    "payment_id":   "a2a_xxx",
+    "status":       "<status>",
+    "tx_hash":      "<hash or null>",
+    "valid_after":  0,
+    "valid_before": 1746000000,
+    "signature":    "0x..."
+  }
 }
 ```
+
+Proceed to Step 2 (auto-poll).
+
+**Rejected** — server returned `data.success:false` (e.g. `errorReason:"insufficient_balance"`). CLI surfaces it as a hard failure: `ok:false`, exit code 1, message embeds the reason verbatim:
+
+```json
+{
+  "ok": false,
+  "error": "payment a2a_xxx rejected (reason=<errorReason>)"
+}
+```
+
+**Treat as terminal — do NOT retry `pay`.** Every retry produces a fresh EIP-3009 nonce + signature; if the reason is `insufficient_balance` or similar, retrying wastes a signature without changing the outcome. Tell the user what failed, suggest the obvious remedy (top up balance / ask the seller for a new link), and stop.
 
 ### Step 2 — Auto-poll status to terminal
 
@@ -217,6 +235,7 @@ For any symbol not in the table: render `<minimal> <symbol>` and append `unknown
 | `onchainos wallet status` reports not logged in | Prompt user to run `onchainos wallet login`. Never attempt to sign without a live session. |
 | User provides no `paymentId` | STOP and ask the user for the seller-issued paymentId. |
 | CLI reports `payment ... not payable` / expired challenge / unsupported intent | Relay the error verbatim and surface as a **terminal failure** — do NOT retry signing. |
+| CLI reports `payment ... rejected (reason=<errorReason>)` (post-signing credential refusal — `insufficient_balance`, etc.) | Relay verbatim and surface as a **terminal failure**. Map common `errorReason` values to user remedies: `insufficient_balance` → top up wallet via `okx-agentic-wallet`; otherwise relay the reason and ask seller for a new link. **Do NOT retry `pay`** — burns a fresh nonce + signature without changing the outcome. |
 | `paymentId` not found / 404 from server | Relay the error and ask the user to confirm the paymentId with the seller or upstream caller. |
 | `pay` succeeded but status still `pending` / `settling` after 60s poll budget | Return the current status verbatim + paymentId; tell the user `Status is still <status> after 60s; you can run status again later`. |
 | Server returns 5xx | Surface status code and any `errorMessage` verbatim. **Do not auto-retry `pay`** — every retry produces a fresh EIP-3009 nonce + signature; let the upstream decide. `status` is read-only and safe to retry manually. |

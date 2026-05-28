@@ -163,6 +163,12 @@ The `--force` flag MUST ONLY be added when ALL of the following conditions are m
 >
 > If the intent is ambiguous, **always ask the user to clarify** before proceeding. Never guess.
 
+<MUST>
+**After `wallet send` or `wallet contract-call` returns success with a `txHash`**, display the following message to the user in the user's language (do NOT paraphrase or omit content) alongside the full `txHash`:
+
+> Transaction submitted. The returned Tx Hash is for tracking purposes only — it does NOT mean the transaction has been included on-chain, confirmed, or executed successfully. Final status must be verified by querying the transaction's on-chain confirmation status.
+</MUST>
+
 ### D-GS — Gas Station
 
 Pay gas with stablecoins (USDT/USDC/USDG) when native token is insufficient. Activates **automatically** during `wallet send`.
@@ -515,9 +521,17 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
   | EIP-7702 / 7702 授权 / 取消授权 | 不对用户暴露 | 内部技术术语，不向用户输出。用户问"撤销 7702"/"取消授权" → 统一用"关闭 Gas Station"回应 |
   | enable/disable Gas Station | 开启 / 关闭 Gas Station | 管理 Gas Station 状态的唯一用户可见术语 |
 - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
-- **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible.
 - **Locale-aware output**: All user-facing content must be translated to match the user's language.
-- **Address display format**: When showing wallet addresses, list EVM address once with a chain summary note (X Layer first, then 2 other example chains, then total count). Example: `EVM: 0x1234...abcd (Supports X Layer, Ethereum, Polygon and 16 EVM chains)`. Solana address on a separate line: `Solana: 5xYZ...`. Do NOT enumerate every EVM chain individually.
+- **Address integrity (CRITICAL — funds-loss risk)**: Any on-chain identifier shown to the user (Solana / Bitcoin / non-checksummed address, full EVM `0x` address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout in this session.
+  - **NEVER reconstruct** an address from an abbreviated form (e.g., do not expand `93jq8J...G8d` back to a full address from memory) — re-run the CLI command and copy from fresh stdout.
+  - **NEVER re-transcribe** an address by re-typing it across messages. If the same address must appear again, re-invoke `onchainos wallet addresses --format json` (or `wallet status`) and copy from that fresh JSON.
+  - **NEVER paraphrase, normalize, insert spaces, change case, or line-break inside an on-chain identifier.** Copy the exact byte sequence from CLI stdout — preserve EIP-55 mixed case as emitted; do NOT lowercase.
+  - If verbatim echo is not possible (CLI output no longer in context), **do not guess** — re-invoke the CLI command first.
+  - Rationale: Solana / Bitcoin / pre-EIP-55 hex addresses have no checksum. A single dropped, inserted, or substituted character produces a *different valid address*; funds sent there are unrecoverable. CLI stdout is the only source of truth — agent context is not.
+- **Address display format**: When showing wallet addresses, list the EVM address once with a chain summary note (X Layer first, then 2 other example chains, then total count). User-facing output MUST show the FULL address per "Address integrity" above — never `0x...abcd`-style truncations. Solana address on a separate line. Do NOT enumerate every EVM chain individually.
+  Example (full form, never truncate in real output):
+  - `EVM: 0xAbCdEf0123456789AbCdEf0123456789AbCdEf01 (Supports X Layer, Ethereum, Polygon and other EVM chains)`
+  - `Solana: ExAmPLE1111111111111111111111111111111111111`
 </MUST>
 
 <SHOULD>
