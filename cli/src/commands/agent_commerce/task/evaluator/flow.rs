@@ -175,14 +175,14 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
 
         "dispute_resolved" => format!(
             "[Current Status] dispute_resolved\n\n\
-             Extract from `message`: `jobTitle`, `vote` (0 or 1), `jobStatus` (`completed` = provider won / `rejected` = client won), `slashMinorityBps` + `slashAmount` (lost branch only). **Substitute `<message.jobTitle>` below with the extracted value.**\n\
+             Extract from `message`: `jobTitle`, `vote` (0 or 1), `jobStatus` (`complete` = provider won / `failed` = client won), `slashMinorityBps` + `slashAmount` (lost branch only). **Substitute `<message.jobTitle>` below with the extracted value.**\n\
              Derive the outcome:\n\
-             - `vote = 0` (Approve) → you backed **Client**; you win iff `jobStatus = rejected`\n\
-             - `vote = 1` (Reject) → you backed **Provider**; you win iff `jobStatus = completed`\n\
+             - `vote = 0` (Approve) → you backed **Client**; you win iff `jobStatus = failed`\n\
+             - `vote = 1` (Reject) → you backed **Provider**; you win iff `jobStatus = complete`\n\
              - otherwise → you lost (minority)\n\
              If `vote` is missing → abort this turn and log `missing vote; abort`.\n\n\
              ━━━━━━━━━━━━━ Branch A: WON ━━━━━━━━━━━━━\n\n\
-             Compute `winningSide` from `jobStatus` (`completed` → `Provider`; `rejected` → `Client`).\n\
+             Compute `winningSide` from `jobStatus` (`complete` → `Provider`; `failed` → `Client`).\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20🎉 Arbitration result for task [<message.jobTitle>]: your vote aligned with the majority — reward eligible\n\
