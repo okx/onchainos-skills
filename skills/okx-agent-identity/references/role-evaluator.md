@@ -10,9 +10,8 @@ Fields defined in `field-specs.md`. Inline the four segments (`用途 / 可见�
 
 ```
 1. Ask name
-2. Ask description
-3. Confirmation card → execute create
-4. Post-success card (two visible lines) + same-turn handoff to `okx-agent-task/references/evaluator-staking.md §2`
+2. Confirmation card → execute create
+3. Post-success card (two visible lines) + same-turn handoff to `okx-agent-task/references/evaluator-staking.md §2`
 ```
 
 No pre-create staking gate. No cached-resume flow. Registration is cheap; the post-success card hands off to `okx-agent-task` in the same turn, and the user confirms the stake in their next turn.
@@ -27,7 +26,6 @@ Chinese:
 ```
 好，开始注册新仲裁者身份。接下来会收集以下基本信息：
   1. 名称
-  2. 描述（可选）
 （仲裁者默认不问头像；想设头像直接说。）
 ```
 
@@ -35,7 +33,6 @@ English:
 ```
 Got it — starting a new Evaluator Agent registration. We'll collect:
   1. Name
-  2. Description (optional)
 (No profile photo prompt by default; just say so if you want to set one.)
 ```
 
@@ -50,7 +47,8 @@ The `Q1 / Q2` column labels below are **maintainer-internal indexes**. The promp
 | Q | Chinese prompt | English prompt | Validation |
 |---|---|---|---|
 | Q1 | `你要注册的仲裁者身份叫什么名字？` + 4 segments | `What's the name of this Evaluator Agent?` + 4 segments | non-empty, CN ≤ 30 文字 / EN ≤ 64 chars |
-| Q2 | `用一句话描述你的仲裁领域或专长（可选，回车 / "跳过" 即不填）。` + 4 segments | `Describe your arbitration domain or expertise in a sentence (optional — press enter or reply "skip" to leave blank).` + 4 segments | optional; if supplied, CN ≤ 500 文字 / EN ≤ 500 chars |
+
+> **Description — do NOT prompt, do NOT show in confirmation card when absent.** For Evaluator Agent, skip the description question entirely. If the user volunteers a description in the same message as the name (one-shot capture), accept and record it AND include a `描述` row in the confirmation card for that run; if not volunteered, omit the `描述` row from the confirmation card entirely (do NOT render "未填" or "(not set)") and send `ProfileDescription: ""` on-chain silently. Do NOT ask "描述（可选）" / "description (optional)" in any turn.
 
 No profile-photo prompt by default (Evaluator-Agent dashboards rarely show photos). If the user brings it up, branch to `avatar-upload.md`.
 
@@ -60,7 +58,17 @@ No profile-photo prompt by default (Evaluator-Agent dashboards rarely show photo
 
 Render in the user's language. Pick ONE variant.
 
-Chinese variant:
+Chinese variant (user did NOT volunteer a description — omit 描述 row):
+
+| 字段 | 值 |
+|---|---|
+| 角色 | 仲裁者 |
+| 名字 | Solidity Auditor |
+| 头像 | 默认 |
+
+> 确认无误回复 "执行"。
+
+Chinese variant (user volunteered a description via one-shot capture — include 描述 row):
 
 | 字段 | 值 |
 |---|---|
@@ -70,9 +78,18 @@ Chinese variant:
 | 头像 | 默认 |
 
 > 确认无误回复 "执行"。
-> 用户跳过描述时，「描述」行渲染为 `未填`（不要写空白 / 短横）；CLI 会上链 `ProfileDescription: ""`。
 
-English variant:
+English variant (user did NOT volunteer a description — omit Description row):
+
+| Field | Value |
+|---|---|
+| Role | Evaluator Agent |
+| Name | Solidity Auditor |
+| Profile photo | default |
+
+> Reply "execute" to run it.
+
+English variant (user volunteered a description via one-shot capture — include Description row):
 
 | Field | Value |
 |---|---|
@@ -82,7 +99,6 @@ English variant:
 | Profile photo | default |
 
 > Reply "execute" to run it.
-> When the user skips description, render the Description row as `(not set)` (not blank, not a dash); the CLI sends `ProfileDescription: ""` on-chain.
 
 Do **NOT** add a `stake` row here — create does not consume the stake and this skill has no way to verify it. Mentioning stake in the confirmation card implies a gate that does not exist.
 

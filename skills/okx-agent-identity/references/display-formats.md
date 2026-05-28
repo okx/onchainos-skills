@@ -65,16 +65,16 @@ Chinese variant:
 
 > 钱包 wallet-1（0xfa3…0fa3）
 
-| Agent ID | 名字 | 角色 | 状态 | 评分 |
-|---|---|---|---|---|
-| #42 | DeFi Analyzer | 服务提供商 | 已上架 | ★ 4.6 (18) |
-| #58 | MyBuyer | 用户 | 已上架 | — |
+| Agent ID | 名字 | 角色 | 状态 | 审核状态 | 评分 |
+|---|---|---|---|---|---|
+| #42 | DeFi Analyzer | 服务提供商 | 已上架 | 审核通过，可被推荐自动接单 | ★ 4.6 (18) |
+| #58 | MyBuyer | 用户 | 已上架 | 未发起审核 | 暂无评分 |
 
 > 钱包 wallet-2（0xfa4…0fa4）
 
-| Agent ID | 名字 | 角色 | 状态 | 评分 |
-|---|---|---|---|---|
-| #99 | Solidity Auditor | 仲裁者 | 已下架 | ★ 4.4 (7) |
+| Agent ID | 名字 | 角色 | 状态 | 审核状态 | 评分 |
+|---|---|---|---|---|---|
+| #99 | Solidity Auditor | 仲裁者 | 已下架 | 审核中，请耐心等待 | ★ 4.4 (7) |
 
 > 共 N 个钱包、合计 M 个 agent。查看详情请说 "详情 #42"。
 
@@ -82,16 +82,16 @@ English variant:
 
 > Wallet wallet-1 (0xfa3…0fa3)
 
-| Agent ID | Name | Role | Status | Rating |
-|---|---|---|---|---|
-| #42 | DeFi Analyzer | Agent Service Provider (ASP) | active | ★ 4.6 (18) |
-| #58 | MyBuyer | User Agent | active | — |
+| Agent ID | Name | Role | Status | Approval status | Rating |
+|---|---|---|---|---|---|
+| #42 | DeFi Analyzer | Agent Service Provider (ASP) | active | Approved — eligible for task recommendations | ★ 4.6 (18) |
+| #58 | MyBuyer | User Agent | active | Not submitted for review | No rating yet |
 
 > Wallet wallet-2 (0xfa4…0fa4)
 
-| Agent ID | Name | Role | Status | Rating |
-|---|---|---|---|---|
-| #99 | Solidity Auditor | Evaluator Agent | inactive | ★ 4.4 (7) |
+| Agent ID | Name | Role | Status | Approval status | Rating |
+|---|---|---|---|---|---|
+| #99 | Solidity Auditor | Evaluator Agent | inactive | Under review, please wait | ★ 4.4 (7) |
 
 > Total N wallets, M agents in all. Say "detail #42" to drill in.
 
@@ -100,9 +100,10 @@ Rules:
 - **Group by accountName.** One header line per outer-`list[*]` wrapper, rendering `钱包 <accountName>（<short-address>）` / `Wallet <accountName> (<short-address>)`. The short-address form follows §2's rule (`0x` + first 4 + `…` + last 4 hex chars).
 - **Per-wallet table follows the header**, listing that wrapper's `agentList[*]` rows. If a wrapper has 0 agents, render `（暂无 agent）` / `(no agents)` instead of an empty table.
 - **No deduplication across wrappers.** If the same `agentId` appears under multiple accountNames, render it under each (per product spec). Dedup is a skill-side concern only when it actually matters elsewhere — for the list view, faithful reproduction wins.
-- Five columns per agent table, exactly. The first column header (`Agent ID`) stays in English because "Agent ID" reads as a technical token; the other four adapt to user language (`名字 / 角色 / 状态 / 评分` ↔ `Name / Role / Status / Rating`).
+- Six columns per agent table. The first column header (`Agent ID`) stays in English; the other five adapt to user language (`名字 / 角色 / 状态 / 审核状态 / 评分` ↔ `Name / Role / Status / Approval status / Rating`).
 - Truncate `Name` to 20 chars with `…`.
-- `Rating`: `★ <average_stars> (<count>)`, where `<average_stars>` = `<backend_score> / 20` with **up to 2 decimal places** (see `SKILL.md §Amount Display Rules` reputation block). Because wire is an integer 0–100, `score/20` is exact at 2 decimals — no rounding. Trailing zeros trimmed. Examples: `100 → 5`, `92 → 4.6`, `89 → 4.45`, `85 → 4.25`, `66 → 3.3`. If no feedback yet, render `—`. **Never expose the raw 0–100 score in user-visible cells** — `92 / 100` is forbidden.
+- `审核状态 / Approval status`: render per `ux-lexicon.md §ApprovalDisplayStatus` following `SKILL.md §Language Matching`. When `approvalDisplayStatus` is absent from the list response, omit the cell value (render empty). **Do NOT** append `approvalRemark` in the list view — remark is detail-card only (§2).
+- `Rating`: `★ <average_stars> (<count>)`, where `<average_stars>` = `<backend_score> / 20` with **up to 2 decimal places** (see `SKILL.md §Amount Display Rules` reputation block). Because wire is an integer 0–100, `score/20` is exact at 2 decimals — no rounding. Trailing zeros trimmed. Examples: `100 → 5`, `92 → 4.6`, `89 → 4.45`, `85 → 4.25`, `66 → 3.3`. If no feedback yet, render `暂无评分` / `No rating yet`. **Never** render `—` for missing rating in the list view, and **never** expose the raw 0–100 score — `92 / 100` is forbidden.
 - `Status` and `Role` use the language-matching label: Chinese users see `已上架 / 已下架` and `用户 / 服务提供商 / 仲裁者`; English users see `active / inactive` and `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render bilingual `active (已上架)` or `User Agent (用户)`. **Never** render the raw ERC-8004 enum (`requester / provider / evaluator`) or the legacy CN nouns (`买家 / 卖家 / 服务方 / 验证者`) — see `ux-lexicon.md §Role`.
 - The footer summary counts BOTH wallets and total agents (`共 N 个钱包、合计 M 个 agent` / `Total N wallets, M agents in all`). `N` = `envelope.total` (= wrapper count); `M` = sum of `wrapper.agentList.length` across wrappers (computed skill-side).
 - If `envelope.total` > requested page size, append the pagination footer in the user's language (`第 <page>/<total_pages> 页，继续翻页说 "下一页"。` ↔ `Page <page>/<total_pages> — say "next page" to continue.`).
@@ -147,6 +148,7 @@ Chinese variant:
 | 名字 | DeFi Analyzer |
 | 角色 | 服务提供商 |
 | 状态 | 已上架 |
+| 审核状态 | 已上架，可被任务系统推荐 |
 | 地址 | 0xabc…1234 |
 | 描述 | 链上数据分析与收益模拟。 |
 | 头像 | <url> |
@@ -166,6 +168,7 @@ English variant:
 | Name | DeFi Analyzer |
 | Role | Agent Service Provider (ASP) |
 | Status | active |
+| Approval status | Listed — eligible for task recommendations |
 | Address | 0xabc…1234 |
 | Description | On-chain data analysis and yield simulation. |
 | Profile photo | <url> |
@@ -183,12 +186,13 @@ Rules:
 - Pick ONE variant based on user language — do not render bilingual `Agent Service Provider (服务提供商)` or `active (已上架)`.
 - Render `Role` using the user-language label: `用户 / 服务提供商 / 仲裁者` ↔ `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render the raw ERC-8004 enum (`requester / provider / evaluator`) or legacy CN nouns (`买家 / 卖家 / 服务方 / 验证者`).
 - Render `Status` using the user-language label: `已上架 / 已下架` ↔ `active / inactive`.
+- `Approval status` row: render `approvalDisplayStatus` per `ux-lexicon.md §ApprovalDisplayStatus` — never expose the raw integer. Follow `SKILL.md §Language Matching` for both the row label (`审核状态` / `Approval status`) and the value text. When `approvalRemark` is non-empty, append it as a parenthetical in the user's language. This field is independent of `status` (on-chain publish state); both rows always appear in the card when the field is present.
 - Short-form address: `0x` + first 4 + `…` + last 4 hex chars. Show the full address only when the user asks.
 - **⛔ `服务` / `Services` rows are provider-only.** `requester` 和 `evaluator` 的角色定义里没有 service —— 渲染他们的详情卡时**必须把所有 `服务` / `Services` 行整行省略**（不要写 `服务 | 无` / `Services | none` / `服务 | —` 之类的占位，**直接删除整行不输出**）。即使后端 `services` 字段返回了 `[]` / `null` / 甚至意外塞了一条数据，**只对 `role == provider` 的 agent 渲染 Service 行**。这条规则同时适用于 `agent get --agent-ids <id>` 的详情卡、`create` / `update` 后的详情卡、以及 §3 Create variant / Update Diff variant —— 见 §3 顶部的对应规则。/ For `requester` and `evaluator` detail cards, **omit every `服务` / `Services` row entirely** — no `Services | none` / `Services | —` / `Services | (empty)` placeholders, just drop the rows. This holds even when the backend returns `services: []` or `services: null` (or, by anomaly, a non-empty array for a non-provider role): render Service rows **only when `role == provider`**. Same constraint applies to the §3 Create / Update Diff variants.
 - Services — one row per service, numbered `[N]`, single-line format **(provider only — see the rule above; on requester / evaluator skip the rows entirely)**. The **name value** (what the user typed, e.g. `TVL Query`) stays verbatim; the following descriptor uses user-language words: Chinese `名称 — 类型, 价格, 接口地址`-style reading order, English `Name — Type, Fee, Endpoint`-style reading order. In practice the single-line format is `<ServiceName> — <Type>, <Fee or 免费/free>, <Endpoint>`. **A2A fee handling**: if the backend returned a non-empty `fee` for the A2A service, render it as `<N> USDT` exactly like A2MCP; if `fee` is absent / empty, render the short form `免费` / `free` (Type=A2A in the same row already gives readers the off-chain-pricing context, so no parenthetical is needed in this compact row). The Endpoint cell is always dropped for A2A regardless (CLI clears it).
 - `txHash` row present only when the command produced a tx (absent on read-only commands).
 - `Agent ID` row: follow the `#<id>` placeholder rule at the top of this file — omit the row entirely if the id is not available yet (e.g. fresh `create` response), don't render `#` alone.
-- **Single source of data — no chain calls.** All rows above (including Services and Reputation aggregate) come from the **one** `agent get --agent-ids <id>` response. The envelope is double-layer (see `cli-reference.md §3`): outer `list[*]` is an accountName wrapper, the actual agent row sits at `list[0].agentList[0]` for a single-id detail lookup. Field set on the agent row stays unchanged: `{ agentId, name, role, status, description, picture, address, services: [...], reputation: { score, count } }`. Do **NOT** chain `agent service-list --agent-id <id>` to "populate" the Services rows — they're already in the response. Do **NOT** chain `agent feedback-list --agent-id <id>` to "populate" the Reputation row — the aggregate `{ score, count }` is already there; individual review entries belong to a separate, user-triggered request (see §Post-detail prompt below).
+- **Single source of data — no chain calls.** All rows above (including Services and Reputation aggregate) come from the **one** `agent get --agent-ids <id>` response. The envelope is double-layer (see `cli-reference.md §3`): outer `list[*]` is an accountName wrapper, the actual agent row sits at `list[0].agentList[0]` for a single-id detail lookup. Field set on the agent row: `{ agentId, name, role, status, description, picture, address, services: [...], reputation: { score, count }, approvalDisplayStatus, approvalRemark }`. `approvalDisplayStatus` and `approvalRemark` are read-only backend-returned fields — render per the `Approval status` rule above; never pass the raw integer to the user. Do **NOT** chain `agent service-list --agent-id <id>` to "populate" the Services rows — they're already in the response. Do **NOT** chain `agent feedback-list --agent-id <id>` to "populate" the Reputation row — the aggregate `{ score, count }` is already there; individual review entries belong to a separate, user-triggered request (see §Post-detail prompt below).
 
 ### Post-detail prompt (after rendering §2)
 

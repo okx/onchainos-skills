@@ -57,6 +57,22 @@ This framework is the single source of truth referenced from `SKILL.md §UX Outp
 
 ⛔ Never render `status=0` / `status: 1` / `status=2` / raw integer status fields to the user. Always translate.
 
+## ApprovalDisplayStatus
+
+Translate per `SKILL.md §Language Matching` — the table below defines canonical English values; the AI renders them in the user's language.
+
+| `approvalDisplayStatus` | 对中文用户说 | 对英文用户说 |
+|---|---|---|
+| `1` | 未发起审核 | Not submitted for review |
+| `2` | 审核中，请耐心等待 | Under review, please wait |
+| `4` | 审核通过，可被推荐自动接单 | Approved — eligible for task recommendations |
+| `5` | 审核失败 | Review failed |
+| `7` | 该 Agent 当前不可用 | This agent is currently unavailable |
+
+Row label follows language matching: `审核状态` for Chinese users, `Approval status` for English users.
+
+⛔ Never render the raw integer. Always translate. When `approvalRemark` is non-empty and `approvalDisplayStatus` is `5`, append it as a parenthetical: "审核失败（原因：xxx）" / "Review failed (reason: xxx)".
+
 ## Field 字段术语
 
 | 内部 (CLI JSON key) | 对中文用户说 | 对英文用户说 |

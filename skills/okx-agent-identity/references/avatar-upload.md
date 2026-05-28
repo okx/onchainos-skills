@@ -61,10 +61,11 @@ The right path depends on the runtime. Do not force the user down a path their e
 User: "帮我注册 provider，名字 Alice，顺便用这张图做头像" [attaches file]
 Skill:
   1. Save attachment → /tmp/<random>.png
-  2. onchainos agent upload --file /tmp/<random>.png
+  2. Check file size — if > 1 MB: STOP, prompt the user (see Validation §File size), do NOT proceed to step 3
+  3. onchainos agent upload --file /tmp/<random>.png
      ← { url: "<url>" }
-  3. Run agent create with --picture "<url>"
-  4. Clean up the temp file
+  4. Run agent create with --picture "<url>"
+  5. Clean up the temp file
 ```
 
 After the upload succeeds, move to the next step of the flow silently — or with a one-line ack that includes the URL so the user can see what was set:
@@ -103,7 +104,13 @@ If the user already hands over a URL (e.g., "用这个 twitter 头像 https://..
 ## Validation
 
 - **MIME type** — backend is known to accept PNG / JPEG / WebP; other types are likely rejected with a backend-originated error (exact wording is not a CLI `bail!` and may drift — do NOT hard-code). On rejection, ask the user to convert to PNG / JPEG / WebP and retry.
-- **File size** — no explicit limit in the CLI; if backend rejects with a size error, ask the user to downscale (≤ 2 MB is a safe default).
+- **File size** — hard limit is **1 MB**. Check the file size **before** calling `onchainos agent upload`. If the file exceeds 1 MB:
+  - ⛔ **Do NOT call `onchainos agent upload` or any backend API.**
+  - ⛔ **Do NOT proactively compress, resize, or modify the file.** The user owns the image; altering it without explicit instruction is forbidden.
+  - Prompt the user in their language to supply a smaller image and stop the upload flow:
+    - 中文："图片超过 1 MB（当前约 X MB），无法上传。请压缩后再发给我，或换一张 1 MB 以内的图片。"
+    - English: "The image exceeds 1 MB (~X MB) and can't be uploaded. Please compress it or send a smaller image (under 1 MB)."
+  - Replace `X` with the actual file size rounded to one decimal place (e.g. `1.4 MB`). If the exact size is unavailable, omit the parenthetical size note.
 - **URL shape** — must be HTTPS. On invalid shape, in the user's language:
   - 中文："头像链接必须是 https:// 开头的。"
   - English: "The avatar link must start with https://."
