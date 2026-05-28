@@ -169,7 +169,6 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let short_id = ctx.short_id;
     let terminal_session_hint = ctx.terminal_session_hint;
     let follow_end = super::super::flow::FOLLOW_PLAYBOOK_END_TURN;
-    let idem_check = super::super::flow::idempotency_check(job_id);
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
 
     format!(
@@ -183,7 +182,6 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      🛑 **In escrow mode auto-approval is strictly forbidden**: you must wait for the user's relayed decision; the agent must not decide on behalf of the user, regardless of deliverable quality or how close to deadline.\n\
      ⚠️ In x402 mode: funds are already paid; just notify the user of the deliverable content; the user cannot reject.\n\n\
      [Your next actions (strict order)]\n\n\
-     {idem_check}\n\
      **Step 1 — Query task details; extract deliverable and payment mode:**\n\
      ```bash\n\
      onchainos agent status {job_id}\n\

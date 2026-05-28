@@ -69,15 +69,6 @@ pub(super) fn pending_cmd(job_id: &str, agent_id: &str, list_label: &str, source
     format!("onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"{list_label}\" --source-event {source_event}")
 }
 
-pub(super) fn idempotency_check(job_id: &str) -> String {
-    format!("\
-**Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
-```bash\n\
-onchainos agent pending-decisions-v2 list --format json\n\
-```\n\
-If `entries[]` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue.\n")
-}
-
 /// Shared context parameter pack across all event handler functions.
 pub(super) struct FlowContext<'a> {
     pub job_id: &'a str,

@@ -128,8 +128,6 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
     let short_id = ctx.short_id;
     let session_hint = super::super::flow::SESSION_STATUS_HINT;
     let follow_end = super::super::flow::FOLLOW_PLAYBOOK_END_TURN;
-    let idem_check = super::super::flow::idempotency_check(job_id);
-
     let review_deadline_prompt = super::super::content::review_deadline_warn_user_prompt(job_id, short_id);
     format!(
     "[System Notification] review_deadline_warn (review deadline approaching)\n\
@@ -139,7 +137,6 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
      ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
      ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request` (the user must make a review decision; dispatch_user cannot relay).\n\n\
      [Your next actions (strict order)]\n\n\
-     {idem_check}\n\
      **Step 1 — Enqueue the review decision via `pending-decisions-v2 request`**:\n\n\
      {session_hint}\n\
      ```bash\n\

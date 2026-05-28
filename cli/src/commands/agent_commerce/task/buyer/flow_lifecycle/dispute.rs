@@ -40,8 +40,6 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     let title_query_hint = ctx.title_query_hint;
     let session_hint = super::super::flow::SESSION_STATUS_HINT;
     let follow_end = super::super::flow::FOLLOW_PLAYBOOK_END_TURN;
-    let idem_check = super::super::flow::idempotency_check(job_id);
-
     let evidence_prompt = super::super::content::job_disputed_user_evidence_prompt(short_id, title_display);
     format!(
     "[Current Status] job_disputed (arbitration opened; 1-hour evidence preparation window)\n\
@@ -55,7 +53,6 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      ❌ Do NOT xmtp_send any message to the ASP — during arbitration both sides interact via on-chain evidence.\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     {idem_check}\n\
      **Step 1 — Enqueue the evidence decision via `pending-decisions-v2 request`**:\n\n\
      {session_hint}\n\
      ```bash\n\
