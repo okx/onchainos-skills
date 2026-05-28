@@ -13,7 +13,7 @@ Skipping skill loading = not knowing the tool whitelist / communication protocol
 [Session Type] user session (talking directly to the user)
 
 🛑 **No skipping**: you MUST finish collecting all fields → show the confirmation form → wait for an explicit user confirmation before calling the CLI.
-💡 **Draft shortcut**: if the user says \"save as draft\" / \"先保存草稿\" / \"草稿\" at ANY point during field collection, **immediately jump to Step 6-D** with whatever fields have been collected so far. Only `--title` is required for drafts — do NOT ask for additional fields. If title is missing, ask only for the title, then jump to Step 6-D.
+💡 **Draft shortcut**: if the user says \"save as draft\" / \"先保存草稿\" / \"草稿\" at ANY point during field collection, **jump to Step 6-D**. Draft requires `--description` (≥20 chars, user-provided); `--title` and `--description-summary` are agent-generated from description. If description is missing or <20 chars, ask the user to provide/expand it before saving.
 
 ================================================
 Step 1 -- Field collection (collect progressively in conversation; **only enter Step 2 when all fields are ready**)
@@ -73,8 +73,8 @@ Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/referenc
 
 | Field | Value |
 |---|---|
-| Title | <agent summary> |
-| Summary | <agent summary, <=200 chars> |
+| Title | <short title, <=30 chars> |
+| Summary | <brief summary of the task, <=200 chars> |
 | Description | <full content> (if <=200 chars, put it in the table; if >200, write `see below` in the table and render the full content as prose below) |
 | Payment token | <USDT or USDG> |
 | Budget | <number> |
@@ -162,18 +162,38 @@ After success, call `xmtp_dispatch_user` to notify the user:\n\
 ================================================\n\
 Step 6-D -- Draft path: save as draft (off-chain)\n\
 ================================================\n\n\
-Call the draft create CLI with **only the fields the user has provided** (all fields except --title are optional for drafts):\n\n\
+Step 6-D.1 -- Check required fields for draft creation\n\n\
+Draft creation requires `--description` (≥ 20 chars, user-provided), `--title` (agent-generated from description, ≤ 30 chars), and `--description-summary` (agent-generated from description, ≤ 200 chars).\n\n\
+Check whether the user has provided a description (≥ 20 chars). If not, ask the user to provide or expand it.\n\
+Once description is ready, generate title and summary from it, then show a draft confirmation form:\n\n\
+| Field | Value |\n\
+|---|---|\n\
+| Title | <agent-generated, ≤30 chars> |\n\
+| Summary | <agent-generated, ≤200 chars> |\n\
+| Description | <user-provided content> |\n\
+| Budget | <value or \"—\"> |\n\
+| Max budget | <value or \"—\"> |\n\
+| Currency | <value or \"—\"> |\n\
+| Acceptance window | <value or \"—\"> |\n\
+| Delivery window | <value or \"—\"> |\n\n\
+> Save as draft? Other fields (marked —) are optional and can be added later.\n\n\
+⚠️ Use Chinese field labels for Chinese conversations, English labels for English conversations.\n\
+🛑 **Description**: must come from the user — do NOT auto-generate or invent content. You may consolidate the user's words, but the substance must be theirs.\n\
+🛑 **Title & Summary**: agent-generated from the user's description. Must count chars after generating — shorten title if >30, summary if >200.\n\
+→ After the user confirms, proceed to Step 6-D.2.\n\n\
+Step 6-D.2 -- Call draft create CLI\n\n\
+Once description + title + summary are ready, call the CLI with all fields the user has provided:\n\n\
 ```bash\n\
 onchainos agent draft create \\\\\n\
   --title \"<title>\" \\\\\n\
-  [--description \"<description>\"] \\\\\n\
+  --description \"<description>\" \\\\\n\
+  --description-summary \"<summary>\" \\\\\n\
   [--budget <budget>] [--max-budget <max_budget>] \\\\\n\
   [--currency <USDT|USDG>] \\\\\n\
   [--deadline-open <deadline_open>] [--deadline-submit <deadline_submit>] \\\\\n\
   [--provider <provider agentId>]\n\
 ```\n\n\
-⚠️ All fields except --title are optional for drafts. Only pass what the user has provided.\n\
-🛑 **Error handling**: if the CLI returns a validation error (e.g. \"description is too short\"), relay the error message to the user and ask them to fix it. **Do NOT auto-modify, expand, or rewrite the user's content** — the user must provide the corrected value themselves. If the user prefers, they can omit the problematic field entirely (only --title is required).\n\
+🛑 **Error handling**: if the CLI returns a validation error (e.g. \"description is too short\"), relay the error message to the user and ask them to fix it. **Do NOT auto-modify, expand, or rewrite the user's content** — the user must provide the corrected value themselves.\n\
 ⚠️ If the user included file(s), save them after draft creation:\n\
 ```bash\n\
 onchainos agent task-attach --file \"<local file path>\" <jobId>\n\
@@ -203,32 +223,45 @@ pub(crate) fn draft_publish(job_id: &str) -> String {
 Step 1 -- Pre-publish field check
 ================================================
 
-Before publishing, query the draft detail to verify all required fields are populated:
+Query the draft detail to verify all required fields are populated:
 ```bash
 onchainos agent status {job_id}
 ```
 
 Check the following required fields:
-| Field | Requirement |
-|---|---|
-| title | non-empty |
-| description | >= 20 characters |
-| paymentTokenSymbol | USDT or USDG |
-| tokenAmount (budget) | > 0, <= 10,000,000 |
-| paymentMostTokenAmount (max budget) | >= budget |
-| expireConfig.acceptDeadline | 10m ~ 180d (in seconds) |
-| expireConfig.submittedDeadline | 1m ~ 180d (in seconds) |
+| Field | API field | Requirement |
+|---|---|---|
+| Title | title | non-empty |
+| Description | description | >= 20 characters |
+| Summary | descriptionSummary | non-empty |
+| Currency | paymentTokenSymbol | USDT or USDG |
+| Budget | tokenAmount | > 0, <= 10,000,000 |
+| Max budget | paymentMostTokenAmount | >= budget |
+| Acceptance window | expireConfig.acceptDeadline | 10m ~ 180d (in seconds) |
+| Delivery window | expireConfig.submittedDeadline | 1m ~ 180d (in seconds) |
 
-If any field is missing or invalid → tell the user which fields need to be filled, and guide them to update the draft:
-```bash
-onchainos agent draft update {job_id} --<field> <value>
-```
-After the user provides the missing fields, return to Step 1 to re-verify.
+If any field is missing or invalid → show a table listing ALL fields with their current values (filled fields show the value, missing fields show `❌ Required`). Then:\n\
+- **Description, Budget, Max budget, Currency, Acceptance window, Delivery window**: these are user-provided fields — ask the user to provide them. **Do NOT auto-fill.**\n\
+- **Title** (≤30 chars) and **Summary** (≤200 chars): agent-generated from description. If description is present but title/summary are missing, **auto-generate them** from the description (count chars, shorten if needed). Do NOT ask the user to write these.\n\
+
+→ After the user provides field(s), **do not call `draft update` yet** — update the in-memory values and show the table again until all required fields are filled.
 
 ⚠️ The CLI `draft publish` has a built-in validation safety net; this step is the first line of defense.
+🛑 **Error handling**: if the user provides a value that fails validation (e.g. description too short), relay the error and ask them to fix it. **Do NOT auto-modify the user's content** (description, budget, etc.).
 
 ================================================
-Step 2 -- Call draft publish CLI
+Step 2 -- Update draft with collected fields
+================================================
+
+Once ALL required fields are verified, call `draft update` to persist any fields the user provided during Step 1:
+```bash
+onchainos agent draft update {job_id} --<field1> <value1> --<field2> <value2> ...
+```
+
+Only include fields that were missing or changed during Step 1. If no fields were updated (all were already present), skip this step.
+
+================================================
+Step 3 -- Call draft publish CLI
 ================================================
 
 ```bash
@@ -238,7 +271,7 @@ onchainos agent draft publish {job_id}
 This command validates all required fields, checks balance (blocking), signs the transaction, and broadcasts on-chain.
 
 ================================================
-Step 3 -- Notify user
+Step 4 -- Notify user
 ================================================
 
 ⚠️ **Balance warning relay**: if the CLI output contains a `⚠️ Insufficient ... balance` warning line, \

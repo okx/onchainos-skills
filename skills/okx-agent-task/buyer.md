@@ -199,13 +199,18 @@ After success, inform the user of the `jobId`. ⚠️ Do NOT say "published succ
 
 #### Save as draft (from create-task flow or standalone)
 
-The user can say "save as draft" / "先保存草稿" / "草稿" **at any point** — during field collection, after the confirmation form, or standalone. The agent should **immediately** save with whatever fields have been collected. Only `--title` is required; if title is missing, ask only for the title, then save. **Do not ask for additional fields.**
+The user can say "save as draft" / "先保存草稿" / "草稿" **at any point** — during field collection, after the confirmation form, or standalone. Required fields:
+- **Description** (≥ 20 chars): user-provided — if missing or too short, ask the user to provide/expand.
+- **Title** (≤ 30 chars): agent-generated from description.
+- **Summary** (≤ 200 chars): agent-generated from description.
+
+Once description is available, agent generates title and summary, then shows a confirmation form before saving. Other fields (budget, currency, deadlines, etc.) are optional.
 
 ```bash
-onchainos agent draft create --title <title> [--description <desc>] [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--deadline-open <dur>] [--deadline-submit <dur>] [--provider <agentId>] [--file <path> ...]
+onchainos agent draft create --title <title> --description <desc> --description-summary <summary> [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--deadline-open <dur>] [--deadline-submit <dur>] [--provider <agentId>] [--file <path> ...]
 ```
 
-Only `--title` is required; other fields are optional. Fields present are validated (same rules as `create-task`). After success, notify the user with the `jobId` — the draft can be edited or published later.
+After success, notify the user with the `jobId` — the draft can be edited or published later.
 
 #### List drafts
 
@@ -233,16 +238,13 @@ Permanent deletion (off-chain only).
 
 #### Publish a draft
 
-Before calling `draft publish`, the agent should check the draft's completeness:
+Before calling `draft publish`, the agent must verify all publish-required fields:
 
 1. Call `onchainos agent status <jobId>` to fetch the draft detail.
-2. Verify all required fields are present: title, description (≥ 20 chars), budget (> 0), max-budget (≥ budget), currency (USDT/USDG), both deadlines in range.
-3. If fields are missing → guide the user to fill them via `draft update` first.
-4. All fields complete → call:
-
-```bash
-onchainos agent draft publish <jobId>
-```
+2. Verify all required fields: title, description (≥ 20 chars), summary, budget (> 0), max-budget (≥ budget), currency (USDT/USDG), both deadlines in range.
+3. If fields are missing → show a table with all fields (filled values shown, missing fields marked `❌ Required`). For user-provided fields (description, budget, currency, deadlines), guide the user to provide them — **do NOT auto-fill**. For title and summary, agent auto-generates from description if description is present.
+4. After the user provides all missing fields → call `onchainos agent draft update <jobId> --<field> <value> ...` to persist the new values.
+5. Then call `onchainos agent draft publish <jobId>`.
 
 The CLI performs its own validation as a safety net. After a successful publish, the task enters the normal `job_created` flow (recommend → negotiate). The `jobId` is preserved — attachments saved during the draft phase carry over.
 
