@@ -56,8 +56,8 @@ pub fn rpc_url_for_chain(chain_index: &str) -> Option<&'static str> {
 /// All known chain indices produced by [`resolve_chain`].
 /// Used by callers that need to reject unrecognised chains early.
 pub const SUPPORTED_CHAIN_INDICES: &[&str] = &[
-    "1", "10", "56", "137", "195", "196", "250", "324", "501", "534352", "607", "784", "8453",
-    "42161", "43114", "59144",
+    "1", "10", "56", "137", "195", "196", "250", "324", "501", "534352", "607", "784", "1952",
+    "8453", "42161", "43114", "59144",
 ];
 
 /// Validate that `chain_index` is a known chain. Returns an error that
@@ -353,5 +353,13 @@ mod tests {
         assert_eq!(chain_family("1"), "evm");
         assert_eq!(chain_family("195"), "evm"); // Tron buckets to evm by default — loose bucketing only
         assert_eq!(chain_family("unknown"), "evm");
+    }
+
+    #[test]
+    fn ensure_supported_chain_accepts_xlayer_testnet_offline() {
+        // No chain_cache.json is written by this test, so load_chain_cache()
+        // returns Ok(default) with an empty `chains` vec; the dynamic branch
+        // finds nothing, then SUPPORTED_CHAIN_INDICES covers "1952".
+        assert!(ensure_supported_chain("1952", "xlayer_test").is_ok());
     }
 }

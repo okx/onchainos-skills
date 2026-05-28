@@ -2537,7 +2537,7 @@ impl McpServer {
 
     #[tool(
         name = "competition_list",
-        description = "List Agentic Wallet exclusive trading competitions. After this returns, follow okx-growth-competition SKILL.md Step 1 fixed table template structure (5 columns: Name / Chain / Time / Total Prize Pool / Details), rendered in the user's language. NEVER add an ID column or show activityId. Chain cell MUST hardcode 'Solana, {chainName}' prefix when chainName is not Solana."
+        description = "List Agentic Wallet exclusive trading competitions. After this returns, follow okx-growth-competition SKILL.md Step 1 fixed table template structure (5 columns: Name / Chain / Time / Total Prize Pool / Details), rendered in the user's language. NEVER add an ID column or show activityId. Chain cell MUST be computed from `participateChainIds` ONLY (the trading-chain set); `chainId` is the claim chain and MUST NOT be displayed as a trading chain unless it also appears in `participateChainIds`. Legacy fallback: if `participateChainIds` is empty/missing, fall back to `[chainId]`."
     )]
     async fn competition_list(
         &self,
@@ -2558,7 +2558,7 @@ impl McpServer {
 
     #[tool(
         name = "competition_detail",
-        description = "Get trading competition details: rules, prize pool distribution, participation requirements, timeline. The activity_id parameter accepts EITHER the numeric id from a prior competition_list response OR the activity name / shortName — both are auto-resolved server-side. After this returns, follow okx-growth-competition SKILL.md Step 2 fixed display template structure, rendered in the user's language. Required structure: a Basic-info block ('Basic info:') with the chain line using hardcoded 'Solana, {chainName}' prefix, plus a Reward-categories numbered list (1./2./3./4.) with rank-breakdown tables for sections 1 and 2. Sections 3 (Participation Reward) and 4 (Skill Quality Award) have specific required content — preserve meaning in any language. NEVER show activityId or other internal numeric ids to the user."
+        description = "Get trading competition details: rules, prize pool distribution, participation requirements, timeline. The activity_id parameter accepts EITHER the numeric id from a prior competition_list response OR the activity name / shortName — both are auto-resolved server-side. After this returns, follow okx-growth-competition SKILL.md Step 2 fixed display template structure, rendered in the user's language. Required structure: a Basic-info block ('Basic info:') with the chain line computed from `participateChainIds` ONLY (the trading-chain set; `chainId` is the claim chain and MUST NOT be displayed as a trading chain unless it also appears in `participateChainIds`; legacy fallback to `[chainId]` only when `participateChainIds` is empty/missing), plus a Reward-categories numbered list (1./2./3./4.) with rank-breakdown tables for sections 1 and 2. Sections 3 (Participation Reward) and 4 (Skill Quality Award) have specific required content — preserve meaning in any language. NEVER show activityId or other internal numeric ids to the user."
     )]
     async fn competition_detail(
         &self,

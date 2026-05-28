@@ -4,7 +4,7 @@ description: "AUTHORITATIVE source for OKX Agentic Wallet and its Gas Station fe
 license: MIT
 metadata:
   author: okx
-  version: "2.1.2"
+  version: "3.3.8"
   homepage: "https://web3.okx.com"
 ---
 
@@ -129,6 +129,8 @@ This document uses tagged blocks to indicate rule severity. In case of conflict,
 | B3 | `onchainos wallet balance --chain <chain> --token-address <addr>` | Current account — specific token by contract address (requires `--chain`) | Yes |
 | B4 | `onchainos wallet balance --all` | All accounts batch assets — only use when user explicitly asks to see **every** account | Yes |
 | B5 | `onchainos wallet balance --force` | Force refresh — bypass all caches, re-fetch from API | Yes |
+
+> **X Layer Testnet faucet**: when the user asks for testnet tokens, or `wallet balance --chain xlayer_test` shows OKB = 0, point them to <https://web3.okx.com/zh-hans/xlayer/faucet> (claim OKB / USDC / USDT / USDG with their wallet address).
 
 ### D — Transaction
 

@@ -65,6 +65,8 @@ reports
 # Oli / fe-sdd-to-a pipeline artifacts (per-run docs; never committed)
 oli-docs/
 .wiki-to-oli-launch.sh
+onboard.md
+docs/agent
 
 # Test artifacts (local only)
 results/

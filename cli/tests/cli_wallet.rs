@@ -19,15 +19,58 @@
 
 mod common;
 
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use common::onchainos;
 
+/// RAII guard for an `ONCHAINOS_HOME` staged under `cli/target/test_tmp/`.
+/// Removes the directory on drop. We can't use `tempfile::tempdir()` because
+/// the agent's bash sandbox denies writes to the system tempdir.
+struct TestHome {
+    path: PathBuf,
+}
+
+impl TestHome {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TestHome {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Build a fresh, isolated `ONCHAINOS_HOME` directory under
+/// `cli/target/test_tmp/cli_wallet/`.
+fn fresh_home() -> TestHome {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test_tmp")
+        .join("cli_wallet");
+    fs::create_dir_all(&base).expect("create test_tmp base");
+    let pid = std::process::id();
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = base.join(format!("{pid}-{ts}-{n}"));
+    fs::create_dir_all(&dir).expect("create per-test dir");
+    TestHome { path: dir }
+}
+
 /// Build the standard live-row CLI invocation. `extra` is the per-row tail
 /// (email + optional `--locale <v>`). Each invocation gets its own
-/// `ONCHAINOS_HOME` tempdir so wallet credentials never leak between tests.
-fn run_wallet_login(extra: &[&str]) -> (Output, tempfile::TempDir) {
-    let home = tempfile::tempdir().expect("create ONCHAINOS_HOME tempdir");
+/// `ONCHAINOS_HOME` so wallet credentials never leak between tests.
+fn run_wallet_login(extra: &[&str]) -> (Output, TestHome) {
+    let home = fresh_home();
     let mut args: Vec<&str> = vec!["--base-url", "https://web3pre.okex.org", "wallet", "login"];
     args.extend_from_slice(extra);
 
@@ -194,7 +237,7 @@ fn wallet_login_empty_string_locale_falls_back_with_warning() {
 
 #[test]
 fn wallet_login_empty_email_fails() {
-    let home = tempfile::tempdir().expect("create ONCHAINOS_HOME tempdir");
+    let home = fresh_home();
     onchainos()
         .env("ONCHAINOS_HOME", home.path())
         .args(["wallet", "login", ""])
