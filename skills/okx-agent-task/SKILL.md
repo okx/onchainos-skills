@@ -442,14 +442,14 @@ When the deliverable / evidence / any P2P content is a **file** (image / PDF / d
 **Receiver (sub agent) flow**:
 1. Parse the peer's `xmtp_send` `content` to extract `fileKey` + the metadata (5 fields).
 2. Call `xmtp_file_download` with `fileKey` / `agentId` / `digest` / `salt` / `nonce` / `secret` (optional `filename`).
-3. The return value contains the local decrypted file path; use that path for the next action (e.g. report the path to the user, render it locally, or feed it as `--image` to the next CLI).
+3. The return value contains the local decrypted file path; use that path for the next action (e.g. report the path to the user, render it locally, or feed it as `--file` to the next CLI).
 
 **When to use**:
 - ASP deliverables that are files (applies to both escrow and x402).
 - Any P2P content that is a file.
 
 **When NOT to use**:
-- Off-chain arbitration evidence images → use the CLI `onchainos agent dispute upload --image <path>`; that is a multipart POST to a separate backend endpoint and does NOT go through P2P.
+- Off-chain arbitration evidence files → handled automatically by the CLI on the `job_disputed` event (the buyer / provider sub session pulls its chat history and calls `dispute upload` internally, with the local deliverables manifest auto-attached). **There is no user-facing CLI for evidence upload** — users cannot manually trigger / re-submit evidence during arbitration.
 - Plain-text deliverables → just `xmtp_send` the content directly; no attachment needed.
 
 **Path 9: `xmtp_sessions_query` query the sub sessions associated with a task (user-session usage)**:
@@ -557,7 +557,11 @@ When a new `request` lands as `queued` (because an active decision is already sh
 
 🛑🛑🛑 **CRITICAL — do NOT make domain assumptions on behalf of the user**: when the queue is empty and the user issues a task-scoped instruction, your job is to **route**, not to **adjudicate**. **Do NOT** reply "the evidence phase is over, can't resubmit" / "the negotiation is done, can't change price" / "this state doesn't allow that" based on your own model of the task lifecycle. The chain state may still allow the action (e.g. dispute evidence can be appended within the 1-hour window even after the initial upload), or it may not — **only the sub session can query the chain and know for sure**. Your role is to forward the user's verbatim wording to the sub via Step 5/6 below and let the sub respond authoritatively.
 
-🔴 **Real incident**: user typed "重新提交证据" (re-submit evidence) during a dispute. Master saw the pending-decisions queue was empty (the original evidence-collection decision had already been resolved when the user first submitted), and replied "证据提交阶段已结束，无法重新提交" (evidence stage is over, can't resubmit) — making a domain assumption that the chain didn't actually enforce. The user repeated "可以重新提交证据" (yes you can resubmit) and master still refused. **Correct behavior**: recognize "重新提交证据" as a §5.5 trigger phrase → run `active-tasks` → find the disputed task → `xmtp_sessions_query` to get the sub's sessionKey → `xmtp_dispatch_session` to forward the verbatim instruction → let the sub call `next-action --event dispute_evidence --jobStatus dispute_evidence` again (which re-pushes the decision; the sub will then call `dispute upload` if the chain allows).
+🛑 **Arbitration evidence is NOT a §5.5 trigger** — evidence is auto-submitted by the CLI on the `job_disputed` event (chat history + saved deliverables). Users **cannot** manually submit / re-submit / append evidence. If the user says "重新提交证据" / "补充证据" / "再传证据" / "re-submit evidence" during a `disputed` task, master should friendly-reject:
+
+> Evidence for this task was automatically submitted when arbitration opened (full chat history + your saved deliverables). The system does not support manual or follow-up evidence uploads — please wait for the arbiter's verdict.
+
+Do NOT forward such requests to the sub session; the sub session has no playbook for them and will just spin.
 
 **Decision tree** (apply in order; stop at first hit):
 
@@ -918,7 +922,7 @@ Once the role is identified, user-initiated commands (those NOT triggered by an 
 | Evaluator Agent | "I want to stake" / "stake to become an evaluator" | `onchainos agent staking-config` + `my-stake` to look up the threshold | references/evaluator-staking.md §2 |
 | Any role | "look up task `{jobId}`" | `onchainos agent status <jobId>` | — |
 | Any role | "view deliverables" / "my deliverables" / "查看交付物" / "交付物列表" | `onchainos agent task-deliverable-list [--job-id <jobId>] --role <buyer\|provider>` | buyer.md §3.7 (provider uses same flow with `--role provider`) |
-| Any role | "upload evidence" | `onchainos agent dispute upload <jobId> --text ... --image ...` | buyer.md §6 / provider.md §5 |
+| Any role | "upload evidence" / "re-submit evidence" / "补证据" | Friendly-reject (evidence is auto-submitted by the CLI on `job_disputed`; manual upload not supported). See §5.5 above. | — |
 
 **Trigger-word matching principles**:
 - Loose match against intent in either Chinese or English.

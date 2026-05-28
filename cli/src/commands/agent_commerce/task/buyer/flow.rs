@@ -53,6 +53,19 @@ Follow the playbook the CLI returns verbatim.";
 pub(super) const FOLLOW_PLAYBOOK_END_TURN: &str = "\
 Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.";
 
+/// Inlined Step 0 idempotency check — used by scenes that need to detect a duplicate
+/// system event for the same job (e.g. job_disputed firing into both sub + backup).
+/// Returns a "Step 0" block that queries `pending-decisions-v2 list` and tells the agent
+/// to end the turn if an entry for `<job_id>` already exists.
+pub(super) fn idempotency_check(job_id: &str) -> String {
+    format!("\
+**Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
+```bash\n\
+onchainos agent pending-decisions-v2 list --format json\n\
+```\n\
+If `entries[]` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue.\n")
+}
+
 /// Generic hint placed at the end of pending-decisions-v2 request scenes (after the
 /// `--user-content` template). The keyword/intent routing lives in the per-scene
 /// `user_decision_<source_event>` handler (see `Event::Other` arm in generate_next_action),
@@ -120,8 +133,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Disputed => vec![
             next_action("job_disputed"),
-            ref_header,
-            format!("  onchainos agent dispute upload {job_id} --text \"<summary>\" --image <image>  # Submit evidence within the 1h preparation window"),
+            "(passive) Evidence is auto-submitted by the CLI on `job_disputed` (chat history + saved deliverables under ~/.onchainos/deliverables/buyer/<jobId>/); manual `dispute upload` is not supported.".to_string(),
         ],
         Status::Completed => vec![
             next_action("job_completed"),
@@ -269,7 +281,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             Event::JobAccepted => "xmtp_dispatch_user (notify accept success)",
             Event::JobSubmitted => "pending-decisions-v2 request (forward deliverable, request review decision)",
             Event::JobRejected => "xmtp_dispatch_user (notify rejection on-chain) → wait for provider decision",
-            Event::JobDisputed => "pending-decisions-v2 request (forward arbitration notice, request evidence)",
+            Event::JobDisputed => "xmtp_get_conversation_history → dispute upload (auto-submit chat history + manifest deliverables) → xmtp_dispatch_user (notify)",
             Event::DisputeResolved => "xmtp_dispatch_user (notify arbitration result)",
             Event::JobRefunded => "xmtp_dispatch_user (notify refund complete)",
             Event::JobAutoRefunded => "xmtp_dispatch_user (claimAutoRefund tx receipt)",
@@ -300,7 +312,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),
         Event::JobRejected => super::flow_lifecycle::job_rejected(&ctx),
         Event::JobDisputed => super::flow_lifecycle::job_disputed(&ctx),
-        Event::Other(ref s) if s == "dispute_evidence" => super::flow_lifecycle::dispute_evidence(&ctx),
         Event::Other(ref s) if s == "approve_review" => super::flow_lifecycle::approve_review(&ctx),
         Event::Other(ref s) if s == "reject_review" => super::flow_lifecycle::reject_review(&ctx),
         Event::JobCompleted => super::flow_lifecycle::job_completed(&ctx),

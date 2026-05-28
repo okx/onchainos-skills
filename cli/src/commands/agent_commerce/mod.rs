@@ -1175,7 +1175,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // the WakeupNotify arm output the guidance script.
     const PSEUDO_EVENTS: &[&str] = &[
         "create_task", "switch_provider", "attachment_added", "deliverable_received",
-        "dispute_raise", "agree_refund", "dispute_evidence", "approve_review", "reject_review",
+        "dispute_raise", "agree_refund", "approve_review", "reject_review",
         "close", "set_public",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
         "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "vote_commit_deadline_warn", "cooldown_entered", "round_failed",

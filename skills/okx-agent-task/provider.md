@@ -183,7 +183,7 @@ The chain-event notification format + the `next-action` command template are in 
 
 - Chain events: `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_rejected` / `job_disputed` / `job_refunded` / `dispute_resolved`.
 - Chain events (two-phase dispute transient): `dispute_approved` (after the arbitration phase-1 approve is on-chain, the system pushes this; it triggers phase-2 dispute confirm).
-- **Pseudo events** (NOT pushed by the backend; the sub agent receives a `user_decision_<source_event>` system envelope relayed from user-session, then calls `next-action --jobStatus user_decision_<source_event> --data "<message.data>"` — CLI's per-scene handler does the LLM semantic mapping and returns a routing playbook pointing to one of these): `dispute_raise` / `agree_refund` / `dispute_evidence`.
+- **Pseudo events** (NOT pushed by the backend; the sub agent receives a `user_decision_<source_event>` system envelope relayed from user-session, then calls `next-action --jobStatus user_decision_<source_event> --data "<message.data>"` — CLI's per-scene handler does the LLM semantic mapping and returns a routing playbook pointing to one of these): `dispute_raise` / `agree_refund`.
 
 For every notification received → call `next-action` once → execute the Scene that `flow.rs` outputs (CLI / `xmtp_send` / push the user session if and only if required).
 

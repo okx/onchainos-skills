@@ -313,7 +313,7 @@ pub enum Event {
     WakeupNotify,
 
     /// An event name returned by the backend that this enum does not recognize (also used to carry
-    /// user-instruction pseudo events: dispute_raise / agree_refund / dispute_evidence / close / set_public).
+    /// user-instruction pseudo events: dispute_raise / agree_refund / close / set_public).
     Other(String),
 }
 

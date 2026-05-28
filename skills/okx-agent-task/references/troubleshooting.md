@@ -64,8 +64,8 @@ The backend task / dispute / evaluator APIs all follow this 5-class error-code s
 
 | Error code / message | Trigger | Handling |
 |---|---|---|
-| `code=1001` + `msg` containing `text or images required` | `dispute upload` was called without `--text` or `--image` (parameter validation failed) | At least one of text / image is required; text length cap is 16 KB (CLI has a pre-check); single image cap is 20 MB (CLI has a pre-check) |
-| `Unsupported image format` | `dispute upload --image` extension is not in `jpg/jpeg/png/gif/webp` | Convert format and re-upload |
+| `no evidence to upload` (CLI pre-check) / `code=1001` + `msg` containing `text or files required` | `dispute upload` had no `--text`, no `--file`, and the local manifest at `~/.onchainos/deliverables/<role>/<jobId>/manifest.json` was empty or every entry was unreadable | Provide at least one of: `--text` (≤ 16 KB), one or more `--file <path>` (any type), or save a deliverable first so the manifest is non-empty |
+| `--role must be 'buyer' or 'provider'` | `dispute upload --role` value is wrong / missing | Pass `--role buyer` or `--role provider` to match the caller; the CLI uses it to locate the local deliverables manifest |
 | No `dispute_approved` received after Phase 1 completes | Chain event delay | **Do not** preemptively run `dispute confirm`; wait for the notification to arrive before calling (anti-hallucination rule in provider.md) |
 | `evidence-info` / `vote-commit` / `vote-reveal` can't find jobId / backend 1001 | Task status is not disputed / there is no active arbitration round | Run `agent status <jobId>` to confirm status=disputed; the CLI argument is `jobId` (**no longer needs `disputeId`**) — the backend automatically locates the current active round |
 

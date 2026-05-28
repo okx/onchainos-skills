@@ -48,7 +48,7 @@ Escrow buyer rejects: `onchainos agent reject <jobId> --reason "..."`
 
 The dispute flow is payment-mode-agnostic:
 - raise: `onchainos agent dispute raise <jobId> --reason "..."`
-- Upload off-chain evidence: `onchainos agent dispute upload <jobId> --text "..." --image <path>`
+- Off-chain evidence upload: **auto-triggered** by the buyer / provider sub session on the `job_disputed` event (chat history + saved deliverables under `~/.onchainos/deliverables/<role>/<jobId>/`); manual upload not supported.
 - Evaluator voting → `job_completed` (provider wins) or `job_refunded` (buyer wins)
 
 **Fund settlement**: applies post-verdict per each payment mode's rules (escrow contract executes automatically; x402 already-paid, no fund movement).

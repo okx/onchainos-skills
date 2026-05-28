@@ -186,17 +186,6 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
     )
 }
 
-/// `Event::JobDisputed` Step 1 — evidence-collection prompt shown to the user
-/// (`xmtp_prompt_user.userContent`).
-pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[Job {short_id} — you are the ASP] The dispute is confirmed on-chain. You must submit off-chain evidence within 1 hour. Please provide:\n\
-         \x20\x20\x20\x20- Text summary (required): key evidence that you delivered against the quality standards\n\
-         \x20\x20\x20\x20- Image path (optional): local file path to screenshots, design files, chat logs, etc.\n\
-         \x20\x20\x20\x20Reply format example: 'Evidence: delivered X/Y/Z as required; image: /path/to/screenshot.png'"
-    )
-}
-
 /// `Event::JobAccepted` Step 3 branch A (escrow text deliverable) — `xmtp_send`
 /// content sent to the User Agent.
 ///

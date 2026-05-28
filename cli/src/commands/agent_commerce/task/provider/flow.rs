@@ -482,72 +482,39 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
              **End this turn directly**; the refund flow is fully complete.\n"
         ),
 
-        // ─── Scene 6.4: Arbitration on-chain; need user-provided evidence ───────────────────
-        Event::JobDisputed => {
-            let user_prompt = super::content::job_disputed_user_evidence_prompt(&short_id);
-            format!(
-            "[Current state] job_disputed (arbitration is on-chain; entering 1-hour evidence preparation window)\n\
+        // ─── Scene 6.4: Arbitration on-chain; CLI auto-submits evidence ─────────────────────
+        Event::JobDisputed => format!(
+            "[Current state] job_disputed (arbitration is on-chain; CLI auto-submits evidence on this event)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the evidence request to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `xmtp_dispatch_user`)**.\n\
-             `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → evidence cannot be collected → 1-hour window expires → arbiter rules on partial / missing evidence. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `xmtp_prompt_user` so the user session can relay the evidence back.\n\
-             ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
-             ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request`.\n\
-             ⚠️ **Evidence content MUST come from the user** — this agent doesn't know what evidence the user has (screenshots, chat logs, deliverable links, etc.), do NOT fabricate an evidence summary and call `dispute upload` blindly. **Push the decision request to the user first and let the user decide**.\n\n\
-             ⚠️ Do NOT send `xmtp_send` `arbitration on-chain, preparing evidence` filler to the User Agent — both sides already receive the `job_disputed` system event.\n\n\
-             **Step 1 — Enqueue the evidence decision via `pending-decisions-v2 request`**:\n\n\
-             First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
-             ```bash\n\
-             onchainos agent pending-decisions-v2 request \\\n\
-               --sub-key \"<full sessionKey from session_status>\" \\\n\
-               --job-id {job_id} --role provider --agent-id {agent_id} \\\n\
-               --user-content \"{user_prompt_for_shell}\" \\\n\
-               --list-label \"[Decision {short_id}] Submit Arbitration Evidence\" \\\n\
-               --source-event job_disputed\n\
-             ```\n\
-             🌐 Translate `--user-content` AND `--list-label` to the user's language (signal = user's OWN typed messages this session; default English if unsure). See [Localization] above for token mapping.\n\n\
-             Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
-             **Step 2 — After user-session relays as system envelope** (`event: \"user_decision_job_disputed\"`, `message.data: <user's verbatim evidence text>`):\n\
-             Call `onchainos agent next-action --jobid {job_id} --event user_decision_job_disputed --jobStatus user_decision_job_disputed --role provider --agentId {agent_id} --data \"<message.data>\"` — CLI returns a routing playbook pointing to the `dispute_evidence` upload script. The data field IS the evidence; pass it verbatim through to the upload step (do NOT second-guess length / similarity / detail).\n\n\
-             ⚠️ Must submit evidence within 1 hour; expires after that.\n",
-                user_prompt_for_shell = user_prompt.replace('"', "\\\""),
-            )
-        }
-
-        // ─── Scene 6.4b: User has provided evidence content (user-instruction pseudo-event) ──
-        Event::Other(ref s) if s == "dispute_evidence" => format!(
-            "[Current action] Upload arbitration evidence\n\
-             [Role] ASP (Agent Service Provider)\n\n\
-             **Step 1 — Extract evidence content from the user's relay:**\n\
-             Routed in via the `--data` argument on next-action (system envelope `event:\"user_decision_job_disputed\"`, `message.data:<user verbatim>`). The verbatim text IS the evidence — extract:\n\
-             - Text summary → the text portion the user wrote\n\
-             - Image path (if the user provided a local file path) → `--image` parameter\n\
-             **At least one** of text and image is required.\n\n\
-             **Step 2 — Fetch negotiation / delivery chat history to attach as objective evidence at the head of text:**\n\
-             First call `session_status` to get sessionKey, then call `xmtp_get_conversation_history` with these arguments to retrieve the full a2a-agent-chat history with the User Agent:\n\
-             \x20\x20tool: xmtp_get_conversation_history\n\
-             \x20\x20arguments:\n\
-             \x20\x20\x20\x20sessionKey: \"<verbatim from session_status>\"\n\
-             Splice the history as the following **structured segmented block** at the front of the `--text` field (the arbitrator is an LLM and will read the text field in full); then append the user summary:\n\n\
+             🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
+             The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
+             session, calls `dispute upload` (which also auto-attaches the deliverable copy saved under\n\
+             `~/.onchainos/deliverables/provider/{job_id}/`), and then notifies the user via\n\
+             `xmtp_dispatch_user`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
+             **Do NOT** `xmtp_send` anything to the User Agent — both sides see the arbitration via on-chain events.\n\n\
+             **Step 1 — Pull this sub session's chat history:**\n\n\
+             First call `session_status` to get the current sessionKey (only once per turn). Then call `xmtp_get_conversation_history` with that sessionKey to retrieve the full a2a-agent-chat history with the User Agent.\n\n\
+             **Step 2 — Format the chat history as the `--text` body**:\n\n\
              ```\n\
              ==== Negotiation / delivery chat history (from xmtp_get_conversation_history) ====\n\
              [time] User Agent(<agentId>): ...\n\
              [time] ASP(<agentId>): ...\n\
-             ... (in chronological order; key checkpoints: User Agent inquiry / [intent:propose] / your [intent:ack] / User Agent [intent:confirm] / your deliver message)\n\n\
-             ==== User evidence summary ====\n\
-             <user's original summary>\n\
+             ... (chronological; key checkpoints: User Agent inquiry / [intent:propose] / your [intent:ack] / User Agent [intent:confirm] / your deliver message)\n\
              ```\n\n\
-             ⚠️ **`--text` limit is 16 KB** — if the chat history is too long **keep only** the key checkpoints (PROPOSE / ACK / CONFIRM / deliverable / each side's key contention points), and prepend `(key checkpoints only)` to mark truncation; do NOT just chop the first N messages.\n\n\
-             **Step 3 — Call the CLI to upload evidence (off-chain multipart):**\n\
+             ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints (PROPOSE / ACK / CONFIRM / deliverable / each side's key contention points) and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
+             If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
+             **Step 3 — Upload (off-chain multipart):**\n\
              ```bash\n\
-             onchainos agent dispute upload {job_id} --agent-id {agent_id} --text \"<chat history + user summary spliced into the full text>\" --image <user-provided image path or omit>\n\
+             onchainos agent dispute upload {job_id} --role provider --agent-id {agent_id} --text \"<chat history block>\"\n\
              ```\n\
-             At least one of text and image; image can be omitted entirely by leaving out `--image`; do not pass an empty string.\n\n\
+             The CLI auto-attaches every entry under `~/.onchainos/deliverables/provider/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copy saved at `deliver` time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
+             **Step 4 — Notify the user (after upload returns):**\n\n\
+             content:\n\
+             \x20\x20\x20\x20[Arbitration opened] Arbitration for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverable). Awaiting the arbiter's verdict.\n\n\
+             **Step 5 — End this turn.** Do NOT `xmtp_send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
-             - dispute_resolved → lost, funds refunded to the User Agent\n\n\
-             After Steps 1-3 → **end this turn directly**.\n\
-             ⚠️ Do NOT send `xmtp_send` `evidence submitted` filler to the User Agent — both sides are uploading evidence in parallel; cross-notifying has no value; the arbitration result is delivered to both sides via the `dispute_resolved` system event.\n\
-             ⚠️ Do NOT push to the user with `xmtp_dispatch_user`.\n"
+             - dispute_resolved → lost, funds refunded to the User Agent\n"
         ),
 
         // ─── Unknown type fallback ─────────────────────────────────────────────
