@@ -43,7 +43,7 @@ Track in conversation context. Across conversations, ask the user to re-supply `
 
 First step of any session. Decide the **deposit** with the user:
 
-> A streaming session needs you to lock a prepaid balance up front (held in escrow). How much would you like to prepay?
+> A session payment needs you to lock a prepaid balance up front (held in escrow). How much would you like to prepay?
 > Suggested: `<human(suggestedDeposit)> (<suggestedDeposit>)` (or `unit_amount × 100` if no suggestion — enough for ~100 requests).
 > Each request draws from this balance. You can add more later, or close the channel anytime to refund whatever's unused.
 
