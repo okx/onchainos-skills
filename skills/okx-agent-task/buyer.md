@@ -198,15 +198,13 @@ After success, inform the user of the `jobId`. ⚠️ Do NOT say "published succ
 
 #### Save as draft (from create-task flow or standalone)
 
-The create-task playbook (§3.1.2) includes a draft branch — after displaying the confirmation form (Step 5), if the user says "save as draft" / "先保存草稿" instead of confirming, the agent calls:
+The user can say "save as draft" / "先保存草稿" / "草稿" **at any point** — during field collection, after the confirmation form, or standalone. The agent should **immediately** save with whatever fields have been collected. Only `--title` is required; if title is missing, ask only for the title, then save. **Do not ask for additional fields.**
 
 ```bash
 onchainos agent draft create --title <title> [--description <desc>] [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--deadline-open <dur>] [--deadline-submit <dur>] [--provider <agentId>] [--file <path> ...]
 ```
 
 Only `--title` is required; other fields are optional. Fields present are validated (same rules as `create-task`). After success, notify the user with the `jobId` — the draft can be edited or published later.
-
-Users can also create a draft standalone (without going through the full create-task field collection) by providing at minimum a title.
 
 #### List drafts
 

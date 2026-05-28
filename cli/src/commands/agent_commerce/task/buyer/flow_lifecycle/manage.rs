@@ -13,6 +13,7 @@ Skipping skill loading = not knowing the tool whitelist / communication protocol
 [Session Type] user session (talking directly to the user)
 
 🛑 **No skipping**: you MUST finish collecting all fields → show the confirmation form → wait for an explicit user confirmation before calling the CLI.
+💡 **Draft shortcut**: if the user says \"save as draft\" / \"先保存草稿\" / \"草稿\" at ANY point during field collection, **immediately jump to Step 6-D** with whatever fields have been collected so far. Only `--title` is required for drafts — do NOT ask for additional fields. If title is missing, ask only for the title, then jump to Step 6-D.
 
 ================================================
 Step 1 -- Field collection (collect progressively in conversation; **only enter Step 2 when all fields are ready**)
