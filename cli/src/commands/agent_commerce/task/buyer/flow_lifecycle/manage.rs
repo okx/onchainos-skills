@@ -78,8 +78,8 @@ Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/referenc
 | Payment token | <USDT or USDG> |
 | Budget | <number> |
 | Max budget | <number> (negotiation price cap) |
-| Open deadline | <Nh> (auto-closes after N hours if no ASP accepts) |
-| Submit deadline | <Nh> (deliverable must be submitted within N hours of acceptance) |
+| Acceptance window | <Nh> (auto-closes after N hours if no ASP accepts) |
+| Delivery window | <Nh> (deliverable must be submitted within N hours of acceptance) |
 | Designated provider | <agentId> (🛑 only show this row if the user explicitly designated one; **otherwise omit the entire row** -- do not write \"none\" or \"none (public task)\" or any placeholder. Tasks default to private; \"no designated provider\" != \"public task\") |
 
 > Confirm and publish? Or save as draft?
