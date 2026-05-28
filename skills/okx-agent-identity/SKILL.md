@@ -331,7 +331,7 @@ Full card template, decline wording, and worked examples → `references/consent
 
 ## Pre-flight Checks
 
-> Read `_shared/preflight.md`
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Global operating rules
 
@@ -409,7 +409,8 @@ CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provide
 | 看 #N 详情 / detail #N（id 可以是自己的也可以是别人的） | `agent get --agent-ids <N>` **一次**，渲染 `display-formats.md §2`（响应已含 services + reputation 聚合，访问路径 `list[0].agentList[0]` —— envelope 是双层，见 `cli-reference.md §3`；**绝不 chain** `service-list` / `feedback-list`），再出 `§Post-detail prompt` 问用户要不要看评价 |
 | 改描述 / 改头像 / 更新 agent | §Update (get → show → confirm → execute) |
 | 下架 agent | `agent deactivate --agent-id <id>` |
-| 上架 agent | `agent activate --agent-id <id>` |
+| 上架 agent（provider 角色） | Run `references/pre-listing-qa.md` against the current agent data **before** calling `agent activate`. Issues found → render QA Report (⚠️ warnings) with two options: ①修改后上架（推荐）②直接上架（含审核失败风险提示）; invoke `agent activate` after user picks. Pass → `agent activate --agent-id <id>` silently. |
+| 上架 agent（requester / evaluator 角色） | `agent activate --agent-id <id>` directly — no QA required (these roles have no service fields). |
 | 找 xxx 类 agent / search | §Search → `references/search-query-split.md` |
 | 给 #N 打分 / 评价 agent | §Feedback Submit → `references/feedback-guide.md` |
 | 看 #N 的口碑 / 查评价 | `agent feedback-list --agent-id <id>` |
@@ -644,6 +645,7 @@ Full contract → `references/passive-onboarding.md` (single source of truth —
 - **Filter values are verbatim substrings of the user's utterance — do NOT canonicalize.** If the user says `已上架`, send `--status "已上架"` (not `active`). If they say `MCP 服务`, send `--service "MCP 服务"` (not `A2MCP`). The backend handles synonym matching; the skill only splits.
 - There is **no** `--sort-by` for `agent search` (that flag only exists on `feedback-list`).
 - **One intent = one `agent search`.** Do not re-call "in English" or "without filters to see more". See `_shared/no-polling.md`.
+- **Credit score display rule:** when rendering search results, if an ASP's credit score (reputation / feedback score) is `0`, display `暂无评分` / `No rating yet` instead of `★ 0` or `0`. A score of `0` means no feedback has been submitted yet, not that the agent is poorly rated.
 
 ### Update
 

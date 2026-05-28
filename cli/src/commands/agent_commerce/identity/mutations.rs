@@ -627,16 +627,15 @@ async fn wait_for_identity_push(
 ///   - page 1 missing or non-numeric `total` field (response shape
 ///     anomaly — cannot trust the dataset)
 ///   - any page missing or non-array `list` field (same)
-///   - mid-pagination empty page when `total > aggregated` (backend
-///     says more exist but failed to deliver them)
 ///
-/// The safety-cap exit (page > `AGENT_LIST_MAX_PAGES`) is the only path
-/// that returns a partial aggregate, and it logs the truncation. The
+/// An empty `list` on any page stops pagination gracefully and returns
+/// the aggregated results so far (does not abort to `None`). The
 /// legitimate empty case (`total == 0` and page 1 returned `list: []`)
 /// returns `Some({total: 0, list: []})`.
 async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> Option<Value> {
     let mut all_items: Vec<Value> = Vec::new();
     let mut total: u64 = 0;
+    let mut all_agent_count: u64 = 0;
     let mut page: usize = 1;
 
     while page <= AGENT_LIST_MAX_PAGES {
@@ -695,33 +694,41 @@ async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> O
             }
         };
         let page_count = page_items.len();
+
+        // Count agents in this page: each group carries agentList[].
+        let page_agent_count: u64 = page_items
+            .iter()
+            .filter_map(|item| item.get("agentList").and_then(Value::as_array))
+            .map(|a| a.len() as u64)
+            .sum();
+        all_agent_count += page_agent_count;
         all_items.extend(page_items);
 
-        // Done: aggregated count satisfies backend's reported total.
-        // Also covers the legitimate empty case: total == 0, page 1 list == [],
-        // aggregated (0) >= total (0) on first iteration.
-        if (all_items.len() as u64) >= total {
+        // Done: accumulated agent count satisfies backend's reported total.
+        // Also covers the empty case: total == 0, page 1 list == [], 0 >= 0.
+        if all_agent_count >= total {
             break;
         }
 
-        // Anomaly: total > aggregated but this page returned 0 list entries.
-        // Don't return a truncated Some — abort per cli-reference §1 contract.
+        // list == [] means the backend has no more data; stop paging.
+        // total may be stale — treat an empty page as end-of-data rather
+        // than an error so we don't keep incrementing page indefinitely.
         if page_count == 0 {
             eprintln!(
-                "[agent-identity] agent-list page {page} returned 0 list entries but total={} > aggregated={} — abort",
+                "[agent-identity] agent-list page {page} returned empty list (total={} agents_accumulated={}) — stopping",
                 total,
-                all_items.len(),
+                all_agent_count,
             );
-            return None;
+            break;
         }
 
         page += 1;
         if page > AGENT_LIST_MAX_PAGES {
             eprintln!(
-                "[agent-identity] agent-list paging hit safety cap of {} pages × {} ({} items aggregated, backend total={})",
+                "[agent-identity] agent-list paging hit safety cap of {} pages × {} ({} agents accumulated, backend total={})",
                 AGENT_LIST_MAX_PAGES,
                 AGENT_LIST_PAGE_SIZE,
-                all_items.len(),
+                all_agent_count,
                 total,
             );
         }

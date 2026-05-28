@@ -195,7 +195,14 @@ onchainos agent get --page 2 --page-size 50
 
 ⚠️ **Envelope is double-layer in BOTH modes.** The outer `list[*]` is an **accountName wrapper** (one per derived wallet the JWT caller has visibility into), not an agent row. The actual agent rows live at `list[*].agentList[*]`. `total` counts wrappers (= accountName groups), **not** agent rows. Even in `--agent-ids <N>` (detail) mode the envelope keeps this shape — `list[0].agentList[0]` is typically where the single matched agent sits (the backend still groups by accountName).
 
-**Agent-row internal fields are unchanged** from prior revisions — `agentId`, `name`, `role`, `status`, `description`, `picture`, `address`, `services`, `reputation: { score, count }` keep their semantics and types. This envelope change only adds the outer wrapper layer; nothing inside an agent row was renamed or reshaped.
+**Agent-row internal fields** — `agentId`, `name`, `role`, `status`, `description`, `picture`, `address`, `services`, `reputation: { score, count }` keep their semantics and types. Two additional fields are returned by the backend:
+
+| Field | Type | Values |
+|---|---|---|
+| `approvalDisplayStatus` | Integer | `1` Not listed / `2` Listing under review / `4` Listed — eligible for task recommendations / `5` Listing rejected / `7` This agent is currently unavailable |
+| `approvalRemark` | String | Reviewer's remark (filled by the approver; explains reason when rejected; may be empty string) |
+
+`approvalDisplayStatus` is independent of `status` (the on-chain publish state). Render it per `ux-lexicon.md §ApprovalDisplayStatus`; never expose the raw integer to the user.
 
 (Note the array field is `list`, not `items`. `agent get` calls the same `/agent/agent-list` endpoint that powers `agent create` / `update`'s post-broadcast `agentList` segment in §1; the two diverge slightly in post-processing: `agent get` returns a single backend page verbatim including `page` / `pageSize` echoed back from the request, while §1's `agentList` is the **aggregate across all pages** assembled by `fetch_agent_list` and only carries `{ total, list }` — `page` / `pageSize` lose coherent meaning after cross-page aggregation and are dropped on purpose.)
 
