@@ -228,14 +228,14 @@ pub async fn handle_set_payment_mode(
             crate::output::success(serde_json::json!({
                 "alreadySet": true,
                 "paymentMode": mode_str,
-                "next": format!("Run onchainos agent confirm-accept {job_id} --payment-mode {mode_str} directly"),
+                "next": "Payment mode already on-chain. Call next-action --event job_payment_mode_changed to get the script (escrow: send [intent:confirm] to provider; then wait for provider to apply before confirm-accept).",
             }));
         } else {
             let mode_int = payment_mode.as_int();
             println!("✓ Payment mode set: {mode_str} ({mode_int}); awaiting on-chain confirmation...");
             crate::output::confirming(
                 &format!("setPaymentMode({mode_str}) complete."),
-                &format!("Wait for the job_payment_mode_changed system notification → onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
+                "Wait for the job_payment_mode_changed system notification → call next-action to get the script (escrow: send [intent:confirm] to provider, then wait for provider to apply before confirm-accept).",
             );
         }
     }
