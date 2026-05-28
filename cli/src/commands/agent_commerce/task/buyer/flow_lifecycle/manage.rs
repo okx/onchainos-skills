@@ -240,9 +240,9 @@ Check the following required fields:
 | Acceptance window | expireConfig.acceptDeadline | 10m ~ 180d (in seconds) |
 | Delivery window | expireConfig.submittedDeadline | 1m ~ 180d (in seconds) |
 
-If any field is missing or invalid → show a table listing ALL fields with their current values (filled fields show the value, missing fields show `❌ Required`). Then:\n\
-- **Description, Budget, Max budget, Currency, Acceptance window, Delivery window**: these are user-provided fields — ask the user to provide them. **Do NOT auto-fill.**\n\
-- **Title** (≤30 chars) and **Summary** (≤200 chars): agent-generated from description. If description is present but title/summary are missing, **auto-generate them** from the description (count chars, shorten if needed). Do NOT ask the user to write these.\n\
+If any field is missing or invalid → show a table listing ALL fields with their current values (filled fields show the value, missing fields show `❌ Required`). Then:
+- **Description, Budget, Max budget, Currency, Acceptance window, Delivery window**: these are user-provided fields — ask the user to provide them. **Do NOT auto-fill.**
+- **Title** (≤30 chars) and **Summary** (≤200 chars): agent-generated from description. If description is present but title/summary are missing, **auto-generate them** from the description (count chars, shorten if needed). Do NOT ask the user to write these.
 
 → After the user provides field(s), **do not call `draft update` yet** — update the in-memory values and show the table again until all required fields are filled.
 
