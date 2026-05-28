@@ -19,16 +19,23 @@ Skipping skill loading = not knowing the tool whitelist / communication protocol
 Step 1 -- Field collection (collect progressively in conversation; **only enter Step 2 when all fields are ready**)
 ================================================
 
+🛑🛑🛑 **ABSOLUTE RULE — No auto-fill for user-provided fields**:
+The following fields MUST come from the user's explicit input: **Description, Budget, Max budget, Currency, Acceptance window, Delivery window**.
+If the user has NOT explicitly stated a field's value, you MUST ask for it — do NOT guess, infer, generate a default, or extract an implied value from the task description.
+Even if the user's description hints at a price range or timeline (e.g. \"大概50块\" / \"一两天\"), you MUST confirm with the user before filling.
+Only **Title** and **Summary** are agent-generated (from the user's description).
+🔴 Real incident: a user said \"翻译2000字文档\", the agent auto-filled budget, deadline-open, and deadline-submit without asking — the user did not agree to those values, and the task was published with wrong terms.
+
 | Field | CLI flag | Constraint | How to collect |
 |---|---|---|---|
 | Description | --description | 20-2000 chars | Consolidate the user's words. If <20 → \"A more detailed description helps match a better Provider. Could you add more specifics?\" |
 | Title | --title | <=30 chars | Agent-generated; **must count chars after generating**, shorten if >30 |
 | Summary | --description-summary | <=200 chars | Agent-generated; **must count chars after generating**, shorten if >200 |
 | Payment token | --currency | Only USDT / USDG | ⚠️ See token rules below |
-| Budget | --budget | number; <=5 decimal places; max 10,000,000 | Extract the number |
+| Budget | --budget | number; <=5 decimal places; max 10,000,000 | **MUST ask the user; do NOT auto-fill or guess.** Extract the number only after the user states it explicitly |
 | Max budget | --max-budget | **Required**; >= budget; <=5 decimal places; max 10,000,000 | ⚠️ **You MUST ask the user explicitly**, do not auto-fill or guess. This is the negotiation price cap; the ASP's quote cannot exceed it |
-| Acceptance window | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long the task stays open before auto-closing if no ASP accepts |
-| Delivery window | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long after acceptance the ASP must deliver |
+| Acceptance window | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user; do NOT auto-fill or guess.** How long the task stays open before auto-closing if no ASP accepts |
+| Delivery window | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user; do NOT auto-fill or guess.** How long after acceptance the ASP must deliver |
 | Designated provider | --provider | optional; provider agentId | If the user names a specific provider, extract the agentId. **Do not ask proactively** -- if the user does not bring it up, omit it |
 
 🛑 **Token rules (top priority)**:
@@ -94,11 +101,16 @@ Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/referenc
 Step 5.5 -- Route by user decision (🛑 must NOT be in the same turn as Step 5)
 ================================================
 
+🛑🛑🛑 You MUST show the confirmation form (Step 5) AND wait for the user's reply before entering this step.
+NEVER skip directly to Step 6 (create-task) or Step 6-D (draft) — the user must explicitly choose.
+🔴 Real incident: an agent auto-filled all fields from the user's description, skipped the confirmation form, and called `create-task` directly — the task was published on-chain with terms the user never agreed to.
+
 After the user replies, determine which path to take:
 
 - **User confirms / says publish / approves** → go to Step 6 (publish on-chain immediately)
 - **User says \"save as draft\" / \"save draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D (save draft)
 - **User asks to edit a field** → update the field, show the form again (return to Step 5)
+- **Ambiguous reply** (e.g. \"OK\" without context, or unrelated text) → ask the user to clarify: publish on-chain now, or save as draft?
 
 ================================================
 Step 6 -- Publish path: call create-task CLI (on-chain immediately)
