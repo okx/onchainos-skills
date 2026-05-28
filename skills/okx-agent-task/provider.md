@@ -242,4 +242,5 @@ A sub session's `sessionKey` is stable within a single turn — call it once, ca
 |---|---|
 | Don't know who you are / what state the task is in | `onchainos agent common context <jobId> --role provider --agent-id <your agentId>` |
 | Look up task status | `onchainos agent status <jobId>` |
+| View saved deliverables | `onchainos agent task-deliverable-list --role provider [--job-id <jobId>]` |
 | Claim funds after the review window expired | `onchainos agent claim-auto-complete <jobId> --agent-id <your agentId>` |

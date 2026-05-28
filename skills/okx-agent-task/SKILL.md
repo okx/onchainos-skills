@@ -897,6 +897,7 @@ Once the role is identified, user-initiated commands (those NOT triggered by an 
 | User Agent | "Use ASP X to provide the service" | Gather negotiation parameters → enter Scene 1.7 | buyer.md §3.3 |
 | Evaluator Agent | "I want to stake" / "stake to become an evaluator" | `onchainos agent staking-config` + `my-stake` to look up the threshold | references/evaluator-staking.md §2 |
 | Any role | "look up task `{jobId}`" | `onchainos agent status <jobId>` | — |
+| Any role | "view deliverables" / "my deliverables" / "查看交付物" / "交付物列表" | `onchainos agent task-deliverable-list [--job-id <jobId>] --role <buyer\|provider>` | buyer.md §3.7 (provider uses same flow with `--role provider`) |
 | Any role | "upload evidence" | `onchainos agent dispute upload <jobId> --text ... --image ...` | buyer.md §6 / provider.md §5 |
 
 **Trigger-word matching principles**:

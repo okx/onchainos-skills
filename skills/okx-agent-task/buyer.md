@@ -113,6 +113,7 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 > | Draft operations | "save as draft", "保存草稿", "草稿列表", "draft list", "编辑草稿", "update draft", "删除草稿", "delete draft", "发布草稿", "publish draft" | §3.1.4 |
 > | Add attachment / image to a task | "add this file to the task", "attach this to job #478", "补充附件", "补充图片", "补充材料", "给任务加个文件", "把这个文件加到任务里", "给任务补充一下", "发个文件给卖家", "send this file to the provider", "upload file to task", or user sends a file/image during an active task conversation (ask which task before proceeding) | §3.5.1 |
 > | Modify task terms | "change budget", "switch provider", "修改预算", "换服务商" | §3.6 |
+> | View deliverables | "view deliverables", "my deliverables", "查看交付物", "交付物列表", "show deliverable for job X" | §3.7 |
 > | Negotiate with a provider | "negotiate with XXX", "pick XXX", "start negotiation", "找810接单" | §3.2 Unified entry |
 
 ### User session — `pending-decisions-v2 resolve` execution rule
@@ -523,6 +524,71 @@ User messages unrelated to terms → sync to the Client session as context; do N
 
 ---
 
+## 3.7 View deliverables (user session)
+
+The user wants to see saved deliverables from completed or in-progress tasks.
+
+> This section applies to both buyer and provider roles. Use `--role buyer` or `--role provider` based on the current role determined in §1 / SKILL.md role identification.
+
+**Trigger**: "view deliverables", "my deliverables", "查看交付物", "交付物列表", "show deliverable for job X"
+
+**Step 1 — Determine scope**:
+- If the user specifies a jobId → single job query
+- If the user says "all" / "列表" / no specific job → list all
+
+**Step 2 — Run the CLI** (substitute `<role>` with `buyer` or `provider`):
+
+Single job:
+```bash
+onchainos agent task-deliverable-list --job-id <jobId> --role <role>
+```
+
+All deliverables (with optional keyword search):
+```bash
+onchainos agent task-deliverable-list --role <role> [--search "<keyword>"]
+```
+
+**Step 3 — Present results directly to the user** (this is a user-session flow):
+
+🌐 **Localization**: this is a user-session reply — you MUST reply in the user's language. The templates below are canonical English; for non-English users, translate all labels faithfully. Label mapping:
+
+| English | 中文 |
+|---|---|
+| Deliverables | 交付物 |
+| My Deliverables | 我的交付物 |
+| Path | 路径 |
+| Saved | 保存时间 |
+| file(s) | 个文件 |
+| job(s) with saved deliverables | 个任务有已保存的交付物 |
+| No saved deliverables found | 没有已保存的交付物 |
+
+For single job (`deliverables` array):
+```
+[Deliverables] Job <jobId> — <title>
+<for each entry>
+  • <originalName> (<deliverableType>, <sizeBytes human-readable>)
+    Path: <path>
+    Saved: <savedAt>
+</for each>
+```
+
+For all jobs (`results` array):
+```
+[My Deliverables] <count> job(s) with saved deliverables:
+<for each job>
+  <title> (<jobId>) — <deliverableCount> file(s)
+  <for each entry>
+    • <originalName> — <path>
+  </for each>
+</for each>
+```
+
+If the result is empty (`deliverables: []` or `results: []`), reply in the user's language (EN: "No saved deliverables found." / ZH: "没有已保存的交付物。").
+
+⚠️ File paths MUST be absolute (the user needs to locate the file on disk). Never truncate to just the filename.
+
+---
+
 ## 4. Upon receiving a system notification / user-decision relay
 
 For any system notification received → follow the unified flow in SKILL.md `## Activation` to call `next-action` (`--role buyer`) and execute the script.
@@ -585,3 +651,4 @@ Call once and cache; reuse it. Calling ≥ 2 times = dead-loop symptom; stop imm
 |---|---|
 | Don't know who you are / what state the task is in | `onchainos agent common context <jobId> --role buyer --agent-id <your agentId>` |
 | Look up task status | `onchainos agent status <jobId>` |
+| View saved deliverables (§3.7) | `onchainos agent task-deliverable-list --role buyer [--job-id <jobId>]` |

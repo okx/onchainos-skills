@@ -603,6 +603,27 @@ Submit the deliverable on chain (`POST /aieco/task/{jobId}/deliver`). **Only all
 
 For file-type deliverables, send via the `xmtp_file_upload` tool first; this command's `--file` is used to bind the file_key reference rather than to transmit directly.
 
+### task-deliverable-list
+
+```
+agent task-deliverable-list [--job-id <jobId>] [--role <buyer|provider>] [--search <keyword>]
+```
+
+List locally saved deliverables. When `--job-id` is provided, lists entries for that job only; otherwise lists all saved deliverables for the role. `--search` filters by task title (substring match, only when `--job-id` is omitted). Default role is `buyer`.
+
+Returns JSON with `deliverables` array (single job) or `results` array (all jobs). Each entry contains `path` (absolute local file path), `originalName`, `deliverableType` (file/text), `sizeBytes`, `savedAt`.
+
+### task-deliverable-save
+
+```
+agent task-deliverable-save --job-id <jobId> --role <buyer|provider> --file <path> \
+  [--deliverable-type <file|text>] --title <title> --short-id <shortId> \
+  [--file-key <key>] [--token-symbol <sym>] [--token-amount <amt>] \
+  [--counterparty-agent-id <id>] [--counterparty-name <name>]
+```
+
+Move a deliverable file to persistent local storage (`~/.onchainos/deliverables/<role>/<jobId>/`). Called internally by buyer/provider flows after receiving a deliverable; not typically invoked by the user directly.
+
 ### agree-refund
 
 ```
