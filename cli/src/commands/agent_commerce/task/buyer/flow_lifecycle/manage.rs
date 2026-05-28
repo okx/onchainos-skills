@@ -21,7 +21,7 @@ Step 1 -- Field collection (collect progressively in conversation; **only enter 
 
 | Field | CLI flag | Constraint | How to collect |
 |---|---|---|---|
-| Description | --description | 10-2000 chars | Consolidate the user's words. If <10 → \"A more detailed description helps match a better Provider. Could you add more specifics?\" |
+| Description | --description | 20-2000 chars | Consolidate the user's words. If <20 → \"A more detailed description helps match a better Provider. Could you add more specifics?\" |
 | Title | --title | <=30 chars | Agent-generated; **must count chars after generating**, shorten if >30 |
 | Summary | --description-summary | <=200 chars | Agent-generated; **must count chars after generating**, shorten if >200 |
 | Payment token | --currency | Only USDT / USDG | ⚠️ See token rules below |
@@ -42,7 +42,7 @@ Step 2 -- Validation (after all fields collected, before showing the form)
 
 1. Token is neither USDT nor USDG → \"Only USDT and USDG are supported. Please choose one.\"
 2. **Currency consistency between budget and max budget**: if the user mentions different tokens for budget and max budget (e.g. \"budget 10 USDT, max 20 USDG\") → **block**, \"Budget and max budget must use the same token. Please confirm: USDT or USDG?\". The task has a single --currency, the two must match.
-3. Description < 10 chars → ask the user to expand
+3. Description < 20 chars → ask the user to expand
 4. max_budget < budget → \"Max budget cannot be less than the budget.\"
 5. max_budget missing → \"Please set the max budget (the negotiation price cap); the ASP's quote cannot exceed it.\"
 6. budget > 10,000,000 or > 5 decimal places → tell the user the limits
@@ -119,6 +119,7 @@ onchainos agent create-task \\
 
 🚫 **create-task only accepts the flags above. There is no --content / --period / --visibility / --amount / --token / --payment-mode flag.** When `--provider` is passed, the CLI automatically sets visibility=1 (PRIVATE) and providerAgentId; no extra flags needed.
 ⚠️ **Payment mode is not set at creation** -- paymentMode is decided downstream: the A2A negotiation path is always escrow; if a provider is designated and has an endpoint, x402 is used. If the user mentions a preferred payment mode at publication, **do not pass --payment-mode**; tell them: \"The payment mode will be determined automatically when negotiating with the provider.\"
+🛑 **Error handling**: if the CLI returns a validation error (e.g. \"description is too short\"), relay the error message to the user and ask them to fix it. **Do NOT auto-modify, expand, or rewrite the user's content** — the user must provide the corrected value themselves. After the user provides the fix, return to Step 5 to show the updated confirmation form.
 
 ================================================
 Step 6.5 -- Save attachments (only if the user included files with the task request)
@@ -172,6 +173,7 @@ onchainos agent draft create \\\\\n\
   [--provider <provider agentId>]\n\
 ```\n\n\
 ⚠️ All fields except --title are optional for drafts. Only pass what the user has provided.\n\
+🛑 **Error handling**: if the CLI returns a validation error (e.g. \"description is too short\"), relay the error message to the user and ask them to fix it. **Do NOT auto-modify, expand, or rewrite the user's content** — the user must provide the corrected value themselves. If the user prefers, they can omit the problematic field entirely (only --title is required).\n\
 ⚠️ If the user included file(s), save them after draft creation:\n\
 ```bash\n\
 onchainos agent task-attach --file \"<local file path>\" <jobId>\n\
