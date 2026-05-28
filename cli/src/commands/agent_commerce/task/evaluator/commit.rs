@@ -53,7 +53,7 @@ pub async fn handle_commit(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
-    let body = serde_json::json!({ "vote": vote, "voteReport": reason });
+    let body = serde_json::json!({ "vote": vote });
     let path = client.endpoint(job_id, "vote/commit");
     let resp = client.post_with_identity(
         &path,
@@ -72,7 +72,7 @@ pub async fn handle_commit(
     let tx_hash = signing::sign_uop_and_broadcast_with_commit_meta(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
-        salt, vote,
+        salt, vote, &reason,
     ).await?;
 
     let vote_label = if vote == 0 { "Approve (Client wins)" } else { "Reject (Provider wins)" };
