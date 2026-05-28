@@ -113,8 +113,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
     // Note: the `[USER_DECISION_REQUEST]` tag still appears inside the llmContent of
     // `xmtp_prompt_user`; it is an inline tag for the user agent to recognize "awaiting
     // user decision", not the old envelope wrapper — after the user agent receives the
-    // sub_key it relays back to sub via path 3
-    // (`xmtp_dispatch_session(sessionKey=<sub>, [USER_DECISION_RELAY] ...)`).
+    // sub_key it relays back to sub via path 3 (`xmtp_dispatch_session` carrying a
+    // `{source:"system", event:"user_decision_<src>", data:<reply>, ...}` envelope).
     // ──────────────────────────────────────────────────────────────────────
     let send_to_peer = format!(
         "→ Call `xmtp_send` to send to the User Agent.\n\
@@ -473,7 +473,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
             "[Current action] Upload arbitration evidence\n\
              [Role] ASP (Agent Service Provider)\n\n\
              **Step 1 — Extract evidence content from the user's relay:**\n\
-             Routed in via `[USER_DECISION_RELAY] decision: <user verbatim>`. The verbatim text IS the evidence — extract:\n\
+             Routed in via the `--data` argument on next-action (system envelope `event:\"user_decision_job_disputed\"`, `message.data:<user verbatim>`). The verbatim text IS the evidence — extract:\n\
              - Text summary → the text portion the user wrote\n\
              - Image path (if the user provided a local file path) → `--image` parameter\n\
              **At least one** of text and image is required.\n\n\

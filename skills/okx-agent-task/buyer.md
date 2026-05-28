@@ -473,24 +473,35 @@ For any system notification received → follow the unified flow in SKILL.md `##
 
 ---
 
-## 5. Upon receiving a `[USER_DECISION_RELAY]` message
+## 5. Upon receiving a `user_decision_<source_event>` system envelope
 
-The generic flow is in SKILL.md `Session Communication Contract §3 Receiving a user relay`. Buyer-specific mapping:
+> **Format**: the user-session relays user replies as a **JSON envelope** shaped exactly like a chain notification (`{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role, …}}`). See `_shared/message-types.md §3.2` for the full contract.
 
-| User reply keywords | pseudo event |
-|---|---|
-| Contains 验收通过 / 完成 / `accept` | `approve_review` |
-| Contains 拒绝 / 不达标 / `reject` | `reject_review` |
-| Contains 证据 / `evidence` / 摘要 / 图片 / `screenshot` (dispute phase) | `dispute_evidence` |
-| Contains 关闭 / 取消 / `close` | `close` |
-| Contains 公开 / `set public` | `set_public` |
-| Contains 退款 / `refund` | `claim_auto_refund` |
-| Unrecognized | — → `xmtp_dispatch_user` "Decision unclear, please choose again", **then stop**. |
+**Routing — uniform for all source_events**: extract `message.jobId`, `message.event`, and `message.data` from the envelope, then call:
 
-After recognition, uniformly call:
 ```bash
-onchainos agent next-action --jobid <jobId> --event <pseudo event> --jobStatus <pseudo event> --role buyer --agentId <your agentId>
+onchainos agent next-action --jobid <jobId> --event <event verbatim, e.g. user_decision_recommend_pick> --jobStatus <event verbatim> --role buyer --agentId <your agentId> --data "<message.data verbatim>"
 ```
+
+The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic mapping (user reply → pseudo-event / inline action) and returns the routing playbook. Follow it verbatim. **Do NOT keyword-match `message.data` yourself** before calling next-action — pass it through as `--data` and let the handler decide.
+
+**Buyer-side source_events** (each has a dedicated handler in `cli/src/commands/agent_commerce/task/buyer/flow.rs`):
+
+| `source_event` | Push location (scene that called `pending-decisions-v2 request --source-event …`) | Routed by handler to |
+|---|---|---|
+| `job_submitted` | `flow_lifecycle/core.rs` job_submitted scene | `approve_review` / `reject_review` (semantic) |
+| `review_deadline_warn` | `flow_lifecycle/terminal.rs` review_deadline_warn scene | shares the job_submitted handler |
+| `job_disputed` | `flow_lifecycle/dispute.rs` job_disputed scene | `dispute_evidence` (the verbatim IS the evidence) |
+| `cli_failed` | `flow.rs` escalation prose (CLI failure auto-prompt) | retry / dismiss / new-instruction (handler decides) |
+| `recommend_pick` | `flow_negotiate/match_provider.rs` job_created scene | `next-action --provider <agentId>` (pick) / `recommend --next-page` (next page) / `set-public` (public) / `close` (close) |
+| `provider_pending` | `flow_negotiate/match_provider.rs` provider_conversation scene | pick / skip-all / reject-current |
+| `no_asp_found` / `provider_offline` / `x402_invalid` / `over_budget` | designated.rs / match_provider.rs A/B/C scenes (4-way shared handler) | A=specify+agentId / B=set-public / C=close |
+| `x402_price_mismatch` | designated.rs DX-Step 2 (x402 endpoint price differs from registered fee) | Accept → continue / Reject → mark-failed+switch |
+| `negotiate_over_budget` | events.rs negotiate_reply over-budget branch | A=view recommendations / B=specify+agentId / C=close |
+
+**The handlers handle ambiguity** (e.g. user says `好的` / `嗯` on a sensitive decision): if the reply cannot be confidently mapped, the handler emits a re-ask playbook telling sub to enqueue another `pending-decisions-v2 request` with the same `--source-event` and clarifying user-content.
+
+**❌ Do NOT** call `pending-decisions-v2 resolve` / `pick` / `cancel` / `list` from the sub side after receiving an envelope — those commands are user-session-only.
 
 ---
 

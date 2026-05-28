@@ -183,7 +183,7 @@ The chain-event notification format + the `next-action` command template are in 
 
 - Chain events: `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_rejected` / `job_disputed` / `job_refunded` / `dispute_resolved`.
 - Chain events (two-phase dispute transient): `dispute_approved` (after the arbitration phase-1 approve is on-chain, the system pushes this; it triggers phase-2 dispute confirm).
-- **Pseudo events** (NOT pushed by the backend; the sub agent parses `[USER_DECISION_RELAY]` keywords from the user's reply and **manually** passes these labels to `next-action`): `dispute_raise` / `agree_refund` / `dispute_evidence`.
+- **Pseudo events** (NOT pushed by the backend; the sub agent receives a `user_decision_<source_event>` system envelope relayed from user-session, then calls `next-action --jobStatus user_decision_<source_event> --data "<message.data>"` — CLI's per-scene handler does the LLM semantic mapping and returns a routing playbook pointing to one of these): `dispute_raise` / `agree_refund` / `dispute_evidence`.
 
 For every notification received → call `next-action` once → execute the Scene that `flow.rs` outputs (CLI / `xmtp_send` / push the user session if and only if required).
 
@@ -191,24 +191,30 @@ For every notification received → call `next-action` once → execute the Scen
 
 ---
 
-## 4. Upon receiving a `[USER_DECISION_RELAY]` message (user decision relayed from the user session)
+## 4. Upon receiving a `user_decision_<source_event>` system envelope (user decision relayed from the user session)
 
-The generic flow is in SKILL.md `Session Communication Contract §3 Receiving a user relay`;
-the `[USER_DECISION_REQUEST]` / `[USER_DECISION_RELAY]` string contracts (llmContent / userContent templates, the `sub_key` field, the 22-character prefix, the fullwidth colon, etc.) are in [`_shared/message-types.md §3`](./_shared/message-types.md).
+> **Format**: the relay is a **JSON envelope** shaped exactly like a chain notification (`{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role:"provider", …}}`). See [`_shared/message-types.md §3.2`](./_shared/message-types.md) for the contract; the `[USER_DECISION_REQUEST]` inline marker (path 2b llmContent only — sub-to-user direction) is described in `_shared/message-types.md §3.1`.
 
-ASP-specific keyword → pseudo event mapping:
+**Routing — uniform for all source_events**: extract `message.jobId`, `message.event`, and `message.data` from the envelope, then call:
 
-| User reply keywords | Pseudo event | Subsequent task CLI |
-|---|---|---|
-| Contains 发起仲裁 / 仲裁 / dispute | `dispute_raise` | **Phase 1** `onchainos agent dispute raise <jobId> --reason "<user's reason verbatim>" --agent-id <your agentId>` → wait for the on-chain `dispute_approved` notification → **Phase 2** `onchainos agent dispute confirm <jobId> --agent-id <your agentId>` → wait for `job_disputed` |
-| Contains 同意退款 / 退款 / agree refund | `agree_refund` | `onchainos agent agree-refund <jobId> --agent-id <your agentId>` → wait for `job_refunded` |
-| Contains 证据 / evidence / 摘要 / 图片 / screenshot (dispute phase) | `dispute_evidence` | Extract the text summary + image path from the relay → `onchainos agent dispute upload <jobId> --agent-id <your agentId> --text "<summary>" --image <path or omit>` → wait for the arbitration verdict |
-| Unrecognized | — | Call `xmtp_dispatch_user` **once** to tell the user "decision unclear, please choose again", **then stop** |
-
-Then call `next-action` to fetch the script:
 ```bash
-onchainos agent next-action --jobid <jobId> --event <dispute_raise|agree_refund|dispute_evidence> --jobStatus <dispute_raise|agree_refund|dispute_evidence> --role provider --agentId <your agentId>
+onchainos agent next-action --jobid <jobId> --event <event verbatim, e.g. user_decision_job_refused> --jobStatus <event verbatim> --role provider --agentId <your agentId> --data "<message.data verbatim>"
 ```
+
+The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic mapping. **Do NOT keyword-match `message.data` yourself** before calling next-action.
+
+**ASP-side source_events** (each has a dedicated handler in `cli/src/commands/agent_commerce/task/provider/flow.rs`):
+
+| `source_event` | Push location | Routed by handler to (pseudo event → CLI) |
+|---|---|---|
+| `job_refused` | flow.rs job_refused scene (user rejected delivery; ASP must decide dispute vs refund) | `dispute_raise` → **Phase 1** `dispute raise <jobId> --reason "<verbatim>" --agent-id <…>` → wait for `dispute_approved` → **Phase 2** `dispute confirm <jobId> --agent-id <…>` → wait for `job_disputed`. OR `agree_refund` → `agree-refund <jobId> --agent-id <…>` → wait for `job_refunded` |
+| `job_disputed` | flow.rs job_disputed scene (1-hour evidence prep window) | `dispute_evidence` → `dispute upload <jobId> --text "<summary>" --image <path or omit> --agent-id <…>` → wait for the verdict |
+| `submit_deadline_warn` | flow.rs submit_deadline_warn scene | Submit-now → re-enter via `next-action --jobStatus job_accepted` to run delivery; Let-it-timeout → end turn |
+| `cli_failed` | flow.rs escalation prose (CLI failure auto-prompt) | retry / dismiss / new-instruction (handler decides) |
+
+**The handlers handle ambiguity**: if the reply cannot be confidently mapped (e.g. `好的` / `OK` on an irreversible on-chain action), the handler emits a re-ask playbook telling sub to enqueue another `pending-decisions-v2 request` with the same `--source-event` and clarifying user-content. **Do NOT guess** on ambiguous input — irreversible on-chain actions warrant a re-ask.
+
+**❌ Do NOT** call `pending-decisions-v2 resolve` / `pick` / `cancel` / `list` after receiving an envelope — those commands are user-session-only.
 
 ---
 

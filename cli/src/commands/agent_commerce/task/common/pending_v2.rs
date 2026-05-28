@@ -381,8 +381,12 @@ fn handle_request(
     if let Err(msg) = validate_sub_key(&sub_key, &job_id) {
         anyhow::bail!(
             "Invalid --sub-key: {}\n\n\
-             The only valid value is the full XMTP sessionKey for the current sub session, e.g.:\n  \
-             agent:main:okx-a2a:group:okx-xmtp:my=0x...&to=0x...&job=<jobId>&gid=...\n\n\
+             Two valid shapes (both must contain `:okx-a2a:group:`):\n\
+               • task sub (after xmtp_start_conversation with a peer):\n  \
+                 agent:main:okx-a2a:group:okx-xmtp:my=0x...&to=0x...&job=<jobId>&gid=...\n\
+               • backup catch-all sub (handles chain events for this agent BEFORE a task sub exists,\n\
+                 e.g. job_created):\n  \
+                 agent:main:okx-a2a:group:backup\n\n\
              Fix: call `session_status` (xmtp tool) FIRST to obtain the current sessionKey, \
              then pass the verbatim returned string as --sub-key. Do NOT invent prefixes \
              (`review-`, `decision-`, the jobId alone, list labels, …) — they will silently \
@@ -776,23 +780,38 @@ fn short_job_id(job_id: &str) -> String {
 
 /// Validate that `sub_key` is a real XMTP sessionKey rather than a hallucinated
 /// stand-in like `review-<jobId>` / the bare jobId / a list label. Required
-/// shape: starts with `agent:`, contains `&job=<job_id>`, contains `&gid=`.
+/// Two valid shapes (both belong to the OKX a2a group namespace):
+/// - **task sub** (after `xmtp_start_conversation` with a peer): `agent:...:okx-a2a:group:okx-xmtp:my=...&to=...&job=<job_id>&gid=...`
+/// - **backup catch-all sub** (handles events before a task sub exists, e.g. `job_created`):
+///   `agent:...:okx-a2a:group:backup`
+///
+/// Both share the `agent:` prefix and the `:okx-a2a:group:` segment. The check below is enough
+/// to reject LLM-invented fakes (`review-<jobId>` / `decision-<jobId>` / the jobId alone /
+/// list labels / non-okx-a2a group keys — none of those contain `:okx-a2a:group:`) while still
+/// accepting backup.
+///
+/// If `&job=` is present, it MUST match the provided job_id (prevents cross-task leakage when
+/// an LLM accidentally reuses another task's sub-key).
 fn validate_sub_key(sub_key: &str, job_id: &str) -> std::result::Result<(), String> {
-    if !sub_key.starts_with("agent:") {
+    // Check 1 — format check: must be an okx-a2a group session (`agent:...:okx-a2a:group:...`).
+    // Catches both classes of fake key: those without the `agent:` prefix (`review-<jobId>`,
+    // raw jobIds, list labels) and those from other namespaces (`agent:main:other-ns:group:...`).
+    if !sub_key.contains(":okx-a2a:group:") {
         return Err(format!(
-            "expected a sessionKey starting with `agent:`, got `{}`",
+            "sessionKey missing `:okx-a2a:group:` segment — sub-key must be a task sub or backup catch-all sub, got `{}`",
             sub_key
         ));
     }
-    let expected_job = format!("&job={}", job_id);
-    if !sub_key.contains(&expected_job) {
+    // Check 2 — cross-task protection: if sub_key carries an `&job=` parameter, it must
+    // match --job-id. backup-key has no `&job=` and is accepted as-is (its semantics:
+    // "any event for this agent before a task sub exists" — e.g. job_created).
+    if sub_key.contains("&job=") && !sub_key.contains(&format!("&job={}", job_id)) {
         return Err(format!(
-            "sessionKey does not contain `{}` — sub_key's job must match --job-id",
-            expected_job
+            "sub_key carries an `&job=` parameter that does NOT match --job-id {}; \
+             either pass the correct task sub's sessionKey, or (if you are the backup \
+             catch-all sub) pass the backup-key shape `agent:...:okx-a2a:group:backup` (no `&job=`).",
+            job_id
         ));
-    }
-    if !sub_key.contains("&gid=") {
-        return Err("sessionKey missing `&gid=` segment".to_string());
     }
     Ok(())
 }

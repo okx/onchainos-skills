@@ -7,7 +7,7 @@ The task flow uses **only two** XMTP envelope shapes (one-to-one with the whitel
 | `msgType: "a2a-agent-chat"` | sub ↔ peer sub (path 4), **or** user session → peer sub (bootstrap: `xmtp_start_conversation` creates the group and the first message is sent from the user session) | sub agent **or** user session agent (the latter is common for public-task acceptance bootstrap, with an explicit `sessionKey` pointing at the target sub) | peer sub agent |
 | `{agentId, message:{source:"system", event, ...}}` | chain → sub (path 1) | **Only** the task system backend; **agents are strictly forbidden from forging this** | sub agent (parses `event` and calls `next-action`) |
 
-> Paths 2a / 2b / 3 (sub ↔ user) use the `xmtp_dispatch_user` / `xmtp_prompt_user` / `xmtp_dispatch_session` tools; their body is a **plain string** (text containing `[USER_DECISION_REQUEST]` / `[USER_DECISION_RELAY]` prefixes), not an independent envelope — see SKILL.md `Session Communication Contract §1` for details.
+> Paths 2a / 2b / 3 (sub ↔ user) use the `xmtp_dispatch_user` / `xmtp_prompt_user` / `xmtp_dispatch_session` tools. **Paths 2a / 2b** carry a **plain string** body (text containing the `[USER_DECISION_REQUEST]` inline marker so the user-session recognizes "awaiting decision"). **Path 3** carries a **JSON envelope** shaped exactly like the chain notification in row 4 above (`{agentId, message:{source:"system", event:"user_decision_<src>", data:<verbatim>, ...}}`), so the receiving sub routes it through the same `next-action` handler as real chain events — see §3.2 below and SKILL.md `Session Communication Contract §1` for details.
 
 ---
 
@@ -126,8 +126,8 @@ See SKILL.md `## Activation` (the MANDATORY three steps for `source:"system"` ev
 | Path | Tool | String contract | What the receiver does with the prefix |
 |---|---|---|---|
 | 2a | `xmtp_dispatch_user(content)` | **No mandatory prefix**; plain natural-language notification; optionally a leading `[tag emoji] ...` summary line | User-session agent shows the message to the user, calls no tools |
-| 2b | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` must contain `[USER_DECISION_REQUEST][sub_key: <full string>][job: <id>] <relay instruction>`; `userContent` is plain natural language shown to the user | User-session agent uses `userContent` to display the question; once the user replies, follows the `llmContent` instruction to call `xmtp_dispatch_session(sessionKey=<sub_key>, content="[USER_DECISION_RELAY] ...")` |
-| 3 | `xmtp_dispatch_session(sessionKey, content)` | `content` must start literally with `[USER_DECISION_RELAY] decision: ` (exact 32-character prefix, ASCII colon, trailing single space) | Sub agent parses keywords (agree refund / raise dispute / evidence / …) → calls `next-action --event <pseudo_event> --jobStatus <pseudo_event>` |
+| 2b | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` must contain `[USER_DECISION_REQUEST][sub_key: <full string>][job: <id>] <relay instruction>`; `userContent` is plain natural language shown to the user | User-session agent uses `userContent` to display the question; once the user replies, calls `pending-decisions-v2 resolve --user-reply "<verbatim>"` — the CLI returns a relay playbook telling user-session the exact `xmtp_dispatch_session(sessionKey=<sub_key>, content=<envelope JSON>)` to make (do NOT hand-craft the dispatch) |
+| 3 | `xmtp_dispatch_session(sessionKey, content)` | `content` is a **JSON envelope** (NOT a text prefix) shaped like a chain notification: `{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role, code:0, description, timestamp}}` — built by CLI; user-session passes it through verbatim | Sub agent treats it as a `source:"system"` event → calls `next-action --event user_decision_<source_event> --jobStatus user_decision_<source_event> --data "<message.data>"` → CLI's per-scene handler does LLM semantic mapping → playbook drives the actual on-chain action |
 
 > Paths 1 / 4 (chain → sub / sub ↔ peer sub) use real envelopes — see §1 / §2 above.
 
@@ -192,21 +192,21 @@ Please reply with "agree to refund" / "raise dispute" / "accept delivery".
 
 ### 3.1.1 🛑 Anti-pattern — Do NOT treat `[USER_DECISION_REQUEST]` as "the user has already replied"
 
-**This is a real incident that has happened**: the user-session agent received an `llmContent` (containing `[USER_DECISION_REQUEST]`) pushed via `xmtp_prompt_user`, **mistook it for "the user has chosen"**, and immediately fabricated a `[USER_DECISION_RELAY] decision: agree` / `decision: accept the delivery` via `xmtp_dispatch_session` back to the sub — the user said **not a single word** the entire time, yet the on-chain action (confirm-accept / agree-refund etc.) ended up executing on chain based on this fabricated decision. **This is a data-integrity incident and must be eliminated**.
+**This is a real incident that has happened**: the user-session agent received an `llmContent` (containing `[USER_DECISION_REQUEST]`) pushed via `xmtp_prompt_user`, **mistook it for "the user has chosen"**, and immediately called `pending-decisions-v2 resolve --user-reply "agree"` (or equivalent fabricated text) — the user said **not a single word** the entire time, yet the on-chain action (confirm-accept / agree-refund etc.) ended up executing on chain based on this fabricated decision. **This is a data-integrity incident and must be eliminated**.
 
 **Correct mental model** (mandatory reading for the user-session agent):
 
 | Phase | What you see | What it is | What you should do |
 |---|---|---|---|
 | ① | `[USER_DECISION_REQUEST]` arrives in your session | **System notification**: "the sub sent a request that needs the user's decision" | Display the question to the user via `userContent`, **end the current turn and wait for the user's input**. **Forbidden** to call any tool immediately |
-| ② | User types a reply in the terminal (e.g. "reject, reason X") | **The user's real decision** | Call `xmtp_dispatch_session(sessionKey=<full sub_key>, content="[USER_DECISION_RELAY] decision: reject, reason X")`, verbatim, no interpretation |
+| ② | User types a reply in the terminal (e.g. "reject, reason X") | **The user's real decision** | Call `pending-decisions-v2 resolve --user-reply "reject, reason X"` (verbatim, no interpretation). CLI builds the relay envelope and returns a playbook telling user-session the exact `xmtp_dispatch_session` call to make |
 
 **❌ Wrong flow**:
 ```
 sub → xmtp_prompt_user(llmContent=[USER_DECISION_REQUEST]...)
 user agent → 〈thought: "ah, the user probably wants to agree"〉  ← hallucination
-user agent → xmtp_dispatch_session([USER_DECISION_RELAY] decision: agree)  ← fabrication
-sub → calls confirm-accept on chain  ← user never agreed, funds wrongly released
+user agent → pending-decisions-v2 resolve --user-reply "agree"  ← fabrication
+sub → receives user_decision_<src> envelope → calls confirm-accept on chain  ← user never agreed, funds wrongly released
 ```
 
 **✅ Correct flow**:
@@ -215,8 +215,9 @@ sub → xmtp_prompt_user(llmContent=[USER_DECISION_REQUEST]..., userContent="...
 user agent → renders userContent to the user → 〈end turn, wait for input〉
 ... waiting ...
 user → types "reject, because X"
-user agent → xmtp_dispatch_session([USER_DECISION_RELAY] decision: reject, because X)
-sub → routes to reject flow per the user's literal reply
+user agent → pending-decisions-v2 resolve --user-reply "reject, because X"
+user agent → follows the relay playbook: one xmtp_dispatch_session call with the envelope CLI built
+sub → receives envelope (event:user_decision_<src>, data:"reject, because X") → routes to reject flow per the user's literal reply
 ```
 
 **Discriminator rule** (one-line summary):
@@ -233,54 +234,59 @@ sub → routes to reject flow per the user's literal reply
 
 ---
 
-### 3.2 `[USER_DECISION_RELAY]` — path 3 user → sub user-decision relay
+### 3.2 `user_decision_<source_event>` system envelope — path 3 user → sub user-decision relay
 
-Sent as the `content` argument when the user-session agent calls `xmtp_dispatch_session`, relaying the user's literal words **without interpretation** back to the sub session.
+> **Format**: the relay is a **JSON envelope shaped exactly like a chain event**, so sub sessions route it through their normal `next-action` handler — same path as `job_submitted` / `job_refused` / `job_disputed` etc.
 
-**String contract**:
+**Caller**: user-session agent, via `pending-decisions-v2 resolve --user-reply "<verbatim>"` (NEVER hand-crafted). The CLI returns a relay playbook that tells user-session the exact `xmtp_dispatch_session(sessionKey=<sub_key>, content=<envelope-json-string>)` call to make.
 
-```
-[USER_DECISION_RELAY] decision: <user's literal words>
-```
+**Envelope contract** (the `content` argument is a JSON string with these fields):
 
-**Exact-format requirement** (the 32-character prefix must match **literally**, ASCII colon, trailing single space):
-
-| Element | Requirement |
-|---|---|
-| `[USER_DECISION_RELAY]` | Literal brackets + uppercase + underscore, character-for-character |
-| Space | **One** half-width space after `]` |
-| `decision:` | Literal lowercase ASCII word + ASCII colon `:` (U+003A) — full-width Chinese colon `：` (U+FF1A) is **NOT** acceptable |
-| Space | **One** half-width space after `:` |
-| User's literal words | Immediately after the colon-space; **no interpretation / summary / rewording** — the sub agent parses keywords itself |
-
-**Real samples** (correspond to the prompt in §3.1):
-
-```
-[USER_DECISION_RELAY] decision: raise a dispute, reason: didn't see the image
+```json
+{
+  "agentId": "<receiving sub's agentId>",
+  "message": {
+    "source": "system",
+    "event": "user_decision_<source_event>",
+    "data": "<user's verbatim words, no interpretation>",
+    "jobId": "<jobId from the active pending entry>",
+    "role": "<buyer | provider | evaluator>",
+    "code": 0,
+    "description": "Read okx-agent-task/SKILL.md if you don't know the context",
+    "timestamp": <unix-seconds>
+  }
+}
 ```
 
-**Evidence-upload scenario**:
+**Why this shape**: from the sub session's perspective the envelope is indistinguishable from a real chain notification — the same Activation rule applies (`source:"system"` → call `next-action --jobid <jobId> --jobStatus <event> --role <…> --agentId <…> --data "<message.data>"`). One code path, zero new parsing rules. The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic mapping (`approve` / `通过` / `A` → `approve_review`; `reject` / `拒绝` / `B` → `reject_review`; `关闭` → `close` task on recommend_pick; etc.).
 
+**Where `<source_event>` comes from**: the `--source-event` argument the sub originally passed to `pending-decisions-v2 request` (e.g. `--source-event job_submitted` → relay event `user_decision_job_submitted`). When `--source-event` is omitted, the relay event falls back to the bare `user_decision` (sub's `_` fallback branch in the `user_decision_*` router handles it via context inspection).
+
+**Real samples**:
+
+```jsonc
+// User reviewed deliverable and approved (recommend_pick / job_submitted scenes)
+{"agentId":"123","message":{"source":"system","event":"user_decision_job_submitted","data":"approve","jobId":"0xae53...","role":"buyer","code":0,"description":"Read okx-agent-task/SKILL.md if you don't know the context","timestamp":1779871553}}
+
+// User picked "C. Close" on the recommend_pick card
+{"agentId":"123","message":{"source":"system","event":"user_decision_recommend_pick","data":"关闭","jobId":"0xae53...","role":"buyer","code":0,"description":"…","timestamp":1779871600}}
+
+// User submitted arbitration evidence
+{"agentId":"123","message":{"source":"system","event":"user_decision_job_disputed","data":"evidence — generated the cat image as requested; attachment /tmp/cat.png","jobId":"0xae53...","role":"provider","code":0,"description":"…","timestamp":1779880000}}
 ```
-[USER_DECISION_RELAY] decision: evidence — generated the cat image as requested; attachment path /tmp/cat.png
-```
-
-**❌ Illegal variants** (sub will not detect them, **treated as not received**):
-
-| Wrong form | What's wrong |
-|---|---|
-| `decision: agree` / `user said X` / `user picked option 2` | Missing the `[USER_DECISION_RELAY]` prefix |
-| `[USER_DECISION_RELAY] agree` | Missing the `decision: ` segment entirely |
-| `[USER_DECISION_RELAY] decided: agree` | Wrong literal — must be `decision:`, not `decided:` |
-| `[USER_DECISION_RELAY] decision：agree` | Full-width Chinese colon substituted for the ASCII colon (`：` ≠ `:`) |
-| `[USER_DECISION_RELAY]decision: agree` | Missing the single space after `]` |
-| `[USER_DECISION_RELAY] decision: the user wants to raise a dispute` | The user's literal words (e.g. "let me raise a dispute") rewritten as third-person narration (interpretation, violates "no rewording of user's literal words") |
 
 **❌ Caller-side prohibitions**:
-- Omitting the `sessionKey` argument — `xmtp_dispatch_session` will loop back into the user session
-- Omitting the full sub_key string and using only `agent:main:main` — the sub session will not receive it
-- Relaying more than once / sub agent dispatching to itself after receiving a RELAY — triggers a loop
-- User agent proactively sending a RELAY when no `[USER_DECISION_REQUEST]` was received — without matching prompt context, the sub has no idea which decision this answer is for
+- **User-session must NOT hand-craft this envelope.** Always go through `pending-decisions-v2 resolve --user-reply "<verbatim>"` — the CLI builds the envelope and returns the dispatch playbook.
+- Omitting the `sessionKey` argument — `xmtp_dispatch_session` will loop back into the user session.
+- Using a fake/short `sessionKey` like `agent:main:main` — the sub will not receive it. The `sessionKey` returned by the resolve playbook is authoritative; never substitute it.
+- Sub agent dispatching the envelope back to itself (or to another session) after receiving it — that's the final destination; forwarding = infinite loop.
+- User-session proactively crafting an envelope when no `[USER_DECISION_REQUEST]` is pending — without an active queue entry, the sub has no context for this decision and may take the wrong action (or none).
+- Rewriting / summarizing the user's literal reply before passing to `--user-reply` — `message.data` MUST be verbatim. The CLI's handler does the semantic mapping; your job is just to relay.
+
+**❌ Sub-side prohibitions** (receiver):
+- Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` / `list` — those are user-session-only commands; calling them in a sub wastes a turn (queue file lives in user-session's home dir).
+- Do NOT keyword-match `message.data` yourself before calling next-action — pass it through as `--data` and let the CLI handler do the LLM semantic mapping.
+- Do NOT dispatch the envelope back to any session — you are the final receiver.
 
 ---
 
