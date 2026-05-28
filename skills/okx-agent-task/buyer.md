@@ -20,7 +20,7 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 > 🔴 Real incident 1: backup received `job_created`, then called `sessions_spawn` to delegate to a child agent — the designated-provider context was severed and the negotiation flow became uncontrollable.
 > 🔴 Real incident 2 (2026-05-16, MiniMax): backup received `job_created` ("Beijing weather query") → first tool call was `sessions_spawn` → the child agent had no flow.rs script → it just printed a text message "negotiation started, awaiting result" → the user never saw anything → `recommend` was never triggered → the task was permanently stuck. **`sessions_spawn` is the most common fatal mistake on a backup session.**
 
-> 🛑🛑🛑 **ABSOLUTE PROHIBITION — system events MUST call `next-action`; directly executing CLI is forbidden**: after receiving a `source: "system"` event (`job_payment_mode_changed` / `job_accepted` / `job_submitted` / `job_created` / `job_disputed` / ...), **the first action MUST be** `onchainos agent next-action --jobid <jobId> --jobStatus <event> --role buyer --agentId <agentId>`. It is **forbidden** to skip `next-action` and directly execute a business CLI (`confirm-accept` / `complete` / `reject` / `set-payment-mode` / ...) — the script contains pre-condition checks, action whitelists, and ordering constraints; skipping = executing the wrong command = a stuck flow or funds at risk.
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — system events MUST call `next-action`; directly executing CLI is forbidden**: after receiving a `source: "system"` event (`job_payment_mode_changed` / `job_accepted` / `job_submitted` / `job_created` / `job_disputed` / ...), **the first action MUST be** `onchainos agent next-action --jobid <jobId> --event <event> --jobStatus <event> --role buyer --agentId <agentId>`. It is **forbidden** to skip `next-action` and directly execute a business CLI (`confirm-accept` / `complete` / `reject` / `set-payment-mode` / ...) — the script contains pre-condition checks, action whitelists, and ordering constraints; skipping = executing the wrong command = a stuck flow or funds at risk.
 
 > 🛑 **`--role buyer` MUST be confirmed via `agent profile <envelope's top-level agentId>` first** — do NOT assume the event is for you just because this sub has been handling the job as the buyer. In same-wallet multi-role setups, an envelope may carry a `top-level agentId` that belongs to a different role under the same wallet (e.g. evaluator). The reverse is also true: if `agent profile` returns `role=evaluator` / `provider`, **do not** call `next-action --role buyer`. Full rule + rationale: SKILL.md `## Activation` 🛑 MANDATORY block on role resolution.
 
@@ -58,7 +58,7 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 
 ## 3. Inbound Message Routing
 
-> 🔴 **Negotiation-phase autonomy redline**: when status=0 (created) and an active sub session exists, negotiation is **autonomously completed by the sub session** — upon receiving the provider's quote, counter-offer, or discussion message, you **must** match it against the routing priorities below; when it falls through to #6 (fallback), call `next-action --jobStatus negotiate_reply` to fetch the script, then autonomously evaluate and reply per the script's decision matrix. It is **forbidden** to forward the provider's quote / negotiation content to the user via **any** tool (`xmtp_dispatch_user` / `xmtp_prompt_user` / `pending-decisions-v2 request`) asking "should I accept?" or "please confirm". It is **forbidden** to directly print a confirmation form as text in a sub session (the user cannot see any direct output from a sub session). It is **forbidden** to manually execute the D-Step / B-Step flow (service-list → create group → send inquiry); those are only driven by the next-action script when `job_created` first fires. Only the following cases involve the user: (a) the quote exceeds max_budget and after auto-REJECT the user needs to choose the next provider; (b) the recommendation list is empty and the user needs to decide the next step.
+> 🔴 **Negotiation-phase autonomy redline**: when status=0 (created) and an active sub session exists, negotiation is **autonomously completed by the sub session** — upon receiving the provider's quote, counter-offer, or discussion message, you **must** match it against the routing priorities below; when it falls through to #6 (fallback), call `next-action --event negotiate_reply --jobStatus negotiate_reply` to fetch the script, then autonomously evaluate and reply per the script's decision matrix. It is **forbidden** to forward the provider's quote / negotiation content to the user via **any** tool (`xmtp_dispatch_user` / `xmtp_prompt_user` / `pending-decisions-v2 request`) asking "should I accept?" or "please confirm". It is **forbidden** to directly print a confirmation form as text in a sub session (the user cannot see any direct output from a sub session). It is **forbidden** to manually execute the D-Step / B-Step flow (service-list → create group → send inquiry); those are only driven by the next-action script when `job_created` first fires. Only the following cases involve the user: (a) the quote exceeds max_budget and after auto-REJECT the user needs to choose the next provider; (b) the recommendation list is empty and the user needs to decide the next step.
 >
 > ⚠️ **The routing priorities in this section override the generic "receiving peer message" rule in SKILL.md.** Do NOT use the current status from common context (e.g. `created`) to call `next-action` — directly use the `jobStatus` matched by the routing below (e.g. `negotiate_reply` / `negotiate_ack` / `provider_applied`).
 >
@@ -76,28 +76,28 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 
 > 📌 **About `--peerTaskMinVersion` in the next-action templates below**: pass through the `payload.taskMinVersion` integer from the inbound a2a-agent-chat envelope; if the envelope **has no `payload` field** or no `taskMinVersion` sub-field (older peer / compatibility scenarios) → **omit the entire `--peerTaskMinVersion` parameter** (do NOT pass an empty string or the literal `<...>`). The CLI treats missing payload = v1 baseline (backward compatible).
 >
-> 0. **Skill prefetch** (source: self via `xmtp_dispatch_session`): content starts with `[SKILL_PREFETCH]` → this is a warm-up message sent after `xmtp_start_conversation` to pre-load the task skill into context. **Load `okx-agent-task` SKILL.md + `buyer.md` into context and end the turn immediately.** Do NOT execute any business logic, do NOT call any CLI command, do NOT send any message (xmtp_send / xmtp_dispatch_user / xmtp_dispatch_session). Simply acknowledge the prefetch and wait for the next real inbound message.
-> 1. **Provider apply notification** (source: peer): content contains the `[intent:applied]` marker, or semantically expresses "apply submitted on-chain" / "please run confirm-accept" (backward-compatible with older providers that omit the marker) → **immediately** call `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <your agentId>` to fetch the script and execute `confirm-accept` per the script (⚠️ the `confirm-accept` parameter is `--provider-agent-id`, NOT `--agent-id`. The buyer does NOT receive a `provider_applied` system notification; this path is triggered by an a2a-agent-chat message. **Do NOT query the task API to validate** — on-chain indexing has latency; `confirm-accept` performs its own on-chain validation internally.)
-> 2. **Delivery notification** (source: peer): content contains the `[intent:deliver]` marker (decision: `content.includes("[intent:deliver]")`) → **immediately** call `onchainos agent next-action --jobid <jobId> --jobStatus deliverable_received --role buyer --agentId <your agentId>` and follow the returned playbook (download → save to persistent storage → brief user notification). **Do NOT** inline the download/save logic yourself — the `deliverable_received` playbook handles it. The full deliverable content will be displayed by the unified acceptance decision card once the `job_submitted` system event arrives (avoids the user seeing two cards with fragmented information).
+> 0. **Skill prefetch** (source: self via `xmtp_dispatch_session`): content starts with `[SKILL_PREFETCH]` → this is a warm-up message sent after `xmtp_start_conversation` to pre-load the task skill into context. **Load `okx-agent-task` SKILL.md + `buyer.md` into context and end the turn immediately.** Do NOT execute any business logic, do NOT call any CLI command, do NOT send any message (xmtp_send / xmtp_dispatch_user / xmtp_dispatch_session). ⚠️ This prefetch instruction applies **only to this turn**.
+> 1. **Provider apply notification** (source: peer): content contains the `[intent:applied]` marker, or semantically expresses "apply submitted on-chain" / "please run confirm-accept" (backward-compatible with older providers that omit the marker) → **immediately** call `onchainos agent next-action --jobid <jobId> --event provider_applied --jobStatus provider_applied --role buyer --agentId <your agentId>` to fetch the script and execute `confirm-accept` per the script (⚠️ the `confirm-accept` parameter is `--provider-agent-id`, NOT `--agent-id`. The buyer does NOT receive a `provider_applied` system notification; this path is triggered by an a2a-agent-chat message. **Do NOT query the task API to validate** — on-chain indexing has latency; `confirm-accept` performs its own on-chain validation internally.)
+> 2. **Delivery notification** (source: peer): content contains the `[intent:deliver]` marker (decision: `content.includes("[intent:deliver]")`) → **immediately** call `onchainos agent next-action --jobid <jobId> --event deliverable_received --jobStatus deliverable_received --role buyer --agentId <your agentId>` and follow the returned playbook (download → save to persistent storage → brief user notification). **Do NOT** inline the download/save logic yourself — the `deliverable_received` playbook handles it. The full deliverable content will be displayed by the unified acceptance decision card once the `job_submitted` system event arrives (avoids the user seeing two cards with fragmented information).
 > 3. **Negotiation structured marker** (source: peer) (🛑 **MANDATORY literal containment match; semantic inference is forbidden**: content **must contain** the literal bracket sequence `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` to match this rule. Decision method: `content.includes("[intent:")`. ❌ Natural language from the provider such as "I accept / agreed / OK / sure / no problem / agreed / report: 0.1 USDG" — anything **not containing the substring `[intent:`** → **does NOT match #3 and must fall through to #6 → `negotiate_reply`**. Violating this rule = skipping the three-step handshake = a permanently stuck task) → call `agent status <jobId>` to check status (if already known this turn, reuse it; do not call again):
 >    - status≥1 → `xmtp_send` "Negotiation is complete; current parameters are locked and the task is in progress." and end this turn.
 >    - status=0 (created) → dispatch to the corresponding next-action event based on marker type:
->      - `[intent:ack]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_ack --role buyer --agentId <your agentId>`
->      - `[intent:counter]` → `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_counter --role buyer --agentId <your agentId>`
+>      - `[intent:ack]` → `onchainos agent next-action --jobid <jobId> --event negotiate_ack --jobStatus negotiate_ack --role buyer --agentId <your agentId>`
+>      - `[intent:counter]` → `onchainos agent next-action --jobid <jobId> --event negotiate_counter --jobStatus negotiate_counter --role buyer --agentId <your agentId>`
 >      - `[intent:reject]` → the provider has actively rejected the negotiation; **do not reply**; run `onchainos agent mark-failed <jobId> --provider <provider agentId>`, return to the recommendation list (`onchainos agent recommend <jobId> --current`), and let the user pick the next provider.
 >      - `[intent:propose]` → anomaly (the provider should NOT send PROPOSE); `xmtp_send` informing "PROPOSE is initiated by the user; please reply ACK/COUNTER/REJECT".
 > 4. **`[MAX_BUDGET_UPDATE]` internal notification** (source: user session via `xmtp_dispatch_session`): content begins with the `[MAX_BUDGET_UPDATE]` prefix → extract `paymentMostTokenAmount=<value>` and update the current negotiation's max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, notify the provider, `xmtp_send`, or `xmtp_dispatch_user`** — violation = max_budget leaked to the provider = loss of bargaining leverage. After the silent update, **end the turn immediately**.
-> 5. **Attachment added notification** (source: user session via `xmtp_dispatch_session`): content starts with `[ATTACHMENT_ADDED]` → call `onchainos agent next-action --jobid <jobId> --jobStatus attachment_added --role buyer --agentId <your agentId>` and follow the returned playbook verbatim (it handles status check, file upload, structured send to provider, and user notification).
+> 5. **Attachment added notification** (source: user session via `xmtp_dispatch_session`): content starts with `[ATTACHMENT_ADDED]` → call `onchainos agent next-action --jobid <jobId> --event attachment_added --jobStatus attachment_added --role buyer --agentId <your agentId>` and follow the returned playbook verbatim (it handles status check, file upload, structured send to provider, and user notification).
 >    🔴 Real incident: a model received `[ATTACHMENT_ADDED]`, skipped `next-action`, and sent the raw local file path via `xmtp_send` — the provider received a path it cannot access, then the model called `next-action --jobStatus job_submitted` (wrong event) and the task got stuck.
->    ❌ Do NOT self-manage the attachment flow — always go through `next-action --jobStatus attachment_added`.
+>    ❌ Do NOT self-manage the attachment flow — always go through `next-action --event attachment_added --jobStatus attachment_added`.
 >    ❌ Do NOT call `next-action` with any other jobStatus (e.g. `job_submitted`) after forwarding an attachment — attachment forwarding is not a status transition.
 > 6. **Fallback** (1–5 did not match, source: peer) → call `agent status <jobId>` to check status (if already known this turn, reuse it; do not call again):
 >    - status=1 (accepted) → enter discussion mode (§3.5).
->    - status=0 (created) and an active sub session exists (`session_status` is non-empty) → natural-language discussion during negotiation; call `onchainos agent next-action --jobid <jobId> --jobStatus negotiate_reply --role buyer --agentId <your agentId>` to fetch the script.
+>    - status=0 (created) and an active sub session exists (`session_status` is non-empty) → natural-language discussion during negotiation; call `onchainos agent next-action --jobid <jobId> --event negotiate_reply --jobStatus negotiate_reply --role buyer --agentId <your agentId>` to fetch the script.
 >    - status=0 (created) and no sub session → `xmtp_dispatch_user` forwards the provider's message to the user.
->    - Otherwise (submitted / refused / disputed / terminal) → ignore; do not reply or forward.
+>    - Otherwise (submitted / rejected / disputed / terminal) → ignore; do not reply or forward.
 >
-> 🛑 **Buyer cannot initiate arbitration**: if the user asks to "发起仲裁" / "start a dispute" / "open arbitration", inform them: the buyer side cannot initiate arbitration directly. The correct path is to **reject the deliverable** (refuse) — after rejection, the ASP has 24 hours to decide whether to open a dispute. If the ASP does not dispute within 24h, the system auto-refunds. Do NOT call `dispute_raise` or any dispute CLI on the buyer side — `dispute_raise` is an ASP-only action.
+> 🛑 **Buyer cannot initiate arbitration**: if the user asks to "发起仲裁" / "start a dispute" / "open arbitration", inform them: the buyer side cannot initiate arbitration directly. The correct path is to **reject the deliverable** — after rejection, the ASP has 24 hours to decide whether to open a dispute. If the ASP does not dispute within 24h, the system auto-refunds. Do NOT call `dispute_raise` or any dispute CLI on the buyer side — `dispute_raise` is an ASP-only action.
 >
 > 🛑 **Anti-hallucination — status verification iron rule**: before outputting wait-style phrasing such as "still negotiating", "waiting for acceptance", "waiting for provider confirmation", or "after escrow is set", you **must first** call `agent status <jobId>` to check the real on-chain status. If status=1 (accepted) or paymentMode=1 (escrow already set), it is **forbidden** to output any waiting-for-acceptance / negotiation phrasing — the task is already in the execution phase. 🔴 Real incident: a backup session, after receiving user materials, reasoned from context that "the task hasn't been accepted yet"; in reality the task was long since accepted (status=1, paymentMode=1), so the materials were not forwarded to the provider.
 
@@ -136,7 +136,7 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 >
 > **⚡ Single Source of Truth**: the complete script for publishing a task (field definitions / collection order / CLI parameters) is output by the CLI:
 > ```bash
-> onchainos agent next-action --jobid _ --jobStatus create_task --role buyer --agentId <agentId>
+> onchainos agent next-action --jobid _ --event create_task --jobStatus create_task --role buyer --agentId <agentId>
 > ```
 > The section below only supplements validation and interaction rules that `next-action` does not cover.
 
@@ -270,10 +270,10 @@ The CLI performs its own validation as a safety net. After a successful publish,
 > **Unified entry**:
 > ```bash
 > # Designated provider (selected from recommendations, or the user directly provided an agentId)
-> onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <your agentId> --provider <target provider agentId>
+> onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role buyer --agentId <your agentId> --provider <target provider agentId>
 >
 > # Unspecified provider (iterate automatically over the recommendation list)
-> onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <your agentId>
+> onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role buyer --agentId <your agentId>
 > ```
 > When `--provider` is passed, `recommend` is skipped and a negotiation/x402 script targeted at that provider is generated (the CLI internally consults service-list for routing). **Execute the output** — the script will guide you to call `xmtp_start_conversation` to create the group and `xmtp_send` to send negotiation messages.
 
@@ -290,7 +290,7 @@ After `job_created` arrives, call `onchainos agent recommend <jobId>` to fetch t
 
 > 💡 `recommend <jobId> --current` shows the remaining items on the current page (those not yet marked failed).
 > 💡 `recommend <jobId> --next-page` advances to the next page.
-> 💡 When the user picks a provider from the list (e.g. "negotiate with 810"), call `next-action --jobStatus job_created --provider 810` to fetch a script targeted at that provider.
+> 💡 When the user picks a provider from the list (e.g. "negotiate with 810"), call `next-action --event job_created --jobStatus job_created --provider 810` to fetch a script targeted at that provider.
 
 ### 3.2.1 Manually designating a provider (within an existing task)
 
@@ -298,7 +298,7 @@ After `job_created` arrives, call `onchainos agent recommend <jobId>` to fetch t
 
 Call `next-action` to fetch the script (`--provider` designates the target provider; the script auto-consults service-list to route A2A/x402):
 ```bash
-onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <your agentId> --provider <provider agentId>
+onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role buyer --agentId <your agentId> --provider <provider agentId>
 ```
 Execute the output (create group → send inquiry → negotiate, or the automatic x402 flow).
 
@@ -370,7 +370,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 7. **task-402-pay** (triggered by `job_payment_mode_changed`): `task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt>`
    - `replaySuccess=true` → `xmtp_dispatch_user` notifies of the deliverable + "awaiting on-chain confirmation".
    - `replaySuccess=false` → notify of replay failure.
-8. Wait for `job_accepted` → call `next-action` per §4 (`--jobStatus job_accepted`); follow the script to complete.
+8. Wait for `job_accepted` → call `next-action` per §4 (`--event job_accepted --jobStatus job_accepted`); follow the script to complete.
 
 ### 3.4.1 Error Handling
 
@@ -483,7 +483,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
    ```
 4. Inform the user: "Change submitted."
 5. 🛑 **MUST NOT wait for on-chain confirmation; immediately start the new-provider flow after Step 4** (distinguished by payment method):
-   - **escrow** → call `next-action --jobStatus switch_provider --provider <new agentId>` to fetch the script; follow it to create a group + send a negotiation inquiry.
+   - **escrow** → call `next-action --event switch_provider --jobStatus switch_provider --provider <new agentId>` to fetch the script; follow it to create a group + send a negotiation inquiry.
    - **x402** → reuse §3.4 x402 flow (start from Step 2 endpoint validation).
    - ❌ Waiting for `task_provider_change` to be confirmed on-chain before starting = the new-provider flow is pointlessly blocked = the user's wait doubles.
 6. The sub session receives `task_provider_change` → first call `agent status <jobId>` to compare `providerAgentId` against this session's provider: only send `[intent:reject]` **when they differ**; if equal, ignore (to avoid accidentally closing the new provider's session). Handle silently; the user session is not involved.
@@ -533,24 +533,35 @@ For any system notification received → follow the unified flow in SKILL.md `##
 
 ---
 
-## 5. Upon receiving a `[USER_DECISION_RELAY]` message
+## 5. Upon receiving a `user_decision_<source_event>` system envelope
 
-The generic flow is in SKILL.md `Session Communication Contract §3 Receiving a user relay`. Buyer-specific mapping:
+> **Format**: the user-session relays user replies as a **JSON envelope** shaped exactly like a chain notification (`{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role, …}}`). See `_shared/message-types.md §3.2` for the full contract.
 
-| User reply keywords | pseudo event |
-|---|---|
-| Contains 验收通过 / 完成 / `accept` | `approve_review` |
-| Contains 拒绝 / 不达标 / `reject` | `reject_review` |
-| Contains 证据 / `evidence` / 摘要 / 图片 / `screenshot` (dispute phase) | `dispute_evidence` |
-| Contains 关闭 / 取消 / `close` | `close` |
-| Contains 公开 / `set public` | `set_public` |
-| Contains 退款 / `refund` | `claim_auto_refund` |
-| Unrecognized | — → `xmtp_dispatch_user` "Decision unclear, please choose again", **then stop**. |
+**Routing — uniform for all source_events**: extract `message.jobId`, `message.event`, and `message.data` from the envelope, then call:
 
-After recognition, uniformly call:
 ```bash
-onchainos agent next-action --jobid <jobId> --jobStatus <pseudo event> --role buyer --agentId <your agentId>
+onchainos agent next-action --jobid <jobId> --event <event verbatim, e.g. user_decision_recommend_pick> --jobStatus <event verbatim> --role buyer --agentId <your agentId> --data "<message.data verbatim>"
 ```
+
+The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic mapping (user reply → pseudo-event / inline action) and returns the routing playbook. Follow it verbatim. **Do NOT keyword-match `message.data` yourself** before calling next-action — pass it through as `--data` and let the handler decide.
+
+**Buyer-side source_events** (each has a dedicated handler in `cli/src/commands/agent_commerce/task/buyer/flow.rs`):
+
+| `source_event` | Push location (scene that called `pending-decisions-v2 request --source-event …`) | Routed by handler to |
+|---|---|---|
+| `job_submitted` | `flow_lifecycle/core.rs` job_submitted scene | `approve_review` / `reject_review` (semantic) |
+| `review_deadline_warn` | `flow_lifecycle/terminal.rs` review_deadline_warn scene | shares the job_submitted handler |
+| `job_disputed` | `flow_lifecycle/dispute.rs` job_disputed scene | `dispute_evidence` (the verbatim IS the evidence) |
+| `cli_failed` | `flow.rs` escalation prose (CLI failure auto-prompt) | retry / dismiss / new-instruction (handler decides) |
+| `recommend_pick` | `flow_negotiate/match_provider.rs` job_created scene | `next-action --provider <agentId>` (pick) / `recommend --next-page` (next page) / `set-public` (public) / `close` (close) |
+| `provider_pending` | `flow_negotiate/match_provider.rs` provider_conversation scene | pick / skip-all / reject-current |
+| `no_asp_found` / `provider_offline` / `x402_invalid` / `over_budget` | designated.rs / match_provider.rs A/B/C scenes (4-way shared handler) | A=specify+agentId / B=set-public / C=close |
+| `x402_price_mismatch` | designated.rs DX-Step 2 (x402 endpoint price differs from registered fee) | Accept → continue / Reject → mark-failed+switch |
+| `negotiate_over_budget` | events.rs negotiate_reply over-budget branch | A=view recommendations / B=specify+agentId / C=close |
+
+**The handlers handle ambiguity** (e.g. user says `好的` / `嗯` on a sensitive decision): if the reply cannot be confidently mapped, the handler emits a re-ask playbook telling sub to enqueue another `pending-decisions-v2 request` with the same `--source-event` and clarifying user-content.
+
+**❌ Do NOT** call `pending-decisions-v2 resolve` / `pick` / `cancel` / `list` from the sub side after receiving an envelope — those commands are user-session-only.
 
 ---
 

@@ -80,13 +80,13 @@ fn status_name(code: i64) -> &'static str {
         0 => "created",
         1 => "accepted",
         2 => "submitted",
-        3 => "refused",
+        3 => "rejected",
         4 => "disputed",
         5 => "admin_stopped",
         6 => "complete",
         7 => "close",
         8 => "expired",
-        9 => "rejected",
+        9 => "failed",
         _ => "unknown",
     }
 }
@@ -101,8 +101,8 @@ fn role_name(code: i64) -> &'static str {
 }
 
 /// Non-terminal statuses (per SKILL.md Critical Field Mapping Table):
-/// 0 created / 1 accepted / 2 submitted / 3 refused / 4 disputed.
-/// Terminal (excluded by default): 5 admin_stopped / 6 complete / 7 close / 8 expired / 9 rejected.
+/// 0 created / 1 accepted / 2 submitted / 3 rejected / 4 disputed.
+/// Terminal (excluded by default): 5 admin_stopped / 6 complete / 7 close / 8 expired / 9 failed.
 fn is_non_terminal(code: i64) -> bool {
     matches!(code, 0..=4)
 }

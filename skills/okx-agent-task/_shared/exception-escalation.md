@@ -50,10 +50,11 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
    C. Provide a new instruction → describe what to change
    ```
 4. Follow the playbook the CLI returns verbatim, then end the turn
-5. When `[USER_DECISION_RELAY] decision: <verbatim>` arrives in a later turn, route:
-   - `A` / `选A` / `retry` / `重试` / `try again` → re-run the same command **once**; if it fails again, enqueue another error decision (do NOT auto-loop)
-   - `B` / `选B` / `dismiss` / `不再提示` / `skip prompts` → end the turn; the user is taking manual control of this step
-   - Otherwise → interpret the verbatim as a new instruction (e.g. `change --token-symbol to USDT and retry`) and execute accordingly
+5. When the user-session relays the reply back as a system envelope (`event:"user_decision_cli_failed"`, `message.data:<user verbatim>`) in a later turn, call:
+   ```bash
+   onchainos agent next-action --jobid <jobId> --jobStatus user_decision_cli_failed --role <buyer|provider> --agentId <your agentId> --data "<message.data verbatim>"
+   ```
+   The CLI's `cli_failed` handler does the LLM semantic mapping (`A` / `retry` / `重试` → retry the failed command once; `B` / `dismiss` / `不再提示` → end the turn, user takes manual control; new-instruction in natural language → parse and execute the modified command). Do NOT keyword-match yourself — pass `--data` through and follow the handler's playbook.
 
 **Only exception (auto-retry once)**:
 - JWT expired (error message contains `JWT verification failed` / `JWT expired` / `unauthorized` with `code=3001`) → refresh login state and retry once; on continued failure, fall through to the standard pending-decisions-v2 flow above

@@ -35,15 +35,19 @@ pub async fn handle_info(
     fs::create_dir_all(&tmp_dir)?;
 
     // Backend flat structure: top level holds task metadata (title/description)
-    // plus the two evidence buckets `provider` / `client`.
+    // plus the two evidence buckets `provider` / `client`, each carrying:
+    //   - `reason`: provider.reason = dispute-raise reason; client.reason = reject-delivery reason
+    //   - `texts[]`: free-text evidence
+    //   - `files[]`: file evidence (any type — not limited to images)
+    // `reason` / `texts[]` are JSON passthroughs; only `files[]` items need download.
     for side in EVIDENCE_SIDES {
         let Some(bucket) = data.get_mut(side).and_then(Value::as_object_mut) else { continue };
-        let Some(images) = bucket.get_mut("images").and_then(Value::as_array_mut) else { continue };
-        for item in images.iter_mut() {
+        let Some(files) = bucket.get_mut("files").and_then(Value::as_array_mut) else { continue };
+        for item in files.iter_mut() {
             let Some(file_key) = item.as_str().map(str::to_string) else { continue };
             let mut merged = Map::new();
             merged.insert("fileKey".into(), json!(&file_key));
-            match download_image(client, job_id, &file_key, &tmp_dir, agent_id).await {
+            match download_file(client, job_id, &file_key, &tmp_dir, agent_id).await {
                 Ok(p) => {
                     merged.insert(
                         "localPath".into(),
@@ -77,7 +81,7 @@ pub async fn handle_info(
     println!();
     println!("---");
     println!();
-    print!("{}", super::flow::evaluator_selected_post_evidence_steps(job_id));
+    print!("{}", super::flow::evaluator_selected_post_evidence_steps(job_id, agent_id));
     Ok(())
 }
 
@@ -93,11 +97,14 @@ pub(super) async fn fetch_evidence_bytes(
         .await
 }
 
-/// Download a single evidence image into `tmp_dir`; returns the local path.
+/// Download a single evidence file into `tmp_dir`; returns the local path.
+///
 /// fileKey shape is `<jobId>/<idx>/<uuid>` — strip the jobId prefix, join the
-/// rest with `_` into `<idx>_<uuid>`, then sniff the extension via magic bytes
-/// (png/jpg/gif/webp) so the local file opens directly in any image viewer.
-async fn download_image(
+/// rest with `_` into `<idx>_<uuid>` and write the file with **no extension**.
+/// The CLI deliberately does NOT magic-byte-sniff: the evaluator agent
+/// inspects the file content itself (see the evaluator playbook Step 3 +
+/// `references/evaluator-decision-rubric.md` Pass 4 for the probe procedure).
+async fn download_file(
     client: &TaskApiClient,
     job_id: &str,
     file_key: &str,
@@ -105,31 +112,11 @@ async fn download_image(
     agent_id: &str,
 ) -> Result<PathBuf> {
     let bytes = fetch_evidence_bytes(client, job_id, file_key, agent_id).await?;
-    let stem = file_key
+    let filename = file_key
         .split_once('/')
         .map(|(_, rest)| rest.replace('/', "_"))
         .unwrap_or_else(|| file_key.to_string());
-    let filename = match sniff_image_ext(&bytes) {
-        Some(ext) => format!("{stem}.{ext}"),
-        None => stem,
-    };
     let path = tmp_dir.join(filename);
     fs::write(&path, &bytes)?;
     Ok(path)
-}
-
-/// Sniff a common image format from magic bytes; returns the extension
-/// without a leading dot, or `None` if the format is not recognized.
-fn sniff_image_ext(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-        Some("png")
-    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        Some("jpg")
-    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        Some("gif")
-    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        Some("webp")
-    } else {
-        None
-    }
 }

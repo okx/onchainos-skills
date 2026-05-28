@@ -32,13 +32,14 @@
 |---|
 | Spec match 40 + Acceptance met 30 + Functional correctness 20 + Professional standard 10 |
 
-1. **Three-pass material reading** (order must not be reversed — prevents anchor bias):
-   - Pass 1: read only `description` / `title`, build the baseline of "what a perfect delivery looks like" (do not look at either party's submitted texts/images at this stage)
-   - Pass 2: read both parties' submitted texts, mark the points where the two parties' claims conflict
-   - Pass 3: inspect both parties' submitted images one by one (must be opened and inspected pixel-by-pixel)
+1. **Four-pass material reading** (order must not be reversed — prevents anchor bias):
+   - Pass 1: read only `description` / `title`, build the baseline of "what a perfect delivery looks like" (do not look at either party's stated reasons / submitted texts / files at this stage)
+   - Pass 2: read both parties' `reason` (provider = why arbitration was raised; client = why delivery was rejected) — these frame each side's claim, but are unilateral and must be cross-checked against material evidence in Passes 3-4
+   - Pass 3: read both parties' submitted texts, mark the points where the two parties' claims conflict
+   - Pass 4: inspect both parties' submitted files one by one. Local files arrive with **no extension** — probe and read each one using whatever tools you have. Images must be inspected pixel-by-pixel; documents end-to-end. For anything you cannot inspect (unsupported format, conversion failure, archive contents), cite as `<short reason> — contents unreviewable` and treat as evidence missing — **never vote blindly** on an item you could not inspect
 2. **Score the 4 dimensions item by item per the table above**:
    - For each dimension, first enumerate the specific subitems to be measured
-   - Mark each subitem as Pass / Partial / Fail, and cite the evidence source (`{provider|client}.texts[i]` or `.images[i].localPath`); on conflict, adjudicate by decision principle priority
+   - Mark each subitem as Pass / Partial / Fail, and cite the evidence source (`{provider|client}.reason`, `{provider|client}.texts[i]`, or `{provider|client}.files[i].localPath`); on conflict, adjudicate by decision principle priority
    - Dimension score = `(passes + 0.5 × partials) / total × dimension weight`
    - Example (Spec match, 40): spec lists 5 features → 4 Pass + 1 Partial + 0 Fail → `(4 + 0.5 × 1) / 5 × 40 = 36`
 3. **Sum the total score N**, convert to vote per the reduction table in §2
@@ -47,13 +48,13 @@
 
 **Pre-commit self-check: role swap**
 
-Required before submitting the vote. Swap the labels on both parties' texts/images (treat Client's as if Provider submitted them, Provider's as if Client submitted them), re-run the 4-dimension scoring above, and then apply the following table:
+Required before submitting the vote. Swap the labels on both parties' `reason` / texts / files (treat Client's as if Provider submitted them, Provider's as if Client submitted them), re-run the 4-dimension scoring above, and then apply the following table:
 
 | Result after swap | Handling |
 |---|---|
 | Same vote | Pass; submit the current conclusion |
 | Different vote, but you can articulate which specific piece of evidence caused the divergence (not which party identity) | Pass (legitimate asymmetry — e.g. burden of proof is itself asymmetric) |
-| Different vote, cannot articulate an evidence-based reason | Role bias detected → re-read materials from a blank slate: ① first read `description` / `title` to build the "what a perfect delivery looks like" baseline; ② then read both parties' statements, marking points of divergence; ③ inspect every image. The result of the re-read is final — do not run a second swap |
+| Different vote, cannot articulate an evidence-based reason | Role bias detected → re-read materials from a blank slate: ① first read `description` / `title` to build the "what a perfect delivery looks like" baseline; ② then read both parties' `reason` and texts, marking points of divergence; ③ inspect every file. The result of the re-read is final — do not run a second swap |
 
 ## 2. Reduction to vote ∈ {0, 1}
 
@@ -77,6 +78,6 @@ Job ID: <jobId>
 Rubric scoring: <Spec X/40 + Acceptance Y/30 + Functional Z/20 + Professional W/10 = Total N/100>
 vote: <0 | 1>  // 0=Approve (Client wins) / 1=Reject (Provider wins)
 Findings of fact: 1. ...  2. ...
-Evidence citations: Fact N ← <{provider|client}.images[i].localPath or {provider|client}.texts[i]>; whether there is an admission/rebuttal cross-check from the opposing party / whether it is pure text without corroboration
+Evidence citations: Fact N ← <{provider|client}.reason, {provider|client}.texts[i], or {provider|client}.files[i].localPath>; whether there is an admission/rebuttal cross-check from the opposing party / whether it is pure text without corroboration
 Reasoning (cite decision principle number): per principle #<N>, <reasoning process>
 ```

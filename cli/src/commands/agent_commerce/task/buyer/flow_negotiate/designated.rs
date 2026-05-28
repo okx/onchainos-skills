@@ -6,11 +6,11 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
     let session_hint = super::super::flow::SESSION_STATUS_HINT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
     let follow_playbook_short = super::super::flow::FOLLOW_PLAYBOOK_SHORT;
-    let abc_route = super::super::flow::ABC_KEYWORD_ROUTE;
-    let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Offline {short_id}] Choose next step"));
-    let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 invalid {short_id}] A/B/C"));
-    let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 price {short_id}] Accept / Reject"));
-    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] A/B/C"));
+    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
+    let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Offline {short_id}] Choose next step"), "provider_offline");
+    let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 invalid {short_id}] A/B/C"), "x402_invalid");
+    let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 price {short_id}] Accept / Reject"), "x402_price_mismatch");
+    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] A/B/C"), "over_budget");
     let provider_offline = super::super::content::provider_offline_user_prompt(job_id, short_id, dp_id);
     format!("\
              🎯 **Designated ASP**: {dp_id}\n\
@@ -41,11 +41,7 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
              \x20\x20{follow_playbook}\n\
              \x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
-             \x20\x20- Verbatim is `A` / `选A`, or contains `指定` / `specify` or looks like an agentId → extract agentId → `onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId>`\n\
-             \x20\x20- Verbatim is `B` / `选B`, or contains `公开` / `public` → `onchainos agent set-public {job_id}`\n\
-             \x20\x20- Verbatim is `C` / `选C`, or contains `关闭` / `close` / `取消` → `onchainos agent close {job_id}`\n\
-             \x20\x20- Otherwise → `pending-decisions-v2 request` again with clarifying userContent to re-ask.\n\
+             \x20\x20{route_hint}\n\
              - `onlineStatus == 2` but **has an endpoint** (x402 path) -> x402 is automated payment and does not depend on the ASP being online in real time, so continue to D-Step 2.\n\n\
              **D-Step 2 - route by service-list result:**\n\
              - **Has services and contains an endpoint (x402-capable)** -> extract `feeAmount`, `feeTokenSymbol`, `endpoint` from `services[0]`.\n\
@@ -68,7 +64,7 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20{l10n_prompt}\n\
              \x20\x20\x20\x20{follow_playbook}\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20\x20\x20{abc_route}\n\n\
+             \x20\x20\x20\x20{route_hint}\n\n\
              \x20\x20**DX-Step 2 - amount sanity check:**\n\
              \x20\x20Compare `amountHuman` from x402-check with `feeAmount` from `services[0]`:\n\
              \x20\x20- Mismatch (delta > 1%) -> enqueue the user decision via `pending-decisions-v2 request`:\n\
@@ -83,10 +79,7 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20{l10n_prompt}\n\
              \x20\x20\x20\x20{follow_playbook_short}\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:\n\
-             \x20\x20\x20\x20- Verbatim is `A` / `选A` / contains `接受` / `同意` / `accept` / `agree` / `yes` → continue to DX-Step 3 (budget check)\n\
-             \x20\x20\x20\x20- Verbatim is `B` / `选B` / contains `拒绝` / `reject` / `no` / `换` → mark-failed + recommend to switch ASP\n\
-             \x20\x20\x20\x20- Otherwise → `pending-decisions-v2 request` again with clarifying userContent to re-ask.\n\
+             \x20\x20\x20\x20{route_hint}\n\
              \x20\x20- Match -> continue to DX-Step 3.\n\n\
              \x20\x20**DX-Step 3 - budget check:**\n\
              \x20\x20First call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` and extract `paymentMostTokenAmount` (max budget) and the task's `tokenSymbol`.\n\
@@ -108,7 +101,7 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20{l10n_prompt}\n\
              \x20\x20\x20\x20{follow_playbook}\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20\x20\x20{abc_route}\n\
+             \x20\x20\x20\x20{route_hint}\n\
              \x20\x20- Within budget -> execute **A-Step 3** below.\n\n\
              \x20\x20**A-Step 3 - set-payment-mode (push x402 on-chain):**\n\
              \x20\x20```bash\n\
@@ -119,7 +112,7 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20Inspect the CLI output (JSON) of set-payment-mode:\n\
              \x20\x20- Output contains `\"alreadySet\": true` (paymentMode is already on-chain so the on-chain call was skipped) -> **do NOT wait for `job_payment_mode_changed`**;\n\
              \x20\x20\x20\x20no event will fire on-chain. **Within this same turn, immediately execute the x402 flow for job_payment_mode_changed**:\n\
-             \x20\x20\x20\x20call `onchainos agent next-action --jobid {job_id} --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (task-402-pay).\n\
+             \x20\x20\x20\x20call `onchainos agent next-action --jobid {job_id} --event job_payment_mode_changed --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (task-402-pay).\n\
              \x20\x20- Output contains `\"confirming\": true` (normal on-chain submission in flight) -> **end this turn** and wait for the `job_payment_mode_changed` system notification.\n\n\
              - **No service or no endpoint (no x402 support)** -> enter **B-Step 1** to create a chat and negotiate.")
 }
@@ -129,8 +122,8 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
     let l10n_prompt = super::super::flow::L10N_PROMPT;
     let session_hint = super::super::flow::SESSION_STATUS_HINT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
-    let abc_route = super::super::flow::ABC_KEYWORD_ROUTE;
-    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] A/B/C"));
+    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
+    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] A/B/C"), "no_asp_found");
     let attachment_file = super::super::content::attachment_file_to_seller(job_id);
     let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent recommend {job_id} --agent-id {agent_id}");
     let fallback_lines = format!("First run `onchainos agent mark-failed {job_id} --provider {dp_id}` to flag the failure, then run `onchainos agent recommend {job_id} --agent-id {agent_id}` to fetch a fresh recommendation list.\n\
@@ -296,11 +289,11 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              Inspect the CLI output (JSON) of set-payment-mode:\n\
              - Output contains `\"alreadySet\": true` (paymentMode already on-chain so the call was skipped) -> **do NOT wait for `job_payment_mode_changed`**;\n\
              \x20\x20no event will fire on-chain. **Within this same turn, immediately execute the escrow flow for job_payment_mode_changed**:\n\
-             \x20\x20call `onchainos agent next-action --jobid {job_id} --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (xmtp_send [intent:confirm]).\n\
+             \x20\x20call `onchainos agent next-action --jobid {job_id} --event job_payment_mode_changed --jobStatus job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (xmtp_send [intent:confirm]).\n\
              - Output contains `\"confirming\": true` (normal on-chain submission in flight) -> continue to Step 6.3.\n\
              ⚠️ **NEVER** xmtp_send [intent:confirm] while the on-chain call is still confirming - the ASP would apply on seeing [intent:confirm], but the on-chain paymentMode is still in the mempool / unconfirmed, so apply would fail or behave inconsistently. [intent:confirm] must only be sent after the `job_payment_mode_changed` event confirms paymentMode on-chain.\n\n\
              **Step 6.3 - executed only when `confirming`: end this turn** and wait for the `job_payment_mode_changed` system notification.\n\n\
-             (New turn) On receiving `job_payment_mode_changed` -> call next-action --jobStatus job_payment_mode_changed -> per script, xmtp_send [intent:confirm] to the ASP. The ASP sees CONFIRM -> apply (escrow); on-chain paymentMode is already in place.\n\n\
+             (New turn) On receiving `job_payment_mode_changed` -> call next-action --event job_payment_mode_changed --jobStatus job_payment_mode_changed -> per script, xmtp_send [intent:confirm] to the ASP. The ASP sees CONFIRM -> apply (escrow); on-chain paymentMode is already in place.\n\n\
              ━━━━━━━━━ Negotiation failed / switching ASP ━━━━━━━━━\n\n\
              Current ASP timed out (5 min) / COUNTER rounds exceeded (>=3) / received `[intent:reject]` / negotiation failed -> first xmtp_send `[intent:reject]` (reason: timeout / round limit / failure cause) to the ASP, then switch:\n\
              \x20\x20{fallback_lines}\n\
@@ -318,7 +311,7 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20{l10n_prompt}\n\
              \x20\x20{follow_playbook}\n\
              \x20\x20-> **end this turn** and resume execution once the user's reply is relayed back.\n\
-             \x20\x20{abc_route}\n\n\
+             \x20\x20{route_hint}\n\n\
              [Subsequent events]\n\
              - x402 -> set-payment-mode -> job_payment_mode_changed -> task-402-pay (sign + direct/accept + endpoint replay) -> job_accepted -> complete\n\
              - escrow -> set-payment-mode -> job_payment_mode_changed -> notify ASP to apply -> ASP applies on-chain -> ASP xmtp_send notifies user -> user receives a2a-agent-chat -> confirm-accept -> job_accepted\n")

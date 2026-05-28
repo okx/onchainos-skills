@@ -13,10 +13,9 @@ pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user that the refund completed; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund completed:**\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund completed** ({l10n_short}):\n\n\
      content:\n\
-     {refunded_notify}\n\
-     {l10n_short}\n\n\
+     {refunded_notify}\n\n\
      **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Refund flow fully complete.\n"
@@ -37,10 +36,9 @@ pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user the refund has arrived; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund has arrived:**\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund has arrived** ({l10n_short}):\n\n\
      content:\n\
-     {auto_refunded_notify}\n\
-     {l10n_short}\n\n\
+     {auto_refunded_notify}\n\n\
      **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Refund flow fully complete.\n"
@@ -56,9 +54,8 @@ pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
     "[Current Status] job_expired (task expired; no ASP accepted or no submission)\n\
      [Role] User (User Agent)\n\n\
      [Your next actions]\n\n\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the task expired:**\n\
-     \x20\x20content: {expired_notify}\n\
-     {l10n_short}\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the task expired** ({l10n_short}):\n\
+     \x20\x20content: {expired_notify}\n\n\
      This task reached a terminal state; the flow ends.\n"
     )
 }
@@ -76,9 +73,8 @@ pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user:**\n\
-     \x20\x20content: {closed_notify}\n\
-     {l10n_short}\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
+     \x20\x20content: {closed_notify}\n\n\
      **Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Close flow ends.\n"
@@ -101,17 +97,16 @@ pub(crate) fn submit_expired(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
-     **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
-     content: \"{submit_expired}\"\n\
-     {l10n_short}\n"
+     **Step 2 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
+     content: \"{submit_expired}\"\n"
     )
 }
 
-pub(crate) fn refuse_expired(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
-    let refuse_expired = super::super::content::refuse_expired_user_notify(job_id);
+    let reject_expired = super::super::content::reject_expired_user_notify(job_id);
     format!(
     "[System Notification] ASP arbitration window expired\n\
      [Role] User (User Agent)\n\n\
@@ -121,9 +116,8 @@ pub(crate) fn refuse_expired(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
-     **Step 2 -- Call xmtp_dispatch_user to notify the user:**\n\
-     content: \"{refuse_expired}\"\n\
-     {l10n_short}\n"
+     **Step 2 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
+     content: \"{reject_expired}\"\n"
     )
 }
 
@@ -153,15 +147,13 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
        --sub-key \"<full sessionKey from session_status>\" \\\n\
        --job-id {job_id} --role buyer --agent-id {agent_id} \\\n\
        --user-content \"{review_deadline_prompt_for_shell}\" \\\n\
-       --list-label \"[Decision {short_id}] Approve / Reject (deadline soon)\"\n\
+       --list-label \"[Decision {short_id}] Approve / Reject (deadline soon)\" \\\n\
+       --source-event review_deadline_warn\n\
      ```\n\
      {l10n_prompt_bold}\n\n\
      {follow_end}\n\n\
-     **Step 2 — After receiving `[USER_DECISION_RELAY] decision: <user verbatim>` from the user-session**:\n\
-     Inspect the verbatim text (case-insensitive; trim whitespace/punctuation) and route:\n\
-     - Verbatim is `A` / `a` / `选A` / `1` / `Choose A` / `option A`, OR contains `通过` / `同意` / `满意` / `验收` / `接受` / `approve` / `accept` / `agree` → call `onchainos agent next-action --jobid {job_id} --jobStatus approve_review --role buyer --agentId {agent_id}` for the approve playbook (which runs `onchainos agent complete`).\n\
-     - Verbatim is `B` / `b` / `选B` / `2` / `Choose B` / `option B`, OR contains `拒绝` / `不通过` / `不满意` / `不接受` / `reject` / `refuse` → call `onchainos agent next-action --jobid {job_id} --jobStatus reject_review --role buyer --agentId {agent_id}` (extract the reason from the verbatim after `理由` / `reason` / `因为`; if not stated, default to `did not meet acceptance criteria`).\n\
-     - Otherwise (unrelated reply) → call `pending-decisions-v2 request` again with a clarifying userContent (\"您刚才回复 「<verbatim>」我没理解,请回复 「通过」 或 「拒绝, 理由: <...>」 或 直接回复 A / B\") to re-ask.\n",
+     **Step 2 — After user-session relays as system envelope** (`event: \"user_decision_review_deadline_warn\"`, `message.data: <user's verbatim reply>`):\n\
+     Call `onchainos agent next-action --jobid {job_id} --event user_decision_review_deadline_warn --jobStatus user_decision_review_deadline_warn --role buyer --agentId {agent_id} --data \"<message.data>\"` — CLI returns a routing playbook that maps the user's intent (`A` / `通过` / `approve` / 同意 / 接受 → `approve_review`; `B` / `拒绝` / `reject` → `reject_review`; ambiguous → re-ask via pending-decisions-v2 request). Follow the returned routing.\n",
         review_deadline_prompt_for_shell = review_deadline_prompt.replace('"', "\\\""),
     )
 }
@@ -176,10 +168,9 @@ pub(crate) fn review_expired(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user the review window expired; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions]\n\n\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the review window expired:**\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the review window expired** ({l10n_short}):\n\
      \x20\x20content:\n\
-     {review_expired}\n\
-     {l10n_short}\n\n\
+     {review_expired}\n\n\
      **Step 2** -- Wait for the `job_auto_completed` system notification and then wrap up.\n"
     )
 }
@@ -198,10 +189,9 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user the task auto-completed; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed:**\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed** ({l10n_short}):\n\
      \x20\x20content:\n\
-     {auto_completed_notify}\n\
-     {l10n_short}\n\n\
+     {auto_completed_notify}\n\n\
      {terminal_session_hint}\n"
     )
 }
@@ -220,10 +210,8 @@ pub(crate) fn close_task(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent close {job_id}\n\
      ```\n\n\
-     **Step 2 -- Notify the user:**\n\
-     Call xmtp_dispatch_user:\n\
-     content: \"{close_notify}\"\n\
-     {l10n_short}\n"
+     **Step 2 -- Notify the user via xmtp_dispatch_user** ({l10n_short}):\n\
+     content: \"{close_notify}\"\n"
     )
 }
 
@@ -239,10 +227,8 @@ pub(crate) fn set_public(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent set-public {job_id}\n\
      ```\n\n\
-     **Step 2 -- Notify the user:**\n\
-     Call xmtp_dispatch_user:\n\
-     content: \"{set_public_notify}\"\n\
-     {l10n_short}\n"
+     **Step 2 -- Notify the user via xmtp_dispatch_user** ({l10n_short}):\n\
+     content: \"{set_public_notify}\"\n"
     )
 }
 
@@ -274,9 +260,8 @@ pub(crate) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the reward has arrived:**\n\
-     \x20\x20content: {reward_claimed}\n\
-     {l10n_short}\n"
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the reward has arrived** ({l10n_short}):\n\
+     \x20\x20content: {reward_claimed}\n"
     )
 }
 
@@ -292,10 +277,10 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
      You should not run a playbook with `wakeup_notify` as --jobStatus -- this playbook is only a guide.\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 1 -- Read the real status from the envelope**:\n\
-     From the wakeup_notify envelope that triggered this turn, read `message.jobStatus` (e.g. `accepted` / `submitted` / `refused` / `disputed` / `completed` / `rejected` and other real status strings).\n\n\
+     From the wakeup_notify envelope that triggered this turn, read `message.jobStatus` (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed` and other real status strings).\n\n\
      **Step 2 -- Re-call next-action with the real status to fetch the current playbook**:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --jobStatus <value of message.jobStatus> --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --jobid {job_id} --event <value of message.jobStatus> --jobStatus <value of message.jobStatus> --role buyer --agentId {agent_id}\n\
      ```\n\
      Follow the returned playbook for what to do at the current status.\n\n\
      **Step 3 -- Idempotency self-check (avoid re-prompting the user)**:\n\

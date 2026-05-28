@@ -42,12 +42,12 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
     )
 }
 
-/// `Event::JobRefused` Step 1 — decision prompt shown to the user
+/// `Event::JobRejected` Step 1 — decision prompt shown to the user
 /// (`xmtp_prompt_user.userContent`).
 ///
 /// The short jobId prefix lets the user tell tasks apart at a glance when
 /// multiple prompts are in flight concurrently.
-pub fn job_refused_user_decision_prompt(short_id: &str) -> String {
+pub fn job_rejected_user_decision_prompt(short_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[Job {short_id} — you are the ASP] The User Agent rejected the deliverable. Choose:\n\
          \x20\x20\x20\x20A. File a dispute → reply 'file dispute, reason: <reason>'\n\
@@ -154,7 +154,7 @@ pub fn job_auto_completed_user_notify(job_id: &str) -> String {
 /// (`xmtp_prompt_user.userContent`).
 ///
 /// The short jobId prefix lets the user tell tasks apart at a glance (same as
-/// `job_refused_user_decision_prompt`). If the user replies `submit now` →
+/// `job_rejected_user_decision_prompt`). If the user replies `submit now` →
 /// the user-session relays the decision back to the sub, which runs the delivery
 /// flow; if they stay silent → the sub waits for `submit_expired` to trigger a refund.
 pub fn submit_deadline_warn_user_prompt(short_id: &str) -> String {

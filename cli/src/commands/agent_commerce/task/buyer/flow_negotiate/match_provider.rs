@@ -7,12 +7,13 @@ use super::super::flow::FlowContext;
 pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
     let l10n_prompt = super::super::flow::L10N_PROMPT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
-    let follow_playbook_short = super::super::flow::FOLLOW_PLAYBOOK_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-    let cmd_recommend = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Recommend {short_id}] Pick ASP"));
-    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] A/B/C"));
+    let cmd_recommend = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Recommend {short_id}] Pick ASP"), "recommend_pick");
+    // Note: the "next-page returns empty -> push no_asp_found A/B/C" sub-branch
+    // is delegated to the `user_decision_recommend_pick` handler in flow.rs,
+    // which embeds the no_asp_found enqueue command + user-content template.
 
     let designated_provider = super::super::negotiate::take_designated_provider(job_id).ok().flatten();
 
@@ -64,7 +65,9 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              ❌ Absolutely forbidden: using xmtp_dispatch_user instead of `pending-decisions-v2 request` - dispatch_user is pure notification, the user's choice cannot be relayed back.\n\
              ❌ Absolutely forbidden: printing text \"for the user to see\" first and then calling the tool - text output in a sub session never reaches the user.\n\n\
              **Step 2 - show the list to the user and let them choose:**\n\
-             Call `session_status` to get the sessionKey (only once per turn). Then run:\n\
+             🛑🛑🛑 **DO NOT call `xmtp_start_conversation` in this step** — there is no peer agent to talk to yet (the user hasn't picked an ASP). `xmtp_start_conversation` only happens AFTER the user picks (handled by the `next-action --provider <X>` playbook in a later turn). 🔴 Real incident: a model in backup, instead of calling `session_status` to fetch its own backup-key, called `xmtp_start_conversation` to create a brand-new (peer-less) conversation, which produced an unusable sessionKey and broke the relay chain.\n\
+             **Action**: call `session_status` (NOT `xmtp_start_conversation`) to get the **current sub/backup session's** sessionKey (call once per turn, reuse the result). The returned string is what you must pass verbatim to `--sub-key` below. For backup-session callers, the key looks like `agent:main:okx-a2a:group:backup`; for task-sub callers, it contains `&job=<jobId>&gid=<...>`.\n\
+             Then run:\n\
              ```bash\n\
              {cmd_recommend}\n\
              ```\n\
@@ -86,44 +89,22 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              {l10n_prompt}\n\
              {follow_playbook}\n\n\
              -> **end this turn** and wait for the user's reply to be relayed back.\n\n\
-             **Step 3 - after receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:**\n\n\
-             - Verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the recommend list above; the user picked an ASP (agentId=X):\n\
-             ===============================================================\n\
-             🛑🛑🛑 ABSOLUTE MANDATORY — call `next-action` FIRST. This is the ONLY action allowed.\n\
-             ===============================================================\n\
+             **Step 3 — End this turn. The user-session will relay the user's reply as a system envelope.**\n\n\
+             When the system envelope arrives (`event:\"user_decision_recommend_pick\"`, `message.data:<user verbatim>`, e.g. `1` / `864` / `next page` / `公开` / `关闭`), call:\n\
              ```bash\n\
-             onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id} --provider <agentId picked by user>\n\
+             onchainos agent next-action --jobid {job_id} --event user_decision_recommend_pick --jobStatus user_decision_recommend_pick --role buyer --agentId {agent_id} --data \"<message.data>\"\n\
              ```\n\
-             Then execute the returned playbook — it contains ALL subsequent instructions.\n\
+             CLI's routing playbook does the LLM semantic mapping (pick ASP → re-enter via `next-action --provider X` / next page → `recommend --next-page` (auto re-push if results / fall back to `--source-event no_asp_found` if empty) / public → `set-public` / close → `close`). Follow it verbatim.\n\n\
              ===============================================================\n\
-             🔴🔴🔴 ABSOLUTE PROHIBITION — before next-action returns, you are FORBIDDEN from:\n\
+             🔴🔴🔴 ABSOLUTE PROHIBITION — before the `user_decision_recommend_pick` next-action returns, you are FORBIDDEN from:\n\
              ❌ Creating groups or conversations\n\
              ❌ Sending ANY message to ANY agent\n\
              ❌ Calling ANY onchainos CLI command other than the next-action above\n\
              ❌ Deciding routing (x402 / A2A / escrow) yourself\n\
              ❌ Composing negotiation content of any kind\n\
+             ❌ Keyword-matching the verbatim yourself (CLI's user_decision_recommend_pick handler does the semantic mapping; your job is only to pass `--data \"<message.data>\"` through)\n\
              🔴 Real incident: a model skipped next-action and sent [intent:propose] directly — this broke routing, skipped service-list check, and sent an invalid first message. The ONLY correct path is next-action first.\n\
-             ===============================================================\n\n\
-             - Verbatim contains `next page` / `下一页` / `more` / `更多` → run:\n\
-             ```bash\n\
-             onchainos agent recommend {job_id} --next-page\n\
-             ```\n\
-             If results -> go back to Step 2 and show the new list to the user.\n\
-             If empty -> enqueue the user decision via `pending-decisions-v2 request`:\n\
-             \x20\x20\x20\x20```bash\n\
-             \x20\x20\x20\x20{cmd_no_asp}\n\
-             \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-             \x20\x20\x20\x20[Job {short_id} — you are the User Agent] All recommended ASPs have been tried; no match found. Choose next step:\n\
-             \x20\x20\x20\x20A. Specify an ASP — provide the ASP's agentId\n\
-             \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
-             \x20\x20\x20\x20C. Close the job — cancel and refund\n\
-             \x20\x20\x20\x20{l10n_prompt}\n\
-             \x20\x20\x20\x20{follow_playbook_short}\n\
-             \x20\x20\x20\x20After receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route: A / specify / agentId → `next-action --provider <agentId>`; B / public → `set-public`; C / close → `close`; otherwise → re-ask.\n\n\
-             - Verbatim contains `public` / `公开` → `onchainos agent set-public {job_id}`\n\n\
-             - Verbatim contains `close` / `关闭` / `取消` / `cancel` → `onchainos agent close {job_id}`\n\n\
-             - Otherwise (unrelated reply) → `pending-decisions-v2 request` again with clarifying userContent to re-ask.")
+             ===============================================================\n")
     };
 
     let mut output = format!(
@@ -171,7 +152,7 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
         Some(id) => id.clone(),
         None => {
             return format!("[Error] switch_provider is missing the --provider argument.\n\
-                 Please call again: onchainos agent next-action --jobid {job_id} --jobStatus switch_provider --role buyer --agentId {agent_id} --provider <new ASP agentId>\n");
+                 Please call again: onchainos agent next-action --jobid {job_id} --event switch_provider --jobStatus switch_provider --role buyer --agentId {agent_id} --provider <new ASP agentId>\n");
         }
     };
 
@@ -214,12 +195,12 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
     let l10n_prompt = super::super::flow::L10N_PROMPT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
     let follow_playbook_short = super::super::flow::FOLLOW_PLAYBOOK_SHORT;
-    let abc_route = super::super::flow::ABC_KEYWORD_ROUTE;
+    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-    let cmd_pending_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Pending ASP {short_id}] Pick"));
-    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] A/B/C"));
+    let cmd_pending_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Pending ASP {short_id}] Pick"), "provider_pending");
+    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] A/B/C"), "no_asp_found");
 
     let no_sellers = super::super::content::no_more_sellers_user_notify(job_id);
     let pending_empty = super::super::content::pending_list_empty_user_notify();
@@ -262,7 +243,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      Reply with the ASP's number to start, or reply \"skip all\".\n\n\
      {l10n_prompt}\n\
      {follow_playbook}\n\n\
-     **Step 3 - after receiving `[USER_DECISION_RELAY] decision: <user verbatim>`, keyword-route:**\n\n\
+     **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action --jobStatus user_decision_provider_pending --data \"<message.data>\"` — both paths point to the same Branch A/B/C below.)\n\n\
      ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\
      A-Step 1: map the user's reply to agentId (index → AgentID via the pending list, or use a 3-digit AgentID directly); call xmtp_start_conversation to create the group + the sub session:\n\
      \x20\x20Args: myAgentId={agent_id}, toAgentId=<agentId from the pending list above>, jobId={job_id}\n\
@@ -301,7 +282,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \x20\x20C. Close the job — cancel and refund\n\
      \x20\x20{l10n_prompt}\n\
      \x20\x20{follow_playbook_short}\n\
-     \x20\x20{abc_route}\n\n\
+     \x20\x20{route_hint}\n\n\
      [Loop termination conditions] xmtp_get_pending_list returns an empty list, OR negotiation succeeds and enters Scene 6.\n")
 
 }
