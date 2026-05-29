@@ -1020,7 +1020,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
-            if let Some(w) = check_status_freshness(&job_id, &job_status, &agent_id).await {
+            // Evaluator playbook is event-driven (see `evaluator/flow.rs::generate_next_action`); pass `event` so freshness
+            // resolution lands on the right Status::Disputed sub-state machine. Buyer / provider keep the legacy job_status.
+            let freshness_key = if matches!(role.as_str(), "evaluator") { event.as_str() } else { job_status.as_str() };
+            if let Some(w) = check_status_freshness(&job_id, freshness_key, &agent_id).await {
                 println!("{w}");
                 return Ok(());
             }

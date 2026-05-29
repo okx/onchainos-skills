@@ -137,7 +137,7 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
              \x20\x20\x20\x20Commit deadline: <commitDeadlineLocal> (<minutesLeft> minutes remaining)\n\
-             \x20\x20\x20\x20Status: Agent has not committed yet\n\
+             \x20\x20\x20\x20Current Status: Agent has not committed yet\n\
              \x20\x20\x20\x20🚨 Timeout consequences:\n\
              \x20\x20\x20\x20• Stake slashed <slashTimeoutBps> (≈<slashAmount> OKB)\n\
              \x20\x20\x20\x20• Enter a <cooldownHours>h cooldown during which you cannot be selected\n\
@@ -159,7 +159,7 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
              \x20\x20\x20\x20Reveal deadline: <revealDeadlineLocal> (<minutesLeft> minutes remaining)\n\
-             \x20\x20\x20\x20Status: Agent has not revealed yet\n\
+             \x20\x20\x20\x20Current Status: Agent has not revealed yet\n\
              \x20\x20\x20\x20🚨 Timeout consequences:\n\
              \x20\x20\x20\x20• Stake slashed <slashTimeoutBps> (≈<slashAmount> OKB)\n\
              \x20\x20\x20\x20• Enter a <cooldownHours>h cooldown during which you cannot be selected\n\
