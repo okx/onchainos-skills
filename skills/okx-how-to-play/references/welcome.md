@@ -1,6 +1,6 @@
 # Welcome Banner
 
-Two variants by auth state. Both share the same 5-pick (or 4-pick, when Polymarket is geoblocked) Quick-start menu.
+Two variants by auth state. Both share the same 6-pick (or 5-pick, when Polymarket is geoblocked) Quick-start menu.
 
 - **Logged-out** — no addresses, no balance, includes a "login" hint at the menu trailer.
 - **Logged-in** — addresses + balance shown, no QR codes, no login hint.
@@ -35,7 +35,7 @@ Pull `evmAddress`, `solAddress`, and the total USD balance from the `onchainos w
 
 ### 2.3 Polymarket geoblock check (fail-closed)
 
-Polymarket is restricted in some jurisdictions (e.g. United States). Probe geo before deciding whether to include pick 1:
+Polymarket is restricted in some jurisdictions (e.g. United States). Probe geo before deciding whether to include the Polymarket pick:
 
 ```bash
 onchainos wallet geoblock
@@ -86,21 +86,23 @@ Balance: ${balance}
 
 ```
 What do you want to try?
-🔥 1 · Polymarket — top 3 markets worth watching today, I'll handpick them
-💰 2 · Don't let your USDC sit idle — let's find the best APY right now
-🐋 3 · What did the whales just buy? Smart-money signal tracking
-🆕 4 · Fresh tokens on-chain — scan to see which ones are worth boarding
-☕ 5 · One coffee's time to digest today's on-chain market
+✨ 1 · OKX.AI — do business with Agents: post tasks, hire Agents, or stake to judge disputes
+🔥 2 · Polymarket — top 3 markets worth watching today, I'll handpick them
+💰 3 · Don't let your USDC sit idle — let's find the best APY right now
+🐋 4 · What did the whales just buy? Smart-money signal tracking
+🆕 5 · Fresh tokens on-chain — scan to see which ones are worth boarding
+☕ 6 · One coffee's time to digest today's on-chain market
 ```
 
 ### 3.4 Menu — Variant B (`polymarket_available = false`, 4 picks, no Polymarket)
 
 ```
 What do you want to try?
-💰 1 · Don't let your USDC sit idle — let's find the best APY right now
-🐋 2 · What did the whales just buy? Smart-money signal tracking
-🆕 3 · Fresh tokens on-chain — scan to see which ones are worth boarding
-☕ 4 · One coffee's time to digest today's on-chain market
+✨ 1 · OKX.AI — do business with Agents: post tasks, hire Agents, or stake to judge disputes
+💰 2 · Don't let your USDC sit idle — let's find the best APY right now
+🐋 3 · What did the whales just buy? Smart-money signal tracking
+🆕 4 · Fresh tokens on-chain — scan to see which ones are worth boarding
+☕ 5 · One coffee's time to digest today's on-chain market
 ```
 
 ### 3.5 Trailer
@@ -118,7 +120,7 @@ Which one? Just reply with 1–N 👆
 Which one? Just reply with 1–N 👇
 ```
 
-Replace `N` with `5` for Variant A or `4` for Variant B.
+Replace `N` with `6` for Variant A or `5` for Variant B.
 
 ### 3.6 Disclaimer — always at the bottom, both variants
 
@@ -132,6 +134,7 @@ Route by pick **description** (not the raw number — the number shifts in Varia
 
 | Description | Type | Target |
 |---|---|---|
+| ✨ OKX.AI — how OKX.AI works | skill | invoke `okx-ai-guide` (platform detection + routes 1/2/3 into identity registration; no login gate) |
 | 🔥 Polymarket Top 3 | skill | invoke `okx-dapp-discovery` (it routes to / installs `polymarket-plugin`) |
 | 💰 USDC APY | skill | invoke `okx-defi-invest` |
 | 🐋 Smart money / whale tracking | workflow | `~/.onchainos/workflows/smart-money-signals.md` |
@@ -142,6 +145,7 @@ Route by pick **description** (not the raw number — the number shifts in Varia
 
 The skill itself handles auth where it needs it. Don't pre-block on login.
 
+- **✨ OKX.AI**: invoke `okx-ai-guide` skill. One-line bridge ("Let's look at OKX.AI ↓"). It runs its own platform detection and routes the 1/2/3 role picks into `okx-agent-identity` registration; login is handled inside that flow.
 - **🔥 Polymarket**: invoke `okx-dapp-discovery` skill. One-line bridge ("Handing off Polymarket to dapp-discovery."). Don't pre-explain or pre-route.
 - **💰 USDC APY**: invoke `okx-defi-invest` skill, passing the user's intent ("find best USDC APY").
 
