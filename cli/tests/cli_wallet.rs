@@ -8,8 +8,7 @@
 //!   `locale '<original>' not in supported list (en_US, zh_CN), falling back to en_US`.
 //! - Empty email argument fails fast with `email is required` and exit 1 — no network.
 //!
-//! Live rows hit the dev backend (`https://web3pre.okex.org`). The placeholder
-//! email may be rejected by the backend, so we assert only:
+//! The placeholder email may be rejected by the backend, so we assert only:
 //!   1. The CLI did not crash (exit code reached `main.rs` cleanly).
 //!   2. Stdout is parseable JSON.
 //!   3. For fallback rows: stderr contains the exact warning substring.
@@ -71,7 +70,7 @@ fn fresh_home() -> TestHome {
 /// `ONCHAINOS_HOME` so wallet credentials never leak between tests.
 fn run_wallet_login(extra: &[&str]) -> (Output, TestHome) {
     let home = fresh_home();
-    let mut args: Vec<&str> = vec!["--base-url", "https://web3pre.okex.org", "wallet", "login"];
+    let mut args: Vec<&str> = vec!["wallet", "login"];
     args.extend_from_slice(extra);
 
     // Mirror `common::run_with_retry` semantics but with env isolation: retry up
