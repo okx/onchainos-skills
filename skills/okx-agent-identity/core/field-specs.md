@@ -1,6 +1,6 @@
 # Field Specs — 8 Fields, Four-Segment Descriptions
 
-> Shared by `role-requester.md` / `role-provider.md` / `role-evaluator.md`. When asking the user for any of these fields, deliver the four segments in order: **用途 / 可见范围 / 请注意 / 示例** (Chinese) or **Purpose / Visibility / Please note / Example** (English). Do not abbreviate — users need all four to answer well.
+> Shared by all three role playbooks. When asking the user for any of these fields, deliver the four segments in order: **用途 / 可见范围 / 请注意 / 示例** (Chinese) or **Purpose / Visibility / Please note / Example** (English). Do not abbreviate — users need all four to answer well.
 
 > **Language matching.** All four segment labels AND the examples must match the user's language. If the user types Chinese, render `用途 / 可见范围 / 请注意 / 示例` with Chinese examples; if English, render `Purpose / Visibility / Please note / Example` with English examples; mixed follows the user's dominant language. The bilingual examples below are for your reference only — pick or rewrite the one that fits the user's language in the moment. Never mix languages within a single prompt to the user.
 
@@ -55,7 +55,7 @@ The ASP's `--service` is a JSON array whose elements have the fields below. **Ne
 - **请注意** / Please note: 用户回复 `1` / `2` 选择，或者直接说 `API 接口` / `agent 互调` (中文) / `API service` / `agent-to-agent` (English)；skill 会把选择映射成 CLI 接受的值再下发。 / The user replies `1` / `2` to choose, or names the kind directly as `API service` / `agent-to-agent` (English) or `API 接口` / `agent 互调` (Chinese); the skill maps the choice to the CLI's accepted value before issuing.
 - **示例** / Example: `1` / `2` / `API 接口` / `agent 互调` / `API service` / `agent-to-agent`.
 
-**Maintainer-only note (not user-visible — wire-level enum):** the CLI's `--service` payload accepts only `A2MCP` / `A2A` (case-insensitive; the skill always emits uppercase). The raw enum NEVER appears in user-visible text per `references/ux-lexicon.md §Service-type` + `references/display-formats.md` top-level "Service-type rendering" rule.
+**Maintainer-only note (not user-visible — wire-level enum):** the CLI's `--service` payload accepts only `A2MCP` / `A2A` (case-insensitive; the skill always emits uppercase). The raw enum NEVER appears in user-visible text per `core/ux-lexicon.md §Service-type` + `core/display-formats.md` top-level "Service-type rendering" rule.
 
 ### fee
 
@@ -93,4 +93,4 @@ Same field when the user is typing English:
 > - Please note: non-empty, short, up to 64 characters.
 > - Example: `TVL Query` / `Whale Alert`.
 
-Do NOT cram multiple fields into one message. Do NOT mix languages in the same message. Do NOT leak the CLI JSON key (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint` / …) into the user-visible prompt — localize the label (`名称 / 描述 / 类型 / 价格 / 接口地址` or `Name / Description / Type / Fee / Endpoint`) instead. One field per turn is the hard rule from `role-playbook.md`.
+Do NOT cram multiple fields into one message. Do NOT mix languages in the same message. Do NOT leak the CLI JSON key (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint` / …) into the user-visible prompt — localize the label (`名称 / 描述 / 类型 / 价格 / 接口地址` or `Name / Description / Type / Fee / Endpoint`) instead. One field per turn — never batch multiple fields in one message.

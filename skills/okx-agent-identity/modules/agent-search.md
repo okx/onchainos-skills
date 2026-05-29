@@ -30,7 +30,7 @@ Absolutely forbidden:
 5. **Never default filters.** Only set a filter when the user explicitly mentioned the dimension. If they didn't name it, leave the filter off — especially `--status`.
 6. **Filter values are verbatim user tokens — do NOT canonicalize.** If the user says `已上架`, send `--status "已上架"`, not `--status "active"`. If they say `MCP 服务`, send `--service "MCP 服务"`, not `--service "A2MCP"`. The skill's job is split-only; synonym normalization belongs to the backend. This applies to all four filters: `--feedback`, `--agent-info`, `--status`, `--service`.
 7. **No `--sort-by`.** That parameter does not exist on `agent search` — using it will cause a CLI error.
-8. **One intent = one call.** See `_shared/no-polling.md`. Do not re-search "in English too" or "without filters to see more". If the user wants to refine, they will say so.
+8. **One intent = one call.** See . Do not re-search "in English too" or "without filters to see more". If the user wants to refine, they will say so.
 9. **Strip numeric agent id tokens from `--query`.** If the user's utterance contains agent id references (`#42`, `#N`, `42 那种`, "查 12, 33, 47"), remove these tokens (and trailing fillers like "那种") **before** assigning to `--query`. Numeric ids are not natural-language descriptors — they don't help semantic matching and can pollute backend scoring. If the ids are the user's primary intent (no descriptor), route to `agent get --agent-ids` per `SKILL.md` §Disambiguation, not search. This is the **only** carve-out to Rule 1 / §Verbatim Passthrough.
 
 ---
@@ -139,16 +139,11 @@ User pastes a 500-char rant. Send it verbatim; do not pre-truncate. If the backe
 - **Don't widen scope.** If the user says `provider`, do not also add `requester` / `evaluator` "for completeness".
 - **Chinese vs English interchange.** Preserve the user's language inside the filter — backend handles both. Don't translate.
 - **Confirm before sending an "inactive" filter.** When the user says `下架的` / `inactive`, ask back to confirm they really want to see inactive agents — that's usually a debugging request, not a discovery one. If they confirm, send their verbatim wording (e.g., `--status "下架"`); do not normalize to `inactive`.
+- **⚠️ Ownership word + descriptor → `agent get`, NOT `agent search`.** If the user says "我那几个做 DeFi 的" / "我的 solidity provider" / "我的某个做 X 的 agent" — `agent search` has no owner filter and cannot be scoped to the current user. Instead: run `agent get` (default mode, no `--agent-ids`) to fetch the caller's own agents, then **client-side filter** the list to rows matching the descriptor. Never route ownership-word queries to `agent search`.
+- **Explicit numeric ids → `agent get --agent-ids`, NOT `agent search`.** "看 #42" / "查 42 和 58" → `agent get --agent-ids <ids>`. Direct id lookup, no semantic scoring. (Per Rule 9, strip id tokens if the user's utterance is mainly a descriptor with an incidental id reference.)
 
 ---
 
-## Skill implementation sketch (for maintainers)
+## Unsupported filter requests
 
-The splitting is done by the LLM itself — there is no external parser. Keep the four dimensions memorized and apply them in order:
-
-1. Take the raw utterance → assign to `--query`.
-2. For each dimension, scan for matching keywords; emit matches as a comma-separated string.
-3. Drop everything else.
-4. Execute directly — `agent search` is read-only per `SKILL.md` §Step 3 ("Read-only commands ... can run without confirmation"). Do NOT render a confirmation card or show the bash command unless the user explicitly asks.
-
-If the user explicitly wants a filter you cannot extract cleanly ("我想按最近的评价量排序"), tell them that dimension isn't directly supported in search and offer the alternative in natural language: pick the target agent first, then "我帮你拉它的评价 — 按时间倒序还是按评分高低？". ⛔ **Do NOT paste the literal CLI command / flag names (`feedback-list --agent-id`, `--sort-by`, `time_desc`, `score_desc`) into user-visible text** (`SKILL.md §UX Output Red Lines Red line 2`). When the user picks a sort direction in natural language, the AI maps it via `cli-reference.md §10` internally and runs the CLI itself.
+When a user asks for a sort or filter dimension that doesn't exist in `agent search` (e.g. "我想按最近的评价量排序"), tell them it isn't directly supported and offer the alternative in natural language: pick the target agent first, then "我帮你拉它的评价 — 按时间倒序还是按评分高低？". ⛔ Never paste CLI flag names (`feedback-list --agent-id`, `--sort-by`, `time_desc`, `score_desc`) into user-visible text (SKILL.md Red line 2). Map the user's natural-language sort preference to the flag internally via `core/cli-search-feedback.md §10`.

@@ -4,13 +4,11 @@
 
 ## STRICT — one question per turn
 
-Every field is asked in its own message. Never list "请提供 1. Name 2. Description 3. ...". If the user volunteered multiple values in one sentence, you may capture them, but the confirmation table still renders each field on its own row.
-
-Field definitions live in `field-specs.md`. When prompting, inline the four segments (`用途 / 可见范围 / 请注意 / 示例` for Chinese users; `Purpose / Visibility / Please note / Example` for English users) in the user's language only.
+See `playbooks/README.md §STRICT` for the full rule. One field per message; `core/field-specs.md` four segments inline.
 
 ## Phase preview (render BEFORE Q1)
 
-Once role is confirmed as `requester` and pre-check passed (requester is unique per address — if found, hand off to `update` per `role-playbook.md §Pre-check`), render a short declarative preview, then start Q1.
+Once role is confirmed as `requester` and pre-check passed (requester is unique per address — if found, hand off to `update` per `playbooks/README.md §Pre-check`), render a short declarative preview, then start Q1.
 
 Chinese:
 ```
@@ -26,18 +24,18 @@ Got it — starting a new User Agent registration. We'll collect:
   2. Profile photo (optional)
 ```
 
-The preview is **declarative**, not imperative — it describes what's next but does NOT ask for all three at once. See `role-playbook.md §STRICT — Preview ≠ multi-field ask`. Immediately follow the preview with a blank line and the first question — rendered in natural language with **no `Q1：` / `Q1:` prefix** (see `SKILL.md §UX Output Red Lines Red line 3` and `references/ux-lexicon.md`).
+The preview is **declarative**, not imperative — it describes what's next but does NOT ask for all three at once. See `playbooks/README.md §STRICT — Preview ≠ multi-field ask`. Immediately follow the preview with a blank line and the first question — rendered in natural language with **no `Q1：` / `Q1:` prefix** (see SKILL.md Red line 3 and `core/ux-lexicon.md`).
 
 ## Standard Q&A chain
 
-> ⛔ **Field values come from the user, not from elsewhere.** Each of `name` / `description` / `picture` MUST come from the user's literal reply to the matching Q below, OR from their literal text in a §One-shot capture multi-field message. **Never** pre-fill `name` from `userEmail`, USER.md, CLAUDE.md, the wallet account name, the XMTP sender, a Telegram handle, or any session metadata. Do **not** generate "Jim 的买家" / "Alice 的 requester" / "<email-prefix> 的用户" style templates. See `SKILL.md §Red line 6` for the complete forbidden-sources list and table of anti-patterns.
+> ⛔ Fields from user's literal reply only — never pre-fill from userEmail, wallet name, or session metadata. Anti-pattern to avoid: "Jim 的用户" / "yuhui 的 User Agent". Full rules: SKILL.md Red line 6.
 
-The `Q1 / Q2 / Q3` column labels below are **maintainer-internal indexes**. The prompt strings in the Chinese / English columns are the **literal text** rendered to the user — they carry **no `Q1：` / `Q1:` prefix**. Each prompt inlines the four-segment field spec from `field-specs.md` in the user's language only. If §One-shot capture already captured a field, **silently skip that Q** and move to the next.
+The `Q1 / Q2 / Q3` column labels below are **maintainer-internal indexes**. The prompt strings in the Chinese / English columns are the **literal text** rendered to the user — they carry **no `Q1：` / `Q1:` prefix**. Each prompt inlines the four-segment field spec from `core/field-specs.md` in the user's language only. If §One-shot capture already captured a field, **silently skip that Q** and move to the next.
 
 | Q | Chinese prompt | English prompt | Validation | On failure |
 |---|---|---|---|---|
 | Q1 | `这个用户身份叫什么名字？` + 4 segments | `What's the name of this User Agent?` + 4 segments | non-empty, CN ≤ 30 文字 / EN ≤ 64 chars | re-ask once with a shorter example |
-| Q2 | `头像呢？用默认还是上传一张？` + Choice prompt (see `avatar-upload.md`) | `Profile photo? Use the default or upload one?` + Choice prompt | — | skip → backend default photo |
+| Q2 | `头像呢？用默认还是上传一张？` + Choice prompt (see `modules/avatar-upload.md`) | `Profile photo? Use the default or upload one?` + Choice prompt | — | skip → backend default photo |
 
 > **Description — do NOT prompt, do NOT show in confirmation card when absent.** For User Agent, skip the description question entirely. If the user volunteers a description in the same message as the name (one-shot capture), accept and record it AND include a `描述` row in the confirmation card for that run; if not volunteered, omit the `描述` row from the confirmation card entirely (do NOT render "未填" or "(not set)") and send `ProfileDescription: ""` on-chain silently. Do NOT ask "描述（可选）" / "description (optional)" in any turn.
 
@@ -54,9 +52,9 @@ No service questions. No staking. (Signing address is never asked — the CLI al
 
 ## Confirmation
 
-> ⛔ Mandatory before invoking the CLI. See `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)` — that section enumerates the rationalizations (`auto-execute` / plan-mode exit / one-shot capture / urgency / "intent obvious") that do **NOT** bypass it.
+> ⛔ Mandatory before invoking the CLI. See the mandatory confirmation gate in SKILL.md — that section enumerates the rationalizations (`auto-execute` / plan-mode exit / one-shot capture / urgency / "intent obvious") that do **NOT** bypass it.
 
-Show the two-column table (`display-formats.md` §Create/Update Diff → Create variant) in the user's language. Render ONE variant — never bilingual.
+Show the two-column table (`core/display-formats.md` §Create/Update Diff → Create variant) in the user's language. Render ONE variant — never bilingual.
 
 Chinese variant (user did NOT volunteer a description — omit 描述 row):
 
@@ -65,6 +63,8 @@ Chinese variant (user did NOT volunteer a description — omit 描述 row):
 | 角色 | 用户 |
 | 名字 | Alice |
 | 头像 | 默认 |
+| 预计费用 | **0 USDT**（创建/修改/上下架均无手续费，由 OKX 承担） |
+| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；区块链上的记录永久保留 |
 
 > 确认无误回复 "执行" 即可。
 
@@ -76,6 +76,8 @@ Chinese variant (user volunteered a description via one-shot capture — include
 | 名字 | Alice |
 | 描述 | 做 DeFi 研究，经常购买数据服务 |
 | 头像 | 默认 |
+| 预计费用 | **0 USDT**（创建/修改/上下架均无手续费，由 OKX 承担） |
+| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；区块链上的记录永久保留 |
 
 > 确认无误回复 "执行" 即可。
 
@@ -86,6 +88,8 @@ English variant (user did NOT volunteer a description — omit Description row):
 | Role | User Agent |
 | Name | Alice |
 | Profile photo | default |
+| Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
+| Reversible? | Yes — say "deactivate #N" anytime; your record on the blockchain is permanently preserved |
 
 > Reply "execute" to run it.
 
@@ -97,6 +101,8 @@ English variant (user volunteered a description via one-shot capture — include
 | Name | Alice |
 | Description | Independent DeFi researcher, frequently purchases data services. |
 | Profile photo | default |
+| Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
+| Reversible? | Yes — say "deactivate #N" anytime; your record on the blockchain is permanently preserved |
 
 > Reply "execute" to run it.
 
@@ -114,9 +120,9 @@ onchainos agent create \
 
 ## ⛔ Post-success — MANDATORY template (do NOT paraphrase)
 
-> ⛔ **After the visible line, this turn is NOT over.** → proceed to `SKILL.md §Operation Flow Step 5` (which routes to `§Step 6` for the unconditional comm-init handoff). Full rules (anti-skip clauses, runtime self-gating, decline carve-out) live in Step 6 — not duplicated here.
+> ⛔ **After the visible line, this turn is NOT over.** → proceed to SKILL.md §Operation Flow Step 5 (which routes to `§Step 6` for the unconditional comm-init handoff). Full rules (anti-skip clauses, runtime self-gating, decline carve-out) live in Step 6 — not duplicated here.
 
-Render **one visible line** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, adding fields, omitting fields, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
+Render **one visible line** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, adding fields, omitting fields, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of the mandatory post-execute gate in SKILL.md.
 
 ### Visible line (template)
 
@@ -125,14 +131,14 @@ Pick the variant matching the user's language. Render **one line, declarative, n
 - Chinese: `用户身份 #<id> 注册完成 — 想发任务直接跟我说"发布一个 ... 的任务"，我帮你走完整个流程。`
 - English: `User Agent identity #<id> is live — say "publish a task for X" whenever you're ready and I'll take you through it.`
 
-**`#<id>` substitution rule** (per `display-formats.md` top, `#<id>` placeholder rule, **requester-specific constraints**):
+**`#<id>` substitution rule** (per `core/display-formats.md` top, `#<id>` placeholder rule, **requester-specific constraints**):
 
-- Requester is **unique per address** (product invariant — see `role-playbook.md §Pre-check requester / evaluator`). If we got here successfully, the pre-check `agent get` lookup by definition returned **zero requesters** under this address — otherwise the pre-check gate would have stopped the flow and redirected to `update`. **Therefore the pre-check list contains NO same-role agent for this create**; any agent ids in that list belong to *other* roles (provider, evaluator) and MUST NOT be used as `#<id>` here.
+- Requester is **unique per address** (product invariant — see `playbooks/README.md §Pre-check`). If we got here successfully, the pre-check `agent get` lookup by definition returned **zero requesters** under this address — otherwise the pre-check gate would have stopped the flow and redirected to `update`. **Therefore the pre-check list contains NO same-role agent for this create**; any agent ids in that list belong to *other* roles (provider, evaluator) and MUST NOT be used as `#<id>` here.
 - The legitimate sources of `#<id>` for this post-success line are, in priority order:
   1. **CLI response (direct):** the `create` call's response directly contains the new agent id.
-  2. **Post-create envelope diff:** the response envelope is double-layer (see `cli-reference.md §3`), so the filter is **wrapper-level**, not agent-row-level — **two steps, in order**: (a) locate the single wrapper in `envelope.agentList.list[*]` whose `list[*].ownerAddress == <currently selected XLayer wallet address>` (the address that signed this `create`), then (b) inside **that wrapper's** `agentList[*]` only, **diff against the pre-check `agent get` snapshot** captured by §⛔ MANDATORY pre-check gate, and pick the agentId that's **newly present** (in the post-create envelope but not in the pre-check snapshot). For requester this is unambiguous: pre-check returned 0 requesters under this address by construction, so the lone newly-appeared requester-role row in the matching wrapper IS the new id. ❌ Do NOT write the filter as `agentList[*].ownerAddress == ...` — agent rows have no `ownerAddress` field; that phrasing always misses. See `cli-reference.md §1` "Finding the newly-minted `agentId`" for the canonical algorithm. **This is not "borrowing from pre-check"** — pre-check is the baseline, the post-create envelope is the data source; the diff isolates what's new.
+  2. **Post-create envelope diff:** follow the two-step algorithm in `core/cli-create.md §1` "Finding the newly-minted agentId". For requester: pre-check returned 0 requesters by construction, so the lone newly-appeared requester-role row in the current wallet's wrapper IS the new id. ❌ Do NOT write the filter as `agentList[*].ownerAddress == ...` — agent rows have no `ownerAddress` field.
   3. (Future) a follow-up `agent get` in a later turn — irrelevant for this immediate response.
-- If **both** source 1 and source 2 miss — i.e. CLI returned `txHash` only **AND** the post-create `agentList` segment is absent (WS + HTTP both failed, per `cli-reference.md §1`) **OR** the diff yielded no new candidate under the current wallet — → **omit the `#<id> ` substring entirely** — do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, and do NOT borrow an id from the pre-check list. Fallback lines:
+- If **both** source 1 and source 2 miss — i.e. CLI returned `txHash` only **AND** the post-create `agentList` segment is absent (WS + HTTP both failed, per `core/cli-create.md §1`) **OR** the diff yielded no new candidate under the current wallet — → **omit the `#<id> ` substring entirely** — do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, and do NOT borrow an id from the pre-check list. Fallback lines:
   - Chinese: `用户身份注册完成 — 想发任务直接跟我说"发布一个 ... 的任务"，我帮你走完整个流程。`
   - English: `User Agent identity is live — say "publish a task for X" whenever you're ready and I'll take you through it.`
 
@@ -143,7 +149,7 @@ Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user
 ❌ Agent paraphrased:
 > "✅ 用户身份已成功上链！agentId 是 #42，区块哈希 0xabc...def。可以去 okx-agent-task 找服务提供商帮你做事了。需要我帮你看看有哪些服务提供商推荐吗？"
 
-Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate` + `§UX Output Red Lines`:
+Why this is a violation of the mandatory post-execute gate in SKILL.md + `§UX Output Red Lines`:
 
 - Adds `txHash` to the user-visible line — not in the template (txHash lives in the detail card if rendered, not the suggestion line).
 - Adds a follow-up question (`需要我帮你看看有哪些服务提供商推荐吗？`) — turns a declarative line into a question. The same-turn handoff to `after-agent-list-changed.md` does not wait for a reply; a trailing question creates a stuck prompt.
@@ -158,7 +164,7 @@ Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate` + `§UX 
 
 ### Agent directive (internal — do NOT render to the user)
 
-After emitting the visible line above, **do not stop the turn**. → proceed to `SKILL.md §Operation Flow Step 5` — the requester row routes directly to `§Step 6` (comm-init), which loads `/skills/okx-agent-chat/after-agent-list-changed.md` Execution Flow in the same response.
+After emitting the visible line above, **do not stop the turn**. → proceed to SKILL.md §Operation Flow Step 5 — the requester row routes directly to `§Step 6` (comm-init), which loads `/skills/okx-agent-chat/after-agent-list-changed.md` Execution Flow in the same response.
 
 Skip / decline carve-outs and the runtime self-gating contract are owned by Step 6. The **passive onboarding** path is filtered out at Step 5 (different row — see `§Passive Onboarding After success` below).
 
@@ -175,7 +181,7 @@ Skip these normally-required steps:
 - Do **not** ask for `--role` — it's fixed as `requester`.
 - Do **not** pre-check existing agents — the handoff already implied none exist.
 - Do **not** ask for `picture` — use backend default.
-- Do **not** render the Phase preview — passive mode is deliberately lean, go straight to Q1 (see `passive-onboarding.md`).
+- Do **not** render the Phase preview — passive mode is deliberately lean, go straight to Q1 (see the passive onboarding section below).
 
 Keep these:
 
@@ -188,7 +194,7 @@ Keep these:
 
 Return control to the caller. The response to the user is **only one line** in the user's language — **no detail card** in passive mode (the user just confirmed all fields a turn ago; rendering the full detail card would be redundant and would break the lean handoff to `okx-agent-task`). Follow the `#<id>` placeholder rule.
 
-Canonical wording — **must match `references/passive-onboarding.md §Messages to the user` byte-for-byte**; that file is the single source of truth (see `SKILL.md §Passive Onboarding` "Full contract" note). Do NOT drift this wording — if a future change is needed, update `passive-onboarding.md` first and propagate here.
+Canonical wording — this section is the single source of truth. Do NOT drift this wording — update here and propagate to SKILL.md §Passive Onboarding.
 
 With id available:
 - 中文："已为你创建用户身份 #<id>。现在继续发布任务。"
@@ -200,14 +206,22 @@ Without id:
 
 Do NOT ask "要不要发任务" / "want to publish a task?" — the task skill already has the pending intent; it will resume.
 
-Do NOT load `/skills/okx-agent-chat/after-agent-list-changed.md` here — passive mode is contracted to hand strictly back to `okx-agent-task` with the single line above (see `passive-onboarding.md` "No other chatter"). The task skill triggers the chat post-hook itself when its flow needs it.
+Do NOT load `/skills/okx-agent-chat/after-agent-list-changed.md` here — passive mode is contracted to hand strictly back to `okx-agent-task` with the single line above (see the passive onboarding section below "No other chatter"). The task skill triggers the chat post-hook itself when its flow needs it.
 
-> **Why no detail card here?** Normal (non-passive) requester onboarding renders a detail card after success per `§Post-success`; passive mode deliberately omits it because (a) the user just saw all fields on the confirmation card one turn earlier, (b) the goal of passive mode is the leanest possible handoff back to `okx-agent-task`, and (c) detail-card-only fields the user might want later (full address, txHash) are always retrievable via `agent get --agent-ids <id>`. If you want to change this, change it in `passive-onboarding.md §Messages to the user` and `SKILL.md §Passive Onboarding` together.
+> **Why no detail card here?** Normal (non-passive) requester onboarding renders a detail card after success per `§Post-success`; passive mode deliberately omits it because (a) the user just saw all fields on the confirmation card one turn earlier, (b) the goal of passive mode is the leanest possible handoff back to `okx-agent-task`, and (c) detail-card-only fields the user might want later (full address, txHash) are always retrievable via `agent get --agent-ids <id>`. If you want to change this, change it in the passive onboarding messages below and `SKILL.md §Passive Onboarding` together.
 
 ### When user already has a requester
 
-If a pre-existing requester agent happens to be found (e.g., the user returns mid-flow), **skip create** (requester is unique per address — see `role-playbook.md §Pre-check`). Echo in the user's language:
+If a pre-existing requester agent happens to be found (e.g., the user returns mid-flow), **skip create** (requester is unique per address — see `playbooks/README.md §Pre-check`). Echo in the user's language:
 - 中文："你已经有用户身份 #<N>（<name>），直接用它继续发布任务。"
 - English: "You already have a User Agent identity #<N> (<name>) — using it to continue publishing the task."
 
 Hand back.
+
+### Edge cases (passive mode)
+
+| Situation | Action |
+|---|---|
+| User asks to cancel mid-flow ("算了不注册了") | Confirm cancellation: "已取消创建，发布任务需要用户身份，等你想好再来。" |
+| User volunteers a service mid-flow ("顺便加个 MCP 服务") | Explain: 用户身份不带服务；如果想对外收费请后续再注册服务提供商身份。不要在被动子流程里混入 service。 |
+| Backend rejects create | Render the error card (`core/display-formats.md §7`). Do NOT auto-retry. |

@@ -4,7 +4,7 @@
 
 ## STRICT — one question per turn
 
-Fields defined in `field-specs.md`. Inline the four segments (`用途 / 可见范围 / 请注意 / 示例` for Chinese; `Purpose / Visibility / Please note / Example` for English) when asking, in the user's language only.
+See `playbooks/README.md §STRICT` for the full rule. One field per message; `core/field-specs.md` four segments inline.
 
 ## Flow overview
 
@@ -20,7 +20,7 @@ No pre-create staking gate. No cached-resume flow. Registration is cheap; the po
 
 ### Phase preview (render BEFORE Q1)
 
-Once role is `evaluator` and pre-check passed (evaluator is unique per address — if found, hand off to `update` per `role-playbook.md §Pre-check`), render a short declarative preview, then start Q1.
+Once role is `evaluator` and pre-check passed (evaluator is unique per address — if found, hand off to `update` per `playbooks/README.md §Pre-check`), render a short declarative preview, then start Q1.
 
 Chinese:
 ```
@@ -40,9 +40,9 @@ Preview is declarative; the first question follows after a blank line.
 
 ### Q&A
 
-> ⛔ **Field values come from the user, not from elsewhere.** Each of `name` / `description` MUST come from the user's literal reply to the matching Q below (or from their literal text in a §One-shot capture multi-field message). **Never** pre-fill `name` from `userEmail`, USER.md, CLAUDE.md, the wallet account name, the XMTP sender, a Telegram handle, or any session metadata. Do **not** generate "Jim 的仲裁者" / "Alice 的 evaluator" / "<email-prefix> 的 Evaluator" style templates. See `SKILL.md §Red line 6` for the complete forbidden-sources list and table of anti-patterns.
+> ⛔ Fields from user's literal reply only — never pre-fill from userEmail, wallet name, or session metadata. Anti-pattern to avoid: "Jim 的仲裁者" / "yuhui 的 Evaluator Agent". Full rules: SKILL.md Red line 6.
 
-The `Q1 / Q2` column labels below are **maintainer-internal indexes**. The prompt strings in the Chinese / English columns are the **literal text** rendered to the user — they carry **no `Q1：` / `Q1:` prefix** (see `SKILL.md §UX Output Red Lines Red line 3` and `references/ux-lexicon.md`). Each prompt inlines the four-segment field spec from `field-specs.md` in the user's language only. Skip any Q whose field was already captured via `SKILL.md §One-shot capture`.
+The `Q1 / Q2` column labels below are **maintainer-internal indexes**. The prompt strings in the Chinese / English columns are the **literal text** rendered to the user — they carry **no `Q1：` / `Q1:` prefix** (see `SKILL.md §UX Output Red Lines Red line 3` and `core/ux-lexicon.md`). Each prompt inlines the four-segment field spec from `core/field-specs.md` in the user's language only. Skip any Q whose field was already captured via `core/choice-prompts.md §One-Shot Capture`.
 
 | Q | Chinese prompt | English prompt | Validation |
 |---|---|---|---|
@@ -50,11 +50,11 @@ The `Q1 / Q2` column labels below are **maintainer-internal indexes**. The promp
 
 > **Description — do NOT prompt, do NOT show in confirmation card when absent.** For Evaluator Agent, skip the description question entirely. If the user volunteers a description in the same message as the name (one-shot capture), accept and record it AND include a `描述` row in the confirmation card for that run; if not volunteered, omit the `描述` row from the confirmation card entirely (do NOT render "未填" or "(not set)") and send `ProfileDescription: ""` on-chain silently. Do NOT ask "描述（可选）" / "description (optional)" in any turn.
 
-No profile-photo prompt by default (Evaluator-Agent dashboards rarely show photos). If the user brings it up, branch to `avatar-upload.md`.
+No profile-photo prompt by default (Evaluator-Agent dashboards rarely show photos). If the user brings it up, branch to `modules/avatar-upload.md`.
 
 ## Phase 2 — confirmation card
 
-> ⛔ Mandatory before invoking the CLI. See `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)` for the canonical rule + rationalizations (`auto-execute` / plan-mode exit / one-shot capture / urgency / "intent obvious") that do **NOT** bypass it.
+> ⛔ Mandatory before invoking the CLI. See the mandatory confirmation gate in SKILL.md for the canonical rule + rationalizations (`auto-execute` / plan-mode exit / one-shot capture / urgency / "intent obvious") that do **NOT** bypass it.
 
 Render in the user's language. Pick ONE variant.
 
@@ -65,6 +65,8 @@ Chinese variant (user did NOT volunteer a description — omit 描述 row):
 | 角色 | 仲裁者 |
 | 名字 | Solidity Auditor |
 | 头像 | 默认 |
+| 预计费用 | **0 USDT**（注册/修改/上下架均无手续费，由 OKX 承担） |
+| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；区块链上的记录永久保留 |
 
 > 确认无误回复 "执行"。
 
@@ -76,6 +78,8 @@ Chinese variant (user volunteered a description via one-shot capture — include
 | 名字 | Solidity Auditor |
 | 描述 | 仲裁 Solidity 相关任务的争议；5 年审计经验。 |
 | 头像 | 默认 |
+| 预计费用 | **0 USDT**（注册/修改/上下架均无手续费，由 OKX 承担） |
+| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；区块链上的记录永久保留 |
 
 > 确认无误回复 "执行"。
 
@@ -86,6 +90,8 @@ English variant (user did NOT volunteer a description — omit Description row):
 | Role | Evaluator Agent |
 | Name | Solidity Auditor |
 | Profile photo | default |
+| Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
+| Reversible? | Yes — say "deactivate #N" anytime; your record on the blockchain is permanently preserved |
 
 > Reply "execute" to run it.
 
@@ -97,6 +103,8 @@ English variant (user volunteered a description via one-shot capture — include
 | Name | Solidity Auditor |
 | Description | Arbitrates Solidity-related task disputes; 5 years of audit experience. |
 | Profile photo | default |
+| Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
+| Reversible? | Yes — say "deactivate #N" anytime; your record on the blockchain is permanently preserved |
 
 > Reply "execute" to run it.
 
@@ -116,7 +124,7 @@ onchainos agent create \
 
 ## ⛔ Post-success — MANDATORY template (do NOT paraphrase)
 
-> ⛔ **After the visible lines, this turn is NOT over — and comm-init applies to evaluator too.** → proceed to `SKILL.md §Operation Flow Step 5`. The evaluator row routes **first** to `/skills/okx-agent-task/references/evaluator-staking.md §2`; the staking flow's terminal handoff feeds into `§Step 6` (comm-init). **Fallback**: if the staking flow ends without that handoff for any reason (user declines stake, staking error, etc.), the evaluator row in Step 5 requires invoking `§Step 6` from this skill before stopping the turn. Full rules live in Step 5 + Step 6 — not duplicated here.
+> ⛔ **After the visible lines, this turn is NOT over — and comm-init applies to evaluator too.** → proceed to SKILL.md §Operation Flow Step 5. The evaluator row routes **first** to `/skills/okx-agent-task/references/evaluator-staking.md §2`; the staking flow's terminal handoff feeds into `§Step 6` (comm-init). **Fallback**: if the staking flow ends without that handoff for any reason (user declines stake, staking error, etc.), the evaluator row in Step 5 requires invoking `§Step 6` from this skill before stopping the turn. Full rules live in Step 5 + Step 6 — not duplicated here.
 
 Render **two visible lines** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, hardcoding the stake amount, mentioning the downstream skill path, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
 
@@ -131,14 +139,14 @@ Pick the variant matching the user's language. Render exactly **two lines** in t
   > Evaluator Agent identity #<id> registered.
   > A separate stake is still required before you can be assigned disputes.
 
-**`#<id>` substitution rule** (per `display-formats.md` top, `#<id>` placeholder rule, **evaluator-specific constraints**):
+**`#<id>` substitution rule** (per `core/display-formats.md` top, `#<id>` placeholder rule, **evaluator-specific constraints**):
 
-- Evaluator is **unique per address** (product invariant — see `role-playbook.md §Pre-check requester / evaluator`). If we got here successfully, the pre-check `agent get` lookup by definition returned **zero evaluators** under this address — otherwise the pre-check gate would have stopped the flow and redirected to `update`. **Therefore the pre-check list contains NO same-role agent for this create**; any agent ids in that list belong to *other* roles (requester, provider) and MUST NOT be used as `#<id>` here.
+- Evaluator is **unique per address** (product invariant — see `playbooks/README.md §Pre-check`). If we got here successfully, the pre-check `agent get` lookup by definition returned **zero evaluators** under this address — otherwise the pre-check gate would have stopped the flow and redirected to `update`. **Therefore the pre-check list contains NO same-role agent for this create**; any agent ids in that list belong to *other* roles (requester, provider) and MUST NOT be used as `#<id>` here.
 - The legitimate sources of `#<id>` for this post-success line are, in priority order:
   1. **CLI response (direct):** the `create` call's response directly contains the new agent id.
-  2. **Post-create envelope diff:** the response envelope is double-layer (see `cli-reference.md §3`), so the filter is **wrapper-level**, not agent-row-level — **two steps, in order**: (a) locate the single wrapper in `envelope.agentList.list[*]` whose `list[*].ownerAddress == <currently selected XLayer wallet address>` (the address that signed this `create`), then (b) inside **that wrapper's** `agentList[*]` only, **diff against the pre-check `agent get` snapshot** captured by §⛔ MANDATORY pre-check gate, and pick the agentId that's **newly present** (in the post-create envelope but not in the pre-check snapshot). For evaluator this is unambiguous: pre-check returned 0 evaluators under this address by construction, so the lone newly-appeared evaluator-role row in the matching wrapper IS the new id. ❌ Do NOT write the filter as `agentList[*].ownerAddress == ...` — agent rows have no `ownerAddress` field; that phrasing always misses. See `cli-reference.md §1` "Finding the newly-minted `agentId`" for the canonical algorithm. **This is not "borrowing from pre-check"** — pre-check is the baseline, the post-create envelope is the data source; the diff isolates what's new.
+  2. **Post-create envelope diff:** follow the two-step algorithm in `core/cli-create.md §1` "Finding the newly-minted agentId". For evaluator: pre-check returned 0 evaluators by construction, so the lone newly-appeared evaluator-role row in the current wallet's wrapper IS the new id. ❌ Do NOT write the filter as `agentList[*].ownerAddress == ...` — agent rows have no `ownerAddress` field.
   3. (Future) a follow-up `agent get` in a later turn — irrelevant for this immediate response.
-- If **both** source 1 and source 2 miss — i.e. CLI returned `txHash` only **AND** the post-create `agentList` segment is absent (WS + HTTP both failed, per `cli-reference.md §1`) **OR** the diff yielded no new candidate under the current wallet — → **omit the `#<id> ` substring entirely** — do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, and do NOT borrow an id from the pre-check list. The second line is unaffected. Fallback first lines:
+- If **both** source 1 and source 2 miss — i.e. CLI returned `txHash` only **AND** the post-create `agentList` segment is absent (WS + HTTP both failed, per `core/cli-create.md §1`) **OR** the diff yielded no new candidate under the current wallet — → **omit the `#<id> ` substring entirely** — do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, and do NOT borrow an id from the pre-check list. The second line is unaffected. Fallback first lines:
   - Chinese: `仲裁者身份注册完成。`
   - English: `Evaluator Agent identity registered.`
 
@@ -166,7 +174,7 @@ Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
 
 ### Agent directive (internal — do NOT render to the user)
 
-After emitting the two visible lines above, **do not stop the turn**. → proceed to `SKILL.md §Operation Flow Step 5` — the evaluator row routes first to `/skills/okx-agent-task/references/evaluator-staking.md` §2 (Step 1 → Step 2); render its staking confirmation card as the next part of the same response. The stake amount is owned by that skill — identity does not pass one. Staking's terminal handoff feeds `§Step 6` (comm-init); the fallback path (staking declined / errored) is documented in Step 5's evaluator row.
+After emitting the two visible lines above, **do not stop the turn**. → proceed to SKILL.md §Operation Flow Step 5 — the evaluator row routes first to `/skills/okx-agent-task/references/evaluator-staking.md` §2 (Step 1 → Step 2); render its staking confirmation card as the next part of the same response. The stake amount is owned by that skill — identity does not pass one. Staking's terminal handoff feeds `§Step 6` (comm-init); the fallback path (staking declined / errored) is documented in Step 5's evaluator row.
 
 Skip carve-out (staking ONLY, not comm-init): if the user has already declined staking earlier in this conversation — see §Good / bad cases row "不想质押". This skips the staking handoff (do NOT load `evaluator-staking.md`), but **Step 5's evaluator fallback still applies** — proceed to `SKILL.md §Operation Flow Step 6` (comm-init) from this skill before stopping the turn. The local agent list still changed when `create` succeeded, so the OpenClaw cache still needs sync regardless of stake status. Comm-init decline is a **separate** axis owned by Step 6.
 

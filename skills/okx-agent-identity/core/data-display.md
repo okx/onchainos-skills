@@ -4,7 +4,7 @@
 
 - Format: **USDT numeric string up to 6 decimal places** (e.g. `1.234567`, `10`, `0.5`, `0`). Always show as "`N USDT`" to the user.
 - **A2MCP**: `fee` is required. Pass user-typed value verbatim to CLI.
-- **A2A**: `fee` is optional. If empty, CLI sends `"fee": ""` (key always present per `cli-reference.md §1`). Render as:
+- **A2A**: `fee` is optional. If empty, CLI sends `"fee": ""` (key always present per `core/cli-create.md §1`). Render as:
   - Non-empty: `<N> USDT` (same as A2MCP).
   - Empty / absent: `免费` / `free` in user language. In confirm/diff cards where space allows: `（未填，双方自行协商）` / `(skipped — negotiated directly)`.
 
