@@ -324,6 +324,8 @@ pub enum DraftCommand {
         title: String,
         #[arg(long)]
         description: Option<String>,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
         #[arg(long)]
         budget: Option<f64>,
         #[arg(long = "max-budget")]
@@ -381,13 +383,14 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         DraftCommand::Create {
-            title, description, budget, max_budget, currency,
+            title, description, description_summary, budget, max_budget, currency,
             deadline_open, deadline_submit, provider, attachments,
         } => {
             draft::handle_draft_create(
                 &mut client,
                 &title,
                 description.as_deref(),
+                description_summary.as_deref(),
                 budget,
                 max_budget,
                 currency.as_deref(),

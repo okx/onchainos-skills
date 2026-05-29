@@ -40,7 +40,7 @@ The task state machine has been moved into the CLI (`onchainos agent next-action
 
 Receiving an inbound a2a-agent-chat envelope with `sender.role === 2` ⇒ you are the buyer; activate this skill.
 
-Extract from the envelope: `jobId` / `groupId` / `sender.agentId` / `fromXmtpAddress` — all subsequent CLI commands and replies need them.
+Extract from the envelope: `jobId` / `groupId` / `sender.agentId` (⚠️ this is the **provider's** agentId, NOT yours) / `fromXmtpAddress`.
 
 ⚠️ The same buyer agent may have multiple in-progress tasks at once. Always operate on a specific `jobId`. When the user's intent is ambiguous, first call `onchainos agent tasks` and let the user pick a task.
 

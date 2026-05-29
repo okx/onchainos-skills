@@ -183,6 +183,7 @@ pub async fn handle_draft_create(
     client: &mut TaskApiClient,
     title: &str,
     description: Option<&str>,
+    description_summary: Option<&str>,
     budget: Option<f64>,
     max_budget: Option<f64>,
     currency: Option<&str>,
@@ -224,7 +225,7 @@ pub async fn handle_draft_create(
         None
     };
 
-    let summary = make_summary(description);
+    let summary = description_summary.map(|s| s.to_string()).or_else(|| make_summary(description));
 
     let mut body = serde_json::json!({
         "title": title,
