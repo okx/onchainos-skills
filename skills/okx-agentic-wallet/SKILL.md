@@ -506,10 +506,6 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
 - **X Layer gas-free**: X Layer (chainIndex 196) charges zero gas fees. Proactively highlight this when users ask about gas costs, choose a chain for transfers, add a new wallet, or ask for deposit/receive addresses.
 - Transaction timestamps in history are in milliseconds — convert to human-readable for display
 - **Always display the full transaction hash** — never abbreviate or truncate `txHash`
-- EVM addresses must be **0x-prefixed, 42 chars total**
-- Solana addresses are **Base58, 32-44 chars**
-- **XKO address format**: OKX uses a custom `XKO` prefix (case-insensitive) in place of `0x` for EVM addresses. If a user-supplied address starts with `XKO` / `xko`, display this message verbatim:
-  > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
 - **User-facing language**: Apply the following term mappings when translating to Chinese. In English, always keep the original English term.
   | English term | Chinese translation | Note |
   |---|---|---|
@@ -522,14 +518,16 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
   | enable/disable Gas Station | 开启 / 关闭 Gas Station | 管理 Gas Station 状态的唯一用户可见术语 |
 - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
 - **Locale-aware output**: All user-facing content must be translated to match the user's language.
-- **Address integrity (CRITICAL — funds-loss risk)**: Any on-chain identifier shown to the user (Solana / Bitcoin / non-checksummed address, full EVM `0x` address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout in this session.
-  - **NEVER reconstruct** an address from an abbreviated form (e.g., do not expand `93jq8J...G8d` back to a full address from memory) — re-run the CLI command and copy from fresh stdout.
-  - **NEVER re-transcribe** an address by re-typing it across messages. If the same address must appear again, re-invoke `onchainos wallet addresses --format json` (or `wallet status`) and copy from that fresh JSON.
+- EVM addresses must be **0x-prefixed, 42 chars total**
+- Solana addresses are **Base58, 32-44 chars**
+- **XKO address format**: OKX uses a custom `XKO` prefix (case-insensitive) in place of `0x` for EVM addresses. If a user-supplied address starts with `XKO` / `xko`, display this message verbatim:
+  > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
+- **Address integrity (CRITICAL — funds-loss risk)**: Any on-chain identifier shown to the user (wallet address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout in this session.
+  - **NEVER reproduce an identifier from memory** — not by expanding an abbreviated form (e.g. `93jq8J...G8d`), not by re-typing it across messages, and not by guessing when CLI output is no longer in context. Always re-invoke the CLI (`onchainos wallet addresses --format json`, or `wallet status`) and copy from fresh stdout.
   - **NEVER paraphrase, normalize, insert spaces, change case, or line-break inside an on-chain identifier.** Copy the exact byte sequence from CLI stdout — preserve EIP-55 mixed case as emitted; do NOT lowercase.
-  - If verbatim echo is not possible (CLI output no longer in context), **do not guess** — re-invoke the CLI command first.
-  - Rationale: Solana / Bitcoin / pre-EIP-55 hex addresses have no checksum. A single dropped, inserted, or substituted character produces a *different valid address*; funds sent there are unrecoverable. CLI stdout is the only source of truth — agent context is not.
+  - Rationale: Solana addresses have no checksum. A single dropped, inserted, or substituted character produces a *different valid address*; funds sent there are unrecoverable. CLI stdout is the only source of truth — agent context is not.
 - **Address display format**: When showing wallet addresses, list the EVM address once with a chain summary note (X Layer first, then 2 other example chains, then total count). User-facing output MUST show the FULL address per "Address integrity" above — never `0x...abcd`-style truncations. Solana address on a separate line. Do NOT enumerate every EVM chain individually.
-  Example (full form, never truncate in real output):
+  Example (full form):
   - `EVM: 0xAbCdEf0123456789AbCdEf0123456789AbCdEf01 (Supports X Layer, Ethereum, Polygon and other EVM chains)`
   - `Solana: ExAmPLE1111111111111111111111111111111111111`
 </MUST>
