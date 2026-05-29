@@ -331,7 +331,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         | Event::VoteCommitted
         | Event::VoteRevealed
         | Event::RoundFailed
-        | Event::VoteCommitDeadlineWarn => super::flow_lifecycle::evaluator_events(event.as_str()),
+        | Event::VoteCommitDeadlineWarn
+        | Event::VoteRevealDeadlineWarn => super::flow_lifecycle::evaluator_events(event.as_str()),
         Event::RewardClaimed => super::flow_lifecycle::reward_claimed(&ctx),
         Event::WakeupNotify => super::flow_lifecycle::wakeup_notify(&ctx),
         Event::Other(ref s) if s == "create_task" => super::flow_lifecycle::create_task(),

@@ -89,10 +89,10 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              Extract from `message`: `jobTitle`, `budget`, `tokenSymbol`, `commitDeadline` (epoch seconds), `agentName`. Render `commitDeadline` (epoch seconds) into the user's local time as `commitDeadlineLocal`, and compute `hoursLeft` = `max(0, ceil((commitDeadline - now_epoch_seconds) / 3600))`. **Substitute every `<message.jobTitle>` below with the actual value extracted from `message.jobTitle`.**\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20Your Agent <agentName> has been selected as juror for task [<message.jobTitle>]\n\
+             \x20\x20\x20\x20【Your Agent <agentName> has been selected as juror for task [<message.jobTitle>]】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Amount: <budget> <tokenSymbol>\n\
+             \x20\x20\x20\x20Task Amount: <budget> <tokenSymbol>\n\
              \x20\x20\x20\x20⏰ Key deadline\n\
              \x20\x20\x20\x20Your Agent must vote within <hoursLeft> hours\n\n\
              [Field-missing fallbacks] Apply each independently — do **not** invent placeholders.\n\
@@ -113,18 +113,18 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
 
         "vote_committed" => format!(
             "[Current Status] vote_committed\n\n\
-             Extract from `message`: `jobTitle`, `vote` (0 or 1). Map vote to who the agent supports:\n\
-             - `vote = 0` (Approve) → supports **Client**\n\
-             - `vote = 1` (Reject) → supports **Provider**\n\
+             Extract from `message`: `jobTitle`, `vote` (0 or 1). Render vote as text:\n\
+             - `vote = 0` → `User`\n\
+             - `vote = 1` → `ASP`\n\
              Use `xmtp_dispatch_user` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.**\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20Arbitration vote committed for task [<message.jobTitle>] · waiting for Reveal\n\
+             \x20\x20\x20\x20【Arbitration vote committed for task [<message.jobTitle>] · waiting for Reveal】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20🗳️ Your Agent supports: <Provider | Client>\n\n\
+             \x20\x20\x20\x20🗳️ Your Agent supports: <ASP | User>\n\n\
              [Field-missing fallbacks]\n\
-             - `vote` missing → drop the `🗳️ Your Agent supports:` line entirely; do NOT guess Provider/Client.\n"
+             - `vote` missing → drop the `🗳️ Your Agent supports:` line entirely; do NOT guess.\n"
         ),
 
         "vote_commit_deadline_warn" => format!(
@@ -133,7 +133,7 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              Use `xmtp_dispatch_user` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.**\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20⏰ URGENT: Arbitration vote for task [<message.jobTitle>] is about to close\n\
+             \x20\x20\x20\x20【⏰ URGENT: Arbitration vote for task [<message.jobTitle>] is about to close】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
              \x20\x20\x20\x20Commit deadline: <commitDeadlineLocal> (<minutesLeft> minutes remaining)\n\
@@ -145,6 +145,28 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20⚡ Have the Agent vote immediately\n\n\
              [Field-missing fallbacks]\n\
              - `commitDeadline` missing → drop the `Commit deadline:` line.\n\
+             - `slashTimeoutBps` / `slashAmount` missing → drop the `• Stake slashed` bullet.\n\
+             - `slashedCooldownSeconds` missing → drop the `• Enter a ... cooldown` bullet.\n"
+        ),
+
+        "vote_reveal_deadline_warn" => format!(
+            "[Current Status] vote_reveal_deadline_warn\n\n\
+             Extract from `message`: `jobTitle`, `revealDeadline`, `slashTimeoutBps`, `slashAmount`, `slashedCooldownSeconds`. Compute `revealDeadlineLocal` from `revealDeadline` (local time) and `minutesLeft` = `max(0, ceil((revealDeadline - now_epoch_seconds) / 60))`. Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
+             Use `xmtp_dispatch_user` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.**\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20【⏰ URGENT: Arbitration reveal for task [<message.jobTitle>] is about to close】\n\
+             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20Reveal deadline: <revealDeadlineLocal> (<minutesLeft> minutes remaining)\n\
+             \x20\x20\x20\x20Status: Agent has not revealed yet\n\
+             \x20\x20\x20\x20🚨 Timeout consequences:\n\
+             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps> (≈<slashAmount> OKB)\n\
+             \x20\x20\x20\x20• Enter a <cooldownHours>h cooldown during which you cannot be selected\n\
+             \x20\x20\x20\x20• Miss the base validation fee\n\
+             \x20\x20\x20\x20⚡ Have the Agent reveal immediately\n\n\
+             [Field-missing fallbacks]\n\
+             - `revealDeadline` missing → drop the `Reveal deadline:` line.\n\
              - `slashTimeoutBps` / `slashAmount` missing → drop the `• Stake slashed` bullet.\n\
              - `slashedCooldownSeconds` missing → drop the `• Enter a ... cooldown` bullet.\n"
         ),
@@ -175,20 +197,44 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
 
         "dispute_resolved" => format!(
             "[Current Status] dispute_resolved\n\n\
-             Extract from `message`: `jobTitle`, `vote` (0 or 1), `jobStatus` (`complete` = provider won / `failed` = client won), `slashMinorityBps` + `slashAmount` (lost branch only). **Substitute `<message.jobTitle>` below with the extracted value.**\n\
-             Derive the outcome:\n\
-             - `vote = 0` (Approve) → you backed **Client**; you win iff `jobStatus = failed`\n\
-             - `vote = 1` (Reject) → you backed **Provider**; you win iff `jobStatus = complete`\n\
-             - otherwise → you lost (minority)\n\
-             If `vote` is missing → abort this turn and log `missing vote; abort`.\n\n\
-             ━━━━━━━━━━━━━ Branch A: WON ━━━━━━━━━━━━━\n\n\
-             Compute `winningSide` from `jobStatus` (`complete` → `Provider`; `failed` → `Client`).\n\
+             Extract from `message`: `jobTitle`, `vote` (0 or 1), `jobStatus` (`completed` or `rejected`), `slashMinorityBps` + `slashAmount` (lost branch only), `agentName`, `slashTimeoutBps`, `hasCommit`, `hasReveal`. **Substitute `<message.jobTitle>` below with the extracted value.**\n\
+             Render two text labels (pure text mapping, no semantic interpretation):\n\
+             - `vote = 0` → `yourVote = User`; `vote = 1` → `yourVote = ASP`\n\
+             - `jobStatus = completed` → `winningSide = ASP`; `jobStatus = rejected` → `winningSide = User`\n\
+             `hasCommit` / `hasReveal` missing → treat as `1` (participated).\n\n\
+             **Routing (evaluate in order, first match wins):**\n\
+             1. `hasCommit == 0` → Branch 0a (missed commit)\n\
+             2. `hasReveal == 0` → Branch 0b (missed reveal)\n\
+             3. `vote` missing → Branch B (lost / minority)\n\
+             4. `yourVote == winningSide` → Branch A (won)\n\
+             5. otherwise → Branch B (lost)\n\
+             ━━━━━━━━━━━━━ Branch 0a: MISSED COMMIT ━━━━━━━━━━━━━\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20🎉 Arbitration result for task [<message.jobTitle>]: your vote aligned with the majority — reward eligible\n\
+             \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Commit] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Your vote: backed <winningSide> ✓ aligned with majority\n\n\
+             \x20\x20\x20\x20You did not participate in [Commit]\n\
+             \x20\x20\x20\x20🚫 Penalty applied\n\
+             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
+             Missed-commit branch ends this turn; do not call `arbitration-claim`.\n\n\
+             ━━━━━━━━━━━━━ Branch 0b: MISSED REVEAL ━━━━━━━━━━━━━\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Reveal] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
+             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20You did not participate in [Reveal]\n\
+             \x20\x20\x20\x20🚫 Penalty applied\n\
+             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
+             Missed-reveal branch ends this turn; do not call `arbitration-claim`.\n\n\
+             ━━━━━━━━━━━━━ Branch A: WON ━━━━━━━━━━━━━\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20【🎉 Arbitration result for task [<message.jobTitle>]: your vote aligned with the majority — reward eligible】\n\
+             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20Your vote: backed <yourVote> ✓ aligned with majority\n\n\
              Pull claimable then claim:\n\
              ```bash\n\
              onchainos agent arbitration-claimable --agent-id {agent_id}\n\
@@ -201,18 +247,19 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20```\n\
              \x20\x20⚠️ Account-level pull: aside from `--agent-id`, pass no other business params. Retry up to 3 times on failure. Final credit confirmation arrives via the later `reward_claimed` event.\n\n\
              ━━━━━━━━━━━━━ Branch B: LOST ━━━━━━━━━━━━━\n\n\
-             Compute `losingSide` from `vote` (0 → `Client`; 1 → `Provider`).\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20⚠️ Arbitration result for task [<message.jobTitle>]: your vote disagreed with the majority — slash penalty incoming\n\
+             \x20\x20\x20\x20【⚠️ Arbitration result for task [<message.jobTitle>]: your vote disagreed with the majority — slash penalty incoming】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Your vote: backed <losingSide> ✗ opposed majority\n\
+             \x20\x20\x20\x20Your vote: backed <yourVote> ✗ opposed majority\n\
              \x20\x20\x20\x20🚫 Penalty applied\n\
              \x20\x20\x20\x20• Stake slashed <slashMinorityBps>: <slashAmount> OKB\n\n\
              Lost branch ends this turn; do not call `arbitration-claim` (nothing to claim). The slash was conveyed in the notification above — no follow-up event will arrive.\n\n\
              [Field-missing fallbacks]\n\
-             - `slashMinorityBps` / `slashAmount` missing → drop the `🚫 Penalty applied` block.\n"
+             - `slashMinorityBps` / `slashAmount` missing → drop the `🚫 Penalty applied` block (Branch B).\n\
+             - `agentName` missing → degrade Branch 0a/0b header to `⚖️ You missed [Commit|Reveal] for task [<message.jobTitle>] arbitration — penalty incoming`.\n\
+             - `slashTimeoutBps` missing → drop the entire `🚫 Penalty applied` block in Branch 0a/0b.\n"
         ),
 
         "cooldown_entered" => "[Current Status] cooldown_entered\n\n\
@@ -225,11 +272,37 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
 
         "round_failed" => format!(
             "[Current Status] round_failed\n\n\
-             Extract from `message`: `jobTitle`, `abstainCount`, `totalSlashed`, `slashTimeoutBps`, `revealCount`. **Substitute `<message.jobTitle>` below with the extracted value.**\n\n\
+             Extract from `message`: `jobTitle`, `abstainCount`, `totalSlashed`, `slashTimeoutBps`, `revealCount`, `agentName`, `hasCommit`, `hasReveal`. **Substitute `<message.jobTitle>` below with the extracted value.**\n\
+             `hasCommit` / `hasReveal` missing → treat as `1` (participated).\n\n\
+             **Routing (evaluate in order, first match wins):**\n\
+             1. `hasCommit == 0` → Branch 0a (missed commit)\n\
+             2. `hasReveal == 0` → Branch 0b (missed reveal)\n\
+             3. otherwise → Branch C (round invalidated)\n\n\
+             ━━━━━━━━━━━━━ Branch 0a: MISSED COMMIT ━━━━━━━━━━━━━\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Commit] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
+             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20You did not participate in [Commit]\n\
+             \x20\x20\x20\x20🚫 Penalty applied\n\
+             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
+             Missed-commit branch ends this turn.\n\n\
+             ━━━━━━━━━━━━━ Branch 0b: MISSED REVEAL ━━━━━━━━━━━━━\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Reveal] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
+             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
+             \x20\x20\x20\x20Task ID: #{job_id}\n\
+             \x20\x20\x20\x20You did not participate in [Reveal]\n\
+             \x20\x20\x20\x20🚫 Penalty applied\n\
+             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
+             Missed-reveal branch ends this turn.\n\n\
+             ━━━━━━━━━━━━━ Branch C: ROUND INVALIDATED ━━━━━━━━━━━━━\n\n\
              Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20⚖️ Task [<message.jobTitle>] arbitration round invalidated\n\
+             \x20\x20\x20\x20【⚖️ Task [<message.jobTitle>] arbitration round invalidated】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
              \x20\x20\x20\x20Tally: no side reached ≥ 50%\n\
@@ -237,7 +310,9 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20• Source: <abstainCount> abstainers × <slashTimeoutBps> = <totalSlashed> OKB total\n\
              \x20\x20\x20\x20• Split evenly among <revealCount> revealers\n\n\
              [Field-missing fallbacks]\n\
-             - Any of `abstainCount` / `totalSlashed` / `slashTimeoutBps` / `revealCount` missing → drop the `💰 Abstain-slash pool distribution` block.\n"
+             - Any of `abstainCount` / `totalSlashed` / `slashTimeoutBps` / `revealCount` missing → drop the `💰 Abstain-slash pool distribution` block (Branch C).\n\
+             - `agentName` missing → degrade Branch 0a/0b header to `⚖️ You missed [Commit|Reveal] for task [<message.jobTitle>] arbitration — penalty incoming`.\n\
+             - `slashTimeoutBps` missing → drop the entire `🚫 Penalty applied` block in Branch 0a/0b.\n"
         ),
 
         "reward_claimed" => "[Current Status] reward_claimed\n\n\

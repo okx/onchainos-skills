@@ -854,7 +854,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
         | Event::VoteCommitted
         | Event::VoteRevealed
         | Event::RoundFailed
-        | Event::VoteCommitDeadlineWarn => format!(
+        | Event::VoteCommitDeadlineWarn
+        | Event::VoteRevealDeadlineWarn => format!(
             "[System notification] {event} (arbitration-internal event; handled by the evaluator)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              [Recommendation] Observe silently. After the `dispute_resolved` notification arrives, call next-action to wrap up.\n",

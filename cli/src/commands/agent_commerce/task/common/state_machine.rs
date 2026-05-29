@@ -236,6 +236,12 @@ pub enum Event {
     /// `slashedCooldownSeconds`, `slashAmount`) so the playbook can render the urgency notice and
     /// kick off the full vote flow.
     VoteCommitDeadlineWarn,
+    /// Reveal-window nearing-deadline reminder for an evaluator that has committed but has not yet
+    /// revealed (warn class; no status change; backend only fires when reveal is still pending).
+    /// Envelope carries `revealDeadline` (epoch seconds) + slashing params (`slashTimeoutBps`,
+    /// `slashedCooldownSeconds`, `slashAmount`) so the playbook can render the urgency notice and
+    /// kick off the reveal flow.
+    VoteRevealDeadlineWarn,
 
     // ── Staking lifecycle (evaluator) ─────────────────────────────────
     /// VoterStaking.Staked on-chain (**both first-time stake and additional increaseStake emit this event**;
@@ -342,6 +348,7 @@ impl Event {
             "vote_revealed"             => Event::VoteRevealed,
             "round_failed"              => Event::RoundFailed,
             "vote_commit_deadline_warn" => Event::VoteCommitDeadlineWarn,
+            "vote_reveal_deadline_warn" => Event::VoteRevealDeadlineWarn,
             // Staking lifecycle (first-time / additional both map to Staked — the real backend only emits one `staked` event)
             "staked"                    => Event::Staked,
             "unstake_requested"         => Event::UnstakeRequested,
@@ -400,6 +407,7 @@ impl Event {
             Event::VoteRevealed           => "vote_revealed",
             Event::RoundFailed            => "round_failed",
             Event::VoteCommitDeadlineWarn => "vote_commit_deadline_warn",
+            Event::VoteRevealDeadlineWarn => "vote_reveal_deadline_warn",
             Event::Staked                 => "staked",
             Event::UnstakeRequested       => "unstake_requested",
             Event::UnstakeClaimed         => "unstake_claimed",
@@ -485,7 +493,7 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::EvaluatorSelected | Event::VoteCommitted
         | Event::RevealStarted | Event::VoteRevealed
         | Event::CooldownEntered | Event::RoundFailed
-        | Event::VoteCommitDeadlineWarn                                     => Status::Disputed,
+        | Event::VoteCommitDeadlineWarn | Event::VoteRevealDeadlineWarn     => Status::Disputed,
         // Reminder class (no status change; task stays in its current status)
         Event::SubmitDeadlineWarn                                           => Status::Accepted,
         Event::ReviewDeadlineWarn                                           => Status::Submitted,
