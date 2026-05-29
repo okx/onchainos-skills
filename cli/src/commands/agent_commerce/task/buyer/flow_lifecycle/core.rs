@@ -432,7 +432,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
      Extract: {title_in_extract}tokenAmount, tokenSymbol, paymentMode (int: 1=escrow, 3=x402).\n\
-     ⚠️ Timestamp: `updateTime` from the API is a Unix epoch (milliseconds). Convert it to human-readable format (e.g. \"2025-05-29 10:00 UTC\") for the `<timestamp>` placeholder.\n\
+     ⚠️ Timestamp: use the `timestamp` field from the system notification envelope (Unix seconds). Convert to human-readable format (e.g. \"2025-05-29 10:00 UTC\"). If the notification has no `timestamp`, omit the \"Settled at\" line entirely.\n\
      [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Completed] Job `{job_id}` — completed; funds settled. This job is complete.` — the user MUST still receive a notification.\n\n\
      **Step 2 -- Branch by payment mode:**\n\n\
      --------- Branch A: escrow -- flow ends ---------\n\n\
