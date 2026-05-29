@@ -110,7 +110,6 @@ struct TaskDetail {
     expire_time: Option<i64>,
     payment_most_token_amount: Option<String>,
     create_time: Option<i64>,
-    update_time: Option<i64>,
 }
 
 // ─── Agent profile response structure ───────────────────────────────────
@@ -840,7 +839,6 @@ async fn build_context(
         }
     }
     out.push_str(&format!("- Created: {}\n", fmt_unix_secs(task.create_time)));
-    out.push_str(&format!("- Updated: {}\n", fmt_unix_secs(task.update_time)));
     out.push('\n');
 
     // ── Current status ───────────────────────────────────────────────────

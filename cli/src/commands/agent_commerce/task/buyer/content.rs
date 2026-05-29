@@ -360,7 +360,7 @@ pub fn x402_replay_fail_user_notify(job_id: &str) -> String {
         "[x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
          HTTP status: <replayStatus>\n\
          Error: <replayBody>\n\
-         Auto-complete will not run after `job_accepted`. Please give a new instruction; the agent will not auto-retry."
+         Auto-complete will not run. Please give a new instruction; the agent will not auto-retry."
     )
 }
 

@@ -201,7 +201,7 @@ pub async fn handle_set_payment_mode(
 
     if let Some(resolved) = x402_resolved {
         if already_set {
-            println!("✓ Payment mode is already x402; skipping on-chain call, proceeding to task-402-pay.");
+            println!("✓ Payment mode is already x402; proceeding to payment.");
             crate::output::success(serde_json::json!({
                 "alreadySet": true,
                 "paymentMode": "x402",
@@ -211,14 +211,13 @@ pub async fn handle_set_payment_mode(
                 "next": "Run task-402-pay directly (x402_pay signing + direct/accept + endpoint replay).",
             }));
         } else {
-            let mode_int = payment_mode.as_int();
-            println!("✓ Payment mode set: x402 ({mode_int}); awaiting on-chain confirmation...");
+            println!("✓ Payment mode set to x402; awaiting on-chain confirmation...");
             crate::output::confirming(
                 &format!(
                     "x402 setPaymentMode complete. endpoint={}, fee={} {}",
                     resolved.endpoint, resolved.fee_amount, resolved.fee_token_symbol,
                 ),
-                "Wait for the job_payment_mode_changed system notification → agent runs task-402-pay (x402_pay signing + direct/accept + endpoint replay).",
+                "Wait for the on-chain confirmation, then the system will proceed with x402 payment automatically.",
             );
         }
     } else {
@@ -231,11 +230,10 @@ pub async fn handle_set_payment_mode(
                 "next": "Payment mode already on-chain. Call next-action --event job_payment_mode_changed to get the script (escrow: send [intent:confirm] to provider; then wait for provider to apply before confirm-accept).",
             }));
         } else {
-            let mode_int = payment_mode.as_int();
-            println!("✓ Payment mode set: {mode_str} ({mode_int}); awaiting on-chain confirmation...");
+            println!("✓ Payment mode set to {mode_str}; awaiting on-chain confirmation...");
             crate::output::confirming(
                 &format!("setPaymentMode({mode_str}) complete."),
-                "Wait for the job_payment_mode_changed system notification → call next-action to get the script (escrow: send [intent:confirm] to provider, then wait for provider to apply before confirm-accept).",
+                "Wait for the on-chain confirmation, then the system will proceed automatically.",
             );
         }
     }
@@ -489,9 +487,9 @@ pub async fn handle_direct_accept(
         ]),
         None,
     );
-    println!("✓ direct/accept complete (x402); task status → accepted.");
+    println!("✓ x402 acceptance complete; task status → accepted.");
     println!("  txHash: {tx_hash}");
-    println!("  Wait for the job_accepted system notification before running complete.");
+    println!("  Wait for the on-chain confirmation before proceeding.");
 
     Ok(())
 }

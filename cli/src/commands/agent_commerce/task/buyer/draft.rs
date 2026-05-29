@@ -577,13 +577,13 @@ pub async fn handle_draft_publish(
     println!("  jobId:  {returned_job_id}");
     println!("  txHash: {tx_hash}");
     if let Some(pid) = provider_id {
-        println!("  Designated provider: {pid} (skip recommend, direct routing)");
+        println!("  Designated provider: {pid}");
     }
     println!();
     if provider_id.is_some() {
-        println!("Next: wait for the job_created notification; the designated provider's service will be queried and routed automatically.");
+        println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
     } else {
-        println!("Next: onchainos agent recommend {returned_job_id}");
+        println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
     }
     Ok(())
 }

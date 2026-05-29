@@ -279,7 +279,7 @@ pub async fn handle_create(
     println!("  jobId:  {job_id}");
     println!("  txHash: {tx_hash}");
     if let Some(ref provider_id) = params.provider {
-        println!("  Designated provider: {provider_id} (skip recommend, direct routing)");
+        println!("  Designated provider: {provider_id}");
     }
     println!();
     if let Some(ref warning) = balance_warning {
@@ -287,9 +287,9 @@ pub async fn handle_create(
         println!("{warning}");
     }
     if params.provider.is_some() {
-        println!("Next: wait for the job_created notification; the designated provider's service will be queried and routed automatically.");
+        println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
     } else {
-        println!("Next: onchainos agent recommend {job_id}");
+        println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
     }
     println!("🛑 Do NOT call set-payment-mode. End this turn.");
     Ok(())

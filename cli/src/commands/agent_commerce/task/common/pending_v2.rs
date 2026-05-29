@@ -362,6 +362,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
 
 // ─── Handlers ──────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn handle_request(
     sub_key: String,
     job_id: String,
