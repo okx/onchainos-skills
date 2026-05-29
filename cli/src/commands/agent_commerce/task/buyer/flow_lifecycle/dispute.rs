@@ -19,11 +19,11 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
      content:\n\
      {rejected_notify}\n\n\
      **Step 2 -- Silently wait for the ASP's decision:**\n\n\
-     ⚠️ **Do not send any xmtp_send message to the ASP**. The ASP has 24h to decide:\n\
+     ⚠️ **Do not send any xmtp_send message to the ASP**. The ASP will decide:\n\
      - Open a dispute → you will receive job_disputed\n\
      - Agree to refund → you will receive job_refunded\n\
-     - 24h timeout → system auto-refunds, you will receive job_refunded\n\n\
-     ⚠️ **The buyer cannot initiate arbitration** — only the ASP can open a dispute. If the user asks \"can I start a dispute?\", reply: the buyer side does not support initiating arbitration; please wait for the ASP's decision (up to 24h; if no dispute is raised, auto-refund).\n\n\
+     - Timeout → system auto-refunds, you will receive job_refunded\n\n\
+     ⚠️ **The buyer cannot initiate arbitration** — only the ASP can open a dispute. If the user asks \"can I start a dispute?\", reply: the buyer side does not support initiating arbitration; please wait for the ASP's decision.\n\n\
      After Step 1 → **end this turn** and wait for the next system event.\n\n\
      [Follow-up events]\n\
      - job_disputed → submit user evidence\n\

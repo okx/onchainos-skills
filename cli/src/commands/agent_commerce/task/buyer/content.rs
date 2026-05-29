@@ -78,7 +78,7 @@ pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
 pub fn job_rejected_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "[Rejection Confirmed] The deliverable for **{title}** (`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
-         The ASP has 24 hours to choose: file a dispute or agree to a refund.\n\
+         The ASP will choose: file a dispute or agree to a refund.\n\
          If the ASP takes no action, funds will be auto-refunded to your wallet."
     )
 }

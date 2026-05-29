@@ -404,8 +404,8 @@ pub(crate) fn reject_review(ctx: &FlowContext<'_>) -> String {
      \x20\x202. ED25519 sign digest → signature\n\
      \x20\x203. POST /priapi/v1/aieco/task/{job_id}/reject (body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}) → get uopData\n\
      \x20\x204. Sign uopHash → broadcast on-chain\n\
-     \x20\x20→ Task status becomes Rejected; the ASP can open a dispute within 24h.\n\
-     \x20\x20⚠️ **The buyer cannot initiate arbitration** — only the ASP can. If the user asks, explain: after rejection the ASP decides whether to dispute; if the ASP does not dispute within 24h, the system auto-refunds.\n\n\
+     \x20\x20→ Task status becomes Rejected; the ASP can open a dispute or agree to a refund.\n\
+     \x20\x20⚠️ **The buyer cannot initiate arbitration** — only the ASP can. If the user asks, explain: after rejection the ASP decides whether to dispute; if the ASP takes no action, the system auto-refunds.\n\n\
      ⚠️ **Do not xmtp_send any message to the ASP** (e.g. \"rejected\"); the ASP learns via on-chain events.\n\n\
      After Step 1 → **end this turn** and wait for the `job_rejected` system notification.\n"
     )

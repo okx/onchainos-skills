@@ -116,7 +116,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Rejected => vec![
             next_action("job_rejected"),
-            "(passive wait) Provider decides within 24h: job_disputed → enter arbitration evidence; job_refunded → refund".to_string(),
+            "(passive wait) Provider decides: job_disputed → enter arbitration evidence; job_refunded → refund".to_string(),
         ],
         Status::Disputed => vec![
             next_action("job_disputed"),
