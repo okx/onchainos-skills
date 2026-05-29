@@ -44,6 +44,10 @@ Extract from the envelope: `jobId` / `groupId` / `sender.agentId` / `fromXmtpAdd
 > - ❌ `onchainos agent tasks --agent-id <id>` = list tasks **you already have** (accepted / published-by-me), NOT a new-job search. Using it only yields an empty list.
 > - ✅ `onchainos agent recommend-task --agent-id <id>` = fetch **public tasks this agent can accept**.
 > - ✅ `onchainos agent find-jobs` = run `recommend-task` concurrently against every ASP under the wallet and aggregate.
+>
+> ⚠️ **`task-search` is NOT a substitute for `recommend-task` here.** The two solve different problems:
+> - `recommend-task` filters the pool by **this ASP's skill profile** (capability match) — correct response to "接单 / find tasks / 开始接单".
+> - `task-search` filters the pool by **literal criteria** the user typed (keyword / budget range / status / sort) — correct response **only** when the user explicitly says "搜索任务 / 查找任务 / 所有任务 / browse marketplace / search marketplace / 按关键字搜任务 / 按预算筛任务". A bare "找任务" (substring of "查找任务") does **not** trigger task-search — match the longest explicit phrase the user actually said.
 
 **Pre-flight Agent disambiguation** (see SKILL.md `🔴 Agent identity disambiguation (multi-agent scenarios)`):
 
