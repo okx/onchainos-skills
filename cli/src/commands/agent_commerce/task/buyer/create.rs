@@ -291,5 +291,6 @@ pub async fn handle_create(
     } else {
         println!("Next: onchainos agent recommend {job_id}");
     }
+    println!("🛑 Do NOT call set-payment-mode. End this turn.");
     Ok(())
 }
