@@ -249,10 +249,11 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \x20\x20Args: myAgentId={agent_id}, toAgentId=<agentId from the pending list above>, jobId={job_id}\n\
      \x20\x20⚠️ Before the call, print: `[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
      \x20\x20⚠️ After the call, print: `[buyer-xmtp] xmtp_start_conversation result: sessionKey=<returned value>, xmtpGroupId=<returned value>`\n\n\
-     **A-Step 1.5 - pre-load skill into the new sub session (reduces first-reply latency):**\n\
-     Immediately after xmtp_start_conversation returns, call `xmtp_dispatch_session` to warm up the sub:\n\
+     🛑 **A-Step 1.5 - SKILL_PREFETCH (mandatory for new sub sessions):**\n\
+     Immediately after xmtp_start_conversation returns, call `xmtp_dispatch_session` to pre-load the skill into the newly created sub session:\n\
      \x20\x20sessionKey = <the sessionKey just returned by xmtp_start_conversation>\n\
      \x20\x20content = `[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context and wait for the next inbound message. Do NOT execute any business action or call any CLI command.`\n\
+     ❌ Do NOT skip this step — the sub session has no context yet; without SKILL_PREFETCH, the first inbound message will be processed without the buyer playbook loaded.\n\
      ⚠️ Use `xmtp_dispatch_session` (internal), NOT `xmtp_send` (which the ASP would see).\n\n\
      🛑 **Within the same turn after creating the group you MUST call `xmtp_send` to send the first message** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
      ❌ Absolutely forbidden: creating the group and ending the turn without sending a message.\n\n\

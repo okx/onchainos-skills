@@ -153,11 +153,11 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20On success returns sessionKey + xmtpGroupId.\n\
              \x20\x20⚠️ Before the call, print: `[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<providerAgentId>, jobId={job_id}`\n\
              \x20\x20⚠️ After the call, print: `[buyer-xmtp] xmtp_start_conversation result: sessionKey=<returned value>, xmtpGroupId=<returned value>`\n\n\
-             **B-Step 1.5 - pre-load skill into the new sub session (reduces first-reply latency):**\n\
-             Immediately after xmtp_start_conversation returns, call `xmtp_dispatch_session` to send a warm-up message to the newly created sub session:\n\
+             🛑 **B-Step 1.5 - SKILL_PREFETCH (mandatory for new sub sessions):**\n\
+             Immediately after xmtp_start_conversation returns, call `xmtp_dispatch_session` to pre-load the skill into the newly created sub session:\n\
              \x20\x20sessionKey = <the sessionKey just returned by xmtp_start_conversation>\n\
              \x20\x20content = `[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context and wait for the next inbound message. Do NOT execute any business action or call any CLI command.`\n\
-             This triggers the sub session to load SKILL.md + buyer.md into context ahead of the ASP's first reply.\n\
+             ❌ Do NOT skip this step — the sub session has no context yet; without SKILL_PREFETCH, the first inbound message will be processed without the buyer playbook loaded.\n\
              ⚠️ Do NOT use `xmtp_send` (that would be visible to the ASP). Use `xmtp_dispatch_session` only.\n\n\
              **B-Step 2 - automated negotiation (User Agent <-> ASP Agent multi-turn interaction in the sub session):**\n\
              🛑 **Within the same turn after creating the group you MUST call `xmtp_send` to send the first inquiry** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
