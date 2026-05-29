@@ -197,10 +197,10 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
 
         "dispute_resolved" => format!(
             "[Current Status] dispute_resolved\n\n\
-             Extract from `message`: `jobTitle`, `vote` (0 or 1), `jobStatus` (`completed` or `rejected`), `slashMinorityBps` + `slashAmount` (lost branch only), `agentName`, `slashTimeoutBps`, `hasCommit`, `hasReveal`. **Substitute `<message.jobTitle>` below with the extracted value.**\n\
+             Extract from `message`: `jobTitle`, `vote` (0 or 1), `jobStatus` (`complete` or `failed`), `slashMinorityBps` + `slashAmount` (lost branch only), `agentName`, `slashTimeoutBps`, `hasCommit`, `hasReveal`. **Substitute `<message.jobTitle>` below with the extracted value.**\n\
              Render two text labels (pure text mapping, no semantic interpretation):\n\
              - `vote = 0` → `yourVote = User`; `vote = 1` → `yourVote = ASP`\n\
-             - `jobStatus = completed` → `winningSide = ASP`; `jobStatus = rejected` → `winningSide = User`\n\
+             - `jobStatus = complete` → `winningSide = ASP`; `jobStatus = failed` → `winningSide = User`\n\
              `hasCommit` / `hasReveal` missing → treat as `1` (participated).\n\n\
              **Routing (evaluate in order, first match wins):**\n\
              1. `hasCommit == 0` → Branch 0a (missed commit)\n\
