@@ -170,7 +170,8 @@ fn validate_draft_for_publish(detail: &serde_json::Value) -> Result<()> {
             .join("\n");
         bail!(
             "Draft is missing required fields for publishing:\n{list}\n\
-             Please update the draft with the missing fields, then retry publish."
+             🛑 Do NOT auto-fill these fields. Ask the user to provide values for each missing field, \
+             then call `draft update` with the user's values, then retry `draft publish`."
         );
     }
     Ok(())
