@@ -30,8 +30,8 @@
 // ── Event::JobCreated ──────────────────────────────────────────────
 
 /// `Event::JobCreated` Step 0 — user notification that the job is confirmed on-chain.
-pub fn job_created_user_notify(job_id: &str, notify_text: &str) -> String {
-    format!("Job `{job_id}` confirmed on-chain. {notify_text}")
+pub fn job_created_user_notify(job_id: &str, title: &str, notify_text: &str) -> String {
+    format!("[Job Created] **{title}** (`{job_id}`) confirmed on-chain. {notify_text}")
 }
 
 /// Prompt shown when the designated ASP is offline (D-Step 1.5).
@@ -104,7 +104,7 @@ pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: escrow\n\
          - txHash: <txHash>\n\
-         - Settled at: <timestamp>\n\
+         - Settled at: <timestamp — human-readable, e.g. \"2025-05-29 10:00 UTC\"; convert from Unix epoch if needed>\n\
          This job is complete."
     )
 }
@@ -115,7 +115,9 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
         "[x402 Job Completed] {title} (`{job_id}`) — all steps complete.\n\
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: x402\n\
-         - Settled at: <timestamp>\n\
+         - Settled at: <timestamp — human-readable, e.g. \"2025-05-29 10:00 UTC\"; convert from Unix epoch if needed>\n\
+         - Deliverable saved to: <deliverableSavedPath from task-402-pay output; if not in context, omit this line>\n\
+         - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>\n\
          This job is complete."
     )
 }
@@ -344,6 +346,7 @@ pub fn x402_replay_success_user_notify(job_id: &str) -> String {
         "[x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
          ASP agentId: <providerAgentId>\n\
          Amount: <tokenAmount> <tokenSymbol>\n\
+         Deliverable saved to: <deliverableSavedPath from CLI output>\n\
          ---Deliverable---\n\
          <replayBodyDisplay value from CLI output — pass through in full, do not truncate or summarize>\n\
          ---End of deliverable---\n\

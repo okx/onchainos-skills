@@ -618,7 +618,17 @@ pub async fn handle_task_402_pay(
             .unwrap_or_else(|_| serde_json::json!({ "raw": raw_text }));
         let success = (200..300).contains(&initial_status);
         eprintln!("[task-402-pay] endpoint returned HTTP {initial_status} (not 402); using as the result directly");
-        crate::output::success(serde_json::json!({
+        let mut early_saved: Option<String> = None;
+        if success {
+            match auto_save_x402_deliverable(client, job_id, &agent_id, provider, token_symbol, token_amount, &body).await {
+                Ok(p) => {
+                    eprintln!("[task-402-pay] deliverable auto-saved: {p}");
+                    early_saved = Some(p);
+                }
+                Err(e) => eprintln!("[task-402-pay] deliverable auto-save failed (non-blocking): {e}"),
+            }
+        }
+        let mut result = serde_json::json!({
             "replaySuccess": success,
             "replayStatus": initial_status,
             "replayBody": body,
@@ -627,7 +637,11 @@ pub async fn handle_task_402_pay(
             "authorization": proof.authorization,
             "sessionCert": proof.session_cert,
             "txHash": tx_hash,
-        }));
+        });
+        if let Some(p) = early_saved {
+            result["deliverableSavedPath"] = serde_json::Value::String(p);
+        }
+        crate::output::success(result);
         return Ok(());
     }
 
@@ -720,7 +734,19 @@ pub async fn handle_task_402_pay(
         }
     };
 
-    // Step 4: emit the complete result.
+    // Step 4: auto-save deliverable when replay succeeded.
+    let mut saved_path: Option<String> = None;
+    if replay_success {
+        match auto_save_x402_deliverable(client, job_id, &agent_id, provider, token_symbol, token_amount, &replay_body).await {
+            Ok(p) => {
+                eprintln!("[task-402-pay] deliverable auto-saved: {p}");
+                saved_path = Some(p);
+            }
+            Err(e) => eprintln!("[task-402-pay] deliverable auto-save failed (non-blocking): {e}"),
+        }
+    }
+
+    // Step 5: emit the complete result.
     audit::log(
         "cli",
         if replay_success { "buyer/task_402_pay_completed" } else { "buyer/task_402_pay_replay_failed" },
@@ -737,7 +763,7 @@ pub async fn handle_task_402_pay(
         ]),
         None,
     );
-    crate::output::success(serde_json::json!({
+    let mut result = serde_json::json!({
         "replaySuccess": replay_success,
         "replayStatus": replay_status,
         "replayBody": replay_body,
@@ -746,7 +772,11 @@ pub async fn handle_task_402_pay(
         "authorization": proof.authorization,
         "sessionCert": proof.session_cert,
         "txHash": tx_hash,
-    }));
+    });
+    if let Some(p) = saved_path {
+        result["deliverableSavedPath"] = serde_json::Value::String(p);
+    }
+    crate::output::success(result);
     Ok(())
 }
 
@@ -758,6 +788,48 @@ fn format_replay_body_display(replay_body: &serde_json::Value) -> String {
     } else {
         serde_json::to_string_pretty(replay_body).unwrap_or_else(|_| replay_body.to_string())
     }
+}
+
+/// Auto-save the x402 replay result as a deliverable (best-effort).
+///
+/// Fetches task context from the API to get title/short_id, writes replayBody
+/// to a temp file, then calls `deliverables::handle_save`. Returns the saved path on success.
+async fn auto_save_x402_deliverable(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    agent_id: &str,
+    provider: &str,
+    token_symbol: &str,
+    token_amount: &str,
+    replay_body: &serde_json::Value,
+) -> Result<String> {
+    use crate::commands::agent_commerce::task::common::deliverables;
+
+    let resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
+    let title = resp["title"].as_str().unwrap_or("x402 deliverable").to_string();
+    let short_id = if job_id.len() >= 8 { &job_id[..8] } else { job_id }.to_string();
+    let provider_name = resp["providerName"].as_str().map(|s| s.to_string());
+
+    let display = format_replay_body_display(replay_body);
+    let tmp_dir = std::env::temp_dir();
+    let tmp_path = tmp_dir.join(format!("x402-deliverable-{job_id}.txt"));
+    std::fs::write(&tmp_path, &display)?;
+
+    let params = deliverables::SaveParams {
+        job_id,
+        role: "buyer",
+        file_path: tmp_path.to_str().unwrap_or_default(),
+        deliverable_type: "text",
+        title: &title,
+        short_id: &short_id,
+        file_key: None,
+        token_symbol: Some(token_symbol),
+        token_amount: Some(token_amount),
+        counterparty_agent_id: Some(provider),
+        counterparty_name: provider_name.as_deref(),
+    };
+    let result = deliverables::handle_save(&params)?;
+    Ok(result.path)
 }
 
 /// x402-check — validate whether the endpoint is a legitimate x402 service and extract pricing info.

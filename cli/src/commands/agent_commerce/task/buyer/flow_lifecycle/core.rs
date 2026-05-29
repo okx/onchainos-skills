@@ -55,7 +55,8 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n\
      **Step 2 -- Branch by payment mode:**\n\n\
      --------- Branch A: escrow ---------\n\n\
-     Call xmtp_dispatch_user to notify the user that accept succeeded ({l10n_dispatch}):\n\
+     Call xmtp_dispatch_user to notify the user that accept succeeded:\n\
+     {l10n_dispatch}\n\
      \x20\x20content:\n\
      {accepted_escrow_notify}\n\n\
      [Follow-up events]\n\
@@ -152,7 +153,8 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      ```\n\
      If save fails, log the error but do NOT block.\n\n\
      **Step 2 — Notify the user (brief; NO deliverable content)**:\n\n\
-     Call `xmtp_dispatch_user` ({l10n_dispatch}):\n\
+     Call `xmtp_dispatch_user`:\n\
+     {l10n_dispatch}\n\
      \x20\x20content: The provider has sent the deliverable; awaiting on-chain submission confirmation before entering acceptance review.\n\
      ❌ Do NOT include the deliverable body / summary / file path in this notification — the full content is shown in the `job_submitted` review card.\n\n\
      **Step 3 — End this turn**. Wait for the `job_submitted` system event.\n\
@@ -208,17 +210,9 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      **Branch by paymentMode** (from Step 1):\n\n\
      ━━━ paymentMode=x402 (3) ━━━\n\
      In x402, the deliverable was the `replayBody` returned by `task-402-pay` in the earlier `job_payment_mode_changed` turn.\n\
-     Look for the `replayBody` value in this sub session's context (it was printed when the CLI output was processed).\n\
-     If found: write the full `replayBody` (raw endpoint response — JSON or plain text) to a temp file, then persist:\n\
-     ```bash\n\
-     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
-       --file \"<temp .txt path>\" --deliverable-type text \\\n\
-       --title \"<task title>\" --short-id {short_id} \\\n\
-       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
-     ```\n\
-     If save fails or `replayBody` is not in context, skip — the deliverable was already shown to the user during `job_payment_mode_changed`.\n\
-     Set deliverable display variables: deliverableType=text, deliverableText=<replayBodyDisplay content (the display-formatted version of replayBody)>.\n\
+     ✅ The CLI auto-saved the deliverable to disk during `task-402-pay` (no manual `task-deliverable-save` needed).\n\
+     Look for the `replayBodyDisplay` value in this sub session's context (it was printed when the CLI output was processed).\n\
+     Set deliverable display variables: deliverableType=text, deliverableText=<replayBodyDisplay content>.\n\
      Go to Step 3.\n\n\
      ━━━ paymentMode=escrow (1) ━━━\n\
      Call `xmtp_get_conversation_history` (sessionKey = the value obtained above) and find the ASP message **carrying the `[intent:deliver]` suffix tag** (scan newest to oldest; first match is the deliverable), and branch on `deliverableType`:\n\n\
@@ -317,7 +311,8 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      ===============================================================\n\n\
      --------- Branch B: x402 — notify the user (no rejection allowed) ---------\n\n\
      ⚠️ In x402 funds are already paid at job_accepted; the user **cannot reject the deliverable**, just notify.\n\n\
-     **B-Step 1 — Call xmtp_dispatch_user to notify the user** ({l10n_dispatch}) — split by deliverableType:\n\n\
+     **B-Step 1 — Call xmtp_dispatch_user to notify the user** — split by deliverableType:\n\
+     {l10n_dispatch}\n\n\
      \x20\x20▸ deliverableType=file:\n\
      \x20\x20content:\n\
      \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
@@ -342,7 +337,8 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
-     **B-Step 2.5 — Notify the user of the submitted rating** ({l10n_dispatch}):\n\
+     **B-Step 2.5 — Notify the user of the submitted rating:**\n\
+     {l10n_dispatch}\n\
      After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
      ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
      {rating_notify}\n\n\
@@ -436,6 +432,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
      Extract: {title_in_extract}tokenAmount, tokenSymbol, paymentMode (int: 1=escrow, 3=x402).\n\
+     ⚠️ Timestamp: `updateTime` from the API is a Unix epoch (milliseconds). Convert it to human-readable format (e.g. \"2025-05-29 10:00 UTC\") for the `<timestamp>` placeholder.\n\
      [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Completed] Job `{job_id}` — completed; funds settled. This job is complete.` — the user MUST still receive a notification.\n\n\
      **Step 2 -- Branch by payment mode:**\n\n\
      --------- Branch A: escrow -- flow ends ---------\n\n\
@@ -446,7 +443,8 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ❌ Do NOT output the notification as text — it will be trapped in the backup session and the user will never see it.\n\
      ⚠️ txHash: find the txHash (format 0x...) from the earlier `onchainos agent complete` CLI output in this sub session context.\n\
      If not in context (e.g. auto-complete or other non-active-approval scenarios), omit the on-chain receipt line.\n\
-     ✅ Call xmtp_dispatch_user ({l10n_dispatch}) with the following content parameter (replace placeholders with real values):\n\
+     ✅ Call xmtp_dispatch_user with the following content parameter (replace placeholders with real values):\n\
+     {l10n_dispatch}\n\
      \x20\x20content:\n\
      {completed_escrow_notify}\n\n\
      **A-Step 2 -- Auto-rate the ASP:**\n\
@@ -458,23 +456,39 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
-     **A-Step 2.5 -- Notify the user of the submitted rating** ({l10n_dispatch}):\n\
+     **A-Step 2.5 -- Notify the user of the submitted rating:**\n\
+     {l10n_dispatch}\n\
      After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
      ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in A-Step 2; fill `<title>` from task context):\n\
      {rating_notify}\n\n\
      **A-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\n\
-     --------- Branch B: x402 -- final summary ---------\n\n\
+     --------- Branch B: x402 -- final summary + auto-rate ---------\n\n\
      ⚠️ In x402, job_completed means the payment pipeline (accept + complete) is settled on-chain.\n\
-     The deliverable was already sent to the user during task-402-pay (A-Step 4); this step only emits the final summary.\n\n\
+     The deliverable was already sent to the user during task-402-pay; this step emits the final summary and rates the ASP.\n\n\
      **B-Step 1 -- 🛑 MUST call `xmtp_dispatch_user` tool (do NOT produce a plain text reply):**\n\
      🛑🛑🛑 You are in a **sub session (backup)**. Any text you output here is invisible to the user.\n\
      The ONLY way to reach the user is the `xmtp_dispatch_user` tool call.\n\
      ❌ Do NOT output the notification as text — it will be trapped in the backup session and the user will never see it.\n\
-     ✅ Call xmtp_dispatch_user ({l10n_dispatch}) with the following content parameter (replace placeholders with real values from Step 1):\n\
+     🌐 ✅ Call xmtp_dispatch_user with the following content parameter (replace placeholders with real values from Step 1):\n\
+     {l10n_dispatch}\n\
      \x20\x20content:\n\
      {completed_x402_notify}\n\n\
+     **B-Step 1.5 -- Auto-rate the ASP:**\n\
+     Based on the deliverable (the `replayBody` from task-402-pay in this sub session context) vs the task description and quality standards, generate:\n\
+     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
+     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
+     Then execute:\n\
+     ```bash\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+     ```\n\
+     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
+     **B-Step 1.6 -- Notify the user of the submitted rating:**\n\
+     {l10n_dispatch}\n\
+     After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
+     ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 1.5; fill `<title>` from task context):\n\
+     {rating_notify}\n\n\
      **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\

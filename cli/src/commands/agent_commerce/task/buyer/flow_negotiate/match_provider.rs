@@ -22,7 +22,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
         None => "Auto-querying recommended ASPs...".to_string(),
     };
 
-    let created_notify = super::super::content::job_created_user_notify(job_id, &notify_text);
+    let created_notify = super::super::content::job_created_user_notify(job_id, ctx.title_display, &notify_text);
 
     let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
     let attachment_section_created = if attachment_paths.is_empty() {

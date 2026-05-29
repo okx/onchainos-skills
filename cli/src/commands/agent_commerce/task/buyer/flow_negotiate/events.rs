@@ -32,7 +32,6 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let short_id = ctx.short_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
 
@@ -83,33 +82,27 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
      ```\n\
      Extract `acceptsJson`, `tokenSymbol` (= feeTokenSymbol), `amountHuman` (= feeAmount).\n\n\
-     **x402 stage 1.5 - notify the user that payment is in progress via xmtp_dispatch_user** ({l10n_dispatch}):\n\
+     **x402 stage 1.5 - 🌐 notify the user that payment is in progress via xmtp_dispatch_user:**\n\
+     {l10n_dispatch}\n\
      \x20\x20content: {x402_paying}\n\n\
      **x402 stage 2 - sign + direct/accept + endpoint replay (atomic command):**\n\
      ```bash\n\
      onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
      ```\n\
      Internally executes: x402_pay signing -> direct/accept on-chain -> assemble payment header -> replay endpoint.\n\
-     Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, signature, authorization, sessionCert, txHash }}\n\n\
-     **x402 stage 2 Step 2.5 — persist the deliverable when replaySuccess=true** (skip if replaySuccess=false):\n\n\
-     The replay result only lives in session context; without saving it is lost after context compaction or session end.\n\
-     Write `replayBody` (the raw endpoint response — JSON or plain text; full content, no truncation) to a temp file, then call:\n\
-     ```bash\n\
-     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
-       --file \"<temp .txt path>\" --deliverable-type text \\\n\
-       --title \"<task title from common context>\" --short-id {short_id} \\\n\
-       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
-     ```\n\
-     ⚠️ `--title` and counterparty fields: use values from `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` (already called in the parameter-loss fallback above, or from session context).\n\
-     If save fails, log the error but do NOT block — the user notification in the next step is more important.\n\n\
-     **x402 stage 2 Step 3 - check replay result and notify the user via xmtp_dispatch_user** ({l10n_dispatch}) — branch by `replaySuccess`:\n\n\
+     Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, deliverableSavedPath, signature, authorization, sessionCert, txHash }}\n\
+     ✅ The CLI **auto-saves** the deliverable to disk when replaySuccess=true (`deliverableSavedPath` in output). No manual `task-deliverable-save` call needed.\n\n\
+     🔴🔴🔴 **CRITICAL — x402 stage 2 Step 3: notify the user with the FULL deliverable content via xmtp_dispatch_user**\n\
+     {l10n_dispatch}\n\
+     The `replayBodyDisplay` field in the CLI output IS the deliverable the user paid for. You **MUST** copy it verbatim into the notification template below.\n\
+     ❌ Do NOT summarize, truncate, or omit `replayBodyDisplay` — doing so = the user paid but never received the deliverable.\n\
+     ❌ Do NOT compose your own \"payment succeeded\" message — use the template below which includes the deliverable content.\n\
+     🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data they paid for.\n\n\
+     Branch by `replaySuccess`:\n\n\
      ▸ replaySuccess=true:\n\
      {x402_replay_ok}\n\n\
      ▸ replaySuccess=false:\n\
      {x402_replay_fail}\n\n\
-     🛑 The `replayBodyDisplay` field contains the deliverable content; when replaySuccess=true it **must** be included in full.\n\
-     🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data the ASP returned.\n\n\
      -> **end this turn** and wait for the `job_accepted` system notification.\n\n\
      🛑🛑🛑 **Iron rule (MANDATORY) after receiving `job_accepted`**:\n\
      After the `job_accepted` system event arrives, you **must** call:\n\

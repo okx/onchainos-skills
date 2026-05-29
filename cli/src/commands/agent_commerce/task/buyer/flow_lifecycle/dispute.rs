@@ -15,7 +15,8 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user that rejection is settled; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed** ({l10n_short}):\n\n\
+     **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed:**\n\
+     {l10n_short}\n\n\
      content:\n\
      {rejected_notify}\n\n\
      **Step 2 -- Silently wait for the ASP's decision:**\n\n\
@@ -139,7 +140,8 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Extract {title_in_extract}tokenAmount, tokenSymbol.\n\
      [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade — user wins: `[Dispute Won] Job `{job_id}` — dispute resolved; User Agent wins.` / user loses: `[Dispute Lost] Job `{job_id}` — dispute resolved; ASP wins.` — the user MUST still receive a notification.\n\n\
-     **Step 3 -- Call xmtp_dispatch_user to notify the user of the arbitration outcome** ({l10n_dispatch}) — branch by winner:\n\n\
+     **Step 3 -- Call xmtp_dispatch_user to notify the user of the arbitration outcome** — branch by winner:\n\
+     {l10n_dispatch}\n\n\
      -------------- User wins (jobStatus=failed) --------------\n\
      content:\n\
      {dispute_won}\n\n\
@@ -155,7 +157,8 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 2 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
-     **Step 4.5 -- Notify the user of the submitted rating** ({l10n_dispatch}):\n\
+     **Step 4.5 -- Notify the user of the submitted rating:**\n\
+     {l10n_dispatch}\n\
      After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
      ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 4; fill `<title>` from task context):\n\
      {rating_notify}\n\n\
