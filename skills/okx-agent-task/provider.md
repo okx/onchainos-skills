@@ -212,7 +212,6 @@ The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic
 | `source_event` | Push location | Routed by handler to (pseudo event → CLI) |
 |---|---|---|
 | `job_refused` | flow.rs job_refused scene (user rejected delivery; ASP must decide dispute vs refund) | `dispute_raise` → **Phase 1** `dispute raise <jobId> --reason "<verbatim>" --agent-id <…>` → wait for `dispute_approved` → **Phase 2** `dispute confirm <jobId> --agent-id <…>` → wait for `job_disputed`. OR `agree_refund` → `agree-refund <jobId> --agent-id <…>` → wait for `job_refunded` |
-| `job_disputed` | flow.rs job_disputed scene (1-hour evidence prep window) | `dispute_evidence` → `dispute upload <jobId> --text "<summary>" --image <path or omit> --agent-id <…>` → wait for the verdict |
 | `submit_deadline_warn` | flow.rs submit_deadline_warn scene | Submit-now → re-enter via `next-action --jobStatus job_accepted` to run delivery; Let-it-timeout → end turn |
 | `cli_failed` | flow.rs escalation prose (CLI failure auto-prompt) | retry / dismiss / new-instruction (handler decides) |
 

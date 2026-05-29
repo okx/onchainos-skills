@@ -964,14 +964,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
                      ```\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--sub-key` and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=file dispute  B=accept refund\".\n"
                 ),
-                "job_disputed" => format!(
-                    "[User decision relay] source_event=`job_disputed`, user's verbatim reply: `{reply}`\n\n\
-                     The user's reply **is** the evidence content (text + optional image path). Route directly to:\n\
-                     ```bash\n\
-                     onchainos agent next-action --jobid {job_id} --event dispute_evidence --jobStatus dispute_evidence --role provider --agentId {agent_id}\n\
-                     ```\n\
-                     Extract any image path from the reply (e.g. `image: /path/to/screenshot.png`) and pass it through to the upload step per the dispute_evidence playbook.\n"
-                ),
                 "submit_deadline_warn" => format!(
                     "[User decision relay] source_event=`submit_deadline_warn`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means:\n\n\

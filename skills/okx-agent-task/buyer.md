@@ -617,7 +617,6 @@ The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic
 |---|---|---|
 | `job_submitted` | `flow_lifecycle/core.rs` job_submitted scene | `approve_review` / `reject_review` (semantic) |
 | `review_deadline_warn` | `flow_lifecycle/terminal.rs` review_deadline_warn scene | shares the job_submitted handler |
-| `job_disputed` | `flow_lifecycle/dispute.rs` job_disputed scene | `dispute_evidence` (the verbatim IS the evidence) |
 | `cli_failed` | `flow.rs` escalation prose (CLI failure auto-prompt) | retry / dismiss / new-instruction (handler decides) |
 | `recommend_pick` | `flow_negotiate/match_provider.rs` job_created scene | `next-action --provider <agentId>` (pick) / `recommend --next-page` (next page) / `set-public` (public) / `close` (close) |
 | `provider_pending` | `flow_negotiate/match_provider.rs` provider_conversation scene | pick / skip-all / reject-current |
