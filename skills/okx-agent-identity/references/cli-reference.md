@@ -216,6 +216,8 @@ onchainos agent get --page 2 --page-size 50
 
 Publish / list the agent in the marketplace. Required before `search` / counterparty discovery will surface it.
 
+Underlying API: `POST /priapi/v5/wallet/agentic/agent-status` with `status: 1`.
+
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
 | `--agent-id` | ✓ | integer | The agent to publish. |
@@ -225,15 +227,65 @@ Publish / list the agent in the marketplace. Required before `search` / counterp
 onchainos agent activate --agent-id 42
 ```
 
-**Return:** `{ "agentId": 42, "status": "active", "txHash": "0x…" }`.
+**Return fields (`data` object):**
 
-**Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match).
+| Field | Type | Description |
+|---|---|---|
+| `success` | boolean | `true` = 上架成功；`false` = 上架未生效，需看 `approvalStatus` |
+| `approvalStatus` | integer \| null | 审核状态：`1` 未提交审核 / `2` 审核中 / `5` 审核拒绝；`success=true` 时为 `null` |
+| `rejectReason` | string \| null | 拒绝原因；仅 `approvalStatus=5` 时非空 |
+
+**Error response — Agent blacklisted:**
+
+| Field | Type | Description |
+|---|---|---|
+| `code` | string | `"81602"` |
+| `msg` | string | `"Agent is blocked"` |
+| `data` | null | — |
+
+**Four possible outcomes:**
+
+```json
+// Outcome A — Listed immediately
+{ "success": true, "approvalStatus": null, "rejectReason": null }
+
+// Outcome B — Review required, not yet submitted
+// → Skill MUST call onchainos agent submit-approval --agent-id <id>
+{ "success": false, "approvalStatus": 1, "rejectReason": null }
+
+// Outcome C — Already under review
+{ "success": false, "approvalStatus": 2, "rejectReason": null }
+
+// Outcome D — Review rejected
+{ "success": false, "approvalStatus": 5, "rejectReason": "内容不符合上架规范" }
+```
+
+**Error response — Agent blacklisted (code 81602):**
+```json
+{ "code": "81602", "msg": "Agent is blocked", "data": null }
+```
+
+**Skill-side handling (skill reads `success` + `approvalStatus` + top-level `code`, NOT just HTTP status):**
+
+| Condition | Skill action |
+|---|---|
+| `success: true` | ✅ Published — render success line + proceed to `p1-operation.md §Step 5` → `§Step 6` |
+| `success: false`, `approvalStatus: 1` | Call `onchainos agent submit-approval --agent-id <id>` → see §11 |
+| `success: false`, `approvalStatus: 2` | Under review — render review-pending message and **stop** (no Step 5/6) |
+| `success: false`, `approvalStatus: 5` | Rejected — render rejection card with `rejectReason` and **stop** (no Step 5/6) |
+| Top-level `code: "81602"` | Agent blacklisted — render blacklist error and **stop** |
+
+See `troubleshooting.md §2` for the user-facing message templates for outcomes C, D, and code 81602. Outcome B branches to §11 below.
+
+**Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 
 ---
 
 ## 5. `onchainos agent deactivate`
 
 Unpublish the agent — backend removes it from search results. Identity record itself is preserved.
+
+Underlying API: `POST /priapi/v5/wallet/agentic/agent-status` with `status: 2`.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
@@ -244,9 +296,24 @@ Unpublish the agent — backend removes it from search results. Identity record 
 onchainos agent deactivate --agent-id 42
 ```
 
-**Return:** `{ "agentId": 42, "status": "inactive", "txHash": "0x…" }`.
+**Return fields (`data` object):**
 
-**Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match).
+| Field | Type | Description |
+|---|---|---|
+| `success` | boolean | `true` = 下架成功；`false` = 下架失败 |
+| `approvalStatus` | integer \| null | 下架场景忽略此字段 |
+| `rejectReason` | string \| null | 下架场景忽略此字段 |
+
+**Skill-side handling:** only read `success`. `approvalStatus` and `rejectReason` are ignored for deactivate.
+
+| Condition | Skill action |
+|---|---|
+| `success: true` | ✅ Unpublished — render deactivate success line + proceed to `§Step 5` → `§Step 6` |
+| `success: false` | ❌ Failure — render error card per `troubleshooting.md` and **stop** |
+
+Business-level failures (e.g. "agent already inactive", "pending settlements") arrive as `code != "0"` from the backend — they are caught before `success` is evaluated and surfaced via `troubleshooting.md §2` keyword match.
+
+**Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 
 ---
 
@@ -467,3 +534,42 @@ onchainos agent feedback-list --agent-id 42 --sort-by time_desc --page 1 --page-
 `average` and per-item `score` are already in **0.00–5.00 stars (up to 2 decimal places)** when the CLI surfaces them. The CLI applies `utils::convert_feedback_list_scores` to the backend response before returning: both `average` and per-item `score` become 2-decimal floats (e.g. backend `89` → `4.45`; backend `90` → `4.5`; backend `70` → `3.5`). The skill renders `★ <average>` / `★ <score>` directly. Backend wire format is still 0–100 integer — encapsulated by `utils::score_to_stars` with the canonical mapping pinned in `SKILL.md §Amount Display Rules`. (Earlier revisions rendered per-item as an integer bucket; that has been removed now that input precision is 2 decimals.)
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
+
+---
+
+## 11. `onchainos agent submit-approval`
+
+Submit an agent for marketplace listing review. Called **automatically by the skill** (never by the user directly) when `onchainos agent activate` returns `success: false, approvalStatus: 1`.
+
+Underlying API: `POST /priapi/v5/wallet/agentic/agent/submit-approval`.
+
+| Parameter | Required | Type | Notes |
+|---|---|---|---|
+| `--agent-id` | ✓ | integer | The agent to submit for review. |
+
+**Example (skill-internal — never shown to user per Red line 2):**
+```bash
+onchainos agent submit-approval --agent-id 42
+```
+
+**Return — two possible outcomes:**
+
+```json
+// Outcome A — Submission accepted: review now pending
+{ "success": true }
+
+// Outcome B — Submission failed
+{ "success": false, "msg": "<reason>" }
+```
+
+**Skill-side handling:**
+
+| Condition | Skill action |
+|---|---|
+| `success: true` | Review submitted — render review-pending message and **stop** (no `§Step 5` / `§Step 6`). User-facing template → `troubleshooting.md §2` row "submit-approval success (review pending)". |
+| `success: false` | Submission failed — render error card with `msg` (translate per `troubleshooting.md §2` if a keyword match exists; otherwise show `msg` verbatim in the error card footer). **Stop.** |
+| Top-level `code: "81602"` (blacklisted — possible if state changed between activate and submit-approval calls) | Render blacklist error and **stop**. Template → `troubleshooting.md §2` row "81602 blacklisted". |
+
+**Do NOT run `agent get` after `submit-approval` to "confirm" the review status — the return value is authoritative. One intent = one CLI call.**
+
+**Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match).

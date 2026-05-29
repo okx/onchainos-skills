@@ -35,5 +35,5 @@ pub use queries::{feedback_list, get, get_by_address, search, service_list};
 
 // Write-side commands.
 pub use mutations::{
-    activate, create, deactivate, feedback_submit, update, upload, xmtp_sign,
+    activate, create, deactivate, feedback_submit, submit_approval, update, upload, xmtp_sign,
 };

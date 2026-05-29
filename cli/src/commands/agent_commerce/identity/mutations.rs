@@ -61,14 +61,17 @@ pub async fn update(args: UpdateArgs, ctx: &Context) -> Result<()> {
 }
 
 pub async fn activate(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
-    activate_impl(&args, ctx).await?;
-    output::success_empty();
+    output::success(activate_impl(&args, ctx).await?);
     Ok(())
 }
 
 pub async fn deactivate(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
-    deactivate_impl(&args, ctx).await?;
-    output::success_empty();
+    output::success(deactivate_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn submit_approval(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
+    output::success(submit_approval_impl(&args, ctx).await?);
     Ok(())
 }
 
@@ -315,15 +318,15 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
 
 // ─── `agent activate` / `agent deactivate` ────────────────────────────────
 
-async fn activate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<()> {
+async fn activate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
     agent_status_impl(args, 1, ctx).await
 }
 
-async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<()> {
+async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
     agent_status_impl(args, 2, ctx).await
 }
 
-async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -> Result<()> {
+async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
@@ -358,8 +361,44 @@ async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -
         Err(e) => eprintln!("[agent-identity] agent-status response err: {:#}", e),
     }
 
-    result.map_err(format_api_error)?;
-    Ok(())
+    result.map_err(format_api_error)
+}
+
+async fn submit_approval_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let body = json!({
+        "agentId": agent_id,
+        "chainIndex": XLAYER_CHAIN_INDEX,
+    });
+
+    eprintln!(
+        "[agent-identity] submit-approval request: url={} access_token_len={} access_token_prefix={} body={}",
+        reconstruct_post_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/submit-approval"),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+    );
+
+    let result = client
+        .post_authed(
+            "/priapi/v5/wallet/agentic/agent/submit-approval",
+            &access_token,
+            &body,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] submit-approval response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] submit-approval response err: {:#}", e),
+    }
+
+    result.map_err(format_api_error)
 }
 
 // ─── `agent upload` ───────────────────────────────────────────────────────
