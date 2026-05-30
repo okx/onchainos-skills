@@ -261,9 +261,10 @@ pub enum AgentCommand {
     /// Provider applies for a task (apply API → sign → broadcast)
     Apply {
         job_id: String,
-        #[arg(long = "token-amount", default_value = "0")]
+        /// Negotiated token amount from `[intent:confirm]`. **Required**; must be > 0 (empty / 0 = apply for free, irreversible — CLI rejects).
+        #[arg(long = "token-amount")]
         token_amount: String,
-        /// Actual task currency (USDT / USDG); read from task detail, do not assume USDT
+        /// Actual task currency (USDT / USDG); read from `[intent:confirm]` / `[intent:propose]`, do not assume USDT
         #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "agent-id")]

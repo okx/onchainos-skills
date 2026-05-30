@@ -936,7 +936,7 @@ async fn build_context(
         if task.visibility == Some(0) {
             // Public task → ASP proactively creates the group + sends the cold-start opener (does not call next-action).
             out.push_str("Current task **visibility = Public** → you must **proactively contact the User Agent to initiate negotiation**:\n\n");
-            out.push_str("1. Call `xmtp_start_conversation` to create a group + sub session (see skills/okx-agent-task/SKILL.md Session Communication Contract §4.7):\n");
+            out.push_str("1. Call `xmtp_start_conversation` to create a group + sub session (see skills/okx-agent-task/_shared/xmtp-tools.md → Path 7 `xmtp_start_conversation`):\n");
             out.push_str(&format!(
                 "   - Args: `myAgentId={agent_id_hint}`, `toAgentId={buyer_id}` (User Agent's agentId), `jobId={}`\n",
                 task.job_id

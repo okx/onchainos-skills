@@ -385,9 +385,9 @@ fn handle_request(
              Two valid shapes (both must contain `:okx-a2a:group:`):\n\
                • task sub (after xmtp_start_conversation with a peer):\n  \
                  agent:main:okx-a2a:group:okx-xmtp:my=0x...&to=0x...&job=<jobId>&gid=...\n\
-               • backup catch-all sub (handles chain events for this agent BEFORE a task sub exists,\n\
+               • backup sub (per-jobId) (handles chain events for this agent BEFORE a task sub exists,\n\
                  e.g. job_created):\n  \
-                 agent:main:okx-a2a:group:backup\n\n\
+                 agent:main:okx-a2a:group:okx-xmtp:backup:<jobId>\n\n\
              Fix: call `session_status` (xmtp tool) FIRST to obtain the current sessionKey, \
              then pass the verbatim returned string as --sub-key. Do NOT invent prefixes \
              (`review-`, `decision-`, the jobId alone, list labels, …) — they will silently \
@@ -516,13 +516,31 @@ fn handle_resolve(user_reply: String) -> Result<()> {
         Some(se) => format!("user_decision_{}", se),
         None => "user_decision".to_string(),
     };
+    // Description carries explicit routing instructions for the receiving sub agent.
+    // Sub LLM tends to read `description` first; making it action-oriented prevents the
+    // common mis-routing pattern where the sub pattern-matches "I see user_decision_*"
+    // → "this is from resolve flow" → "I should call resolve too" (which is wrong; resolve
+    // is user-session-only — user-session ALREADY called it to produce THIS envelope).
+    let description = format!(
+        "User-decision relay envelope (sub session). Call `onchainos agent next-action \
+         --jobid {jid} --event {evt} --jobStatus {evt} --role {role} --agentId {agent} \
+         --data \"<message.data verbatim>\"` to fetch the routing playbook; follow it. \
+         ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
+         user-session-only; the user-session already called `resolve` to produce this \
+         envelope. The sub session has no queue file; calling resolve here = wasted turn \
+         + flow stall.",
+        jid = active.job_id,
+        evt = relay_event,
+        role = active.role,
+        agent = active.agent_id,
+    );
     let relay_envelope = serde_json::json!({
         "agentId": active.agent_id,
         "message": {
             "event": relay_event,
             "data": user_reply,
             "code": 0,
-            "description": "Read okx-agent-task/SKILL.md if you don't know the context",
+            "description": description,
             "source": "system",
             "jobId": active.job_id,
             "role": active.role,
@@ -793,8 +811,8 @@ fn short_job_id(job_id: &str) -> String {
 /// stand-in like `review-<jobId>` / the bare jobId / a list label. Required
 /// Two valid shapes (both belong to the OKX a2a group namespace):
 /// - **task sub** (after `xmtp_start_conversation` with a peer): `agent:...:okx-a2a:group:okx-xmtp:my=...&to=...&job=<job_id>&gid=...`
-/// - **backup catch-all sub** (handles events before a task sub exists, e.g. `job_created`):
-///   `agent:...:okx-a2a:group:backup`
+/// - **backup sub (per-jobId)** (handles events before a task sub exists, e.g. `job_created`):
+///   `agent:...:okx-a2a:group:okx-xmtp:backup:<jobId>` (no `&job=`)
 ///
 /// Both share the `agent:` prefix and the `:okx-a2a:group:` segment. The check below is enough
 /// to reject LLM-invented fakes (`review-<jobId>` / `decision-<jobId>` / the jobId alone /
@@ -809,7 +827,7 @@ fn validate_sub_key(sub_key: &str, job_id: &str) -> std::result::Result<(), Stri
     // raw jobIds, list labels) and those from other namespaces (`agent:main:other-ns:group:...`).
     if !sub_key.contains(":okx-a2a:group:") {
         return Err(format!(
-            "sessionKey missing `:okx-a2a:group:` segment — sub-key must be a task sub or backup catch-all sub, got `{}`",
+            "sessionKey missing `:okx-a2a:group:` segment — sub-key must be a task sub or backup sub (per-jobId), got `{}`",
             sub_key
         ));
     }
@@ -820,7 +838,7 @@ fn validate_sub_key(sub_key: &str, job_id: &str) -> std::result::Result<(), Stri
         return Err(format!(
             "sub_key carries an `&job=` parameter that does NOT match --job-id {}; \
              either pass the correct task sub's sessionKey, or (if you are the backup \
-             catch-all sub) pass the backup-key shape `agent:...:okx-a2a:group:backup` (no `&job=`).",
+             sub for this jobId) pass the backup-key shape `agent:...:okx-a2a:group:okx-xmtp:backup:<jobId>` (no `&job=`; the jobId is in the path segment, not a query parameter).",
             job_id
         ));
     }

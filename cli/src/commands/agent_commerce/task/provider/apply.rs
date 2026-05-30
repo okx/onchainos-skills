@@ -20,6 +20,26 @@ pub async fn handle_apply(
     token_symbol: &str,
     agent_id: &str,
 ) -> Result<()> {
+    // Guardrail: token_amount must be a positive number. Empty / "0" / non-parseable / non-positive
+    // means the agent forgot to read the locked value from [intent:confirm] / [intent:propose] —
+    // submitting it would commit on-chain to do the work for free (irreversible). Hard reject early.
+    let amt_trim = token_amount.trim();
+    let parsed = amt_trim.parse::<f64>();
+    if amt_trim.is_empty() || !matches!(parsed, Ok(n) if n > 0.0) {
+        anyhow::bail!(
+            "--token-amount must be a positive number; got `{token_amount}`. \
+             Read the locked `tokenAmount` from the `[intent:confirm]` message you just verified \
+             (or fall back to the `[intent:propose]` value if confirm omits it). Empty / 0 / negative \
+             = apply for free, irreversible — refusing to broadcast."
+        );
+    }
+    if token_symbol.trim().is_empty() {
+        anyhow::bail!(
+            "--token-symbol must not be empty; got `{token_symbol}`. \
+             Read the locked `tokenSymbol` from the `[intent:confirm]` (or `[intent:propose]`) — do NOT assume USDT."
+        );
+    }
+
     let (account_id, address) = signing::resolve_wallet(None, None)?;
     let body = serde_json::json!({
         "tokenAmount": token_amount,

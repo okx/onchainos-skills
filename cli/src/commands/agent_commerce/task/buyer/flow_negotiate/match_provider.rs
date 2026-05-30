@@ -66,7 +66,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              ❌ Absolutely forbidden: printing text \"for the user to see\" first and then calling the tool - text output in a sub session never reaches the user.\n\n\
              **Step 2 - show the list to the user and let them choose:**\n\
              🛑🛑🛑 **DO NOT call `xmtp_start_conversation` in this step** — there is no peer agent to talk to yet (the user hasn't picked an ASP). `xmtp_start_conversation` only happens AFTER the user picks (handled by the `next-action --provider <X>` playbook in a later turn). 🔴 Real incident: a model in backup, instead of calling `session_status` to fetch its own backup-key, called `xmtp_start_conversation` to create a brand-new (peer-less) conversation, which produced an unusable sessionKey and broke the relay chain.\n\
-             **Action**: call `session_status` (NOT `xmtp_start_conversation`) to get the **current sub/backup session's** sessionKey (call once per turn, reuse the result). The returned string is what you must pass verbatim to `--sub-key` below. For backup-session callers, the key looks like `agent:main:okx-a2a:group:backup`; for task-sub callers, it contains `&job=<jobId>&gid=<...>`.\n\
+             **Action**: call `session_status` (NOT `xmtp_start_conversation`) to get the **current sub/backup session's** sessionKey (call once per turn, reuse the result). The returned string is what you must pass verbatim to `--sub-key` below. For backup-session callers, the key looks like `agent:main:okx-a2a:group:okx-xmtp:backup:<jobId>`; for task-sub callers, it contains `&job=<jobId>&gid=<...>`.\n\
              Then run:\n\
              ```bash\n\
              {cmd_recommend}\n\
