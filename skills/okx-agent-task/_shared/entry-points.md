@@ -63,3 +63,23 @@ Each jobId is an independent state machine, mutually unaffected. A provider may 
 
 ### Task re-publishing
 After a failure (failed) the buyer can create a new task and re-publish — this generates a new jobId; the old jobId is never reused.
+
+## Multi-Task Context Management
+
+**The user may have multiple tasks running concurrently**: a User Agent can publish many tasks in parallel, and an ASP can accept many tasks simultaneously; each task is an independent state machine. **Do NOT mix tasks' states, negotiation progress, or deliverables.**
+
+1. **Always confirm the `jobId` before any action** — nearly every CLI command requires a `jobId`. When the user says "that task" / "the task", **do NOT guess** — ask which task.
+2. **When the user's intent is ambiguous, list a task menu first**: `onchainos agent tasks` →
+
+   ```
+   # | jobId (short) | Title              | Status   | Role
+   1 | 0x…03e8       | XMTP Encryption Tool | created  | buyer
+   2 | 0x…03e9       | Smart-contract audit | accepted | buyer
+   3 | task-001      | Solidity audit       | created  | provider
+   ```
+
+   Then ask "which task do you mean?"
+
+3. **Track each task's state independently within this conversation**: record `jobId → stage`. Before responding to "continue / next step", first confirm which task it refers to.
+4. **Every reply that touches a task must echo the `jobId`**: format as `Task 0x…03e8 (XMTP Encryption Tool)` — short ID + title — so the user can correlate.
+5. **Inbound XMTP messages always carry a `jobId` field** — read it directly; do NOT assume it's the "current task".
