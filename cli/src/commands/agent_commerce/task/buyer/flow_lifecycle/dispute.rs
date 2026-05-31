@@ -12,7 +12,7 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] job_rejected (user rejection settled on-chain; awaiting ASP decision)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user that rejection is settled; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user that rejection is settled; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed:**\n\
@@ -95,7 +95,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] dispute_resolved (arbitration ruling issued)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user of the arbitration result; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user of the arbitration result; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      **Step 1 -- Decide winner**: read `message.jobStatus` from the system notification envelope:\n\
      - `jobStatus = \"failed\"` → **user wins**\n\
      - `jobStatus = \"complete\"` → **user loses**\n\

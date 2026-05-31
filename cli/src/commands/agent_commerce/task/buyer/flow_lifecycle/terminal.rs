@@ -11,7 +11,7 @@ pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] job_refunded (funds refunded to the user)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user that the refund completed; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user that the refund completed; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the refund completed** ({l10n_short}):\n\n\
      content:\n\
@@ -33,7 +33,7 @@ pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
     format!(
     "[System Notification] job_auto_refunded (claimAutoRefund tx receipt)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the refund has arrived; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the refund has arrived; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the refund has arrived** ({l10n_short}):\n\n\
@@ -91,7 +91,7 @@ pub(crate) fn submit_expired(ctx: &FlowContext<'_>) -> String {
     format!(
     "[System Notification] ASP failed to submit the deliverable in time\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\
      The ASP did not submit the deliverable within the allowed window; auto-refund kicks in.\n\n\
      **Step 1 -- Claim auto-refund immediately (no user confirmation needed):**\n\
      ```bash\n\
@@ -110,7 +110,7 @@ pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
     format!(
     "[System Notification] ASP arbitration window expired\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\
      After your rejection, the ASP did not open a dispute in time; auto-refund kicks in.\n\n\
      **Step 1 -- Claim auto-refund immediately (no user confirmation needed):**\n\
      ```bash\n\
@@ -163,7 +163,7 @@ pub(crate) fn review_expired(ctx: &FlowContext<'_>) -> String {
     format!(
     "[System Notification] review_expired (review window expired; task is still submitted)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the review window expired; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the review window expired; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions]\n\n\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the review window expired** ({l10n_short}):\n\
      \x20\x20content:\n\
@@ -185,7 +185,7 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
     format!(
     "[System Notification] job_auto_completed (claimAutoComplete tx receipt)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the task auto-completed; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the task auto-completed; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions]\n\n\
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed** ({l10n_short}):\n\

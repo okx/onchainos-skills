@@ -45,7 +45,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] job_accepted (user has confirmed accept; task enters execution stage)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 10).\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 1 -- Fetch full task info:**\n\
      ```bash\n\
@@ -426,7 +426,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      🛑🛑🛑 **ABSOLUTE REQUIREMENT -- on job_completed the buyer MUST call `xmtp_dispatch_user` to notify the user**.\n\
      job_completed is a **dual-recipient event** (buyer + provider both receive it); the buyer MUST handle it.\n\
-     Do not produce a plain text reply inside the sub session (see Hard Rule 10) -- a text reply = the user does not see it = the task is complete but the user does not know.\n\
+     Do not produce a plain text reply inside the sub session (see Hard Rule 9) -- a text reply = the user does not see it = the task is complete but the user does not know.\n\
      🔴 Real incident: a model assumed job_completed only went to the provider, skipped xmtp_dispatch_user, and the user never received a completion notification.\n\n\
      **Step 1 -- Fetch task info and payment mode:**\n\
      ```bash\n\

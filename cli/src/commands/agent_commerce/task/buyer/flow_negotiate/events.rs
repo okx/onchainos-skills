@@ -82,17 +82,17 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
      ```\n\
      Extract `acceptsJson`, `tokenSymbol` (= feeTokenSymbol), `amountHuman` (= feeAmount).\n\n\
-     **x402 stage 1.5 - 🌐 notify the user that payment is in progress via xmtp_dispatch_user:**\n\
+     **Step 2 — 🌐 notify the user that payment is in progress via xmtp_dispatch_user:**\n\
      {l10n_dispatch}\n\
      \x20\x20content: {x402_paying}\n\n\
-     **x402 stage 2 - sign + direct/accept + endpoint replay (atomic command):**\n\
+     **Step 3 — sign + direct/accept + endpoint replay (atomic command):**\n\
      ```bash\n\
      onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
      ```\n\
      Internally executes: x402_pay signing -> direct/accept on-chain -> assemble payment header -> replay endpoint.\n\
      Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, deliverableSavedPath, signature, authorization, sessionCert, txHash }}\n\
      ✅ The CLI **auto-saves** the deliverable to disk when replaySuccess=true (`deliverableSavedPath` in output). No manual `task-deliverable-save` call needed.\n\n\
-     🔴🔴🔴 **CRITICAL — x402 stage 2 Step 3: notify the user with the FULL deliverable content via xmtp_dispatch_user**\n\
+     🔴🔴🔴 **CRITICAL — Step 4: notify the user with the FULL deliverable content via xmtp_dispatch_user**\n\
      {l10n_dispatch}\n\
      The `replayBodyDisplay` field in the CLI output IS the deliverable the user paid for. You **MUST** copy it verbatim into the notification template below.\n\
      ❌ Do NOT summarize, truncate, or omit `replayBodyDisplay` — doing so = the user paid but never received the deliverable.\n\
