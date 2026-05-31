@@ -232,12 +232,27 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
     let escalation_protocol_misread = super::content::escalation_protocol_misread_notify(job_id);
     let escalation_cli_failed = super::content::escalation_cli_failed_notify(job_id);
 
+    // Pre-build the cli_failed push block — referenced from IRON RULE 2 in context_preamble.
+    // Uses the same 5-substep helper as scene-specific user-decision push procedures, so the
+    // LLM gets a consistent mental model regardless of whether the trigger is a normal scene
+    // event or a CLI failure.
+    let cli_failed_request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+        job_id,
+        "buyer",
+        agent_id,
+        &escalation_cli_failed,
+        &format!("[Error {short_id}] {title_display} error decision"),
+        "cli_failed",
+    );
+
     let context_preamble = format!(
         "🔒 If `skills/okx-agent-task/SKILL.md Session Communication Contract` has not been read this turn → read it first before continuing (envelope whitelist / xmtp_send two-step / xmtp_dispatch_user·xmtp_prompt_user push-to-user iron rules). The steps below will reference its sections (3 / 4 / 5 / 6).\n\n\
          🛑🛑🛑 **IRON RULE 0 — Follow the playbook steps literally; any deviation risks user funds.** Steps are ordered, parameterized, and event-gated; on-chain actions are irreversible. Do NOT skip / reorder / batch / anticipate steps; do NOT invent CLI invocations from intuition. If the playbook does not cover a situation, end the turn and surface it via `xmtp_dispatch_user`.\n\n\
          ⚠️ **Hard exception escalation rules** — Rule 0 is the master rule above; the numbered rules below are **non-optional concrete instances** (each guards a known failure mode). Rule 0 is not a substitute for them; you must satisfy both Rule 0 and every applicable numbered rule. See _shared/exception-escalation.md + buyer.md.\n\
          \x20\x201) Protocol misunderstanding (counterpart still repeats after ≥1 clarification in the same flow) → **stop replying to counterpart**, call `xmtp_dispatch_user`, content=`{escalation_protocol_misread}` (🌐 localize per [Localization] rules), end turn\n\
-         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**; enqueue an error decision via `pending-decisions-v2 request` with `--source-event cli_failed` (first `session_status` to get sessionKey if not cached this turn; `--user-content` = `{escalation_cli_failed}` localized per [Localization] rules; `--list-label` = `[Error <short jobId>] CLI failed`). Follow the playbook the CLI returns. After the user-session relays the reply back as a system envelope (`event:\"user_decision_cli_failed\"`, `message.data:<user verbatim>`), call `next-action --event user_decision_cli_failed --jobStatus user_decision_cli_failed --data \"<message.data>\"` — the returned playbook does the LLM semantic mapping (retry / dismiss / new-instruction) and tells you what to do. **Exception**: JWT expired (msg contains `JWT verification failed` / `unauthorized`) → re-login once automatically; on continued failure, fall back to the standard pending-decisions-v2 flow. Network timeout — also enqueue via pending-decisions-v2; do not blind-retry\n\
+         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**; push a cli_failed decision to the user using the 5-substep protocol below:\n\
+         {cli_failed_request_block}\
+         \x20\x20\x20\x20**Exception**: JWT expired (msg contains `JWT verification failed` / `unauthorized`) → re-login once automatically; on continued failure, fall back to the above push protocol. Network timeout — same protocol; do not blind-retry.\n\
          \x20\x203) ❌ **Absolutely forbidden to broadcast technical error details to the counterpart**: CLI command names / backend field names / stderr summaries / `bug`/`command:`/`error:` must never go into xmtp_send to the counterpart. At most send a single line 'please wait, confirming details' or do not notify the counterpart at all.\n\
          \x20\x204) ❌ **Do not repeat xmtp_send in the same turn**: when the playbook says 'send one message' → after the tool returns 'sent' once, that **counts as success**, and **do not call xmtp_send to the same counterpart a second time within this turn**. Do not resend just because the message may be unclear — resending = spam + triggering a loop on the counterpart. Wait for the next inbound.\n\
          \x20\x205) ❌ **apply is a provider action**: in the escrow path, `apply` is executed by the provider, the buyer must never call `onchainos agent apply`. The buyer first calls `set-payment-mode`, then executes `confirm-accept` after receiving the provider's application notice. ⚠️ When the user says 'have XXX take the job' / 'let XXX accept it' → they mean 'pick this provider', the correct action is `next-action --provider <agentId>`, **not apply**.\n\
@@ -387,9 +402,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
                     "[User decision relay] source_event=`recommend_pick`, user's verbatim reply: `{reply}`\n\n\
                      The push was the recommended-ASP list. **Semantic mapping** — decide what the user means:\n\n\
                      \x20\x20• **Pick an ASP** — user gave an index (1/2/3/...) or a 3-digit agentId (e.g. `864`). Map index → agentId from the recommend list shown in the source-scene; the user picked agentId=`<X>`. Action: call `onchainos agent next-action --jobid {job_id} --event job_created --jobStatus job_created --role buyer --agentId {agent_id} --provider <X>` and follow the returned playbook (xmtp_start_conversation + xmtp_send `[intent:propose]` — see match_provider.rs Branch A).\n\
-                     \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent recommend {job_id} --next-page`. If results → re-push the same recommend_pick decision (`pending-decisions-v2 request --source-event recommend_pick` with the new list as `--user-content`; --list-label `[Recommend <shortJobId>] Pick ASP`). If empty → enqueue the no-ASP A/B/C decision:\n\
+                     \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent recommend {job_id} --next-page`. If results → re-push the same recommend_pick decision (`pending-decisions-v2 request --source-event recommend_pick` with the new list as `--user-content`; --list-label `[Recommend <shortJobId>] <task title> ASP-pick decision`). If empty → enqueue the no-ASP next-step decision:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] A/B/C\" --source-event no_asp_found\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] <task title> next-step decision\" --source-event no_asp_found\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
                      \x20\x20\x20\x20[Job <shortJobId> — you are the User Agent] All recommended ASPs have been tried; no match found. Choose next step:\n\

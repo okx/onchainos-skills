@@ -1,16 +1,17 @@
 //! Designated-provider D-Step routing and B-Step negotiation protocol.
 
 /// Designated-provider D-Step routing (service-list query -> x402 or A2A branch entry)
-pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
+pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, title_display: &str) -> String {
     let l10n_prompt = super::super::flow::L10N_PROMPT;
     let session_hint = super::super::flow::SESSION_STATUS_HINT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
     let follow_playbook_short = super::super::flow::FOLLOW_PLAYBOOK_SHORT;
     let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
-    let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Offline {short_id}] Choose next step"), "provider_offline");
-    let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 invalid {short_id}] A/B/C"), "x402_invalid");
-    let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 price {short_id}] Accept / Reject"), "x402_price_mismatch");
-    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] A/B/C"), "over_budget");
+    let title = title_display;
+    let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Offline {short_id}] {title} next-step decision"), "provider_offline");
+    let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 invalid {short_id}] {title} next-step decision"), "x402_invalid");
+    let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 price {short_id}] {title} price decision"), "x402_price_mismatch");
+    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] {title} budget decision"), "over_budget");
     let provider_offline = super::super::content::provider_offline_user_prompt(job_id, short_id, dp_id);
     format!("\
              🎯 **Designated ASP**: {dp_id}\n\
@@ -118,12 +119,13 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
 }
 
 /// Designated-provider B-Step negotiation protocol (three-step handshake + group creation + multi-round negotiation + persistence + fallback)
-pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
+pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, title_display: &str) -> String {
     let l10n_prompt = super::super::flow::L10N_PROMPT;
     let session_hint = super::super::flow::SESSION_STATUS_HINT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
     let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
-    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] A/B/C"), "no_asp_found");
+    let title = title_display;
+    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] {title} next-step decision"), "no_asp_found");
     let attachment_file = super::super::content::attachment_file_to_seller(job_id);
     let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent recommend {job_id} --agent-id {agent_id}");
     let fallback_lines = format!("First run `onchainos agent mark-failed {job_id} --provider {dp_id}` to flag the failure, then run `onchainos agent recommend {job_id} --agent-id {agent_id}` to fetch a fresh recommendation list.\n\

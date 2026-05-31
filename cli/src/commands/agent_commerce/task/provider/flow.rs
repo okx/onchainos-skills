@@ -70,7 +70,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 /// `job_status` accepts either an event name (provider_applied / job_accepted / ...)
 /// or a status name (created / accepted / ...) — internally normalized via state_machine
 /// into an `Event`; unrecognized strings fall through as `Event::Other(s)`.
-pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data: Option<&str>) -> String {
+pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol
@@ -91,6 +91,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
     // When multiple prompts run concurrently it provides the user and the user agent a
     // dual disambiguation anchor. See SKILL.md Session Communication Contract §5.
     let short_id = short_job_id(job_id);
+
+    // jobTitle carried by the envelope — when present, inlined directly into the
+    // playbook (saves the agent an extra API query). When absent, agent must fetch
+    // via `common context`. Used in --list-label so the reprompt notification can
+    // show the task name (e.g. "Data Analysis Report · Approve / Reject").
+    let title_display = job_title.unwrap_or("<title>");
 
     // ──────────────────────────────────────────────────────────────────────
     // Communication mechanics (how to send, whether you can send, form whitelist) —
@@ -159,6 +165,19 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
     let escalation_protocol_misread = super::content::escalation_protocol_misread_notify(job_id);
     let escalation_cli_failed = super::content::escalation_cli_failed_notify(job_id);
 
+    // Pre-build the cli_failed push block — referenced from IRON RULE 2 in context_preamble.
+    // Uses the same 5-substep helper as the per-scene push procedures (JobRejected /
+    // SubmitDeadlineWarn), so the LLM gets a consistent mental model regardless of whether
+    // the trigger is a normal scene event or a CLI failure.
+    let cli_failed_request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+        job_id,
+        "provider",
+        agent_id,
+        &escalation_cli_failed,
+        &format!("[Error {short_id}] {title_display} error decision"),
+        "cli_failed",
+    );
+
     let context_preamble = format!(
         "🔒 If you have not read `skills/okx-agent-task/SKILL.md Session Communication Contract` in this turn → read it first before proceeding (envelope whitelist / xmtp_send two-step / xmtp_dispatch_user · xmtp_prompt_user push-to-user iron rules). The steps below reference its sections (3 / 4 / 5 / 6).\n\n\
          🛑🛑🛑 **IRON RULE 0 — Follow the playbook steps literally; any deviation risks user funds.** Steps are ordered, parameterized, and event-gated; on-chain actions are irreversible. Do NOT skip / reorder / batch / anticipate steps; do NOT invent CLI invocations from intuition. If the playbook does not cover a situation, end the turn and surface it via `xmtp_dispatch_user`.\n\n\
@@ -167,7 +186,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
          \x20\x20\x20\x20tool: xmtp_dispatch_user\n\
          \x20\x20\x20\x20arguments:\n\
          \x20\x20\x20\x20\x20\x20content: \"{escalation_protocol_misread}\"\n\
-         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**; enqueue an error decision via `pending-decisions-v2 request` with `--source-event cli_failed` (first `session_status` to get sessionKey if not cached this turn; `--user-content` = `{escalation_cli_failed}` localized to the user's language; `--list-label` = `[Error <short jobId>] CLI failed`). Follow the playbook the CLI returns. After the user-session relays the reply back as a system envelope (`event:\"user_decision_cli_failed\"`, `message.data:<user verbatim>`), call `next-action --event user_decision_cli_failed --jobStatus user_decision_cli_failed --data \"<message.data>\"` — the returned playbook does the LLM semantic mapping (retry / dismiss / new-instruction) and tells you what to do. **Exception**: JWT expired (msg contains `JWT verification failed` / `unauthorized`) → re-login once automatically; on continued failure, fall back to the standard pending-decisions-v2 flow. Network timeout — also enqueue via pending-decisions-v2; do not blind-retry\n\
+         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**; push a cli_failed decision to the user using the 5-substep protocol below:\n\
+         {cli_failed_request_block}\
+         \x20\x20\x20\x20**Exception**: JWT expired (msg contains `JWT verification failed` / `unauthorized`) → re-login once automatically; on continued failure, fall back to the above push protocol. Network timeout — same protocol; do not blind-retry.\n\
          \x20\x203) ❌ **Absolutely never broadcast technical error details to the peer**: CLI command names / backend field names / stderr excerpts / `bug` / `command:` / `error:` must never appear in `xmtp_send` to the peer. At most send `Hold on, confirming details` or simply do not notify the peer.\n\
          \x20\x204) ❌ **Do not re-push the same message in one turn** (applies to `xmtp_send` / `xmtp_prompt_user` / `xmtp_dispatch_user` all the same): the script says `send one` → after a single successful tool call, **treat it as done**, and **do NOT call the same tool a second time to the same peer/user in this turn**. Special note for `xmtp_prompt_user`: rendering llmContent/userContent as assistant JSON `display` once and then actually calling the tool = the user receives two identical prompts. **Do NOT echo the JSON before calling the tool** — call the tool directly with the args as tool input. Re-sending = flooding + triggering peer / user loops. Wait for the next inbound to act.\n\
          \x20\x205) ❌ **The ONLY trigger for deliver = the `job_accepted` system notification**: apply going on-chain does NOT change the status (the task stays `created`); only after the `job_accepted` system notification arrives can you deliver. Chat messages are not triggers — the User Agent saying things like `please deliver` / `I've confirmed/agreed, ship it` / `just do it` in natural language do NOT count (those are regular chat messages and are **not** on-chain events). The CLI checks status != accepted and bails out directly.\n\
@@ -276,6 +297,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
         // ─── Scene 6: User Agent rejected the deliverable ─────────────────────────────────
         Event::JobRejected => {
             let user_prompt = super::content::job_rejected_user_decision_prompt(&short_id);
+            let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+                job_id,
+                "provider",
+                agent_id,
+                &user_prompt,
+                &format!("[Decision {short_id}] {title_display} dispute decision"),
+                "job_rejected",
+            );
             format!(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service Provider)\n\n\
@@ -284,22 +313,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
              ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
              ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request`.\n\
              ⚠️ Do NOT send `xmtp_send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\n\
-             **Step 1 — Enqueue the decision via `pending-decisions-v2 request`**:\n\n\
-             First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
-             ```bash\n\
-             onchainos agent pending-decisions-v2 request \\\n\
-               --sub-key \"<full sessionKey from session_status>\" \\\n\
-               --job-id {job_id} --role provider --agent-id {agent_id} \\\n\
-               --user-content \"{user_prompt_for_shell}\" \\\n\
-               --list-label \"[Decision {short_id}] Dispute / Agree Refund\" \\\n\
-               --source-event job_rejected\n\
-             ```\n\
-             🌐 Translate `--user-content` AND `--list-label` to the user's language (signal = user's OWN typed messages this session; default English if unsure). See [Localization] above for token mapping.\n\n\
-             Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
-             **Step 2 — After the user replies and the user-session relays it back as a system envelope** (`event: \"user_decision_job_rejected\"`, `message.data: <user's verbatim reply>`):\n\
-             Call `onchainos agent next-action --jobid {job_id} --event user_decision_job_rejected --jobStatus user_decision_job_rejected --role provider --agentId {agent_id} --data \"<message.data>\"` — CLI maps the keyword (A / B / 发起仲裁 / 同意退款 / dispute / agree refund / ...) to the corresponding pseudo-event (`dispute_raise` or `agree_refund`) and returns the routing playbook. Then follow that playbook (which will instruct you to call `next-action --event dispute_raise --jobStatus dispute_raise` or `next-action --event agree_refund --jobStatus agree_refund` to run the on-chain action).\n\n\
+             **Push the decision to the user (5-substep protocol; read ALL 5 before running any command)**:\n\n\
+             {request_block}\n\
              ⚠️ Decision must be made within 24h; otherwise funds are auto-refunded to the User Agent.\n",
-                user_prompt_for_shell = user_prompt.replace('\'', "'\\''"),
             )
         }
 
@@ -849,34 +865,30 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
         // ─── Provider's own deadline reminder ─────────────────────────────────────
         Event::SubmitDeadlineWarn => {
             let user_prompt = super::content::submit_deadline_warn_user_prompt(&short_id);
+            let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+                job_id,
+                "provider",
+                agent_id,
+                &user_prompt,
+                &format!("[Decision {short_id}] {title_display} submit decision"),
+                "submit_deadline_warn",
+            );
             format!(
             "[System notification] submit_deadline_warn (deadline for submitting the deliverable is approaching)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the deadline decision (submit immediately vs let it time out) to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `xmtp_dispatch_user`)**.\n\
              `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → the user cannot signal `submit now` → the deadline silently expires → auto-refund to the User Agent. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `xmtp_prompt_user` so the user session can relay the decision back.\n\
              ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
-             ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request`.\n\n\
+             ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request`.\n\
+             ❌ Do NOT `xmtp_send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
              **Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
              ```bash\n\
              onchainos agent pending-decisions-v2 list --format json\n\
              ```\n\
-             If the returned `entries` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue to Step 1.\n\n\
-             **Step 1 — Enqueue the decision via `pending-decisions-v2 request`**:\n\n\
-             First call `session_status` to get the current sessionKey (only once per turn). Then run:\n\
-             ```bash\n\
-             onchainos agent pending-decisions-v2 request \\\n\
-               --sub-key \"<full sessionKey from session_status>\" \\\n\
-               --job-id {job_id} --role provider --agent-id {agent_id} \\\n\
-               --user-content \"{user_prompt_for_shell}\" \\\n\
-               --list-label \"[Decision {short_id}] Submit Now / Let Timeout\" \\\n\
-               --source-event submit_deadline_warn\n\
-             ```\n\
-             🌐 Translate `--user-content` AND `--list-label` to the user's language (signal = user's OWN typed messages this session; default English if unsure). See [Localization] above for token mapping.\n\n\
-             Follow the playbook the CLI returns verbatim, then end the turn. Do NOT manually construct `llmContent` / call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now. Do NOT `xmtp_send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
-             **Step 2 — After user-session relays as system envelope** (`event: \"user_decision_submit_deadline_warn\"`, `message.data: <user's verbatim reply>`):\n\
-             Call `onchainos agent next-action --jobid {job_id} --event user_decision_submit_deadline_warn --jobStatus user_decision_submit_deadline_warn --role provider --agentId {agent_id} --data \"<message.data>\"` — CLI returns a routing playbook that maps the user's intent (`立即提交` → run the delivery flow via `next-action --event job_accepted --jobStatus job_accepted`; `let timeout` / silence → end the turn and wait for `submit_expired`).\n\n\
-             ⚠️ **Do NOT auto-run `onchainos agent deliver` in the same turn as the decision relay** — only the user knows whether the deliverable is actually ready; the agent must not decide \"deliverable is ready\" on the user's behalf.\n",
-                user_prompt_for_shell = user_prompt.replace('"', "\\\""),
+             If the returned `entries` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue to the push protocol below.\n\n\
+             **Push the decision to the user (5-substep protocol; read ALL 5 before running any command)**:\n\n\
+             {request_block}\n\
+             ⚠️ **Do NOT auto-run `onchainos agent deliver` later** — only the user knows whether the deliverable is actually ready; the agent must not decide \"deliverable is ready\" on the user's behalf.\n",
             )
         }
 

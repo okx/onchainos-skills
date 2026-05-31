@@ -122,7 +122,8 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] A/B/C"), "negotiate_over_budget");
+    let title = ctx.title_display;
+    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] {title} budget decision"), "negotiate_over_budget");
     let title_query_hint = ctx.title_query_hint;
 
     let over_budget = super::super::content::over_budget_user_prompt(short_id);

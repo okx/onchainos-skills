@@ -10,7 +10,8 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-    let cmd_recommend = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Recommend {short_id}] Pick ASP"), "recommend_pick");
+    let title = ctx.title_display;
+    let cmd_recommend = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Recommend {short_id}] {title} ASP-pick decision"), "recommend_pick");
     // Note: the "next-page returns empty -> push no_asp_found A/B/C" sub-branch
     // is delegated to the `user_decision_recommend_pick` handler in flow.rs,
     // which embeds the no_asp_found enqueue command + user-content template.
@@ -42,7 +43,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
     };
 
     let routing_section = if let Some(dp_id) = &designated_provider {
-        super::designated::designated_provider_d_steps(job_id, agent_id, short_id, dp_id)
+        super::designated::designated_provider_d_steps(job_id, agent_id, short_id, dp_id, ctx.title_display)
     } else {
         format!("\
              **Step 0 - idempotency check: query whether a pending decision already exists for this job:**\n\
@@ -136,7 +137,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
                          🛑 If D-Step already routed to x402 (service-list has an endpoint), then the B-Steps below are **entirely skipped, absolutely forbidden to execute**.\n\
                          Full x402 path: DX-Step 1->2->3 -> A-Step 3 (set-payment-mode) -> wait for job_payment_mode_changed -> task-402-pay.\n\
                          The x402 path **never involves** xmtp_start_conversation / group creation / three-step handshake / xmtp_send negotiation messages.\n\n");
-        output.push_str(&super::designated::designated_provider_negotiate(job_id, agent_id, short_id, dp_id));
+        output.push_str(&super::designated::designated_provider_negotiate(job_id, agent_id, short_id, dp_id, ctx.title_display));
     }
 
     output
@@ -173,8 +174,8 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
         )
     };
 
-    let d_steps = super::designated::designated_provider_d_steps(job_id, agent_id, short_id, &dp_id);
-    let negotiate = super::designated::designated_provider_negotiate(job_id, agent_id, short_id, &dp_id);
+    let d_steps = super::designated::designated_provider_d_steps(job_id, agent_id, short_id, &dp_id, ctx.title_display);
+    let negotiate = super::designated::designated_provider_negotiate(job_id, agent_id, short_id, &dp_id, ctx.title_display);
     format!("\
          [Provider switch] set-provider has been submitted; start the new ASP flow immediately (do NOT wait for the task_provider_change on-chain confirmation).\n\
          [Role] User (User Agent) | [Execution environment] user session\n\n\
@@ -199,8 +200,9 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-    let cmd_pending_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Pending ASP {short_id}] Pick"), "provider_pending");
-    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] A/B/C"), "no_asp_found");
+    let title = ctx.title_display;
+    let cmd_pending_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Pending ASP {short_id}] {title} ASP-contact decision"), "provider_pending");
+    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] {title} next-step decision"), "no_asp_found");
 
     let no_sellers = super::super::content::no_more_sellers_user_notify(job_id);
     let pending_empty = super::super::content::pending_list_empty_user_notify();

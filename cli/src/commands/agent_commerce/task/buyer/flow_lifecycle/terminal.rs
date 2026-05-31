@@ -122,13 +122,19 @@ pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
-    let l10n_prompt_bold = super::super::flow::L10N_PROMPT_BOLD;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-    let session_hint = super::super::flow::SESSION_STATUS_HINT;
-    let follow_end = super::super::flow::FOLLOW_PLAYBOOK_END_TURN;
+    let title_display = ctx.title_display;
     let review_deadline_prompt = super::super::content::review_deadline_warn_user_prompt(job_id, short_id);
+    let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+        job_id,
+        "buyer",
+        agent_id,
+        &review_deadline_prompt,
+        &format!("[Decision {short_id}] {title_display} acceptance decision (deadline soon)"),
+        "review_deadline_warn",
+    );
     format!(
     "[System Notification] review_deadline_warn (review deadline approaching)\n\
      [Role] User (User Agent)\n\n\
@@ -136,22 +142,8 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
      Review deadline = user funds safety red line — if the user is not notified, funds auto-release to the ASP on timeout, irreversibly.\n\
      ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
      ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request` (the user must make a review decision; dispatch_user cannot relay).\n\n\
-     [Your next actions (strict order)]\n\n\
-     **Step 1 — Enqueue the review decision via `pending-decisions-v2 request`**:\n\n\
-     {session_hint}\n\
-     ```bash\n\
-     onchainos agent pending-decisions-v2 request \\\n\
-       --sub-key \"<full sessionKey from session_status>\" \\\n\
-       --job-id {job_id} --role buyer --agent-id {agent_id} \\\n\
-       --user-content \"{review_deadline_prompt_for_shell}\" \\\n\
-       --list-label \"[Decision {short_id}] Approve / Reject (deadline soon)\" \\\n\
-       --source-event review_deadline_warn\n\
-     ```\n\
-     {l10n_prompt_bold}\n\n\
-     {follow_end}\n\n\
-     **Step 2 — After user-session relays as system envelope** (`event: \"user_decision_review_deadline_warn\"`, `message.data: <user's verbatim reply>`):\n\
-     Call `onchainos agent next-action --jobid {job_id} --event user_decision_review_deadline_warn --jobStatus user_decision_review_deadline_warn --role buyer --agentId {agent_id} --data \"<message.data>\"` — CLI returns a routing playbook that maps the user's intent (`A` / `通过` / `approve` / 同意 / 接受 → `approve_review`; `B` / `拒绝` / `reject` → `reject_review`; ambiguous → re-ask via pending-decisions-v2 request). Follow the returned routing.\n",
-        review_deadline_prompt_for_shell = review_deadline_prompt.replace('"', "\\\""),
+     **Push the review decision to the user (5-substep protocol; read ALL 5 before running any command)**:\n\n\
+     {request_block}",
     )
 }
 

@@ -1044,7 +1044,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id, data.as_deref())
+                    task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id, title_ref, data.as_deref())
                 }
                 "buyer" | "client" => {
                     crate::audit::log(
