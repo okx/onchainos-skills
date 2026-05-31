@@ -807,6 +807,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
         Event::JobAutoCompleted => {
             let user_notify = super::content::job_auto_completed_user_notify(job_id);
             let failed_notify = super::content::job_auto_completed_failed_user_notify(job_id);
+            let rating_notify = super::content::rating_submitted_user_notify(job_id);
             format!(
             "[System notification] job_auto_completed (claimAutoComplete tx receipt)\n\
              [Role] ASP (Agent Service Provider)\n\n\
@@ -817,14 +818,31 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
              \x20\x20\x20\x20content: \"{failed_notify}\"\n\
              - `code` = 0 (success) → continue to Step 2.\n\n\
              **Step 2 — Use `xmtp_dispatch_user` to notify the user of fund arrival**:\n\n\
-             From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol.\n\
+             From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId (needed for Step 3).\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              arguments:\n\
              \x20\x20content:\n\
              {user_notify}\n\n\
-             ⚠️ Do NOT send `xmtp_send` filler to the User Agent — both sides receive the `job_auto_completed` system event.\n\
-             {terminal_session_hint}\n"
+             ⚠️ Do NOT send `xmtp_send` filler to the User Agent — both sides receive the `job_auto_completed` system event.\n\n\
+             🛑 Do NOT end this turn — Step 3 (auto-rate) and Step 3.5 (notify rating) below are MANDATORY.\n\n\
+             **Step 3 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
+             Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
+             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent buyer (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
+             \x20\x20- Comment: one sentence, ≤100 characters, evaluating the buyer's collaboration quality.\n\
+             Then execute:\n\
+             ```bash\n\
+             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+             ```\n\
+             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from Step 2 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
+             **Step 3.5 — Notify the user of the submitted rating:**\n\
+             After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
+             {rating_notify}\n\n\
+             **Step 4 — Terminal wrap-up (keep the sub session):**\n\
+             {terminal_session_hint}\n\
+             Task fully complete.\n"
             )
         }
 

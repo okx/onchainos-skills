@@ -175,11 +175,13 @@ pub(crate) fn review_expired(ctx: &FlowContext<'_>) -> String {
 pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
     let terminal_session_hint = ctx.terminal_session_hint;
 
     let auto_completed_notify = super::super::content::job_auto_completed_user_notify(job_id, title_display);
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
     format!(
     "[System Notification] job_auto_completed (claimAutoComplete tx receipt)\n\
      [Role] User (User Agent)\n\n\
@@ -189,7 +191,24 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
      **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed** ({l10n_short}):\n\
      \x20\x20content:\n\
      {auto_completed_notify}\n\n\
-     {terminal_session_hint}\n"
+     🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
+     **Step 2 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
+     From the task context (call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not already available), extract providerAgentId.\n\
+     Based on the deliverable vs the task description and quality standards, generate:\n\
+     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
+     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
+     Then execute:\n\
+     ```bash\n\
+     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+     ```\n\
+     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from task context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
+     **Step 2.5 -- Notify the user of the submitted rating:**\n\
+     After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
+     ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
+     {rating_notify}\n\n\
+     **Step 3 -- Terminal wrap-up (keep the sub session):**\n\
+     {terminal_session_hint}\n\
+     Task fully complete.\n"
     )
 }
 
