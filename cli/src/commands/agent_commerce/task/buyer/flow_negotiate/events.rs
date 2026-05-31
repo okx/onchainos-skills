@@ -54,7 +54,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      paymentMode value mapping: 1=escrow, 3=x402.\n\
      ⚠️ Use the `paymentMode` from the envelope directly; no extra API query needed.\n\n\
      ━━━━━━━━━ escrow (paymentMode=1) - send [intent:confirm] to trigger ASP apply ━━━━━━━━━\n\n\
-     **Step 3 - send [intent:confirm] (the ONLY legitimate trigger for ASP apply)**:\n\
+     **Step 2 - send [intent:confirm] (the ONLY legitimate trigger for ASP apply)**:\n\
      On-chain paymentMode is now in place; it is safe to send [intent:confirm] for the ASP to apply.\n\
      Take **all fields verbatim** (paymentMode / tokenSymbol / tokenAmount) from the [intent:propose] you sent / the [intent:ack] you received - just replay the sub session history and copy:\n\n\
      Call xmtp_send:\n\
@@ -66,7 +66,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      \x20\x20[intent:confirm]\n\n\
      ⚠️ **Do NOT** bypass with natural language like \"please apply / please accept\" - the ASP's flow.rs treats the `[intent:confirm]` literal as the only apply trigger; natural-language instructions **will not be recognized**.\n\
      ⚠️ apply is an ASP action; the user does not execute apply.\n\n\
-     **Step 4 - notify the user via xmtp_dispatch_user** ({l10n_dispatch}):\n\
+     **Step 3 - notify the user via xmtp_dispatch_user** ({l10n_dispatch}):\n\
      \x20\x20content: {payment_escrow_notify}\n\n\
      -> **end this turn** and wait for the ASP's XMTP message announcing the apply (handled by buyer.md routing priority #2).\n\n\
      ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\

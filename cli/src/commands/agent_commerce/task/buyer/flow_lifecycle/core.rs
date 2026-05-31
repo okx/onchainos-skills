@@ -477,8 +477,8 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      {l10n_dispatch}\n\
      \x20\x20content:\n\
      {completed_x402_notify}\n\n\
-     🛑 Do NOT end this turn — B-Step 1.5 (auto-rate) and B-Step 1.6 (notify rating) below are MANDATORY.\n\n\
-     **B-Step 1.5 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
+     🛑 Do NOT end this turn — B-Step 2 (auto-rate) and B-Step 2.5 (notify rating) below are MANDATORY.\n\n\
+     **B-Step 2 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
      Based on the deliverable (the `replayBody` from task-402-pay in this sub session context) vs the task description and quality standards, generate:\n\
      \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
@@ -487,12 +487,12 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
-     **B-Step 1.6 -- Notify the user of the submitted rating:**\n\
+     **B-Step 2.5 -- Notify the user of the submitted rating:**\n\
      {l10n_dispatch}\n\
      After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
-     ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 1.5; fill `<title>` from task context):\n\
+     ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
      {rating_notify}\n\n\
-     **B-Step 2 -- Terminal wrap-up (keep the sub session):**\n\
+     **B-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\
      🛑 Final check: if you did NOT call `xmtp_dispatch_user` in B-Step 1, go back and call it now. A text reply is NOT a substitute.\n"
