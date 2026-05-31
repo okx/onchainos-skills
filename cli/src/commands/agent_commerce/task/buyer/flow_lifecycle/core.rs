@@ -328,7 +328,8 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20---End of deliverable---\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20Quality standards: <qualityStandards>\n\n\
-     **B-Step 2 — Auto-rate the ASP:**\n\
+     🛑 Do NOT end this turn — B-Step 2 (auto-rate) and B-Step 2.5 (notify rating) below are MANDATORY.\n\n\
+     **B-Step 2 — 🛑 Auto-rate the ASP (MANDATORY):**\n\
      Based on the deliverable content vs the task description and quality standards, generate:\n\
      \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
@@ -447,7 +448,8 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      {l10n_dispatch}\n\
      \x20\x20content:\n\
      {completed_escrow_notify}\n\n\
-     **A-Step 2 -- Auto-rate the ASP:**\n\
+     🛑 Do NOT end this turn — A-Step 2 (auto-rate) and A-Step 2.5 (notify rating) below are MANDATORY.\n\n\
+     **A-Step 2 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
      Based on the deliverable that was reviewed vs the task description and quality standards, generate:\n\
      \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
@@ -475,7 +477,8 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      {l10n_dispatch}\n\
      \x20\x20content:\n\
      {completed_x402_notify}\n\n\
-     **B-Step 1.5 -- Auto-rate the ASP:**\n\
+     🛑 Do NOT end this turn — B-Step 1.5 (auto-rate) and B-Step 1.6 (notify rating) below are MANDATORY.\n\n\
+     **B-Step 1.5 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
      Based on the deliverable (the `replayBody` from task-402-pay in this sub session context) vs the task description and quality standards, generate:\n\
      \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\

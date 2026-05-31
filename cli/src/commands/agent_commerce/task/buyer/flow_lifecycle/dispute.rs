@@ -119,7 +119,8 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      -------------- User loses (jobStatus=complete) --------------\n\
      content:\n\
      {dispute_lost}\n\n\
-     **Step 4 -- Auto-rate the ASP:**\n\
+     🛑 Do NOT end this turn — Step 4 (auto-rate) and Step 4.5 (notify rating) below are MANDATORY.\n\n\
+     **Step 4 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
      Based on the deliverable vs the task description, quality standards, and the arbitration outcome (user won / lost), generate:\n\
      \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: user won (provider at fault) → 0.00–2.00; user lost (provider delivered adequately) → 3.00–5.00. Adjust within the range based on specific circumstances.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\

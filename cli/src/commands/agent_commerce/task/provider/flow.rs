@@ -374,7 +374,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
              arguments:\n\
              \x20\x20content:\n\
              {user_notify}\n\n\
-             **Step 3 — Auto-rate the User Agent (buyer):**\n\
+             🛑 Do NOT end this turn — Step 3 (auto-rate) and Step 3.5 (notify rating) below are MANDATORY.\n\n\
+             **Step 3 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
              Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
              \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent buyer (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
              \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
@@ -430,7 +431,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
              {dispute_won_claim}\n\
              \x20\x20\x20\x20Nothing to claim:\n\
              {dispute_won_no_claim}\n\n\
-             **A-Step 4 — Auto-rate the User Agent (buyer):**\n\
+             🛑 Do NOT end this turn — A-Step 4 (auto-rate) and A-Step 4.5 (notify rating) below are MANDATORY.\n\n\
+             **A-Step 4 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
              Based on the task description, requirements clarity, communication, and dispute outcome (you won), generate:\n\
              \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: provider won dispute → buyer was likely at fault; 0.00–3.00 depending on severity. If the dispute was a misunderstanding, score higher.\n\
              \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
@@ -453,7 +455,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, data
              arguments:\n\
              \x20\x20content:\n\
              {dispute_lost}\n\n\
-             **B-Step 2 — Auto-rate the User Agent (buyer):**\n\
+             🛑 Do NOT end this turn — B-Step 2 (auto-rate) and B-Step 2.5 (notify rating) below are MANDATORY.\n\n\
+             **B-Step 2 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
              Based on the task description, requirements clarity, and dispute outcome (you lost — buyer's rejection was upheld), generate:\n\
              \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: provider lost dispute → buyer was likely right; 3.00–5.00. Adjust based on whether the dispute felt fair.\n\
              \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
