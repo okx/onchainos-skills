@@ -16,7 +16,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     }
 }
 
-const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` templates below are samples — translate to the user's language before `xmtp_dispatch_user`.\n\n";
+const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` templates below are **canonical text, NOT samples** — **translate to the user's language** before `xmtp_dispatch_user`.\n\n";
 
 pub fn generate_next_action(job_id: &str, event: &str, agent_id: &str) -> String {
     if let Some(s) = staking_next_action(job_id, event, agent_id) {
