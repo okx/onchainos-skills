@@ -370,6 +370,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
         Event::JobCompleted => {
             let user_notify = super::content::job_completed_user_notify(job_id);
             let rating_notify = super::content::rating_submitted_user_notify(job_id);
+            let rating_failed_notify = super::content::rating_failed_user_notify(job_id);
             format!(
             "[Current state] job_completed (task completed; funds received)\n\
              [Role] ASP (Agent Service Provider)\n\n\
@@ -401,10 +402,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from Step 1 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 3.5 — Notify the user of the submitted rating**:\n\
-             After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
-             {rating_notify}\n\n\
+             After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
+             - ✅ **Success** (output contains `txHash`):\n\
+             content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
+             {rating_notify}\n\
+             - ❌ **Failure** (error / non-zero exit code) → still notify; do NOT retry:\n\
+             content (fill `<title>` from task context; fill `<error reason>` from feedback-submit stderr):\n\
+             {rating_failed_notify}\n\n\
              **Step 4 — Terminal wrap-up (keep the sub session):**\n\
              {terminal_session_hint}\n\
              Task fully complete.\n"
@@ -417,6 +422,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             let dispute_won_no_claim = super::content::dispute_won_no_claim_user_notify(job_id);
             let dispute_lost = super::content::dispute_lost_user_notify(job_id);
             let rating_notify = super::content::rating_submitted_user_notify(job_id);
+            let rating_failed_notify = super::content::rating_failed_user_notify(job_id);
             format!(
             "[Current state] dispute_resolved (arbitration ruling delivered)\n\
              [Role] ASP (Agent Service Provider)\n\n\
@@ -458,10 +464,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from A-Step 3 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **A-Step 4.5 — Notify the user of the submitted rating**:\n\
-             After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in A-Step 4; fill `<title>` from task context):\n\
-             {rating_notify}\n\n\
+             After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
+             - ✅ **Success** (output contains `txHash`):\n\
+             content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in A-Step 4; fill `<title>` from task context):\n\
+             {rating_notify}\n\
+             - ❌ **Failure** (error / non-zero exit code) → still notify; do NOT retry:\n\
+             content (fill `<title>` from task context; fill `<error reason>` from feedback-submit stderr):\n\
+             {rating_failed_notify}\n\n\
              ━━━━━━━━━━━━━ Branch B: jobStatus=failed (ASP lost) ━━━━━━━━━━━━━\n\n\
              **B-Step 1 — Use `xmtp_dispatch_user` to notify the user of the loss**:\n\n\
              From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId.\n\
@@ -482,10 +492,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from B-Step 1 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **B-Step 2.5 — Notify the user of the submitted rating**:\n\
-             After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
-             {rating_notify}\n\n\
+             After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
+             - ✅ **Success** (output contains `txHash`):\n\
+             content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
+             {rating_notify}\n\
+             - ❌ **Failure** (error / non-zero exit code) → still notify; do NOT retry:\n\
+             content (fill `<title>` from task context; fill `<error reason>` from feedback-submit stderr):\n\
+             {rating_failed_notify}\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
              {terminal_session_hint}\n"
             )
@@ -824,6 +838,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             let user_notify = super::content::job_auto_completed_user_notify(job_id);
             let failed_notify = super::content::job_auto_completed_failed_user_notify(job_id);
             let rating_notify = super::content::rating_submitted_user_notify(job_id);
+            let rating_failed_notify = super::content::rating_failed_user_notify(job_id);
             format!(
             "[System notification] job_auto_completed (claimAutoComplete tx receipt)\n\
              [Role] ASP (Agent Service Provider)\n\n\
@@ -852,10 +867,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from Step 2 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 3.5 — Notify the user of the submitted rating:**\n\
-             After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
-             {rating_notify}\n\n\
+             After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
+             - ✅ **Success** (output contains `txHash`):\n\
+             content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
+             {rating_notify}\n\
+             - ❌ **Failure** (error / non-zero exit code) → still notify; do NOT retry:\n\
+             content (fill `<title>` from task context; fill `<error reason>` from feedback-submit stderr):\n\
+             {rating_failed_notify}\n\n\
              **Step 4 — Terminal wrap-up (keep the sub session):**\n\
              {terminal_session_hint}\n\
              Task fully complete.\n"

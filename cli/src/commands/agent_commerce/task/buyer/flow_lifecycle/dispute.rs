@@ -92,6 +92,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     let dispute_won = super::super::content::dispute_won_user_notify(job_id, title_display);
     let dispute_lost = super::super::content::dispute_lost_user_notify(job_id, title_display);
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+    let rating_failed_notify = super::super::content::rating_failed_user_notify(job_id);
     format!(
     "[Current Status] dispute_resolved (arbitration ruling issued)\n\
      [Role] User (User Agent)\n\n\
@@ -131,9 +132,13 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 2 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
      **Step 4.5 -- Notify the user of the submitted rating:**\n\
      {l10n_dispatch}\n\
-     After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
-     ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 4; fill `<title>` from task context):\n\
-     {rating_notify}\n\n\
+     After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
+     - ✅ **Success** (output contains `txHash`):\n\
+     content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 4; fill `<title>` from task context):\n\
+     {rating_notify}\n\
+     - ❌ **Failure** (error / non-zero exit code) → still notify; do NOT retry:\n\
+     content (fill `<title>` from task context; fill `<error reason>` from feedback-submit stderr):\n\
+     {rating_failed_notify}\n\n\
      **Step 5 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Arbitration flow fully complete.\n"

@@ -174,6 +174,7 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
 
     let auto_completed_notify = super::super::content::job_auto_completed_user_notify(job_id, title_display);
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+    let rating_failed_notify = super::super::content::rating_failed_user_notify(job_id);
     format!(
     "[System Notification] job_auto_completed (claimAutoComplete tx receipt)\n\
      [Role] User (User Agent)\n\n\
@@ -194,10 +195,14 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
      ```\n\
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from task context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
-     **Step 2.5 -- Notify the user of the submitted rating:**\n\
-     After feedback-submit succeeds, call `xmtp_dispatch_user` with the rating result so the user knows what score was given.\n\
-     ✅ content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
-     {rating_notify}\n\n\
+     **Step 2.5 -- Notify the user of the submitted rating ({l10n_short}):**\n\
+     After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
+     - ✅ **Success** (output contains `txHash`):\n\
+     content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
+     {rating_notify}\n\
+     - ❌ **Failure** (error / non-zero exit code) → still notify; do NOT retry:\n\
+     content (fill `<title>` from task context; fill `<error reason>` from feedback-submit stderr):\n\
+     {rating_failed_notify}\n\n\
      **Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n"
