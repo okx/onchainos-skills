@@ -138,7 +138,7 @@ User:    Register another service provider identity.
 
 ## Error codes (backend-only — not handled at skill layer)
 
-These codes may surface via `references/troubleshooting.md` if the second call is malformed.
+These codes may surface via `troubleshooting.md` if the second call is malformed.
 The skill does not need to map them explicitly.
 
 | Code | Name | When |
@@ -147,5 +147,5 @@ The skill does not need to map them explicitly.
 | 40021 | AGENT_CONSENT_INVALID | Key invalid / user mismatch / already finalized, or `agreed` passed without `consentKey` |
 | 40022 | AGENT_CONSENT_REJECTED | User declined (status recorded as rejected in DB) |
 
-If any of these codes appear in the CLI response, route to `references/troubleshooting.md`
+If any of these codes appear in the CLI response, route to `troubleshooting.md`
 for the user-facing message.

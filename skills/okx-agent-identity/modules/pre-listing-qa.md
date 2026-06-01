@@ -127,7 +127,7 @@ Avatar upload is **mandatory** — the platform no longer provides a default. Ch
 |---|------|----------------|-----|
 | L1 | Avatar must be uploaded | `picture` field is empty, null, or absent | Ask the user to upload an avatar via `agent upload` before listing |
 | L2 | 1:1 aspect ratio | Non-square image | Re-upload a square image |
-| L3 | < 1 MB | File too large | Compress and re-upload via `avatar-upload.md` |
+| L3 | < 1 MB | File too large | Compress and re-upload via `modules/avatar-upload.md` |
 
 L1 is a **blocking** check (❌) — do not proceed to `agent activate` without an avatar. L2 and L3 are ⚠️ warnings (cannot always be verified post-upload; surface at upload time).
 
@@ -158,7 +158,7 @@ How would you like to proceed?
 - Use ⚠️ (warning), not ❌ (error) — this is advisory, not a hard block.
 - Group failures by service (service index + name); list all failing checks.
 - Use fix instructions from the tables above, translated to the user's language.
-- ⛔ Do NOT show raw JSON, field key names (`servicedescription`, `servicetype`), or CLI flag names — use the user-facing labels from `references/ux-lexicon.md`.
+- ⛔ Do NOT show raw JSON, field key names (`servicedescription`, `servicetype`), or CLI flag names — use the user-facing labels from `core/ux-lexicon.md`.
 - ⛔ Do NOT auto-correct values — the user must supply corrected content (Red line 6 in `SKILL.md`).
 - **On option 1 (fix first)**: route through `§Update` flow (`agent update` → re-run QA → `agent activate`).
 - **On option 2 (list anyway)**: invoke `agent activate` immediately without re-prompting.

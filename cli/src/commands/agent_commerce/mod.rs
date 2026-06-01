@@ -52,6 +52,10 @@ pub enum AgentCommand {
     #[command(name = "xmtp-sign")]
     XmtpSign(identity::XmtpSignArgs),
 
+    /// Submit an Agent for marketplace listing review (called after activate returns approvalStatus=1)
+    #[command(name = "submit-approval")]
+    SubmitApproval(identity::AgentStatusArgs),
+
     // ── Task system (Client) ────────────────────────────────────────────────
     /// Create a new task (Client)
     #[command(name = "create-task")]
@@ -718,6 +722,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::FeedbackSubmit(args) => identity::feedback_submit(args, ctx).await,
         AgentCommand::FeedbackList(args) => identity::feedback_list(args, ctx).await,
         AgentCommand::XmtpSign(args) => identity::xmtp_sign(args, ctx).await,
+        AgentCommand::SubmitApproval(args) => identity::submit_approval(args, ctx).await,
 
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {

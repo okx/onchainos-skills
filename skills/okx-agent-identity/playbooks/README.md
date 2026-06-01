@@ -1,0 +1,186 @@
+# Role Playbook — Router + Shared Rules
+
+> Entry point for `agent create`. This file is intentionally thin: it routes to the three role-specific files and spells out the rules that apply to all of them. Read the matching role file for the full Q&A chain.
+
+## Route to the right role file
+
+| User intent | Read |
+|---|---|
+| "注册用户 / 用户身份 / 买家 / requester / buyer / User Agent / 发任务被系统要求建身份" | `playbooks/requester.md` (includes Passive Onboarding sub-flow) |
+| "注册服务提供商 / ASP / Agent Service Provider / 卖家 / 服务方 / provider / 上架服务" | `playbooks/provider.md` |
+| "注册仲裁者 / 验证者 / evaluator / Evaluator Agent / 我想当仲裁" | `playbooks/evaluator.md` (create-first; staking happens separately via `okx-agent-task`) |
+| Incoming context `intent=need-requester` | `playbooks/requester.md §Passive Onboarding` → `playbooks/requester.md` |
+
+If the user said "注册一个 agent" without specifying a role, ask the three-option question first using the **numbered-options pattern** (per the numbered-options pattern + `§Core Flow` gate 1) — never the prose `A / B / C` form, which is banned by the choice-prompt rule.
+
+Chinese:
+```
+你要注册哪种身份？
+  1. 用户 — 发任务、付费买服务
+  2. 服务提供商 — 提供服务、接订单
+  3. 仲裁者 — 仲裁任务争议
+回复数字 1/2/3。
+```
+
+English:
+```
+Which identity do you want to register?
+  1. User Agent — publishes tasks, pays for services
+  2. Agent Service Provider (ASP) — offers services, delivers work
+  3. Evaluator Agent — arbitrates task disputes
+Reply with a number: 1/2/3.
+```
+
+Also accept a written role name as a fallback — be permissive on input (users may type any of the legacy or new terms): `用户` / `买家` / `User Agent` / `requester` / `buyer` (→ requester); `服务提供商` / `ASP` / `Agent Service Provider` / `服务方` / `卖家` / `provider` / `seller` (→ provider); `仲裁者` / `验证者` / `Evaluator Agent` / `evaluator` / `arbitrator` (→ evaluator). The primary ask is numeric. CLI accepts `1`/`2`/`3` as `--role` aliases (`utils.rs:162-165`), so the numeric reply can pass straight through. The skill's own output uses the canonical localized term per `core/ux-lexicon.md §Role`.
+
+Do NOT default. Do NOT guess from the name / description fields.
+
+## Field prompts
+
+All eight fields (Name / Description / Profile photo / `name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) have standardized four-segment specs — **用途 / 可见范围 / 请注意 / 示例** (Chinese) or **Purpose / Visibility / Please note / Example** (English). See `core/field-specs.md`. When you ask the user a field, inline all four segments with the question in the user's language only (never mix languages in one message).
+
+## STRICT — one question per turn
+
+Applies to every role flow. Applies to every service sub-field. No exceptions.
+
+- Never list "请提供 1. Name 2. Description 3. ..." / "Please provide 1. Name 2. Description 3. ..." in one message as an **imperative ask**.
+- Never enumerate more than one field per turn in an **asking** message.
+- If the user volunteered multiple values in one sentence ("叫 Alice，做 DeFi 分析"), you may capture them at parse time (see `core/choice-prompts.md §One-Shot Capture`) — but the confirmation card still renders one row per field, and any still-unanswered fields are still asked one at a time.
+- The rationale is not just UX; users answer one question more accurately than a list. List format causes dropped fields and typos that force re-prompting, which is worse than the extra turns.
+
+### Preview ≠ multi-field ask
+
+Showing a **declarative preview** at the start of each phase ("接下来会问你：名称、描述、头像（可选）。" / "Next we'll collect: Name, Description, Profile photo (optional).") is **allowed and encouraged** — it sets expectations and lets users decide whether to one-shot. Previews are statements, not asks; they are always followed by a single field question, **asked in natural language — no `Q1：` / `Q1:` prefix** in the user-visible prompt (see `SKILL.md §UX Output Red Lines Red line 3` and `core/ux-lexicon.md` flow-term table).
+
+The distinction is verb mood:
+
+- ❌ Banned (imperative, multi-field): "请提供 1. 名称 2. 描述 3. 头像" / "Please provide: 1. Name 2. Description 3. Profile photo"
+- ❌ Banned (declarative preamble + Q-prefix leak): "接下来会收集：…\n\n**Q1：这个服务提供商身份叫什么名字？**" — the `Q1：` prefix leaks an internal label into chat output (Red line 3); also note the example uses the canonical localized term `服务提供商身份`, not the legacy `卖家` or the raw English `provider` (Red line 4 + `core/ux-lexicon.md §Role`).
+- ✅ Allowed (declarative preamble + single natural-language question): "接下来会收集：名称、描述、头像（可选）。\n\n这个服务提供商身份叫什么名字？" / "Next we'll collect: Name, Description, Profile photo (optional).\n\nWhat's the name of this ASP?" — Chinese uses the localized role term `服务提供商身份`; English uses `ASP` per `core/ux-lexicon.md §Role` (both languages localize; the raw ERC-8004 enum `provider` is wire-only).
+
+If in doubt: the preamble describes what will happen; the Q asks for exactly one thing.
+
+## Pre-check existing agents (normal onboarding only)
+
+Before entering any role flow triggered by the user's own initiative, run `agent get` **once** to see if they already have an agent of the requested role.
+
+**每个地址下用户身份（wire-level `requester`）和仲裁者身份（wire-level `evaluator`）只能各有一个**（产品约定，后端兜底拒绝第二次）。服务提供商身份（wire-level `provider`）不限——同一个地址可以有多个服务提供商身份（便于分别提供不同服务）。Pre-check 结果按 role 分两条支路：
+
+> ⚠️ **展示口径 vs 唯一性判定口径不一样（双层 envelope 的产物，必须读完）。**
+>
+> `agent get` 默认 list 模式返回的是 **双层 envelope**（`core/cli-reference.md §3`）：`list[*]` 是按 accountName 分组的 wrapper（一个邮箱 / JWT 调用者下可以挂多个派生钱包，每个钱包是一个 wrapper），真正的 agent 行在 `list[*].agentList[*]`。两个口径必须分开处理：
+>
+> - **展示**：列出**所有** wrapper（按 `core/display-formats.md §1` 的"每个 accountName 一个头 + 下面挂这个钱包的 agent 表"格式渲染），不要做跨 wrapper 的去重 / 合并，让用户看到他名下完整钱包-agent 拓扑。
+> - **唯一性判定 + K=1/K≥2 数 K**：**仅基于"当前选中 XLayer 钱包对应的那一组 wrapper"** —— 锁定 `wrapper.ownerAddress == <current selected XLayer wallet address>` 的那一份 `agentList`，在它内部判定有没有同 role agent。其他 wrapper 下的同 role agent 属于其他派生钱包，不算"我"已有 —— 因为产品约定的"requester / evaluator 唯一"是 **per address**，不是 per email。
+>
+> 这同时也是 §Pre-check Q1 自检"pre-check 跑过"的语义对齐点：跑过 `agent get` 不等于跑完 pre-check —— 还要按当前钱包 ownerAddress 过滤后再下结论。
+
+### requester / evaluator（唯一身份）
+
+如果已存在同 role 的 agent，**不要**提供"新建"选项，不要进入 create 流程。直接告知并指向 update：
+
+> 中文："**在当前钱包下**你已经有 <role> 身份 #<N>（<name>）。同一个地址只能注册一个 <role>，想改描述 / 头像就跟我说"更新 #<N>"，或者直接拿这个身份继续用。（如果你想在另一个地址下再注册一个 <role>，先切换 / 新增钱包再来 — 跟我说"切换钱包"或"新增钱包"就行。）"
+>
+> English: "**Under this wallet** you already have a <role> identity #<N> (<name>). Each address can only register one <role> — say "update #<N>" if you want to edit description / picture, or just keep using this one. (If you want a separate <role> under a different address, switch / add a wallet first — say "switch wallet" or "add wallet" to do that.)"
+
+`<role>` 中文渲染为对应 user-facing label（`用户` / `仲裁者`），英文渲染为对应 user-facing label（`User Agent` / `Evaluator Agent`）— 不要写 raw ERC-8004 enum（`requester` / `evaluator`）。"在当前钱包下" / "Under this wallet" 是必须保留的限定语 —— 唯一性约束是 per-address 不是 per-email；如果用户名下其他关联钱包有同 role agent，那是另一回事，不应让本提示听起来像跨钱包的全局唯一性。⛔ **不要把 skill 名 `okx-agentic-wallet` 写进用户可见话术**（Red line 1）—— 用户说"切换钱包" / "新增钱包" / "switch wallet" / "add wallet" 时 AI 内部路由到 wallet skill，用户读不到 skill 名字。
+
+用户如果坚持要另一个，重申产品限制，不要绕开（后端会拒）。
+
+### provider（可多开）
+
+两条路都允许。用编号选项问（参考 the numbered-options pattern）。**K 仅按"当前选中 XLayer 钱包对应的那一组 wrapper"内的服务提供商身份数计算**（见上面的 ⚠️ callout）—— 其他 wrapper 下的服务提供商身份属于别的关联钱包，不计入 K，也不列入候选。**当前钱包对应 wrapper 内 K ≥ 1 时，列出该 wrapper 内所有现有服务提供商身份**（用户需要看到他们到底有哪些，才能判断是新开还是改其中之一）。⛔ **Chinese 用户提示一律用 `服务提供商身份`，不要把英文 `provider` 或旧词 `卖家` 写进用户看的话**（Red line 4 + `core/ux-lexicon.md §Role`）：
+
+中文（K = 1）：
+```
+在当前钱包下你已经有 1 个服务提供商身份：#<N1>（<name1>）。这次是：
+  1. 再开一个新的服务提供商身份（同一个地址可多开）
+  2. 修改 #<N1> 的描述 / 头像 / 服务
+回复 1 或 2。
+```
+
+中文（K ≥ 2，列出所有）：
+```
+在当前钱包下你已经有 K 个服务提供商身份：#<N1>（<name1>）, #<N2>（<name2>）, …, #<NK>（<nameK>）。这次是：
+  1. 再开一个新的服务提供商身份（同一个地址可多开）
+  2. 修改其中某一个
+回复 1 或 2。
+```
+
+若用户选 2 且 K ≥ 2，**再问一次**让用户指定改哪个，使用单独的 numbered-options 提问：「想改哪个？回复编号 1（#<N1>）/ 2（#<N2>）/ … / K（#<NK>）。」
+
+English (K = 1):
+```
+Under this wallet you already have 1 ASP identity: #<N1> (<name1>). What would you like to do?
+  1. Register a new ASP (multiple ASPs per address are allowed)
+  2. Update #<N1> (description / picture / services)
+Reply 1 or 2.
+```
+
+English (K ≥ 2, list them all):
+```
+Under this wallet you already have K ASP identities: #<N1> (<name1>), #<N2> (<name2>), …, #<NK> (<nameK>). What would you like to do?
+  1. Register a new ASP (multiple ASPs per address are allowed)
+  2. Update one of them
+Reply 1 or 2.
+```
+
+If the user picks 2 and K ≥ 2, ask a follow-up numbered question: "Which one? Reply with a number: 1 (#<N1>) / 2 (#<N2>) / … / K (#<NK>)."
+
+Do not auto-choose for provider. Don't silently default. **Do not collapse the K ≥ 2 case to "one of them" without listing the ids** — the user must see the full list to make an informed pick (and to notice if they have stale providers they forgot about).
+
+**The "在当前钱包下" / "Under this wallet" qualifier is mandatory and must not be dropped.** Reason: per the ⚠️ note above this section, the `agent get` list display shows **all** wrappers (cross-wallet, by accountName), while K is counted **only** on the wrapper matching the currently selected XLayer wallet address (established via `okx-agentic-wallet` login). If the user already saw N agents in the display but the prompt says "K provider 身份" with K < N, the qualifier is what reconciles the apparent contradiction. Same logic applies to the requester / evaluator uniqueness messages above — keep "在当前钱包下" / "Under this wallet" there too.
+
+### Language
+
+The prompt **must match the user's language**. Follow .
+
+**Skip this pre-check entirely for passive onboarding** (`intent=need-requester`) — see `playbooks/requester.md §Passive Onboarding`.
+
+## Confirmation card
+
+> ⛔ The card is **mandatory before every content-creating on-chain write** — `agent create` / `update` / `feedback-submit`. This is enforced by the mandatory confirmation gate in SKILL.md; that section is the canonical source. Memory preferences, plan-mode exit, one-shot capture, urgency, and "intent is obvious" all do **NOT** bypass it — see the rationalization list in `SKILL.md §Core Flow` gate 4. State toggles (`agent activate` / `agent deactivate`) are NOT gated and run directly via `SKILL.md §Intent → Sub-flow`.
+
+Always a table of fields — never a bash blob. Match the user's language per . Render field labels and row values in one language only. ⛔ The `role` row MUST follow `core/ux-lexicon.md §Role` — both languages localize: Chinese `用户 / 服务提供商 / 仲裁者`; English `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. **Never render the raw ERC-8004 enum (`requester / provider / evaluator`) or the legacy CN nouns (`买家 / 卖家 / 服务方 / 验证者`); never render bilingual parentheticals (`服务提供商 (provider)` / `用户 (requester)`)** (`SKILL.md §UX Output Red Lines Red line 4`). See `core/display-formats.md` §Create/Update Diff for the full template with both language variants.
+
+Chinese variant:
+
+| 字段 | 值 |
+|---|---|
+| 角色 | 服务提供商 |
+| 名字 | <...> |
+| 描述 | <...> |
+| 头像 | 默认 — 若用户上传了图片或给了链接，这里**直接贴实际 URL**（例：`https://…/abc.png`），不要写 "已上传" / "uploaded" / 提到 "CDN" 等占位词。 |
+| 服务[1] 名称 / 描述 / 类型 / 价格 / 接口地址 | (仅服务提供商身份有) |
+
+End with: `确认无误回复 "执行" 即可。` (English: `Reply "execute" to run.`). Do not promise a verb the model could echo as pre-execution chatter — see `SKILL.md §Step 3 — No narration between confirmation and result`.
+
+English variant:
+
+| Field | Value |
+|---|---|
+| Role | Agent Service Provider (ASP) |
+| Name | <...> |
+| Description | <...> |
+| Profile photo | default — if the user uploaded an image or supplied a link, render the **actual URL verbatim** here (e.g. `https://…/abc.png`). Never write "uploaded" / "已上传" / mention "CDN" as a placeholder. |
+| Service [1] Name / Description / Type / Fee / Endpoint | (ASP only) |
+
+End with: `Reply "execute" to run it.`
+
+**The bash `onchainos agent create ...` command is NOT shown in the confirmation card.** Show it only if the user explicitly says "把命令给我看" / "show me the CLI".
+
+## Execute
+
+> Before invoking the CLI, run the **3-question pre-execute self-check** defined in `SKILL.md §Step 3: Execute` — externalize your answers (pre-check ran? confirm token in latest turn? card values byte-equal to CLI values?). **If any answer ≠ yes, render the confirmation card and wait — do NOT call the tool.** The canonical wording, command-specific reinterpretations, and full remediation table all live in `SKILL.md §Step 3`; do not maintain a parallel summary here.
+
+After the user replies "执行" / "yes" / equivalent:
+
+1. Run the CLI command once.
+2. On success → render the detail card (`core/display-formats.md` §Agent detail card) + the role-specific next-step line (see each role file). **Exception — passive onboarding** (`intent=need-requester`): render **only one line** and **no detail card** per the passive onboarding section in `playbooks/requester.md` + `playbooks/requester.md §Passive Onboarding`. **For the list-mutating writes** (`requester` / `provider` / `evaluator` create, `update`, plus `activate` / `deactivate`), control then flows into `SKILL.md §Operation Flow Step 5` (dispatcher) → `§Step 6` (comm-init) in the same response. The Step 6 invocation is **unconditional from this skill's side** — runtime gating lives inside the callee's Step 0, not in this skill's pre-decision. Do not stop between visible line and Step 5. See each role file's §Post-success "Agent directive" block. **Passive onboarding lands in Step 5's "back to task" branch** — no Step 6.
+3. On failure → render the error card (`core/display-formats.md` §Error card) + the recovery action (see `troubleshooting.md`). **Do NOT auto-retry.**
+
+See  — do NOT follow up with `agent get` / status poll. The Step 5 → Step 6 same-turn chain is explicitly allowed (it is not polling).
+
+## bash blocks in these files
+
+Every `onchainos agent create ...` bash block inside `playbooks/requester.md` / `playbooks/provider.md` / `playbooks/evaluator.md` is labeled **maintainer reference — not shown to user**. They are there so developers can grep for the exact CLI shape and keep translations in sync. Your user-facing output is the confirmation card, not the bash.
