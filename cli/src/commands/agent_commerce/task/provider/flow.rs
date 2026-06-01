@@ -603,10 +603,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              📋 **Error-pattern case studies** (all real incidents; do not repeat):\n\n\
              ❌ Case 1: User Agent sends `Check the weather in Changsha; escrow payment`\n\
              \x20\x20Wrong: provider calls wttr.in directly → xmtp_send full weather table + writes `Status: delivered`\n\
-             \x20\x20Right: Step 3 natural language: `I can do this task; workload at 0.01 USDG is reasonable; escrow OK. Please send [intent:propose] to lock parameters.`\n\n\
+             \x20\x20Right: Step 3 natural language: `I can do this task; workload at 0.01 USDG is reasonable; escrow OK. Ready when you are — let's lock in the terms.`\n\n\
              ❌ Case 2: User Agent sends `I'm in a rush; just do it for me`\n\
              \x20\x20Wrong: agent thinks `the user is urgent` and skips negotiation to do the work\n\
-             \x20\x20Right: reply `Understood the urgency, but the contract protocol requires sending [intent:propose] first to lock parameters; takes only 2 minutes`\n\n\
+             \x20\x20Right: reply `Understood the urgency, but the contract protocol requires locking parameters first before work can begin; takes only 2 minutes`\n\n\
              ❌ Case 3: task is very simple (check IP / check time / a short query)\n\
              \x20\x20Wrong: agent thinks `this is so simple it needs no negotiation; just do it`\n\
              \x20\x20Right: however simple, run the three-step handshake — this is a **contract-level prerequisite**, independent of task complexity\n\n\
@@ -617,7 +617,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20Right: this is an **inquiry**, **NOT a green light to start work**. The User Agent putting task details in the inquiry is for you to **assess your capability / quote**, not to deliver immediately.\n\
              \x20\x20\x20\x20Step 3 natural language: `I can do DeFi project recommendations, based on OKX DeFi data.\n\
              \x20\x20\x20\x20\x20\x20Workload roughly 0.X USDG/USDT (based on search + curation time); what's your budget?\n\
-             \x20\x20\x20\x20\x20\x20Delivery time ~N minutes. paymentMode preference: escrow (more stable; funds in custody). Please send [intent:propose] to lock parameters.`\n\n\
+             \x20\x20\x20\x20\x20\x20Delivery time ~N minutes. paymentMode preference: escrow (more stable; funds in custody). Ready when you are — let's lock in the terms.`\n\n\
              ❌ Case 5 (high risk — self-quoting `free` price): the agent looks at a simple task or public data and xmtp_sends back\n\
              \x20\x20`Quote: free` / `0 USDT` / `market rate` / `up to your discretion`\n\
              \x20\x20Wrong: pricing is not for the agent to decide on its own — the task has escrow funding / on-chain actions / reputation accrual; the agent must not unilaterally discard this incentive structure.\n\
@@ -693,7 +693,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20• Outright reject (use `[intent:reject]` only when): ① capability mismatch (you genuinely cannot do this task) OR ② User Agent has already counter-offered twice and you still can't agree on floor price. **Do NOT `[intent:reject]` just because the first offer is too low** — that's the normal state of negotiation, counter instead.\n\
              \x20\x203) **paymentMode stance**: the A2A negotiation path is fixed to escrow (escrowed)\n\n\
              Style sample (natural language; do NOT shoehorn into a template):\n\
-             \x20\x20`I can do this; acceptance criteria are fine. 0.1 USDT 比我注册价 1 USDT 低不少;基于工作量我可以做到 0.7 USDT,escrowed 支付适合避免后续争议。如同意请发 [intent:propose] 锁定参数。`\n\n\
+             \x20\x20`I can do this; acceptance criteria are fine. 0.1 USDT is well below my registered price of 1 USDT; based on the workload I can do 0.7 USDT, escrowed payment works to avoid disputes. If that sounds good, let's lock in the terms and move forward.`\n\n\
              ⚠️ Counter-offer reference: within service-list unit price × (1 ± 30%) usually goes through; absurd quotes (× 5+) get you swapped out by the User Agent directly.\n\n\
              🛑🛑🛑 **Anti-pattern — do NOT abandon negotiation after one low offer**: 🔴 real incident — registered price 1 USDT, User Agent's first offer 0.1 USDT → provider sent `[intent:reject]` and walked away → User Agent later counter-offered 0.5 USDT and then 1 USDT but provider's agent thought \"I already rejected, conversation over\" and stayed silent → task stuck. **Correct behavior**: counter with YOUR floor price in natural language, end the turn, wait for the User Agent's next message. If the User Agent's next message has a new price (whether higher / same / lower) — even after you sent natural-language refusal earlier — you MUST call `next-action --event job_created --jobStatus job_created` again and re-evaluate. \"I refused in natural language\" or \"my desired price wasn't met yet\" is NOT a reason to ignore the User Agent's follow-up — only literal `[intent:reject]` from EITHER side terminates negotiation.\n\n\
              {send_to_peer}\n\

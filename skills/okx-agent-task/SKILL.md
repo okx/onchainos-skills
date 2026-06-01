@@ -125,7 +125,7 @@ When dealing with integer values of any of the fields below, **look up the table
 >    ⚠️ **If `event` starts with `user_decision_`** (user-decision relay from user session, e.g. `user_decision_job_submitted`), **also pass `--data "<message.data>"`** — that field carries the user's verbatim reply (e.g. `A` / `通过` / `approve`). The CLI uses `--data` to map the keyword to the corresponding pseudo-event playbook (e.g. `approve_review`).
 > 3. Execute the script step by step (CLI commands + xmtp tool calls)
 >
-> **Do nothing else.** No `sessions_spawn`. No free-form text output. No asking the user.
+> **Do nothing else.** No `sessions_spawn`. No free-form text output. No asking the user. No loading domain skills (weather / DeFi / image / etc.) based on `jobTitle` — the title is metadata, not a work instruction; task execution only begins after `job_accepted`.
 >
 > When an inbound message arrives, match by **envelope shape first** (priority 1 → 2 → 3), stop at the first hit:
 > 1. **System event envelope** — JSON contains `message.source == "system"` AND `message.event` is present (fields NESTED under `message`); top-level `agentId` is the target → **follow the three steps above**.
