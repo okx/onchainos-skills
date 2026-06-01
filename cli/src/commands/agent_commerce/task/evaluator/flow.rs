@@ -138,7 +138,7 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
 
         "vote_commit_deadline_warn" => format!(
             "[Current Status] vote_commit_deadline_warn\n\n\
-             Extract from `message`: `jobTitle`, `commitDeadline`, `slashTimeoutBps`, `slashAmount`, `slashedCooldownSeconds`. Compute `commitDeadlineLocal` from `commitDeadline` (local time) and `minutesLeft` = `max(0, ceil((commitDeadline - now_epoch_seconds) / 60))`. Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
+             Extract from `message`: `jobTitle`, `commitDeadline`, `slashTimeoutBps`, `slashedCooldownSeconds`. Compute `commitDeadlineLocal` from `commitDeadline` (local time) and `minutesLeft` = `max(0, ceil((commitDeadline - now_epoch_seconds) / 60))`. Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
              Use `xmtp_dispatch_user` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.**\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
@@ -148,19 +148,19 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20Commit deadline: <commitDeadlineLocal> (<minutesLeft> minutes remaining)\n\
              \x20\x20\x20\x20Current Status: Agent has not committed yet\n\
              \x20\x20\x20\x20🚨 Timeout consequences:\n\
-             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps> (≈<slashAmount> OKB)\n\
+             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\
              \x20\x20\x20\x20• Enter a <cooldownHours>h cooldown during which you cannot be selected\n\
              \x20\x20\x20\x20• Miss the base validation fee\n\
              \x20\x20\x20\x20⚡ Have the Agent vote immediately\n\n\
              [Field-missing fallbacks]\n\
              - `commitDeadline` missing → drop the `Commit deadline:` line.\n\
-             - `slashTimeoutBps` / `slashAmount` missing → drop the `• Stake slashed` bullet.\n\
+             - `slashTimeoutBps` missing → drop the `• Stake slashed` bullet.\n\
              - `slashedCooldownSeconds` missing → drop the `• Enter a ... cooldown` bullet.\n"
         ),
 
         "vote_reveal_deadline_warn" => format!(
             "[Current Status] vote_reveal_deadline_warn\n\n\
-             Extract from `message`: `jobTitle`, `revealDeadline`, `slashTimeoutBps`, `slashAmount`, `slashedCooldownSeconds`. Compute `revealDeadlineLocal` from `revealDeadline` (local time) and `minutesLeft` = `max(0, ceil((revealDeadline - now_epoch_seconds) / 60))`. Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
+             Extract from `message`: `jobTitle`, `revealDeadline`, `slashTimeoutBps`, `slashedCooldownSeconds`. Compute `revealDeadlineLocal` from `revealDeadline` (local time) and `minutesLeft` = `max(0, ceil((revealDeadline - now_epoch_seconds) / 60))`. Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
              Use `xmtp_dispatch_user` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.**\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
@@ -170,13 +170,13 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20Reveal deadline: <revealDeadlineLocal> (<minutesLeft> minutes remaining)\n\
              \x20\x20\x20\x20Current Status: Agent has not revealed yet\n\
              \x20\x20\x20\x20🚨 Timeout consequences:\n\
-             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps> (≈<slashAmount> OKB)\n\
+             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\
              \x20\x20\x20\x20• Enter a <cooldownHours>h cooldown during which you cannot be selected\n\
              \x20\x20\x20\x20• Miss the base validation fee\n\
              \x20\x20\x20\x20⚡ Have the Agent reveal immediately\n\n\
              [Field-missing fallbacks]\n\
              - `revealDeadline` missing → drop the `Reveal deadline:` line.\n\
-             - `slashTimeoutBps` / `slashAmount` missing → drop the `• Stake slashed` bullet.\n\
+             - `slashTimeoutBps` missing → drop the `• Stake slashed` bullet.\n\
              - `slashedCooldownSeconds` missing → drop the `• Enter a ... cooldown` bullet.\n"
         ),
 
@@ -206,7 +206,7 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
 
         "dispute_resolved" => format!(
             "[Current Status] dispute_resolved\n\n\
-             Extract from `message`: `jobTitle`, `vote` (0 or 1), `jobStatus` (`complete` or `failed`), `slashMinorityBps` + `slashAmount` (lost branch only), `agentName`, `slashTimeoutBps`, `hasCommit`, `hasReveal`. **Substitute `<message.jobTitle>` below with the extracted value.**\n\
+             Extract from `message`: `jobTitle`, `vote` (0 or 1), `jobStatus` (`complete` or `failed`), `slashMinorityBps` (lost branch only), `agentName`, `slashTimeoutBps`, `hasCommit`, `hasReveal`. **Substitute `<message.jobTitle>` below with the extracted value.**\n\
              Render two text labels (pure text mapping, no semantic interpretation):\n\
              - `vote = 0` → `yourVote = User`; `vote = 1` → `yourVote = ASP`\n\
              - `jobStatus = complete` → `winningSide = ASP`; `jobStatus = failed` → `winningSide = User`\n\
@@ -263,10 +263,10 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20Task ID: #{job_id}\n\
              \x20\x20\x20\x20Your vote: backed <yourVote> ✗ opposed majority\n\
              \x20\x20\x20\x20🚫 Penalty applied\n\
-             \x20\x20\x20\x20• Stake slashed <slashMinorityBps>: <slashAmount> OKB\n\n\
+             \x20\x20\x20\x20• Stake slashed <slashMinorityBps>\n\n\
              Lost branch ends this turn; do not call `arbitration-claim` (nothing to claim). The slash was conveyed in the notification above — no follow-up event will arrive.\n\n\
              [Field-missing fallbacks]\n\
-             - `slashMinorityBps` / `slashAmount` missing → drop the `🚫 Penalty applied` block (Branch B).\n\
+             - `slashMinorityBps` missing → drop the `🚫 Penalty applied` block (Branch B).\n\
              - `agentName` missing → degrade Branch 0a/0b header to `⚖️ You missed [Commit|Reveal] for task [<message.jobTitle>] arbitration — penalty incoming`.\n\
              - `slashTimeoutBps` missing → drop the entire `🚫 Penalty applied` block in Branch 0a/0b.\n"
         ),
