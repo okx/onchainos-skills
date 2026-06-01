@@ -15,7 +15,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
     // is delegated to the `user_decision_recommend_pick` handler in flow.rs,
     // which embeds the no_asp_found enqueue command + user-content template.
 
-    let designated_provider = super::super::negotiate::take_designated_provider(job_id).ok().flatten();
+    let designated_provider = super::super::negotiate::get_designated_provider(job_id).ok().flatten();
 
     let notify_text = match &designated_provider {
         Some(dp_id) => format!("Connecting to the designated ASP {dp_id}..."),
@@ -147,7 +147,7 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
 
-    let designated_provider = super::super::negotiate::take_designated_provider(job_id).ok().flatten();
+    let designated_provider = super::super::negotiate::get_designated_provider(job_id).ok().flatten();
     let dp_id = match &designated_provider {
         Some(id) => id.clone(),
         None => {

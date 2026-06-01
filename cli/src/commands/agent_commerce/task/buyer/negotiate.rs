@@ -279,16 +279,25 @@ pub fn has_designated_provider(job_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Read and delete the designated-provider file (consume-on-read: `job_created` fires once, cleared after read).
-pub fn take_designated_provider(job_id: &str) -> Result<Option<String>> {
+/// Read the designated-provider file (read-only; file persists for retries and multi-event scenarios).
+/// Cleared explicitly by `cleanup()` (on accept/close) or `clear_designated_provider()` (on mark-failed match).
+pub fn get_designated_provider(job_id: &str) -> Result<Option<String>> {
     let path = state_dir(job_id)?.join("designated-provider.json");
     if !path.exists() {
         return Ok(None);
     }
     let raw = std::fs::read_to_string(&path)?;
-    let _ = std::fs::remove_file(&path);
     let v: serde_json::Value = serde_json::from_str(&raw)?;
     Ok(v["agentId"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()))
+}
+
+/// Remove the designated-provider file (used when mark-failed matches the current designated provider).
+pub fn clear_designated_provider(job_id: &str) -> Result<()> {
+    let path = state_dir(job_id)?.join("designated-provider.json");
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(())
 }
 
 /// Mark a provider as failed negotiation (filtered out of subsequent `recommend` displays).
@@ -327,6 +336,16 @@ pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
         None,
     );
     println!("✓ Marked provider {provider_agent_id} as failed negotiation (job={job_id})");
+
+    // If the failed provider is the current designated provider, clear the file
+    // so that a retry job_created does not re-attempt the same failed provider.
+    if let Ok(Some(ref dp)) = get_designated_provider(job_id) {
+        if dp == provider_agent_id {
+            let _ = clear_designated_provider(job_id);
+            eprintln!("[mark-failed] cleared designated-provider (matched {provider_agent_id})");
+        }
+    }
+
     Ok(())
 }
 
