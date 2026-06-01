@@ -18,12 +18,20 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 
 const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` templates below are **canonical text, NOT samples** — **translate to the user's language** before `xmtp_dispatch_user`.\n\n";
 
+const TOOL_RESOLUTION_PREFIX: &str = "⚠️ **Tool resolution** (applies to every `xmtp_*` / `session_*` call below):\n\
+\x20\x20\x201) Try the native tool.\n\
+\x20\x20\x202) If unavailable, retry via bridge:\n\
+\x20\x20\x20\x20\x20\x20`node ~/.agents/skills/okx-a2a-legacy-tool-bridge/scripts/xmtp-tool.js <toolName> '<jsonParams>'`\n\
+\x20\x20\x203) If it is STILL unavailable / returns \"unsupported\" / \"not found\":\n\
+\x20\x20\x20\x20\x20\x20🟢 SKIP only the step that needs this tool → move to the next step.\n\
+\x20\x20\x20\x20\x20\x20🛑 Do NOT abort the turn.\n\n";
+
 pub fn generate_next_action(job_id: &str, event: &str, agent_id: &str) -> String {
     if let Some(s) = staking_next_action(job_id, event, agent_id) {
         return format!("{LOCALIZATION_PREFIX}{s}");
     }
     if let Some(s) = dispute_next_action(job_id, event, agent_id) {
-        return format!("{LOCALIZATION_PREFIX}{s}");
+        return format!("{LOCALIZATION_PREFIX}{TOOL_RESOLUTION_PREFIX}{s}");
     }
     format!(
         "[unknown event={event} at jobId={job_id} ignored.\n\
