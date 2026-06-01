@@ -298,6 +298,11 @@ pub enum Event {
     /// Can fire in Created (with active sub session) or Accepted — multi-status, so freshness check is skipped.
     AttachmentAdded,
 
+    // ── Deliverable relay event (buyer-local dispatch, no status change) ─
+    /// Buyer receives provider's `[intent:deliver]` P2P message; downloads + saves the deliverable
+    /// locally before the on-chain `job_submitted` event confirms the submission.
+    DeliverableReceived,
+
     // ── Negotiation relay events (buyer-local dispatch, no status change) ─
     /// Provider's natural-language reply (no [intent:*] marker); buyer.md Route 4 → negotiate_reply.
     NegotiateReply,
@@ -375,6 +380,8 @@ impl Event {
             "switch_provider"           => Event::SwitchProvider,
             // Attachment relay (buyer-local dispatch)
             "attachment_added"          => Event::AttachmentAdded,
+            // Deliverable relay (buyer-local dispatch)
+            "deliverable_received"      => Event::DeliverableReceived,
             // Negotiation relay (buyer-local dispatch)
             "negotiate_reply"           => Event::NegotiateReply,
             "negotiate_ack"             => Event::NegotiateAck,
@@ -426,6 +433,7 @@ impl Event {
             Event::TaskProviderChange    => "task_provider_change",
             Event::SwitchProvider         => "switch_provider",
             Event::AttachmentAdded        => "attachment_added",
+            Event::DeliverableReceived    => "deliverable_received",
             Event::NegotiateReply         => "negotiate_reply",
             Event::NegotiateAck           => "negotiate_ack",
             Event::NegotiateCounter       => "negotiate_counter",
@@ -471,7 +479,7 @@ pub fn status_when_event(e: &Event) -> Status {
         | Event::TaskTokenBudgetChange | Event::TaskProviderChange
         | Event::SwitchProvider
         | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,
-        Event::JobAccepted                                                  => Status::Accepted,
+        Event::JobAccepted | Event::DeliverableReceived                       => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
         Event::JobRejected | Event::RejectExpired                             => Status::Rejected,
         // submit_expired: provider did not submit; status is still accepted (never entered submitted)

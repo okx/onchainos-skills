@@ -1002,7 +1002,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         | Event::NegotiateCounter => "[System notification] negotiate_* (buyer-side negotiation relay event; not the provider's concern)\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
-        Event::SwitchProvider | Event::AttachmentAdded => "[System notification] buyer-side event; not the provider's concern.\n\
+        Event::SwitchProvider | Event::AttachmentAdded | Event::DeliverableReceived => "[System notification] buyer-side event; not the provider's concern.\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
         // ─── user_decision_* relay router (provider-side scenes) ───
