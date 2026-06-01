@@ -130,18 +130,24 @@ impl TaskApiClient {
         let token = get_access_token().await?;
         let query: Vec<(&str, &str)> = vec![];
         let headers: Vec<(&str, &str)> = vec![("agenticId", agent_id)];
-        eprintln!("[TaskAPI] GET(jwt+agenticId) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
+        if cfg!(feature = "debug-log") {
+            eprintln!("[TaskAPI] GET(jwt+agenticId) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
+        }
         let started = Instant::now();
         let result = self.wallet.get_authed_with_headers(path, &token, &query, Some(&headers)).await;
         let elapsed = started.elapsed();
         match &result {
             Ok(data) => {
-                eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← {data}");
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← {data}");
+                }
                 log_api("get", path, agent_id, true, elapsed, None, None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
-                eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← ERROR: {err_msg}");
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← ERROR: {err_msg}");
+                }
                 log_api("get", path, agent_id, false, elapsed, Some(&err_msg), None);
             }
         }
@@ -160,7 +166,9 @@ impl TaskApiClient {
         let query: Vec<(&str, &str)> = cert.as_deref()
             .map(|c| vec![("sessionCert", c)])
             .unwrap_or_default();
-        eprintln!("[TaskAPI] GET {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
+        if cfg!(feature = "debug-log") {
+            eprintln!("[TaskAPI] GET {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
+        }
         let headers = [("agenticId", agent_id)];
         let started = Instant::now();
         let result = self.wallet
@@ -169,12 +177,16 @@ impl TaskApiClient {
         let elapsed = started.elapsed();
         match &result {
             Ok(data) => {
-                eprintln!("[TaskAPI] GET {url} ← {data}");
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[TaskAPI] GET {url} ← {data}");
+                }
                 log_api("get", path, agent_id, true, elapsed, None, None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
-                eprintln!("[TaskAPI] GET {url} ← ERROR: {err_msg}");
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[TaskAPI] GET {url} ← ERROR: {err_msg}");
+                }
                 log_api("get", path, agent_id, false, elapsed, Some(&err_msg), None);
             }
         }
@@ -199,10 +211,12 @@ impl TaskApiClient {
         ) {
             headers.insert(name, val);
         }
-        eprintln!(
-            "[TaskAPI] GET(bytes) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}",
-            token.len()
-        );
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[TaskAPI] GET(bytes) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}",
+                token.len()
+            );
+        }
         let query_summary = query
             .iter()
             .map(|(k, v)| format!("{k}={v}"))
@@ -291,7 +305,9 @@ impl TaskApiClient {
         let body = inject_session_cert(body);
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await?;
-        eprintln!("[TaskAPI] POST {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {body}", token.len());
+        if cfg!(feature = "debug-log") {
+            eprintln!("[TaskAPI] POST {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {body}", token.len());
+        }
         let headers = [("agenticId", agent_id)];
         let started = Instant::now();
         let result = self.wallet
@@ -300,12 +316,16 @@ impl TaskApiClient {
         let elapsed = started.elapsed();
         match &result {
             Ok(data) => {
-                eprintln!("[TaskAPI] POST {url} ← {data}");
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[TaskAPI] POST {url} ← {data}");
+                }
                 log_api("post", path, agent_id, true, elapsed, None, None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
-                eprintln!("[TaskAPI] POST {url} ← ERROR: {err_msg}");
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[TaskAPI] POST {url} ← ERROR: {err_msg}");
+                }
                 log_api("post", path, agent_id, false, elapsed, Some(&err_msg), None);
             }
         }
@@ -327,10 +347,12 @@ impl TaskApiClient {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await?;
         let content_len = body.len();
-        eprintln!(
-            "[TaskAPI] POST(raw) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}, Content-Type={content_type}, Content-Length={content_len}",
-            token.len(),
-        );
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[TaskAPI] POST(raw) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}, Content-Type={content_type}, Content-Length={content_len}",
+                token.len(),
+            );
+        }
         let extra = [("agenticId", agent_id)];
         let extra_meta = format!("contentType={content_type}; contentLength={content_len}");
         let started = Instant::now();
@@ -340,12 +362,16 @@ impl TaskApiClient {
         let elapsed = started.elapsed();
         match &result {
             Ok(data) => {
-                eprintln!("[TaskAPI] POST(raw) {url} ← {data}");
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[TaskAPI] POST(raw) {url} ← {data}");
+                }
                 log_api("post_raw", path, agent_id, true, elapsed, None, Some(&extra_meta));
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
-                eprintln!("[TaskAPI] POST(raw) {url} ← ERROR: {err_msg}");
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[TaskAPI] POST(raw) {url} ← ERROR: {err_msg}");
+                }
                 log_api("post_raw", path, agent_id, false, elapsed, Some(&err_msg), Some(&extra_meta));
             }
         }

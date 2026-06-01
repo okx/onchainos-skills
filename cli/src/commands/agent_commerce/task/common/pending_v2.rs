@@ -63,10 +63,10 @@ struct PendingEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     llm_content_override: Option<String>,
     /// Originating chain event for this decision (e.g. `job_submitted` /
-    /// `job_refused` / `job_disputed` / `submit_deadline_warn`). At resolve
+    /// `job_rejected` / `job_disputed` / `submit_deadline_warn`). At resolve
     /// time the CLI emits a system-shaped relay envelope with
     /// `event = "user_decision_<source_event>"`, so the receiving sub session
-    /// can dispatch to its existing `next-action --jobStatus user_decision_<X>`
+    /// can dispatch to its existing `next-action --event user_decision_<X>`
     /// handler — no string-prefix parsing, no keyword-mapping in the sub.
     ///
     /// Optional for backward compatibility: if absent at resolve time, the CLI
@@ -243,23 +243,35 @@ fn ensure_invariant_and_evict(queue: &mut Queue) -> usize {
     });
     let evicted = pre_len - queue.entries.len();
 
-    // 3a. Normalize entry order to FIFO by created_at. Overwrites via Vec::push move entries
-    //     to the tail; without this sort, the queue file and snapshot would show jumpy order.
-    queue.entries.sort_by_key(|e| e.created_at);
+    // 3a. Normalize entry order: Active first (always pinned to index 0 because the user is
+    //     "currently working on" it), then Queued entries in LIFO by created_at (newest first).
+    //     Invariant guarantees at most one Active, so the Active-vs-Active branch is unreachable.
+    //     This ordering drives both the queue file and the display snapshot, so `pick --index 1`
+    //     always refers to the active entry (no-op promotion) and `pick --index 2+` always refers
+    //     to a queued entry — keeping the "switch N" UX (jump to the Nth remaining item) cleanly
+    //     mappable to `pick --index (N+1)`.
+    queue.entries.sort_by(|a, b| {
+        use std::cmp::Ordering;
+        match (a.status == Status::Active, b.status == Status::Active) {
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            _ => b.created_at.cmp(&a.created_at),
+        }
+    });
 
-    // 3b. If eviction killed the active entry, promote the oldest queued to recover.
+    // 3b. If eviction killed the active entry, promote the newest queued to recover.
     //    NOTE: only triggers when `evicted > 0`. Otherwise "no active + N queued" is a
     //    valid state (selection mode after resolve with queue >= 2) and must be preserved.
     if evicted > 0 {
         let has_active = queue.entries.iter().any(|e| e.status == Status::Active);
         if !has_active {
-            if let Some(oldest) = queue
+            if let Some(newest) = queue
                 .entries
                 .iter_mut()
                 .filter(|e| e.status == Status::Queued)
-                .min_by_key(|e| e.created_at)
+                .max_by_key(|e| e.created_at)
             {
-                oldest.status = Status::Active;
+                newest.status = Status::Active;
             }
         }
     }
@@ -295,10 +307,10 @@ pub enum PendingDecisionsV2Command {
         #[arg(long = "llm-content")]
         llm_content: Option<String>,
         /// Originating chain event for this decision (e.g. `job_submitted` /
-        /// `job_refused` / `job_disputed` / `submit_deadline_warn`). At resolve
+        /// `job_rejected` / `job_disputed` / `submit_deadline_warn`). At resolve
         /// time the CLI emits a system-shaped relay envelope with
         /// `event = "user_decision_<source_event>"`. Sub then routes via its
-        /// existing `next-action --jobStatus user_decision_<X>` handler.
+        /// existing `next-action --event user_decision_<X>` handler.
         #[arg(long = "source-event")]
         source_event: Option<String>,
     },
@@ -324,7 +336,7 @@ pub enum PendingDecisionsV2Command {
     /// (user-session) Silently cancel a pending decision (the sub is NOT notified;
     /// it will eventually TTL-evict or be retriggered by a new system event).
     /// Pass exactly one of --sub-key or --index to identify the target.
-    /// If the cancelled entry was Active, the oldest Queued entry is auto-promoted.
+    /// If the cancelled entry was Active, the newest Queued entry is auto-promoted (LIFO).
     Cancel {
         /// Cancel by full XMTP sessionKey (precise).
         #[arg(long = "sub-key", conflicts_with = "index")]
@@ -362,6 +374,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
 
 // ─── Handlers ──────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn handle_request(
     sub_key: String,
     job_id: String,
@@ -384,9 +397,9 @@ fn handle_request(
              Two valid shapes (both must contain `:okx-a2a:group:`):\n\
                • task sub (after xmtp_start_conversation with a peer):\n  \
                  agent:main:okx-a2a:group:okx-xmtp:my=0x...&to=0x...&job=<jobId>&gid=...\n\
-               • backup catch-all sub (handles chain events for this agent BEFORE a task sub exists,\n\
+               • backup sub (per-jobId) (handles chain events for this agent BEFORE a task sub exists,\n\
                  e.g. job_created):\n  \
-                 agent:main:okx-a2a:group:backup\n\n\
+                 agent:main:okx-a2a:group:okx-xmtp:backup:<jobId>\n\n\
              Fix: call `session_status` (xmtp tool) FIRST to obtain the current sessionKey, \
              then pass the verbatim returned string as --sub-key. Do NOT invent prefixes \
              (`review-`, `decision-`, the jobId alone, list labels, …) — they will silently \
@@ -515,13 +528,31 @@ fn handle_resolve(user_reply: String) -> Result<()> {
         Some(se) => format!("user_decision_{}", se),
         None => "user_decision".to_string(),
     };
+    // Description carries explicit routing instructions for the receiving sub agent.
+    // Sub LLM tends to read `description` first; making it action-oriented prevents the
+    // common mis-routing pattern where the sub pattern-matches "I see user_decision_*"
+    // → "this is from resolve flow" → "I should call resolve too" (which is wrong; resolve
+    // is user-session-only — user-session ALREADY called it to produce THIS envelope).
+    let description = format!(
+        "User-decision relay envelope (sub session). Call `onchainos agent next-action \
+         --jobid {jid} --event {evt} --role {role} --agentId {agent} \
+         --data \"<message.data verbatim>\"` to fetch the routing playbook; follow it. \
+         ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
+         user-session-only; the user-session already called `resolve` to produce this \
+         envelope. The sub session has no queue file; calling resolve here = wasted turn \
+         + flow stall.",
+        jid = active.job_id,
+        evt = relay_event,
+        role = active.role,
+        agent = active.agent_id,
+    );
     let relay_envelope = serde_json::json!({
         "agentId": active.agent_id,
         "message": {
             "event": relay_event,
             "data": user_reply,
             "code": 0,
-            "description": "Read okx-agent-task/SKILL.md if you don't know the context",
+            "description": description,
             "source": "system",
             "jobId": active.job_id,
             "role": active.role,
@@ -540,39 +571,36 @@ fn handle_resolve(user_reply: String) -> Result<()> {
         .filter(|e| e.status == Status::Queued)
         .collect();
 
-    match queued.len() {
-        0 => {
-            print!("{}", playbook_relay_only(&active.sub_key, &relay_content));
-            write_queue_atomic(&q)?;
-        }
-        1 => {
-            let promote_sub_key = queued[0].sub_key.clone();
-            let promote_idx = q
-                .entries
-                .iter()
-                .position(|e| e.sub_key == promote_sub_key)
-                .unwrap();
-            q.entries[promote_idx].status = Status::Active;
-            print!(
-                "{}",
-                playbook_relay_and_render(
-                    &active.sub_key,
-                    &relay_content,
-                    &q.entries[promote_idx]
-                )
-            );
-            write_queue_atomic(&q)?;
-        }
-        _n => {
-            // Refresh snapshot for the list display
-            let snap = build_snapshot(&q);
-            write_snapshot_atomic(&snap)?;
-            write_queue_atomic(&q)?;
-            print!(
-                "{}",
-                playbook_relay_and_list(&active.sub_key, &relay_content, &snap)
-            );
-        }
+    if queued.is_empty() {
+        // Nothing left to advance to — just relay and end the turn.
+        print!("{}", playbook_relay_only(&active.sub_key, &relay_content));
+        write_queue_atomic(&q)?;
+    } else {
+        // Auto-advance: promote the newest queued entry (LIFO — sort already placed it at
+        // index 0 since the active was just removed). Render the new active + the remaining
+        // list in one go so the user sees the next decision immediately, no extra round-trip
+        // through "selection mode".
+        //
+        // Promote by sub_key (not by raw position) to be robust against any reordering.
+        let promote_sub_key = queued[0].sub_key.clone();
+        let promote_idx = q
+            .entries
+            .iter()
+            .position(|e| e.sub_key == promote_sub_key)
+            .unwrap();
+        q.entries[promote_idx].status = Status::Active;
+        // Re-sort so the newly-promoted active sits at index 0 (the sort honors the
+        // "active first, then LIFO" invariant).
+        ensure_invariant_and_evict(&mut q);
+
+        let snap = build_snapshot(&q);
+        write_snapshot_atomic(&snap)?;
+        write_queue_atomic(&q)?;
+
+        print!(
+            "{}",
+            playbook_relay_and_advance(&active.sub_key, &relay_content, &q)
+        );
     }
     Ok(())
 }
@@ -621,24 +649,34 @@ fn handle_pick(index: usize) -> Result<()> {
     //   (a) The picked entry IS already active → re-render its card (no state change).
     //       User likely wants to re-see the card after scrolling past it.
     //   (b) The picked entry is queued AND no active exists → promote it (selection-mode flow).
-    //   (c) The picked entry is queued AND a different entry is active → refuse; user must
-    //       resolve/cancel the active first to avoid silently dropping it.
+    //   (c) The picked entry is queued AND a DIFFERENT entry is currently active →
+    //       **swap**: demote the current active to queued, promote the picked one to active.
+    //       Neither decision is lost; the user can come back to either by `pick --index <N>`.
     let already_active = q.entries[entry_idx].status == Status::Active;
+    let picked_sub_key = q.entries[entry_idx].sub_key.clone();
     if !already_active {
-        let other_active = q.entries.iter().any(|e| e.status == Status::Active);
-        if other_active {
-            print!(
-                "{}",
-                playbook_error(
-                    "There is already a different active decision. Resolve or cancel it first before picking a queued entry."
-                )
-            );
-            return Ok(());
+        // If another entry is currently active, demote it to queued (swap, not drop).
+        for e in q.entries.iter_mut() {
+            if e.status == Status::Active {
+                e.status = Status::Queued;
+            }
         }
         q.entries[entry_idx].status = Status::Active;
+        // Re-sort so the newly-promoted active sits at index 0 (active-first invariant).
+        ensure_invariant_and_evict(&mut q);
+        // Refresh snapshot so a subsequent `pick --index N` reflects the new order
+        // (otherwise the next pick would resolve indices against the stale pre-pick layout).
+        let new_snap = build_snapshot(&q);
+        write_snapshot_atomic(&new_snap)?;
         write_queue_atomic(&q)?;
     }
-    print!("{}", playbook_render(&q.entries[entry_idx]));
+    // entry_idx may now be invalid after the sort — look up the entry by its sub_key.
+    let render_idx = q
+        .entries
+        .iter()
+        .position(|e| e.sub_key == picked_sub_key)
+        .expect("picked entry must still exist after promotion + sort");
+    print!("{}", playbook_render(&q.entries[render_idx]));
     Ok(())
 }
 
@@ -684,13 +722,31 @@ fn handle_cancel(
     let removed = q.entries.remove(entry_idx);
     let was_active = removed.status == Status::Active;
 
+    // If we just cancelled the active and there's at least one queued left, auto-promote
+    // the newest queued (LIFO) so the user keeps a clean "current focus" without round-tripping
+    // through selection mode.
+    if was_active && !q.entries.is_empty() {
+        let newest_queued_sub_key = q
+            .entries
+            .iter()
+            .filter(|e| e.status == Status::Queued)
+            .max_by_key(|e| e.created_at)
+            .map(|e| e.sub_key.clone());
+        if let Some(sk) = newest_queued_sub_key {
+            if let Some(promote_idx) = q.entries.iter().position(|e| e.sub_key == sk) {
+                q.entries[promote_idx].status = Status::Active;
+                ensure_invariant_and_evict(&mut q);
+            }
+        }
+    }
+
     // Refresh snapshot so a subsequent `pick --index N` resolves correctly
     // when the user chooses the next decision from the remaining list.
     let snap = build_snapshot(&q);
     write_snapshot_atomic(&snap)?;
     write_queue_atomic(&q)?;
 
-    print!("{}", playbook_cancel(&removed, was_active, &snap));
+    print!("{}", playbook_cancel(&removed, was_active, &q, &snap));
     Ok(())
 }
 
@@ -730,28 +786,155 @@ fn handle_list(format: ListFormat) -> Result<()> {
                     evicted, ttl_days,
                 );
             }
-            if q.entries.is_empty() {
-                println!("(no pending decisions)");
+            let n = q.entries.len();
+            if n == 0 {
+                println!("(no pending decisions)\n");
+                println!("Render the line above to the user as your assistant response.");
             } else {
-                println!("{} pending decision(s):\n", q.entries.len());
-                println!("| # | Active | Role     | Job             | Label                            |");
-                println!("|---|--------|----------|-----------------|----------------------------------|");
-                for (i, e) in q.entries.iter().enumerate() {
-                    let active = if e.status == Status::Active { "✓" } else { " " };
-                    let short_job = short_job_id(&e.job_id);
-                    println!(
-                        "| {} | {}      | {:<8} | {} | {} |",
-                        i + 1,
-                        active,
-                        e.role,
-                        short_job,
-                        e.list_label
-                    );
-                }
+                let view = render_list_markdown(&q);
+                print!(
+                    "3 steps (Steps 1-2 in this turn, Step 3 in the future turn):\n\n\
+                     **Step 1** — Translate the [Source content] below to the user's language per [Translation rules].\n\n\
+                     **Step 2** — Render Step 1's output to the user as your assistant response.\n\n\
+                     **Step 3** — (Future turn) Apply [Future-turn user-reply routing] below when the user replies.\n\n\
+                     {view}"
+                );
             }
         }
     }
     Ok(())
+}
+
+/// Render the `list --format markdown` output: focused-card-with-remaining-list view.
+///
+/// Two shapes:
+///   * **Has active**: render the active card (verbatim user_content) at the top with a 🟢
+///     prefix, then a separator + remaining-list (renumbered 1..M starting from the first
+///     non-active entry), then the footer ("Reply A/B" / "switch N" / "later").
+///   * **Selection mode** (0 active + N queued, post-resolve/post-cancel): render only the
+///     numbered list; no active card to highlight. Footer asks user to pick a number.
+///
+/// Assumes the queue has already been sorted by `ensure_invariant_and_evict` so that — if
+/// any active exists — it sits at index 0, and remaining entries follow in LIFO (newest
+/// queued first).
+/// Renders the components used by every list-view playbook.
+///
+/// Output layout (no Step labels — caller adds them):
+///   [Source to render to user]:
+///   <body>
+///
+///   [Translation rules]:
+///   - …
+///
+///   [Future-turn user-reply routing]:
+///   - …
+///
+/// Callers (`handle_list`, `playbook_relay_and_advance`, `playbook_cancel`) wrap
+/// this with their own Step numbering (e.g. "Step 1 — Translate", "Step 2 —
+/// Render", "Step N — (Future turn) routing"). The labeled sections act as
+/// natural boundaries — no ═══ zone markers needed.
+fn render_list_markdown(q: &Queue) -> String {
+    let n = q.entries.len();
+    let active_idx = q.entries.iter().position(|e| e.status == Status::Active);
+
+    // ── User-visible body ───────────────────────────────────────────────────────
+    let mut user_body = String::new();
+    if let Some(ai) = active_idx {
+        let active = &q.entries[ai];
+        user_body.push_str(&format!(
+            "🟢 Decision 1 — {label} (Job {job})\n\n{body}\n\n",
+            label = strip_label_prefix(&active.list_label),
+            job = short_job_id(&active.job_id),
+            body = active.user_content,
+        ));
+
+        let remaining: Vec<&PendingEntry> = q
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != ai)
+            .map(|(_, e)| e)
+            .collect();
+        if !remaining.is_empty() {
+            user_body.push_str("─────────────────\n");
+            user_body.push_str(&format!("Remaining ({}):\n", remaining.len()));
+            for (j, e) in remaining.iter().enumerate() {
+                user_body.push_str(&format!(
+                    "{n}. {label} (Job {job})\n",
+                    n = j + 1,
+                    label = strip_label_prefix(&e.list_label),
+                    job = short_job_id(&e.job_id),
+                ));
+            }
+            user_body.push('\n');
+            user_body.push_str(
+                "Reply per the options shown in the active card to handle this decision; reply \"switch N\" to jump to remaining item N; reply \"later\" to defer.\n",
+            );
+        } else {
+            user_body.push_str(
+                "Reply per the options shown in the active card to handle this decision; reply \"later\" to defer.\n",
+            );
+        }
+    } else {
+        user_body.push_str("Please pick one to activate:\n\n");
+        for (i, e) in q.entries.iter().enumerate() {
+            user_body.push_str(&format!(
+                "{n}. {label} (Job {job})\n",
+                n = i + 1,
+                label = strip_label_prefix(&e.list_label),
+                job = short_job_id(&e.job_id),
+            ));
+        }
+        user_body.push('\n');
+        user_body.push_str(&format!(
+            "Reply with a number 1-{n} to activate that decision, or \"later\" to defer.\n",
+            n = n,
+        ));
+    }
+
+    // ── Final composition: source body + translation rules + future routing ──
+    let mut out = String::new();
+    out.push_str("[Source content to render to user]:\n\n");
+    out.push_str(&user_body);
+    out.push('\n');
+
+    out.push_str(
+        "[Translation rules] — **translate every English word to the user's language**, including quoted user-facing keywords. Only these are kept verbatim:\n\
+         \x20\x20- Hex jobIds (`0x...`).\n\
+         \x20\x20- Sub-provided `<title>` fields (already in user's language).\n\
+         \x20\x20- Structural delimiters (`🟢`, `─────────────────`, numbered list markers).\n\
+         Everything else — `Decision`, the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`), `decision`, all surrounding prose, AND quoted user-facing keywords like `\"switch N\"` / `\"later\"` — gets translated. Footer: preserve every `;`-separated clause (do NOT drop or merge). No mixed-language content.\n\n",
+    );
+
+    out.push_str("[Future-turn user-reply routing] (when the user replies, match semantics — localized equivalents count):\n");
+    if active_idx.is_some() {
+        let remaining_count = q.entries.len() - 1;
+        out.push_str(
+            "\x20\x20- Reply matches the active card's option set (`A` / `B` / `A`/`B`/`C` / numeric `1`/`2`/`3` / free-form like `retry` / `dismiss` / `重试` / `同意` / `拒绝` / `通过` / `第一个` / etc.) → `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording>\"`\n\
+             \x20\x20\x20\x20⚠️ Disambiguation: if the active card uses numeric options (e.g. \"1. Alpha / 2. Beta\"), a bare `1` / `2` is the active answer → use `resolve`, NOT `pick`. `pick` requires explicit `switch` / `切换` / `跳到` keyword.\n",
+        );
+        if remaining_count > 0 {
+            out.push_str(&format!(
+                "\x20\x20- `switch N` / `切换 N` / `跳到 N` / `go to N` / `change to N` (1 ≤ N ≤ {m}) → `onchainos agent pending-decisions-v2 pick --index (N+1)` (e.g. `switch 2` → `--index 3`).\n",
+                m = remaining_count,
+            ));
+        }
+        out.push_str(
+            "\x20\x20- `later` / `稍后` / `defer` → end the turn.\n\
+             \x20\x20- User asks to see the list again → `onchainos agent pending-decisions-v2 list --format markdown`.\n\
+             \x20\x20- Else → ordinary chat; do NOT call `pick` / `resolve` / `cancel`.\n",
+        );
+    } else {
+        out.push_str(&format!(
+            "\x20\x20- A number K (1 ≤ K ≤ {n}) / `第 K 个` / `选 K` / `the Kth` → `onchainos agent pending-decisions-v2 pick --index K`.\n\
+             \x20\x20- `later` / `稍后` / `defer` → end the turn.\n\
+             \x20\x20- User asks to see the list again → `onchainos agent pending-decisions-v2 list --format markdown`.\n\
+             \x20\x20- Else → ordinary chat. No active entry to resolve.\n",
+            n = n,
+        ));
+    }
+
+    out
 }
 
 fn build_snapshot(q: &Queue) -> DisplaySnapshot {
@@ -778,12 +961,96 @@ fn short_job_id(job_id: &str) -> String {
     }
 }
 
+/// Strip the leading bracketed prefix (e.g. `[Decision 0x3938…815d]`) from a
+/// list_label so the natural-language description stands alone in the
+/// reprompt notification. Returns the input unchanged if it doesn't start
+/// with a `[…]` block.
+fn strip_label_prefix(label: &str) -> &str {
+    if label.starts_with('[') {
+        if let Some(end) = label.find(']') {
+            return label[end + 1..].trim_start();
+        }
+    }
+    label
+}
+
+/// Canonical sub-side bash + immediate hints for `pending-decisions-v2 request` —
+/// shared by every scene that pushes a decision to the user-session queue.
+///
+/// Encapsulates ONLY the 5-substep procedure (sessionKey → translate → run request →
+/// follow stdout playbook → end turn). Callers retain their own preamble (state /
+/// role / absolute-requirement) and any post-procedure warnings.
+///
+/// The "follow the playbook the CLI returns" line is hardened here vs. the previous
+/// hand-written copies: it spells out the three possible stdout shapes
+/// (`xmtp_prompt_user` / `xmtp_dispatch_user` / end-turn) and explicitly warns that
+/// stdout IS the next-action playbook (not log output). Without this, smaller models
+/// tend to stop after the bash call — the user-facing tool invocation never happens,
+/// the card never surfaces, the flow stalls (24h auto-refund / mistaken auto-decline).
+///
+/// Arguments:
+/// - `job_id`: full hex jobId
+/// - `role`: `buyer` | `provider` | `evaluator`
+/// - `agent_id`: numeric agentId (string form)
+/// - `user_content`: the user-facing prompt body (canonical English; LLM localizes
+///   before pasting). Double-quote (`"`) and backslash safety is handled internally.
+/// - `list_label_full`: full label INCLUDING bracket prefix
+///   (e.g. `[Decision <short_id>] <title> dispute decision`).
+/// - `source_event`: bare event name (e.g. `job_rejected`); becomes the
+///   `<source_event>` token in the relay envelope's
+///   `event = user_decision_<source_event>` after the user replies.
+pub fn request_command_block(
+    job_id: &str,
+    role: &str,
+    agent_id: &str,
+    user_content: &str,
+    list_label_full: &str,
+    source_event: &str,
+) -> String {
+    // Bash `--user-content "..."` uses double quotes; escape `\` and `"` inside.
+    let user_content_escaped = user_content
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    format!(
+        "Execute these 5 sub-steps strictly in order. ALL FIVE are mandatory; skipping any breaks the flow.\n\n\
+         **(1) Get sessionKey** — call `session_status` once this turn; pass the returned key as `--sub-key` in step (3). Do NOT invent prefixes (`review-`, `decision-`, the raw jobId, etc.) — those silently break dispatch routing.\n\n\
+         **(2) Translate `--user-content` AND `--list-label` to the user's language BEFORE step (3)** (signal = user's OWN typed messages this session; default English if unsure; see [Localization] above for token mapping). The bash in (3) shows English placeholders for shape reference only — the actual strings you pass MUST be localized. Keep `--list-label`'s bracket prefix structure (e.g. `[Decision <shortJobId>]`) intact: translate the keyword inside the bracket and the suffix phrase, but preserve the shortJobId hex.\n\n\
+         **(3) Run `pending-decisions-v2 request`** using sessionKey from (1) and translated args from (2):\n\
+         ```bash\n\
+         onchainos agent pending-decisions-v2 request \\\n\
+         \x20\x20--sub-key \"<full sessionKey from step 1>\" \\\n\
+         \x20\x20--job-id {job_id} --role {role} --agent-id {agent_id} \\\n\
+         \x20\x20--user-content \"{content}\" \\\n\
+         \x20\x20--list-label \"{label}\" \\\n\
+         \x20\x20--source-event {source_event}\n\
+         ```\n\n\
+         **(4) Read step (3)'s stdout and follow it verbatim.** 🛑 The printed text IS your next-action playbook (it self-describes: tells you which xmtp tool to call with which args, or to end the turn) — it is NOT a success-confirmation receipt. Skipping (4) = card never reaches the user → flow stalls → 24h auto-refund / mistaken auto-decline. Do NOT hand-craft `llmContent` or call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
+         **(5) End the turn** after (4)'s tool call returns 'sent' (or immediately if (4) was the no-tool branch). Do NOT call further tools, do NOT loop back to (3).\n",
+        job_id = job_id,
+        role = role,
+        agent_id = agent_id,
+        content = user_content_escaped,
+        label = list_label_full,
+        source_event = source_event,
+    )
+}
+
+/// Map internal role enum to the short user-facing label used in notifications.
+fn role_short_label(role: &str) -> &str {
+    match role {
+        "buyer" => "User",
+        "provider" => "ASP",
+        "evaluator" => "Evaluator",
+        other => other,
+    }
+}
+
 /// Validate that `sub_key` is a real XMTP sessionKey rather than a hallucinated
 /// stand-in like `review-<jobId>` / the bare jobId / a list label. Required
 /// Two valid shapes (both belong to the OKX a2a group namespace):
 /// - **task sub** (after `xmtp_start_conversation` with a peer): `agent:...:okx-a2a:group:okx-xmtp:my=...&to=...&job=<job_id>&gid=...`
-/// - **backup catch-all sub** (handles events before a task sub exists, e.g. `job_created`):
-///   `agent:...:okx-a2a:group:backup`
+/// - **backup sub (per-jobId)** (handles events before a task sub exists, e.g. `job_created`):
+///   `agent:...:okx-a2a:group:okx-xmtp:backup:<jobId>` (no `&job=`)
 ///
 /// Both share the `agent:` prefix and the `:okx-a2a:group:` segment. The check below is enough
 /// to reject LLM-invented fakes (`review-<jobId>` / `decision-<jobId>` / the jobId alone /
@@ -798,7 +1065,7 @@ fn validate_sub_key(sub_key: &str, job_id: &str) -> std::result::Result<(), Stri
     // raw jobIds, list labels) and those from other namespaces (`agent:main:other-ns:group:...`).
     if !sub_key.contains(":okx-a2a:group:") {
         return Err(format!(
-            "sessionKey missing `:okx-a2a:group:` segment — sub-key must be a task sub or backup catch-all sub, got `{}`",
+            "sessionKey missing `:okx-a2a:group:` segment — sub-key must be a task sub or backup sub (per-jobId), got `{}`",
             sub_key
         ));
     }
@@ -809,7 +1076,7 @@ fn validate_sub_key(sub_key: &str, job_id: &str) -> std::result::Result<(), Stri
         return Err(format!(
             "sub_key carries an `&job=` parameter that does NOT match --job-id {}; \
              either pass the correct task sub's sessionKey, or (if you are the backup \
-             catch-all sub) pass the backup-key shape `agent:...:okx-a2a:group:backup` (no `&job=`).",
+             sub for this jobId) pass the backup-key shape `agent:...:okx-a2a:group:okx-xmtp:backup:<jobId>` (no `&job=`; the jobId is in the path segment, not a query parameter).",
             job_id
         ));
     }
@@ -879,40 +1146,39 @@ fn playbook_wait_with_reprompt(
     queued_position: usize,
 ) -> String {
     let total_pending = queued_position + 1;
-    // Canonical English wrapper. Sub LLM translates the wrapper lines (the 🆕
-    // top notice + the `─── Current active decision ───` divider) to match the
-    // embedded active card's language. The embedded `active.user_content` is
-    // already in the user's language (sub-A localized at request time when the
-    // active was first pushed); do NOT re-translate it. The `new_entry.list_label`
-    // is sub-provided and already localized too; do NOT translate it.
+    // Canonical English notification. The user-session LLM translates the entire
+    // body to match the user's language before xmtp_dispatch_user. We do NOT
+    // embed the active card content here — the user is already partway through
+    // answering it; re-surfacing the full card would be noisy. The user can
+    // ask for the decision list to switch focus.
+    let _ = active; // active is no longer rendered inline; kept in signature for callers + future use
+    let label_clean = strip_label_prefix(&new_entry.list_label);
+    let short_job = short_job_id(&new_entry.job_id);
+    let role_label = role_short_label(&new_entry.role);
     let dispatch_content = format!(
-        "🆕 **A new decision arrived (queued: \"{}\") — {} pending decisions in total. \
-         Please answer the active decision below first; the queued one will auto-display \
-         once you finish this.**\n\n\
-         ─────────── Current active decision ───────────\n\
-         {}\n\n\
-         💡 Tip: reply `查看决策列表` / `决策项` / `show decision list` / `list decisions` \
-         (or any similar phrase asking for pending decisions) at any time to see all pending decisions.",
-        new_entry.list_label, total_pending, active.user_content,
+        "🆕 {label} (Job {job}, {role}: Agent #{agent}) — added to the pending-decisions queue.\n\
+         You currently have {n} pending decisions; reply \"decision list\" to view and pick which to handle.",
+        label = label_clean,
+        job = short_job,
+        role = role_label,
+        agent = new_entry.agent_id,
+        n = total_pending,
     );
     format!(
-        "Your decision is queued (position {}). The user has another decision currently active — re-surface \
-         that ACTIVE decision's card via `xmtp_dispatch_user` (pure notification, no llmContent needed: the \
-         active entry already has its own context in the queue). The user answers the ACTIVE card; their \
-         reply routes (via `pending-decisions-v2 resolve` in the user-session) to the active entry's sub. \
-         Your queued card will be auto-rendered later when the active resolves.\n\n\
-         🌐 **LOCALIZE FIRST**: the three English wrapper lines in content below (the `🆕 A new decision \
-         arrived...` top notice, the `─── Current active decision ───` divider, AND the `💡 Tip: reply 查看决策列表 ...` \
-         footer) must be translated to the **same language as the embedded active decision text** before \
-         xmtp_dispatch_user. Keep the embedded active card text and the literal command keywords (`查看决策列表` / \
-         `决策项` / `show decision list` / `list decisions`) intact — those are recognized commands. Do NOT send \
-         mixed-language content.\n\n\
-         Call `xmtp_dispatch_user` with the EXACT content below (after applying the header translation). End \
-         the turn after the tool returns. Do NOT call any other tool first or after.\n\n\
-         tool: xmtp_dispatch_user\n\
-         content:\n{}\n",
-        queued_position,
-        indent(&dispatch_content, "  "),
+        "Your decision is queued (position {pos}). 2 steps:\n\n\
+         **Step 1 — Localize this content to the user's language** (rules below):\n\
+         {body}\n\n\
+         [Localization rules] — **translate every English word to the user's language**, including quoted user-facing keywords. Only these are kept verbatim:\n\
+         \x20\x20• Hex jobIds (`0x...`) and numeric agent IDs (the digits after `Agent #`).\n\
+         \x20\x20• The sub-provided `<title>` field (may already be in user's language).\n\
+         Everything else — `Decision`, the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`), the role token (`User` / `ASP` / `Evaluator`), surrounding prose, AND quoted user-facing keywords like `\"decision list\"` — gets translated to a natural localized form (skill routing accepts both English and translated keywords). No mixed-language content.\n\n\
+         **Step 2 — Call `xmtp_dispatch_user` with the localized content from Step 1**:\n\
+         \x20\x20tool: xmtp_dispatch_user\n\
+         \x20\x20arguments:\n\
+         \x20\x20\x20\x20content: <the localized Step 1 output>\n\n\
+         End the turn after the tool returns. Do NOT call any other tool first or after.\n",
+        pos = queued_position,
+        body = dispatch_content,
     )
 }
 
@@ -933,103 +1199,56 @@ fn playbook_relay_only(sub_key: &str, relay_content: &str) -> String {
     )
 }
 
-fn playbook_relay_and_render(
+/// Resolve auto-advance playbook: relay user's reply to the just-resolved sub, then render
+/// the next decision (auto-promoted newest queued) using the unified list view.
+///
+/// Used whenever ≥1 queued entry remains after resolve. The newly-promoted active is shown
+/// at the top with its full card; if other queued entries remain, they form the "Remaining"
+/// list underneath. No more "selection mode" round-trip — the user gets the next card
+/// immediately and can keep deciding.
+///
+/// Caller is responsible for promoting the new active + re-sorting the queue BEFORE invoking
+/// this function; we just consume `q` (post-promotion) and produce the playbook.
+fn playbook_relay_and_advance(
     resolved_sub_key: &str,
     relay_content: &str,
-    next: &PendingEntry,
+    q: &Queue,
 ) -> String {
-    let next_user_content = format!(
-        "✓ Previous decision handled. Here's the next pending one:\n\n{}",
-        next.user_content,
-    );
+    let list_view = render_list_markdown(q);
     format!(
-        "Execute the following in order WITHIN THIS TURN. End the turn after Step 2.\n\n\
-         🛑 Do NOT call `pending-decisions-v2 resolve` again in this turn — the next resolve only happens in a FUTURE turn after the user replies to the card rendered in Step 2.\n\n\
-         Step 1 — Relay the user's decision to the just-resolved sub session (call `xmtp_dispatch_session` exactly once; repeated calls = sub receives N relays):\n\
-           tool: xmtp_dispatch_session\n\
-           sessionKey: {}\n\
-           content: {}\n\n\
-         🛑 **CONSUMPTION MARKER** — The user's reply has been DISPATCHED in Step 1 and is **already consumed**. The card rendered in Step 2 below is a NEW decision; the just-consumed reply is NOT its answer. Do NOT pass that consumed reply to any subsequent `resolve` / `dispatch_session` call.\n\n\
-         Step 2 — Render the next decision card to the user as your assistant response (text rendering only — do NOT call any tool).\n\
-         🌐 Translate the English transition header `✓ Previous decision handled. Here's the next pending one:` to match the embedded next-decision's language. Keep the embedded next-decision text intact (do NOT re-translate). Do NOT render mixed-language content.\n\n\
-         Verbatim text to render:\n\"\"\"\n{}\"\"\"\n\n\
-         When the user replies in a FUTURE turn, call `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording>\"` (defer keyword → end turn). CLI consumes the active entry and emits a system envelope to the sub.\n",
-        resolved_sub_key,
-        relay_content,
-        next_user_content,
-    )
-}
-
-fn playbook_relay_and_list(
-    resolved_sub_key: &str,
-    relay_content: &str,
-    snap: &DisplaySnapshot,
-) -> String {
-    let mut list = String::new();
-    list.push_str(&format!(
-        "✓ Previous decision handled. {} more pending — please pick one to answer first:\n\n",
-        snap.items.len()
-    ));
-    for it in &snap.items {
-        list.push_str(&format!("{}. {}\n", it.index, it.list_label));
-    }
-    list.push_str(&format!(
-        "\nReply with a number 1-{} to choose, or say `later` to defer.\n",
-        snap.items.len()
-    ));
-    format!(
-        "Execute the following in order WITHIN THIS TURN. End the turn after Step 2.\n\n\
-         🛑 **Do NOT call `pending-decisions-v2 resolve` again in this turn** — the next CLI call is \
-         `pending-decisions-v2 pick --index N` (in a FUTURE turn, after the user types a number).\n\n\
-         Step 1 — Relay the user's decision to the just-resolved sub session (call `xmtp_dispatch_session` \
-         exactly once):\n\
-           tool: xmtp_dispatch_session\n\
-           sessionKey: {}\n\
-           content: {}\n\n\
-         🛑 **CONSUMPTION MARKER** — The user's reply has been DISPATCHED in Step 1 and is **already consumed**. \
-         The list rendered in Step 2 below requires the user to type a NEW number (`1`-`N`) or defer keyword. \
-         The just-consumed reply is NOT a pick selection; do NOT pass it to `pick --index` or any subsequent CLI.\n\n\
-         Step 2 — Render the list below VERBATIM to the user in your assistant response (text rendering only; \
-         do NOT call any tool for Step 2).\n\
-         🌐 **LOCALIZE FIRST**: the English header (`✓ Previous decision handled...`) and footer (`Reply with \
-         a number...`) must be translated to the user's language before rendering. The list items \
-         (`N. <label>`) are sub-provided and already localized; keep them intact.\n\n\
-         Verbatim:\n\"\"\"\n{}\"\"\"\n\n\
-         ⚠️ Next user reply routing (future turn — the queue is now in **selection mode**: 0 active + {} queued):\n\
-           - Number 1-{} → `onchainos agent pending-decisions-v2 pick --index <N>` (this promotes the chosen entry to Active and renders its card)\n\
-           - Defer keyword ({}) → just end the turn (the list will re-render later when the user comes back)\n\
-           - Else → **DO NOT call `resolve`** — there is no active entry to resolve in selection mode. Instead, render this text to the user (translated to their language):\n\
-             \"\"\"\n\
-             I see your message \"<user verbatim>\" but {} decisions are still waiting; please pick one by number (1-{}) first, then I'll relay your answer to that one.\n\
-             \n\
-             [re-render the list above verbatim]\n\
-             \"\"\"\n\
-           ❌ NEVER call `resolve` while the queue has 0 active entries — it will return a stale-relist playbook (since v2.1 the CLI heals this case instead of dropping the reply, but it still costs a round-trip).\n",
-        resolved_sub_key,
-        relay_content,
-        list,
-        snap.items.len(),
-        snap.items.len(),
-        DEFER_KEYWORDS.join(" / "),
-        snap.items.len(),
-        snap.items.len(),
+        "4 steps (Steps 1-3 in this turn, Step 4 in the future turn):\n\n\
+         **Step 1** — Forward the user's reply to the just-resolved sub session. Call `xmtp_dispatch_session` exactly once.\n\
+         \x20\x20tool: xmtp_dispatch_session\n\
+         \x20\x20sessionKey: {sub}\n\
+         \x20\x20content: {content}\n\n\
+         **Step 2** — Translate the [Source content] below to the user's language per [Translation rules]. Prepend a transition line `✓ Previous decision handled. Here's the next pending one:` (also translated) to the top of the translated output.\n\n\
+         **Step 3** — Render Step 2's output to the user as your assistant response. The user's reply just dispatched in Step 1 is **already consumed** — it is NOT the answer to the next card.\n\n\
+         **Step 4** — (Future turn) Apply [Future-turn user-reply routing] below when the user replies.\n\n\
+         {list}",
+        sub = resolved_sub_key,
+        content = relay_content,
+        list = list_view,
     )
 }
 
 fn playbook_render(entry: &PendingEntry) -> String {
+    let llm_content = resolve_llm_content(entry);
     format!(
         "Render the selected decision card to the user as your assistant response (text rendering only — do NOT call any tool). End the turn after rendering.\n\n\
-         🌐 If the user's language is not English, translate the card per [Localization] rules before rendering (do NOT add/remove content; keep `jobId` / data values intact).\n\n\
-         Verbatim text to render:\n\
+         **User-visible text** (render this verbatim as your assistant response; 🌐 translate per [Localization] rules if the user's language is not English; keep `jobId` / data values intact):\n\
          \"\"\"\n{}\"\"\"\n\n\
-         When the user replies in a FUTURE turn, call `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording>\"` (defer keyword → end turn). CLI consumes the active entry and emits a system envelope to the sub session; the business flow continues there.\n",
+         **LLM context** (this is for YOUR own routing reasoning — **do NOT show / paraphrase / leak this block to the user**; it is the same instruction the sub would have embedded in `xmtp_prompt_user`'s `llmContent` if this card had been freshly pushed):\n\
+         \"\"\"\n{}\n\"\"\"\n\n\
+         When the user replies in a FUTURE turn, follow the LLM context above: defer keyword → end the turn; otherwise call `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording — no interpretation, no translation>\"` exactly once, then follow the relay playbook the CLI returns. CLI consumes the active entry and emits a system envelope to the sub session; the business flow continues there.\n",
         entry.user_content,
+        llm_content,
     )
 }
 
 fn playbook_cancel(
     removed: &PendingEntry,
     was_active: bool,
+    q_after: &Queue,
     snap_after: &DisplaySnapshot,
 ) -> String {
     let mut out = String::new();
@@ -1048,34 +1267,17 @@ fn playbook_cancel(
     }
 
     if was_active {
-        // Active was removed → queue now has 0 active + N queued.
-        // Do NOT auto-promote; render the remaining list so the user picks next.
-        let mut list = String::new();
-        list.push_str(&format!(
-            "✓ Previous decision cancelled. {} more pending — please pick one to answer next:\n\n",
-            snap_after.items.len()
-        ));
-        for it in &snap_after.items {
-            list.push_str(&format!("{}. {}\n", it.index, it.list_label));
-        }
-        list.push_str(&format!(
-            "\nReply with a number 1-{} to choose, or say `later` to defer.\n",
-            snap_after.items.len()
-        ));
-
-        out.push_str(&format!(
-            "Render the list below VERBATIM in your assistant response (text rendering only; do NOT call any tool).\n\
-             🌐 Translate the English header / footer to the user's language; keep the `N. <label>` items intact (already localized).\n\n\
-             Verbatim:\n\"\"\"\n{}\"\"\"\n\n\
-             ⚠️ Next user reply routing (future turn — queue is in **selection mode**: 0 active + {} queued):\n\
-             \x20\x20- Number 1-{} → `onchainos agent pending-decisions-v2 pick --index <N>` (promotes the chosen entry to active and renders its card)\n\
-             \x20\x20- Defer keyword ({}) → end the turn\n\
-             \x20\x20- Else → DO NOT call resolve (no active entry); re-render the list and ask the user to pick by number.\n",
-            list,
-            snap_after.items.len(),
-            snap_after.items.len(),
-            DEFER_KEYWORDS.join(" / "),
-        ));
+        // Active was removed; caller (handle_cancel) has already auto-promoted the newest
+        // queued entry, so `q_after` should now have an active again. Render the unified
+        // list view (active card + remaining list + routing footer), prefixed by a
+        // transition header. No more "selection mode" — keeps the user moving.
+        out.push_str(
+            "3 steps (Steps 1-2 in this turn, Step 3 in the future turn):\n\n\
+             **Step 1** — Translate the [Source content] below to the user's language per [Translation rules]. Prepend a transition line `✓ Previous decision cancelled. Here's the next pending one:` (also translated) to the top of the translated output.\n\n\
+             **Step 2** — Render Step 1's output to the user as your assistant response.\n\n\
+             **Step 3** — (Future turn) Apply [Future-turn user-reply routing] below when the user replies.\n\n",
+        );
+        out.push_str(&render_list_markdown(q_after));
     } else {
         out.push_str("Active entry was NOT affected (the cancelled entry was queued, not active). End the turn.\n");
     }

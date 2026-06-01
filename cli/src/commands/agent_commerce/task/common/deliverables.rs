@@ -18,7 +18,7 @@ fn deliverables_root() -> Result<PathBuf> {
     Ok(home.join(".onchainos").join("deliverables"))
 }
 
-fn deliverables_dir(role: &str, job_id: &str) -> Result<PathBuf> {
+pub(crate) fn deliverables_dir(role: &str, job_id: &str) -> Result<PathBuf> {
     Ok(deliverables_root()?.join(role).join(job_id))
 }
 
@@ -64,7 +64,7 @@ pub struct DeliverableEntry {
     pub size_bytes: u64,
 }
 
-fn read_manifest(role: &str, job_id: &str) -> Result<Option<Manifest>> {
+pub(crate) fn read_manifest(role: &str, job_id: &str) -> Result<Option<Manifest>> {
     let path = manifest_path(role, job_id)?;
     if !path.exists() {
         return Ok(None);

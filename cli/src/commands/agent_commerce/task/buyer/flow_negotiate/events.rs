@@ -32,7 +32,6 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let short_id = ctx.short_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
 
@@ -55,7 +54,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      paymentMode value mapping: 1=escrow, 3=x402.\n\
      ⚠️ Use the `paymentMode` from the envelope directly; no extra API query needed.\n\n\
      ━━━━━━━━━ escrow (paymentMode=1) - send [intent:confirm] to trigger ASP apply ━━━━━━━━━\n\n\
-     **Step 3 - send [intent:confirm] (the ONLY legitimate trigger for ASP apply)**:\n\
+     **Step 2 - send [intent:confirm] (the ONLY legitimate trigger for ASP apply)**:\n\
      On-chain paymentMode is now in place; it is safe to send [intent:confirm] for the ASP to apply.\n\
      Take **all fields verbatim** (paymentMode / tokenSymbol / tokenAmount) from the [intent:propose] you sent / the [intent:ack] you received - just replay the sub session history and copy:\n\n\
      Call xmtp_send:\n\
@@ -67,7 +66,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      \x20\x20[intent:confirm]\n\n\
      ⚠️ **Do NOT** bypass with natural language like \"please apply / please accept\" - the ASP's flow.rs treats the `[intent:confirm]` literal as the only apply trigger; natural-language instructions **will not be recognized**.\n\
      ⚠️ apply is an ASP action; the user does not execute apply.\n\n\
-     **Step 4 - notify the user via xmtp_dispatch_user** ({l10n_dispatch}):\n\
+     **Step 3 - notify the user via xmtp_dispatch_user** ({l10n_dispatch}):\n\
      \x20\x20content: {payment_escrow_notify}\n\n\
      -> **end this turn** and wait for the ASP's XMTP message announcing the apply (handled by buyer.md routing priority #2).\n\n\
      ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\
@@ -83,38 +82,32 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
      ```\n\
      Extract `acceptsJson`, `tokenSymbol` (= feeTokenSymbol), `amountHuman` (= feeAmount).\n\n\
-     **x402 stage 1.5 - notify the user that payment is in progress via xmtp_dispatch_user** ({l10n_dispatch}):\n\
+     **Step 2 — 🌐 notify the user that payment is in progress via xmtp_dispatch_user:**\n\
+     {l10n_dispatch}\n\
      \x20\x20content: {x402_paying}\n\n\
-     **x402 stage 2 - sign + direct/accept + endpoint replay (atomic command):**\n\
+     **Step 3 — sign + direct/accept + endpoint replay (atomic command):**\n\
      ```bash\n\
      onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
      ```\n\
      Internally executes: x402_pay signing -> direct/accept on-chain -> assemble payment header -> replay endpoint.\n\
-     Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, signature, authorization, sessionCert, txHash }}\n\n\
-     **x402 stage 2 Step 2.5 — persist the deliverable when replaySuccess=true** (skip if replaySuccess=false):\n\n\
-     The replay result only lives in session context; without saving it is lost after context compaction or session end.\n\
-     Write `replayBody` (the raw endpoint response — JSON or plain text; full content, no truncation) to a temp file, then call:\n\
-     ```bash\n\
-     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
-       --file \"<temp .txt path>\" --deliverable-type text \\\n\
-       --title \"<task title from common context>\" --short-id {short_id} \\\n\
-       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
-     ```\n\
-     ⚠️ `--title` and counterparty fields: use values from `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` (already called in the parameter-loss fallback above, or from session context).\n\
-     If save fails, log the error but do NOT block — the user notification in the next step is more important.\n\n\
-     **x402 stage 2 Step 3 - check replay result and notify the user via xmtp_dispatch_user** ({l10n_dispatch}) — branch by `replaySuccess`:\n\n\
+     Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, deliverableSavedPath, signature, authorization, sessionCert, txHash }}\n\
+     ✅ The CLI **auto-saves** the deliverable to disk when replaySuccess=true (`deliverableSavedPath` in output). No manual `task-deliverable-save` call needed.\n\n\
+     🔴🔴🔴 **CRITICAL — Step 4: notify the user with the FULL deliverable content via xmtp_dispatch_user**\n\
+     {l10n_dispatch}\n\
+     The `replayBodyDisplay` field in the CLI output IS the deliverable the user paid for. You **MUST** copy it verbatim into the notification template below.\n\
+     ❌ Do NOT summarize, truncate, or omit `replayBodyDisplay` — doing so = the user paid but never received the deliverable.\n\
+     ❌ Do NOT compose your own \"payment succeeded\" message — use the template below which includes the deliverable content.\n\
+     🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data they paid for.\n\n\
+     Branch by `replaySuccess`:\n\n\
      ▸ replaySuccess=true:\n\
      {x402_replay_ok}\n\n\
      ▸ replaySuccess=false:\n\
      {x402_replay_fail}\n\n\
-     🛑 The `replayBodyDisplay` field contains the deliverable content; when replaySuccess=true it **must** be included in full.\n\
-     🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data the ASP returned.\n\n\
      -> **end this turn** and wait for the `job_accepted` system notification.\n\n\
      🛑🛑🛑 **Iron rule (MANDATORY) after receiving `job_accepted`**:\n\
      After the `job_accepted` system event arrives, you **must** call:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --event job_accepted --jobStatus job_accepted --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --jobid {job_id} --event job_accepted --role buyer --agentId {agent_id}\n\
      ```\n\
      Follow the returned script (the script will guide you to run `onchainos agent complete`).\n\
      ❌ **Absolutely forbidden**: re-running this turn's `x402-check` / `task-402-pay` / `xmtp_dispatch_user` - those completed in this turn; re-running causes double payment or duplicate notification.\n\
@@ -129,7 +122,8 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] A/B/C"), "negotiate_over_budget");
+    let title = ctx.title_display;
+    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] {title} budget decision"), "negotiate_over_budget");
     let title_query_hint = ctx.title_query_hint;
 
     let over_budget = super::super::content::over_budget_user_prompt(short_id);
@@ -173,7 +167,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20{l10n_prompt}\n\
      \x20\x20\x20\x20{follow_playbook}\n\
      \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-     \x20\x20\x20\x20After the user-session relays the reply as a system envelope (`event:\"user_decision_negotiate_over_budget\"`, `message.data:<verbatim>`), call `next-action --event user_decision_negotiate_over_budget --jobStatus user_decision_negotiate_over_budget --data \"<message.data>\"` — CLI returns a routing playbook (A=view recommendations / B=specify ASP / C=close); follow it verbatim. Do NOT keyword-match yourself.\n\n\
+     \x20\x20\x20\x20After the user-session relays the reply as a system envelope (`event:\"user_decision_negotiate_over_budget\"`, `message.data:<verbatim>`), call `next-action --event user_decision_negotiate_over_budget --data \"<message.data>\"` — CLI returns a routing playbook (A=view recommendations / B=specify ASP / C=close); follow it verbatim. Do NOT keyword-match yourself.\n\n\
      **Step 3 - reply to the ASP (depends on Step 2 evaluation):**\n\n\
      - **ASP is still in discussion (no explicit price yet or asking for details)** -> xmtp_send a natural-language reply to keep discussing.\n\n\
      - **Both sides agree on tokenAmount / tokenSymbol / paymentMode** -> send [intent:propose]:\n\
@@ -187,6 +181,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      ⚠️ **In an A2A negotiation session paymentMode is fixed to escrow.**\n\
      ⚠️ **Do NOT replace [intent:propose] with natural language** - the ASP Agent only recognizes structured markers; \"please apply / terms locked\" in natural language will not be parsed.\n\
      ⚠️ **Only one xmtp_send per turn.**\n\
+     ⏱ **5-minute timeout**: if the ASP does not reply within 5 minutes, xmtp_send `[intent:reject]` (reason: negotiation timeout), then `onchainos agent mark-failed {job_id} --provider <ASP agentId>` + `onchainos agent recommend {job_id} --agent-id {agent_id}` to switch. Do NOT call `xmtp_delete_conversation` when switching — just ignore further messages from that ASP.\n\
      🚫 🛑 **CRITICAL - this event absolutely forbids save-agreed / set-payment-mode / confirm-accept** - those only run in the later negotiate_ack event. ASP natural-language phrases like \"I accept\", \"agree\", \"OK\", \"no problem\" are **NOT** `[intent:ack]` - only content that starts with the literal `[intent:ack]` square brackets counts. Before the user sends [intent:propose], the ASP cannot reply with [intent:ack]. Violating this = skipping the three-step handshake = the job is permanently stuck.\n\
      -> **end this turn** and wait for the ASP's reply.\n")
 }

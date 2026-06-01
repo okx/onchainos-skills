@@ -39,7 +39,6 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
     if let Some(pid) = t["providerAgentId"].as_str() {
         println!("  provider: {pid}");
     }
-    println!("  updated:  {}", t["updateTime"].as_str().unwrap_or("?"));
     Ok(())
 }
 
@@ -152,7 +151,6 @@ fn parse_role_arg(raw: &str) -> Option<i64> {
 ///       "myRole":              "buyer",
 ///       "counterpartyAgentId": "963",      // null when not yet designated (e.g. status=created with no provider)
 ///       "counterpartyRole":    "provider", // null in the evaluator case
-///       "updateTime":          "..."
 ///     }
 ///   ]
 /// }
@@ -237,7 +235,6 @@ pub async fn handle_active_tasks(
                                         } else {
                                             Value::String(counterparty_role.to_string())
                                         },
-                "updateTime":           t.get("updateTime").and_then(|v| v.as_str()).unwrap_or(""),
             }));
         }
     }

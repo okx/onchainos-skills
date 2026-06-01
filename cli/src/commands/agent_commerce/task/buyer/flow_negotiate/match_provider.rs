@@ -10,19 +10,20 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-    let cmd_recommend = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Recommend {short_id}] Pick ASP"), "recommend_pick");
+    let title = ctx.title_display;
+    let cmd_recommend = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Recommend {short_id}] {title} ASP-pick decision"), "recommend_pick");
     // Note: the "next-page returns empty -> push no_asp_found A/B/C" sub-branch
     // is delegated to the `user_decision_recommend_pick` handler in flow.rs,
     // which embeds the no_asp_found enqueue command + user-content template.
 
-    let designated_provider = super::super::negotiate::take_designated_provider(job_id).ok().flatten();
+    let designated_provider = super::super::negotiate::get_designated_provider(job_id).ok().flatten();
 
     let notify_text = match &designated_provider {
         Some(dp_id) => format!("Connecting to the designated ASP {dp_id}..."),
         None => "Auto-querying recommended ASPs...".to_string(),
     };
 
-    let created_notify = super::super::content::job_created_user_notify(job_id, &notify_text);
+    let created_notify = super::super::content::job_created_user_notify(job_id, ctx.title_display, &notify_text);
 
     let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
     let attachment_section_created = if attachment_paths.is_empty() {
@@ -42,7 +43,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
     };
 
     let routing_section = if let Some(dp_id) = &designated_provider {
-        super::designated::designated_provider_d_steps(job_id, agent_id, short_id, dp_id)
+        super::designated::designated_provider_d_steps(job_id, agent_id, short_id, dp_id, ctx.title_display)
     } else {
         format!("\
              **Step 0 - idempotency check: query whether a pending decision already exists for this job:**\n\
@@ -66,7 +67,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              ❌ Absolutely forbidden: printing text \"for the user to see\" first and then calling the tool - text output in a sub session never reaches the user.\n\n\
              **Step 2 - show the list to the user and let them choose:**\n\
              🛑🛑🛑 **DO NOT call `xmtp_start_conversation` in this step** — there is no peer agent to talk to yet (the user hasn't picked an ASP). `xmtp_start_conversation` only happens AFTER the user picks (handled by the `next-action --provider <X>` playbook in a later turn). 🔴 Real incident: a model in backup, instead of calling `session_status` to fetch its own backup-key, called `xmtp_start_conversation` to create a brand-new (peer-less) conversation, which produced an unusable sessionKey and broke the relay chain.\n\
-             **Action**: call `session_status` (NOT `xmtp_start_conversation`) to get the **current sub/backup session's** sessionKey (call once per turn, reuse the result). The returned string is what you must pass verbatim to `--sub-key` below. For backup-session callers, the key looks like `agent:main:okx-a2a:group:backup`; for task-sub callers, it contains `&job=<jobId>&gid=<...>`.\n\
+             **Action**: call `session_status` (NOT `xmtp_start_conversation`) to get the **current sub/backup session's** sessionKey (call once per turn, reuse the result). The returned string is what you must pass verbatim to `--sub-key` below. For backup-session callers, the key looks like `agent:main:okx-a2a:group:okx-xmtp:backup:<jobId>`; for task-sub callers, it contains `&job=<jobId>&gid=<...>`.\n\
              Then run:\n\
              ```bash\n\
              {cmd_recommend}\n\
@@ -92,7 +93,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              **Step 3 — End this turn. The user-session will relay the user's reply as a system envelope.**\n\n\
              When the system envelope arrives (`event:\"user_decision_recommend_pick\"`, `message.data:<user verbatim>`, e.g. `1` / `864` / `next page` / `公开` / `关闭`), call:\n\
              ```bash\n\
-             onchainos agent next-action --jobid {job_id} --event user_decision_recommend_pick --jobStatus user_decision_recommend_pick --role buyer --agentId {agent_id} --data \"<message.data>\"\n\
+             onchainos agent next-action --jobid {job_id} --event user_decision_recommend_pick --role buyer --agentId {agent_id} --data \"<message.data>\"\n\
              ```\n\
              CLI's routing playbook does the LLM semantic mapping (pick ASP → re-enter via `next-action --provider X` / next page → `recommend --next-page` (auto re-push if results / fall back to `--source-event no_asp_found` if empty) / public → `set-public` / close → `close`). Follow it verbatim.\n\n\
              ===============================================================\n\
@@ -136,7 +137,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
                          🛑 If D-Step already routed to x402 (service-list has an endpoint), then the B-Steps below are **entirely skipped, absolutely forbidden to execute**.\n\
                          Full x402 path: DX-Step 1->2->3 -> A-Step 3 (set-payment-mode) -> wait for job_payment_mode_changed -> task-402-pay.\n\
                          The x402 path **never involves** xmtp_start_conversation / group creation / three-step handshake / xmtp_send negotiation messages.\n\n");
-        output.push_str(&super::designated::designated_provider_negotiate(job_id, agent_id, short_id, dp_id));
+        output.push_str(&super::designated::designated_provider_negotiate(job_id, agent_id, short_id, dp_id, ctx.title_display));
     }
 
     output
@@ -147,12 +148,12 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
 
-    let designated_provider = super::super::negotiate::take_designated_provider(job_id).ok().flatten();
+    let designated_provider = super::super::negotiate::get_designated_provider(job_id).ok().flatten();
     let dp_id = match &designated_provider {
         Some(id) => id.clone(),
         None => {
             return format!("[Error] switch_provider is missing the --provider argument.\n\
-                 Please call again: onchainos agent next-action --jobid {job_id} --event switch_provider --jobStatus switch_provider --role buyer --agentId {agent_id} --provider <new ASP agentId>\n");
+                 Please call again: onchainos agent next-action --jobid {job_id} --event switch_provider --role buyer --agentId {agent_id} --provider <new ASP agentId>\n");
         }
     };
 
@@ -173,8 +174,8 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
         )
     };
 
-    let d_steps = super::designated::designated_provider_d_steps(job_id, agent_id, short_id, &dp_id);
-    let negotiate = super::designated::designated_provider_negotiate(job_id, agent_id, short_id, &dp_id);
+    let d_steps = super::designated::designated_provider_d_steps(job_id, agent_id, short_id, &dp_id, ctx.title_display);
+    let negotiate = super::designated::designated_provider_negotiate(job_id, agent_id, short_id, &dp_id, ctx.title_display);
     format!("\
          [Provider switch] set-provider has been submitted; start the new ASP flow immediately (do NOT wait for the task_provider_change on-chain confirmation).\n\
          [Role] User (User Agent) | [Execution environment] user session\n\n\
@@ -199,8 +200,9 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-    let cmd_pending_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Pending ASP {short_id}] Pick"), "provider_pending");
-    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] A/B/C"), "no_asp_found");
+    let title = ctx.title_display;
+    let cmd_pending_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Pending ASP {short_id}] {title} ASP-contact decision"), "provider_pending");
+    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] {title} next-step decision"), "no_asp_found");
 
     let no_sellers = super::super::content::no_more_sellers_user_notify(job_id);
     let pending_empty = super::super::content::pending_list_empty_user_notify();
@@ -243,16 +245,17 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      Reply with the ASP's number to start, or reply \"skip all\".\n\n\
      {l10n_prompt}\n\
      {follow_playbook}\n\n\
-     **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action --jobStatus user_decision_provider_pending --data \"<message.data>\"` — both paths point to the same Branch A/B/C below.)\n\n\
+     **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action --event user_decision_provider_pending --data \"<message.data>\"` — both paths point to the same Branch A/B/C below.)\n\n\
      ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\
      A-Step 1: map the user's reply to agentId (index → AgentID via the pending list, or use a 3-digit AgentID directly); call xmtp_start_conversation to create the group + the sub session:\n\
      \x20\x20Args: myAgentId={agent_id}, toAgentId=<agentId from the pending list above>, jobId={job_id}\n\
      \x20\x20⚠️ Before the call, print: `[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
      \x20\x20⚠️ After the call, print: `[buyer-xmtp] xmtp_start_conversation result: sessionKey=<returned value>, xmtpGroupId=<returned value>`\n\n\
-     **A-Step 1.5 - pre-load skill into the new sub session (reduces first-reply latency):**\n\
-     Immediately after xmtp_start_conversation returns, call `xmtp_dispatch_session` to warm up the sub:\n\
+     🛑 **A-Step 1.5 - SKILL_PREFETCH (mandatory for new sub sessions):**\n\
+     Immediately after xmtp_start_conversation returns, call `xmtp_dispatch_session` to pre-load the skill into the newly created sub session:\n\
      \x20\x20sessionKey = <the sessionKey just returned by xmtp_start_conversation>\n\
-     \x20\x20content = `[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context and wait for the next inbound message. Do NOT execute any business action or call any CLI command.`\n\
+     \x20\x20content = `[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via buyer.md §3 routing (#1–#6). Do NOT carry over \"no action\" to business messages.`\n\
+     ❌ Do NOT skip this step — the sub session has no context yet; without SKILL_PREFETCH, the first inbound message will be processed without the buyer playbook loaded.\n\
      ⚠️ Use `xmtp_dispatch_session` (internal), NOT `xmtp_send` (which the ASP would see).\n\n\
      🛑 **Within the same turn after creating the group you MUST call `xmtp_send` to send the first message** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
      ❌ Absolutely forbidden: creating the group and ending the turn without sending a message.\n\n\

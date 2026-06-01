@@ -30,19 +30,34 @@
 // ── Event::JobCreated ──────────────────────────────────────────────
 
 /// `Event::JobCreated` Step 0 — user notification that the job is confirmed on-chain.
-pub fn job_created_user_notify(job_id: &str, notify_text: &str) -> String {
-    format!("Job `{job_id}` confirmed on-chain. {notify_text}")
+pub fn job_created_user_notify(job_id: &str, title: &str, notify_text: &str) -> String {
+    format!("[Job Created] **{title}** (`{job_id}`) confirmed on-chain. {notify_text}")
 }
 
-/// Prompt shown when the designated ASP is offline (D-Step 1.5).
-pub fn provider_offline_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -> String {
+fn designated_asp_abc_prompt(short_id: &str, dp_id: &str, job_id: &str, reason: &str) -> String {
     format!(
-        "[Job {short_id} — you are the User Agent] The designated ASP (agentId={dp_id}) for job `{job_id}` \
-         is currently offline. Negotiation requires the ASP to be online.\n\
+        "[Job {short_id} — you are the User Agent] The designated agent (agentId={dp_id}) for job `{job_id}` \
+         {reason}\n\
          Please choose:\n\
          A. Designate another ASP — provide the agentId\n\
          B. Make the job public — let more ASPs discover it\n\
          C. Close the job"
+    )
+}
+
+/// Prompt shown when the designated agent is not a provider or does not exist (D-Step 1.5a role gate).
+pub fn not_provider_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -> String {
+    designated_asp_abc_prompt(
+        short_id, dp_id, job_id,
+        "does not exist or is not registered as an ASP (Agent Service Provider). It cannot fulfil this job.",
+    )
+}
+
+/// Prompt shown when the designated ASP is offline (D-Step 1.5b).
+pub fn provider_offline_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -> String {
+    designated_asp_abc_prompt(
+        short_id, dp_id, job_id,
+        "is currently offline. Negotiation requires the ASP to be online.",
     )
 }
 
@@ -78,20 +93,8 @@ pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
 pub fn job_rejected_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "[Rejection Confirmed] The deliverable for **{title}** (`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
-         The ASP has 24 hours to choose: file a dispute or agree to a refund.\n\
+         The ASP will choose: file a dispute or agree to a refund.\n\
          If the ASP takes no action, funds will be auto-refunded to your wallet."
-    )
-}
-
-// ── Event::JobDisputed ─────────────────────────────────────────────
-
-/// `Event::JobDisputed` Step 1 — evidence collection prompt (B-5-3, `xmtp_prompt_user.userContent`).
-pub fn job_disputed_user_evidence_prompt(short_id: &str, title: &str) -> String {
-    format!(
-        "[Job {short_id} — {title} — you are the User Agent] The dispute is confirmed on-chain. You must submit off-chain evidence within 1 hour. Please provide:\n\
-         - Text summary (required): key evidence that the deliverable failed the quality standards\n\
-         - Image path (optional): local file path to screenshots, chat logs, etc.\n\
-         Reply format example: \"Evidence: the deliverable is missing X/Y/Z; image: /path/to/screenshot.png\""
     )
 }
 
@@ -104,7 +107,7 @@ pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: escrow\n\
          - txHash: <txHash>\n\
-         - Settled at: <timestamp>\n\
+         - Settled at: <timestamp from system notification, converted to human-readable e.g. \"2025-05-29 10:00 UTC\"; omit this line if not available>\n\
          This job is complete."
     )
 }
@@ -115,7 +118,9 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
         "[x402 Job Completed] {title} (`{job_id}`) — all steps complete.\n\
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: x402\n\
-         - Settled at: <timestamp>\n\
+         - Settled at: <timestamp from system notification, converted to human-readable e.g. \"2025-05-29 10:00 UTC\"; omit this line if not available>\n\
+         - Deliverable saved to: <deliverableSavedPath from task-402-pay output; if not in context, omit this line>\n\
+         - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>\n\
          This job is complete."
     )
 }
@@ -139,6 +144,24 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
          - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
          - Outcome: ProviderWins\n\
          This job is complete."
+    )
+}
+
+// ── Auto-rating notification ──────────────────────────────────────
+
+/// User notification after the buyer agent auto-rates the ASP.
+pub fn rating_submitted_user_notify(job_id: &str) -> String {
+    format!(
+        "[📝 Rating Submitted] Task <title> (`{job_id}`) — rated.\n\
+         Score: <score> / 5.00\n\
+         💬 Comment: <description>"
+    )
+}
+
+pub fn rating_failed_user_notify(job_id: &str) -> String {
+    format!(
+        "[⚠️ Rating Skipped] Task <title> (`{job_id}`) — auto-rating could not be submitted: <error reason>.\n\
+         This does not affect the task completion or payment."
     )
 }
 
@@ -250,7 +273,7 @@ pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String 
          After expiry, the ASP can auto-claim the funds.\n\
          Please decide soon:\n\
          A. Approve the deliverable\n\
-         B. Reject the deliverable — please state your reason"
+         B. Reject the deliverable — please state your reason (if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator)"
     )
 }
 
@@ -333,6 +356,7 @@ pub fn x402_replay_success_user_notify(job_id: &str) -> String {
         "[x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
          ASP agentId: <providerAgentId>\n\
          Amount: <tokenAmount> <tokenSymbol>\n\
+         Deliverable saved to: <deliverableSavedPath from CLI output>\n\
          ---Deliverable---\n\
          <replayBodyDisplay value from CLI output — pass through in full, do not truncate or summarize>\n\
          ---End of deliverable---\n\
@@ -346,7 +370,7 @@ pub fn x402_replay_fail_user_notify(job_id: &str) -> String {
         "[x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
          HTTP status: <replayStatus>\n\
          Error: <replayBody>\n\
-         Auto-complete will not run after `job_accepted`. Please give a new instruction; the agent will not auto-retry."
+         Auto-complete will not run. Please give a new instruction; the agent will not auto-retry."
     )
 }
 
@@ -372,6 +396,40 @@ pub fn create_task_public_user_notify() -> String {
 /// create_task success — with designated provider.
 pub fn create_task_designated_user_notify() -> String {
     "Task submitted; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); \
+     awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider."
+        .to_string()
+}
+
+// ── draft notifications ─────────────────────────────────────────
+
+/// Draft saved — user notification.
+pub fn draft_saved_user_notify() -> String {
+    "Draft saved (jobId: <jobId>). You can continue editing it later, or publish it when ready."
+        .to_string()
+}
+
+/// Draft updated — user notification.
+pub fn draft_updated_user_notify() -> String {
+    "Draft updated (jobId: <jobId>)."
+        .to_string()
+}
+
+/// Draft deleted — user notification.
+pub fn draft_deleted_user_notify() -> String {
+    "Draft deleted (jobId: <jobId>)."
+        .to_string()
+}
+
+/// Draft publish success — no designated provider (same downstream flow as create-task).
+pub fn draft_publish_public_user_notify() -> String {
+    "Draft published; jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
+     Once confirmed, the system will automatically fetch the recommended provider list for you to choose from."
+        .to_string()
+}
+
+/// Draft publish success — with designated provider.
+pub fn draft_publish_designated_user_notify() -> String {
+    "Draft published; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); \
      awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider."
         .to_string()
 }

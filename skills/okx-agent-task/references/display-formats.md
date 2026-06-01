@@ -31,6 +31,24 @@ Rules:
 
 ---
 
+## 1.1 Draft list — `onchainos agent draft list`
+
+| jobId | 标题 | 预算 | 状态 |
+|---|---|---|---|
+| 0xbb31…ba4f | 数据清洗任务 | 100 USDT | 📝 Draft |
+| 0xa1c2…d3e4 | 翻译白皮书 | — | 📝 Draft |
+
+> 共 N 条草稿。编辑请说 "编辑草稿 0xbb31…ba4f"，发布请说 "发布草稿 0xbb31…ba4f"。
+
+Rules:
+
+- Same four-column layout as §1 (task list).
+- `预算` / `Budget`: `{tokenAmount} {paymentTokenSymbol}`; if budget is not set, show `—`.
+- `状态` / `Status`: always `📝 Draft` (all drafts share one status).
+- Empty list → `No drafts found.` / `暂无草稿。`
+
+---
+
 ## 2. Task detail card — `onchainos agent status` / context display
 
 Chinese variant:
@@ -126,6 +144,7 @@ Rules:
 - The summary always goes inside the table.
 - When the description is ≤ 200 chars, put it in the table; when > 200 chars, write `见下方` / `See below` in that row and render the full text as prose under the table.
 - Do not display the acceptance criteria field.
+- Do NOT add a Visibility / 可见性 row — visibility is not set at creation time and does not belong in the creation form.
 - Chinese/English field labels match user language.
 - If attachments are present, add a row: `附件` / `Attachments` with the file count and names (e.g. `2 files: spec.pdf, mockup.png`).
 - Footer must be a blockquote asking for confirmation.

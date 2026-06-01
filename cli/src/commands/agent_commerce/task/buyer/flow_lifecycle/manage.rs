@@ -13,21 +13,30 @@ Skipping skill loading = not knowing the tool whitelist / communication protocol
 [Session Type] user session (talking directly to the user)
 
 🛑 **No skipping**: you MUST finish collecting all fields → show the confirmation form → wait for an explicit user confirmation before calling the CLI.
+❌ **Do NOT use `draft create` + `draft publish` as a substitute for `create-task`** — they are completely different flows. `create-task` publishes the task on-chain in one step. The draft flow (`draft create` → `draft update` → `draft publish`) is ONLY for when the user explicitly says \"save as draft\". If the user says \"publish a task\" / \"发布任务\" / \"create a task\", you MUST use `create-task` (Step 6), NOT the draft path.
+💡 **Draft shortcut**: if the user says \"save as draft\" / \"先保存草稿\" / \"草稿\" at ANY point during field collection, **jump to Step 6-D**. Draft requires `--description` (≥20 chars, user-provided); `--title` and `--description-summary` are agent-generated from description. If description is missing or <20 chars, ask the user to provide/expand it before saving.
 
 ================================================
 Step 1 -- Field collection (collect progressively in conversation; **only enter Step 2 when all fields are ready**)
 ================================================
 
+🛑🛑🛑 **ABSOLUTE RULE — No auto-fill for user-provided fields**:
+The following fields MUST come from the user's explicit input: **Description, Budget, Max budget, Currency, Acceptance window, Delivery window**.
+If the user has NOT explicitly stated a field's value, you MUST ask for it — do NOT guess, infer, generate a default, or extract an implied value from the task description.
+Even if the user's description hints at a price range or timeline (e.g. \"大概50块\" / \"一两天\"), you MUST confirm with the user before filling.
+Only **Title** and **Summary** are agent-generated (from the user's description).
+🔴 Real incident: a user said \"翻译2000字文档\", the agent auto-filled budget, deadline-open, and deadline-submit without asking — the user did not agree to those values, and the task was published with wrong terms.
+
 | Field | CLI flag | Constraint | How to collect |
 |---|---|---|---|
-| Description | --description | 10-2000 chars | Consolidate the user's words. If <10 → \"A more detailed description helps match a better Provider. Could you add more specifics?\" |
+| Description | --description | 20-2000 chars | Consolidate the user's words. If <20 → \"A more detailed description helps match a better Provider. Could you add more specifics?\" |
 | Title | --title | <=30 chars | Agent-generated; **must count chars after generating**, shorten if >30 |
 | Summary | --description-summary | <=200 chars | Agent-generated; **must count chars after generating**, shorten if >200 |
 | Payment token | --currency | Only USDT / USDG | ⚠️ See token rules below |
-| Budget | --budget | number; <=5 decimal places; max 10,000,000 | Extract the number |
+| Budget | --budget | number; <=5 decimal places; max 10,000,000 | **MUST ask the user; do NOT auto-fill or guess.** Extract the number only after the user states it explicitly |
 | Max budget | --max-budget | **Required**; >= budget; <=5 decimal places; max 10,000,000 | ⚠️ **You MUST ask the user explicitly**, do not auto-fill or guess. This is the negotiation price cap; the ASP's quote cannot exceed it |
-| Acceptance window | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long the task stays open before auto-closing if no ASP accepts |
-| Delivery window | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user**. How long after acceptance the ASP must deliver |
+| Acceptance window | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user; do NOT auto-fill or guess.** How long the task stays open before auto-closing if no ASP accepts |
+| Delivery window | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user; do NOT auto-fill or guess.** How long after acceptance the ASP must deliver |
 | Designated provider | --provider | optional; provider agentId | If the user names a specific provider, extract the agentId. **Do not ask proactively** -- if the user does not bring it up, omit it |
 
 🛑 **Token rules (top priority)**:
@@ -41,7 +50,7 @@ Step 2 -- Validation (after all fields collected, before showing the form)
 
 1. Token is neither USDT nor USDG → \"Only USDT and USDG are supported. Please choose one.\"
 2. **Currency consistency between budget and max budget**: if the user mentions different tokens for budget and max budget (e.g. \"budget 10 USDT, max 20 USDG\") → **block**, \"Budget and max budget must use the same token. Please confirm: USDT or USDG?\". The task has a single --currency, the two must match.
-3. Description < 10 chars → ask the user to expand
+3. Description < 20 chars → ask the user to expand
 4. max_budget < budget → \"Max budget cannot be less than the budget.\"
 5. max_budget missing → \"Please set the max budget (the negotiation price cap); the ASP's quote cannot exceed it.\"
 6. budget > 10,000,000 or > 5 decimal places → tell the user the limits
@@ -72,26 +81,45 @@ Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/referenc
 
 | Field | Value |
 |---|---|
-| Title | <agent summary> |
-| Summary | <agent summary, <=200 chars> |
+| Title | <short title, <=30 chars> |
+| Summary | <brief summary of the task, <=200 chars> |
 | Description | <full content> (if <=200 chars, put it in the table; if >200, write `see below` in the table and render the full content as prose below) |
 | Payment token | <USDT or USDG> |
 | Budget | <number> |
 | Max budget | <number> (negotiation price cap) |
-| Open deadline | <Nh> (auto-closes after N hours if no ASP accepts) |
-| Submit deadline | <Nh> (deliverable must be submitted within N hours of acceptance) |
+| Acceptance window | <Nh> (auto-closes after N hours if no ASP accepts) |
+| Delivery window | <Nh> (deliverable must be submitted within N hours of acceptance) |
 | Designated provider | <agentId> (🛑 only show this row if the user explicitly designated one; **otherwise omit the entire row** -- do not write \"none\" or \"none (public task)\" or any placeholder. Tasks default to private; \"no designated provider\" != \"public task\") |
 
-> Confirm? Once you confirm, I will submit the task on-chain immediately.
+🚫 **The form MUST contain ONLY the fields listed above.** Do NOT add a Visibility / 可见性 row — visibility is not set at creation time.
+
+> Confirm and publish? Or save as draft?
 
 ⚠️ Use Chinese field labels for Chinese conversations, English labels for English conversations.
 
-→ **End this turn**; after showing the form you MUST stop and wait for the user's explicit confirmation of **this form**.
+→ **End this turn**; after showing the form you MUST stop and wait for the user's reply.
 🛑 The user's earlier confirmation on a sub-question (e.g. token confirmation) does NOT count as confirming the form; you must wait for a new reply after the form is shown.
 
 ================================================
-Step 6 -- After user confirms the form, call the CLI (🛑 must NOT be in the same turn as Step 5)
+Step 5.5 -- Route by user decision (🛑 must NOT be in the same turn as Step 5)
 ================================================
+
+🛑🛑🛑 You MUST show the confirmation form (Step 5) AND wait for the user's reply before entering this step.
+NEVER skip directly to Step 6 (create-task) or Step 6-D (draft) — the user must explicitly choose.
+🔴 Real incident: an agent auto-filled all fields from the user's description, skipped the confirmation form, and called `create-task` directly — the task was published on-chain with terms the user never agreed to.
+
+After the user replies, determine which path to take:
+
+- **User confirms / says publish / approves** → go to Step 6 (publish on-chain immediately)
+- **User says \"save as draft\" / \"save draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D (save draft)
+- **User asks to edit a field** → update the field, show the form again (return to Step 5)
+- **Ambiguous reply** (e.g. \"OK\" without context, or unrelated text) → ask the user to clarify: publish on-chain now, or save as draft?
+
+================================================
+Step 6 -- ✅ DEFAULT Publish path: call create-task CLI (on-chain immediately)
+================================================
+🟢 **This is the default path** — when the user confirms the form (or says \"publish\" / \"发布\"), use `create-task` below.
+❌ Do NOT call `draft create` here — `draft create` is only for Step 6-D when the user explicitly asks for a draft.
 
 ```bash
 onchainos agent create-task \\
@@ -108,6 +136,7 @@ onchainos agent create-task \\
 
 🚫 **create-task only accepts the flags above. There is no --content / --period / --visibility / --amount / --token / --payment-mode flag.** When `--provider` is passed, the CLI automatically sets visibility=1 (PRIVATE) and providerAgentId; no extra flags needed.
 ⚠️ **Payment mode is not set at creation** -- paymentMode is decided downstream: the A2A negotiation path is always escrow; if a provider is designated and has an endpoint, x402 is used. If the user mentions a preferred payment mode at publication, **do not pass --payment-mode**; tell them: \"The payment mode will be determined automatically when negotiating with the provider.\"
+🛑 **Error handling**: if the CLI returns a validation error (e.g. \"description is too short\"), relay the error message to the user and ask them to fix it. **Do NOT auto-modify, expand, or rewrite the user's content** — the user must provide the corrected value themselves. After the user provides the fix, return to Step 5 to show the updated confirmation form.
 
 ================================================
 Step 6.5 -- Save attachments (only if the user included files with the task request)
@@ -130,6 +159,9 @@ If the user's message did NOT include any files, skip this step entirely.
 
 ================================================
 
+⚠️ **Balance warning relay**: if the CLI output contains a `⚠️ Insufficient ... balance` warning line, \
+you **MUST** append it to the `xmtp_dispatch_user` content below.\n\
+🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
 After success, call `xmtp_dispatch_user` to notify the user:\n\
 ".to_string()
     + &format!("\
@@ -143,9 +175,142 @@ After success, call `xmtp_dispatch_user` to notify the user:\n\
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.\n\
 ❌ **Do not call any onchainos agent commands** (except `task-attach` in Step 6.5 above) -- this turn ends here; all further actions are driven by on-chain events.\n\
 ❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.\n\
+===============================================================\n\n\
+================================================\n\
+Step 6-D -- Draft path: save as draft (off-chain)\n\
+================================================\n\
+🛑 **ONLY enter this step if the user EXPLICITLY said \"save as draft\" / \"草稿\" / \"先保存\"**. If the user said \"publish\" / \"发布\" / \"confirm\" / confirmed the form → you are in the WRONG step; go back to Step 6.\n\n\
+Step 6-D.1 -- Check required fields for draft creation\n\n\
+Draft creation requires `--description` (≥ 20 chars, user-provided), `--title` (agent-generated from description, ≤ 30 chars), and `--description-summary` (agent-generated from description, ≤ 200 chars).\n\n\
+Check whether the user has provided a description (≥ 20 chars). If not, ask the user to provide or expand it.\n\
+Once description is ready, generate title and summary from it, then show a draft confirmation form:\n\n\
+| Field | Value |\n\
+|---|---|\n\
+| Title | <agent-generated, ≤30 chars> |\n\
+| Summary | <agent-generated, ≤200 chars> |\n\
+| Description | <user-provided content> |\n\
+| Budget | <value or \"—\"> |\n\
+| Max budget | <value or \"—\"> |\n\
+| Currency | <value or \"—\"> |\n\
+| Acceptance window | <value or \"—\"> |\n\
+| Delivery window | <value or \"—\"> |\n\n\
+> Save as draft? Other fields (marked —) are optional and can be added later.\n\n\
+⚠️ Use Chinese field labels for Chinese conversations, English labels for English conversations.\n\
+🛑 **Description**: must come from the user — do NOT auto-generate or invent content. You may consolidate the user's words, but the substance must be theirs.\n\
+🛑 **Title & Summary**: agent-generated from the user's description. Must count chars after generating — shorten title if >30, summary if >200.\n\
+→ After the user confirms, proceed to Step 6-D.2.\n\n\
+Step 6-D.2 -- Call draft create CLI\n\n\
+Once description + title + summary are ready, call the CLI with all fields the user has provided:\n\n\
+```bash\n\
+onchainos agent draft create \\\\\n\
+  --title \"<title>\" \\\\\n\
+  --description \"<description>\" \\\\\n\
+  --description-summary \"<summary>\" \\\\\n\
+  [--budget <budget>] [--max-budget <max_budget>] \\\\\n\
+  [--currency <USDT|USDG>] \\\\\n\
+  [--deadline-open <deadline_open>] [--deadline-submit <deadline_submit>] \\\\\n\
+  [--provider <provider agentId>]\n\
+```\n\n\
+🛑 **Error handling**: if the CLI returns a validation error (e.g. \"description is too short\"), relay the error message to the user and ask them to fix it. **Do NOT auto-modify, expand, or rewrite the user's content** — the user must provide the corrected value themselves.\n\
+⚠️ If the user included file(s), save them after draft creation:\n\
+```bash\n\
+onchainos agent task-attach --file \"<local file path>\" <jobId>\n\
+```\n\n\
+After success, call `xmtp_dispatch_user` to notify the user:\n\
+- content: \"{draft_saved}\"\n\
+{l10n_short}\n\n\
+→ **End this turn.**\n\
 ===============================================================\n",
         create_public = super::super::content::create_task_public_user_notify(),
         create_designated = super::super::content::create_task_designated_user_notify(),
+        draft_saved = super::super::content::draft_saved_user_notify(),
+    )
+}
+
+// --- User-action: publish draft ----------------------------------------
+
+pub(crate) fn draft_publish(job_id: &str) -> String {
+    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
+
+    format!("\
+[Current Operation] Publish draft (draft_publish)
+[Role] User (User Agent)
+[Session Type] user session (talking directly to the user)
+
+================================================
+Step 1 -- Pre-publish field check
+================================================
+
+Query the draft detail to verify all required fields are populated:
+```bash
+onchainos agent status {job_id}
+```
+
+Check the following required fields:
+| Field | API field | Requirement |
+|---|---|---|
+| Title | title | non-empty |
+| Description | description | >= 20 characters |
+| Summary | descriptionSummary | non-empty |
+| Currency | paymentTokenSymbol | USDT or USDG |
+| Budget | tokenAmount | > 0, <= 10,000,000 |
+| Max budget | paymentMostTokenAmount | >= budget |
+| Acceptance window | expireConfig.acceptDeadline | 10m ~ 180d (in seconds) |
+| Delivery window | expireConfig.submittedDeadline | 1m ~ 180d (in seconds) |
+
+If any field is missing or invalid → show a table listing ALL fields with their current values (filled fields show the value, missing fields show `❌ Required`). Then:
+- **Description, Budget, Max budget, Currency, Acceptance window, Delivery window**: these are user-provided fields — ask the user to provide them. **Do NOT auto-fill.**
+- **Title** (≤30 chars) and **Summary** (≤200 chars): agent-generated from description. If description is present but title/summary are missing, **auto-generate them** from the description (count chars, shorten if needed). Do NOT ask the user to write these.
+
+→ After the user provides field(s), **do not call `draft update` yet** — update the in-memory values and show the table again until all required fields are filled.
+
+⚠️ The CLI `draft publish` has a built-in validation safety net; this step is the first line of defense.
+🛑 **Error handling**: if the user provides a value that fails validation (e.g. description too short), relay the error and ask them to fix it. **Do NOT auto-modify the user's content** (description, budget, etc.).
+
+================================================
+Step 2 -- Update draft with collected fields
+================================================
+
+Once ALL required fields are verified, call `draft update` to persist any fields the user provided during Step 1:
+```bash
+onchainos agent draft update {job_id} --<field1> <value1> --<field2> <value2> ...
+```
+
+Only include fields that were missing or changed during Step 1. If no fields were updated (all were already present), skip this step.
+
+================================================
+Step 3 -- Call draft publish CLI
+================================================
+
+```bash
+onchainos agent draft publish {job_id}
+```
+⚠️ `{job_id}` is a **positional argument**, NOT a flag. Do NOT use `--job-id`.
+
+This command validates all required fields, checks balance (blocking), signs the transaction, and broadcasts on-chain.
+
+================================================
+Step 4 -- Notify user
+================================================
+
+⚠️ **Balance warning relay**: if the CLI output contains a `⚠️ Insufficient ... balance` warning line, \
+you **MUST** append it to the `xmtp_dispatch_user` content below.
+🌐 Canonical template — localize per [Localization] rules before sending.
+
+After success, call `xmtp_dispatch_user` to notify the user:
+- No designated provider → content: \"{publish_public}\"
+- With designated provider → content: \"{publish_designated}\"
+{l10n_short}
+
+===============================================================
+🛑🛑🛑 STOP -- after draft publish you **MUST end this turn immediately**
+===============================================================
+❌ **Do not say \"task published\" or \"publish succeeded\"** -- draft publish only submits the transaction; it is not yet confirmed on-chain.
+❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification.
+❌ **Do not call any onchainos agent commands** -- this turn ends here; all further actions are driven by on-chain events.
+===============================================================\n",
+        publish_public = super::super::content::draft_publish_public_user_notify(),
+        publish_designated = super::super::content::draft_publish_designated_user_notify(),
     )
 }
 
@@ -163,7 +328,7 @@ pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> Str
      [Role] User (User Agent)\n\n\
      🛑 **This is the ONLY correct path for forwarding attachments. Do not improvise.**\n\
      🔴 Real incident: a Minimax model received `[ATTACHMENT_ADDED]`, skipped `xmtp_file_upload`, and sent the raw local file path via `xmtp_send` — \
-     the provider received a path like `/Users/.../attachments/photo.jpg` which it cannot access. Then the model called `next-action --jobStatus job_submitted` (wrong event) and the task got stuck.\n\n\
+     the provider received a path like `/Users/.../attachments/photo.jpg` which it cannot access. Then the model called `next-action --event job_submitted` (wrong event) and the task got stuck.\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 1 — Extract the file path:**\n\
      The `[ATTACHMENT_ADDED]` message content has the format: `[ATTACHMENT_ADDED] <absolute file path>`.\n\
@@ -269,7 +434,7 @@ pub(crate) fn task_provider_change(ctx: &super::super::flow::FlowContext<'_>) ->
             "- If you are the **backup session** → the user session has written the new provider info via `set-provider`.\n\
              \x20\x20**🛑 MUST run the following command immediately to kick off the new provider flow**:\n\
              \x20\x20```bash\n\
-             \x20\x20onchainos agent next-action --jobid {job_id} --event switch_provider --jobStatus switch_provider --role buyer --agentId {agent_id}\n\
+             \x20\x20onchainos agent next-action --jobid {job_id} --event switch_provider --role buyer --agentId {agent_id}\n\
              \x20\x20```\n\
              \x20\x20Follow the returned playbook (D-Steps → negotiation / x402).\n\
              \x20\x20❌ Do not ignore this event ❌ Do not skip next-action and decide the next step yourself\n")

@@ -44,6 +44,10 @@ Extract from the envelope: `jobId` / `groupId` / `sender.agentId` / `fromXmtpAdd
 > - ❌ `onchainos agent tasks --agent-id <id>` = list tasks **you already have** (accepted / published-by-me), NOT a new-job search. Using it only yields an empty list.
 > - ✅ `onchainos agent recommend-task --agent-id <id>` = fetch **public tasks this agent can accept**.
 > - ✅ `onchainos agent find-jobs` = run `recommend-task` concurrently against every ASP under the wallet and aggregate.
+>
+> ⚠️ **`task-search` is NOT a substitute for `recommend-task` here.** The two solve different problems:
+> - `recommend-task` filters the pool by **this ASP's skill profile** (capability match) — correct response to "接单 / find tasks / 开始接单".
+> - `task-search` filters the pool by **literal criteria** the user typed (keyword / budget range / status / sort) — correct response **only** when the user explicitly says "搜索任务 / 查找任务 / 所有任务 / browse marketplace / search marketplace / 按关键字搜任务 / 按预算筛任务". A bare "找任务" (substring of "查找任务") does **not** trigger task-search — match the longest explicit phrase the user actually said.
 
 **Pre-flight Agent disambiguation** (see SKILL.md `🔴 Agent identity disambiguation (multi-agent scenarios)`):
 
@@ -92,9 +96,9 @@ Return 3-5 recommended tasks for the user to choose from.
 3. **End this turn** and wait for the User Agent's reply (do NOT take any further action in this turn).
 4. **After the User Agent replies** (the next inbound a2a-agent-chat envelope — free-form inquiry / `[intent:propose]` / natural-language follow-up) → **only THEN** call `next-action` to fetch the negotiation script:
    ```bash
-   onchainos agent next-action --jobid <chosen jobId> --event job_created --jobStatus job_created --role provider --agentId <chosen agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
+   onchainos agent next-action --jobid <chosen jobId> --event job_created --role provider --agentId <chosen agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
    ```
-   - `--event` / `--jobStatus`: both fixed to `job_created` (during negotiation the on-chain status is still `created` = `job_created`).
+   - `--event`: fixed to `job_created` (during negotiation the on-chain status is still `created` = `job_created`).
    - `--role`: fixed to `provider`.
    - `--jobid` / `--agentId`: same as Step 1.
    - `--peerTaskMinVersion`: pass through the `payload.taskMinVersion` integer from the inbound envelope (protocol version handshake). **When the envelope has no `payload` / `taskMinVersion` field, omit the entire parameter** — do NOT pass an empty string or the literal `<...>`.
@@ -105,7 +109,7 @@ Return 3-5 recommended tasks for the user to choose from.
 
 **Single source of truth in the CLI** — every time you enter a negotiation scene (either reactively from an a2a-agent-chat, or proactively after creating the group), first call:
 ```bash
-onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
+onchainos agent next-action --jobid <jobId> --event job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
 ```
 > 📌 **About `--peerTaskMinVersion`** (applies to this section and to every peer-message-triggered `next-action` template in §2.2 / §3 below): pass through the `payload.taskMinVersion` integer from the inbound a2a-agent-chat envelope. **Two cases in which you omit the entire parameter**: ① the envelope has no `payload` field / no `taskMinVersion` sub-field (older peer version); ② proactive group-creation cold-start with no inbound envelope. **Do NOT pass an empty string or the literal `<...>`** — the CLI treats missing as the v1 baseline (backward compatible).
 
@@ -121,7 +125,7 @@ to fetch the complete script for the current status (including: the three topics
 **Mandatory reflex upon receiving the first inbound a2a-agent-chat envelope (`sender.role=1`)** (a very easy pitfall, symmetric with the `[intent:confirm]` reflex):
 
 1. **First action must be** to call `onchainos agent common context <jobId> --role provider --agent-id <your agentId>` to pull task details and run a professional-fit check.
-2. **Second action must be** to call `onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>` to fetch the first-round negotiation script.
+2. **Second action must be** to call `onchainos agent next-action --jobid <jobId> --event job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>` to fetch the first-round negotiation script.
 3. **Third action** may be `xmtp_send`, sending only the message body that the script tells you to send — namely, "**ask** the User Agent about the three topics (task capability / price / payment mode)".
 4. ❌ **Do NOT call `xmtp_send` before steps 1–2** — regardless of the inbound content, do NOT reply on conversational instinct.
 5. ❌ **Do NOT treat a User Agent's task description in natural language as a "start execution" trigger** — the User Agent's first inquiry **commonly contains** the full task description, expected deliverables, and desired format (e.g. "give me a list of projects, with X / Y / Z per item"), but this is **just an inquiry**, not a work order. Real work starts ONLY after the `job_accepted` system notification.
@@ -148,7 +152,7 @@ to fetch the complete script for the current status (including: the three topics
 
 1. **First action must be** to call `next-action` to fetch the script (during negotiation the on-chain status is still `job_created`):
    ```bash
-   onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
+   onchainos agent next-action --jobid <jobId> --event job_created --role provider --agentId <your agentId> --peerTaskMinVersion <inbound envelope.payload.taskMinVersion>
    ```
 2. ❌ **Do NOT send any P2P reply** to the User Agent — including but not limited to: "the agreement is in effect" / "waiting for job_accepted" / "confirmed" / any `[intent:*_ack]` literal / thanks.
 3. Per the script: verify the fields match → on the `escrow` path, run `apply`; **send no P2P message at any point**.
@@ -183,7 +187,7 @@ The chain-event notification format + the `next-action` command template are in 
 
 - Chain events: `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_rejected` / `job_disputed` / `job_refunded` / `dispute_resolved`.
 - Chain events (two-phase dispute transient): `dispute_approved` (after the arbitration phase-1 approve is on-chain, the system pushes this; it triggers phase-2 dispute confirm).
-- **Pseudo events** (NOT pushed by the backend; the sub agent receives a `user_decision_<source_event>` system envelope relayed from user-session, then calls `next-action --jobStatus user_decision_<source_event> --data "<message.data>"` — CLI's per-scene handler does the LLM semantic mapping and returns a routing playbook pointing to one of these): `dispute_raise` / `agree_refund` / `dispute_evidence`.
+- **Pseudo events** (NOT pushed by the backend; the sub agent receives a `user_decision_<source_event>` system envelope relayed from user-session, then calls `next-action --event user_decision_<source_event> --data "<message.data>"` — CLI's per-scene handler does the LLM semantic mapping and returns a routing playbook pointing to one of these): `dispute_raise` / `agree_refund`.
 
 For every notification received → call `next-action` once → execute the Scene that `flow.rs` outputs (CLI / `xmtp_send` / push the user session if and only if required).
 
@@ -198,7 +202,7 @@ For every notification received → call `next-action` once → execute the Scen
 **Routing — uniform for all source_events**: extract `message.jobId`, `message.event`, and `message.data` from the envelope, then call:
 
 ```bash
-onchainos agent next-action --jobid <jobId> --event <event verbatim, e.g. user_decision_job_refused> --jobStatus <event verbatim> --role provider --agentId <your agentId> --data "<message.data verbatim>"
+onchainos agent next-action --jobid <jobId> --event <event verbatim, e.g. user_decision_job_refused> --role provider --agentId <your agentId> --data "<message.data verbatim>"
 ```
 
 The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic mapping. **Do NOT keyword-match `message.data` yourself** before calling next-action.
@@ -208,8 +212,7 @@ The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic
 | `source_event` | Push location | Routed by handler to (pseudo event → CLI) |
 |---|---|---|
 | `job_refused` | flow.rs job_refused scene (user rejected delivery; ASP must decide dispute vs refund) | `dispute_raise` → **Phase 1** `dispute raise <jobId> --reason "<verbatim>" --agent-id <…>` → wait for `dispute_approved` → **Phase 2** `dispute confirm <jobId> --agent-id <…>` → wait for `job_disputed`. OR `agree_refund` → `agree-refund <jobId> --agent-id <…>` → wait for `job_refunded` |
-| `job_disputed` | flow.rs job_disputed scene (1-hour evidence prep window) | `dispute_evidence` → `dispute upload <jobId> --text "<summary>" --image <path or omit> --agent-id <…>` → wait for the verdict |
-| `submit_deadline_warn` | flow.rs submit_deadline_warn scene | Submit-now → re-enter via `next-action --jobStatus job_accepted` to run delivery; Let-it-timeout → end turn |
+| `submit_deadline_warn` | flow.rs submit_deadline_warn scene | Submit-now → re-enter via `next-action --event job_accepted` to run delivery; Let-it-timeout → end turn |
 | `cli_failed` | flow.rs escalation prose (CLI failure auto-prompt) | retry / dismiss / new-instruction (handler decides) |
 
 **The handlers handle ambiguity**: if the reply cannot be confidently mapped (e.g. `好的` / `OK` on an irreversible on-chain action), the handler emits a re-ask playbook telling sub to enqueue another `pending-decisions-v2 request` with the same `--source-event` and clarifying user-content. **Do NOT guess** on ambiguous input — irreversible on-chain actions warrant a re-ask.
@@ -242,4 +245,5 @@ A sub session's `sessionKey` is stable within a single turn — call it once, ca
 |---|---|
 | Don't know who you are / what state the task is in | `onchainos agent common context <jobId> --role provider --agent-id <your agentId>` |
 | Look up task status | `onchainos agent status <jobId>` |
+| View saved deliverables | `onchainos agent task-deliverable-list --role provider [--job-id <jobId>]` |
 | Claim funds after the review window expired | `onchainos agent claim-auto-complete <jobId> --agent-id <your agentId>` |

@@ -165,6 +165,22 @@ pub fn submit_deadline_warn_user_prompt(short_id: &str) -> String {
     )
 }
 
+/// User notification after the provider agent auto-rates the buyer.
+pub fn rating_submitted_user_notify(job_id: &str) -> String {
+    format!(
+        "\x20\x20\x20\x20[📝 Rating Submitted] Task <title> (`{job_id}`) — rated.\n\
+         \x20\x20\x20\x20Score: <score> / 5.00\n\
+         \x20\x20\x20\x20💬 Comment: <description>"
+    )
+}
+
+pub fn rating_failed_user_notify(job_id: &str) -> String {
+    format!(
+        "\x20\x20\x20\x20[⚠️ Rating Skipped] Task <title> (`{job_id}`) — auto-rating could not be submitted: <error reason>.\n\
+         \x20\x20\x20\x20This does not affect the task completion or payment."
+    )
+}
+
 /// `Event::DisputeResolved` branch B (ASP loses) — B-Step 1 user notify.
 pub fn dispute_lost_user_notify(job_id: &str) -> String {
     format!(
@@ -174,17 +190,6 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          \x20\x20\x20\x20  \n\
          \x20\x20\x20\x20  This job is complete."
-    )
-}
-
-/// `Event::JobDisputed` Step 1 — evidence-collection prompt shown to the user
-/// (`xmtp_prompt_user.userContent`).
-pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[Job {short_id} — you are the ASP] The dispute is confirmed on-chain. You must submit off-chain evidence within 1 hour. Please provide:\n\
-         \x20\x20\x20\x20- Text summary (required): key evidence that you delivered against the quality standards\n\
-         \x20\x20\x20\x20- Image path (optional): local file path to screenshots, design files, chat logs, etc.\n\
-         \x20\x20\x20\x20Reply format example: 'Evidence: delivered X/Y/Z as required; image: /path/to/screenshot.png'"
     )
 }
 

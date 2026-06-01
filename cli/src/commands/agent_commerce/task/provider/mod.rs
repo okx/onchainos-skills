@@ -136,19 +136,34 @@ pub enum DisputeCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Upload offchain evidence (multipart, 1h preparation window only) — shared by both sides.
+    /// [Internal] Upload offchain evidence (multipart, 1h preparation window only) — shared by both sides.
+    ///
+    /// ⚠️ **Not user-facing**: this command is invoked automatically by the buyer / provider sub
+    /// session on the `job_disputed` event (via the next-action playbook). Users must NOT call it
+    /// manually — the agent owns the timing, role injection, and chat-history assembly.
+    ///
+    /// In addition to the explicit `--text` / `--file` inputs, the CLI auto-attaches every
+    /// entry recorded in `~/.onchainos/deliverables/<role>/<jobId>/manifest.json` as evidence
+    /// (buyer side = the downloaded deliverable + any later attachments; provider side = the
+    /// submitted deliverable copy). The next-action script must inject `--role buyer|provider`
+    /// so the CLI knows which manifest to read.
     Upload {
         job_id: String,
         /// Caller's own agentId (buyer or provider). Injected by the next-action script so the
         /// client doesn't have to do wallet-to-role mapping (a single wallet may have multiple registered agentIds).
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Text evidence (optional; at least one of text/images is required).
+        /// Caller's role for locating the local deliverables manifest. Required: `buyer` or `provider`.
+        #[arg(long)]
+        role: String,
+        /// Text evidence (optional). At least one source is required: `--text`, an explicit `--file`,
+        /// or a non-empty local deliverables manifest for the given role+jobId.
         #[arg(long)]
         text: Option<String>,
-        /// Image path (repeatable; only jpg/jpeg/png/gif/webp are supported).
-        #[arg(long = "image")]
-        images: Vec<String>,
+        /// Explicit evidence attachment path (repeatable, any file type). User-supplied paths
+        /// are appended in addition to the auto-attached deliverables from the manifest.
+        #[arg(long = "file")]
+        files: Vec<String>,
     },
 }
 
@@ -236,9 +251,9 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
             dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await,
         DisputeCommand::Confirm { job_id, reason, agent_id } =>
             dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id).await,
-        DisputeCommand::Upload { job_id, agent_id, text, images } =>
+        DisputeCommand::Upload { job_id, agent_id, role, text, files } =>
             dispute_upload::handle_upload_evidence(
-                &mut client, &job_id, &agent_id, text.as_deref(), &images,
+                &mut client, &job_id, &agent_id, &role, text.as_deref(), &files,
             ).await,
     }
 }

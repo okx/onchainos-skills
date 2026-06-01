@@ -261,9 +261,10 @@ pub enum AgentCommand {
     /// Provider applies for a task (apply API → sign → broadcast)
     Apply {
         job_id: String,
-        #[arg(long = "token-amount", default_value = "0")]
+        /// Negotiated token amount from `[intent:confirm]`. **Required**; must be > 0 (empty / 0 = apply for free, irreversible — CLI rejects).
+        #[arg(long = "token-amount")]
         token_amount: String,
-        /// Actual task currency (USDT / USDG); read from task detail, do not assume USDT
+        /// Actual task currency (USDT / USDG); read from `[intent:confirm]` / `[intent:propose]`, do not assume USDT
         #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "agent-id")]
@@ -391,6 +392,10 @@ pub enum AgentCommand {
     },
 
     // ── Task system (sub-groups) ────────────────────────────────────────────
+    /// Draft task commands: create, list, update, delete, publish
+    #[command(subcommand)]
+    Draft(task::buyer::DraftCommand),
+
     /// Dispute actions (provider): raise, evidence, info, upload
     #[command(subcommand)]
     Dispute(task::provider::DisputeCommand),
@@ -548,13 +553,9 @@ pub enum AgentCommand {
     NextAction {
         /// Accepts both `--jobid` (legacy camelCase) and `--job-id` (kebab)
         #[arg(long = "jobid", alias = "job-id")] job_id: String,
-        /// envelope `message.event` — required. Currently drives playbook routing **only for
-        /// `--role evaluator`** (event-based routing pilot); buyer/provider still route via
-        /// `--jobStatus` (legacy path) but must also pass this field so callers learn the new
-        /// contract.
+        /// envelope `message.event` — required. Drives playbook routing for all roles
+        /// (buyer / provider / evaluator). Pass the envelope's `message.event` value here.
         #[arg(long = "event")] event: String,
-        /// Accepts both `--jobStatus` (legacy) and `--job-status` (kebab).
-        #[arg(long = "jobStatus", alias = "job-status")] job_status: String,
         /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab)
         #[arg(long = "agentId", alias = "agent-id")] agent_id: String,
         #[arg(long)] role: String,
@@ -580,7 +581,7 @@ pub enum AgentCommand {
         /// User's decision payload from a `user_decision_*` relay envelope's
         /// `message.data` field (the user's verbatim reply to a pending decision,
         /// e.g. `A` / `approve` / `通过` / `agree to refund`). Required when
-        /// `--jobStatus` starts with `user_decision_`; ignored otherwise.
+        /// `--event` starts with `user_decision_`; ignored otherwise.
         #[arg(long)]
         data: Option<String>,
     },
@@ -876,6 +877,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
 
         // ── Sub-groups ──────────────────────────────────────────────
+        AgentCommand::Draft(c) =>
+            task::buyer::run_draft(c, ctx).await,
+
         AgentCommand::Dispute(c) =>
             task::provider::run_dispute(c, ctx).await,
 
@@ -935,9 +939,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { job_id, event, job_status, agent_id, role, code, job_title, provider, peer_task_min_version, data } => {
+        AgentCommand::NextAction { job_id, event, agent_id, role, code, job_title, provider, peer_task_min_version, data } => {
             eprintln!(
-                "[next-action] received system notification: job_id={job_id}, event={event}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
+                "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
                 title = job_title.as_deref().unwrap_or("(none)"),
                 provider = provider.as_deref().unwrap_or("(none)"),
                 peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
@@ -980,7 +984,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // code ≠ 0 → tx failed; output the failure script directly and skip the event match
             if code != 0 {
-                let label = tx_failure_label(&job_status);
+                let label = tx_failure_label(&event);
                 let title_part = match job_title.as_deref() {
                     Some(t) => format!(" **{t}**"),
                     None => " ".to_string(),
@@ -994,17 +998,34 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
 
-            // designated-provider is only written by --provider (line 748) or create.rs;
-            // no longer backfilled from the API `designatedProvider` field — that backend field is an on-chain address,
-            // semantically different from agentId, and may return non-zero even when no provider is specified, causing misjudgment.
+            // ── job_created API fallback: when --provider is absent and no local file exists,
+            // query the task detail API for providerAgentId and persist it.
+            // This covers the case where draft-publish wrote the file under a different jobId path.
+            // Safe at job_created time because no provider switch has occurred yet;
+            // subsequent switches overwrite the file via set-provider.
+            if provider.is_none()
+                && matches!(role.as_str(), "buyer" | "client")
+                && event == "job_created"
+                && !task::buyer::negotiate::has_designated_provider(&job_id)
+            {
+                let mut fb_client = task::common::network::task_api_client::TaskApiClient::new();
+                if let Ok(resp) = fb_client.get_with_identity(&fb_client.task_path(&job_id), &agent_id).await {
+                    if let Some(pid) = resp["providerAgentId"].as_str().filter(|s| !s.is_empty()) {
+                        eprintln!("[next-action] job_created fallback: API providerAgentId={pid}, persisting");
+                        if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
+                            eprintln!("[next-action] save_designated_provider (fallback) failed: {e}");
+                        }
+                    }
+                }
+            }
 
             // ── review gate: auto-mark buyer's review gate ──────────────────────
             if matches!(role.as_str(), "buyer" | "client") {
-                if job_status == "job_submitted" {
+                if event == "job_submitted" {
                     if let Err(e) = task::common::review_gate::mark_pending(&job_id) {
                         eprintln!("[next-action] review_gate mark_pending failed: {e}");
                     }
-                } else if job_status == "approve_review" {
+                } else if event == "approve_review" {
                     if let Err(e) = task::common::review_gate::mark_approved(&job_id) {
                         eprintln!("[next-action] review_gate mark_approved failed: {e}");
                     }
@@ -1013,7 +1034,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
-            if let Some(w) = check_status_freshness(&job_id, &job_status, &agent_id).await {
+            if let Some(w) = check_status_freshness(&job_id, &event, &agent_id).await {
                 println!("{w}");
                 return Ok(());
             }
@@ -1028,12 +1049,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         Some(vec![
                             format!("jobId={job_id}"),
                             format!("agentId={agent_id}"),
-                            format!("jobStatus={job_status}"),
+                            format!("event={event}"),
                             format!("code={code}"),
                         ]),
                         None,
                     );
-                    task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id, data.as_deref())
+                    task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref())
                 }
                 "buyer" | "client" => {
                     crate::audit::log(
@@ -1044,12 +1065,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         Some(vec![
                             format!("jobId={job_id}"),
                             format!("agentId={agent_id}"),
-                            format!("jobStatus={job_status}"),
+                            format!("event={event}"),
                             format!("code={code}"),
                         ]),
                         None,
                     );
-                    task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id, title_ref, data.as_deref())
+                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref())
                 }
                 "evaluator" => {
                     crate::audit::log(
@@ -1061,12 +1082,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                             format!("jobId={job_id}"),
                             format!("agentId={agent_id}"),
                             format!("event={event}"),
-                            format!("jobStatus={job_status}"),
                             format!("code={code}"),
                         ]),
                         None,
                     );
-                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id, title_ref)
+                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id)
                 }
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };
@@ -1168,10 +1188,10 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // the WakeupNotify arm output the guidance script.
     const PSEUDO_EVENTS: &[&str] = &[
         "create_task", "switch_provider", "attachment_added", "deliverable_received",
-        "dispute_raise", "agree_refund", "dispute_evidence", "approve_review", "reject_review",
+        "dispute_raise", "agree_refund", "approve_review", "reject_review",
         "close", "set_public",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
-        "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "vote_commit_deadline_warn", "cooldown_entered", "round_failed",
+        "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",
         "reward_claimed",
         "wakeup_notify",
     ];
@@ -1214,9 +1234,11 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     }
     Some(format!(
         "🛑 **状态脱节，剧本已 block**（next-action 入参与任务真实状态不一致，不输出步骤防止你按 stale event 上链）\n\n\
-         - 你传的 jobStatus/event = `{job_status_or_event}`，对应任务状态应为 `{expected_str}`\n\
+         - 你传的 event = `{job_status_or_event}`，对应任务状态应为 `{expected_str}`\n\
          - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\n\
-         **必须做**：重调 next-action 并传 `--event {actual_str} --jobStatus {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\
+         **必须做**（二选一）：\n\
+         1. 如果当前 inbound 是 **P2P 消息**（a2a-agent-chat）→ 你很可能用错了 event。回到 buyer.md / provider.md §3 Inbound Message Routing 重新匹配正确的事件（例如 `[intent:deliver]` → `deliverable_received`，自然语言报价 → `negotiate_reply`，`[intent:ack]` → `negotiate_ack`）。这些伪事件不受 freshness 限制。\n\
+         2. 如果当前 inbound 是 **system event** → 重调 next-action 并传 `--event {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
          **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 xmtp_dispatch_user 推用户。\n",
         expected_str = expected.as_str(),
     ))

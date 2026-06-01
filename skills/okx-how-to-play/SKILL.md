@@ -78,7 +78,7 @@ onchainos wallet status
 # Welcome Banner
 
 <MUST>
-Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 5 picks (Polymarket allowed); Variant B = 4 picks (Polymarket geoblocked). Never fabricate addresses or balance.
+Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 6 picks (OKX.AI + Polymarket allowed); Variant B = 5 picks (Polymarket geoblocked). Never fabricate addresses or balance.
 </MUST>
 
 ---
@@ -166,6 +166,7 @@ If the user types something other than a numbered pick or `login`, answer in the
 
 | Intent | Route to |
 |---|---|
+| OKX.AI / agent economy / make money with Agents / register agent (user / ASP / evaluator) | `okx-ai-guide` |
 | meme sniping / pump.fun / new launches | `okx-dex-trenches` |
 | follow smart money / KOL / whale | `okx-dex-signal` (or load `smart-money-signals.md`) |
 | bridge / cross-chain / move tokens between chains | `okx-dex-bridge` |
@@ -186,7 +187,7 @@ If the user picks multiple options at once, execute them in order and bookmark u
 ## Acceptance Criteria
 
 1. **Banner variant matches auth state** — `loggedIn: false` renders the logged-out variant (no addresses, with "login" hint); `loggedIn: true` renders the logged-in variant (addresses + balance, no hint).
-2. **Skill picks load without login gate** — 🔥 / 💰 load even when logged out; each loaded skill handles its own auth.
+2. **Skill picks load without login gate** — ✨ / 🔥 / 💰 load even when logged out; each loaded skill handles its own auth.
 3. **Workflow picks gate on login** — when logged out, 🐋 / 🆕 / ☕ route through Login Method Choice first, then auto-resume the workflow. User should not have to re-state their pick.
 4. **Turn budget** — ≤ 3 turns end-to-end for a new user; ≤ 2 turns for a returning user picking a workflow + login.
 
