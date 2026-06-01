@@ -899,11 +899,11 @@ fn render_list_markdown(q: &Queue) -> String {
     out.push('\n');
 
     out.push_str(
-        "[Translation rules] (every line and every clause that exists in the source MUST appear in the translation):\n\
-         \x20\x20- Keep `Job <hex>` intact.\n\
-         \x20\x20- Translate `Decision`, the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`), and the word `decision`; preserve `<title>` verbatim.\n\
-         \x20\x20- Footer: preserve every `;`-separated clause; do NOT drop `switch N` or `later`. Translate keywords (`switch`, `later`) to natural equivalents.\n\
-         \x20\x20- No mixed-language; no missing structural delimiters (`🟢`, `─────────────────`, numbered list).\n\n",
+        "[Translation rules] — **translate every English word to the user's language**, including quoted user-facing keywords. Only these are kept verbatim:\n\
+         \x20\x20- Hex jobIds (`0x...`).\n\
+         \x20\x20- Sub-provided `<title>` fields (already in user's language).\n\
+         \x20\x20- Structural delimiters (`🟢`, `─────────────────`, numbered list markers).\n\
+         Everything else — `Decision`, the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`), `decision`, all surrounding prose, AND quoted user-facing keywords like `\"switch N\"` / `\"later\"` — gets translated. Footer: preserve every `;`-separated clause (do NOT drop or merge). No mixed-language content.\n\n",
     );
 
     out.push_str("[Future-turn user-reply routing] (when the user replies, match semantics — localized equivalents count):\n");
@@ -1168,12 +1168,10 @@ fn playbook_wait_with_reprompt(
         "Your decision is queued (position {pos}). 2 steps:\n\n\
          **Step 1 — Localize this content to the user's language** (rules below):\n\
          {body}\n\n\
-         [Localization rules]:\n\
-         \x20\x20• Keep `Job <hex>` and `Agent #<id>` intact.\n\
-         \x20\x20• The decision label is `<title> <type> decision` — translate the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`) and the word `decision`; preserve `<title>` verbatim (sub-provided; may already be in user's language).\n\
-         \x20\x20• Translate `User` / `ASP` / `Evaluator` to natural equivalents (or keep as English labels if idiomatic).\n\
-         \x20\x20• Translate surrounding text: `added to the pending-decisions queue`, `You currently have N pending decisions`, `reply \"decision list\" to view and pick which to handle`.\n\
-         \x20\x20• No mixed-language content.\n\n\
+         [Localization rules] — **translate every English word to the user's language**, including quoted user-facing keywords. Only these are kept verbatim:\n\
+         \x20\x20• Hex jobIds (`0x...`) and numeric agent IDs (the digits after `Agent #`).\n\
+         \x20\x20• The sub-provided `<title>` field (may already be in user's language).\n\
+         Everything else — `Decision`, the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`), the role token (`User` / `ASP` / `Evaluator`), surrounding prose, AND quoted user-facing keywords like `\"decision list\"` — gets translated to a natural localized form (skill routing accepts both English and translated keywords). No mixed-language content.\n\n\
          **Step 2 — Call `xmtp_dispatch_user` with the localized content from Step 1**:\n\
          \x20\x20tool: xmtp_dispatch_user\n\
          \x20\x20arguments:\n\
