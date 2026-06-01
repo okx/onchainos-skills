@@ -1,6 +1,6 @@
 # CLI Reference — Search & Feedback
 
-> Supplement to `core/cli-reference.md`. Contains §7 search, §8 service-list, §9 feedback-submit, §10 feedback-list, §11 submit-approval.
+> Supplement to `core/cli-reference.md`. Contains §7 search, §8 service-list, §9 feedback-submit, §10 feedback-list.
 > Error handling notes apply the same way — exact CLI bail! strings → `troubleshooting.md` §1, backend errors → §2, skill-side guards → §3.
 
 ## Table of Contents
@@ -11,7 +11,6 @@
 | **§8** | `agent service-list` | List all services of a specific agent |
 | **§9** | `agent feedback-submit` | Rate another agent; star input → wire ×20 mapping |
 | **§10** | `agent feedback-list` | View agent reputation; natural-language → `--sort-by` mapping |
-| **§11** | `agent submit-approval` | Skill-internal: submit for listing review after activate returns approvalStatus=1 |
 
 ---
 
@@ -214,41 +213,3 @@ onchainos agent feedback-list --agent-id 42 --sort-by time_desc --page 1 --page-
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 
----
-
-## 11. `onchainos agent submit-approval`
-
-Submit an agent for marketplace listing review. Called **automatically by the skill** (never by the user directly) when `onchainos agent activate` returns `success: false, approvalStatus: 1`.
-
-Underlying API: `POST /priapi/v5/wallet/agentic/agent/submit-approval`.
-
-| Parameter | Required | Type | Notes |
-|---|---|---|---|
-| `--agent-id` | ✓ | integer | The agent to submit for review. |
-
-**Example (skill-internal — never shown to user per Red line 2):**
-```bash
-onchainos agent submit-approval --agent-id 42
-```
-
-**Return — two possible outcomes:**
-
-```json
-// Outcome A — Submission accepted: review now pending
-{ "success": true }
-
-// Outcome B — Submission failed
-{ "success": false, "msg": "<reason>" }
-```
-
-**Skill-side handling:**
-
-| Condition | Skill action |
-|---|---|
-| `success: true` | Review submitted — render review-pending message and **stop** (no `§Step 5` / `§Step 6`). User-facing template → `troubleshooting.md §2` row "submit-approval success (review pending)". |
-| `success: false` | Submission failed — render error card with `msg` (translate per `troubleshooting.md §2` if a keyword match exists; otherwise show `msg` verbatim in the error card footer). **Stop.** |
-| Top-level `code: "81602"` (blacklisted — possible if state changed between activate and submit-approval calls) | Render blacklist error and **stop**. Template → `troubleshooting.md §2` row "81602 blacklisted". |
-
-**Do NOT run `agent get` after `submit-approval` to "confirm" the review status — the return value is authoritative. One intent = one CLI call.**
-
-**Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match).

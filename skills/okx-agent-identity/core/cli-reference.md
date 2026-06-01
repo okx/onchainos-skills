@@ -144,51 +144,14 @@ onchainos agent activate --agent-id 42
 
 | Field | Type | Description |
 |---|---|---|
-| `success` | boolean | `true` = 上架成功；`false` = 上架未生效，需看 `approvalStatus` |
-| `approvalStatus` | integer \| null | 审核状态：`1` 未提交审核 / `2` 审核中 / `5` 审核拒绝；`success=true` 时为 `null` |
-| `rejectReason` | string \| null | 拒绝原因；仅 `approvalStatus=5` 时非空 |
+| `success` | boolean | `true` = 上架成功；`false` = 上架失败 |
 
-**Error response — Agent blacklisted:**
-
-| Field | Type | Description |
-|---|---|---|
-| `code` | string | `"81602"` |
-| `msg` | string | `"Agent is blocked"` |
-| `data` | null | — |
-
-**Four possible outcomes:**
-
-```json
-// Outcome A — Listed immediately
-{ "success": true, "approvalStatus": null, "rejectReason": null }
-
-// Outcome B — Review required, not yet submitted
-// → Skill MUST call onchainos agent submit-approval --agent-id <id>
-{ "success": false, "approvalStatus": 1, "rejectReason": null }
-
-// Outcome C — Already under review
-{ "success": false, "approvalStatus": 2, "rejectReason": null }
-
-// Outcome D — Review rejected
-{ "success": false, "approvalStatus": 5, "rejectReason": "内容不符合上架规范" }
-```
-
-**Error response — Agent blacklisted (code 81602):**
-```json
-{ "code": "81602", "msg": "Agent is blocked", "data": null }
-```
-
-**Skill-side handling (skill reads `success` + `approvalStatus` + top-level `code`, NOT just HTTP status):**
+**Skill-side handling:**
 
 | Condition | Skill action |
 |---|---|
 | `success: true` | ✅ Published — render success line + proceed to `SKILL.md §Operation Flow Step 5` → `§Step 6` |
-| `success: false`, `approvalStatus: 1` | Call `onchainos agent submit-approval --agent-id <id>` → see §11 |
-| `success: false`, `approvalStatus: 2` | Under review — render review-pending message and **stop** (no Step 5/6) |
-| `success: false`, `approvalStatus: 5` | Rejected — render rejection card with `rejectReason` and **stop** (no Step 5/6) |
-| Top-level `code: "81602"` | Agent blacklisted — render blacklist error and **stop** |
-
-See `troubleshooting.md §2` for the user-facing message templates for outcomes C, D, and code 81602. Outcome B branches to §11 below.
+| `success: false` | Render error card per `troubleshooting.md §2` and **stop** |
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 

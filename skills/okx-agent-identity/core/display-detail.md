@@ -23,7 +23,6 @@ Chinese variant:
 | 名字 | DeFi Analyzer |
 | 角色 | 服务提供商 |
 | 状态 | 已上架 |
-| 审核状态 | 已上架，可被任务系统推荐 |
 | 地址 | 0xabc…1234 |
 | 描述 | 链上数据分析与收益模拟。 |
 | 头像 | <url> |
@@ -43,7 +42,6 @@ English variant:
 | Name | DeFi Analyzer |
 | Role | Agent Service Provider (ASP) |
 | Status | active |
-| Approval status | Listed — eligible for task recommendations |
 | Address | 0xabc…1234 |
 | Description | On-chain data analysis and yield simulation. |
 | Profile photo | <url> |
@@ -61,13 +59,12 @@ Rules:
 - Pick ONE variant based on user language — do not render bilingual `Agent Service Provider (服务提供商)` or `active (已上架)`.
 - Render `Role` using the user-language label: `用户 / 服务提供商 / 仲裁者` ↔ `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render the raw ERC-8004 enum (`requester / provider / evaluator`) or legacy CN nouns (`买家 / 卖家 / 服务方 / 验证者`).
 - Render `Status` using the user-language label: `已上架 / 已下架` ↔ `active / inactive`.
-- `Approval status` row: render `approvalDisplayStatus` per `core/ux-lexicon.md §ApprovalDisplayStatus` — never expose the raw integer. Follow  for both the row label (`审核状态` / `Approval status`) and the value text. When `approvalRemark` is non-empty, append it as a parenthetical in the user's language. This field is independent of `status` (on-chain publish state); both rows always appear in the card when the field is present.
 - Short-form address: `0x`first 4`…`last 4 hex chars. Show the full address only when the user asks.
 - **⛔ `服务` / `Services` rows are provider-only.** `requester` 和 `evaluator` 的角色定义里没有 service —— 渲染他们的详情卡时**必须把所有 `服务` / `Services` 行整行省略**（不要写 `服务 | 无` / `Services | none` / `服务 | —` 之类的占位，**直接删除整行不输出**）。即使后端 `services` 字段返回了 `[]` / `null` / 甚至意外塞了一条数据，**只对 `role == provider` 的 agent 渲染 Service 行**。这条规则同时适用于 `agent get --agent-ids <id>` 的详情卡、`create` / `update` 后的详情卡、以及 §3 Create variant / Update Diff variant —— 见 §3 顶部的对应规则。/ For `requester` and `evaluator` detail cards, **omit every `服务` / `Services` row entirely** — no `Services | none` / `Services | —` / `Services | (empty)` placeholders, just drop the rows. This holds even when the backend returns `services: []` or `services: null` (or, by anomaly, a non-empty array for a non-provider role): render Service rows **only when `role == provider`**. Same constraint applies to the §3 Create / Update Diff variants.
 - Services — one row per service, numbered `[N]`, single-line format **(provider only — see the rule above; on requester / evaluator skip the rows entirely)**. The **name value** (what the user typed, e.g. `TVL Query`) stays verbatim; the following descriptor uses user-language words: Chinese `名称 — 类型, 价格, 接口地址`-style reading order, English `Name — Type, Fee, Endpoint`-style reading order. In practice the single-line format is `<ServiceName> — <Type>, <Fee or 免费/free>, <Endpoint>`. **A2A fee handling**: if the backend returned a non-empty `fee` for the A2A service, render it as `<N> USDT` exactly like A2MCP; if `fee` is absent / empty, render the short form `免费` / `free` (Type=A2A in the same row already gives readers the off-chain-pricing context, so no parenthetical is needed in this compact row). The Endpoint cell is always dropped for A2A regardless (CLI clears it).
 - `txHash` row present only when the command produced a tx (absent on read-only commands).
 - `Agent ID` row: follow the `#<id>` placeholder rule at the top of this file — omit the row entirely if the id is not available yet (e.g. fresh `create` response), don't render `#` alone.
-- **Single source of data — no chain calls.** All rows above (including Services and Reputation aggregate) come from the **one** `agent get --agent-ids <id>` response. The envelope is double-layer (see `core/cli-reference.md §3`): outer `list[*]` is an accountName wrapper, the actual agent row sits at `list[0].agentList[0]` for a single-id detail lookup. Field set on the agent row: `{ agentId, name, role, status, description, picture, address, services: [...], reputation: { score, count }, approvalDisplayStatus, approvalRemark }`. `approvalDisplayStatus` and `approvalRemark` are read-only backend-returned fields — render per the `Approval status` rule above; never pass the raw integer to the user. Do **NOT** chain `agent service-list --agent-id <id>` to "populate" the Services rows — they're already in the response. Do **NOT** chain `agent feedback-list --agent-id <id>` to "populate" the Reputation row — the aggregate `{ score, count }` is already there; individual review entries belong to a separate, user-triggered request (see §Post-detail prompt below).
+- **Single source of data — no chain calls.** All rows above (including Services and Reputation aggregate) come from the **one** `agent get --agent-ids <id>` response. The envelope is double-layer (see `core/cli-reference.md §3`): outer `list[*]` is an accountName wrapper, the actual agent row sits at `list[0].agentList[0]` for a single-id detail lookup. Field set on the agent row: `{ agentId, name, role, status, description, picture, address, services: [...], reputation: { score, count } }`. Do **NOT** chain `agent service-list --agent-id <id>` to "populate" the Services rows — they're already in the response. Do **NOT** chain `agent feedback-list --agent-id <id>` to "populate" the Reputation row — the aggregate `{ score, count }` is already there; individual review entries belong to a separate, user-triggered request (see §Post-detail prompt below).
 
 ### Post-detail prompt (after rendering §2)
 
