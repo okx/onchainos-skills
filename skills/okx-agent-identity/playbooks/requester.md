@@ -64,7 +64,6 @@ Chinese variant (user did NOT volunteer a description — omit 描述 row):
 | 名字 | Alice |
 | 头像 | 默认 |
 | 预计费用 | **0 USDT**（创建/修改/上下架均无手续费，由 OKX 承担） |
-| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；区块链上的记录永久保留 |
 
 > 确认无误回复 "执行" 即可。
 
@@ -77,7 +76,6 @@ Chinese variant (user volunteered a description via one-shot capture — include
 | 描述 | 做 DeFi 研究，经常购买数据服务 |
 | 头像 | 默认 |
 | 预计费用 | **0 USDT**（创建/修改/上下架均无手续费，由 OKX 承担） |
-| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；区块链上的记录永久保留 |
 
 > 确认无误回复 "执行" 即可。
 
@@ -89,7 +87,6 @@ English variant (user did NOT volunteer a description — omit Description row):
 | Name | Alice |
 | Profile photo | default |
 | Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
-| Reversible? | Yes — say "deactivate #N" anytime; your record on the blockchain is permanently preserved |
 
 > Reply "execute" to run it.
 
@@ -102,7 +99,6 @@ English variant (user volunteered a description via one-shot capture — include
 | Description | Independent DeFi researcher, frequently purchases data services. |
 | Profile photo | default |
 | Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
-| Reversible? | Yes — say "deactivate #N" anytime; your record on the blockchain is permanently preserved |
 
 > Reply "execute" to run it.
 

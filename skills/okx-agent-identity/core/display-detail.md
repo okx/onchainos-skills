@@ -217,15 +217,13 @@ Rules:
 - **Do NOT show the bash command in this card.** If the user asks "把命令给我看", render it as a separate code block afterward; otherwise omit.
 - **Maintainer note (wholesale `--service` replacement, internal — do NOT surface to user):** the `--service` flag wire-level **replaces the full services list**, not a per-field patch. When only one sub-field of one service changes (e.g. only `Service [1] Fee`), the skill MUST construct the new `--service` JSON by **starting from the current full services list** (from the mandatory `agent get` pre-step) and applying the diff in memory — then send the **complete** list. Sending only the changed entry would silently delete every other service. This is a wire-level concern; do not mention `--service` in the user-visible card footer (Red line 2).
 - End every diff card with exactly one line: `确认后回复 "执行" 即可。` (English variant: `Reply "execute" to run.`). Do NOT use any verb like "下发" / "dispatch" / "send" in this footer — the SKILL.md "no narration between confirmation and result" rule for why.
-- **Cost & reversibility rows (mandatory).** Every Create-variant card AND Update Diff card MUST include two final rows (rendered immediately above the `确认后回复 "执行" 即可。` line) explaining what the user pays and whether they can undo. Phrasings (substitute the role / action wording per context — these are templates, not literal):
+- **Cost row (mandatory).** Every Create-variant card AND Update Diff card MUST include a final row (rendered immediately above the `确认后回复 "执行" 即可。` line) explaining what the user pays. Phrasings (substitute the role / action wording per context — these are templates, not literal):
   - Create variant (2 cols):
     - 中文: `| 预计费用 | **0 USDT**（创建 / 修改 / 上下架均无手续费，由 OKX 承担；服务费用由用户在调用时支付，100% 归你） |`
     - 英文: `| Estimated cost | **0 USDT** (creating / editing / activating / deactivating costs no transaction fees — OKX covers them; service fees are paid by User Agents per call and go 100% to you) |`
-    - 中文: `| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；区块链上的记录永久保留，不会丢失 |`
-    - 英文: `| Reversible? | Yes — say "deactivate #N" anytime; your record on the blockchain is permanently preserved and your history stays intact |`
-  - Update variant (3 cols — these two rows use only 1 cell that spans across, so render as plain text below the table instead of as table rows):
-    - 中文: `> 预计费用: **0 USDT**（修改字段无手续费，由 OKX 承担）。可以撤回: 想退回原值再更新一次即可；操作随时可逆。`
-    - 英文: `> Estimated cost: **0 USDT** (editing fields costs no transaction fees — OKX covers them). Reversible: re-run update to revert to the old value at any time.`
+  - Update variant (3 cols — this row uses only 1 cell that spans across, so render as plain text below the table instead of as a table row):
+    - 中文: `> 预计费用: **0 USDT**（修改字段无手续费，由 OKX 承担）。`
+    - 英文: `> Estimated cost: **0 USDT** (editing fields costs no transaction fees — OKX covers them).`
 - Source of truth for these costs: `core/cost-disclosure.md`. ⛔ **Never fabricate other cost items** (no "平台服务费", no "Agent 调度费", no "审核费").
 
 ---

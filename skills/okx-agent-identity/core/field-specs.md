@@ -43,8 +43,13 @@ The ASP's `--service` is a JSON array whose elements have the fields below. **Ne
 
 - **用途** / Purpose: 详细说明能力和使用场景，影响搜索匹配。 / Describe capability and use case; affects search matching.
 - **可见范围** / Visibility: 上链（写入区块链）公开。 / On-chain public.
-- **请注意** / Please note: 非空；建议 1–2 句；最多 500 个文字。 / Non-empty; 1–2 sentences recommended; up to 500 characters.
-- **示例** / Example: `通过 MCP（标准调用接口）按链查询协议 TVL，支持 Ethereum / BSC / XLayer。` / `Query protocol TVL by chain via MCP (standard call protocol), covering Ethereum / BSC / XLayer.`
+- **请注意** / Please note: 3 段结构，400 字以内：① 摘要（50 字，是什么 + 给谁用）② 核心能力（150 字以内，3–5 点，顿号或分号分隔）③ 示例 Prompt（1–3 条，每条 80 字以内）。 / 3-part structure, ≤400 chars: ① summary (≤50 chars, what + who) ② capabilities (≤150 chars, 3–5 points, separated by commas or semicolons) ③ example prompts (1–3 items, ≤80 chars each).
+- **示例** / Example:
+  ```
+  为 DeFi 研究者提供实时链上 TVL 查询服务。
+  支持按链查询、协议对比、历史趋势、多链汇总、数据导出。
+  「查一下 Aave 在 Ethereum 上的 TVL」「对比 Curve 和 Uniswap 近 7 天 TVL 变化」
+  ```
 
 ### servicetype
 
@@ -59,10 +64,11 @@ The ASP's `--service` is a JSON array whose elements have the fields below. **Ne
 
 ### fee
 
-- **用途** / Purpose: 每次调用的单价。 / Price per call.
+- **用途** / Purpose: 每次调用的单价（API 接口）或议价参考（agent 互调）。 / Price per call (API service) or reference price for negotiation (agent-to-agent).
 - **可见范围** / Visibility: 上链（写入区块链）公开。 / On-chain public.
-- **请注意** / Please note: USDT 数字（最多六位小数，如 `1.234567` / `10` / `0.5`）；`0` 表示免费引流（**API 接口** 上填 `0` 等于承诺后续不再按量收费）。**API 接口必填，agent 互调选填** —— agent 互调跳过时，skill 端会按 `免费` / `free` 渲染。 / USDT numeric (up to 6 decimal places, e.g. `1.234567` / `10` / `0.5`); `0` means free lead-gen (on **API service**, `0` means you've committed to no per-call charges going forward). **API service requires it; agent-to-agent is optional** — when the user skips on agent-to-agent, the skill renders the price as `免费` / `free`. <br><br>**Maintainer-only note (not user-visible):** the CLI wire-level enums are `A2MCP` / `A2A` (case-insensitive). When `A2A` skips fee, the wire payload still carries `"fee": ""` because `cli/src/commands/agent_commerce/identity/models.rs:21` declares `fee: String` with no `skip_serializing_if`; whether the backend distinguishes empty-string from absent-key is governed by the product spec, not anything in this repo. Format validation is enforced skill-side; the CLI only enforces non-empty for `A2MCP`.
-- **示例** / Example: `1.22` / `10` / `0.5` / `0` / （agent 互调选填留空）/ (empty for agent-to-agent optional skip).
+- **支持币种** / Supported currencies: USDT / USDG。
+- **请注意** / Please note: 格式为「数字 + 空格 + 币种」，数字最多六位小数，如 `10 USDT` / `50 USDG` / `0.5 USDT`；`0 USDT` 表示免费引流（**API 接口** 上填 `0` 等于承诺后续不再按量收费）。**API 接口必填，agent 互调选填** —— agent 互调跳过时，skill 端会按 `免费` / `free` 渲染。Skill 端解析「数字」写入 wire payload（`fee` 字段），「币种」用于展示。 / Format: number + space + currency, up to 6 decimal places, e.g. `10 USDT` / `50 USDG` / `0.5 USDT`; `0 USDT` means free lead-gen. **API service required; agent-to-agent optional** — skipped agent-to-agent renders as `免费` / `free`. Skill parses the numeric part into the wire `fee` field; currency is used for display only. <br><br>**Maintainer-only note (not user-visible):** the CLI wire-level enums are `A2MCP` / `A2A` (case-insensitive). When `A2A` skips fee, the wire payload still carries `"fee": ""` because `cli/src/commands/agent_commerce/identity/models.rs:21` declares `fee: String` with no `skip_serializing_if`; whether the backend distinguishes empty-string from absent-key is governed by the product spec, not anything in this repo. Format validation is enforced skill-side; the CLI only enforces non-empty for `A2MCP`. Skill-side validation pattern (internal, do NOT show user): `^\d+(\.\d{1,6})? (USDT|USDG)$` (case-insensitive); extract numeric part before sending to CLI.
+- **示例** / Example: `10 USDT` / `50 USDG` / `0.5 USDT` / `0 USDT` / （agent 互调选填留空）/ (empty for agent-to-agent optional skip).
 
 ### endpoint (API 接口 / API service only)
 

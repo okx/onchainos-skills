@@ -238,11 +238,11 @@ After `create` / `update` / `activate` / `deactivate` / `feedback-submit`, rende
 
 Good (Chinese user):
 
-> 服务提供商身份注册完成，默认已上架可以接单。想看看市场上同类服务提供商长什么样跟我说"找做 ... 的服务提供商"我帮你搜；否则就等用户来找你。
+> 身份已创建，还未对外可见。说"上架 #N"立即发起上架申请，或先说"找做 ... 的服务提供商"看看市场行情再决定。
 
 Good (English user):
 
-> ASP identity is live and active by default. Say "find ASPs doing X" if you want me to scan the marketplace; otherwise wait for matching tasks.
+> ASP identity registered — not yet visible to others. Say "activate #N" to publish now, or "find ASPs doing X" to check the market first.
 
 Bad:
 

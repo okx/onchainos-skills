@@ -143,8 +143,8 @@ Render **one visible line** using the template below — **verbatim except for t
 
 Pick the variant matching the user's language. Render **one line, declarative, no question mark, no pre-announcement of the chat handoff** (the chat flow is a silent no-op outside an OpenClaw runtime; pre-announcing would mislead users in Claude Code / Claude Desktop):
 
-- Chinese: `服务提供商身份 #<id> 注册完成，默认已上架可以接单。想看看市场上同类服务提供商长什么样、或确认你自己的曝光，跟我说"找做 ... 的服务提供商"我帮你搜；否则就等用户来找你。`
-- English: `ASP identity #<id> is live and active by default. Say "find ASPs doing X" if you want me to scan the marketplace for similar agents or confirm your exposure; otherwise just wait for matching tasks.`
+- Chinese: `#<id> 身份已创建，还未对外可见。说"上架 #<id>"立即发起上架申请，或先说"找做 ... 的服务提供商"看看市场行情再决定。`
+- English: `ASP identity #<id> registered — not yet visible to others. Say "activate #<id>" to publish now, or "find ASPs doing X" to check the market first.`
 
 **`#<id>` substitution rule** (per `core/display-formats.md` top, `#<id>` placeholder rule, **with provider-specific carve-out**):
 
@@ -154,10 +154,10 @@ Pick the variant matching the user's language. Render **one line, declarative, n
   3. (Future) a follow-up `agent get` in a later turn — irrelevant for this immediate response.
 - ⚠️ **Provider-specific danger zone — DO NOT pick any id directly from the pre-check list as `#<id>`.** Pre-check reflects state *before* this `create`, so its rows are all older providers, never the newly minted one. Source 2 above is **diff-based** (post-create envelope MINUS pre-check snapshot), not "borrow from pre-check"; it picks the id that's in the post-create envelope but **not** in the pre-check snapshot. Conflating the two is a real failure mode — the agent that does "I see provider #88 in pre-check, must be the new one" instead of running the diff will surface an older provider's id as if it were freshly created, which is misleading.
 - If **both** source 1 (CLI direct id) and source 2 (envelope diff) miss — i.e. CLI returned `txHash` only **AND** the post-create `agentList` segment is also absent (WS + HTTP both failed, per `core/cli-create.md §1`) **OR** the diff yielded no new candidate under the current wallet — **omit the `#<id> ` substring entirely**: do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, do NOT borrow from the pre-check list. Fallback lines:
-  - Chinese: `服务提供商身份注册完成，默认已上架可以接单。想看看市场上同类服务提供商长什么样跟我说"找做 ... 的服务提供商"我帮你搜；否则就等用户来找你。`
-  - English: `ASP identity is live and active by default. Say "find ASPs doing X" if you want me to scan the marketplace; otherwise wait for matching tasks.`
+  - Chinese: `身份已创建，还未对外可见。说"上架 #N"立即发起上架申请，或先说"找做 ... 的服务提供商"看看市场行情再决定。`
+  - English: `ASP identity registered — not yet visible to others. Say "activate #N" to publish now, or "find ASPs doing X" to check the market first.`
 
-**Create returns active by default** / **Create 默认返回 active** — no need to follow up with `agent activate`. `activate` is only for users who previously ran `deactivate` and now want to re-publish.
+**Create does NOT auto-list** — user must explicitly run `agent activate` to publish the agent. Only after a successful activate can the agent accept tasks.
 
 Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes).
 
@@ -175,10 +175,10 @@ Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
 - Uses the raw English `provider` and the `agent search` CLI literal in Chinese user-visible text — violates `SKILL.md §UX Output Red Lines Red lines 1/2/4` and `core/ux-lexicon.md` (Chinese must localize role term to `服务提供商`, never paste CLI command for user to run).
 
 ✅ Correct (with id):
-> 服务提供商身份 #961 注册完成，默认已上架可以接单。想看看市场上同类服务提供商长什么样、或确认你自己的曝光，跟我说"找做 ... 的服务提供商"我帮你搜；否则就等用户来找你。
+> #961 身份已创建，还未对外可见。说"上架 #961"立即发起上架申请，或先说"找做 ... 的服务提供商"看看市场行情再决定。
 
 ✅ Correct (id unknown, txHash-only return):
-> 服务提供商身份注册完成，默认已上架可以接单。想看看市场上同类服务提供商长什么样跟我说"找做 ... 的服务提供商"我帮你搜；否则就等用户来找你。
+> 身份已创建，还未对外可见。说"上架 #N"立即发起上架申请，或先说"找做 ... 的服务提供商"看看市场行情再决定。
 
 ### Agent directive (internal — do NOT render to the user)
 

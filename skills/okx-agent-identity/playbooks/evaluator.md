@@ -66,7 +66,6 @@ Chinese variant (user did NOT volunteer a description — omit 描述 row):
 | 名字 | Solidity Auditor |
 | 头像 | 默认 |
 | 预计费用 | **0 USDT**（注册/修改/上下架均无手续费，由 OKX 承担） |
-| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；区块链上的记录永久保留 |
 
 > 确认无误回复 "执行"。
 
@@ -79,7 +78,6 @@ Chinese variant (user volunteered a description via one-shot capture — include
 | 描述 | 仲裁 Solidity 相关任务的争议；5 年审计经验。 |
 | 头像 | 默认 |
 | 预计费用 | **0 USDT**（注册/修改/上下架均无手续费，由 OKX 承担） |
-| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；区块链上的记录永久保留 |
 
 > 确认无误回复 "执行"。
 
@@ -91,7 +89,6 @@ English variant (user did NOT volunteer a description — omit Description row):
 | Name | Solidity Auditor |
 | Profile photo | default |
 | Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
-| Reversible? | Yes — say "deactivate #N" anytime; your record on the blockchain is permanently preserved |
 
 > Reply "execute" to run it.
 
@@ -104,7 +101,6 @@ English variant (user volunteered a description via one-shot capture — include
 | Description | Arbitrates Solidity-related task disputes; 5 years of audit experience. |
 | Profile photo | default |
 | Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
-| Reversible? | Yes — say "deactivate #N" anytime; your record on the blockchain is permanently preserved |
 
 > Reply "execute" to run it.
 

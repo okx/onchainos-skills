@@ -50,14 +50,17 @@ This framework is the single source of truth for service-type localization; all 
 
 | 内部 (`status` int) | 对中文用户说 | 对英文用户说 |
 |---|---|---|
-| `0` | 已下架 | inactive |
 | `1` | 已上架（可接单） | active |
-| `2` | 审核中（一般 24h 内出结果） | under review (typically resolved within 24h) |
-| `3` | 审核未通过 | review failed |
+| `2` | 未上架 | not listed |
+| `3` | 该 Agent 当前不可用 | This agent is currently unavailable |
+| `4` | 该 Agent 当前不可用 | This agent is currently unavailable |
+| `5` | 该 Agent 当前不可用 | This agent is currently unavailable |
 
-⛔ Never render `status=0` / `status: 1` / `status=2` / raw integer status fields to the user. Always translate.
+⛔ Never render the raw integer. Always translate. Values `3` / `4` / `5` all render as the same "unavailable" copy — do NOT distinguish the reason (security / risk-control / manual) to the user.
 
 ## ApprovalDisplayStatus
+
+**Only render `approvalDisplayStatus` when `status == 2` (未上架).** If `status` is any other value, skip the approval status row entirely.
 
 Render in the user's language — the table below defines canonical values:
 
