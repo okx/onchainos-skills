@@ -273,7 +273,7 @@ pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String 
          After expiry, the ASP can auto-claim the funds.\n\
          Please decide soon:\n\
          A. Approve the deliverable\n\
-         B. Reject the deliverable — please state your reason"
+         B. Reject the deliverable — please state your reason (if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator)"
     )
 }
 

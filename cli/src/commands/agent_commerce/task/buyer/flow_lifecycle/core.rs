@@ -282,7 +282,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \n\
      Choose:\n\
      A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
-     B. Reject the deliverable (please state your reason) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
+     B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
      ```\n\n\
      ▸ deliverableType=text:\n\
      ```\n\
@@ -296,7 +296,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \n\
      Choose:\n\
      A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
-     B. Reject the deliverable (please state your reason) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
+     B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
      ```\n\n\
      **Step 3b — Push to user via the 5-substep protocol** (use the composed `--user-content` from Step 3a; read ALL 5 sub-steps before running any command):\n\n\
      {l10n_prompt_bold}\n\n\

@@ -382,7 +382,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
                      \x20\x20• **`approve_review`** — user accepts the deliverable (typical intents: A / 通过 / 同意 / 满意 / 接受 / 验收 / approve / accept / agree / OK / 行 / 可以 — anything meaning satisfaction with the deliverable).\n\
-                     \x20\x20• **`reject_review`** — user rejects and wants revisions/refund (typical intents: B / 拒绝 / 不通过 / 不满意 / 不接受 / reject / refuse / 不行 / 不达标 — anything meaning dissatisfaction; extract the reason if the user provided one after `理由` / `reason` / `因为`).\n\n\
+                     \x20\x20• **`reject_review`** — user rejects and wants revisions/refund (typical intents: B / 拒绝 / 不通过 / 不满意 / 不接受 / reject / refuse / 不行 / 不达标 — anything meaning dissatisfaction; extract the reason if the user provided one after `理由` / `reason` / `因为`; ⚠️ the reason is critical — it will be auto-submitted as evidence if the ASP files a dispute).\n\n\
                      If the user's reply clearly maps to one of these → call:\n\
                      ```bash\n\
                      onchainos agent next-action --jobid {job_id} --event <approve_review|reject_review> --role buyer --agentId {agent_id}\n\
