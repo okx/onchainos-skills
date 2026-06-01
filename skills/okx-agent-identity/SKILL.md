@@ -132,7 +132,7 @@ Success → detail card (`core/display-detail.md §2`) + one next-step suggestio
 ### Step 5: Post-success Flow Continuation
 | Last successful CLI | Next |
 |---|---|
-| `agent create --role evaluator` | Load `okx-agent-task/references/evaluator-staking.md §2` in same response. If staking flow ends without comm-init, fallback to Step 6. |
+| `agent create --role evaluator` | Load `okx-agent-task/references/evaluator-staking.md §2` in same response. If staking flow ends without comm-init, fallback to Step 6. If the user has explicitly declined staking earlier in the conversation, skip the staking handoff but still proceed to Step 6 (local agent list changed → OpenClaw cache still needs sync). |
 | `agent create --role requester / provider` | → Step 6 |
 | `agent update / activate / deactivate` | → Step 6 (agent list changed) |
 | Passive Onboarding (`intent=need-requester`) | Hand back to `okx-agent-task` with one line. Do NOT proceed to Step 6. |
@@ -228,4 +228,3 @@ After rendering the result card, append exactly **one** declarative suggestion l
 - `core/choice-prompts.md` — numbered options + one-shot capture
 - `core/cost-disclosure.md` — gas policy and forbidden phrasings
 - `troubleshooting.md` — CLI errors → user-friendly messages
-- `cross-skill-workflows.md` — Workflows A–D with data-handoff contracts
