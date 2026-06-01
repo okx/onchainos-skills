@@ -42,5 +42,9 @@ pub async fn handle_close(client: &mut TaskApiClient, job_id: &str, explicit_age
 
     println!("✓ Task closed; status → close.");
     println!("  txHash: {tx_hash}");
+
+    if let Err(e) = super::negotiate::cleanup(job_id) {
+        eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}");
+    }
     Ok(())
 }

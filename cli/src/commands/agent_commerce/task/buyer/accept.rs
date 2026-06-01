@@ -491,6 +491,9 @@ pub async fn handle_direct_accept(
     println!("  txHash: {tx_hash}");
     println!("  Wait for the on-chain confirmation before proceeding.");
 
+    if let Err(e) = negotiate::cleanup(job_id) {
+        eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}");
+    }
     Ok(())
 }
 
@@ -775,6 +778,10 @@ pub async fn handle_task_402_pay(
         result["deliverableSavedPath"] = serde_json::Value::String(p);
     }
     crate::output::success(result);
+
+    if let Err(e) = negotiate::cleanup(job_id) {
+        eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}");
+    }
     Ok(())
 }
 

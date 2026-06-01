@@ -1002,9 +1002,26 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
 
-            // designated-provider is only written by --provider (line 748) or create.rs;
-            // no longer backfilled from the API `designatedProvider` field — that backend field is an on-chain address,
-            // semantically different from agentId, and may return non-zero even when no provider is specified, causing misjudgment.
+            // ── job_created API fallback: when --provider is absent and no local file exists,
+            // query the task detail API for providerAgentId and persist it.
+            // This covers the case where draft-publish wrote the file under a different jobId path.
+            // Safe at job_created time because no provider switch has occurred yet;
+            // subsequent switches overwrite the file via set-provider.
+            if provider.is_none()
+                && matches!(role.as_str(), "buyer" | "client")
+                && event == "job_created"
+                && !task::buyer::negotiate::has_designated_provider(&job_id)
+            {
+                let mut fb_client = task::common::network::task_api_client::TaskApiClient::new();
+                if let Ok(resp) = fb_client.get_with_identity(&fb_client.task_path(&job_id), &agent_id).await {
+                    if let Some(pid) = resp["providerAgentId"].as_str().filter(|s| !s.is_empty()) {
+                        eprintln!("[next-action] job_created fallback: API providerAgentId={pid}, persisting");
+                        if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
+                            eprintln!("[next-action] save_designated_provider (fallback) failed: {e}");
+                        }
+                    }
+                }
+            }
 
             // ── review gate: auto-mark buyer's review gate ──────────────────────
             if matches!(role.as_str(), "buyer" | "client") {
