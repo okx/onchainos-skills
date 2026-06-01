@@ -287,13 +287,13 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
     "[System Notification] wakeup_notify (task wake-up after network / machine restart)\n\
      [Role] User (User Agent)\n\n\
      ⚠️ This is a wake-up heartbeat event, **not** a business-driven event. The real business status lives in envelope.message.jobStatus.\n\
-     You should not run a playbook with `wakeup_notify` as --jobStatus -- this playbook is only a guide.\n\n\
+     You should not run a playbook with `wakeup_notify` as --event -- this playbook is only a guide.\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 1 -- Read the real status from the envelope**:\n\
      From the wakeup_notify envelope that triggered this turn, read `message.jobStatus` (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed` and other real status strings).\n\n\
      **Step 2 -- Re-call next-action with the real status to fetch the current playbook**:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --event <value of message.jobStatus> --jobStatus <value of message.jobStatus> --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --jobid {job_id} --event <value of message.jobStatus> --role buyer --agentId {agent_id}\n\
      ```\n\
      Follow the returned playbook for what to do at the current status.\n\n\
      **Step 3 -- Idempotency self-check (avoid re-prompting the user)**:\n\

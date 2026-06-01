@@ -13,7 +13,7 @@ After receiving a `source:"system"` envelope, **immediately** call:
 ```bash
 onchainos agent next-action \
   --jobid <message.jobId> \
-  --jobStatus <message.event>       # required; all evaluator playbooks dispatch on event
+  --event <message.event> \
   --agentId <top-level agentId> \
   --role evaluator
 ```

@@ -1,6 +1,6 @@
 //! Provider-side task flow driver.
 //!
-//! Based on the current system notification type received (jobStatus), outputs the prompt
+//! Based on the current system notification type received (event), outputs the prompt
 //! for the next action to take. The goal: consolidate the Scene steps scattered across
 //! provider.md into code so the agent can simply run
 //! `exec onchainos agent next-action ...` to fetch the prompt and execute it directly,
@@ -20,7 +20,7 @@ use crate::commands::agent_commerce::task::common::state_machine::Status;
 /// corresponding to the status.
 pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     let next_action = |evt: &str| {
-        format!("**Next step (mandatory)** → `onchainos agent next-action --jobid {job_id} --event {evt} --jobStatus {evt} --role provider --agentId <agentId>` to fetch the full script for the current status, and **follow the script strictly**.\n  ⚠️ **Do NOT** infer CLI commands directly from the status name (apply / deliver / dispute raise / agree-refund / dispute upload, etc.) — the script typically prefixes steps such as `xmtp_prompt_user` / `xmtp_send` / `pending-decisions-v2 request`; skipping them causes incidents (this has happened before).")
+        format!("**Next step (mandatory)** → `onchainos agent next-action --jobid {job_id} --event {evt} --role provider --agentId <agentId>` to fetch the full script for the current status, and **follow the script strictly**.\n  ⚠️ **Do NOT** infer CLI commands directly from the status name (apply / deliver / dispute raise / agree-refund / dispute upload, etc.) — the script typically prefixes steps such as `xmtp_prompt_user` / `xmtp_send` / `pending-decisions-v2 request`; skipping them causes incidents (this has happened before).")
     };
     match status {
         Status::Created => vec![next_action("job_created")],
@@ -65,12 +65,12 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     }
 }
 
-/// Generate the structured next-action prompt for the ASP based on jobStatus.
+/// Generate the structured next-action prompt for the ASP based on event.
 ///
-/// `job_status` accepts either an event name (provider_applied / job_accepted / ...)
+/// `event_str` accepts either an event name (provider_applied / job_accepted / ...)
 /// or a status name (created / accepted / ...) — internally normalized via state_machine
 /// into an `Event`; unrecognized strings fall through as `Event::Other(s)`.
-pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>) -> String {
+pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol
@@ -199,7 +199,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
          load context first with `onchainos agent common context {job_id} --role provider --agent-id {agent_id}`.\n\n"
     );
 
-    let event = parse_status_or_event(job_status);
+    let event = parse_status_or_event(event_str);
     let body = match event {
         // ─── Scene 3: Apply has been recorded on-chain (escrow path; the User Agent issues the payment) ──
         Event::ProviderApplied => format!(
@@ -290,8 +290,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              - **Just observe silently**; do NOT call xmtp_send / xmtp_file_upload / xmtp_dispatch_user / xmtp_prompt_user\n\
              - **End this turn directly**; wait for the User Agent to complete/reject and trigger the next event\n\n\
              [Follow-up events]\n\
-             - Received `job_completed` (review passed) → `onchainos agent next-action --jobid {job_id} --event job_completed --jobStatus job_completed --role provider --agentId {agent_id}`\n\
-             - Received `job_rejected`  (User Agent rejected) → `onchainos agent next-action --jobid {job_id} --event job_rejected --jobStatus job_rejected --role provider --agentId {agent_id}`\n"
+             - Received `job_completed` (review passed) → `onchainos agent next-action --jobid {job_id} --event job_completed --role provider --agentId {agent_id}`\n\
+             - Received `job_rejected`  (User Agent rejected) → `onchainos agent next-action --jobid {job_id} --event job_rejected --role provider --agentId {agent_id}`\n"
         ),
 
         // ─── Scene 6: User Agent rejected the deliverable ─────────────────────────────────
@@ -574,7 +574,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x202) `[intent:ack]` or `[intent:counter]` (provider → buyer) or `[intent:reject]` (either side rejects)\n\
              \x20\x203) `[intent:confirm]` (buyer → provider, echoing all fields verbatim)\n\
              \x20\x20⚡ `[intent:reject]` is **soft-terminal**: sending it ends THIS round (do not auto-reply / do not chase the other side after sending). **But the negotiation thread is NOT permanently closed**:\n\
-             \x20\x20\x20\x20- If the OTHER side comes back with a NEW `[intent:propose]` (materially different terms — e.g. higher price after you rejected a low one), treat it as **negotiation reopened**: call `next-action --event job_created --jobStatus job_created` again, re-evaluate the new fields, and proceed with the normal Propose → Ack → Confirm flow (ACK if acceptable, COUNTER if still off, [intent:reject] again only if still unacceptable).\n\
+             \x20\x20\x20\x20- If the OTHER side comes back with a NEW `[intent:propose]` (materially different terms — e.g. higher price after you rejected a low one), treat it as **negotiation reopened**: call `next-action --event job_created` again, re-evaluate the new fields, and proceed with the normal Propose → Ack → Confirm flow (ACK if acceptable, COUNTER if still off, [intent:reject] again only if still unacceptable).\n\
              \x20\x20\x20\x20- If the other side just sends natural-language follow-up (e.g. \"can you reconsider 0.5 USDT?\") after your reject, you may reply naturally and continue Step 3 first-round negotiation; the prior [intent:reject] does NOT mean ignore them forever.\n\
              \x20\x20\x20\x20- The thread is only **truly dead** when BOTH sides have sent [intent:reject] AND no follow-up arrives, OR when the chain emits `job_closed` / `job_expired`.\n\n\
              apply can only run **after `[intent:confirm]` has been received** (any other inbound does NOT count — including the three questions, the free-form invitation, the User Agent's `agree / accept` natural-language reply, and even the User Agent natural-language `please apply`).\n\n\
@@ -695,7 +695,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              Style sample (natural language; do NOT shoehorn into a template):\n\
              \x20\x20`I can do this; acceptance criteria are fine. 0.1 USDT is well below my registered price of 1 USDT; based on the workload I can do 0.7 USDT, escrowed payment works to avoid disputes. If that sounds good, let's lock in the terms and move forward.`\n\n\
              ⚠️ Counter-offer reference: within service-list unit price × (1 ± 30%) usually goes through; absurd quotes (× 5+) get you swapped out by the User Agent directly.\n\n\
-             🛑🛑🛑 **Anti-pattern — do NOT abandon negotiation after one low offer**: 🔴 real incident — registered price 1 USDT, User Agent's first offer 0.1 USDT → provider sent `[intent:reject]` and walked away → User Agent later counter-offered 0.5 USDT and then 1 USDT but provider's agent thought \"I already rejected, conversation over\" and stayed silent → task stuck. **Correct behavior**: counter with YOUR floor price in natural language, end the turn, wait for the User Agent's next message. If the User Agent's next message has a new price (whether higher / same / lower) — even after you sent natural-language refusal earlier — you MUST call `next-action --event job_created --jobStatus job_created` again and re-evaluate. \"I refused in natural language\" or \"my desired price wasn't met yet\" is NOT a reason to ignore the User Agent's follow-up — only literal `[intent:reject]` from EITHER side terminates negotiation.\n\n\
+             🛑🛑🛑 **Anti-pattern — do NOT abandon negotiation after one low offer**: 🔴 real incident — registered price 1 USDT, User Agent's first offer 0.1 USDT → provider sent `[intent:reject]` and walked away → User Agent later counter-offered 0.5 USDT and then 1 USDT but provider's agent thought \"I already rejected, conversation over\" and stayed silent → task stuck. **Correct behavior**: counter with YOUR floor price in natural language, end the turn, wait for the User Agent's next message. If the User Agent's next message has a new price (whether higher / same / lower) — even after you sent natural-language refusal earlier — you MUST call `next-action --event job_created` again and re-evaluate. \"I refused in natural language\" or \"my desired price wasn't met yet\" is NOT a reason to ignore the User Agent's follow-up — only literal `[intent:reject]` from EITHER side terminates negotiation.\n\n\
              {send_to_peer}\n\
              <natural-language splicing of 1) 2) 3) above as the three-item negotiation stance>\n\n\
              **Step 3.5 — Handling the User Agent's structured [intent:propose] proposal:**\n\n\
@@ -975,13 +975,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
             "[System notification] wakeup_notify (task wake-up after network / machine reboot)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              ⚠️ This is a wake-up heartbeat event, **NOT** a business-driving event. The real business state is in the envelope.message.jobStatus field.\n\
-             You should NOT use `wakeup_notify` as --jobStatus to run the script — this script is just for guidance.\n\n\
+             You should NOT use `wakeup_notify` as --event to run the script — this script is just for guidance.\n\n\
              [Your next action (strict order)]\n\n\
              **Step 1 — Read the real status from the envelope**:\n\
              From the wakeup_notify envelope that triggered this turn, read the `message.jobStatus` field (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed`, etc. — the real status string).\n\n\
              **Step 2 — Use the real status to call next-action and fetch the current script**:\n\
              ```bash\n\
-             onchainos agent next-action --jobid {job_id} --event <value of the message.jobStatus field> --jobStatus <value of the message.jobStatus field> --role provider --agentId {agent_id}\n\
+             onchainos agent next-action --jobid {job_id} --event <value of the message.jobStatus field> --role provider --agentId {agent_id}\n\
              ```\n\
              Follow the returned script for what to do in the current status.\n\n\
              **Step 3 — Idempotency self-check (avoid re-prompting the user)**:\n\
@@ -1023,14 +1023,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
                      \x20\x20• **`agree_refund`** — user accepts the refund and walks away (typical intents: B / 同意退款 / agree refund / 退款 / 算了 / 不争了 / OK refund / let it go).\n\n\
                      If the user's reply clearly maps to one of these → call:\n\
                      ```bash\n\
-                     onchainos agent next-action --jobid {job_id} --event <dispute_raise|agree_refund> --jobStatus <dispute_raise|agree_refund> --role provider --agentId {agent_id}\n\
+                     onchainos agent next-action --jobid {job_id} --event <dispute_raise|agree_refund> --role provider --agentId {agent_id}\n\
                      ```\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--sub-key` and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=file dispute  B=accept refund\".\n"
                 ),
                 "submit_deadline_warn" => format!(
                     "[User decision relay] source_event=`submit_deadline_warn`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means:\n\n\
-                     \x20\x20• **Submit now** — user wants to deliver immediately (typical intents: 立即提交 / 我提交 / submit now / I'll deliver / ready / 现在交). Route: call `onchainos agent next-action --jobid {job_id} --event job_accepted --jobStatus job_accepted --role provider --agentId {agent_id}` and run its Step 2-3 (skip Step 1 apply-accepted notification — user already knows).\n\
+                     \x20\x20• **Submit now** — user wants to deliver immediately (typical intents: 立即提交 / 我提交 / submit now / I'll deliver / ready / 现在交). Route: call `onchainos agent next-action --jobid {job_id} --event job_accepted --role provider --agentId {agent_id}` and run its Step 2-3 (skip Step 1 apply-accepted notification — user already knows).\n\
                      \x20\x20• **Let it timeout** — user lets the deadline pass (typical intents: silence / 算了 / 不交了 / let it timeout / skip / 放弃). Route: end the turn; the chain will fire `submit_expired` and the User Agent auto-refunds.\n\n\
                      If ambiguous: re-ask via `pending-decisions-v2 request` (`--source-event submit_deadline_warn`).\n"
                 ),
@@ -1045,7 +1045,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
                 ),
                 _ => format!(
                     "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n\n\
-                     **Manual routing required** — inspect the scene context (call `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` if needed) and decide semantically which pseudo-event the user's reply maps to. Then call `onchainos agent next-action --jobid {job_id} --event <chosen-pseudo-event> --jobStatus <chosen-pseudo-event> --role provider --agentId {agent_id}`.\n"
+                     **Manual routing required** — inspect the scene context (call `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` if needed) and decide semantically which pseudo-event the user's reply maps to. Then call `onchainos agent next-action --jobid {job_id} --event <chosen-pseudo-event> --role provider --agentId {agent_id}`.\n"
                 ),
             }
         }

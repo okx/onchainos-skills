@@ -65,7 +65,7 @@ pub enum Status {
 }
 
 impl Status {
-    /// String parsing (for the CLI `--jobStatus` flag / event-name parsing); int fields in the spec should go through [`Self::from_int`].
+    /// String parsing (for the CLI `--event` flag / event-name parsing); int fields in the spec should go through [`Self::from_int`].
     pub fn parse(s: &str) -> Self {
         match s {
             "init"                               => Status::Init,
@@ -314,7 +314,7 @@ pub enum Event {
     ///                         paymentMode, visibility, ... } }`
     /// Upon receipt the agent **must not** call next-action with `wakeup_notify`;
     /// instead, read `message.jobStatus` to get the real status, then call next-action again with
-    /// that as `--jobStatus` to resume the script for the current status. See the WakeupNotify arm
+    /// that as `--event` to resume the script for the current status. See the WakeupNotify arm
     /// in flow.rs for details.
     WakeupNotify,
 
@@ -539,7 +539,7 @@ pub fn entry_event(s: &Status) -> Option<Event> {
 
 /// Given a string (which may be either a status or an event), parse it as an event first.
 /// On failure (i.e. Event::Other) fall back to status parsing and run it back through entry_event.
-/// Used as the compatibility entry for `next-action --jobStatus <X>` — historical callers pass either event or status names.
+/// Used as the compatibility entry for `next-action --event <X>` — callers may pass either event or status names.
 pub fn parse_status_or_event(s: &str) -> Event {
     let evt = Event::parse(s);
     if !matches!(evt, Event::Other(_)) {

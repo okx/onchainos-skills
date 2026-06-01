@@ -170,4 +170,4 @@ The response contains `[Current State]` (status string + description) and `[Curr
 
 - Status enum: `cli/src/commands/agent_commerce/task/common/state_machine.rs::Status`
 - Event enum (35 entries): same file, `Event` enum
-- `status_when_event(event)` / `entry_event(status)`: bidirectional mapping functions; the agent does not need to replicate them — just call `agent next-action --event <event> --jobStatus <status_or_event>` and let the CLI route
+- `status_when_event(event)` / `entry_event(status)`: bidirectional mapping functions; the agent does not need to replicate them — just call `agent next-action --event <event>` and let the CLI route

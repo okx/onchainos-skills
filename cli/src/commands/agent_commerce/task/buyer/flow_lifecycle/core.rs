@@ -91,7 +91,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      After complete is settled on-chain, a `job_completed` system event will arrive.\n\
      Upon receiving `job_completed`, you **MUST** call:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --event job_completed --jobStatus job_completed --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --jobid {job_id} --event job_completed --role buyer --agentId {agent_id}\n\
      ```\n\
      Follow the returned playbook (it will guide you to notify the user that the job is complete).\n\
      ❌ **NEVER** ignore the `job_completed` event -- ignoring it = user never learns the job is done.\n\
@@ -158,7 +158,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      \x20\x20content: The provider has sent the deliverable; awaiting on-chain submission confirmation before entering acceptance review.\n\
      ❌ Do NOT include the deliverable body / summary / file path in this notification — the full content is shown in the `job_submitted` review card.\n\n\
      **Step 3 — End this turn**. Wait for the `job_submitted` system event.\n\
-     When `job_submitted` arrives, call `onchainos agent next-action --jobid {job_id} --event job_submitted --jobStatus job_submitted --role buyer --agentId {agent_id}`.\n\
+     When `job_submitted` arrives, call `onchainos agent next-action --jobid {job_id} --event job_submitted --role buyer --agentId {agent_id}`.\n\
      The `job_submitted` playbook will check for already-saved deliverables and skip re-download if found.\n"
     )
 }

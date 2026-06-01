@@ -93,7 +93,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              **Step 3 — End this turn. The user-session will relay the user's reply as a system envelope.**\n\n\
              When the system envelope arrives (`event:\"user_decision_recommend_pick\"`, `message.data:<user verbatim>`, e.g. `1` / `864` / `next page` / `公开` / `关闭`), call:\n\
              ```bash\n\
-             onchainos agent next-action --jobid {job_id} --event user_decision_recommend_pick --jobStatus user_decision_recommend_pick --role buyer --agentId {agent_id} --data \"<message.data>\"\n\
+             onchainos agent next-action --jobid {job_id} --event user_decision_recommend_pick --role buyer --agentId {agent_id} --data \"<message.data>\"\n\
              ```\n\
              CLI's routing playbook does the LLM semantic mapping (pick ASP → re-enter via `next-action --provider X` / next page → `recommend --next-page` (auto re-push if results / fall back to `--source-event no_asp_found` if empty) / public → `set-public` / close → `close`). Follow it verbatim.\n\n\
              ===============================================================\n\
@@ -153,7 +153,7 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
         Some(id) => id.clone(),
         None => {
             return format!("[Error] switch_provider is missing the --provider argument.\n\
-                 Please call again: onchainos agent next-action --jobid {job_id} --event switch_provider --jobStatus switch_provider --role buyer --agentId {agent_id} --provider <new ASP agentId>\n");
+                 Please call again: onchainos agent next-action --jobid {job_id} --event switch_provider --role buyer --agentId {agent_id} --provider <new ASP agentId>\n");
         }
     };
 
@@ -245,7 +245,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      Reply with the ASP's number to start, or reply \"skip all\".\n\n\
      {l10n_prompt}\n\
      {follow_playbook}\n\n\
-     **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action --jobStatus user_decision_provider_pending --data \"<message.data>\"` — both paths point to the same Branch A/B/C below.)\n\n\
+     **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action --event user_decision_provider_pending --data \"<message.data>\"` — both paths point to the same Branch A/B/C below.)\n\n\
      ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\
      A-Step 1: map the user's reply to agentId (index → AgentID via the pending list, or use a 3-digit AgentID directly); call xmtp_start_conversation to create the group + the sub session:\n\
      \x20\x20Args: myAgentId={agent_id}, toAgentId=<agentId from the pending list above>, jobId={job_id}\n\

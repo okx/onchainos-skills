@@ -66,7 +66,7 @@ struct PendingEntry {
     /// `job_rejected` / `job_disputed` / `submit_deadline_warn`). At resolve
     /// time the CLI emits a system-shaped relay envelope with
     /// `event = "user_decision_<source_event>"`, so the receiving sub session
-    /// can dispatch to its existing `next-action --jobStatus user_decision_<X>`
+    /// can dispatch to its existing `next-action --event user_decision_<X>`
     /// handler — no string-prefix parsing, no keyword-mapping in the sub.
     ///
     /// Optional for backward compatibility: if absent at resolve time, the CLI
@@ -310,7 +310,7 @@ pub enum PendingDecisionsV2Command {
         /// `job_rejected` / `job_disputed` / `submit_deadline_warn`). At resolve
         /// time the CLI emits a system-shaped relay envelope with
         /// `event = "user_decision_<source_event>"`. Sub then routes via its
-        /// existing `next-action --jobStatus user_decision_<X>` handler.
+        /// existing `next-action --event user_decision_<X>` handler.
         #[arg(long = "source-event")]
         source_event: Option<String>,
     },
@@ -535,7 +535,7 @@ fn handle_resolve(user_reply: String) -> Result<()> {
     // is user-session-only — user-session ALREADY called it to produce THIS envelope).
     let description = format!(
         "User-decision relay envelope (sub session). Call `onchainos agent next-action \
-         --jobid {jid} --event {evt} --jobStatus {evt} --role {role} --agentId {agent} \
+         --jobid {jid} --event {evt} --role {role} --agentId {agent} \
          --data \"<message.data verbatim>\"` to fetch the routing playbook; follow it. \
          ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
          user-session-only; the user-session already called `resolve` to produce this \

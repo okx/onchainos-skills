@@ -3,7 +3,7 @@ use crate::commands::agent_commerce::task::common::state_machine::Status;
 pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     let status_str = status.as_str();
     let next_action = |evt: &str| {
-        format!("**Next required action** → `onchainos agent next-action --jobid {job_id} --event {evt} --jobStatus {status_str} --role evaluator --agentId <agentId>` (fetch the full playbook for the current status; **follow the playbook**, do not bypass next-action and call the CLI below directly).")
+        format!("**Next required action** → `onchainos agent next-action --jobid {job_id} --event {evt} --role evaluator --agentId <agentId>` (fetch the full playbook for the current status; **follow the playbook**, do not bypass next-action and call the CLI below directly).")
     };
 
     match status {

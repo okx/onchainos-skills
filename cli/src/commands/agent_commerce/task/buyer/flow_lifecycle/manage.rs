@@ -328,7 +328,7 @@ pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> Str
      [Role] User (User Agent)\n\n\
      🛑 **This is the ONLY correct path for forwarding attachments. Do not improvise.**\n\
      🔴 Real incident: a Minimax model received `[ATTACHMENT_ADDED]`, skipped `xmtp_file_upload`, and sent the raw local file path via `xmtp_send` — \
-     the provider received a path like `/Users/.../attachments/photo.jpg` which it cannot access. Then the model called `next-action --jobStatus job_submitted` (wrong event) and the task got stuck.\n\n\
+     the provider received a path like `/Users/.../attachments/photo.jpg` which it cannot access. Then the model called `next-action --event job_submitted` (wrong event) and the task got stuck.\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 1 — Extract the file path:**\n\
      The `[ATTACHMENT_ADDED]` message content has the format: `[ATTACHMENT_ADDED] <absolute file path>`.\n\
@@ -434,7 +434,7 @@ pub(crate) fn task_provider_change(ctx: &super::super::flow::FlowContext<'_>) ->
             "- If you are the **backup session** → the user session has written the new provider info via `set-provider`.\n\
              \x20\x20**🛑 MUST run the following command immediately to kick off the new provider flow**:\n\
              \x20\x20```bash\n\
-             \x20\x20onchainos agent next-action --jobid {job_id} --event switch_provider --jobStatus switch_provider --role buyer --agentId {agent_id}\n\
+             \x20\x20onchainos agent next-action --jobid {job_id} --event switch_provider --role buyer --agentId {agent_id}\n\
              \x20\x20```\n\
              \x20\x20Follow the returned playbook (D-Steps → negotiation / x402).\n\
              \x20\x20❌ Do not ignore this event ❌ Do not skip next-action and decide the next step yourself\n")
