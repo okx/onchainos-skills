@@ -31,6 +31,10 @@ Examples: `0→0`, `66→3.3`, `67→3.35`, `70→3.5`, `89→4.45`, `92→4.6`,
 | `agent feedback-submit` | `--score` input | CLI (`utils::parse_stars_arg`, ×20) | Pass user's stars straight to `--score` — ⛔ no multiplication |
 | `agent get` | `list[*].agentList[*].reputation.score` | ⚠️ Skill-side (raw 0–100) | Divide by 20, up to 2 dp |
 
-**No-data**: render `—`.
+**No-data / zero**: `agent search` feedbackRate follows this two-way rule:
+- `feedbackRate` is `null`, absent, or `== 0` → render `暂无评分` / `No rating yet` (no reviews have been submitted yet)
+- `feedbackRate > 0` → render `★ <feedbackRate>` (up to 2 decimal places, trailing zeros trimmed)
+
+For `agent get` list view, `reputation.score` follows the same intent: `score == 0` or absent after `/20` conversion → `暂无评分` / `No rating yet`.
 
 ⛔ Never render `92 / 100` / `85 分` or the raw 0–100 integer in any user-visible cell or message.
