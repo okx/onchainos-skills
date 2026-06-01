@@ -354,12 +354,12 @@ pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> S
          content:\n\
          \x20\x20\x20\x20Arbitration aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
          \x20\x20\x20\x20⚠️ commit window timeout will slash your stake — please restore the file as soon as possible.\n\n\
-         - Read success and evidence already output → produce the final `vote` and the verdict markdown per the rubric's Verdict section (whichever heading defines the verdict template).\n\n\
-         → **Once Step 4's verdict markdown is produced, continue with Step 5 in this same turn.**\n\n\
+         - Read success and evidence already output → produce the final `vote` and the verdict text per the rubric's Verdict section (whichever heading defines the verdict template).\n\n\
+         → **Once Step 4's verdict text is produced, continue with Step 5 in this same turn.**\n\n\
          **Step 5 — Execute commit:**\n\
-         - **Flatten the entire verdict markdown into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; pass via `--reason`:\n\
+         - **Flatten the entire verdict text into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; pass via `--reason`:\n\
          ```bash\n\
-         onchainos agent vote-commit {job_id} --vote <0|1> --reason \"Verdict\\n\\nJob ID: {job_id}\\nvote: <0|1>\\nFindings of fact: 1. ...\\nEvidence citations: ...\\nReasoning: ...\" --agent-id {agent_id}\n\
+         onchainos agent vote-commit {job_id} --vote <0|1> --reason \"<flattened verdict text from Step 4, with every real newline replaced by the two-character escape \\n>\" --agent-id {agent_id}\n\
          ```\n\
          ⚠️ **Only 0 (Approve / Client wins) or 1 (Reject / Provider wins) — skip is forbidden**.\n\
          ⚠️ **The `<0|1>` value MUST come from Step 5** — it is the binary vote that Step 5 derived by applying `references/evaluator-decision-rubric.md` (whatever decision procedure that document defines) to the evidence. Do **not** commit a vote that bypassed Step 5 — guessing / pattern-matching / averaging a value here violates the rubric and produces an unfounded ruling.\n\
