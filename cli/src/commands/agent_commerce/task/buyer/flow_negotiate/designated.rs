@@ -8,10 +8,12 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
     let follow_playbook_short = super::super::flow::FOLLOW_PLAYBOOK_SHORT;
     let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
     let title = title_display;
+    let cmd_not_provider = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Not ASP {short_id}] {title} next-step decision"), "not_provider");
     let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Offline {short_id}] {title} next-step decision"), "provider_offline");
     let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 invalid {short_id}] {title} next-step decision"), "x402_invalid");
     let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 price {short_id}] {title} price decision"), "x402_price_mismatch");
     let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] {title} budget decision"), "over_budget");
+    let not_provider = super::super::content::not_provider_user_prompt(job_id, short_id, dp_id);
     let provider_offline = super::super::content::provider_offline_user_prompt(job_id, short_id, dp_id);
     format!("\
              🎯 **Designated ASP**: {dp_id}\n\
@@ -23,12 +25,28 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              ⚠️ `--agent-id` is a **required named flag** — do NOT pass the agent ID as a positional argument (e.g. `service-list {dp_id}` will error). Always use `--agent-id {dp_id}`.\n\
              If the command returns an error (e.g. \"unexpected argument\", \"unrecognized\"), **retry once** using the exact command above with `--agent-id`. Do NOT skip D-Steps on error — the routing decision depends on this result.\n\
              Check whether the response contains services (non-empty `services` array) and inspect the `endpoint`, `feeAmount`, `feeTokenSymbol` fields on each service.\n\n\
-             **D-Step 1.5 - online-status check (only effective on the escrow path):**\n\
-             Query the ASP's profile to get its online status:\n\
+             **D-Step 1.5 - profile check (role validation + online-status):**\n\
+             Query the ASP's profile:\n\
              ```bash\n\
              onchainos agent profile {dp_id}\n\
              ```\n\
-             ⚠️ This is the **ASP's** profile — the `role` field in the response belongs to the ASP, **NOT to you**. Do NOT use it to determine your own role. You are the **buyer** (`--role buyer`). Only read `onlineStatus` from this response; ignore all other fields.\n\
+             ⚠️ This is the **ASP's** profile — the `role` field in the response belongs to the ASP, **NOT to you**. Do NOT use it to determine your own role. You are the **buyer** (`--role buyer`).\n\n\
+             **D-Step 1.5a - role gate (🛑 hard gate):**\n\
+             Check `ok` and `role` from the response:\n\
+             - `ok == true` AND `role == 2` -> pass; continue to D-Step 1.5b.\n\
+             - `ok == false` or `role != 2` (or role missing/null) -> the designated agent does not exist or is not registered as an ASP (provider). It cannot fulfil the job.\n\
+             \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
+             \x20\x20{session_hint}\n\
+             \x20\x20```bash\n\
+             \x20\x20{cmd_not_provider}\n\
+             \x20\x20```\n\
+             \x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
+             \x20\x20{not_provider}\n\
+             \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
+             \x20\x20{follow_playbook}\n\
+             \x20\x20-> **end this turn** and wait for the user's reply.\n\
+             \x20\x20{route_hint}\n\n\
+             **D-Step 1.5b - online-status check (only effective on the escrow path):**\n\
              Read `onlineStatus` from the response (1=online / 2=offline). If the field is missing, null, or empty, treat the ASP as **online** (the backend may not yet return this field).\n\
              - `onlineStatus == 1` **or field missing/null/empty** (online / unknown) -> continue to D-Step 2.\n\
              - `onlineStatus == 2` AND **no endpoint** (so you are about to enter the escrow negotiation path) -> the ASP is offline and cannot negotiate.\n\

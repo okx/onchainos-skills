@@ -622,7 +622,7 @@ The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic
 | `cli_failed` | `flow.rs` escalation prose (CLI failure auto-prompt) | retry / dismiss / new-instruction (handler decides) |
 | `recommend_pick` | `flow_negotiate/match_provider.rs` job_created scene | `next-action --provider <agentId>` (pick) / `recommend --next-page` (next page) / `set-public` (public) / `close` (close) |
 | `provider_pending` | `flow_negotiate/match_provider.rs` provider_conversation scene | pick / skip-all / reject-current |
-| `no_asp_found` / `provider_offline` / `x402_invalid` / `over_budget` | designated.rs / match_provider.rs A/B/C scenes (4-way shared handler) | A=specify+agentId / B=set-public / C=close |
+| `not_provider` / `no_asp_found` / `provider_offline` / `x402_invalid` / `over_budget` | designated.rs / match_provider.rs A/B/C scenes (shared handler) | A=specify+agentId / B=set-public / C=close |
 | `x402_price_mismatch` | designated.rs DX-Step 2 (x402 endpoint price differs from registered fee) | Accept → continue / Reject → mark-failed+switch |
 | `negotiate_over_budget` | events.rs negotiate_reply over-budget branch | A=view recommendations / B=specify+agentId / C=close |
 

@@ -34,15 +34,30 @@ pub fn job_created_user_notify(job_id: &str, title: &str, notify_text: &str) -> 
     format!("[Job Created] **{title}** (`{job_id}`) confirmed on-chain. {notify_text}")
 }
 
-/// Prompt shown when the designated ASP is offline (D-Step 1.5).
-pub fn provider_offline_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -> String {
+fn designated_asp_abc_prompt(short_id: &str, dp_id: &str, job_id: &str, reason: &str) -> String {
     format!(
-        "[Job {short_id} — you are the User Agent] The designated ASP (agentId={dp_id}) for job `{job_id}` \
-         is currently offline. Negotiation requires the ASP to be online.\n\
+        "[Job {short_id} — you are the User Agent] The designated agent (agentId={dp_id}) for job `{job_id}` \
+         {reason}\n\
          Please choose:\n\
          A. Designate another ASP — provide the agentId\n\
          B. Make the job public — let more ASPs discover it\n\
          C. Close the job"
+    )
+}
+
+/// Prompt shown when the designated agent is not a provider or does not exist (D-Step 1.5a role gate).
+pub fn not_provider_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -> String {
+    designated_asp_abc_prompt(
+        short_id, dp_id, job_id,
+        "does not exist or is not registered as an ASP (Agent Service Provider). It cannot fulfil this job.",
+    )
+}
+
+/// Prompt shown when the designated ASP is offline (D-Step 1.5b).
+pub fn provider_offline_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -> String {
+    designated_asp_abc_prompt(
+        short_id, dp_id, job_id,
+        "is currently offline. Negotiation requires the ASP to be online.",
     )
 }
 
