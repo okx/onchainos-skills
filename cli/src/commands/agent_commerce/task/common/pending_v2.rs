@@ -789,9 +789,16 @@ fn handle_list(format: ListFormat) -> Result<()> {
             let n = q.entries.len();
             if n == 0 {
                 println!("(no pending decisions)\n");
-                println!("Render the line above to the user. End the turn. Do NOT call any other tool.");
+                println!("Render the line above to the user as your assistant response.");
             } else {
-                print!("{}", render_list_markdown(&q));
+                let view = render_list_markdown(&q);
+                print!(
+                    "3 steps (Steps 1-2 in this turn, Step 3 in the future turn):\n\n\
+                     **Step 1** — Translate the [Source content] below to the user's language per [Translation rules].\n\n\
+                     **Step 2** — Render Step 1's output to the user as your assistant response.\n\n\
+                     **Step 3** — (Future turn) Apply [Future-turn user-reply routing] below when the user replies.\n\n\
+                     {view}"
+                );
             }
         }
     }
@@ -810,24 +817,34 @@ fn handle_list(format: ListFormat) -> Result<()> {
 /// Assumes the queue has already been sorted by `ensure_invariant_and_evict` so that — if
 /// any active exists — it sits at index 0, and remaining entries follow in LIFO (newest
 /// queued first).
+/// Renders the components used by every list-view playbook.
+///
+/// Output layout (no Step labels — caller adds them):
+///   [Source to render to user]:
+///   <body>
+///
+///   [Translation rules]:
+///   - …
+///
+///   [Future-turn user-reply routing]:
+///   - …
+///
+/// Callers (`handle_list`, `playbook_relay_and_advance`, `playbook_cancel`) wrap
+/// this with their own Step numbering (e.g. "Step 1 — Translate", "Step 2 —
+/// Render", "Step N — (Future turn) routing"). The labeled sections act as
+/// natural boundaries — no ═══ zone markers needed.
 fn render_list_markdown(q: &Queue) -> String {
     let n = q.entries.len();
     let active_idx = q.entries.iter().position(|e| e.status == Status::Active);
 
-    // ── Build the USER-VISIBLE body (zone-A) ───────────────────────────────────
-    // This is the block the LLM MUST render to the user (verbatim after localization).
-    // It is bracketed by ═══ markers below in the final output so the LLM can clearly
-    // tell what to render vs. what to follow as a rule.
+    // ── User-visible body ───────────────────────────────────────────────────────
     let mut user_body = String::new();
-
     if let Some(ai) = active_idx {
         let active = &q.entries[ai];
-        let active_label = strip_label_prefix(&active.list_label);
-        let active_short = short_job_id(&active.job_id);
         user_body.push_str(&format!(
             "🟢 Decision 1 — {label} (Job {job})\n\n{body}\n\n",
-            label = active_label,
-            job = active_short,
+            label = strip_label_prefix(&active.list_label),
+            job = short_job_id(&active.job_id),
             body = active.user_content,
         ));
 
@@ -850,7 +867,6 @@ fn render_list_markdown(q: &Queue) -> String {
                 ));
             }
             user_body.push('\n');
-            // Footer phrasing is option-agnostic — each active card has its own option set.
             user_body.push_str(
                 "Reply per the options shown in the active card to handle this decision; reply \"switch N\" to jump to remaining item N; reply \"later\" to defer.\n",
             );
@@ -876,79 +892,47 @@ fn render_list_markdown(q: &Queue) -> String {
         ));
     }
 
-    // ── Compose the final output: AGENT-ONLY zone first, then USER-VISIBLE zone ─
-    // Order rationale: rules first (so the LLM has the protocol in mind before it
-    // reads the user body), USER-VISIBLE block last (closer to the moment of
-    // rendering). The ═══ markers are explicit boundaries — the LLM must NOT
-    // render anything outside the markers, and must preserve every line/clause
-    // inside the markers (modulo localization).
+    // ── Final composition: source body + translation rules + future routing ──
     let mut out = String::new();
+    out.push_str("[Source content to render to user]:\n\n");
+    out.push_str(&user_body);
+    out.push('\n');
 
-    // ── Zone B: AGENT-ONLY INSTRUCTIONS ──────────────────────────────────────────
     out.push_str(
-        "═══════════ AGENT-ONLY INSTRUCTIONS (do NOT render any of this to the user) ═══════════\n\n",
+        "[Translation rules] (every line and every clause that exists in the source MUST appear in the translation):\n\
+         \x20\x20- Keep `Job <hex>` intact.\n\
+         \x20\x20- Translate `Decision`, the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`), and the word `decision`; preserve `<title>` verbatim.\n\
+         \x20\x20- Footer: preserve every `;`-separated clause; do NOT drop `switch N` or `later`. Translate keywords (`switch`, `later`) to natural equivalents.\n\
+         \x20\x20- No mixed-language; no missing structural delimiters (`🟢`, `─────────────────`, numbered list).\n\n",
     );
-    out.push_str(
-        "**Action**: translate the USER-VISIBLE CONTENT block below (between the `═══ … USER-VISIBLE CONTENT … ═══` markers) to the user's current language per the [Localization] rules, then render the translated block as your assistant response. Do NOT include the ═══ markers themselves in the rendered output. Do NOT call any tool in this turn. End the turn after rendering.\n\n",
-    );
-    out.push_str(
-        "🌐 **[Localization]** — translate the USER-VISIBLE CONTENT block. Every line and every clause that exists in the English source MUST appear in the translation (translation = re-expressing the same content in the user's language, NOT condensing or omitting). Rules:\n\
-         \x20\x20• Keep hex jobIds intact (e.g. `0x0b6c…39c6`).\n\
-         \x20\x20• The `🟢 Decision 1` line: translate `Decision` to the user's language; keep the integer `1` and the jobId hex unchanged. The decision label is `<title> <type> decision` — translate the English `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`) and the word `decision`; preserve `<title>` verbatim (sub-provided; may already be in the user's language).\n\
-         \x20\x20• The active card body (between the 🟢 header and the `─────────────────` separator) is sub-provided `user_content`; translate it the same way you would translate any sub-pushed card (per the active card's own localization rules — usually English source → user's language target).\n\
-         \x20\x20• The `Remaining (N):` heading and each remaining item's label: same translation rules as the active label.\n\
-         \x20\x20• 🛑 **Footer: preserve EVERY clause** — the English footer is a single line with 2 or 3 `;`-separated clauses: (a) `Reply per the options...`, (b) `reply \"switch N\"...` (only when Remaining is non-empty), (c) `reply \"later\"...`. **Each clause that appears in the English source MUST appear in the translation as a separate clause.** Do NOT drop a clause, do NOT merge clauses, do NOT keep English keywords untranslated. Translate the keywords `switch` / `later` to natural equivalents in the user's language (the LLM will accept the translated keywords back on the next turn). Do NOT substitute specific option letters (`A` / `B` / `1` / `2` / `3`) into the footer — they vary per active card.\n\
-         \x20\x20• Do NOT add or drop any structural delimiter (`🟢` / `─────────────────` separator / numbered list / footer clauses).\n\n",
-    );
+
+    out.push_str("[Future-turn user-reply routing] (when the user replies, match semantics — localized equivalents count):\n");
     if active_idx.is_some() {
         let remaining_count = q.entries.len() - 1;
-        let switch_line = if remaining_count > 0 {
-            format!(
-                "\x20\x20- User says `switch N` / `切换 N` / `跳到 N` / `go to N` / `change to N` (a positive integer N, 1 ≤ N ≤ {m}) → that means \"activate remaining item N\". The display's `Remaining` list is renumbered 1..M, but `pick --index` uses the FULL queue position, where active = position 1 and remaining position N = queue position (N+1). Call **exactly**:\n\
-                 \x20\x20\x20\x20```bash\n\
-                 \x20\x20\x20\x20onchainos agent pending-decisions-v2 pick --index (N+1)\n\
-                 \x20\x20\x20\x20```\n\
-                 \x20\x20\x20\x20(literally substitute `(N+1)` with the integer — e.g. user says `switch 2` → `--index 3`). Follow the returned playbook verbatim.\n",
+        out.push_str(
+            "\x20\x20- Reply matches the active card's option set (`A` / `B` / `A`/`B`/`C` / numeric `1`/`2`/`3` / free-form like `retry` / `dismiss` / `重试` / `同意` / `拒绝` / `通过` / `第一个` / etc.) → `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording>\"`\n\
+             \x20\x20\x20\x20⚠️ Disambiguation: if the active card uses numeric options (e.g. \"1. Alpha / 2. Beta\"), a bare `1` / `2` is the active answer → use `resolve`, NOT `pick`. `pick` requires explicit `switch` / `切换` / `跳到` keyword.\n",
+        );
+        if remaining_count > 0 {
+            out.push_str(&format!(
+                "\x20\x20- `switch N` / `切换 N` / `跳到 N` / `go to N` / `change to N` (1 ≤ N ≤ {m}) → `onchainos agent pending-decisions-v2 pick --index (N+1)` (e.g. `switch 2` → `--index 3`).\n",
                 m = remaining_count,
-            )
-        } else {
-            String::new()
-        };
-        out.push_str(&format!(
-            "**Next-turn routing** (when the user replies — match semantics, not exact wording; localized equivalents in the user's language all count):\n\
-             \x20\x20- User replies with anything matching the active card's option set (the card body in the 🟢 block defines the options — could be `A` / `B`, `A` / `B` / `C`, numeric indices `1` / `2` / `3`, or free-form text like `retry` / `dismiss` / `重试` / `换个 ASP`; localized equivalents like `同意` / `拒绝` / `通过` / `第一个` all count) → call **exactly**:\n\
-             \x20\x20\x20\x20```bash\n\
-             \x20\x20\x20\x20onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording — no interpretation, no translation>\"\n\
-             \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20Then follow the relay playbook the CLI returns. (The CLI consumes the active entry and relays the reply to its sub session, which does its own semantic mapping per the card's option set — you do NOT need to interpret the reply yourself.)\n\
-             \x20\x20- ⚠️ **Disambiguation for bare numbers** — if the active card's option set uses numeric indices (e.g. \"1. Provider Alpha / 2. Provider Beta\"), a bare `1` / `2` is the active card's answer → use the `resolve` branch above, NOT `pick`. The `switch N` branch below requires the explicit `switch` / `切换` / `跳到` / `go to` / `change to` keyword.\n\
-             {switch_line}\
-             \x20\x20- User asks to see the list again → call `onchainos agent pending-decisions-v2 list --format markdown` again.\n\
-             \x20\x20- User says `later` / `稍后` / `defer` / `skip for now` → just end the turn; the list will re-render later when the user comes back.\n\
-             \x20\x20- Otherwise → treat as ordinary chat; do NOT call `pick` / `resolve` / `cancel`.\n",
-        ));
+            ));
+        }
+        out.push_str(
+            "\x20\x20- `later` / `稍后` / `defer` → end the turn.\n\
+             \x20\x20- User asks to see the list again → `onchainos agent pending-decisions-v2 list --format markdown`.\n\
+             \x20\x20- Else → ordinary chat; do NOT call `pick` / `resolve` / `cancel`.\n",
+        );
     } else {
         out.push_str(&format!(
-            "**Next-turn routing** (when the user replies — match semantics, not exact wording; localized equivalents in the user's language all count):\n\
-             \x20\x20- User replies with a number K (1 ≤ K ≤ {n}) / `第 K 个` / `选 K` / `the Kth` → call **exactly**:\n\
-             \x20\x20\x20\x20```bash\n\
-             \x20\x20\x20\x20onchainos agent pending-decisions-v2 pick --index K\n\
-             \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20(substitute `K` with the integer the user typed). Follow the playbook the CLI returns verbatim.\n\
-             \x20\x20- User asks to see the list again → call `onchainos agent pending-decisions-v2 list --format markdown` again.\n\
-             \x20\x20- User says `later` / `稍后` / `defer` → end the turn.\n\
-             \x20\x20- Otherwise → treat as ordinary chat; do NOT call `pick` / `resolve` / `cancel`. There is no active entry to resolve.\n",
+            "\x20\x20- A number K (1 ≤ K ≤ {n}) / `第 K 个` / `选 K` / `the Kth` → `onchainos agent pending-decisions-v2 pick --index K`.\n\
+             \x20\x20- `later` / `稍后` / `defer` → end the turn.\n\
+             \x20\x20- User asks to see the list again → `onchainos agent pending-decisions-v2 list --format markdown`.\n\
+             \x20\x20- Else → ordinary chat. No active entry to resolve.\n",
             n = n,
         ));
     }
-    out.push_str("\n═══════════ END AGENT-ONLY INSTRUCTIONS ═══════════\n\n");
-
-    // ── Zone A: USER-VISIBLE CONTENT ─────────────────────────────────────────────
-    out.push_str(
-        "═══════════ USER-VISIBLE CONTENT (render this block VERBATIM after localization — every line and every clause MUST appear in the rendered output) ═══════════\n\n",
-    );
-    out.push_str(&user_body);
-    out.push_str("\n═══════════ END USER-VISIBLE CONTENT ═══════════\n");
 
     out
 }
@@ -1181,26 +1165,22 @@ fn playbook_wait_with_reprompt(
         n = total_pending,
     );
     format!(
-        "Your decision is queued (position {}). Do NOT re-render the active decision card here — the user \
-         is already in the middle of answering it; just notify them that a new decision arrived and they can \
-         switch focus via the decision list if they want. Their reply (to whichever card stays active) routes \
-         via `pending-decisions-v2 resolve` in the user-session to the active entry's sub. Your queued card \
-         will be auto-rendered later when the active resolves OR when the user explicitly picks it via \
-         `pick --index <N>`.\n\n\
-         🌐 **LOCALIZE FIRST — translate the entire content body below to match the user's language** before xmtp_dispatch_user. Rules:\n\
-         \x20\x20• Keep `Job <hex jobId>` and `Agent #<numeric agentId>` intact (literal data).\n\
-         \x20\x20• The decision label is `<title> <type> decision` — translate the English `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`) and the word `decision` to the user's language; naturally re-order if the target language puts noun-modifiers in a different position. The `<title>` is sub-provided and may already be in the user's language — preserve it verbatim.\n\
-         \x20\x20• Translate punctuation to the user's language conventions (parens / commas / dashes / quote-marks). The em-dash separator before `added to the pending-decisions queue` may need to become a different connector or be absorbed into a comma + clause in some languages.\n\
-         \x20\x20• Translate role tokens (`User` / `ASP` / `Evaluator`) to whichever convention fits the user's language (you may keep them as English labels if that's idiomatic; just be consistent).\n\
-         \x20\x20• Translate the surrounding text: `added to the pending-decisions queue`, `You currently have N pending decisions`, `reply \"decision list\" to view and pick which to handle`.\n\
-         \x20\x20• Do NOT send mixed-language content.\n\n\
-         Call `xmtp_dispatch_user` with the EXACT content below (after applying the translation). End the \
-         turn after the tool returns. Do NOT call any other tool first or after.\n\n\
-         tool: xmtp_dispatch_user\n\
-         arguments:\n\
-         \x20\x20content:\n{}\n",
-        queued_position,
-        indent(&dispatch_content, "    "),
+        "Your decision is queued (position {pos}). 2 steps:\n\n\
+         **Step 1 — Localize this content to the user's language** (rules below):\n\
+         {body}\n\n\
+         [Localization rules]:\n\
+         \x20\x20• Keep `Job <hex>` and `Agent #<id>` intact.\n\
+         \x20\x20• The decision label is `<title> <type> decision` — translate the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`) and the word `decision`; preserve `<title>` verbatim (sub-provided; may already be in user's language).\n\
+         \x20\x20• Translate `User` / `ASP` / `Evaluator` to natural equivalents (or keep as English labels if idiomatic).\n\
+         \x20\x20• Translate surrounding text: `added to the pending-decisions queue`, `You currently have N pending decisions`, `reply \"decision list\" to view and pick which to handle`.\n\
+         \x20\x20• No mixed-language content.\n\n\
+         **Step 2 — Call `xmtp_dispatch_user` with the localized content from Step 1**:\n\
+         \x20\x20tool: xmtp_dispatch_user\n\
+         \x20\x20arguments:\n\
+         \x20\x20\x20\x20content: <the localized Step 1 output>\n\n\
+         End the turn after the tool returns. Do NOT call any other tool first or after.\n",
+        pos = queued_position,
+        body = dispatch_content,
     )
 }
 
@@ -1238,16 +1218,15 @@ fn playbook_relay_and_advance(
 ) -> String {
     let list_view = render_list_markdown(q);
     format!(
-        "Execute the following in order WITHIN THIS TURN. End the turn after Step 2.\n\n\
-         🛑 Do NOT call `pending-decisions-v2 resolve` again in this turn — the next resolve only happens in a FUTURE turn after the user replies to the active card rendered in Step 2.\n\n\
-         Step 1 — Relay the user's decision to the just-resolved sub session (call `xmtp_dispatch_session` exactly once; repeated calls = sub receives N relays):\n\
-           tool: xmtp_dispatch_session\n\
-           sessionKey: {sub}\n\
-           content: {content}\n\n\
-         🛑 **CONSUMPTION MARKER** — The user's reply has been DISPATCHED in Step 1 and is **already consumed**. The card rendered in Step 2 below is the NEXT decision (auto-promoted); the just-consumed reply is NOT its answer. Do NOT pass that consumed reply to any subsequent `resolve` / `pick` / `dispatch_session` call.\n\n\
-         Step 2 — Render the next decision view below to the user as your assistant response. Prepend a transition header `✓ Previous decision handled. Here's the next pending one:` (🌐 translate to the user's language) before rendering the list view body. The list view is the standard pending-decisions-v2 list output (active card + remaining list + routing footer); render and route exactly as that view's playbook says.\n\n\
-         ─── List view (render this body after the transition header) ───\n\
-         {list}\n",
+        "4 steps (Steps 1-3 in this turn, Step 4 in the future turn):\n\n\
+         **Step 1** — Forward the user's reply to the just-resolved sub session. Call `xmtp_dispatch_session` exactly once.\n\
+         \x20\x20tool: xmtp_dispatch_session\n\
+         \x20\x20sessionKey: {sub}\n\
+         \x20\x20content: {content}\n\n\
+         **Step 2** — Translate the [Source content] below to the user's language per [Translation rules]. Prepend a transition line `✓ Previous decision handled. Here's the next pending one:` (also translated) to the top of the translated output.\n\n\
+         **Step 3** — Render Step 2's output to the user as your assistant response. The user's reply just dispatched in Step 1 is **already consumed** — it is NOT the answer to the next card.\n\n\
+         **Step 4** — (Future turn) Apply [Future-turn user-reply routing] below when the user replies.\n\n\
+         {list}",
         sub = resolved_sub_key,
         content = relay_content,
         list = list_view,
@@ -1295,8 +1274,10 @@ fn playbook_cancel(
         // list view (active card + remaining list + routing footer), prefixed by a
         // transition header. No more "selection mode" — keeps the user moving.
         out.push_str(
-            "Render the body below to the user as your assistant response (text rendering only; do NOT call any tool). Prepend a transition header `✓ Previous decision cancelled. Here's the next pending one:` (🌐 translate to the user's language) before rendering the list view body. The list view is the standard pending-decisions-v2 list output; render and route exactly as that view's playbook says.\n\n\
-             ─── List view (render this body after the transition header) ───\n",
+            "3 steps (Steps 1-2 in this turn, Step 3 in the future turn):\n\n\
+             **Step 1** — Translate the [Source content] below to the user's language per [Translation rules]. Prepend a transition line `✓ Previous decision cancelled. Here's the next pending one:` (also translated) to the top of the translated output.\n\n\
+             **Step 2** — Render Step 1's output to the user as your assistant response.\n\n\
+             **Step 3** — (Future turn) Apply [Future-turn user-reply routing] below when the user replies.\n\n",
         );
         out.push_str(&render_list_markdown(q_after));
     } else {

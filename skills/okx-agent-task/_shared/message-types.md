@@ -251,7 +251,7 @@ sub → receives envelope (event:user_decision_<src>, data:"reject, because X") 
     "jobId": "<jobId from the active pending entry>",
     "role": "<buyer | provider | evaluator>",
     "code": 0,
-    "description": "Read okx-agent-task/SKILL.md if you don't know the context",
+    "description": "Read okx-agent-task/SKILL.md if you don't know the context. Then execute `onchainos agent next-action` with this envelope's `jobId` / `event` / `role` / `agentId` to get the playbook",
     "timestamp": <unix-seconds>
   }
 }
@@ -265,7 +265,7 @@ sub → receives envelope (event:user_decision_<src>, data:"reject, because X") 
 
 ```jsonc
 // User reviewed deliverable and approved (recommend_pick / job_submitted scenes)
-{"agentId":"123","message":{"source":"system","event":"user_decision_job_submitted","data":"approve","jobId":"0xae53...","role":"buyer","code":0,"description":"Read okx-agent-task/SKILL.md if you don't know the context","timestamp":1779871553}}
+{"agentId":"123","message":{"source":"system","event":"user_decision_job_submitted","data":"approve","jobId":"0xae53...","role":"buyer","code":0,"description":"Read okx-agent-task/SKILL.md if you don't know the context. Then execute `onchainos agent next-action` with this envelope's `jobId` / `event` / `role` / `agentId` to get the playbook","timestamp":1779871553}}
 
 // User picked "C. Close" on the recommend_pick card
 {"agentId":"123","message":{"source":"system","event":"user_decision_recommend_pick","data":"关闭","jobId":"0xae53...","role":"buyer","code":0,"description":"…","timestamp":1779871600}}
