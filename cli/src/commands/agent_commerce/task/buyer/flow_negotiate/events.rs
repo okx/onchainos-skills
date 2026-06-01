@@ -181,6 +181,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      ⚠️ **In an A2A negotiation session paymentMode is fixed to escrow.**\n\
      ⚠️ **Do NOT replace [intent:propose] with natural language** - the ASP Agent only recognizes structured markers; \"please apply / terms locked\" in natural language will not be parsed.\n\
      ⚠️ **Only one xmtp_send per turn.**\n\
+     ⏱ **5-minute timeout**: if the ASP does not reply within 5 minutes, xmtp_send `[intent:reject]` (reason: negotiation timeout), then `onchainos agent mark-failed {job_id} --provider <ASP agentId>` + `onchainos agent recommend {job_id} --agent-id {agent_id}` to switch. Do NOT call `xmtp_delete_conversation` when switching — just ignore further messages from that ASP.\n\
      🚫 🛑 **CRITICAL - this event absolutely forbids save-agreed / set-payment-mode / confirm-accept** - those only run in the later negotiate_ack event. ASP natural-language phrases like \"I accept\", \"agree\", \"OK\", \"no problem\" are **NOT** `[intent:ack]` - only content that starts with the literal `[intent:ack]` square brackets counts. Before the user sends [intent:propose], the ASP cannot reply with [intent:ack]. Violating this = skipping the three-step handshake = the job is permanently stuck.\n\
      -> **end this turn** and wait for the ASP's reply.\n")
 }
