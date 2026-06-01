@@ -107,6 +107,7 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              - `agentName` missing → degrade header to `You have been selected as juror for task [<message.jobTitle>]`.\n\
              - `budget` / `tokenSymbol` missing → drop the `Amount:` line.\n\
              - `commitDeadline` missing or `hoursLeft` is 0 → drop the entire `⏰ Key deadline` block.\n\n\
+             → **Once Step 2 has attempted the `xmtp_dispatch_user` call (whether it succeeds or errors), continue with Step 3 in this same turn.** Step 2 is a user-facing notification, not a precondition for Step 3.\n\n\
              **Step 3 — Fetch evidence (`--round-num` comes from the envelope's top-level `roundNum`; if missing, abort this turn and log `missing roundNum in payload; abort`):**\n\
              ```bash\n\
              onchainos agent evidence-info {job_id} --agent-id {agent_id} --round-num <envelope top-level roundNum>\n\
@@ -181,18 +182,18 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
 
         "reveal_started" => format!(
             "[Current Status] reveal_started\n\n\
-             **Step 1 — Notify the user that the reveal phase has started:**\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
-             \x20\x20\x20\x20The reveal phase has started for Job jobId={job_id}. Your agent is revealing the vote on-chain in the background — no action needed from you.\n\n\
-             **Step 2 — Execute reveal:**\n\
+             **Step 1 — Execute reveal:**\n\
              ```bash\n\
              onchainos agent vote-reveal {job_id} --agent-id {agent_id}\n\
              ```\n\n\
              [Error mapping]\n\
-             - `canReveal=false` → CLI has already pre-checked and rejected; no retry needed. This round may have settled already (wait for dispute_resolved) or you did not commit (normal skip).\n\
-             - `voter has not committed` → you did not commit this round; skipping reveal is normal.\n\
-             - Other failures: retry up to 3 times.\n"
+             - `canReveal=false` → CLI has already pre-checked and rejected; no retry needed. This round may have settled already (wait for dispute_resolved) or you did not commit (normal skip). **End this turn; skip Step 2.**\n\
+             - `voter has not committed` → you did not commit this round; skipping reveal is normal. **End this turn; skip Step 2.**\n\
+             - Other failures: retry up to 3 times.\n\n\
+             **Step 2 — Notify the user that the reveal has been submitted:**\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20Your agent has submitted the reveal transaction for Job jobId={job_id}. Waiting for chain confirmation — no action needed from you.\n"
         ),
 
         "vote_revealed" => format!(
@@ -345,7 +346,8 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
 /// evidence.
 pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> String {
     format!(
-        "**Step 4 — Render the verdict per `references/evaluator-decision-rubric.md`:**\n\
+        "→ **Continue with Step 4 in this same turn — it is NOT event-driven.**\n\n\
+         **Step 4 — Render the verdict per `references/evaluator-decision-rubric.md`:**\n\
          - **Prerequisite — file readability check**: read `references/evaluator-decision-rubric.md`.\n\
          \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Push the user via `xmtp_dispatch_user` then end the turn:\n\n\
          tool: xmtp_dispatch_user\n\
@@ -353,6 +355,7 @@ pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> S
          \x20\x20\x20\x20Arbitration aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
          \x20\x20\x20\x20⚠️ commit window timeout will slash your stake — please restore the file as soon as possible.\n\n\
          - Read success and evidence already output → produce the final `vote` and the verdict markdown per the rubric's Verdict section (whichever heading defines the verdict template).\n\n\
+         → **Once Step 4's verdict markdown is produced, continue with Step 5 in this same turn.**\n\n\
          **Step 5 — Execute commit:**\n\
          - **Flatten the entire verdict markdown into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; pass via `--reason`:\n\
          ```bash\n\
