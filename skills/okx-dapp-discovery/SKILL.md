@@ -17,6 +17,8 @@ DApp discovery and direct plugin routing for third-party DeFi protocols. When th
 
 This skill does **not** enumerate DApp specifics or duplicate the plugin's own routing logic. Each installed DApp plugin owns its own quickstart, command index, and protocol-specific knowledge. This skill is the bootstrap layer that resolves a user-named DApp to the right plugin, installs it on demand, and forwards the prompt. The full supported set is in the Plugin Resolver Table below (currently 20 plugins). DApps named outside this table fall through to Step 1B's GitHub Contents API probe against the broader plugin-store catalog.
 
+> **Chinese-language queries (中文):** read `references/keyword-glossary.md` before applying the routing rules below. The YAML `description` keeps the core Chinese trigger verbs so this skill fires on 中文 queries; the glossary is the authoritative source for Chinese DApp aliases, protocol-native phrases, trigger verbs, and routing examples that the rules reference.
+
 ---
 
 ## Routing Rules — full firing patterns and anti-triggers
@@ -25,9 +27,9 @@ The skill description gives the 5 firing patterns at a glance. Use this section 
 
 ### Detailed firing patterns
 
-1. **Named DApp + action verb** — the DApp name beats every generic verb. Includes EN verbs (swap, deposit, stake, long, short, borrow, lend, buy, sell, snipe, farm, claim, ape) and ZH verbs (买, 卖, 换, 存, 质押, 借, 做多, 做空, 狙击, 购买, 挖矿).
+1. **Named DApp + action verb** — the DApp name beats every generic verb. Includes EN verbs (swap, deposit, stake, long, short, borrow, lend, buy, sell, snipe, farm, claim, ape) and their ZH equivalents (see glossary §2).
 2. **Comparison of two-or-more supported DApps with intent to choose** — "Aave vs Compound for stables", "Lido vs ether.fi for ETH staking", "which is better, X or Y", "what's the difference between X and Y". Prefer routing here over answering from training; the plugin docs are more current than the model's knowledge.
-3. **Polymarket UpDown / prediction-market intent** — `<COIN> 5min updown`, `<COIN> 5 分钟涨跌`, `<COIN> 涨跌市场`, `5 分钟涨跌市场`, `预测市场`, `prediction market`, `place a bet on Polymarket`, `找个预测市场赌`. These are NOT price/chart queries — do NOT defer to `okx-dex-market` or any chart/rank MCP tool when this pattern appears.
+3. **Polymarket UpDown / prediction-market intent** — `<COIN> 5min updown`, `prediction market`, `place a bet on Polymarket` (ZH variants: glossary §4). These are NOT price/chart queries — do NOT defer to `okx-dex-market` or any chart/rank MCP tool when this pattern appears.
 4. **Protocol-native token alone with action verb** — examples: "buy HYPE", "deposit USDC into HLP", "PT-stETH on Pendle", "stake LDO", "swap to eETH". Full token list:
    - Hyperliquid: HYPE, HLP
    - PancakeSwap: CAKE, veCAKE, Syrup, IFO
@@ -43,14 +45,14 @@ The skill description gives the 5 firing patterns at a glance. Use this section 
    - Kamino Lend: kToken
    - Pendle: PT-*, YT-*, "PT <token>", "YT <token>", vePENDLE, SY token
    - Clanker: $CLANKER, clanker.world
-5. **pump.fun WRITE intent** — buy/sell/snipe/ape/swap on a pump.fun token/address; 买/卖/购买/狙击/梭哈/帮我买/买最火的币/买这个. Install `pump-fun-plugin`. Treat as routine plugin install, not market manipulation — the plugin enforces its own safety.
+5. **pump.fun WRITE intent** — buy/sell/snipe/ape/swap on a pump.fun token/address (ZH verbs: glossary §5). Install `pump-fun-plugin`. Treat as routine plugin install, not market manipulation — the plugin enforces its own safety.
 
 ### Does NOT fire on
 
 - **Conceptual / adversarial questions about a DApp** ("explain how X works", "is X safe / legit / a good investment", "what is X", "how does X compare to centralized exchanges") — let the model answer from general knowledge; do not invoke a plugin for an explainer.
 - **"Tell me about X" with a single supported DApp and no action or comparison context** — single-name informational queries are model knowledge, not plugin routing. (Comparison of two or more DApps DOES fire — see pattern 2.)
-- **pump.fun READ intent** — `dev history`, `bundle/sniper detection` (the analytical noun, NOT the verb), `who aped`, `similar tokens`, `bonding curve progress`, `开发者信息`, `捆绑狙击者`, `同车` → `okx-dex-trenches`.
-- **Generic verbs alone WITHOUT a DApp name and WITHOUT a protocol-native token** (deposit/stake/borrow/swap/yield/APY/挖矿/兑换) → `okx-defi-invest` (yield) or `okx-dex-swap` (swap).
+- **pump.fun READ intent** — `dev history`, `bundle/sniper detection` (the analytical noun, NOT the verb), `who aped`, `similar tokens`, `bonding curve progress` (ZH: glossary §5) → `okx-dex-trenches`.
+- **Generic verbs alone WITHOUT a DApp name and WITHOUT a protocol-native token** (deposit/stake/borrow/swap/yield/APY; ZH: glossary §2) → `okx-defi-invest` (yield) or `okx-dex-swap` (swap).
 - **Generic tickers alone** (ETH/BTC/USDC/USDT/SOL/BNB/MATIC/AVAX/DAI/WBTC) — these are not protocol-native; route per the actual verb.
 - **Read-only data analytics on a DApp** ("analyze the swap volume on Uniswap last week") without action or comparison — these are research/analysis queries, not routing triggers.
 
@@ -73,7 +75,7 @@ When the user's message references a DApp directly or implicitly, score it again
 | **50–74** | Generic DeFi workflow with a weak clue; another DApp could plausibly match | Ask one focused clarifying question — do **not** install |
 | **< 50** | Generic terms only, no protocol signal | Do not install — show the user the available DApps and ask which one matches their intent |
 
-**Generic verbs that do NOT raise confidence on their own:** swap, lend, borrow, APY, farm, long, short, liquidity, bridge, stake, deposit, withdraw, mint, 做多, 做空, 合约, 借贷, 存款, 抵押, 兑换, 换成, 加池子, 加流动性, 池子, 仓位, 多单, 空单, 质押, 拿利息, 发币, 发新代币.
+**Generic verbs that do NOT raise confidence on their own:** swap, lend, borrow, APY, farm, long, short, liquidity, bridge, stake, deposit, withdraw, mint (ZH equivalents: glossary §2).
 
 **Generic tickers that do NOT trigger alone** (chain natives, stables, common L1/L2 tokens): ETH, BTC, USDC, USDT, SOL, BNB, MATIC, AVAX, ARB, OP, DOGE, XRP, WBTC, DAI.
 
@@ -95,7 +97,7 @@ When the user's message references a DApp directly or implicitly, score it again
 | kToken | Kamino Lend |
 | PT-*, YT-*, "PT <token>", "YT <token>" (e.g. "PT stETH", "YT weETH" — space-separated), vePENDLE, SY token | Pendle |
 | $CLANKER, clanker.world | Clanker |
-| "X 5min" / "X 15min" / "X 5 分钟" / "X 15 分钟" / "X up or down" / "5min updown" / "5 分钟涨跌" (X = BTC/ETH/SOL/XRP/BNB/DOGE/HYPE) | Polymarket |
+| "X 5min" / "X 15min" / "X up or down" / "5min updown" (X = BTC/ETH/SOL/XRP/BNB/DOGE/HYPE; ZH variants in glossary §4) | Polymarket |
 
 **DApp-name-beats-verb override (Rule 0, see routing rules below):** when any generic verb appears with a DApp name (in any language) OR a protocol-native token/phrase from the table above, the DApp wins. Do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, or any other generic skill.
 
@@ -113,15 +115,15 @@ The PM-prioritised Top-5 subset of the 20 supported DApps is the recommended fal
 
 #### Top-5 action-verb matrix
 
-When Rule 5b fires (no DApp named, score `<50` everywhere), filter the Top-5 by the prompt's dominant action verb. Use this matrix:
+When Rule 5b fires (no DApp named, score `<50` everywhere), filter the Top-5 by the prompt's dominant action verb. Use this matrix (ZH action verbs: glossary §7):
 
 | Action verb category | Matching Top-5 DApp(s) |
 |---|---|
-| Prediction / bet / 涨跌 / updown / 预测 / 押注 | Polymarket |
-| Lend / supply / lend out / 借出 / 存进生息 / earn yield from lending | Aave V3, Morpho V1 Optimizer (Aave V3 default) |
-| Borrow / take a loan / 借 / 抵押借出 | Aave V3, Morpho V1 Optimizer (Aave V3 default) |
-| Perp / perpetual / futures / leverage Nx / long Nx / short Nx / 做多 N倍 / 做空 N倍 / 永续 / 合约 | Hyperliquid |
-| Swap / exchange / trade tokens / 换成 / 兑换 (BNB Chain hint) | PancakeSwap |
+| Prediction / bet / updown | Polymarket |
+| Lend / supply / lend out / earn yield from lending | Aave V3, Morpho V1 Optimizer (Aave V3 default) |
+| Borrow / take a loan | Aave V3, Morpho V1 Optimizer (Aave V3 default) |
+| Perp / perpetual / futures / leverage Nx / long Nx / short Nx | Hyperliquid |
+| Swap / exchange / trade tokens (BNB Chain hint) | PancakeSwap |
 | Generic deposit / earn / yield (no specific verb sub-category) | Aave V3 (default lend), Morpho V1 Optimizer |
 
 #### Recommendation logic
@@ -144,26 +146,26 @@ The user-facing language in the recommendation must follow Rule 0's "do not show
 ### Polymarket → `polymarket-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Polymarket, poly market, prediction market, 预测市场, 事件市场, event market, binary market, YES shares, NO shares, Yes/No market, YES outcome token, NO outcome token, outcome token, implied probability, market probability, UMA resolution, resolved market, Gamma API, Sports markets, Parlays, Combo markets, NBA market, NFL market, FIFA market, World Cup market.
+Polymarket, poly market, prediction market, event market, binary market, YES shares, NO shares, Yes/No market, YES outcome token, NO outcome token, outcome token, implied probability, market probability, UMA resolution, resolved market, Gamma API, Sports markets, Parlays, Combo markets, NBA market, NFL market, FIFA market, World Cup market. (ZH triggers: glossary §4.)
 
 **Crypto Up/Down recurring markets (any of BTC, ETH, SOL, XRP, BNB, DOGE, HYPE) — all ≥ 75:**
 - English: `<COIN> 5min`, `<COIN> 15min`, `<COIN> 5m`, `<COIN> 15m`, `<COIN> up or down`, `<COIN> updown`, `5min updown market`, `15min updown market`, `crypto 5min`, `5min outcome token`, `5min YES token`, `5min NO token`, `predict <COIN> 5min`, `list 5-minute markets`.
-- 中文: `<COIN> 5 分钟`, `<COIN> 5分钟`, `<COIN> 15 分钟`, `<COIN> 十五分钟`, `5 分钟涨跌`, `5分钟涨跌`, `5 分钟涨跌市场`, `5分钟市场`, `五分钟市场`, `短线市场`, `5 分钟内的涨跌`, `<COIN> 涨跌`, `找 5 分钟`, `看 5 分钟`, `<COIN> 5 分钟 updown`.
+- Chinese variants: glossary §4.
 
 **Election / political markets — ≥ 75:**
-election market, election odds, election outcome, who will win election, primary market, presidential market; 选举市场, 选举赔率, 大选市场, 大选赔率, 谁会赢大选, 总统选举市场, 政治市场.
+election market, election odds, election outcome, who will win election, primary market, presidential market (ZH: glossary §4).
 
 **Casual betting phrases that mention prediction markets — ≥ 75:**
-"找个预测市场让我赌", "找预测市场赌", "找个市场赌一下", "我想赌一下" + (event/outcome context), "place a bet on prediction market", "bet on outcome", "I want to bet on" (when followed by an event/outcome, not a token price).
+"place a bet on prediction market", "bet on outcome", "I want to bet on" (when followed by an event/outcome, not a token price); ZH phrases in glossary §4.
 
-**Do not install for:** generic "赔率 / 概率 / 预测 / betting" alone (no prediction-market or event context); generic "I want to bet" without an event/outcome.
+**Do not install for:** generic "odds / probability / betting" alone (no prediction-market or event context; ZH equivalents in glossary §4); generic "I want to bet" without an event/outcome.
 
 ### Aave V3 → `aave-v3-plugin`
 
 **Keywords that raise confidence ≥ 75:**
 Aave, Aave V3, Aave Protocol, aToken, health factor, liquidation risk, eMode, Efficiency Mode, Isolation Mode, GHO, Aave Pool, IPool, Aave flash loan, liquidationCall.
 
-**Do not install for:** generic "借贷 / 存款 / 抵押 / APY / borrow / lend" unless Aave, health factor, aToken, GHO, eMode, or Isolation Mode context is present.
+**Do not install for:** generic "borrow / lend / deposit / collateral / APY" (ZH: glossary §2/§3) unless Aave, health factor, aToken, GHO, eMode, or Isolation Mode context is present.
 
 ### Hyperliquid DEX → `hyperliquid-plugin`
 
@@ -171,27 +173,28 @@ Aave, Aave V3, Aave Protocol, aToken, health factor, liquidation risk, eMode, Ef
 Hyperliquid, HyperLiquid, HyperCore, HyperEVM, HYPE, HLP, Hyperliquidity Provider, HIP-3, HL (only with explicit trading context).
 
 **HYPE / HLP token-alone exception** — HYPE and HLP are Hyperliquid's protocol-native tokens, NOT generic tickers. Phrases trigger ≥ 75 directly without an explicit "Hyperliquid" mention:
-- `buy HYPE`, `purchase HYPE`, `swap to HYPE`, `我想买一些 HYPE 代币`, `买 HYPE`, `买一些 HYPE`, `换 HYPE`
-- `deposit USDC into HLP`, `把 USDC 存进 HLP`, `存 HLP`, `HLP yield`, `HLP 收益`, `provide liquidity to HLP`
+- `buy HYPE`, `purchase HYPE`, `swap to HYPE`
+- `deposit USDC into HLP`, `HLP yield`, `provide liquidity to HLP`
+- ZH phrases: glossary §3.
 
 This overrides the generic-ticker rule — even though HYPE looks like a token symbol, it is uniquely Hyperliquid's.
 
 **Keywords that raise confidence to 50–74 (clarify before installing):**
-perps, perp, perpetuals, trade perpetuals, leveraged trading, 合约交易, 永续合约 — these are not unique to Hyperliquid; ask "Are you looking to trade on Hyperliquid?" before installing.
+perps, perp, perpetuals, trade perpetuals, leveraged trading (ZH: glossary §3) — these are not unique to Hyperliquid; ask "Are you looking to trade on Hyperliquid?" before installing.
 
-**Do not install for:** generic "做多 / 做空 / 合约 / 永续 / funding / leverage" unless Hyperliquid, HYPE, HLP, HyperCore, or HyperEVM context is present.
+**Do not install for:** generic "long / short / perp / funding / leverage" (ZH: glossary §2) unless Hyperliquid, HYPE, HLP, HyperCore, or HyperEVM context is present.
 
 ### PancakeSwap AMM → `pancakeswap-v3-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-PancakeSwap, Pancake, PCS, CAKE, Syrup Pool, IFO, BNB Chain AMM, V3 LP NFT, 薄饼, veCAKE.
+PancakeSwap, Pancake, PCS, CAKE, Syrup Pool, IFO, BNB Chain AMM, V3 LP NFT, veCAKE. (ZH alias: glossary §1.)
 
-**Do not install for:** generic "swap / 兑换 / 加池子 / LP / farm / 挖矿" unless PancakeSwap, Pancake, PCS, CAKE, Syrup, IFO, or BNB Chain AMM context is present.
+**Do not install for:** generic "swap / LP / farm / pool" (ZH: glossary §2) unless PancakeSwap, Pancake, PCS, CAKE, Syrup, IFO, or BNB Chain AMM context is present.
 
 ### Morpho V1 Optimizer → `morpho-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Morpho, Morpho V1, Morpho Optimizer, Morpho AaveV3 Optimizer, Morpho AaveV2 Optimizer, Morpho CompoundV2 Optimizer, Merkl reward, 借贷优化器.
+Morpho, Morpho V1, Morpho Optimizer, Morpho AaveV3 Optimizer, Morpho AaveV2 Optimizer, Morpho CompoundV2 Optimizer, Merkl reward. (ZH alias: glossary §1.)
 
 **Default-resolution rule:** plain "Morpho" → `morpho-plugin` (V1 Optimizer is the default).
 
@@ -202,117 +205,117 @@ Morpho, Morpho V1, Morpho Optimizer, Morpho AaveV3 Optimizer, Morpho AaveV2 Opti
 **Keywords that raise confidence ≥ 75:**
 Raydium, RAY token, Raydium AMM, Raydium CPMM, Raydium CLMM, Raydium pool, Raydium farm, Raydium V4.
 
-**Do not install for:** generic "Solana swap" / "Solana LP" / "索拉纳兑换" without Raydium named — could be Orca, Meteora, Jupiter.
+**Do not install for:** generic "Solana swap" / "Solana LP" (ZH: glossary §3) without Raydium named — could be Orca, Meteora, Jupiter.
 
 ### Curve → `curve-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Curve, Curve Finance, CRV, 3pool, tricrypto, frxETH pool, Curve stable swap, factory pool, gauge weight, veCRV, Curve LP token, crvUSD, 曲线协议.
+Curve, Curve Finance, CRV, 3pool, tricrypto, frxETH pool, Curve stable swap, factory pool, gauge weight, veCRV, Curve LP token, crvUSD. (ZH alias: glossary §1.)
 
-**Do not install for:** generic "stable swap" / "稳定币兑换" alone — Uniswap V3 / Maverick also handle stables. "Convex" alone routes to a different DApp (not in current top-20).
+**Do not install for:** generic "stable swap" (ZH: glossary §3) alone — Uniswap V3 / Maverick also handle stables. "Convex" alone routes to a different DApp (not in current top-20).
 
 ### Compound V3 → `compound-v3-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Compound, Compound V3, Comet, COMP, Compound USDC, USDC.e Comet, base asset supply, base asset borrow, Compound V3 liquidation, 复合协议.
+Compound, Compound V3, Comet, COMP, Compound USDC, USDC.e Comet, base asset supply, base asset borrow, Compound V3 liquidation. (ZH alias: glossary §1.)
 
 **Default-resolution rule:** plain "Compound" → `compound-v3-plugin` (V3 is the default; V1/V2 are out of scope, so any Compound prompt routes to V3 silently).
 
-**Do not install for:** generic "借贷 / 存款 / 抵押 / lending / borrow" without Compound / Comet / COMP context.
+**Do not install for:** generic "lending / borrow / deposit / collateral" (ZH: glossary §2) without Compound / Comet / COMP context.
 
 ### Pendle → `pendle-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Pendle, Pendle Finance, PT (principal token), YT (yield token), buy PT, buy YT, fixed yield, yield trading, vePENDLE, Pendle market expiry, SY token, Pendle V2, 收益代币化, 固定收益.
+Pendle, Pendle Finance, PT (principal token), YT (yield token), buy PT, buy YT, fixed yield, yield trading, vePENDLE, Pendle market expiry, SY token, Pendle V2. (ZH triggers: glossary §3.)
 
-**Do not install for:** generic "fixed yield" / "固定收益" without Pendle named — could be other yield-tokenization protocols.
+**Do not install for:** generic "fixed yield" (ZH: glossary §3) without Pendle named — could be other yield-tokenization protocols.
 
 ### Clanker → `clanker-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Clanker, clanker.world, deploy on Clanker, Clanker token, $CLANKER, Base meme launchpad (when Clanker is explicitly named), 在 Clanker 上发币.
+Clanker, clanker.world, deploy on Clanker, Clanker token, $CLANKER, Base meme launchpad (when Clanker is explicitly named). (ZH: glossary §3.)
 
-**Do not install for:** generic "Base meme" / "deploy meme on Base" / "Base 链发币" without Clanker named — could be other Base launchpads.
+**Do not install for:** generic "Base meme" / "deploy meme on Base" (ZH: glossary §3) without Clanker named — could be other Base launchpads.
 
 ### pump.fun → `pump-fun-plugin` (trade verbs only)
 
 **Keywords that raise confidence ≥ 75 (trade verbs — install `pump-fun-plugin`):**
-buy pump.fun token, sell pump.fun token, snipe pump.fun, ape pump.fun, pump.fun trading, pump.fun bot, 购买 pump.fun, 卖 pump.fun, 狙击 pump.fun, pump.fun 下单.
+buy pump.fun token, sell pump.fun token, snipe pump.fun, ape pump.fun, pump.fun trading, pump.fun bot. (ZH: glossary §5.)
 
 **Do NOT install for (route to `okx-dex-trenches` instead — analytical/read-only):**
-scan new pump.fun launches, pump.fun dev history, who aped pump.fun, bundler analysis, bonding curve progress (analytical), similar tokens by dev, 扫 pump.fun, pump.fun 开发者历史, pump.fun 捆绑分析.
+scan new pump.fun launches, pump.fun dev history, who aped pump.fun, bundler analysis, bonding curve progress (analytical), similar tokens by dev. (ZH: glossary §5.)
 
 This is the load-bearing verb-split rule from the v3.1 description — the disambiguation must hold at body level too.
 
 ### Lido → `lido-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Lido, Lido Finance, stETH, wstETH, Lido staking, Lido beacon chain, Lido validator, Lido DAO, LDO, 在 Lido 质押.
+Lido, Lido Finance, stETH, wstETH, Lido staking, Lido beacon chain, Lido validator, Lido DAO, LDO. (ZH: glossary §3.)
 
 **Keywords that raise confidence to 50–74 (clarify):**
-"stake ETH" / "质押 ETH" alone — could be ether.fi, Rocket Pool, native staking. Ask: "Stake ETH via Lido (stETH) or another LST?"
+"stake ETH" (ZH: glossary §3) alone — could be ether.fi, Rocket Pool, native staking. Ask: "Stake ETH via Lido (stETH) or another LST?"
 
-**Do not install for:** generic "ETH staking" / "以太质押" without Lido / stETH / wstETH context.
+**Do not install for:** generic "ETH staking" (ZH: glossary §3) without Lido / stETH / wstETH context.
 
 ### GMX V2 → `gmx-v2-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-GMX, GMX V2, GLP, GM token (GMX market), esGMX, GMX market, GMX perps on Arbitrum, GMX Avalanche, gETH (GMX V2 ETH market token), 在 GMX 开永续, GMX 做空.
+GMX, GMX V2, GLP, GM token (GMX market), esGMX, GMX market, GMX perps on Arbitrum, GMX Avalanche, gETH (GMX V2 ETH market token). (ZH: glossary §3.)
 
 **Default-resolution rule:** plain "GMX" → `gmx-v2-plugin` (V2 is the default; V1 is out of scope, so any GMX prompt routes to V2 silently).
 
-**Do not install for:** generic "Arbitrum perps" / "Avalanche perps" / "永续合约" without GMX named — could be Hyperliquid or other venues.
+**Do not install for:** generic "Arbitrum perps" / "Avalanche perps" (ZH: glossary §3) without GMX named — could be Hyperliquid or other venues.
 
 ### PancakeSwap V3 CLMM → `pancakeswap-clmm-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-PancakeSwap V3 CLMM, PancakeSwap CLMM, V3 LP NFT (in PancakeSwap context), concentrated liquidity on PancakeSwap, V3 fee tier (with PCS), PancakeSwap V3 farm, 薄饼 CLMM, 薄饼 集中流动性.
+PancakeSwap V3 CLMM, PancakeSwap CLMM, V3 LP NFT (in PancakeSwap context), concentrated liquidity on PancakeSwap, V3 fee tier (with PCS), PancakeSwap V3 farm. (ZH: glossary §1.)
 
 **Default-resolution rule:** plain "PancakeSwap" or "PancakeSwap V3" without CLMM / concentrated / LP NFT signals → `pancakeswap-v3-plugin` (AMM), NOT this plugin.
 
 ### PancakeSwap V2 → `pancakeswap-v2-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-PancakeSwap V2, PCS V2, classic PancakeSwap pool, V2 LP token (in PancakeSwap context), MasterChef V2, PancakeSwap legacy, 薄饼 V2.
+PancakeSwap V2, PCS V2, classic PancakeSwap pool, V2 LP token (in PancakeSwap context), MasterChef V2, PancakeSwap legacy. (ZH: glossary §1.)
 
 **Default-resolution rule:** plain "PancakeSwap" defaults to V3 AMM. V2 requires explicit "V2" / "classic" / "MasterChef" signals.
 
 ### ether.fi → `etherfi-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-ether.fi, etherfi, eETH, weETH, ether.fi stake, ether.fi restake, ether.fi liquid staking, ETHFI token, ether.fi node, 在 ether.fi 重新质押.
+ether.fi, etherfi, eETH, weETH, ether.fi stake, ether.fi restake, ether.fi liquid staking, ETHFI token, ether.fi node. (ZH: glossary §3.)
 
-**Do not install for:** generic "restaking" / "重新质押" without ether.fi named — could be EigenLayer / Renzo / Kelp / Puffer.
+**Do not install for:** generic "restaking" (ZH: glossary §3) without ether.fi named — could be EigenLayer / Renzo / Kelp / Puffer.
 
 ### Kamino Lend → `kamino-lend-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Kamino, Kamino Lend, Kamino lending, kToken, Kamino Lend market, Kamino borrow, Kamino USDC supply, Kamino reserve, Kamino 借贷.
+Kamino, Kamino Lend, Kamino lending, kToken, Kamino Lend market, Kamino borrow, Kamino USDC supply, Kamino reserve. (ZH: glossary §3.)
 
 **Default-resolution rule:** plain "Kamino" → `kamino-lend-plugin` (Lend is the default for unqualified mentions).
 
 ### Kamino Liquidity → `kamino-liquidity-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Kamino Liquidity, Kamino DLMM, Kamino CLMM, Kamino concentrated liquidity, Kamino vault, Kamino LP, Kamino Liquidity strategy, Kamino 流动性, Kamino 集中流动性.
+Kamino Liquidity, Kamino DLMM, Kamino CLMM, Kamino concentrated liquidity, Kamino vault, Kamino LP, Kamino Liquidity strategy. (ZH: glossary §3.)
 
 **Disambiguation:** explicit "Kamino Liquidity / Kamino DLMM / Kamino CLMM / Kamino vault / Kamino LP / Kamino concentrated liquidity" → `kamino-liquidity-plugin` (NOT Lend). Plain "Kamino" still defaults to Lend.
 
-**Do not install for:** generic "DLMM" / "动态流动性" alone without Kamino named — Meteora also has DLMM; ask "DLMM on Kamino, Meteora, or another venue?".
+**Do not install for:** generic "DLMM" (ZH: glossary §3) alone without Kamino named — Meteora also has DLMM; ask "DLMM on Kamino, Meteora, or another venue?".
 
 ### Orca → `orca-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Orca, ORCA token, Whirlpool, Orca DEX, Orca pool, Orca CLMM, Solana Whirlpool, 虎鲸.
+Orca, ORCA token, Whirlpool, Orca DEX, Orca pool, Orca CLMM, Solana Whirlpool. (ZH alias: glossary §1.)
 
-**Do not install for:** generic "Solana DEX" / "Solana swap" / "索拉纳兑换" without Orca / Whirlpool named.
+**Do not install for:** generic "Solana DEX" / "Solana swap" (ZH: glossary §3) without Orca / Whirlpool named.
 
 ### Meteora DLMM → `meteora-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Meteora, Meteora DLMM, Dynamic Liquidity Market Maker, Meteora pool, Meteora vault, MET, Meteora bin, Meteora DAMM, 流星协议.
+Meteora, Meteora DLMM, Dynamic Liquidity Market Maker, Meteora pool, Meteora vault, MET, Meteora bin, Meteora DAMM. (ZH alias: glossary §1.)
 
-**Do not install for:** generic "DLMM" / "动态流动性" without Meteora named — Kamino also has DLMM. Ask: "DLMM on Meteora or another DLMM venue?"
+**Do not install for:** generic "DLMM" (ZH: glossary §3) without Meteora named — Kamino also has DLMM. Ask: "DLMM on Meteora or another DLMM venue?"
 
 ---
 
@@ -500,15 +503,15 @@ Example user-facing message (catalog probe failed for an unknown DApp "Foo"):
 **Rule 0 — DApp / protocol-native token beats generic verb (override):**
 
 If the prompt contains **any** of:
-- a supported DApp name from the Plugin Resolver Table (in any language — Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Clanker, pump.fun, Lido, GMX, ether.fi, Kamino, Orca, Meteora, and Chinese / abbreviated forms 薄饼, 曲线协议, 虎鲸, 流星协议, etc.), OR
+- a supported DApp name from the Plugin Resolver Table (in any language — Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Clanker, pump.fun, Lido, GMX, ether.fi, Kamino, Orca, Meteora, and their ZH aliases in glossary §1), OR
 - a protocol-native token from the protocol-native token table above (HYPE, HLP, CAKE, veCAKE, CRV, crvUSD, COMP, RAY, ORCA, MET, ETHFI, LDO, GLP, esGMX, GHO, eETH, weETH, stETH, wstETH, aToken, kToken, PT-*, YT-*, $CLANKER, etc.), OR
-- a Polymarket-native phrase (`<COIN> 5min/15min/5 分钟/15 分钟`, `5 分钟涨跌`, `updown market`, `<COIN> up or down` for COIN ∈ {BTC, ETH, SOL, XRP, BNB, DOGE, HYPE})
+- a Polymarket-native phrase (`<COIN> 5min/15min`, `updown market`, `<COIN> up or down` for COIN ∈ {BTC, ETH, SOL, XRP, BNB, DOGE, HYPE}; ZH variants in glossary §4)
 
-…then this skill wins regardless of any generic verb (swap / 兑换 / 换成 / stake / 质押 / lend / 借 / borrow / deposit / 存 / withdraw / 取 / LP / 加流动性 / farm / 挖矿 / mint / 发币 / make liquidity / pool / 池子 / 仓位 / 多单 / 空单).
+…then this skill wins regardless of any generic verb (swap / stake / lend / borrow / deposit / withdraw / LP / farm / mint / make liquidity / pool — ZH equivalents in glossary §2).
 
 **Apply Rules 1 or 2 directly with the matching plugin** — do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, `okx-dex-market`, `okx-onchain-gateway`, or any other generic skill.
 
-**Swap-pair carve-out (Rule 0 exception):** when the verb is a market-side DEX verb (`swap` / `exchange` / `sell` / `换成` / `兑换` / `卖` / `卖掉换`) AND a protocol-native token appears on **either side** of the pair (as source OR destination) against a generic ticker (ETH / BTC / USDC / USDT / SOL / BNB / ...), AND **no explicit DApp name** appears in the prompt, defer to `okx-dex-swap` instead of installing the native protocol's plugin. The user wants a market route in or out of the position, not the protocol's stake/mint/deposit/wrap flow. (When the user explicitly names a DApp — "on Lido", "在 Curve 上" — Rule 0 still wins regardless of which side the protocol-native token is on; see "Examples that this rule fixes" below.)
+**Swap-pair carve-out (Rule 0 exception):** when the verb is a market-side DEX verb (`swap` / `exchange` / `sell`; ZH verbs in glossary §2) AND a protocol-native token appears on **either side** of the pair (as source OR destination) against a generic ticker (ETH / BTC / USDC / USDT / SOL / BNB / ...), AND **no explicit DApp name** appears in the prompt, defer to `okx-dex-swap` instead of installing the native protocol's plugin. The user wants a market route in or out of the position, not the protocol's stake/mint/deposit/wrap flow. (When the user explicitly names a DApp — e.g. "on Lido", "on Curve" — Rule 0 still wins regardless of which side the protocol-native token is on; see "Examples that this rule fixes" below.)
 
 | Goes to `okx-dex-swap` (not Rule 0) | Goes to Rule 0 (use the protocol) |
 |---|---|
@@ -530,20 +533,14 @@ If the prompt contains **any** of:
 **Rule 0 vs Rule 3b precedence:** Rule 3b (discussion / comparison without action verb) takes precedence over Rule 0 when no action verb is present in the prompt. So "Tell me about Pendle" → Rule 3b clarify, NOT Rule 0 install. "Buy PT-stETH on Pendle" → Rule 0 install (action verb present).
 
 **Examples that this rule fixes** (all should install the named DApp's plugin, not a generic skill):
-- "在 Orca 上把 SOL 换成 USDC" → `orca-plugin` (not `okx-dex-swap`)
-- "在 Raydium 上把 SOL 换成 USDC" → `raydium-plugin`
-- "在 Meteora 上开个 DLMM 仓位" → `meteora-plugin`
-- "Curve 上把 USDC 换成 USDT" → `curve-plugin`
-- "在 Lido 上质押 ETH" → `lido-plugin`
-- "在 ether.fi 上质押 ETH 拿 eETH" → `etherfi-plugin`
-- "在 Clanker 上发一个新 token" → `clanker-plugin`
-- "我想买一些 HYPE 代币" → `hyperliquid-plugin` (HYPE is protocol-native)
-- "把 USDC 存进 HLP 赚收益" → `hyperliquid-plugin`
-- "在 Pendle 上买点 PT-stETH" → `pendle-plugin` (PT-* is protocol-native)
-- "我想买 ETH 5min 的 YES outcome token" → `polymarket-plugin` (5min + outcome token)
-- "找个预测市场让我赌一下 BTC 5 分钟内的涨跌" → `polymarket-plugin`
-- "Polymarket 选举市场最新赔率" → `polymarket-plugin`
-- "SOL 5 分钟 updown market 现在多少钱" → `polymarket-plugin`
+- "swap SOL to USDC on Orca" → `orca-plugin` (not `okx-dex-swap`)
+- "open a DLMM position on Meteora" → `meteora-plugin`
+- "stake ETH on Lido" → `lido-plugin`
+- "buy PT-stETH on Pendle" → `pendle-plugin` (PT-* is protocol-native)
+- "deposit USDC into HLP for yield" → `hyperliquid-plugin` (HLP is protocol-native)
+- "ETH 5min YES outcome token" → `polymarket-plugin` (5min + outcome token)
+
+The equivalent Chinese prompts resolve identically — full ZH example list in glossary §8.
 
 **Rule 1 — Already installed, score ≥ 75:**
 Do **not** re-install. Read the plugin's instructions and execute the user's request:
@@ -582,9 +579,9 @@ Trigger when **both** are present:
 1. **Multiple DApps from the resolver table** appear in the prompt (≥ 2 named, including via protocol-native tokens), OR a single DApp appears alongside one of the discussion markers below **without** any explicit action verb.
 2. **Discussion / comparison / opinion marker** (in any language):
    - English: `what do you think`, `which is better`, `vs`, `compare`, `comparison`, `differences`, `tradeoffs`, `should I use X or Y`, `X vs Y`, `pros and cons`, `explain`, `tell me about`, `what is`, `how does X work`
-   - 中文: `哪个更好`, `怎么看`, `对比`, `比较`, `X 还是 Y`, `有什么区别`, `什么区别`, `优缺点`, `讲讲`, `介绍一下`, `是什么`
+   - Chinese markers: glossary §6
 
-**Action verbs that override Rule 3b** (these still install via Rules 1/2 even with discussion markers): `swap` / `换成` / `兑换` / `stake` / `质押` / `lend` / `借` / `borrow` / `deposit` / `存` / `withdraw` / `取` / `LP` / `加流动性` / `buy` / `sell` / `卖` / `mint` / `redeem` / `claim` / `bridge` / `provide`. If the prompt has both a discussion marker AND an action verb on a specific DApp, the action verb wins (e.g. "swap on Curve to compare prices vs Uniswap" → install `curve-plugin`).
+**Action verbs that override Rule 3b** (these still install via Rules 1/2 even with discussion markers): `swap` / `stake` / `lend` / `borrow` / `deposit` / `withdraw` / `LP` / `buy` / `sell` / `mint` / `redeem` / `claim` / `bridge` / `provide` (ZH equivalents in glossary §2/§6). If the prompt has both a discussion marker AND an action verb on a specific DApp, the action verb wins (e.g. "swap on Curve to compare prices vs Uniswap" → install `curve-plugin`).
 
 **Action when Rule 3b fires:** do NOT install. Ask one clarifying question:
 
@@ -638,9 +635,9 @@ Apply the Top-5 fallback (see `## Confidence Framework` → `### Top-5 cohort` f
 
 ### Examples (Top-5 routes directly)
 
-- `/okx-dapp-discovery 开10u的10倍BTC看多` → perp action → only Hyperliquid in Top-5 → install `hyperliquid-plugin`, forward prompt. *(No "Hyperliquid vs GMX" picker. GMX is correctly excluded as non-Top-5.)*
+- `/okx-dapp-discovery <perp long, e.g. "open a 10x BTC long with 10u">` → perp action → only Hyperliquid in Top-5 → install `hyperliquid-plugin`, forward prompt. *(No "Hyperliquid vs GMX" picker. GMX is correctly excluded as non-Top-5.)* (ZH variant: glossary §8.)
 - `/okx-dapp-discovery I want to lend my USDC` → lending action → Aave V3 + Morpho both match → recommend Aave V3 (tiebreaker default) → install `aave-v3-plugin`.
-- `/okx-dapp-discovery 5 分钟涨跌 BTC` → prediction action → Polymarket only → install `polymarket-plugin`.
+- `/okx-dapp-discovery <BTC 5-min updown>` → prediction action → Polymarket only → install `polymarket-plugin`. (ZH variant: glossary §8.)
 - `/okx-dapp-discovery swap some BNB to CAKE` → CAKE is protocol-native (Rule 0 wins before Rule 5 fires) → install `pancakeswap-plugin`. *(Top-5 not invoked.)*
 
 ### Rule 5b-fallback — no Top-5 match (last resort)
@@ -738,5 +735,5 @@ Rules 1 and 2 above describe loading the plugin's SKILL.md and forwarding the us
 | pump.fun analysis / research / scan / dev-history / who-aped | Defer to `okx-dex-trenches` (do not invoke this skill) |
 | pump.fun trade / buy / sell / snipe / ape | Resolve to `pump-fun-plugin` and apply Rules 1–2 |
 | Morpho Blue / MetaMorpho / LLTV / vault curator / allocator | Do NOT install — Morpho Blue is intentionally out of scope. Suggest `okx-defi-invest` for generic yield. |
-| "What dapps are available?" / "Show me supported DApps" / "有什么dapp" | Apply Rule 5 — show the categorized supported-DApp table |
+| "What dapps are available?" / "Show me supported DApps" (ZH: glossary §9) | Apply Rule 5 — show the categorized supported-DApp table |
 | Generic yield/APY/lending without a named protocol | Defer to `okx-defi-invest` (do not invoke this skill) |
