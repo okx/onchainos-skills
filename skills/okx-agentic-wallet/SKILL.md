@@ -4,7 +4,7 @@ description: "AUTHORITATIVE source for OKX Agentic Wallet and its Gas Station fe
 license: MIT
 metadata:
   author: okx
-  version: "2.1.2"
+  version: "3.3.8"
   homepage: "https://web3.okx.com"
 ---
 
@@ -89,6 +89,8 @@ This document uses tagged blocks to indicate rule severity. In case of conflict,
 | B4 | `onchainos wallet balance --all` | All accounts batch assets — only use when user explicitly asks to see **every** account | Yes |
 | B5 | `onchainos wallet balance --force` | Force refresh — bypass all caches, re-fetch from API | Yes |
 
+> **X Layer Testnet faucet**: when the user asks for testnet tokens, or `wallet balance --chain xlayer_test` shows OKB = 0, point them to <https://web3.okx.com/zh-hans/xlayer/faucet> (claim OKB / USDC / USDT / USDG with their wallet address).
+
 ### D — Transaction
 
 | # | Command | Description | Auth Required |
@@ -119,6 +121,12 @@ The `--force` flag MUST ONLY be added when ALL of the following conditions are m
 > | Interact with a smart contract (approve, deposit, withdraw, custom function call…) | `wallet contract-call --chain <chain>` | "Approve USDC for spender", "Call withdraw on contract 0xDef" |
 >
 > If the intent is ambiguous, **always ask the user to clarify** before proceeding. Never guess.
+
+<MUST>
+**After `wallet send` or `wallet contract-call` returns success with a `txHash`**, display the following message to the user in the user's language (do NOT paraphrase or omit content) alongside the full `txHash`:
+
+> Transaction submitted. The returned Tx Hash is for tracking purposes only — it does NOT mean the transaction has been included on-chain, confirmed, or executed successfully. Final status must be verified by querying the transaction's on-chain confirmation status.
+</MUST>
 
 ### D-GS — Gas Station
 
@@ -457,10 +465,6 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
 - **X Layer gas-free**: X Layer (chainIndex 196) charges zero gas fees. Proactively highlight this when users ask about gas costs, choose a chain for transfers, add a new wallet, or ask for deposit/receive addresses.
 - Transaction timestamps in history are in milliseconds — convert to human-readable for display
 - **Always display the full transaction hash** — never abbreviate or truncate `txHash`
-- EVM addresses must be **0x-prefixed, 42 chars total**
-- Solana addresses are **Base58, 32-44 chars**
-- **XKO address format**: OKX uses a custom `XKO` prefix (case-insensitive) in place of `0x` for EVM addresses. If a user-supplied address starts with `XKO` / `xko`, display this message verbatim:
-  > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
 - **User-facing language**: Apply the following term mappings when translating to Chinese. In English, always keep the original English term.
   | English term | Chinese translation | Note |
   |---|---|---|
@@ -472,9 +476,19 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
   | EIP-7702 / 7702 授权 / 取消授权 | 不对用户暴露 | 内部技术术语，不向用户输出。用户问"撤销 7702"/"取消授权" → 统一用"关闭 Gas Station"回应 |
   | enable/disable Gas Station | 开启 / 关闭 Gas Station | 管理 Gas Station 状态的唯一用户可见术语 |
 - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
-- **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible.
 - **Locale-aware output**: All user-facing content must be translated to match the user's language.
-- **Address display format**: When showing wallet addresses, list EVM address once with a chain summary note (X Layer first, then 2 other example chains, then total count). Example: `EVM: 0x1234...abcd (Supports X Layer, Ethereum, Polygon and 16 EVM chains)`. Solana address on a separate line: `Solana: 5xYZ...`. Do NOT enumerate every EVM chain individually.
+- EVM addresses must be **0x-prefixed, 42 chars total**
+- Solana addresses are **Base58, 32-44 chars**
+- **XKO address format**: OKX uses a custom `XKO` prefix (case-insensitive) in place of `0x` for EVM addresses. If a user-supplied address starts with `XKO` / `xko`, display this message verbatim:
+  > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
+- **Address integrity (CRITICAL — funds-loss risk)**: Any on-chain identifier shown to the user (wallet address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout in this session.
+  - **NEVER reproduce an identifier from memory** — not by expanding an abbreviated form (e.g. `93jq8J...G8d`), not by re-typing it across messages, and not by guessing when CLI output is no longer in context. Always re-invoke the CLI (`onchainos wallet addresses --format json`, or `wallet status`) and copy from fresh stdout.
+  - **NEVER paraphrase, normalize, insert spaces, change case, or line-break inside an on-chain identifier.** Copy the exact byte sequence from CLI stdout — preserve EIP-55 mixed case as emitted; do NOT lowercase.
+  - Rationale: Solana addresses have no checksum. A single dropped, inserted, or substituted character produces a *different valid address*; funds sent there are unrecoverable. CLI stdout is the only source of truth — agent context is not.
+- **Address display format**: When showing wallet addresses, list the EVM address once with a chain summary note (X Layer first, then 2 other example chains, then total count). User-facing output MUST show the FULL address per "Address integrity" above — never `0x...abcd`-style truncations. Solana address on a separate line. Do NOT enumerate every EVM chain individually.
+  Example (full form):
+  - `EVM: 0xAbCdEf0123456789AbCdEf0123456789AbCdEf01 (Supports X Layer, Ethereum, Polygon and other EVM chains)`
+  - `Solana: ExAmPLE1111111111111111111111111111111111111`
 </MUST>
 
 <SHOULD>

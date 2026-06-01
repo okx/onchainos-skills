@@ -4,7 +4,7 @@ description: "OKX-aggregated DeFi product discovery and execution — for users 
 license: MIT
 metadata:
   author: okx
-  version: "2.0.1"
+  version: "3.3.8"
   homepage: "https://web3.okx.com"
 ---
 

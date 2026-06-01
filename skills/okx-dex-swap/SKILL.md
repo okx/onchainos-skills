@@ -4,7 +4,7 @@ description: "NOTE (gating): route to okx-dapp-discovery (NOT this skill) when p
 license: MIT
 metadata:
   author: okx
-  version: "1.3.2"
+  version: "3.3.8"
   homepage: "https://web3.okx.com"
 ---
 
@@ -55,7 +55,7 @@ metadata:
 
 Acceptable CA sources (in order):
 1. **CLI TOKEN_MAP** (pass directly as `--from`/`--to`): native: `sol eth bnb okb matic pol avax ftm trx sui`; stablecoins: `usdc usdt dai`; wrapped: `weth wbtc wbnb wmatic`
-2. `onchainos token search --query <symbol> --chains <chain>` — for all other symbols
+2. `onchainos token search --query <symbol> --chains <chain>` — for all other symbols. Returns `tokenContractAddress` (use as `--from`/`--to`) and `decimal` (string, e.g. `"6"`);
 3. User provides full CA directly
 
 Multiple search results → show name/symbol/CA/chain, ask user to confirm before executing. Single exact match → show token details for user to verify before executing.
@@ -105,7 +105,7 @@ onchainos swap execute --from <token address from step1> --to <token address fro
 ```
 
 CLI handles approve (if needed) + sign + broadcast internally.
-Returns: `{ approveTxHash?, swapTxHash, fromAmount, toAmount, priceImpact, gasUsed }`
+Returns: `{ approveTxHash?, swapTxHash, fromAmount, toAmount, priceImpact, gasUsed, nextSteps }`
 
 #### Error Retry
 
@@ -135,9 +135,23 @@ Enabled only when the user has **explicitly authorized** automated execution. Th
 
 ### Step 6 — Report Result
 
-IMPORTANT: Report as **broadcast successful**. Use wording like "Swap transaction broadcast — final on-chain result pending". Do NOT say "Swap complete" / "Swap successful" / "On-chain success" — broadcast does not guarantee the tx lands or succeeds on-chain. Tell the user to check the explorer link for final status.
+<MUST>Translate the template's prose labels into the user's conversation language. `<swapTxHash>` and `<nextSteps.checkSwapStatus>` are verbatim placeholder values. Construct `<explorerUrl>` yourself from the chain's canonical block explorer; if unknown, omit the Explorer line.</MUST>
 
-Suggest follow-up: explorer link for `swapTxHash`, check new token price, or swap again.
+Report as **broadcast** (not "complete" / "successful" / "on-chain success") — broadcast ≠ landed. Output:
+
+```
+Swap broadcast — final on-chain result pending.
+Tx hash: <swapTxHash>
+
+1. Reply 1 — query on-chain status on Agent:
+  <nextSteps.checkSwapStatus>
+
+2. Explorer (click to open):
+  <explorerUrl>
+```
+
+- Use `nextSteps.checkSwapStatus` verbatim from the execute response.
+- After running `Reply 1`, if `txStatus` is **not** `SUCCESS` / `FAIL` (e.g. empty, `PENDING`, no record yet), tell the user the tx hasn't landed and they can reply `1` again to re-query. Do not auto-poll.
 
 
 ## Additional Resources

@@ -798,6 +798,33 @@ fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
     Ok((tx_hash, order_id))
 }
 
+/// Build ready-to-paste `onchainos wallet history --tx-hash <h> --chain <c>`
+/// commands so callers can poll on-chain status without string surgery.
+fn next_steps_for_swap(
+    chain_index: &str,
+    swap_tx_hash: &str,
+    approve_tx_hash: Option<&str>,
+) -> Value {
+    let mut steps = serde_json::Map::new();
+    steps.insert(
+        "checkSwapStatus".to_string(),
+        json!(format!(
+            "onchainos wallet history --tx-hash {} --chain {}",
+            swap_tx_hash, chain_index
+        )),
+    );
+    if let Some(approve) = approve_tx_hash {
+        steps.insert(
+            "checkApproveStatus".to_string(),
+            json!(format!(
+                "onchainos wallet history --tx-hash {} --chain {}",
+                approve, chain_index
+            )),
+        );
+    }
+    Value::Object(steps)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn cmd_execute(
     client: &mut ApiClient,
@@ -1100,6 +1127,7 @@ async fn cmd_execute(
         );
     }
     let router_result = &swap_result["routerResult"];
+    let next_steps = next_steps_for_swap(&chain_index, &swap_tx_hash, approve_tx_hash.as_deref());
     let mut out = json!({
         "approveTxHash": approve_tx_hash,
         "swapTxHash": swap_tx_hash,
@@ -1109,6 +1137,7 @@ async fn cmd_execute(
         "toAmount": router_result["toTokenAmount"],
         "priceImpact": router_result["priceImpactPercent"],
         "gasUsed": router_result["estimateGasFee"],
+        "nextSteps": next_steps,
     });
     // Only emit orderId fields when Gas Station was actually used (non-empty).
     // Normal (native-gas) swaps return empty orderId and shouldn't pollute output.
@@ -1260,6 +1289,7 @@ async fn cmd_execute_batch(
         )
         .await?;
         let swap_tx_hash = extract_tx_hash(&result)?;
+        let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, None);
         let router_result = &swap_result["routerResult"];
         let out = json!({
             "approveTxHash": Value::Null,
@@ -1270,6 +1300,7 @@ async fn cmd_execute_batch(
             "toAmount": router_result["toTokenAmount"],
             "priceImpact": router_result["priceImpactPercent"],
             "gasUsed": router_result["estimateGasFee"],
+            "nextSteps": next_steps,
         });
         output::success(out);
         return Ok(());
@@ -1349,6 +1380,7 @@ async fn cmd_execute_batch(
     }
 
     let router_result = &swap_result["routerResult"];
+    let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, approve_tx_hash.as_deref());
     let out = json!({
         "approveTxHash": approve_tx_hash,
         "swapTxHash": swap_tx_hash,
@@ -1358,6 +1390,7 @@ async fn cmd_execute_batch(
         "toAmount": router_result["toTokenAmount"],
         "priceImpact": router_result["priceImpactPercent"],
         "gasUsed": router_result["estimateGasFee"],
+        "nextSteps": next_steps,
     });
     output::success(out);
     Ok(())

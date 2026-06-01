@@ -4,7 +4,7 @@ description: "Agentic Wallet exclusive trading competitions. Full lifecycle: dis
 license: MIT
 metadata:
   author: okx
-  version: "1.2.0"
+  version: "3.3.8"
   homepage: "https://web3.okx.com"
 ---
 
@@ -17,21 +17,21 @@ CLI reference: `references/cli-reference.md`
 ## Facts about every Agentic Wallet competition (always true unless backend confirms otherwise)
 
 <MUST>
-Treat the following as **factual ground truth** when the user asks about how a competition works. Every activity exposes two chain-related fields, and both contribute to the trading set:
+Treat the following as **factual ground truth** when the user asks about how a competition works. The two chain-related fields play **distinct, non-overlapping roles** — never conflate them:
 
-- `chainId` — single id. **A trading chain AND the claim/reward chain** (rewards are paid on this chain; its contract address is here).
-- `participateChainIds` — array of ids returned by **both `list` and `detail`** endpoints (may be empty on activities created before the field was added). **Additional trading chains** (no claim role).
+- `chainId` — single id. **The claim / reward chain ONLY** (rewards are paid on this chain; its contract address lives here). It is NOT a trading chain unless it also appears in `participateChainIds`.
+- `participateChainIds` — array of ids returned by **both `list` and `detail`** endpoints. **The trading chain set.** Trades on any chain in this list count toward the same competition standing. (May be empty on legacy activities created before the field was added; in that case fall back to `[chainId]` for trading-chain display — backend invariant for new activities is that `participateChainIds` is always populated.)
 
-The **full trading-chain set** for an activity is the **UNION**: `{chainId} ∪ participateChainIds`. Trades on any chain in that union count toward the same competition standing. The **claim chain** is `chainId` only.
+**Trading-chain set = `participateChainIds`. Claim chain = `chainId`.** These are two separate concepts; the display rules below NEVER union them.
 </MUST>
 
-1. **The trading-chain set is `{chainId} ∪ participateChainIds` (dedup).** Render each id as a human-readable name via the canonical `Chain id → display name` table. Currently supported competition chains: `1 → Ethereum`, `196 → X Layer`, `501 → Solana`.
-2. **Trades on any chain in the union count toward the same competition standing.** Trades on chains NOT in the union do not count. Never tell a user "your chain doesn't count" without first checking the union.
+1. **The trading-chain set is `participateChainIds`.** Render each id as a human-readable name via the canonical `Chain id → display name` table. Currently supported competition chains: `1 → Ethereum`, `196 → X Layer`, `501 → Solana`.
+2. **Trades on any chain in `participateChainIds` count toward the same competition standing.** Trades on chains NOT in `participateChainIds` (including `chainId` if it is not also listed there) do not count. Never tell a user "your chain doesn't count" without first checking `participateChainIds`.
 3. `myRankInfo.userTotal = 0` means the user has not yet hit the qualifying threshold or the backend metric pipeline has not picked up their trades yet — it does **NOT** mean the user's chain is unsupported.
-4. `competition_rank` takes a single optional `wallet`. Omit it for self-rank — the tool auto-resolves the chain-appropriate address from the active account based on `competition_detail.chainId` (the primary chain used for reward claim and rank indexing). Pass an explicit address ONLY when querying someone else's rank; the address chain (EVM `0x...` else Solana) must match the activity's primary chain or the tool rejects the call (no silent wrong-chain queries). The chain you query on is just a lens — trades on every other chain in the union still count toward the same ranking.
-5. **Claim path uses only `chainId`** (that's where the reward contract / activity address lives). Everything else — trading eligibility, "which chains count", chain-list display in templates — uses the union of both fields.
+4. `competition_rank` takes a single optional `wallet`. Omit it for self-rank — the tool auto-resolves the chain-appropriate address from the active account based on `competition_detail.chainId` (the primary chain used for reward claim and rank indexing). Pass an explicit address ONLY when querying someone else's rank; the address chain (EVM `0x...` else Solana) must match the activity's primary chain or the tool rejects the call (no silent wrong-chain queries). The chain you query on is just a lens — trades on every chain in `participateChainIds` still count toward the same ranking.
+5. **Claim path uses only `chainId`** (that's where the reward contract / activity address lives). Trading eligibility, "which chains count", and the chain-list display in templates use **`participateChainIds`** only — never include `chainId` in trading-chain output unless `participateChainIds` itself contains it.
 
-When the user asks "Does my chain count for this competition?" or "Which chains can I trade on?", answer from the **union** of `chainId` and `participateChainIds`. When rendering the "Chain" column / line in a template, render that same union (deduplicated) — see the `{supportedChains}` computation rule in each Step's field-mapping section.
+When the user asks "Does my chain count for this competition?" or "Which chains can I trade on?", answer from **`participateChainIds`** only. When rendering the "Chain" column / line in a template, render `participateChainIds` only — see the `{supportedChains}` computation rule in each Step's field-mapping section.
 
 ## Identity resolution invariant (deterministic — always answerable)
 
@@ -235,17 +235,17 @@ For non-English users, translate the column headers, section headers, and link t
 
 - Group rows by `availableCompetitions[].status`: `3` → Active table, `4` → Ended table.
 - Name column ← `name`
-- **Chain column** ← `{supportedChains}`, computed as the **union of `participateChainIds` and `chainId`**:
-  1. Start with the ids in `participateChainIds` (in backend-returned order).
-  2. If `chainId` is not already in that list, append it at the end.
-  3. Map each id to its display name. Currently supported competition chains: `1 → Ethereum`, `196 → X Layer`, `501 → Solana`.
-  4. Join with `, `.
+- **Chain column** ← `{supportedChains}`, computed from **`participateChainIds` only**:
+  1. Take the ids in `participateChainIds` (in backend-returned order).
+  2. Map each id to its display name. Currently supported competition chains: `1 → Ethereum`, `196 → X Layer`, `501 → Solana`.
+  3. Join with `, `.
+  - Legacy fallback: if `participateChainIds` is empty/missing (activity created before the field was added), fall back to `[chainId]` for display.
   - Examples:
-    - `chainId=196`, `participateChainIds=[501]` → `Solana, X Layer`
-    - `chainId=196`, `participateChainIds=[196, 501]` → `X Layer, Solana` (chainId already in list — no duplicate)
-    - `chainId=501`, `participateChainIds=[501]` → `Solana`
-    - `chainId=196`, `participateChainIds` empty/missing (legacy activity created before the field was added) → `X Layer` (chainId only)
-  - Rationale: Both `chainId` and `participateChainIds` are trading chains — trades on any of them count. `chainId` additionally is the claim chain. The display union exposes the user to the full set so they can pick where to trade.
+    - `participateChainIds=[501]` → `Solana`
+    - `participateChainIds=[196, 501]` → `X Layer, Solana`
+    - `participateChainIds=[1, 196, 501]` → `Ethereum, X Layer, Solana`
+    - `participateChainIds` empty/missing, `chainId=196` → `X Layer` (legacy fallback)
+  - Do NOT include `chainId` in this column unless it appears in `participateChainIds` itself. `chainId` is the claim-only chain; it is not a trading chain.
 - Time column ← `startTime` ~ `endTime` formatted per **Time Formatting** rules above. List-table compact form: `YYYY-MM-DD ~ YYYY-MM-DD` in UTC+8 (e.g. `2026-05-07 ~ 2026-05-21`). Do NOT include time-of-day in the compact list to keep the column narrow — full time-of-day is shown in Step 2 detail view only.
 - Total Prize Pool column ← `rewards` field (already a formatted string like `50,000 USDC`)
 - Details column ← `https://web3.okx.com/boost/trading-competition/<shortName>` as a markdown link
@@ -307,17 +307,17 @@ The Skill Quality Prize is an independently judged award. During the competition
 
 #### Field-mapping rules
 
-- Chain line ← `{supportedChains}`, computed as the **union of `data.participateChainIds` and `data.chainId`**:
-  1. Start with `data.participateChainIds` (in backend-returned order).
-  2. Append `data.chainId` at the end if not already present.
-  3. Map each id to its display name. Currently supported competition chains: `1 → Ethereum`, `196 → X Layer`, `501 → Solana`.
-  4. Join with `, `.
+- Chain line ← `{supportedChains}`, computed from **`data.participateChainIds` only**:
+  1. Take `data.participateChainIds` (in backend-returned order).
+  2. Map each id to its display name. Currently supported competition chains: `1 → Ethereum`, `196 → X Layer`, `501 → Solana`.
+  3. Join with `, `.
+  - Legacy fallback: if `data.participateChainIds` is empty/missing, fall back to `[data.chainId]` for display.
   - Examples (using real backend shapes):
-    - `chainId=196`, `participateChainIds=[501]` → `Solana, X Layer`
-    - `chainId=196`, `participateChainIds=[196, 501]` → `X Layer, Solana`
-    - `chainId=501`, `participateChainIds=[501]` → `Solana`
-    - `chainId=196`, `participateChainIds` empty/missing (legacy activity) → `X Layer` (chainId only)
-  - Both fields are trading chains (trades on any of them count toward the competition standing); `chainId` additionally hosts the reward contract / claim path. Display the union so the user sees the full trading set.
+    - `participateChainIds=[501]` → `Solana`
+    - `participateChainIds=[196, 501]` → `X Layer, Solana`
+    - `participateChainIds=[1, 196, 501]` → `Ethereum, X Layer, Solana`
+    - `participateChainIds` empty/missing, `chainId=196` → `X Layer` (legacy fallback)
+  - `chainId` is the claim chain only — never display it as a trading chain unless `participateChainIds` itself contains it. Trading eligibility and the chain line both come from `participateChainIds`.
 - `{startTime}` / `{endTime}` ← read `startTimeFormatted` / `endTimeFormatted` directly from `competition_detail.data` and append ` (UTC+8)`. Final form: `YYYY-MM-DD HH:mm:ss (UTC+8)` (e.g. `2026-05-07 18:00:00 (UTC+8)`). Do NOT compute from raw `startTime` / `endTime` epoch — the backend has already done the math.
 - `{totalPrizePool}` ← sum of all `prizePoolDistribution[].totalReward` plus `rewardUnit` (e.g. `50,000 USDC`).
 - `{roiPoolAmount}` ← totalReward of the realized-ROI tab.
@@ -374,7 +374,7 @@ If any of the four pools is absent for a particular activity, omit just that sec
   - `top {skillTopN} Skill creators ... each receive a reward of {skillPerCreatorReward}`
 
 <NEVER>
-- ❌ Do NOT invent or omit chains on the chain line — `{supportedChains}` must reflect the **union of `participateChainIds` and `chainId`** (dedup, participateChainIds order first, then `chainId` if missing). Never drop `chainId` because `participateChainIds` is present; never drop `participateChainIds` because `chainId` exists.
+- ❌ Do NOT invent or omit chains on the chain line — `{supportedChains}` must reflect **`participateChainIds` only** (in backend-returned order). Do NOT include `chainId` in trading-chain output unless it appears in `participateChainIds`. Only fall back to `[chainId]` when `participateChainIds` is empty/missing (legacy activities).
 - ❌ Do NOT reorder or merge the four reward sections — they must appear in the order 1 → 2 → 3 → 4.
 - ❌ Do NOT add ID columns or expose any internal numeric id (`activityId`, etc.) anywhere in the output.
 - ❌ Do NOT paraphrase, abbreviate, or substitute synonyms in Sections 3 and 4. These are product-mandated copy.
@@ -395,8 +395,13 @@ onchainos competition join --activity-id <id> --evm-wallet <evm_addr> --sol-wall
 
 Get `chainIndex` from `competition_detail` → `chainIndex` field.
 
-If the user is not logged in, the tool returns `not logged in — please run: onchainos wallet login`. Tell the user verbatim:
-> Please run `onchainos wallet login <your_email>` in your terminal to log in (it cannot be done from inside this conversation), then ask me to register again.
+If the user is not logged in, the tool returns `not logged in — please run: onchainos wallet login`. Walk the user through the **okx-agentic-wallet** login flow (see that skill's Authentication section):
+1. Ask the user for their email address.
+2. Run `onchainos wallet login <email> --locale <locale>`.
+3. Tell the user a verification code has been sent and ask them to paste it into the chat.
+4. Run `onchainos wallet verify <code>`.
+
+After login succeeds, re-attempt the registration.
 
 #### Required pre-flight: distinguish duplicate-registration scenarios
 
@@ -437,7 +442,7 @@ Field-mapping:
 #### Successful registration
 
 <MUST>
-**On every successful `competition_join` call (the tool returns `joined: true`), output the fixed template below.** Structure (the lead phrase + the supported-chains sentence + the closing question + the bracketed disclaimer on its own line) is fixed. `{supportedChains}` is the union of `participateChainIds` and `chainId` (see Field-mapping rules below); `{totalPrizePool}` is filled from `competition_detail` (call it before formatting if you don't have it cached). Translate the natural-language strings to the user's language while preserving structure and placeholders.
+**On every successful `competition_join` call (the tool returns `joined: true`), output the fixed template below.** Structure (the lead phrase + the supported-chains sentence + the closing question + the bracketed disclaimer on its own line) is fixed. `{supportedChains}` is **`participateChainIds` only** (see Field-mapping rules below); `{totalPrizePool}` is filled from `competition_detail` (call it before formatting if you don't have it cached). Translate the natural-language strings to the user's language while preserving structure and placeholders.
 </MUST>
 
 Template:
@@ -450,11 +455,11 @@ Registered successfully! This competition runs on {supportedChains}, with a tota
 
 **Field-mapping rules**
 
-- `{supportedChains}` ← computed as the **union of `data.participateChainIds` and `data.chainId`** from `competition_detail`. Take participateChainIds in backend order, append `chainId` at the end if not already in the list, map each id to its display name (currently supported competition chains: `1 → Ethereum`, `196 → X Layer`, `501 → Solana`), join with `, `. Examples: `chainId=196`+`participateChainIds=[501]` → `Solana, X Layer`; `chainId=501`+`participateChainIds=[501]` → `Solana`. The lead sentence and the closing question both use the same string; do not paraphrase by listing chains separately.
+- `{supportedChains}` ← computed from **`data.participateChainIds` only** in `competition_detail`. Take `participateChainIds` in backend-returned order, map each id to its display name (currently supported competition chains: `1 → Ethereum`, `196 → X Layer`, `501 → Solana`), join with `, `. Legacy fallback: if `participateChainIds` is empty/missing, fall back to `[data.chainId]`. Examples: `participateChainIds=[501]` → `Solana`; `participateChainIds=[196, 501]` → `X Layer, Solana`. The lead sentence and the closing question both use the same string; do not paraphrase by listing chains separately.
 - `{totalPrizePool}` ← total reward pool (sum of all `prizePoolDistribution[].totalReward` + `rewardUnit`, e.g. `500 DJT`).
 
 <NEVER>
-- ❌ Do NOT invent or omit chains on the chain line — `{supportedChains}` must reflect the **union of `participateChainIds` and `chainId`** (dedup, participateChainIds order first, then `chainId` if missing). Never drop `chainId` because `participateChainIds` is present; never drop `participateChainIds` because `chainId` exists.
+- ❌ Do NOT invent or omit chains on the chain line — `{supportedChains}` must reflect **`participateChainIds` only** (in backend-returned order). Do NOT include `chainId` in trading-chain output unless it appears in `participateChainIds`. Only fall back to `[chainId]` when `participateChainIds` is empty/missing (legacy activities).
 - ❌ Do NOT drop or merge the four key phrases of the lead sentence: (1) which chains it runs on (from `{supportedChains}`), (2) the total prize pool, (3) the dual-axis PnL%/realized PnL ranking, (4) the existence of Participation and Skill Quality Prizes. These are required content; the wording can be localized but the four pieces must all appear.
 - ❌ Do NOT drop the bracketed disclaimer line — it must appear on its own line at the end of the message, in the user's language.
 </NEVER>
@@ -526,16 +531,16 @@ Only ask the user to pick one when there are clearly too many to fit (≥ 3 lead
 onchainos competition rank --activity-id <id> [--wallet <addr>] --sort-type <descend> --limit 20
 ```
 
-**Display rules:** for each leaderboard render a separate section labeled by its `title`. Each section shows top N entries: rank, nickname (masked), score (`userTotal` formatted by `format` field), estimated reward.
+**Display rules:** for each leaderboard render a separate section labeled by its `title`. Each section shows top N entries: rank, `nickName`, score (`userTotal` formatted by `format` field), estimated reward. Render `nickName` verbatim from the response.
 
-Example response (activity with two leaderboards):
+Example layout (`nickName`, score, and reward values come from the backend):
 > **PnL% leaderboard** — pool 200 DJT
-> Rank 1, Agentic....sMWP, PnL% +0.17%, estimated reward 100 DJT
-> Rank 2, Agentic....gweD, PnL% +0.03%, estimated reward 20 DJT
+> Rank 1, {nickName}, PnL% +0.17%, estimated reward 100 DJT
+> Rank 2, {nickName}, PnL% +0.03%, estimated reward 20 DJT
 >
 > **PnL leaderboard** — pool 200 DJT
-> Rank 1, Agentic....sMWP, PnL $0.1885, estimated reward 100 DJT
-> Rank 2, Agentic....gweD, PnL $0.0006, estimated reward 20 DJT
+> Rank 1, {nickName}, PnL $0.1885, estimated reward 100 DJT
+> Rank 2, {nickName}, PnL $0.0006, estimated reward 20 DJT
 
 After the leaderboards, append a "Your rank" section using the **CASE 1 / 2 / 3 templates** from the next section, since you already have all the data.
 
@@ -792,17 +797,17 @@ When user asks "show my registered address" or similar:
 
 1. Call `competition_user_status` (MCP) — `accountId` is loaded from the active wallet session; no wallet args needed. CLI equivalent: `onchainos competition user-status` (omit `--activity-id` to query all activities).
 2. Find entries where `joinStatus=1`
-3. For each matched entry, present: competition name (`activityName`) + chain (`chainName`) + masked address (first4...last4). Use chain to determine which address was used (EVM or SOL).
+3. For each matched entry, present: competition name (`activityName`) + chain (`chainName`) + `joinedAddress` rendered verbatim. Use chain to determine which address was used (EVM or SOL).
 
 If multiple entries match, list all of them.
 
-Example (single):
-> Your Account 1 is registered for **XXX Trading Competition**. Registered address: Solana address DeEV...Fbx.
+Example layout (single):
+> Your Account 1 is registered for **XXX Trading Competition**. Registered address: Solana address {joinedAddress}.
 
-Example (multiple):
+Example layout (multiple):
 > Your Account 1 is registered for the following trading competitions:
-> - **XXX Trading Competition** (Solana): DeEV...Fbx
-> - **YYY Trading Competition** (XLayer): 0x1234...abcd
+> - **XXX Trading Competition** (Solana): {joinedAddress}
+> - **YYY Trading Competition** (XLayer): {joinedAddress}
 
 If no entry has `joinStatus=1`:
 > You are not currently registered for any trading competition.
@@ -844,7 +849,7 @@ When the user requests to export the Agentic Wallet:
 
 | Error | Response |
 |-------|----------|
-| `not logged in` | Login is interactive (email + OTP) and cannot run inside this conversation. Tell the user verbatim: `Please run "onchainos wallet login <your_email>" in your terminal, then ask me again.` |
+| `not logged in` | Walk the user through the okx-agentic-wallet login flow: ask for email → run `onchainos wallet login <email> --locale <locale>` → ask user to paste the OTP code from their inbox → run `onchainos wallet verify <code>`. After login succeeds, re-attempt the original action. |
 | `address limit reached` | Registration failed: this wallet account is already registered and cannot register again |
 | code 11002 `not eligible for reward` | You did not win a reward and cannot claim |
 | code 11003 `activity not found / status mismatch` | The competition does not exist or its status no longer permits this action |

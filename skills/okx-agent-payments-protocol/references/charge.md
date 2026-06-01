@@ -57,7 +57,13 @@ Output is the same shape as transaction mode, but `mode: "hash"`. Save `authoriz
 Authorization: <authorization_header>
 ```
 
-Expected: `HTTP 200` with the requested content + a `Payment-Receipt` header carrying the on-chain tx hash. Charge complete.
+Expected: `HTTP 200` with the requested content + a `Payment-Receipt` header (base64-encoded JSON). Decode with:
+
+```bash
+echo '<header value>' | base64 -d | jq .
+```
+
+关键字段：`status` / `transaction`（on-chain tx hash）/ `chainId`。Charge complete.
 
 If a fresh `HTTP 402` returns (stale challenge), re-run the original request to fetch a new `WWW-Authenticate`, then sign again from the top.
 

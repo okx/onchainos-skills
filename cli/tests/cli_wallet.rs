@@ -8,8 +8,7 @@
 //!   `locale '<original>' not in supported list (en_US, zh_CN), falling back to en_US`.
 //! - Empty email argument fails fast with `email is required` and exit 1 — no network.
 //!
-//! Live rows hit the dev backend (`https://web3pre.okex.org`). The placeholder
-//! email may be rejected by the backend, so we assert only:
+//! The placeholder email may be rejected by the backend, so we assert only:
 //!   1. The CLI did not crash (exit code reached `main.rs` cleanly).
 //!   2. Stdout is parseable JSON.
 //!   3. For fallback rows: stderr contains the exact warning substring.
@@ -19,16 +18,59 @@
 
 mod common;
 
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use common::onchainos;
 
+/// RAII guard for an `ONCHAINOS_HOME` staged under `cli/target/test_tmp/`.
+/// Removes the directory on drop. We can't use `tempfile::tempdir()` because
+/// the agent's bash sandbox denies writes to the system tempdir.
+struct TestHome {
+    path: PathBuf,
+}
+
+impl TestHome {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TestHome {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Build a fresh, isolated `ONCHAINOS_HOME` directory under
+/// `cli/target/test_tmp/cli_wallet/`.
+fn fresh_home() -> TestHome {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test_tmp")
+        .join("cli_wallet");
+    fs::create_dir_all(&base).expect("create test_tmp base");
+    let pid = std::process::id();
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = base.join(format!("{pid}-{ts}-{n}"));
+    fs::create_dir_all(&dir).expect("create per-test dir");
+    TestHome { path: dir }
+}
+
 /// Build the standard live-row CLI invocation. `extra` is the per-row tail
 /// (email + optional `--locale <v>`). Each invocation gets its own
-/// `ONCHAINOS_HOME` tempdir so wallet credentials never leak between tests.
-fn run_wallet_login(extra: &[&str]) -> (Output, tempfile::TempDir) {
-    let home = tempfile::tempdir().expect("create ONCHAINOS_HOME tempdir");
-    let mut args: Vec<&str> = vec!["--base-url", "https://web3pre.okex.org", "wallet", "login"];
+/// `ONCHAINOS_HOME` so wallet credentials never leak between tests.
+fn run_wallet_login(extra: &[&str]) -> (Output, TestHome) {
+    let home = fresh_home();
+    let mut args: Vec<&str> = vec!["wallet", "login"];
     args.extend_from_slice(extra);
 
     // Mirror `common::run_with_retry` semantics but with env isolation: retry up
@@ -194,7 +236,7 @@ fn wallet_login_empty_string_locale_falls_back_with_warning() {
 
 #[test]
 fn wallet_login_empty_email_fails() {
-    let home = tempfile::tempdir().expect("create ONCHAINOS_HOME tempdir");
+    let home = fresh_home();
     onchainos()
         .env("ONCHAINOS_HOME", home.path())
         .args(["wallet", "login", ""])
