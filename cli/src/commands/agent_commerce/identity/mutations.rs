@@ -61,14 +61,17 @@ pub async fn update(args: UpdateArgs, ctx: &Context) -> Result<()> {
 }
 
 pub async fn activate(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
-    activate_impl(&args, ctx).await?;
-    output::success_empty();
+    output::success(activate_impl(&args, ctx).await?);
     Ok(())
 }
 
 pub async fn deactivate(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
-    deactivate_impl(&args, ctx).await?;
-    output::success_empty();
+    output::success(deactivate_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn submit_approval(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
+    output::success(submit_approval_impl(&args, ctx).await?);
     Ok(())
 }
 
@@ -315,15 +318,15 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
 
 // ─── `agent activate` / `agent deactivate` ────────────────────────────────
 
-async fn activate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<()> {
+async fn activate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
     agent_status_impl(args, 1, ctx).await
 }
 
-async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<()> {
+async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
     agent_status_impl(args, 2, ctx).await
 }
 
-async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -> Result<()> {
+async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
@@ -358,17 +361,61 @@ async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -
         Err(e) => eprintln!("[agent-identity] agent-status response err: {:#}", e),
     }
 
-    result.map_err(format_api_error)?;
-    Ok(())
+    result.map_err(format_api_error)
+}
+
+async fn submit_approval_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let body = json!({
+        "agentId": agent_id,
+        "chainIndex": XLAYER_CHAIN_INDEX,
+    });
+
+    eprintln!(
+        "[agent-identity] submit-approval request: url={} access_token_len={} access_token_prefix={} body={}",
+        reconstruct_post_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/submit-approval"),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+    );
+
+    let result = client
+        .post_authed(
+            "/priapi/v5/wallet/agentic/agent/submit-approval",
+            &access_token,
+            &body,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] submit-approval response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] submit-approval response err: {:#}", e),
+    }
+
+    result.map_err(format_api_error)
 }
 
 // ─── `agent upload` ───────────────────────────────────────────────────────
+
+const MAX_UPLOAD_BYTES: usize = 1024 * 1024; // 1 MB
 
 async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let client = wallet_client(ctx)?;
     let file = require_non_empty(args.file.as_deref(), "--file")?;
     let bytes = fs::read(file).with_context(|| format!("failed to read file: {file}"))?;
+    if bytes.len() > MAX_UPLOAD_BYTES {
+        bail!(
+            "file size {} bytes exceeds the 1 MB limit — please downscale the image and retry",
+            bytes.len()
+        );
+    }
     let filename = std::path::Path::new(file)
         .file_name()
         .and_then(|name| name.to_str())
@@ -619,16 +666,15 @@ async fn wait_for_identity_push(
 ///   - page 1 missing or non-numeric `total` field (response shape
 ///     anomaly — cannot trust the dataset)
 ///   - any page missing or non-array `list` field (same)
-///   - mid-pagination empty page when `total > aggregated` (backend
-///     says more exist but failed to deliver them)
 ///
-/// The safety-cap exit (page > `AGENT_LIST_MAX_PAGES`) is the only path
-/// that returns a partial aggregate, and it logs the truncation. The
+/// An empty `list` on any page stops pagination gracefully and returns
+/// the aggregated results so far (does not abort to `None`). The
 /// legitimate empty case (`total == 0` and page 1 returned `list: []`)
 /// returns `Some({total: 0, list: []})`.
 async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> Option<Value> {
     let mut all_items: Vec<Value> = Vec::new();
     let mut total: u64 = 0;
+    let mut all_agent_count: u64 = 0;
     let mut page: usize = 1;
 
     while page <= AGENT_LIST_MAX_PAGES {
@@ -687,33 +733,41 @@ async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> O
             }
         };
         let page_count = page_items.len();
+
+        // Count agents in this page: each group carries agentList[].
+        let page_agent_count: u64 = page_items
+            .iter()
+            .filter_map(|item| item.get("agentList").and_then(Value::as_array))
+            .map(|a| a.len() as u64)
+            .sum();
+        all_agent_count += page_agent_count;
         all_items.extend(page_items);
 
-        // Done: aggregated count satisfies backend's reported total.
-        // Also covers the legitimate empty case: total == 0, page 1 list == [],
-        // aggregated (0) >= total (0) on first iteration.
-        if (all_items.len() as u64) >= total {
+        // Done: accumulated agent count satisfies backend's reported total.
+        // Also covers the empty case: total == 0, page 1 list == [], 0 >= 0.
+        if all_agent_count >= total {
             break;
         }
 
-        // Anomaly: total > aggregated but this page returned 0 list entries.
-        // Don't return a truncated Some — abort per cli-reference §1 contract.
+        // list == [] means the backend has no more data; stop paging.
+        // total may be stale — treat an empty page as end-of-data rather
+        // than an error so we don't keep incrementing page indefinitely.
         if page_count == 0 {
             eprintln!(
-                "[agent-identity] agent-list page {page} returned 0 list entries but total={} > aggregated={} — abort",
+                "[agent-identity] agent-list page {page} returned empty list (total={} agents_accumulated={}) — stopping",
                 total,
-                all_items.len(),
+                all_agent_count,
             );
-            return None;
+            break;
         }
 
         page += 1;
         if page > AGENT_LIST_MAX_PAGES {
             eprintln!(
-                "[agent-identity] agent-list paging hit safety cap of {} pages × {} ({} items aggregated, backend total={})",
+                "[agent-identity] agent-list paging hit safety cap of {} pages × {} ({} agents accumulated, backend total={})",
                 AGENT_LIST_MAX_PAGES,
                 AGENT_LIST_PAGE_SIZE,
-                all_items.len(),
+                all_agent_count,
                 total,
             );
         }

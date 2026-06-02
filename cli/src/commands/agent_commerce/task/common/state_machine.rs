@@ -65,7 +65,7 @@ pub enum Status {
 }
 
 impl Status {
-    /// String parsing (for the CLI `--jobStatus` flag / event-name parsing); int fields in the spec should go through [`Self::from_int`].
+    /// String parsing (for the CLI `--event` flag / event-name parsing); int fields in the spec should go through [`Self::from_int`].
     pub fn parse(s: &str) -> Self {
         match s {
             "init"                               => Status::Init,
@@ -233,13 +233,13 @@ pub enum Event {
     /// Commit-window nearing-deadline reminder for an evaluator that has been selected but has not yet
     /// committed a vote (warn class; no status change; backend only fires when commit is still pending).
     /// Envelope carries `commitDeadline` (epoch seconds) + slashing params (`slashTimeoutBps`,
-    /// `slashedCooldownSeconds`, `slashAmount`) so the playbook can render the urgency notice and
+    /// `slashedCooldownSeconds`) so the playbook can render the urgency notice and
     /// kick off the full vote flow.
     VoteCommitDeadlineWarn,
     /// Reveal-window nearing-deadline reminder for an evaluator that has committed but has not yet
     /// revealed (warn class; no status change; backend only fires when reveal is still pending).
     /// Envelope carries `revealDeadline` (epoch seconds) + slashing params (`slashTimeoutBps`,
-    /// `slashedCooldownSeconds`, `slashAmount`) so the playbook can render the urgency notice and
+    /// `slashedCooldownSeconds`) so the playbook can render the urgency notice and
     /// kick off the reveal flow.
     VoteRevealDeadlineWarn,
 
@@ -298,6 +298,11 @@ pub enum Event {
     /// Can fire in Created (with active sub session) or Accepted — multi-status, so freshness check is skipped.
     AttachmentAdded,
 
+    // ── Deliverable relay event (buyer-local dispatch, no status change) ─
+    /// Buyer receives provider's `[intent:deliver]` P2P message; downloads + saves the deliverable
+    /// locally before the on-chain `job_submitted` event confirms the submission.
+    DeliverableReceived,
+
     // ── Negotiation relay events (buyer-local dispatch, no status change) ─
     /// Provider's natural-language reply (no [intent:*] marker); buyer.md Route 4 → negotiate_reply.
     NegotiateReply,
@@ -314,7 +319,7 @@ pub enum Event {
     ///                         paymentMode, visibility, ... } }`
     /// Upon receipt the agent **must not** call next-action with `wakeup_notify`;
     /// instead, read `message.jobStatus` to get the real status, then call next-action again with
-    /// that as `--jobStatus` to resume the script for the current status. See the WakeupNotify arm
+    /// that as `--event` to resume the script for the current status. See the WakeupNotify arm
     /// in flow.rs for details.
     WakeupNotify,
 
@@ -375,6 +380,8 @@ impl Event {
             "switch_provider"           => Event::SwitchProvider,
             // Attachment relay (buyer-local dispatch)
             "attachment_added"          => Event::AttachmentAdded,
+            // Deliverable relay (buyer-local dispatch)
+            "deliverable_received"      => Event::DeliverableReceived,
             // Negotiation relay (buyer-local dispatch)
             "negotiate_reply"           => Event::NegotiateReply,
             "negotiate_ack"             => Event::NegotiateAck,
@@ -426,6 +433,7 @@ impl Event {
             Event::TaskProviderChange    => "task_provider_change",
             Event::SwitchProvider         => "switch_provider",
             Event::AttachmentAdded        => "attachment_added",
+            Event::DeliverableReceived    => "deliverable_received",
             Event::NegotiateReply         => "negotiate_reply",
             Event::NegotiateAck           => "negotiate_ack",
             Event::NegotiateCounter       => "negotiate_counter",
@@ -471,7 +479,7 @@ pub fn status_when_event(e: &Event) -> Status {
         | Event::TaskTokenBudgetChange | Event::TaskProviderChange
         | Event::SwitchProvider
         | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,
-        Event::JobAccepted                                                  => Status::Accepted,
+        Event::JobAccepted | Event::DeliverableReceived                       => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
         Event::JobRejected | Event::RejectExpired                             => Status::Rejected,
         // submit_expired: provider did not submit; status is still accepted (never entered submitted)
@@ -539,7 +547,7 @@ pub fn entry_event(s: &Status) -> Option<Event> {
 
 /// Given a string (which may be either a status or an event), parse it as an event first.
 /// On failure (i.e. Event::Other) fall back to status parsing and run it back through entry_event.
-/// Used as the compatibility entry for `next-action --jobStatus <X>` — historical callers pass either event or status names.
+/// Used as the compatibility entry for `next-action --event <X>` — callers may pass either event or status names.
 pub fn parse_status_or_event(s: &str) -> Event {
     let evt = Event::parse(s);
     if !matches!(evt, Event::Other(_)) {

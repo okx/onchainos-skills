@@ -10,7 +10,7 @@ Reference log of real production incidents from the okx-agent-task flow. Each en
 
 **Root cause**: ASP treated the a2a-agent-chat as a ChatGPT-style conversation; skipped `common context` + `next-action`; directly generated "service output".
 
-**Correct flow**: receive first a2a-agent-chat → infer role from `sender.role=1` (you = ASP) → read `provider.md §1` → call `common context` → call `next-action --event job_created --jobStatus job_created` → follow script's three-step handshake → only `apply` after literal `[intent:confirm]`.
+**Correct flow**: receive first a2a-agent-chat → infer role from `sender.role=1` (you = ASP) → read `provider.md §1` → call `common context` → call `next-action --event job_created` → follow script's three-step handshake → only `apply` after literal `[intent:confirm]`.
 
 ---
 
@@ -60,7 +60,7 @@ Reference log of real production incidents from the okx-agent-task flow. Each en
 - Plain text output instead of `xmtp_dispatch_user` / `xmtp_prompt_user`
 - `recommend` never triggered
 
-**Correct response**: `agent get` to look up role → `next-action --event job_created --jobStatus job_created` → execute `recommend` per script → `xmtp_prompt_user` to push list to user.
+**Correct response**: `agent get` to look up role → `next-action --event job_created` → execute `recommend` per script → `xmtp_prompt_user` to push list to user.
 
 ---
 
@@ -162,7 +162,7 @@ recommend → pending-decisions-v2 request (--source-event recommend_pick)
 
 **What happened**: registered 1 USDT, User Agent's first offer 0.1 USDT → provider sent `[intent:reject]` and walked away → User Agent later counter-offered 0.5 USDT and then 1 USDT → provider's agent thought "I already rejected, conversation over" and stayed silent → task stuck.
 
-**Rule**: counter with YOUR floor price in natural language; end the turn; wait for next message. If User Agent's next message has any new price, you MUST call `next-action --event job_created --jobStatus job_created` again and re-evaluate. Only literal `[intent:reject]` from EITHER side terminates negotiation.
+**Rule**: counter with YOUR floor price in natural language; end the turn; wait for next message. If User Agent's next message has any new price, you MUST call `next-action --event job_created` again and re-evaluate. Only literal `[intent:reject]` from EITHER side terminates negotiation.
 
 ---
 
@@ -176,7 +176,7 @@ recommend → pending-decisions-v2 request (--source-event recommend_pick)
 
 ## I-19 — Same-wallet multi-role collision; inherited `--role` slashed stake
 
-**What happened**: same wallet held both an ASP and an Evaluator Agent. An arbitration event (`evaluator_selected`) targeting the evaluator agentId was delivered into the existing **provider task sub** for the same jobId (XMTP routes by sessionKey, not by agentId). The sub inherited its bound `--role provider` and called `next-action --role provider --jobStatus evaluator_selected` → hit the "Observe silently" fallback in `provider/flow.rs` → evaluator playbook (`xmtp_start_evaluate_conversation` → commit/reveal) was never executed → commit window expired → stake slashed at `TIMEOUT_PENALTY_RATE`.
+**What happened**: same wallet held both an ASP and an Evaluator Agent. An arbitration event (`evaluator_selected`) targeting the evaluator agentId was delivered into the existing **provider task sub** for the same jobId (XMTP routes by sessionKey, not by agentId). The sub inherited its bound `--role provider` and called `next-action --role provider --event evaluator_selected` → hit the "Observe silently" fallback in `provider/flow.rs` → evaluator playbook (`xmtp_start_evaluate_conversation` → commit/reveal) was never executed → commit window expired → stake slashed at `TIMEOUT_PENALTY_RATE`.
 
 **Rule**: for every `source:"system"` envelope, `--role` MUST be re-resolved by calling `onchainos agent profile <envelope's top-level agentId>` and reading the returned `role` field. The envelope's top-level `agentId` is the SOLE routing authority; jobId / current sessionKey / prior turns' lookups / sub's bound role are all irrelevant. The lookup is a local registry hit (cached) — cheap to re-do every turn. Symmetric failure mode exists for buyer-side same-wallet collisions.
 

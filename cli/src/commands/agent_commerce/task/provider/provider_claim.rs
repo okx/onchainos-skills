@@ -57,6 +57,6 @@ pub async fn handle_claim_auto_complete(
     println!();
     println!("⚠️  Next steps are driven by system notifications:");
     println!("    - You will receive a `job_completed` system notification after on-chain confirmation (funds released to you)");
-    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event job_completed --jobStatus job_completed --role provider`");
+    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event job_completed --role provider`");
     Ok(())
 }

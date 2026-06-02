@@ -95,7 +95,7 @@ State-machine event notifications pushed by the chain to the sub session. **Only
 | `agentId` (top-level) | string | **Receiver's** agent ID (i.e. "which agent am I"); for multi-agent wallets this is how the wallet signature is located, and it **must** be passed verbatim to `next-action --agentId` and to every task CLI's `--agent-id` |
 | `message.source` | string | Fixed `"system"` — the envelope shape discriminator (**a key field activating this skill**: the `source:"system"` + `event` + `jobId` triple identifies the system-notification shape) |
 | `message.event` | string | One of 35 event enum values (`provider_applied` / `job_accepted` / `job_submitted` / … / `evaluator_selected` / `staked` / `submit_deadline_warn` etc.). The full list + state-machine impact is in [`state-machine.md`](./state-machine.md) |
-| `message.jobStatus` | string | The current on-chain status (`created` / `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `refunded` / `close`). **Note**: `event` is an action and `jobStatus` is a state — some "transient events" (e.g. `provider_applied`) don't change status, so `event` ≠ `jobStatus`. **Pass `message.event` to `next-action --event`; pass `message.jobStatus` to `next-action --jobStatus` (fall back to the event name when `message.jobStatus` is absent)** |
+| `message.jobStatus` | string | The current on-chain status (`created` / `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `refunded` / `close`). **Note**: `event` is an action and `jobStatus` is a state — some "transient events" (e.g. `provider_applied`) don't change status, so `event` ≠ `jobStatus`. **Pass `message.event` to `next-action --event`** |
 | `message.jobId` | string (0x…) | On-chain task ID |
 | `message.description` | string | Backend-attached description (may be empty; the agent generally doesn't depend on this field for decisions) |
 | `message.timestamp` | int (Unix sec) | Backend push timestamp |
@@ -109,7 +109,6 @@ State-machine event notifications pushed by the chain to the sub session. **Only
 ```bash
 onchainos agent next-action \
   --jobid <message.jobId> \
-  --jobStatus <message.event>          # prefer event; fall back to message.jobStatus only when event is missing
   --role <provider|buyer|evaluator>    # call onchainos agent profile <top-level agentId in envelope> to fetch the role field
   --agentId <top-level agentId>        # pass through verbatim — multi-agent wallets rely on it for signature lookup
   --code <message.code>                # optional; pass through when message.code is present in the envelope, CLI handles tx failures internally
@@ -127,7 +126,7 @@ See SKILL.md `## Activation` (the MANDATORY three steps for `source:"system"` ev
 |---|---|---|---|
 | 2a | `xmtp_dispatch_user(content)` | **No mandatory prefix**; plain natural-language notification; optionally a leading `[tag emoji] ...` summary line | User-session agent shows the message to the user, calls no tools |
 | 2b | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` must contain `[USER_DECISION_REQUEST][sub_key: <full string>][job: <id>] <relay instruction>`; `userContent` is plain natural language shown to the user | User-session agent uses `userContent` to display the question; once the user replies, calls `pending-decisions-v2 resolve --user-reply "<verbatim>"` — the CLI returns a relay playbook telling user-session the exact `xmtp_dispatch_session(sessionKey=<sub_key>, content=<envelope JSON>)` to make (do NOT hand-craft the dispatch) |
-| 3 | `xmtp_dispatch_session(sessionKey, content)` | `content` is a **JSON envelope** (NOT a text prefix) shaped like a chain notification: `{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role, code:0, description, timestamp}}` — built by CLI; user-session passes it through verbatim | Sub agent treats it as a `source:"system"` event → calls `next-action --event user_decision_<source_event> --jobStatus user_decision_<source_event> --data "<message.data>"` → CLI's per-scene handler does LLM semantic mapping → playbook drives the actual on-chain action |
+| 3 | `xmtp_dispatch_session(sessionKey, content)` | `content` is a **JSON envelope** (NOT a text prefix) shaped like a chain notification: `{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role, code:0, description, timestamp}}` — built by CLI; user-session passes it through verbatim | Sub agent treats it as a `source:"system"` event → calls `next-action --event user_decision_<source_event> --data "<message.data>"` → CLI's per-scene handler does LLM semantic mapping → playbook drives the actual on-chain action |
 
 > Paths 1 / 4 (chain → sub / sub ↔ peer sub) use real envelopes — see §1 / §2 above.
 
@@ -252,13 +251,13 @@ sub → receives envelope (event:user_decision_<src>, data:"reject, because X") 
     "jobId": "<jobId from the active pending entry>",
     "role": "<buyer | provider | evaluator>",
     "code": 0,
-    "description": "Read okx-agent-task/SKILL.md if you don't know the context",
+    "description": "Read okx-agent-task/SKILL.md if you don't know the context. Then execute `onchainos agent next-action` with this envelope's `jobId` / `event` / `role` / `agentId` to get the playbook",
     "timestamp": <unix-seconds>
   }
 }
 ```
 
-**Why this shape**: from the sub session's perspective the envelope is indistinguishable from a real chain notification — the same Activation rule applies (`source:"system"` → call `next-action --jobid <jobId> --jobStatus <event> --role <…> --agentId <…> --data "<message.data>"`). One code path, zero new parsing rules. The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic mapping (`approve` / `通过` / `A` → `approve_review`; `reject` / `拒绝` / `B` → `reject_review`; `关闭` → `close` task on recommend_pick; etc.).
+**Why this shape**: from the sub session's perspective the envelope is indistinguishable from a real chain notification — the same Activation rule applies (`source:"system"` → call `next-action --jobid <jobId> --event <event> --role <…> --agentId <…> --data "<message.data>"`). One code path, zero new parsing rules. The CLI's per-scene `user_decision_<source_event>` handler does the LLM semantic mapping (`approve` / `通过` / `A` → `approve_review`; `reject` / `拒绝` / `B` → `reject_review`; `关闭` → `close` task on recommend_pick; etc.).
 
 **Where `<source_event>` comes from**: the `--source-event` argument the sub originally passed to `pending-decisions-v2 request` (e.g. `--source-event job_submitted` → relay event `user_decision_job_submitted`). When `--source-event` is omitted, the relay event falls back to the bare `user_decision` (sub's `_` fallback branch in the `user_decision_*` router handles it via context inspection).
 
@@ -266,7 +265,7 @@ sub → receives envelope (event:user_decision_<src>, data:"reject, because X") 
 
 ```jsonc
 // User reviewed deliverable and approved (recommend_pick / job_submitted scenes)
-{"agentId":"123","message":{"source":"system","event":"user_decision_job_submitted","data":"approve","jobId":"0xae53...","role":"buyer","code":0,"description":"Read okx-agent-task/SKILL.md if you don't know the context","timestamp":1779871553}}
+{"agentId":"123","message":{"source":"system","event":"user_decision_job_submitted","data":"approve","jobId":"0xae53...","role":"buyer","code":0,"description":"Read okx-agent-task/SKILL.md if you don't know the context. Then execute `onchainos agent next-action` with this envelope's `jobId` / `event` / `role` / `agentId` to get the playbook","timestamp":1779871553}}
 
 // User picked "C. Close" on the recommend_pick card
 {"agentId":"123","message":{"source":"system","event":"user_decision_recommend_pick","data":"关闭","jobId":"0xae53...","role":"buyer","code":0,"description":"…","timestamp":1779871600}}
