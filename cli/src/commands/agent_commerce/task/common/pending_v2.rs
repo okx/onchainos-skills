@@ -161,6 +161,17 @@ fn acquire_lock() -> Result<std::fs::File> {
     }
 }
 
+/// Append a timestamped line to /tmp/onchainos-cli-mode.log for verifying the
+/// CLI-mode bypass branches in handle_request / handle_resolve. Best-effort;
+/// any IO error is swallowed so trace failures never break the main flow.
+fn trace_log(line: &str) {
+    let _ = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/onchainos-cli-mode.log")
+        .and_then(|mut f| writeln!(f, "[{}] {}", Utc::now().to_rfc3339(), line));
+}
+
 fn read_queue() -> Result<Queue> {
     let path = queue_path()?;
     if !path.exists() {
@@ -321,6 +332,27 @@ pub enum PendingDecisionsV2Command {
         user_reply: String,
     },
 
+    /// (user-session, CLI-driver bypass) Resolve a decision without consulting
+    /// the queue file — caller passes every routing field explicitly so the
+    /// envelope can be built and dispatched. Pairs with `request`'s
+    /// OKX_A2A_IS_CLI=1 bypass; used when a non-MCP CLI loop owns turn-taking
+    /// and never persists queue state to disk.
+    #[command(name = "resolve-with-sessionkey")]
+    ResolveWithSessionkey {
+        #[arg(long = "user-reply")]
+        user_reply: String,
+        #[arg(long = "sub-key")]
+        sub_key: String,
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "source-event")]
+        source_event: String,
+    },
+
     /// (user-session) Pick entry by 1-based index from the displayed list.
     Pick {
         #[arg(long)]
@@ -366,6 +398,9 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             source_event,
         } => handle_request(sub_key, job_id, role, agent_id, user_content, list_label, llm_content, source_event),
         PendingDecisionsV2Command::Resolve { user_reply } => handle_resolve(user_reply),
+        PendingDecisionsV2Command::ResolveWithSessionkey {
+            user_reply, sub_key, job_id, role, agent_id, source_event,
+        } => handle_resolve_with_sessionkey(user_reply, sub_key, job_id, role, agent_id, source_event),
         PendingDecisionsV2Command::Pick { index } => handle_pick(index),
         PendingDecisionsV2Command::List { format } => handle_list(format),
         PendingDecisionsV2Command::Cancel { sub_key, index } => handle_cancel(sub_key, index),
@@ -388,22 +423,14 @@ fn handle_request(
     // CLI mode: the driver (a non-MCP CLI loop) owns turn-taking and doesn't need
     // queue routing. Bypass the queue file entirely — build an ad-hoc entry and
     // emit playbook_push so the LLM calls xmtp_prompt_user immediately.
-    if std::env::var("OKX_A2A_IS_CLI").as_deref() == Ok("1") {
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/onchainos-cli-mode.log")
-            .and_then(|mut f| {
-                use std::io::Write;
-                writeln!(
-                    f,
-                    "[{}] handle_request CLI mode hit: job_id={} role={} sub_key={}",
-                    Utc::now().to_rfc3339(),
-                    job_id,
-                    role,
-                    sub_key,
-                )
-            });
+    let cli_mode_env = std::env::var("OKX_A2A_IS_CLI").unwrap_or_default();
+    let cli_mode = cli_mode_env == "1";
+    trace_log(&format!(
+        "handle_request {} (OKX_A2A_IS_CLI={:?}): job_id={} role={} sub_key={}",
+        if cli_mode { "CLI_MODE" } else { "QUEUE_MODE" },
+        cli_mode_env, job_id, role, sub_key,
+    ));
+    if cli_mode {
         let now = Utc::now();
         let entry = PendingEntry {
             sub_key,
@@ -418,7 +445,7 @@ fn handle_request(
             created_at: now,
             updated_at: now,
         };
-        print!("{}", playbook_push(&entry));
+        print!("{}", playbook_push_cli(&entry));
         return Ok(());
     }
 
@@ -518,6 +545,54 @@ fn handle_request(
             }
         }
     }
+    Ok(())
+}
+
+/// CLI-driver bypass: build the full system-shaped relay envelope from the
+/// caller-supplied routing fields and emit `playbook_relay_only`. Mirrors the
+/// queue-based `handle_resolve` envelope shape exactly (same fields, same
+/// `user_decision_<source_event>` event), so the receiving sub routes via the
+/// same `next-action --event user_decision_<X>` handler regardless of mode.
+fn handle_resolve_with_sessionkey(
+    user_reply: String,
+    sub_key: String,
+    job_id: String,
+    role: String,
+    agent_id: String,
+    source_event: String,
+) -> Result<()> {
+    trace_log(&format!(
+        "handle_resolve_with_sessionkey: sub_key={} job_id={} role={} agent_id={} source_event={} user_reply={:?}",
+        sub_key, job_id, role, agent_id, source_event, user_reply,
+    ));
+    let relay_event = format!("user_decision_{}", source_event);
+    let description = format!(
+        "User-decision relay envelope (CLI mode). Call `onchainos agent next-action \
+         --jobid {jid} --event {evt} --role {role} --agentId {agent} \
+         --data \"<message.data verbatim>\"` to fetch the routing playbook; follow it. \
+         ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
+         user-session-only; the user-session already issued this relay envelope.",
+        jid = job_id, evt = relay_event, role = role, agent = agent_id,
+    );
+    let relay_envelope = serde_json::json!({
+        "agentId": agent_id,
+        "message": {
+            "event": relay_event,
+            "data": user_reply,
+            "code": 0,
+            "description": description,
+            "source": "system",
+            "jobId": job_id,
+            "role": role,
+            "timestamp": Utc::now().timestamp(),
+        }
+    });
+    let relay_content = serde_json::to_string(&relay_envelope)
+        .unwrap_or_else(|_| format!(
+            "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",
+            agent_id, relay_event, user_reply, job_id, role,
+        ));
+    print!("{}", playbook_relay_only(&sub_key, &relay_content));
     Ok(())
 }
 
@@ -1144,6 +1219,49 @@ fn resolve_llm_content(entry: &PendingEntry) -> String {
 
 fn playbook_push(entry: &PendingEntry) -> String {
     let llm_content = resolve_llm_content(entry);
+    format!(
+        "Now call xmtp_prompt_user with the EXACT arguments below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the tool returns 'sent'.\n\n\
+         tool: xmtp_prompt_user\n\
+         llmContent:\n{}\n\
+         userContent:\n{}\n",
+        indent(&llm_content, "  "),
+        indent(&entry.user_content, "  "),
+    )
+}
+
+/// CLI-driver variant of `resolve_llm_content`. The queue file is bypassed in
+/// CLI mode, so the future `resolve` call cannot reverse-lookup routing fields
+/// from a queue entry — embed all of them up front so the LLM passes them
+/// verbatim to `resolve-with-sessionkey`.
+fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
+    if let Some(ref custom) = entry.llm_content_override {
+        return custom.clone();
+    }
+    let source_event_str = entry.source_event.clone().unwrap_or_default();
+    format!(
+        "[USER_DECISION_REQUEST][sub_key: {}][job: {}][role: {}]\n\n\
+         Step 1 — Card was just delivered via `xmtp_prompt_user`. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
+         Step 2 — When the user actually replies (next turn):\n\
+         \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
+         \x20\x20\x20\x20· else → run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --sub-key \"{}\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\" --source-event \"{}\"` exactly once, then follow the relay playbook it returns.",
+        entry.sub_key,
+        entry.job_id,
+        entry.role,
+        DEFER_KEYWORDS.join(" / "),
+        entry.sub_key,
+        entry.job_id,
+        entry.role,
+        entry.agent_id,
+        source_event_str,
+    )
+}
+
+/// CLI-driver variant of `playbook_push`. Same `xmtp_prompt_user` envelope
+/// shape as `playbook_push`; only the embedded llmContent differs (uses
+/// `resolve-with-sessionkey` so the future resolve call works without a queue
+/// file lookup).
+fn playbook_push_cli(entry: &PendingEntry) -> String {
+    let llm_content = resolve_llm_content_cli(entry);
     format!(
         "Now call xmtp_prompt_user with the EXACT arguments below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the tool returns 'sent'.\n\n\
          tool: xmtp_prompt_user\n\
