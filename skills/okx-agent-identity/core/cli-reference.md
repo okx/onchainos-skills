@@ -173,7 +173,7 @@ onchainos agent activate --agent-id 42
 | Condition | Skill action |
 |---|---|
 | `success: true` | ✅ Published — render success line + proceed to `SKILL.md §Operation Flow Step 5` → `§Step 6` |
-| `success: false`, `approvalStatus: 1` | Auto-call `onchainos agent submit-approval --agent-id <id>` → `cli-search-feedback.md §11` |
+| `success: false`, `approvalStatus: 1` | Run `modules/pre-listing-qa.md`; if QA passes → call `onchainos agent submit-approval --agent-id <id>` (`cli-search-feedback.md §11`); if QA fails → render QA report and stop |
 | `success: false`, `approvalStatus: 2` | Under review — render review-pending message per `troubleshooting.md §2` and **stop** (no Step 5/6) |
 | `success: false`, `approvalStatus: 5` | Rejected — render rejection card with `rejectReason` per `troubleshooting.md §2` and **stop** (no Step 5/6) |
 | Top-level `code: "81602"` | Agent blacklisted — render blacklist error per `troubleshooting.md §2` and **stop** |

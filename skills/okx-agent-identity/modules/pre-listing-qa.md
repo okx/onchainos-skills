@@ -1,23 +1,23 @@
 # Pre-Listing Quality Assurance
 
-This file defines the quality gate the AI runs **before invoking `agent activate`** for any `provider`-role agent. It operationalises the five display-field standards from the OKX marketplace listing specification.
+This file defines the quality gate the AI runs **after `agent activate` returns `approvalStatus: 1`** (review required, not yet submitted) for any `provider`-role agent, and **before calling `agent submit-approval`**. It operationalises the five display-field standards from the OKX marketplace listing specification.
 
 ## When to Run
 
 Automatically trigger this checklist when:
 
-- The user intends to activate an agent, **AND**
-- The target agent's `role` is `provider` (determined from the most recent `agent get` response already in context)
+- `agent activate` returns `success: false, approvalStatus: 1`, **AND**
+- The target agent's `role` is `provider`
 
 If the role is `requester` or `evaluator`, skip this file — it does not apply (those roles have no service fields).
 
 ## How to Run
 
-1. Use the `agent get --agent-ids <N>` data already fetched during the activate pre-check (do **NOT** make an extra CLI call just for QA).
+1. Use the `agent get --agent-ids <N>` data already in context (do **NOT** make an extra CLI call just for QA).
 2. Extract: top-level `name`, `description`, `picture`, and all `services[]` entries (each with `name`, `servicedescription`, `servicetype`, `fee`, `endpoint`).
 3. Run **every** check in the tables below against each service.
-4. **All checks pass** → proceed to `agent activate`. No report needed.
-5. **Any check fails** → render the §QA Report (with two explicit options) and stop. Wait for the user to choose. **Exception: L1 (no avatar) is always blocking** — if `picture` is absent, do NOT offer option 2 (list anyway); only offer option 1 (fix first).
+4. **All checks pass** → proceed to `agent submit-approval`. No report needed.
+5. **Any check fails** → render the §QA Report (with two explicit options) and stop. Wait for the user to choose. **Exception: L1 (no avatar) is always blocking** — if `picture` is absent, do NOT offer option 2 (submit anyway); only offer option 1 (fix first).
 
 ---
 
@@ -160,15 +160,15 @@ How would you like to proceed?
 - Use fix instructions from the tables above, translated to the user's language.
 - ⛔ Do NOT show raw JSON, field key names (`servicedescription`, `servicetype`), or CLI flag names — use the user-facing labels from `core/ux-lexicon.md`.
 - ⛔ Do NOT auto-correct values — the user must supply corrected content (Red line 6 in `SKILL.md`).
-- **On option 1 (fix first)**: route through `§Update` flow (`agent update` → re-run QA → `agent activate`).
-- **On option 2 (list anyway)**: invoke `agent activate` immediately without re-prompting.
+- **On option 1 (fix first)**: route through `§Update` flow (`agent update` → re-run QA → `agent submit-approval`).
+- **On option 2 (submit anyway)**: invoke `agent submit-approval` immediately without re-prompting.
 
 ---
 
 ## Pass Message (all checks green)
 
-No separate message needed — silently proceed to `agent activate`. The post-activate line from `§Suggest Next Steps` is the only user-visible output.
+No separate message needed — silently proceed to `agent submit-approval`. The post-submit line from `troubleshooting.md §2` is the only user-visible output.
 
-If you want to surface the clean result (optional, e.g. when the user explicitly asked for a QA check without intending to activate right away):
+If you want to surface the clean result (optional, e.g. when the user explicitly asked for a QA check without intending to submit right away):
 
-- "QA passed — all fields meet listing requirements. Say the word and I'll activate it."
+- "QA passed — all fields meet listing requirements. Say the word and I'll submit for review."

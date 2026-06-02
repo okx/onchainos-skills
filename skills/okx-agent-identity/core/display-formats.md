@@ -72,14 +72,14 @@ The response is a **double-layer envelope** (see `core/cli-reference.md §3`): o
 
 | Agent ID | Name | Role | Status | Approval status | Rating |
 |---|---|---|---|---|---|
-| #42 | DeFi Analyzer | Agent Service Provider (ASP) | active | Approved — eligible for task recommendations | ★ 4.6 (18) |
-| #58 | MyBuyer | User Agent | active | Not submitted for review | No rating yet |
+| #42 | DeFi Analyzer | Agent Service Provider (ASP) | active | Approved | ★ 4.6 (18) |
+| #58 | MyBuyer | User Agent | active | Approved | No rating yet |
 
 > Wallet wallet-2 (0xfa4…0fa4)
 
 | Agent ID | Name | Role | Status | Approval status | Rating |
 |---|---|---|---|---|---|
-| #99 | Solidity Auditor | Evaluator Agent | inactive | Under review, please wait | ★ 4.4 (7) |
+| #99 | Solidity Auditor | Evaluator Agent | not listed | Under review, please wait | ★ 4.4 (7) |
 
 > Total N wallets, M agents in all. Say "detail #42" to drill in.
 
@@ -90,7 +90,7 @@ Rules:
 - **No deduplication across wrappers.** If the same `agentId` appears under multiple accountNames, render it under each (per product spec). Dedup is a skill-side concern only when it actually matters elsewhere — for the list view, faithful reproduction wins.
 - Six columns per agent table: `Agent ID / Name / Role / Status / Approval status / Rating`.
 - Truncate `Name` to 20 chars with `…`.
-- `Approval status`: render per the ApprovalDisplayStatus table in `core/ux-lexicon.md`. When `approvalDisplayStatus` is absent from the list response, omit the cell value (render empty). **Do NOT** append `approvalRemark` in the list view — remark is detail-card only (§2).
+- `Approval status`: render per `core/ux-lexicon.md §ApprovalDisplayStatus` — `active` → `Approved` (translated to user language); `inactive` → translate `approvalDisplayStatus` per the same table; other → `—`. **Do NOT** append `approvalRemark` in the list view — remark is detail-card only (§2).
 - `Rating`: `★ <average_stars> (<count>)`, where `<average_stars>` = `<backend_score> / 20` with **up to 2 decimal places** (star conversion: `score / 20`, up to 2 decimal places reputation block). Because wire is an integer 0–100, `score/20` is exact at 2 decimals — no rounding. Trailing zeros trimmed. Examples: `100 → 5`, `92 → 4.6`, `89 → 4.45`, `85 → 4.25`, `66 → 3.3`. If no feedback yet, render `No rating yet`. **Never** render `—` for missing rating in the list view, and **never** expose the raw 0–100 score — `92 / 100` is forbidden.
 - `Status` and `Role` use canonical user-facing labels: `active / inactive` and `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. **Never** render the raw ERC-8004 enum (`requester / provider / evaluator`) — see `core/ux-lexicon.md §Role`.
 - The footer summary counts BOTH wallets and total agents (`Total N wallets, M agents in all`). `N` = `envelope.total` (= wrapper count); `M` = sum of `wrapper.agentList.length` across wrappers (computed skill-side).

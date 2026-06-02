@@ -129,7 +129,6 @@ Left column is the exact JSON key sent on the wire inside the `--service` payloa
 | Service [1] Fee | 10 USDT | (unchanged) |
 
 > This update changes Description and Profile photo; everything else stays as-is.
-> Estimated cost: **0 USDT** (editing fields costs no transaction fees — OKX covers them). Reversible: re-run update to revert to the old value at any time.
 > Reply "execute" to run.
 
 Rules:
@@ -140,11 +139,6 @@ Rules:
 - **Do NOT show the bash command in this card.** If the user asks "show me the command", render it as a separate code block afterward; otherwise omit.
 - **Maintainer note (wholesale `--service` replacement, internal — do NOT surface to user):** the `--service` flag wire-level **replaces the full services list**, not a per-field patch. When only one sub-field of one service changes (e.g. only `Service [1] Fee`), the skill MUST construct the new `--service` JSON by **starting from the current full services list** (from the mandatory `agent get` pre-step) and applying the diff in memory — then send the **complete** list. Sending only the changed entry would silently delete every other service. This is a wire-level concern; do not mention `--service` in the user-visible card footer (Red line 2).
 - End every diff card with exactly one line: `Reply "execute" to run.`. Do NOT use any verb like "dispatch" / "send" in this footer — see the SKILL.md "no narration between confirmation and result" rule for why.
-- **Cost row (mandatory).** Every Create-variant card AND Update Diff card MUST include a final row (rendered immediately above the `Reply "execute" to run.` line) explaining what the user pays. Phrasings (substitute the role / action wording per context — these are templates, not literal):
-  - Create variant (2 cols):
-    - `| Estimated cost | **0 USDT** (creating / editing / activating / deactivating costs no transaction fees — OKX covers them; service fees are paid by User Agents per call and go 100% to you) |`
-  - Update variant (3 cols — this row uses only 1 cell that spans across, so render as plain text below the table instead of as a table row):
-    - `> Estimated cost: **0 USDT** (editing fields costs no transaction fees — OKX covers them).`
-- Source of truth for these costs: `core/cost-disclosure.md`. ⛔ **Never fabricate other cost items** (no "platform service fee", no "agent dispatch fee", no "review fee").
+- Source of truth for costs: `core/cost-disclosure.md`. ⛔ **Never fabricate cost items** (no "platform service fee", no "agent dispatch fee", no "review fee", no "Estimated cost" row).
 
 ---

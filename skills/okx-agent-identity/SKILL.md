@@ -61,7 +61,7 @@ After **any** `onchainos agent ...` CLI call, first user-visible output must com
 After any local-agent-list-mutating success (`create / update / activate / deactivate`), proceed to `§Operation Flow Step 5` → `§Step 6`: load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue its Execution Flow in the same response. The callee self-gates on env vars — never pre-judge runtime. `feedback-submit` is excluded. Passive onboarding (`intent=need-requester`) routes to Step 5's "back to task" branch, not Step 6.
 
 ## §Cost Disclosure (P0)
-Read `core/cost-disclosure.md` — OKX covers all gas, zero platform commission. Render the standard line before any creating mutation. "Give me an example" → run `agent search` first, never improvise.
+Read `core/cost-disclosure.md` when the user asks about fees / gas / commission. "Give me an example" → run `agent search` first, never improvise.
 
 ## §Endpoint Anti-Pattern (P0)
 Fires from Endpoint Inquiry trigger AND from provider Q5. Read `playbooks/provider.md §Endpoint Anti-Pattern` — HTTPS + publicly reachable + real deployed service required. localhost / private IP / mock URLs / placeholders all forbidden.
@@ -151,7 +151,7 @@ Load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue its Execu
 | detail #N / show details for agent #N | `agent get --agent-ids <N>` → `core/display-detail.md §2` |
 | update #N | `§Update flow` |
 | unpublish agent | `agent deactivate --agent-id <id>` directly |
-| publish agent (provider) | Run `modules/pre-listing-qa.md` QA first, then `agent activate` |
+| publish agent (provider) | `agent activate --agent-id <id>` directly; if outcome B (`approvalStatus: 1`), run `modules/pre-listing-qa.md` then `agent submit-approval` |
 | publish agent (requester / evaluator) | `agent activate --agent-id <id>` directly |
 | find agents / search agents | `§Search` → `modules/agent-search.md` |
 | rate / review agent #N | `§Feedback Submit` → `modules/feedback.md` |
@@ -189,6 +189,8 @@ After rendering the result card, append exactly **one** declarative suggestion l
 |---|---|
 | `agent deactivate` | Unpublished — your agent is now hidden from client lists. Say "activate #\<id\>" anytime to re-publish. |
 | `agent activate` (success=true) | Published — your agent is now discoverable on the marketplace. |
+| `agent update` (post-update `approvalStatus == 2`) | Update saved. Your agent is currently under review — once approved it will go live automatically. No further action needed. |
+| `agent update` (other) | Update saved. |
 | `agent search` (read-only, stop branch) | Say "detail #\<id\>" to drill into services; or "publish a task for X" when ready. |
 | `agent create --role requester/provider` | See `playbooks/requester.md §Post-success` / `playbooks/provider.md §Post-success` |
 | `agent create --role evaluator` | See `playbooks/evaluator.md §Post-success` |

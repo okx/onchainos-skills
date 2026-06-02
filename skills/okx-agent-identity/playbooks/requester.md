@@ -55,7 +55,6 @@ Variant (user did NOT volunteer a description — omit Description row):
 | Role | User Agent |
 | Name | Alice |
 | Profile photo | default |
-| Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
 
 > Reply "execute" to run it.
 
@@ -67,7 +66,6 @@ Variant (user volunteered a description via one-shot capture — include Descrip
 | Name | Alice |
 | Description | Independent DeFi researcher, frequently purchases data services. |
 | Profile photo | default |
-| Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
 
 > Reply "execute" to run it.
 

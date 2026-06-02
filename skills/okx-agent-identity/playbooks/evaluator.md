@@ -57,7 +57,6 @@ Variant (user did NOT volunteer a description — omit Description row):
 | Role | Evaluator Agent |
 | Name | Solidity Auditor |
 | Profile photo | default |
-| Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
 
 > Reply "execute" to run it.
 
@@ -69,7 +68,6 @@ Variant (user volunteered a description via one-shot capture — include Descrip
 | Name | Solidity Auditor |
 | Description | Arbitrates Solidity-related task disputes; 5 years of audit experience. |
 | Profile photo | default |
-| Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
 
 > Reply "execute" to run it.
 
