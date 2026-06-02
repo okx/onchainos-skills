@@ -385,6 +385,43 @@ fn handle_request(
     llm_content: Option<String>,
     source_event: Option<String>,
 ) -> Result<()> {
+    // CLI mode: the driver (a non-MCP CLI loop) owns turn-taking and doesn't need
+    // queue routing. Bypass the queue file entirely — build an ad-hoc entry and
+    // emit playbook_push so the LLM calls xmtp_prompt_user immediately.
+    if std::env::var("OKX_A2A_IS_CLI").as_deref() == Ok("1") {
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/onchainos-cli-mode.log")
+            .and_then(|mut f| {
+                use std::io::Write;
+                writeln!(
+                    f,
+                    "[{}] handle_request CLI mode hit: job_id={} role={} sub_key={}",
+                    Utc::now().to_rfc3339(),
+                    job_id,
+                    role,
+                    sub_key,
+                )
+            });
+        let now = Utc::now();
+        let entry = PendingEntry {
+            sub_key,
+            job_id,
+            role,
+            agent_id,
+            user_content,
+            list_label,
+            llm_content_override: llm_content,
+            source_event,
+            status: Status::Active,
+            created_at: now,
+            updated_at: now,
+        };
+        print!("{}", playbook_push(&entry));
+        return Ok(());
+    }
+
     // Reject hallucinated sub_key shapes early. The only valid sub_key is the
     // full XMTP sessionKey returned by `session_status` — anything else (e.g.
     // `review-<jobId>`, the bare jobId, a label) silently breaks `xmtp_dispatch_session`

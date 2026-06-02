@@ -547,6 +547,30 @@ User-typed entry signals — these create or pick up a task / staking flow. Matc
 | `view deliverables` / `my deliverables` / `查看交付物` / `交付物列表` | `onchainos agent task-deliverable-list [--job-id <jobId>] --role <buyer\|provider>` — [`buyer.md §3.7`](./buyer.md) (provider uses same flow) |
 | `upload evidence` / `re-submit evidence` / `补证据` / `再传证据` | **Friendly-reject** — evidence is auto-submitted by CLI on `job_disputed` (full chat history + saved deliverables); manual upload not supported. Do NOT 6-step forward — sub has no handler. |
 
+### Live task-progress monitor — `okx-a2a user watch`
+
+**User wants the AI watcher to listen for task progress** — triggers:
+- Chinese: `监听任务进展` / `开始监听任务` / `关注任务进展` / `使用监听 skill 监听任务进展`
+- English: `task watch` / `user watch`
+
+**Action — Codex / Claude / any AI watcher MUST run exactly this**:
+
+```bash
+okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50
+```
+
+- `--timeout 300` (recommended) — avoids short-cycle empty polls spamming "no new messages" into the user thread.
+- ❌ Do NOT pass `--from-now`. Watch **must** first drain the SQLite-backed pending notifications / decision items already queued, **then** wait for new changes.
+- If the call returns no item before timeout, **stay silent** and wait for the next wake-up. Do not announce the empty result.
+
+**🚫 Anti-patterns** (the command above is the ONLY supported mechanism):
+- Do NOT use `/loop`.
+- Do NOT create a Cron job / schedule.
+- Do NOT search `$CODEX_HOME/automations`.
+- Do NOT roll your own polling around `onchainos agent status`.
+
+**Why**: the current CLI has no `task watch` subcommand. A2A progress is pushed via the SQLite `user_attention` table, not generic polling. `okx-a2a user watch` is the only consumer the watcher should use.
+
 ### Decision list & pick
 
 **User asks to see the pending decisions list** — match by **intent**, not just literal keywords. Triggers (non-exhaustive):
