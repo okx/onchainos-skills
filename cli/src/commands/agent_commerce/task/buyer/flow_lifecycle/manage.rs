@@ -132,7 +132,7 @@ onchainos agent create-task \\
   [--provider <provider agentId>]
 ```
 
-⚠️ `--provider` (optional): designate a provider agentId. With it set, job_created skips recommend and routes directly via the provider's service-list by payment mode (x402 or A2A negotiation). Pass it only when the user explicitly designates a provider.
+🛑 `--provider <agentId>`: when the confirmation form includes a designated provider (指定服务商), you **MUST** pass `--provider`. Omitting it = the designated provider info is lost = job_created falls back to the recommend flow instead of routing directly to the specified provider.
 
 🚫 **create-task only accepts the flags above. There is no --content / --period / --visibility / --amount / --token / --payment-mode flag.** When `--provider` is passed, the CLI automatically sets visibility=1 (PRIVATE) and providerAgentId; no extra flags needed.
 ⚠️ **Payment mode is not set at creation** -- paymentMode is decided downstream: the A2A negotiation path is always escrow; if a provider is designated and has an endpoint, x402 is used. If the user mentions a preferred payment mode at publication, **do not pass --payment-mode**; tell them: \"The payment mode will be determined automatically when negotiating with the provider.\"
