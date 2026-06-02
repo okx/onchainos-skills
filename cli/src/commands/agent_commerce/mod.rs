@@ -444,10 +444,10 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long)]
         vote: u8,
-        /// Full verdict markdown produced by Step 5 per the Verdict template defined in
+        /// Full verdict text produced by Step 5 per the Verdict template defined in
         /// `references/evaluator-decision-rubric.md` (whichever heading the user-customized
         /// rubric uses to define it; required). Sent to backend in the commit body as the
-        /// on-chain audit trail — findings of fact, evidence citations, reasoning, the lot.
+        /// on-chain audit trail — whatever fields the rubric's Verdict template prescribes.
         /// Flatten to a single line with `\n` / `\t` / `\r` / `\\` / `\"` escapes (CLI
         /// unescapes before transport); escape `"` / `` ` `` / `$` to survive the shell.
         #[arg(long = "reason")]

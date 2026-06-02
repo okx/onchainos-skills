@@ -233,13 +233,13 @@ pub enum Event {
     /// Commit-window nearing-deadline reminder for an evaluator that has been selected but has not yet
     /// committed a vote (warn class; no status change; backend only fires when commit is still pending).
     /// Envelope carries `commitDeadline` (epoch seconds) + slashing params (`slashTimeoutBps`,
-    /// `slashedCooldownSeconds`, `slashAmount`) so the playbook can render the urgency notice and
+    /// `slashedCooldownSeconds`) so the playbook can render the urgency notice and
     /// kick off the full vote flow.
     VoteCommitDeadlineWarn,
     /// Reveal-window nearing-deadline reminder for an evaluator that has committed but has not yet
     /// revealed (warn class; no status change; backend only fires when reveal is still pending).
     /// Envelope carries `revealDeadline` (epoch seconds) + slashing params (`slashTimeoutBps`,
-    /// `slashedCooldownSeconds`, `slashAmount`) so the playbook can render the urgency notice and
+    /// `slashedCooldownSeconds`) so the playbook can render the urgency notice and
     /// kick off the reveal flow.
     VoteRevealDeadlineWarn,
 
