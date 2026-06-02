@@ -102,8 +102,9 @@ Read `_shared/no-polling.md` — one intent = one CLI call; never poll, never au
 | `onchainos agent service-list` | List agent's services | `--agent-id` |
 | `onchainos agent feedback-submit` | Rate an agent | `--agent-id`, `--creator-id`, `--score` |
 | `onchainos agent feedback-list` | View reputation | `--agent-id` |
+| `onchainos agent submit-approval` | Submit for listing review (skill-internal, auto) | `--agent-id` |
 
-Full parameter tables and return schemas: `agent create` → `core/cli-create.md`; §2–§6 → `core/cli-reference.md`; §7–§10 → `core/cli-search-feedback.md`.
+Full parameter tables and return schemas: `agent create` → `core/cli-create.md`; §2–§6 → `core/cli-reference.md`; §7–§11 → `core/cli-search-feedback.md`.
 
 ## Operation Flow
 
@@ -131,7 +132,7 @@ Success → detail card (`core/display-detail.md §2`) + one next-step suggestio
 ### Step 5: Post-success Flow Continuation
 | Last successful CLI | Next |
 |---|---|
-| `agent create --role evaluator` | Load `okx-agent-task/references/evaluator-staking.md §2` in same response. If staking flow ends without comm-init, fallback to Step 6. |
+| `agent create --role evaluator` | Load `okx-agent-task/references/evaluator-staking.md §2` in same response. If staking flow ends without comm-init, fallback to Step 6. If the user has explicitly declined staking earlier in the conversation, skip the staking handoff but still proceed to Step 6 (local agent list changed → OpenClaw cache still needs sync). |
 | `agent create --role requester / provider` | → Step 6 |
 | `agent update / activate / deactivate` | → Step 6 (agent list changed) |
 | Passive Onboarding (`intent=need-requester`) | Hand back to `okx-agent-task` with one line. Do NOT proceed to Step 6. |
@@ -150,7 +151,8 @@ Load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue its Execu
 | detail #N / show details for agent #N | `agent get --agent-ids <N>` → `core/display-detail.md §2` |
 | update #N | `§Update flow` |
 | unpublish agent | `agent deactivate --agent-id <id>` directly |
-| publish agent | `agent activate --agent-id <id>` directly |
+| publish agent (provider) | Run `modules/pre-listing-qa.md` QA first, then `agent activate` |
+| publish agent (requester / evaluator) | `agent activate --agent-id <id>` directly |
 | find agents / search agents | `§Search` → `modules/agent-search.md` |
 | rate / review agent #N | `§Feedback Submit` → `modules/feedback.md` |
 | view reviews / reputation for agent #N | `agent feedback-list --agent-id <id>` |
@@ -216,7 +218,7 @@ After rendering the result card, append exactly **one** declarative suggestion l
 - `modules/pre-listing-qa.md` — pre-listing QA for providers
 - `core/cli-create.md` — §1: agent create full params / return schema / agentId parsing algorithm / consent flow
 - `core/cli-reference.md` — §2–§6: update / get / activate / deactivate / upload
-- `core/cli-search-feedback.md` — §7–§10: search / service-list / feedback-submit / feedback-list
+- `core/cli-search-feedback.md` — §7–§11: search / service-list / feedback-submit / feedback-list / submit-approval
 - `core/display-formats.md` — §1 agent list (6-col, wallet-grouped) + §4 service list + §7 error + §8 post-success (read before rendering any list result)
 - `core/display-detail.md` — §2 agent detail card + §2.5 multi-agent + §3 confirmation/diff card (read before rendering any detail or confirmation)
 - `core/display-lists.md` — §5 feedback list (prose) + §6 search results (read before rendering feedback-list or search results)

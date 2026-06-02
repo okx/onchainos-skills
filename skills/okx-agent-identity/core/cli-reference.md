@@ -144,14 +144,39 @@ onchainos agent activate --agent-id 42
 
 | Field | Type | Description |
 |---|---|---|
-| `success` | boolean | `true` = listed successfully; `false` = listing failed |
+| `success` | boolean | `true` = listed successfully; `false` = listing not effective, check `approvalStatus` |
+| `approvalStatus` | integer \| null | Review status: `1` = not submitted / `2` = under review / `5` = rejected; `null` when `success=true` |
+| `rejectReason` | string \| null | Rejection reason; non-null only when `approvalStatus=5` |
 
-**Skill-side handling:**
+**Five possible outcomes:**
+
+```json
+// Outcome A — Listed immediately
+{ "success": true, "approvalStatus": null, "rejectReason": null }
+
+// Outcome B — Review required, not yet submitted
+// → Skill MUST call onchainos agent submit-approval --agent-id <id>
+{ "success": false, "approvalStatus": 1, "rejectReason": null }
+
+// Outcome C — Already under review
+{ "success": false, "approvalStatus": 2, "rejectReason": null }
+
+// Outcome D — Review rejected
+{ "success": false, "approvalStatus": 5, "rejectReason": "Content does not meet listing guidelines" }
+
+// Outcome E — Agent blacklisted (top-level error, outside data object)
+{ "code": "81602", "msg": "Agent is blocked", "data": null }
+```
+
+**Skill-side handling (reads `success` + `approvalStatus` + top-level `code`, NOT just HTTP status):**
 
 | Condition | Skill action |
 |---|---|
 | `success: true` | ✅ Published — render success line + proceed to `SKILL.md §Operation Flow Step 5` → `§Step 6` |
-| `success: false` | Render error card per `troubleshooting.md §2` and **stop** |
+| `success: false`, `approvalStatus: 1` | Auto-call `onchainos agent submit-approval --agent-id <id>` → `cli-search-feedback.md §11` |
+| `success: false`, `approvalStatus: 2` | Under review — render review-pending message per `troubleshooting.md §2` and **stop** (no Step 5/6) |
+| `success: false`, `approvalStatus: 5` | Rejected — render rejection card with `rejectReason` per `troubleshooting.md §2` and **stop** (no Step 5/6) |
+| Top-level `code: "81602"` | Agent blacklisted — render blacklist error per `troubleshooting.md §2` and **stop** |
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 
