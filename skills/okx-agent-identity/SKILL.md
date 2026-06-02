@@ -209,19 +209,21 @@ After rendering the result card, append exactly **one** declarative suggestion l
 - `playbooks/provider.md` — ASP Phase 1 Q&A + confirmation + post-success + endpoint anti-pattern
 - `playbooks/provider-services.md` — Phase 2: per-service Q&A loop (name/description/type/fee/endpoint)
 - `playbooks/evaluator.md` — Evaluator Q&A
-- `playbooks/consent.md` — first-time consent card
-- `modules/feedback.md` — feedback submission flow
-- `modules/agent-search.md` — search filter extraction
-- `modules/avatar-upload.md` — avatar upload decision matrix
+- `playbooks/consent.md` — first-time consent card (read when CLI returns non-null `consent`)
+- `modules/feedback.md` — feedback submission flow (read before any feedback-submit intent)
+- `modules/agent-search.md` — search filter extraction (read before invoking agent search)
+- `modules/avatar-upload.md` — avatar upload decision matrix (read at Q3 avatar prompt)
+- `modules/pre-listing-qa.md` — pre-listing QA for providers
 - `core/cli-create.md` — §1: agent create 完整参数 / 返回结构 / agentId 解析算法 / consent 流程
 - `core/cli-reference.md` — §2–§6: update / get / activate / deactivate / upload
 - `core/cli-search-feedback.md` — §7–§10: search / service-list / feedback-submit / feedback-list
-- `core/display-formats.md` — §1 agent list + §4 service list + §7 error + §8 post-success
-- `core/display-detail.md` — §2 agent detail card + §2.5 multi-agent + §3 confirmation/diff card
-- `core/display-lists.md` — §5 feedback list + §6 search results
+- `core/display-formats.md` — §1 agent list (6-col, wallet-grouped) + §4 service list + §7 error + §8 post-success (read before rendering any list result)
+- `core/display-detail.md` — §2 agent detail card + §2.5 multi-agent + §3 confirmation/diff card (read before rendering any detail or confirmation)
+- `core/display-lists.md` — §5 feedback list (prose) + §6 search results (read before rendering feedback-list or search results)
 - `core/field-specs.md` — 8 fields, four-segment spec
 - `core/ux-lexicon.md` — term translation table
 - `core/data-display.md` — amount display and star conversion rules
 - `core/choice-prompts.md` — numbered options + one-shot capture
-- `core/cost-disclosure.md` — gas policy and forbidden phrasings
+- `core/cost-disclosure.md` — gas policy and forbidden phrasings (read before any confirmation card or fee question)
 - `troubleshooting.md` — CLI errors → user-friendly messages
+- `cross-skill-workflows.md` — Workflows A–D with data-handoff contracts across okx-agentic-wallet / okx-agent-task / okx-agent-chat

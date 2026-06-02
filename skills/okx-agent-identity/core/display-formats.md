@@ -1,6 +1,12 @@
 # Display Formats
 
 > Standardized output templates. Use these verbatim — do not improvise column counts or add Unicode box-drawing characters.
+>
+> **When to load this file (on-demand — load only the section you need):**
+> - `agent get` (no `--agent-ids`) returns → read **§1** before rendering
+> - `agent service-list` returns → read **§4** before rendering
+> - Any error → read **§7** before rendering
+> - After any mutation success → read **§8** for the post-success suggestion line
 
 ## Table of Contents
 
@@ -111,8 +117,9 @@ Rules:
 - **Group by accountName.** One header line per outer-`list[*]` wrapper, rendering `钱包 <accountName>（<short-address>）` / `Wallet <accountName> (<short-address>)`. The short-address form follows §2's rule (`0x`first 4`…`last 4 hex chars).
 - **Per-wallet table follows the header**, listing that wrapper's `agentList[*]` rows. If a wrapper has 0 agents, render `（暂无 agent）` / `(no agents)` instead of an empty table.
 - **No deduplication across wrappers.** If the same `agentId` appears under multiple accountNames, render it under each (per product spec). Dedup is a skill-side concern only when it actually matters elsewhere — for the list view, faithful reproduction wins.
-- Five columns per agent table. The first column header (`Agent ID`) stays in English; the other four adapt to user language (`名字 / 角色 / 状态 / 评分` ↔ `Name / Role / Status / Rating`).
+- **Six columns** per agent table. The first column header (`Agent ID`) stays in English; the other five adapt to user language (`名字 / 角色 / 状态 / 审核状态 / 评分` ↔ `Name / Role / Status / Approval status / Rating`).
 - Truncate `Name` to 20 chars with `…`.
+- `审核状态 / Approval status`: render per the ApprovalDisplayStatus table in `core/ux-lexicon.md`. When `approvalDisplayStatus` is absent from the list response, omit the cell value (render empty). **Do NOT** append `approvalRemark` in the list view — remark is detail-card only (§2).
 - `Rating`: `★ <average_stars> (<count>)`, where `<average_stars>` = `<backend_score> / 20` with **up to 2 decimal places** (star conversion: `score / 20`, up to 2 decimal places reputation block). Because wire is an integer 0–100, `score/20` is exact at 2 decimals — no rounding. Trailing zeros trimmed. Examples: `100 → 5`, `92 → 4.6`, `89 → 4.45`, `85 → 4.25`, `66 → 3.3`. If no feedback yet, render `暂无评分` / `No rating yet`. **Never** render `—` for missing rating in the list view, and **never** expose the raw 0–100 score — `92 / 100` is forbidden.
 - `Status` and `Role` use the language-matching label: Chinese users see `已上架 / 已下架` and `用户 / 服务提供商 / 仲裁者`; English users see `active / inactive` and `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render bilingual `active (已上架)` or `User Agent (用户)`. **Never** render the raw ERC-8004 enum (`requester / provider / evaluator`) or the legacy CN nouns (`买家 / 卖家 / 服务方 / 验证者`) — see `core/ux-lexicon.md §Role`.
 - The footer summary counts BOTH wallets and total agents (`共 N 个钱包、合计 M 个 agent` / `Total N wallets, M agents in all`). `N` = `envelope.total` (= wrapper count); `M` = sum of `wrapper.agentList.length` across wrappers (computed skill-side).

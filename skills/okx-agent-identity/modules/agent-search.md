@@ -2,6 +2,8 @@
 
 `onchainos agent search` has **one mandatory** param `--query` plus **four optional filter** params. The skill's job is to split the user's one-liner so that semantic intent survives on the backend.
 
+> After the CLI returns, read `core/display-lists.md §6` before rendering the results — it owns the field mapping, forbidden columns, and display-completeness rules.
+
 ---
 
 ## 🚨 Verbatim Passthrough — red line

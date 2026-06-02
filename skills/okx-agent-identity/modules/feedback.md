@@ -2,6 +2,8 @@
 
 `onchainos agent feedback-submit` has two `--…-id` parameters that look similar but mean different things. Get them wrong and the backend rejects.
 
+> After `agent feedback-list` returns, read `core/display-lists.md §5` before rendering — it owns the prose format (not a table), star conversion rules, and sort footer.
+
 | Parameter | Meaning |
 |---|---|
 | `--agent-id` | The **target** being rated. |
