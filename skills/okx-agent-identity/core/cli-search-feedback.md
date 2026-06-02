@@ -21,21 +21,21 @@ Discover agents by semantic query + optional filter dimensions.
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
 | `--query` | ✓ | string | User's full sentence verbatim. CLI does not enforce a length cap (`queries.rs:105-108` only validates non-empty). |
-| `--feedback` | ✗ | `Vec<String>` (comma-separated) | Reputation keywords. **Verbatim** — pass user's wording (e.g., `高分`, `好评`, `highly-rated`); do NOT canonicalize. |
-| `--agent-info` | ✗ | `Vec<String>` | Role / domain keywords. **Verbatim** (e.g., `provider`, `数据分析`, `solidity`); do NOT canonicalize. |
-| `--status` | ✗ | `Vec<String>` | Activity state. **Verbatim** — pass user's wording (e.g., `已上架`, `活跃`, `下架`); do NOT canonicalize to `active` / `inactive`. Pass user's exact wording — never canonicalize. |
-| `--service` | ✗ | `Vec<String>` | Service type / interface tokens. **Verbatim** (e.g., `MCP 服务`, `API`, `A2A`); do NOT canonicalize `MCP 服务` to `A2MCP`. Domain words go to `--agent-info`, not here. |
-| `--page` | ✗ | integer | 未传时不上送，由后端取默认。 |
-| `--page-size` | ✗ | integer | 未传时不上送，由后端取默认。**Backend caps at 50** — `--page-size 100` returns a 4xx error. Use `--page <N+1>` to fetch more rather than enlarging page size. |
+| `--feedback` | ✗ | `Vec<String>` (comma-separated) | Reputation keywords. **Verbatim** — pass user's wording (e.g., `highly-rated`, `well-reviewed`); do NOT canonicalize. |
+| `--agent-info` | ✗ | `Vec<String>` | Role / domain keywords. **Verbatim** (e.g., `provider`, `data analysis`, `solidity`); do NOT canonicalize. |
+| `--status` | ✗ | `Vec<String>` | Activity state. **Verbatim** — pass user's wording (e.g., `listed`, `active`, `unlisted`); do NOT canonicalize to `active` / `inactive`. Pass user's exact wording — never canonicalize. |
+| `--service` | ✗ | `Vec<String>` | Service type / interface tokens. **Verbatim** (e.g., `MCP service`, `API`, `A2A`); do NOT canonicalize `MCP service` to `A2MCP`. Domain words go to `--agent-info`, not here. |
+| `--page` | ✗ | integer | Omitted when not provided; backend uses its default. |
+| `--page-size` | ✗ | integer | Omitted when not provided; backend uses its default. **Backend caps at 50** — `--page-size 100` returns a 4xx error. Use `--page <N+1>` to fetch more rather than enlarging page size. |
 
 There is **no** `--sort-by` on `agent search`.
 
 **Example:**
 ```bash
 onchainos agent search \
-  --query "找个口碑好的做链上数据分析的 provider" \
-  --feedback "口碑好" \
-  --agent-info "provider,链上数据分析"
+  --query "find a highly-rated provider doing on-chain data analysis" \
+  --feedback "highly-rated" \
+  --agent-info "provider,on-chain data analysis"
 ```
 
 Filter splitting rules and full examples are in the agent-search module.
@@ -83,7 +83,7 @@ Filter splitting rules and full examples are in the agent-search module.
 }
 ```
 
-⚠️ **`services` array carries `@JsonInclude(NON_NULL)`** — if the backend has no service data for an agent, the `services` key is omitted entirely (not present as `null`, not present as `[]`). Per the backend VO, this field is documented as "cliSearch 专用，其他接口不填充" — only the search endpoint populates it; do not rely on it on other endpoints. Skill renderers MUST check `services` presence before indexing; render `—` in the `主打服务 / Top service` column when absent.
+⚠️ **`services` array carries `@JsonInclude(NON_NULL)`** — if the backend has no service data for an agent, the `services` key is omitted entirely (not present as `null`, not present as `[]`). Per the backend VO, this field is documented as "cliSearch-only, not populated on other endpoints" — only the search endpoint populates it; do not rely on it on other endpoints. Skill renderers MUST check `services` presence before indexing; render `—` in the `Top service` column when absent.
 
 ⚠️ **Schema differs from `agent get` (§3)** — `search` and `get` hit different backend endpoints and return different field names. Critical contrasts vs §3:
 
@@ -156,7 +156,7 @@ onchainos agent feedback-submit \
   --agent-id 42 \
   --creator-id 88 \
   --score 4.5 \
-  --description "交付及时、数据准确" \
+  --description "Timely delivery, accurate data" \
   --task-id "0xabc...03e8"
 ```
 
@@ -185,9 +185,9 @@ Users never type `time_desc`. The skill translates:
 
 | User phrasing | `--sort-by` value |
 |---|---|
-| "最新 / 最近 / latest / newest / 按时间排序" | `time_desc` |
-| "最高分 / 分数最高 / 高分优先 / 高星 / 好评优先 / 五星优先 / highest score / top rated / highest rating / most stars / best reviewed" | `score_desc` |
-| "最低分 / 分数最低 / lowest / 差评优先 / 一星 / 低星" | **Not supported.** Tell the user only `time_desc` / `score_desc` are accepted; offer `score_desc` then let them page to the tail, or leave `--sort-by` off entirely. |
+| "latest / newest / sort by time" | `time_desc` |
+| "highest score / top rated / highest rating / most stars / best reviewed" | `score_desc` |
+| "lowest score / lowest rating / worst reviews first / one-star first" | **Not supported.** Tell the user only `time_desc` / `score_desc` are accepted; offer `score_desc` then let them page to the tail, or leave `--sort-by` off entirely. |
 | Unclear / not mentioned | Omit `--sort-by` — backend picks a default. |
 
 If the user explicitly says a raw value outside the enum, the CLI will bail with `invalid value for --sort-by: <value>`; return to this mapping.

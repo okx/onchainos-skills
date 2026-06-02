@@ -1,27 +1,27 @@
-# UX Lexicon — 内部术语 → 用户视角翻译表
+# UX Lexicon — Internal terms → user-facing translation
 
-Every AI user-visible message MUST follow the **per-section rendering rule** below. For Role / Status / Field sections that means using the canonical user-facing wording in the appropriate column; for the multi-form Service-type section that means using the form prescribed by the section's own pattern selector (long form for Pattern A teaching contexts, short form + footnote for Pattern B cell contexts). Never leak the left-column `内部` literal (wire-level enum / CLI flag / JSON key) into chat output. Internal reasoning, tool arguments, CLI invocations, and maintainer-facing doc blocks may use those left-column literals freely — the constraint applies only to text the user sees.
+Every AI user-visible message MUST follow the **per-section rendering rule** below. For Role / Status / Field sections that means using the canonical user-facing wording; for the multi-form Service-type section that means using the form prescribed by the section's own pattern selector (long form for Pattern A teaching contexts, short form + footnote for Pattern B cell contexts). Never leak the left-column internal literal (wire-level enum / CLI flag / JSON key) into chat output. Internal reasoning, tool arguments, CLI invocations, and maintainer-facing doc blocks may use those left-column literals freely — the constraint applies only to text the user sees.
 
-## Role 角色术语
+## Role
 
-The user-facing role terms are now **fully localized in BOTH languages** — Chinese users see the localized noun; English users see a friendly product term (NOT the raw ERC-8004 enum). The raw `requester` / `provider` / `evaluator` enum is wire-only.
+The raw `requester` / `provider` / `evaluator` enum is wire-only.
 
-| 内部 (CLI key / API field) | 对中文用户说 | 对英文用户说 |
-|---|---|---|
-| `requester` (CLI `--role` value, alias `1` / `buyer` / `requestor`) | **用户**（统一使用） | **User Agent** |
-| `provider` (CLI `--role` value, alias `2`) | **服务提供商**（统一使用） | **Agent Service Provider (ASP)** — the abbreviation `ASP` is acceptable after first mention in the same conversation |
-| `evaluator` (CLI `--role` value, alias `3`) | **仲裁者**（统一使用） | **Evaluator Agent** |
+| Internal (CLI key / API field) | User-facing label |
+|---|---|
+| `requester` (CLI `--role` value, alias `1` / `buyer` / `requestor`) | **User Agent** |
+| `provider` (CLI `--role` value, alias `2`) | **Agent Service Provider (ASP)** — the abbreviation `ASP` is acceptable after first mention in the same conversation |
+| `evaluator` (CLI `--role` value, alias `3`) | **Evaluator Agent** |
 
-The raw `requester` / `provider` / `evaluator` enum is wire-only and should not reach user-visible text (this is what causes the "buy agent" confusion) — neither in Chinese nor in English. They're wire-only on the CLI `--role` flag. Same for the legacy CN words `买家` / `卖家` / `服务方` / `验证者` — those are deprecated user-facing terms; do not render them to the user from any new code path.
+The raw `requester` / `provider` / `evaluator` enum is wire-only and should not reach user-visible text (this is what causes the "buy agent" confusion). They're wire-only on the CLI `--role` flag.
 
-**Carve-out:** if the user themselves typed `provider` / `requester` / `evaluator` (or the legacy CN words) in their message, the AI MAY echo their wording in the immediate reply — but the next system-initiated mention should drift back to the canonical localized term so subsequent prompts stay consistent.
+**Carve-out:** if the user themselves typed `provider` / `requester` / `evaluator` in their message, the AI MAY echo their wording in the immediate reply — but the next system-initiated mention should drift back to the canonical localized term so subsequent prompts stay consistent.
 
-## Service-type 服务类型术语
+## Service-type
 
-| 内部 (`servicetype`) | 长形式（用于"教学型"上下文，gloss 内嵌） | 短形式（用于卡片单元格 / 标签场景） | 单独的 gloss 内容（用作 footnote） |
+| Internal (`servicetype`) | Long form (for "teaching" contexts, gloss inlined) | Short form (for card cells / labels) | Standalone gloss (used as footnote) |
 |---|---|---|---|
-| `A2MCP` | 「**API 接口式服务**（按次调用、固定价格）」 / "**API-interface service** (pay-per-call, fixed price)" | "API 接口" / "API service" | 按次调用、固定价格 / pay-per-call, fixed price |
-| `A2A` | 「**agent（智能体）通信式服务**（议价 / 灵活协作）」 / "**agent-to-agent service** (negotiated / off-chain pricing)" | "agent 互调" / "agent-to-agent" | 议价 / 灵活协作 / negotiated / off-chain pricing |
+| `A2MCP` | "**API-interface service** (pay-per-call, fixed price)" | "API service" | pay-per-call, fixed price |
+| `A2A` | "**agent-to-agent service** (negotiated / off-chain pricing)" | "agent-to-agent" | negotiated / off-chain pricing |
 
 ⛔ **Raw `A2MCP` / `A2A` enum NEVER appears in user-visible text — period.** The raw form is the wire-level CLI `--service` payload value only; user output uses one of the two localized forms above.
 
@@ -30,15 +30,15 @@ The raw `requester` / `provider` / `evaluator` enum is wire-only and should not 
 Both patterns satisfy the "user must see the gloss on first encounter" requirement; the choice is **context-driven**, not preferential. The skill MUST use exactly one of these patterns whenever serviceType reaches user-visible text:
 
 - **Pattern A — Inline parenthetical (long form)**: render the **long form** verbatim — the gloss sits in the parenthetical attached to the name. Used in: Q&A prompts that teach the user the choice (provider registration type-choice numbered options), error messages explaining the constraint, free-form explanations in chat. Example:
-  > 这项服务是哪种类型？
-  >   1. API 接口式服务（按次调用、固定价格，标准 MCP（标准调用接口）接口）
-  >   2. agent（智能体）通信式服务（双方协商定价 / 灵活协作；价格默认私下谈，可选填上链（写入区块链）参考价）
+  > Which type is this service?
+  >   1. API-interface service (pay-per-call, fixed price, standard MCP (standard call protocol) interface)
+  >   2. agent-to-agent service (negotiated / off-chain pricing; price defaults to off-chain negotiation, with an optional on-chain reference price)
 
 - **Pattern B — Short form + footnote below table** (preferred in cells / tables where space is tight): the **short form** sits in the cell; **on first occurrence in the conversation**, append a one-line gloss footnote below the table. Used in: detail cards, confirmation cards, service-list, search results, anywhere `serviceType` appears as a cell value. Example:
-  > | TVL Query | API 接口 | 10 USDT | ... |
-  > | Yield Check | agent 互调 | 免费 | ... |
+  > | TVL Query | API service | 10 USDT | ... |
+  > | Yield Check | agent-to-agent | free | ... |
   >
-  > 服务类型：API 接口 = 按次调用、固定价格；agent 互调 = 议价 / 灵活协作。
+  > Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
 
 ### Subsequent reuse in the same conversation
 
@@ -46,90 +46,82 @@ After the user has seen the gloss (either via Pattern A or Pattern B), subsequen
 
 This framework is the single source of truth for service-type localization; all templates must stay aligned with it.
 
-## Status 状态术语
+## Status
 
-| 内部 (`status` int) | 对中文用户说 | 对英文用户说 |
-|---|---|---|
-| `1` | 已上架（可接单） | active |
-| `2` | 未上架 | not listed |
-| `3` | 该 Agent 当前不可用 | This agent is currently unavailable |
-| `4` | 该 Agent 当前不可用 | This agent is currently unavailable |
-| `5` | 该 Agent 当前不可用 | This agent is currently unavailable |
+| Internal (`status` int) | User-facing label |
+|---|---|
+| `1` | active |
+| `2` | not listed |
+| `3` | This agent is currently unavailable |
+| `4` | This agent is currently unavailable |
+| `5` | This agent is currently unavailable |
 
 ⛔ Never render the raw integer. Always translate. Values `3` / `4` / `5` all render as the same "unavailable" copy — do NOT distinguish the reason (security / risk-control / manual) to the user.
 
 ## ApprovalDisplayStatus
 
-**Only render `approvalDisplayStatus` when `status == 2` (未上架).** If `status` is any other value, skip the approval status row entirely.
+**Only render `approvalDisplayStatus` when `status == 2` (not listed).** If `status` is any other value, skip the approval status row entirely.
 
-Render in the user's language — the table below defines canonical values:
+| `approvalDisplayStatus` | User-facing label |
+|---|---|
+| `1` | Not submitted for review |
+| `2` | Under review, please wait |
+| `4` | Approved — eligible for task recommendations |
+| `5` | Review failed |
+| `7` | This agent is currently unavailable |
 
-| `approvalDisplayStatus` | 对中文用户说 | 对英文用户说 |
-|---|---|---|
-| `1` | 未发起审核 | Not submitted for review |
-| `2` | 审核中，请耐心等待 | Under review, please wait |
-| `4` | 审核通过，可被推荐自动接单 | Approved — eligible for task recommendations |
-| `5` | 审核失败 | Review failed |
-| `7` | 该 Agent 当前不可用 | This agent is currently unavailable |
+Row label: `Approval status`.
 
-Row label follows language matching: `审核状态` for Chinese users, `Approval status` for English users.
+⛔ Never render the raw integer. Always translate. When `approvalRemark` is non-empty and `approvalDisplayStatus` is `5`, append it as a parenthetical: "Review failed (reason: xxx)".
 
-⛔ Never render the raw integer. Always translate. When `approvalRemark` is non-empty and `approvalDisplayStatus` is `5`, append it as a parenthetical: "审核失败（原因：xxx）" / "Review failed (reason: xxx)".
+## Field
 
-## Field 字段术语
-
-| 内部 (CLI JSON key) | 对中文用户说 | 对英文用户说 |
-|---|---|---|
-| `agentId` | "ID #N" or "#N"（保留 `#` 前缀） | "#N" or "Agent ID #N" |
-| `ownerAddress` | 拥有者地址 / 持有钱包 | owner wallet |
-| `address` (agent record `address` field) | 链上地址（区块链上的地址） | on-chain address |
-| `chainIndex` | (不说 — XLayer 是默认且唯一 chain) | (don't mention — XLayer is default) |
-| `name` (agent or service) | 名字 / 名称 | name |
-| `description` (agent) | 描述 / 简介 | description |
-| `picture` | 头像 | profile photo |
-| `servicedescription` | 服务描述 | service description |
-| `servicetype` | 服务类型 | service type |
-| `fee` | 价格 / 费用 | price / fee |
-| `endpoint` | 接口地址 | endpoint |
-| `reputation.score` | (do NOT render raw — always convert to `★ <stars>` via `score / 20`, up to 2 decimal places) | (same — render as `★ <stars>`) |
-| `reputation.count` | 评价数 | review count |
-| `txHash` | 交易哈希 | tx hash |
-| `creator-id` | (do NOT expose the literal `creator-id`; just say "你的 agent #N 会作为这次评价的发起人") | (same — phrase as "your agent #N will be the reviewer") |
-| `--agent-id` flag value | (don't expose the flag; AI fills it itself) | (same) |
-| `--score` flag value | (don't expose the flag; "X 星" / "X stars") | (same) |
+| Internal (CLI JSON key) | User-facing label |
+|---|---|
+| `agentId` | "#N" or "Agent ID #N" (keep `#` prefix) |
+| `ownerAddress` | owner wallet |
+| `address` (agent record `address` field) | on-chain address |
+| `chainIndex` | (don't mention — XLayer is default and the only chain) |
+| `name` (agent or service) | name |
+| `description` (agent) | description |
+| `picture` | profile photo |
+| `servicedescription` | service description |
+| `servicetype` | service type |
+| `fee` | price / fee |
+| `endpoint` | endpoint |
+| `reputation.score` | (do NOT render raw — always convert to `★ <stars>` via `score / 20`, up to 2 decimal places) |
+| `reputation.count` | review count |
+| `txHash` | tx hash |
+| `creator-id` | (do NOT expose the literal `creator-id`; phrase as "your agent #N will be the reviewer") |
+| `--agent-id` flag value | (don't expose the flag; AI fills it itself) |
+| `--score` flag value | (don't expose the flag; "X stars") |
 
 ⛔ The carve-out: `Agent ID` as a column header in cards / `#<N>` as a row value is allowed (it's a stable identifier the user will see again on explorer). Everywhere else, translate.
 
 **agentId exposure rule**: only surface `agentId` (`#N`) in user-visible output when it is directly relevant (e.g. confirmation card, post-success line, detail card). When a counterparty only needs the `address` (e.g. for payments or cross-skill references), provide `address` only — do not proactively volunteer `agentId`.
 
-**A2A 服务未填价格的渲染**: when a service of type `A2A` carries an empty / missing `fee`, render the user-facing value as `免费 / （未填，双方自行协商）` (Chinese) or `free / (skipped — negotiated directly)` (English) — do NOT echo the wire-level empty string, and do NOT use the older "链外议价 / off-chain negotiation" wording (that phrasing was changed to emphasize that pricing happens **between the two parties directly**, not on some "external chain").
+**A2A service rendering when fee is empty**: when a service of type `A2A` carries an empty / missing `fee`, render the user-facing value as `free / (skipped — negotiated directly)` — do NOT echo the wire-level empty string, and do NOT use the older "off-chain negotiation" wording (that phrasing was changed to emphasize that pricing happens **between the two parties directly**, not on some "external chain").
 
-**EVM 地址显示规则**: all EVM addresses (`ownerAddress`, `address` fields) must be displayed in **all-lowercase** (e.g. `0xabc...1234`, not `0xABC...1234`). The checksummed mixed-case format is a developer artifact; users see it on explorers in lowercase. Short form: `0x` + first 4 + `…` + last 4 hex chars (all lowercase).
+**EVM address display rule**: all EVM addresses (`ownerAddress`, `address` fields) must be displayed in **all-lowercase** (e.g. `0xabc...1234`, not `0xABC...1234`). The checksummed mixed-case format is a developer artifact; users see it on explorers in lowercase. Short form: `0x` + first 4 + `…` + last 4 hex chars (all lowercase).
 
-**链 / 区块链 / NFT 的口语化** (used inside user-visible "请注意" segments, post-success lines, error cards):
-- `链上` / `on-chain` → CN add gloss on first user-facing mention: `上链（写入区块链）`. EN may keep `on-chain` (English-speaking users recognize the term).
-- `链上 NFT` / `on-chain NFT` in cost/reversibility copy → render as `区块链上的记录` (CN) / `your record on the blockchain` (EN) — most non-engineer users don't think of identities as "NFTs", and the NFT framing is wire detail.
-- `gas` / `网络手续费` in cost copy → render as `手续费`（中文）/ `transaction fees` (English). Drop the "phase 1 / OKX 一期" framing; just say "由 OKX 承担" / "OKX covers them" — phase-numbering is a product-roadmap concern, not user-facing.
+**Chain / blockchain / NFT phrasing** (used inside user-visible "Please note" segments, post-success lines, error cards):
+- `on-chain NFT` in cost/reversibility copy → render as `your record on the blockchain` — most non-engineer users don't think of identities as "NFTs", and the NFT framing is wire detail.
+- `gas` / `network transaction fee` in cost copy → render as `transaction fees`. Drop the "phase 1 / OKX phase 1" framing; just say "OKX covers them" — phase-numbering is a product-roadmap concern, not user-facing.
 
-**钱包术语**:
-- ⛔ Never write `钉包` — that's a typo of `钱包`. Sweep the entire codebase before shipping.
-- `派生钱包` (in display-formats reassurance footer) → `关联钱包`. "派生" is implementation-leak (it implies HD-wallet derivation under the hood); "关联" is what the user sees.
-
-## Flow / internal-section term 黑话术语
+## Flow / internal-section terms (jargon)
 
 These names exist purely inside the skill's own documentation and reasoning. ⛔ **Never surface them to the user.**
 
-| 内部 (skill docs / model reasoning) | 对用户怎么处理 |
+| Internal (skill docs / model reasoning) | How to handle in user output |
 |---|---|
-| `pre-check` / `Pre-Check` / `MANDATORY pre-check gate` / `前置检查` | (just run it silently and report the result; never narrate "正在执行 pre-check") |
-| `Phase 1` / `Phase 2` / `阶段 1` / `阶段 2` | If you must signpost a transition, say "**接下来配置你的服务**" / "**now let's set up your services**" — never "进入 Phase 2" |
-| `Q1：` / `Q1:` / `Q2：` / `Q3：` / `S1：` / ... / `S6：` (numbered Q/S prompt prefixes) | Strip the prefix. Just ask the question in natural language. Chinese example: "这个服务提供商身份叫什么名字？" — **not** "Q1: 这个服务提供商身份叫什么名字？" and **not** "这个 provider 叫什么名字？" (the raw `provider` word also violates the Role-term localization rule above). English example: "What's the name of this ASP?" — no `Q1:` prefix; use the canonical localized term (ASP), not raw `provider`. |
+| `pre-check` / `Pre-Check` / `MANDATORY pre-check gate` | (just run it silently and report the result; never narrate "running pre-check") |
+| `Phase 1` / `Phase 2` | If you must signpost a transition, say "**now let's set up your services**" — never "entering Phase 2" |
+| `Q1:` / `Q2:` / `Q3:` / `S1:` / ... / `S6:` (numbered Q/S prompt prefixes) | Strip the prefix. Just ask the question in natural language. Example: "What's the name of this ASP?" — no `Q1:` prefix; use the canonical localized term (ASP), not raw `provider`. |
 | `One-shot capture` / `pre-execute self-check` / `confirmation gate` / `post-execute gate` | (model-internal control-flow names; never appear in user text) |
 | `passive onboarding` / `intent=need-requester` | (handoff metadata; never appear in user text) |
-| `dual-scope rule` / `wrapper / accountName` | (rendering rule for the AI; user sees "钱包 wallet-N" headers in the agent list, not the words "wrapper" or "accountName") |
+| `dual-scope rule` / `wrapper / accountName` | (rendering rule for the AI; user sees "Wallet wallet-N" headers in the agent list, not the words "wrapper" or "accountName") |
 | `--service` JSON payload key names | Translate (see Field table above) |
-| `MCP` (when rendered to first-time user) | CN add gloss on first mention: `MCP（标准调用接口）`. EN add gloss similarly: `MCP (standard call protocol)`. Subsequent mentions in the same conversation may use bare `MCP`. |
-| `agent` (when used as a user-visible noun in CN UI prompts) | On first mention, add inline gloss `agent（智能体）`. Subsequent mentions may use bare `agent`. EN keeps `agent` as-is. |
+| `MCP` (when rendered to first-time user) | Add gloss on first mention: `MCP (standard call protocol)`. Subsequent mentions in the same conversation may use bare `MCP`. |
 
 ## How to use this lexicon at runtime
 
@@ -137,9 +129,9 @@ The AI's user-visible draft → sweep these rules → emit:
 
 1. Replace every `okx-*` skill literal with business language.
 2. Replace every `onchainos agent <cmd>` literal with "I'll do it for you" + actually invoke the CLI.
-3. Replace every role / status / field literal with its user-language wording (see sections above). For **service-type** specifically, use **Pattern A long form** for Q&A teaching prompts / error messages / free-form chat; **Pattern B short form + footnote** for cards / tables.
+3. Replace every role / status / field literal with its user-facing wording (see sections above). For **service-type** specifically, use **Pattern A long form** for Q&A teaching prompts / error messages / free-form chat; **Pattern B short form + footnote** for cards / tables.
 4. Replace every flow-term / Q-prefix / S-prefix / Phase-N literal with natural-language phrasing (this file).
 5. Check ≥5 agent counts have a reassurance footer (see `core/display-formats.md §1`).
-6. Sweep for legacy CN role nouns (`买家` / `卖家` / `服务方` / `验证者`) and the typo `钉包` — replace with the new canonical (`用户` / `服务提供商` / `仲裁者` / `钱包`). Same sweep applies to raw EN role enums (`requester` / `provider` / `evaluator`) outside of wire-level documentation.
+6. Sweep for raw role enums (`requester` / `provider` / `evaluator`) outside of wire-level documentation — replace with the canonical user-facing wording (`User Agent` / `Agent Service Provider (ASP)` / `Evaluator Agent`).
 
 If the draft survives all six sweeps without rewrite, it's safe to send.
