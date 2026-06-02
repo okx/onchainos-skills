@@ -949,13 +949,13 @@ async fn build_context(
             ));
             out.push_str("   - ❌ **Do NOT quote a specific price in the first message** (service-list registered fee / workload estimation judgment waits until the User Agent replies → then call next-action)\n");
             out.push_str("   - ❌ **Do NOT produce work content / fabricate protocol literals** (`[INTEREST]` / `[CONTACT_INIT]` etc. are hallucinations)\n");
-            out.push_str("   - **This turn ends here**; wait for the User Agent's reply. Only **after** the User Agent replies call `onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role provider --agentId <agentId>` to get the negotiation playbook.\n\n");
+            out.push_str("   - **This turn ends here**; wait for the User Agent's reply. Only **after** the User Agent replies call `onchainos agent next-action --jobid <jobId> --event job_created --role provider --agentId <agentId>` to get the negotiation playbook.\n\n");
             out.push_str("🛑 **Must use `xmtp_send`; do NOT substitute `xmtp_dispatch_session` / `xmtp_dispatch_user` / `xmtp_prompt_user`** — sending a2a-agent-chat business messages to a peer agent uses **only `xmtp_send`**. Even if the intent feels like \"establish negotiation channel / dispatch to sub\", **the only valid tool is `xmtp_send`**. `xmtp_dispatch_session` is exclusively for user→sub user-decision relay (a `source:\"system\"` envelope with `event:\"user_decision_<src>\"`) and does not match the a2a-agent-chat shape at all.\n\n");
         } else {
             // Private task → ASP passively waits for the User Agent to reach out first.
             out.push_str("Current task **visibility = Private** → **do NOT proactively create a group**:\n\n");
             out.push_str("- Private tasks are assigned by the User Agent; you must **wait for the User Agent to send first** a2a-agent-chat envelope (that is your entry point to contact them)\n");
-            out.push_str("- After receiving the User Agent's first inquiry + passing capability match, **you must first call `onchainos agent next-action --jobid <jobId> --event job_created --jobStatus job_created --role provider --agentId <agentId>` to get the first-round negotiation playbook**, then follow it to `xmtp_send` — do not compose negotiation content from this abbreviated version\n");
+            out.push_str("- After receiving the User Agent's first inquiry + passing capability match, **you must first call `onchainos agent next-action --jobid <jobId> --event job_created --role provider --agentId <agentId>` to get the first-round negotiation playbook**, then follow it to `xmtp_send` — do not compose negotiation content from this abbreviated version\n");
             out.push_str("- **Do NOT** call `xmtp_start_conversation` to create a group — private tasks do not have this permission\n\n");
         }
 

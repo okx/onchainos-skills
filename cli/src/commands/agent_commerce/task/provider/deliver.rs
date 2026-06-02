@@ -153,6 +153,6 @@ pub async fn handle_deliver(
     println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
     println!("    - Do NOT call `xmtp_send` to tell the buyer \"deliverable is on-chain, please review\" or similar");
     println!("    - You will receive a `job_submitted` system notification after on-chain confirmation");
-    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event job_submitted --jobStatus job_submitted --role provider`");
+    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event job_submitted --role provider`");
     Ok(())
 }

@@ -107,7 +107,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      🛑🛑🛑 **Iron rule (MANDATORY) after receiving `job_accepted`**:\n\
      After the `job_accepted` system event arrives, you **must** call:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --event job_accepted --jobStatus job_accepted --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --jobid {job_id} --event job_accepted --role buyer --agentId {agent_id}\n\
      ```\n\
      Follow the returned script (the script will guide you to run `onchainos agent complete`).\n\
      ❌ **Absolutely forbidden**: re-running this turn's `x402-check` / `task-402-pay` / `xmtp_dispatch_user` - those completed in this turn; re-running causes double payment or duplicate notification.\n\
@@ -122,7 +122,8 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] A/B/C"), "negotiate_over_budget");
+    let title = ctx.title_display;
+    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] {title} budget decision"), "negotiate_over_budget");
     let title_query_hint = ctx.title_query_hint;
 
     let over_budget = super::super::content::over_budget_user_prompt(short_id);
@@ -166,7 +167,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20{l10n_prompt}\n\
      \x20\x20\x20\x20{follow_playbook}\n\
      \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-     \x20\x20\x20\x20After the user-session relays the reply as a system envelope (`event:\"user_decision_negotiate_over_budget\"`, `message.data:<verbatim>`), call `next-action --event user_decision_negotiate_over_budget --jobStatus user_decision_negotiate_over_budget --data \"<message.data>\"` — CLI returns a routing playbook (A=view recommendations / B=specify ASP / C=close); follow it verbatim. Do NOT keyword-match yourself.\n\n\
+     \x20\x20\x20\x20After the user-session relays the reply as a system envelope (`event:\"user_decision_negotiate_over_budget\"`, `message.data:<verbatim>`), call `next-action --event user_decision_negotiate_over_budget --data \"<message.data>\"` — CLI returns a routing playbook (A=view recommendations / B=specify ASP / C=close); follow it verbatim. Do NOT keyword-match yourself.\n\n\
      **Step 3 - reply to the ASP (depends on Step 2 evaluation):**\n\n\
      - **ASP is still in discussion (no explicit price yet or asking for details)** -> xmtp_send a natural-language reply to keep discussing.\n\n\
      - **Both sides agree on tokenAmount / tokenSymbol / paymentMode** -> send [intent:propose]:\n\
@@ -180,6 +181,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      ⚠️ **In an A2A negotiation session paymentMode is fixed to escrow.**\n\
      ⚠️ **Do NOT replace [intent:propose] with natural language** - the ASP Agent only recognizes structured markers; \"please apply / terms locked\" in natural language will not be parsed.\n\
      ⚠️ **Only one xmtp_send per turn.**\n\
+     ⏱ **5-minute timeout**: if the ASP does not reply within 5 minutes, xmtp_send `[intent:reject]` (reason: negotiation timeout), then `onchainos agent mark-failed {job_id} --provider <ASP agentId>` + `onchainos agent recommend {job_id} --agent-id {agent_id}` to switch. Do NOT call `xmtp_delete_conversation` when switching — just ignore further messages from that ASP.\n\
      🚫 🛑 **CRITICAL - this event absolutely forbids save-agreed / set-payment-mode / confirm-accept** - those only run in the later negotiate_ack event. ASP natural-language phrases like \"I accept\", \"agree\", \"OK\", \"no problem\" are **NOT** `[intent:ack]` - only content that starts with the literal `[intent:ack]` square brackets counts. Before the user sends [intent:propose], the ASP cannot reply with [intent:ack]. Violating this = skipping the three-step handshake = the job is permanently stuck.\n\
      -> **end this turn** and wait for the ASP's reply.\n")
 }

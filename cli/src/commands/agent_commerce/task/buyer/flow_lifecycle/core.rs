@@ -91,7 +91,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      After complete is settled on-chain, a `job_completed` system event will arrive.\n\
      Upon receiving `job_completed`, you **MUST** call:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --event job_completed --jobStatus job_completed --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --jobid {job_id} --event job_completed --role buyer --agentId {agent_id}\n\
      ```\n\
      Follow the returned playbook (it will guide you to notify the user that the job is complete).\n\
      ❌ **NEVER** ignore the `job_completed` event -- ignoring it = user never learns the job is done.\n\
@@ -158,7 +158,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      \x20\x20content: The provider has sent the deliverable; awaiting on-chain submission confirmation before entering acceptance review.\n\
      ❌ Do NOT include the deliverable body / summary / file path in this notification — the full content is shown in the `job_submitted` review card.\n\n\
      **Step 3 — End this turn**. Wait for the `job_submitted` system event.\n\
-     When `job_submitted` arrives, call `onchainos agent next-action --jobid {job_id} --event job_submitted --jobStatus job_submitted --role buyer --agentId {agent_id}`.\n\
+     When `job_submitted` arrives, call `onchainos agent next-action --jobid {job_id} --event job_submitted --role buyer --agentId {agent_id}`.\n\
      The `job_submitted` playbook will check for already-saved deliverables and skip re-download if found.\n"
     )
 }
@@ -169,10 +169,21 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
+    let title_display = ctx.title_display;
     let terminal_session_hint = ctx.terminal_session_hint;
-    let follow_end = super::super::flow::FOLLOW_PLAYBOOK_END_TURN;
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
     let rating_failed_notify = super::super::content::rating_failed_user_notify(job_id);
+    // Branch A (escrow) push protocol — user_content is composed at runtime from the
+    // deliverable variables extracted in Step 2 (file vs text); pass the placeholder
+    // and the templates below the helper output guide the LLM through the composition.
+    let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+        job_id,
+        "buyer",
+        agent_id,
+        "<composed in Step 3a from the deliverableType template above — paste the localized result here verbatim, including the A. and B. option lines>",
+        &format!("[Decision {short_id}] {title_display} acceptance decision"),
+        "job_submitted",
+    );
 
     format!(
     "[Current Status] job_submitted (ASP has submitted the deliverable)\n\
@@ -258,18 +269,8 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      If save fails, log the error but do NOT block the review flow.\n\n\
      Deliverable display variables: deliverableType=text, deliverableText=<full original text sent by the ASP>\n\n\
      **Step 3 — Branch by payment mode:**\n\n\
-     --------- Branch A: escrow — enqueue review decision via `pending-decisions-v2 request` ---------\n\n\
-     Build the `--user-content` from the deliverable variables above (split by deliverableType). Then run (substitute `<full sessionKey>` from the session_status call in Step 2):\n\
-     ```bash\n\
-     onchainos agent pending-decisions-v2 request \\\n\
-       --sub-key \"<full sessionKey from session_status>\" \\\n\
-       --job-id {job_id} --role buyer --agent-id {agent_id} \\\n\
-       --user-content \"<deliverable card + A/B options, see templates below>\" \\\n\
-       --list-label \"[Decision {short_id}] Approve / Reject\" \\\n\
-       --source-event job_submitted\n\
-     ```\n\
-     {l10n_prompt_bold}\n\
-     `--user-content` template (canonical English; localize before passing) — split by deliverableType:\n\n\
+     --------- Branch A: escrow — push the review decision to the user ---------\n\n\
+     **Step 3a — Compose `--user-content` from the Step 2 deliverable variables using the template that matches `deliverableType`** (English source — fill `<placeholder>` from runtime values, THEN localize per [Localization] rules):\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
      [Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (file); downloaded locally.\n\
@@ -281,7 +282,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \n\
      Choose:\n\
      A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
-     B. Reject the deliverable (please state your reason) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
+     B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
      ```\n\n\
      ▸ deliverableType=text:\n\
      ```\n\
@@ -295,21 +296,11 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \n\
      Choose:\n\
      A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
-     B. Reject the deliverable (please state your reason) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
+     B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: <...>' or 'reject reason: <...>' / '拒绝, 理由: <...>'\n\
      ```\n\n\
-     {follow_end}\n\n\
-     ===============================================================\n\
-     🛑🛑🛑 STOP — after running `pending-decisions-v2 request` and following its returned playbook (one `xmtp_prompt_user` call) in Step 3, you **MUST end this turn**\n\
-     ===============================================================\n\
-     This playbook ends here for Step 3. In a later turn, when user-session relays the reply as a system envelope (`event: \"user_decision_job_submitted\"`, `message.data: <verbatim>`), continue with Step 4 below.\n\n\
-     **Step 4 — After user-session relays as system envelope** (`event: \"user_decision_job_submitted\"`, `message.data: <user's verbatim reply>`):\n\
-     Call `onchainos agent next-action --jobid {job_id} --event user_decision_job_submitted --jobStatus user_decision_job_submitted --role buyer --agentId {agent_id} --data \"<message.data>\"` — CLI returns a routing playbook that maps the user's intent (`A` / `通过` / `approve` / 同意 / 接受 → `approve_review`; `B` / `拒绝` / `reject` → `reject_review`; ambiguous → re-ask via pending-decisions-v2 request). Follow the returned routing.\n\n\
-     ===============================================================\n\
-     🔴🔴🔴 ABSOLUTE PROHIBITION when routing in Step 4:\n\
-     ❌ Do NOT skip `next-action` and call `onchainos agent complete` / `onchainos agent reject` directly — the `job_submitted` playbook deliberately splits approve/reject into independent pseudo-events; without the playbook from next-action you will miss internal pre-complete / pre-reject signature steps and funds will stay locked.\n\
-     ❌ Do NOT call `xmtp_dispatch_session` yourself — you are the sub session (executor), NOT the user session (relay). The relay has already arrived; your job is to execute the playbook, not to re-dispatch.\n\
-     🔴 Real incident: a model received the user's approval, skipped next-action and called `onchainos agent complete` directly — the on-chain complete was misformed, funds remained locked, and the user was told the job was approved when it was not.\n\
-     ===============================================================\n\n\
+     **Step 3b — Push to user via the 5-substep protocol** (use the composed `--user-content` from Step 3a; read ALL 5 sub-steps before running any command):\n\n\
+     {l10n_prompt_bold}\n\n\
+     {request_block}\n\
      --------- Branch B: x402 — notify the user (no rejection allowed) ---------\n\n\
      ⚠️ In x402 funds are already paid at job_accepted; the user **cannot reject the deliverable**, just notify.\n\n\
      **B-Step 1 — Call xmtp_dispatch_user to notify the user** — split by deliverableType:\n\
