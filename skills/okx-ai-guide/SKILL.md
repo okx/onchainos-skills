@@ -101,9 +101,3 @@ Login + consent + post-success comm-init are handled inside the registration pla
 4. `OKX.AI 快速开始` / `OKX.AI quick start` triggers this skill.
 5. Fixed-zone copy renders in the user's language; emojis / numbers / URLs / placeholders stay literal.
 6. Zero `onchainos agent create` calls in this skill; zero Rust changes.
-
-## Open items (tracked in the design doc)
-
-- `{install_doc_url}` real link pending (PRD 待补充; placeholder 404s). Locale rule: zh → `/zh-hans/` segment; en → no segment.
-- `{okx_ai_site}`: PRD wrote `okx.ai.com`; using `https://okx.ai` — confirm with PM.
-- `okx-how-to-play` banner pick "see how OKX.AI works" routes here (owned by that skill / Sher Zhou); do an end-to-end pass after both land.
