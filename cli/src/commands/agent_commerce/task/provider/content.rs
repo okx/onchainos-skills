@@ -67,6 +67,14 @@ pub fn job_completed_user_notify(job_id: &str) -> String {
     )
 }
 
+/// Per-arbiter verdict rationales block shared by all three `DisputeResolved` outcomes.
+/// Source field: `message.voteReportSummaries[*].voterReportSummary` from the system envelope.
+/// Indentation matches the provider's 6-space bullet style (header at 6 spaces, entries at 10).
+const ARBITRATION_REASONS_BLOCK: &str = "\x20\x20\x20\x20\x20\x20- Arbitration reasons:\n\
+\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20Arbiter 1: <voterReportSummary from message.voteReportSummaries[0]>\n\
+\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20Arbiter 2: <voterReportSummary from message.voteReportSummaries[1]>\n\
+\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20... (one line per entry; first skip entries whose voterReportSummary is missing / empty / whitespace, then number the kept entries consecutively starting at 1 in array order — do NOT preserve gaps from the original index; omit this whole `- Arbitration reasons:` section if voteReportSummaries is missing, not an array, empty, or every entry would be skipped — do NOT print a header with no body, do NOT fabricate filler text)";
+
 /// `Event::DisputeResolved` branch A (ASP wins) — user notify emitted when the
 /// agent actually claims a non-zero reward in A-Step 2.
 pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
@@ -76,6 +84,7 @@ pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Auto-claimed account reward: <claimed amount> <symbol> (txHash=<hash>)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
+         {ARBITRATION_REASONS_BLOCK}\n\
          \x20\x20\x20\x20  \n\
          \x20\x20\x20\x20  This job is complete."
     )
@@ -90,6 +99,7 @@ pub fn dispute_won_no_claim_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Account-level pending reward: none (checked)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
+         {ARBITRATION_REASONS_BLOCK}\n\
          \x20\x20\x20\x20  \n\
          \x20\x20\x20\x20  This job is complete."
     )
@@ -188,6 +198,7 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Outcome: ClientWins\n\
          \x20\x20\x20\x20  - Loss: <tokenAmount> <tokenSymbol> (funds returned to the User Agent)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
+         {ARBITRATION_REASONS_BLOCK}\n\
          \x20\x20\x20\x20  \n\
          \x20\x20\x20\x20  This job is complete."
     )

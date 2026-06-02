@@ -127,12 +127,22 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
 
 // ── Event::DisputeResolved ─────────────────────────────────────────
 
+/// Per-arbiter verdict rationales block shared by both `DisputeResolved` outcomes.
+/// Source field: `message.voteReportSummaries[*].voterReportSummary` from the system envelope.
+const ARBITRATION_REASONS_BLOCK: &str = concat!(
+    "- Arbitration reasons:\n",
+    "    Arbiter 1: <voterReportSummary from message.voteReportSummaries[0]>\n",
+    "    Arbiter 2: <voterReportSummary from message.voteReportSummaries[1]>\n",
+    "    ... (one line per entry; first skip entries whose voterReportSummary is missing / empty / whitespace, then number the kept entries consecutively starting at 1 in array order — do NOT preserve gaps from the original index; omit this whole `- Arbitration reasons:` section if voteReportSummaries is missing, not an array, empty, or every entry would be skipped — do NOT print a header with no body, do NOT fabricate filler text)",
+);
+
 /// `Event::DisputeResolved` — user wins (B-5-4).
 pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
          - Refund: <tokenAmount> <tokenSymbol>\n\
          - Outcome: ClientWins\n\
+         {ARBITRATION_REASONS_BLOCK}\n\
          This job is complete."
     )
 }
@@ -143,6 +153,7 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
         "[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
          - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
          - Outcome: ProviderWins\n\
+         {ARBITRATION_REASONS_BLOCK}\n\
          This job is complete."
     )
 }
