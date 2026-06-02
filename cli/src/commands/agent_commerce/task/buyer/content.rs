@@ -31,7 +31,7 @@
 
 /// `Event::JobCreated` Step 0 — user notification that the job is confirmed on-chain.
 pub fn job_created_user_notify(job_id: &str, title: &str, notify_text: &str) -> String {
-    format!("[Job Created] **{title}** (`{job_id}`) confirmed on-chain. {notify_text}")
+    format!("[Job Created]【{title}】(`{job_id}`) confirmed on-chain. {notify_text}")
 }
 
 fn designated_asp_abc_prompt(short_id: &str, dp_id: &str, job_id: &str, reason: &str) -> String {
@@ -92,7 +92,7 @@ pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
 /// `Event::JobRejected` Step 1 — user notification that the rejection is confirmed on-chain.
 pub fn job_rejected_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "[Rejection Confirmed] The deliverable for **{title}** (`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
+        "[Rejection Confirmed] The deliverable for【{title}】(`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
          The ASP will choose: file a dispute or agree to a refund.\n\
          If the ASP takes no action, funds will be auto-refunded to your wallet."
     )
@@ -217,7 +217,7 @@ pub fn payment_mode_escrow_user_notify(job_id: &str, title: &str) -> String {
 /// x402 set-payment-mode confirmed on-chain; transition notification before task-402-pay.
 pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "Payment in progress — **{title}** (`{job_id}`) — x402 agreement reached with the ASP; \
+        "Payment in progress —【{title}】(`{job_id}`) — x402 agreement reached with the ASP; \
          fee: <tokenAmount> <tokenSymbol>. Paying and fetching the deliverable..."
     )
 }
