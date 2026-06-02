@@ -111,6 +111,33 @@ Other notes:
 ### Network error
 Retry once. If still fails, generate diagnostic summary and prompt user.
 
+## Approval polling pattern
+
+After `cross-chain execute --confirm-approve` returns `action=approved`, poll the approval tx in the main conversation. Reference loop:
+
+```bash
+for i in $(seq 1 30); do
+  out=$(ONCHAINOS_HOME=... onchainos --base-url ... wallet history \
+          --order-id <approveOrderId> --chain <fromChainIndex> 2>/dev/null)
+  st=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print((d.get('data') or [{}])[0].get('txStatus',''))")
+  th=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print((d.get('data') or [{}])[0].get('txHash',''))")
+  echo "Check #$i: status=${st:-pending} txHash=$th"
+  case "$st" in
+    SUCCESS) break;;
+    FAIL|FAILED) break;;
+  esac
+  sleep 2
+done
+```
+
+Pitfalls ("looks-stuck" loop):
+- **Identifier**: pre-prod `--confirm-approve` often returns `approveTxHash: ""` and only `approveOrderId`. Poll `--order-id` first, fall back to `--tx-hash`. `wallet history --order-id` returns `data` as an **array** — status is at `data[0].txStatus`; `data.txStatus` is always empty and the loop never breaks.
+- **Do NOT** capture all 30 responses into one variable and `echo` at the end — the Claude Code tool layer buffers output until the command exits, so the loop appears stuck.
+- **Do NOT** put `sleep 2` at the top of the loop body — it wastes 2 s before the first check.
+- **zsh trap**: never name the variable `status` — it is read-only in zsh (equivalent to `$?`) and assignment aborts the loop with `(eval):1: read-only variable: status`, even though the JSON is fine. Use `st` (or `tx_status` / `cc_status`); never lowercase `status=`.
+
+Stop on `txStatus=SUCCESS` / `FAIL`, or after 30 attempts (60 s timeout).
+
 ## Status Polling Patterns
 
 ```bash
