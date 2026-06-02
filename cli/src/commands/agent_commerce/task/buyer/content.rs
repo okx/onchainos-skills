@@ -318,6 +318,23 @@ pub fn no_more_sellers_user_notify(job_id: &str) -> String {
     format!("[Job `{job_id}` — you are the User Agent] All pending ASPs have been contacted; none remaining. Choose next step:")
 }
 
+// ── Attachment user notifications ─────────────────────────────────
+
+/// Attachment sent successfully — notify the user.
+pub fn attachment_sent_user_notify() -> &'static str {
+    "[Job <short_jobId>] Attachment sent to the ASP."
+}
+
+/// Attachment saved locally (no active session yet) — notify the user.
+pub fn attachment_saved_user_notify() -> &'static str {
+    "[Job <short_jobId>] Attachment saved. It will be forwarded to the ASP once a negotiation session is established."
+}
+
+/// Attachment rejected — task is in review/terminal phase.
+pub fn attachment_phase_blocked_user_notify() -> &'static str {
+    "[Job <short_jobId>] The task has entered the review/terminal phase — attachments can no longer be added."
+}
+
 // ── Attachment (buyer → provider) ──────────────────────────────────
 
 /// File attachment `xmtp_send` content sent from the buyer sub session
