@@ -592,7 +592,7 @@ fn handle_resolve_with_sessionkey(
             "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",
             agent_id, relay_event, user_reply, job_id, role,
         ));
-    print!("{}", playbook_relay_only(&sub_key, &relay_content));
+    print!("{}", playbook_relay_only_cli(&sub_key, &relay_content));
     Ok(())
 }
 
@@ -1256,19 +1256,26 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
     )
 }
 
-/// CLI-driver variant of `playbook_push`. Same `xmtp_prompt_user` envelope
-/// shape as `playbook_push`; only the embedded llmContent differs (uses
-/// `resolve-with-sessionkey` so the future resolve call works without a queue
-/// file lookup).
+/// CLI-driver variant of `playbook_push`. Uses the `okx-a2a user decision-request`
+/// CLI subprocess (writes SQLite `user_attention`) instead of the MCP-only
+/// `xmtp_prompt_user` tool, since CLI mode runs outside of an MCP host.
 fn playbook_push_cli(entry: &PendingEntry) -> String {
     let llm_content = resolve_llm_content_cli(entry);
+    // Bash double-quoted strings: escape `\` and `"` so multi-line / quote-bearing
+    // user_content + llm_content survive shell parsing intact.
+    let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let user_content_q = escape(&entry.user_content);
+    let llm_content_q = escape(&llm_content);
     format!(
-        "Now call xmtp_prompt_user with the EXACT arguments below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the tool returns 'sent'.\n\n\
-         tool: xmtp_prompt_user\n\
-         llmContent:\n{}\n\
-         userContent:\n{}\n",
-        indent(&llm_content, "  "),
-        indent(&entry.user_content, "  "),
+        "Now run the EXACT CLI command below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the command returns.\n\n\
+         ```bash\n\
+         okx-a2a user decision-request \\\n\
+         \x20\x20--user-content \"{user}\" \\\n\
+         \x20\x20--llm-content \"{llm}\" \\\n\
+         \x20\x20--json\n\
+         ```\n",
+        user = user_content_q,
+        llm = llm_content_q,
     )
 }
 
@@ -1351,6 +1358,35 @@ fn playbook_relay_only(sub_key: &str, relay_content: &str) -> String {
          Do NOT reference it as the answer to any subsequently-rendered card. Future decisions need a \
          FRESH user_message — wait for the user to type something new.\n",
         sub_key, relay_content
+    )
+}
+
+/// CLI-driver variant of `playbook_relay_only`. Uses the `okx-a2a session send`
+/// CLI subprocess instead of the MCP-only `xmtp_dispatch_session` tool, since
+/// CLI mode runs outside of an MCP host. Same semantics: relay once, then end.
+fn playbook_relay_only_cli(sub_key: &str, relay_content: &str) -> String {
+    // Bash double-quoted strings: escape `\` and `"` so multi-line / quote-bearing
+    // sub_key + relay_content survive shell parsing intact.
+    let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let sub_key_q = escape(sub_key);
+    let relay_content_q = escape(relay_content);
+    format!(
+        "Relay the user's decision to the just-resolved sub session, then end the turn.\n\n\
+         ```bash\n\
+         okx-a2a session send \\\n\
+         \x20\x20--session-key \"{key}\" \\\n\
+         \x20\x20--content \"{content}\" \\\n\
+         \x20\x20--no-wait --json\n\
+         ```\n\n\
+         ⚠️ Run this command **exactly once** — when it returns success = end the turn immediately \
+         (no more tool / Exec calls). Repeated runs cause the sub to receive N identical relays → \
+         event-recursion loop. Skipping it = sub never gets the user's decision = task stalls.\n\n\
+         🛑 **CONSUMPTION MARKER** — The user's reply has been DISPATCHED above and is **already consumed**. \
+         Do NOT call `pending-decisions-v2 resolve-with-sessionkey` again with the same reply (now or in \
+         any later turn). Do NOT reference it as the answer to any subsequently-rendered card. Future \
+         decisions need a FRESH user_message — wait for the user to type something new.\n",
+        key = sub_key_q,
+        content = relay_content_q,
     )
 }
 
