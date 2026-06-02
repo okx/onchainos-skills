@@ -78,7 +78,7 @@ onchainos wallet status
 # Welcome Banner
 
 <MUST>
-Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 4 picks (Polymarket allowed); Variant B = 3 picks (Polymarket geoblocked). Numbered picks are interpreted strictly against the currently-rendered menu (digit-routing contract per spec §2.2). Never fabricate addresses or balance.
+Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 4 picks (Polymarket allowed); Variant B = 3 picks (Polymarket geoblocked). Numbered picks are interpreted strictly against the currently-rendered menu (digit-routing contract per spec §2.2). Never fabricate addresses or balance. If `wallet balance` fails despite `loggedIn: true` (stale session — refresh token expired), prompt the user to log in again per welcome.md §2.2 instead of rendering a partial banner.
 </MUST>
 
 ---
@@ -192,6 +192,7 @@ If the user picks multiple options at once, execute them in order and bookmark u
 3. **OKX.AI (Reply 1) and Daily brief (option 4 in A / option 3 in B) gate on login** — when logged out, route through Login Method Choice first, then auto-resume the chosen target (`okx-ai-guide` or `daily-brief.md`) WITHOUT re-rendering the welcome banner. Smart-money / new-token intents are no longer numbered picks but remain reachable via the free-form fallback table (`okx-dex-signal` / `okx-dex-trenches`).
 4. **Turn budget** — ≤ 3 turns end-to-end for a new user; ≤ 2 turns for a returning user picking a workflow + login.
 5. **Disclaimer placement** — the disclaimer is the final segment of every rendered banner (both variants, both auth states).
+6. **Stale-session fallback** — when `wallet status` returns `loggedIn: true` but `wallet balance` fails (e.g. expired refresh token) or lacks the address / balance fields, the flow prompts re-login (routes to Login Method Choice) instead of rendering a partial or fabricated logged-in banner; after re-login it renders the logged-in banner.
 
 ## Notes / Non-obvious
 

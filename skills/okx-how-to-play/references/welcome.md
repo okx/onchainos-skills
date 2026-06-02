@@ -40,6 +40,10 @@ Already known from `onchainos wallet status` (run earlier). Pick the right banne
 
 Pull `evmAddress`, `solAddress`, and the total USD balance from the `onchainos wallet balance` response. Never fabricate.
 
+<MUST>
+**Stale-session fallback.** `wallet status` can report `loggedIn: true` from cached credentials while the session's refresh token has already expired — in that case `wallet balance` fails (e.g. `{"ok": false, "error": "Refresh token expired. Log in again."}`) or comes back without the address / balance fields. When the balance call fails or is missing those fields: do **NOT** render the logged-in banner and do **NOT** show partial or fabricated data. Tell the user their session has expired and they need to log in again, then route to **Login Method Choice** in `SKILL.md`. After re-login completes, resume per **Post-login routing** (render the logged-in Welcome Banner with the now-valid addresses + balance).
+</MUST>
+
 > **Do NOT call `onchainos wallet qrcode`** — QR codes are not part of the banner anymore. The CLI subcommand still exists for direct use, but the welcome flow no longer renders QR block art.
 
 ### 2.3 Polymarket geoblock check (fail-closed)
