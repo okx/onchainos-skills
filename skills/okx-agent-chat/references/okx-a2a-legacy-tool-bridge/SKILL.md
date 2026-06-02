@@ -1,6 +1,6 @@
 ---
 name: okx-a2a-legacy-tool-bridge
-description: Use when an OKX A2A / okx-agent-task legacy playbook expects native OpenClaw xmtp_* tools such as xmtp_send, xmtp_start_conversation, xmtp_prompt_user, xmtp_dispatch_user, xmtp_dispatch_session, xmtp_get_conversation_history, or xmtp_sessions_query, but the current AI environment does not expose those tools. This skill provides a compatibility bridge that preserves the legacy tool parameter shape and maps calls to the local okx-a2a CLI.
+description: Use when an OKX A2A / okx-agent-task legacy playbook expects a native OpenClaw tool listed in this skill's Supported Mappings, but the current AI environment does not expose that specific tool. This skill provides a compatibility bridge that preserves the legacy tool parameter shape and maps calls to the local okx-a2a CLI.
 metadata:
   short-description: Bridge legacy xmtp_* tools to okx-a2a CLI
 ---
@@ -13,11 +13,12 @@ This bridge is a transport/runtime replacement for missing native `xmtp_*` tools
 
 ## Activation Rule
 
-1. If the current environment exposes native tools named `xmtp_send` and `xmtp_start_conversation`, use the native tools and do not use this bridge.
-2. If a playbook says to call any supported native `xmtp_*` tool and that native tool is absent, unavailable, or fails with "unknown tool" / "not found", call the bridge script immediately with the same parameters.
-3. Do not ask the user whether to use this bridge. If the original native tool call is legal for the current session state, the bridge call is the required replacement.
-4. If the original native tool call would be forbidden for the current session state, the bridge call is also forbidden. Do not use this bridge to bypass user-session / sub-session boundaries.
-5. Keep the original legacy parameter names. Pass them as JSON to the script.
+1. Check the specific legacy tool requested by the playbook against the complete `Supported Mappings` list below.
+2. If that exact native tool is exposed in the current environment, use the native tool and do not use this bridge for that call.
+3. If that exact native tool is listed below but absent, unavailable, or fails with "unknown tool" / "not found", call the bridge script immediately with the same parameters.
+4. Do not ask the user whether to use this bridge. If the original native tool call is legal for the current session state, the bridge call is the required replacement.
+5. If the original native tool call would be forbidden for the current session state, the bridge call is also forbidden. Do not use this bridge to bypass user-session / sub-session boundaries.
+6. Keep the original legacy parameter names. Pass them as JSON to the script.
 
 Bridge script: `scripts/xmtp-tool.js`, resolved relative to this `SKILL.md`.
 
@@ -36,23 +37,6 @@ node scripts/xmtp-tool.js xmtp_start_conversation \
 node scripts/xmtp-tool.js xmtp_send \
   '{"sessionKey":"job:0xabc:my:1092:to:956","content":"Hello"}'
 ```
-
-## User Decision Relay
-
-When `okx-agent-task` / `_shared/user-message-flow.md` says to relay a user's completed decision to a task session, the expected native tool is `xmtp_dispatch_session`.
-
-If native `xmtp_dispatch_session` is unavailable, call the bridge immediately:
-
-```bash
-node scripts/xmtp-tool.js xmtp_dispatch_session \
-  '{"sessionKey":"<target-sub-session-key>","content":"[USER_DECISION_RELAY] <verbatim user reply>"}'
-```
-
-This is not a new user decision and not a request to simulate the sub session. The user has already decided; the only remaining action is to relay the decision to the target session.
-
-Provider ids and option numbers are still just the user's verbatim decision. If the user replies `956`, `1`, `选956`, `关闭`, or similar to an active decision card, do not reinterpret it as a fresh negotiation command.
-
-Do not replace this relay with `xmtp_start_conversation`, `xmtp_send`, `okx-a2a session create`, `okx-a2a xmtp-send`, or `onchainos agent next-action`. Those tools are for task/session execution after the target sub session receives the relay, not for forwarding a user decision from the user session.
 
 ## Supported Mappings
 
