@@ -357,14 +357,16 @@ pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> S
          - Read success and evidence already output → produce the final `vote` and the verdict text per the rubric's Verdict section (whichever heading defines the verdict template).\n\n\
          → **Once Step 4's verdict text is produced, continue with Step 5 in this same turn.**\n\n\
          **Step 5 — Execute commit:**\n\
-         - **Flatten the entire verdict text into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; pass via `--reason`:\n\
+         - **Flatten the entire verdict text into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; pass via `--reason`.\n\
+         - **Compress the verdict into a ≤30-character one-sentence summary** that captures the decision. Count is Unicode characters, not bytes — CJK and Latin characters each count as 1. The CLI hard-fails if the value is empty or exceeds 30 characters. Pass via `--reason-summary`.\n\
          ```bash\n\
-         onchainos agent vote-commit {job_id} --vote <0|1> --reason \"<flattened verdict text from Step 4, with every real newline replaced by the two-character escape \\n>\" --agent-id {agent_id}\n\
+         onchainos agent vote-commit {job_id} --vote <0|1> --reason \"<flattened verdict text from Step 4, with every real newline replaced by the two-character escape \\n>\" --reason-summary \"<≤30-char one-sentence summary>\" --agent-id {agent_id}\n\
          ```\n\
          ⚠️ **Only 0 (Approve / Client wins) or 1 (Reject / Provider wins) — skip is forbidden**.\n\
          ⚠️ **The `<0|1>` value MUST come from Step 5** — it is the binary vote that Step 5 derived by applying `references/evaluator-decision-rubric.md` (whatever decision procedure that document defines) to the evidence. Do **not** commit a vote that bypassed Step 5 — guessing / pattern-matching / averaging a value here violates the rubric and produces an unfounded ruling.\n\
          ⚠️ **`--reason` is the full verdict produced by Step 5**. Empty / whitespace-only values are rejected by the CLI. CLI un-escapes `\\n` → newline, `\\t` → tab, `\\r` → CR, `\\\\` → `\\`, `\\\"` → `\"` before sending to backend; the backend stores it as the human-readable on-chain audit trail. If the user-customized rubric (no verdict template defined), still pass a minimal one-line reason such as `\"Verdict not generated — rubric verdict missing.\"` \n\
-         - **Character taboos inside the `--reason` value** (otherwise the shell will corrupt the argument before the CLI even sees it):\n\
+         ⚠️ **`--reason-summary` is a ≤30-Unicode-character one-sentence headline** distilled from the same verdict — no markdown / line breaks / bullet markers. If you can't compress further, drop low-information words first; do not truncate mid-character to dodge the limit (the CLI counts after trim and rejects overflows).\n\
+         - **Character taboos inside both `--reason` and `--reason-summary` values** (otherwise the shell will corrupt the argument before the CLI even sees it):\n\
          \x20\x20- `\"` (double quote) → escape as `\\\"`\n\
          \x20\x20- `` ` `` (backtick) → either replace with `'` (single quote) or escape as `` \\` ``; an unescaped backtick triggers shell command substitution\n\
          \x20\x20- `$` → escape as `\\$` to prevent shell variable expansion\n\

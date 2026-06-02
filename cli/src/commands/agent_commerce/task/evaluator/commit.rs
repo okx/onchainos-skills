@@ -41,6 +41,7 @@ pub async fn handle_commit(
     job_id: &str,
     vote: u8,
     reason: &str,
+    reason_summary: &str,
     agent_id: &str,
 ) -> Result<()> {
     if vote != 0 && vote != 1 {
@@ -49,6 +50,14 @@ pub async fn handle_commit(
     let reason = unescape_reason(reason.trim());
     if reason.trim().is_empty() {
         bail!("--reason must not be empty");
+    }
+    let reason_summary = reason_summary.trim().to_string();
+    if reason_summary.is_empty() {
+        bail!("--reason-summary must not be empty");
+    }
+    let summary_len = reason_summary.chars().count();
+    if summary_len > 30 {
+        bail!("--reason-summary must be ≤30 characters (got {summary_len}); compress the verdict further");
     }
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
@@ -72,7 +81,7 @@ pub async fn handle_commit(
     let tx_hash = signing::sign_uop_and_broadcast_with_commit_meta(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::extract_biz_type(&resp), &agent_id,
-        salt, vote, &reason,
+        salt, vote, &reason, &reason_summary,
     ).await?;
 
     let vote_label = if vote == 0 { "Approve (Client wins)" } else { "Reject (Provider wins)" };
@@ -87,6 +96,7 @@ pub async fn handle_commit(
             format!("agentId={agent_id}"),
             format!("vote={vote}"),
             format!("reasonLen={}", reason.chars().count()),
+            format!("reasonSummaryLen={summary_len}"),
             format!("commitHash={commit_hash}"),
             format!("txHash={tx_hash}"),
         ]),

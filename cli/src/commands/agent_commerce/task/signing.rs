@@ -317,9 +317,10 @@ pub async fn sign_uop_and_broadcast(
 
 /// Variant of sign_uop_and_broadcast used only for vote/commit scenarios:
 /// attaches the backend-returned `commitSalt`, the evaluator's chosen `vote` (0/1),
-/// and the free-form `voteReport` to bizContext, so the on-chain broadcast can
-/// reconstruct the material for `commitHash = keccak256(disputeId, vote, salt)`
-/// and persist the verdict text alongside the broadcast.
+/// the free-form `voteReport` and its ≤30-char `voteReportSummary` to bizContext,
+/// so the on-chain broadcast can reconstruct the material for
+/// `commitHash = keccak256(disputeId, vote, salt)` and persist the verdict text
+/// (plus a short headline) alongside the broadcast.
 #[allow(clippy::too_many_arguments)]
 pub async fn sign_uop_and_broadcast_with_commit_meta(
     client: &mut TaskApiClient,
@@ -332,6 +333,7 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
     commit_salt: &str,
     vote: u8,
     vote_report: &str,
+    vote_report_summary: &str,
 ) -> Result<String> {
     if uop_data.is_null() {
         bail!("backend did not return uopData; cannot sign and broadcast");
@@ -370,6 +372,7 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
         "commitSalt": commit_salt,
         "vote": vote,
         "voteReport": vote_report,
+        "voteReportSummary": vote_report_summary,
     });
 
     let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
