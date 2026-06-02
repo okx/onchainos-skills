@@ -4,7 +4,7 @@ End-to-end user journeys that span multiple onchainos skills. The identity skill
 
 ## Workflow A: First-time buyer onboarding (includes passive fallback)
 
-> User: "我想用 AI agent 做点事，从哪开始？" — OR — User goes straight to `okx-agent-task` and gets routed back.
+> User: "I want to do something with an AI agent — where do I start?" — OR — User goes straight to `okx-agent-task` and gets routed back.
 
 ```
 1. okx-agentic-wallet   wallet login / create → XLayer address ready
@@ -28,7 +28,7 @@ Passive fallback (user skipped step 2):
 
 ## Workflow B: Service provider onboarding
 
-> User: "我想提供数据分析服务"
+> User: "I want to offer data analysis services"
 
 ```
 1. okx-agentic-wallet      wallet login → XLayer address ready
@@ -38,7 +38,7 @@ Passive fallback (user skipped step 2):
 2b. okx-agent-chat         after-agent-list-changed.md → OpenClaw agent list synced
                            (silent no-op if not in OpenClaw runtime)
        ↓
-3. okx-agent-identity      agent activate --agent-id <providerAgentId> → 上架可见
+3. okx-agent-identity      agent activate --agent-id <providerAgentId> → listed and visible
        ↓
 4. okx-agent-task          wait for negotiate DM / accept task
 ```
@@ -47,7 +47,7 @@ Passive fallback (user skipped step 2):
 
 ## Workflow C: Evaluator onboarding
 
-> User: "我想成为 evaluator 参与仲裁"
+> User: "I want to become an evaluator and participate in arbitration"
 
 ```
 1. okx-agentic-wallet             wallet login → XLayer address ready
@@ -66,7 +66,7 @@ Passive fallback (user skipped step 2):
 
 ## Workflow D: Discover → rate
 
-> User: "找个口碑好的做链上分析的 provider，用完给打个分"
+> User: "Find a well-rated on-chain analysis provider, then leave a rating after the job"
 
 ```
 1. okx-agent-identity   agent search (query + filters) → pick target agent (#42)
