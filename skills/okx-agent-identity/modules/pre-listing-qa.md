@@ -27,7 +27,7 @@ If the role is `requester` or `evaluator`, skip this file — it does not apply 
 |---|------|----------------|-----|
 | U1 | No test / environment markers | Field contains any of the following patterns (case-insensitive): **parentheses / bracket forms** `(pre)` `(test)` `(dev)` `(beta)` `(alpha)` `(staging)` `(uat)` `(sandbox)` `[pre]` `[test]` `[dev]` `[beta]` `{pre}` `{test}`; **delimiter-suffix forms** `-pre` `-test` `-dev` `-beta` `-staging` `_pre` `_test` `_dev` `_beta` `_staging` `.pre` `.test`; **space-suffix forms** ` pre` ` test` ` dev` ` beta` ` staging` appearing at the **end** of the field value (trailing space marker). Matching is **case-insensitive** (`(PRE)`, `_Test`, `-DEV` all fail). | Remove the marker entirely — do not replace with another tag |
 | U2 | No internal addresses | Any `0x…` wallet / owner / tx hash in name, description, or service fields | Remove the address |
-| U3 | No negative capability statements | Contains `目前不支持` / `暂不支持` / `currently not supported` / `does not support` | Rewrite positively or remove |
+| U3 | No negative capability statements | Contains `currently not supported` / `does not support` (or equivalent in any language) | Rewrite positively or remove |
 | U4 | Free service must be explicit | A2MCP `fee` is empty/blank when the service is free | Set to `0 USDT` |
 
 ---
@@ -38,15 +38,15 @@ If the role is `requester` or `evaluator`, skip this file — it does not apply 
 |---|------|----------------|-----|
 | N1 | Length in range | CN: < 2 or > 12 characters; EN: < 3 or > 25 characters | Shorten or expand |
 | N2 | No agent ID embedded | Contains `#123`, `_1083`, or any numeric agent ID | Remove the ID |
-| N3 | No ordinal suffixes | Ends with bare digit, `_2`, `_v2`, `(2)`, `3号` | Remove the ordinal |
-| N4 | No personal names or account labels | Contains personal name, email prefix, or wallet account label (e.g. `Account2`, `Jim的`, `xicheng`) | Remove the personal reference |
+| N3 | No ordinal suffixes | Ends with bare digit, `_2`, `_v2`, `(2)`, or a language-native ordinal suffix (e.g. `No.3`, `#3`) | Remove the ordinal |
+| N4 | No personal names or account labels | Contains personal name, email prefix, or wallet account label (e.g. `Account2`, `Jim`, `bob123`) | Remove the personal reference |
 | N5 | Brand name — not a sentence | Reads as a full verb + object sentence rather than a product brand | Rewrite as a short brand name |
-| N6 | Bilingual separator | Bilingual name must use `中文名 · EnglishName` format (middle dot `·` + spaces) | Fix the separator |
-| N7 | No test / environment markers in name | Name contains any U1 marker — e.g. `健身教练(pre)` / `WeatherBot-test` / `MyAgent_dev` / `SentryX(beta)` / `链镜 staging`. This is the **#1 reported rejection reason for names** and must be checked explicitly even though U1 also covers it globally. Caution: `Predict` is NOT a violation (`pre` is embedded in a genuine word); only flag when the marker is delimited (parentheses / bracket / hyphen / underscore / trailing space). | Remove the marker; pick a clean brand name |
+| N6 | Bilingual separator | Bilingual name must use `NativeName · EnglishName` format (middle dot `·` + spaces) | Fix the separator |
+| N7 | No test / environment markers in name | Name contains any U1 marker — e.g. `WeatherBot-test` / `MyAgent_dev` / `SentryX(beta)` / `AgentX staging`. This is the **#1 reported rejection reason for names** and must be checked explicitly even though U1 also covers it globally. Caution: `Predict` is NOT a violation (`pre` is embedded in a genuine word); only flag when the marker is delimited (parentheses / bracket / hyphen / underscore / trailing space). | Remove the marker; pick a clean brand name |
 
-**Good:** `Predict-Raven` / `灵镜 · ChainMirror` / `SentryX` / `WakeMeUp` / `PMAlpha`
+**Good:** `Predict-Raven` / `Luminos · ChainMirror` / `SentryX` / `WakeMeUp` / `PMAlpha`
 
-**Bad:** `Robert的健身教练(pre)` / `天气小助手_test` / `MyAgent-dev` / `SentryX(beta)` / `Account2买家`
+**Bad:** `FitnessBot(pre)` / `WeatherHelper_test` / `MyAgent-dev` / `SentryX(beta)` / `Account2buyer`
 
 ---
 
@@ -69,9 +69,9 @@ If the role is `requester` or `evaluator`, skip this file — it does not apply 
 | S1 | Length 5–30 characters | < 5 or > 30 characters | Adjust |
 | S2 | Noun phrase — not a sentence | Contains a full sentence with subject + verb | Rewrite as a short noun phrase |
 | S3 | Not a duplicate of agent name | Service `name` is identical to the agent-level `name` | Write a distinct service name |
-| S4 | No price in service name | Contains price info (`0.1 USDT`, `free`, `免费`) | Move pricing to the fee field |
+| S4 | No price in service name | Contains price info (`0.1 USDT`, `free`, or equivalent in any language) | Move pricing to the fee field |
 | S5 | No technical implementation details | Mentions internal framework, API key, infra provider | Remove or abstract |
-| S6 | No test / environment markers in service name | Service name contains any U1 marker — e.g. `天气查询(pre)` / `分析接口_test` / `推荐服务-beta`. Apply the same delimiter-awareness as N7: `protest` is NOT a violation; only flag when the marker is clearly delimited. | Remove the marker; rewrite as a clean noun phrase |
+| S6 | No test / environment markers in service name | Service name contains any U1 marker — e.g. `WeatherQuery(pre)` / `AnalysisAPI_test` / `RecommendService-beta`. Apply the same delimiter-awareness as N7: `protest` is NOT a violation; only flag when the marker is clearly delimited. | Remove the marker; rewrite as a clean noun phrase |
 
 **Good:** `Polymarket Daily Signal` / `On-chain Signature Analysis` / `Crypto Price Alert`
 
@@ -85,13 +85,13 @@ If the role is `requester` or `evaluator`, skip this file — it does not apply 
 |---|------|----------------|-----|
 | P1 | Format: `{number} {currency}` — both segments required | Missing either segment | Complete both |
 | P2 | Currency must be `USDT` or `USDG` | Any other currency symbol | Change to `USDT` or `USDG` |
-| P3 | No negotiation language | Contains `可协商` / `TBD` / `negotiable` / `flexible` | Set a concrete price |
-| P4 | No parenthetical notes | Contains `(支持 USDG 结算)` or any parenthetical after the price | Remove the parenthetical |
+| P3 | No negotiation language | Contains `TBD` / `negotiable` / `flexible` (or equivalent in any language) | Set a concrete price |
+| P4 | No parenthetical notes | Contains any parenthetical after the price (e.g. `0.05 USDT (USDG accepted)`) | Remove the parenthetical |
 | P5 | A2A fee format | A2A fee is optional; if provided, must still follow all format rules above | Leave empty or apply format |
 
 **Good:** `0.1 USDT` / `0.5 USDG` / `0 USDT`
 
-**Bad:** `0.2 USDT 起按复杂度协商` / `USDG` (missing number) / `0.05 USDT（支持 USDG 结算）`
+**Bad:** `0.2 USDT (complexity-based negotiation)` / `USDG` (missing number) / `0.05 USDT (USDG accepted)`
 
 ---
 
@@ -107,7 +107,7 @@ If the role is `requester` or `evaluator`, skip this file — it does not apply 
 | D6 | No external links or GitHub URLs | Contains `github.com` or any URL | Remove |
 | D7 | No wallet/contract addresses | Contains `0x…` | Remove |
 | D8 | No tech-stack exposure | Mentions internal framework names, model names, infra details | Abstract or remove |
-| D9 | No negative statements | Contains `目前不支持` / `暂不支持` / `currently not supported` | Remove or rephrase |
+| D9 | No negative statements | Contains `currently not supported` or equivalent in any language | Remove or rephrase |
 | D10 | No legal disclaimers | Contains liability statements or legal caveats | Remove |
 
 **Good structure:**

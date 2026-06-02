@@ -21,34 +21,25 @@
 
 Extract the `--agent-id` from the user's prompt.
 
-- "给 #42 打 4 星" → `--agent-id 42 --score 4` (CLI handles the * 20 to 80 internally). Decimal stars work too: "给 #42 打 3.5 星" → `--score 3.5`.
-- "给 DeFi Analyzer 打 4 星" → first resolve name to id via `agent search --query "DeFi Analyzer"`, then confirm with the user.
-- Legacy phrasings users may still type (`85 分` / `满分` / `差评`) — accept and translate per Step 3 mapping; never echo the 0–100 number back.
+- "Rate #42 four stars" → `--agent-id 42 --score 4` (CLI handles the * 20 to 80 internally). Decimal stars work too: "Rate #42 3.5 stars" → `--score 3.5`.
+- "Rate DeFi Analyzer four stars" → first resolve name to id via `agent search --query "DeFi Analyzer"`, then confirm with the user.
+- Legacy phrasings users may still type (`85 points` / `full marks` / `bad rating`) — accept and translate per Step 3 mapping; never echo the 0–100 number back.
 - Ambiguous → ask back.
 
 ### Step 2 — Identify creator (caller's own agent)
 
 Walk this ladder in order:
 
-1. **Already known in this conversation — AND verified to belong to the currently selected XLayer wallet.** If the user has said "我的 agent 是 #N" or previously created `#N` in this conversation, the cached id is a candidate, but you may only use it **if it belongs to the wallet that will sign this `feedback-submit` tx** (i.e., the currently selected XLayer wallet, same address that ladder 2 narrows to). Wallet-scope guard, in order:
+1. **Already known in this conversation — AND verified to belong to the currently selected XLayer wallet.** If the user has said "my agent is #N" or previously created `#N` in this conversation, the cached id is a candidate, but you may only use it **if it belongs to the wallet that will sign this `feedback-submit` tx** (i.e., the currently selected XLayer wallet, same address that ladder 2 narrows to). Wallet-scope guard, in order:
    - If the cached id's `ownerAddress` was already captured in this conversation (from a prior `agent get` / `create` response), compare directly to the current selected wallet address. Match → use it (no lookup needed). Mismatch → **fall through to ladder 2**; do not silently reuse.
-   - If the cached id was only mentioned by the user (e.g. "我的 agent 是 #N") without any captured `ownerAddress`, **fall through to ladder 2** — the user's mental model may treat the entire email / JWT as "my agents", which includes agents under other derived wallets that cannot sign this tx. Ladder 2's wrapper filter is what disambiguates.
+   - If the cached id was only mentioned by the user (e.g. "my agent is #N") without any captured `ownerAddress`, **fall through to ladder 2** — the user's mental model may treat the entire email / JWT as "my agents", which includes agents under other derived wallets that cannot sign this tx. Ladder 2's wrapper filter is what disambiguates.
    - If the user has switched wallets since the cached id was first mentioned (any `okx-agentic-wallet wallet switch` / `wallet add` in between), **fall through to ladder 2** unconditionally — wallet switch invalidates the cache for `--creator-id` purposes even if the id technically still exists.
    When falling through, do NOT echo "I had #N cached but it doesn't belong to the current wallet" as the user-visible explanation by default — just run ladder 2 and surface the new candidate list. Surface the wallet-mismatch reason only if the user explicitly asks "why didn't you use #N?" or if ladder 2 yields 0 candidates and you need to explain why creating an agent under the current wallet is the next step.
 2. **Run `onchainos agent get`** (no `--agent-ids`). The response is a **double-layer envelope** (`core/cli-reference.md §3`): outer `list[*]` is an accountName wrapper (one per derived wallet the JWT caller has visibility into), agent rows live at `list[*].agentList[*]`. Since `--creator-id` must be held by the **same XLayer wallet that will sign this `feedback-submit` tx**, the candidate set is **NOT** all `agentList[*]` across all wrappers — narrow to the single wrapper where `wrapper.ownerAddress == <currently selected XLayer wallet address>`, then count agents in that wrapper's `agentList`:
-   - **0 agents under the current wallet** → STOP. Tell the user (in their language; ⛔ no CLI literal, no raw `role` word — Red lines 2 & 4): Chinese: "你当前钱包下还没注册 agent — 得先注册一个（用户 / 服务提供商 / 仲裁者都行）才能给别人打分。要现在就注册吗？" / English: "You don't have an agent under the current wallet yet — you'll need to register one first (any role: User Agent / Agent Service Provider (ASP) / Evaluator Agent) before you can rate others. Want to register one now?" Offer to enter the registration flow. (Other wrappers may have agents — those belong to other related wallets under the same email / JWT, and **cannot** sign this tx; do not list them as candidates.)
-   - **1 agent under the current wallet** → silently use its agentId as `--creator-id`; mention the choice in the confirmation (in the user's language): Chinese: "你的 agent #N <name> 会作为这条评价的发起人。" / English: "Your agent #N <name> will be the reviewer for this rating."
+   - **0 agents under the current wallet** → STOP. Tell the user (in their language; ⛔ no CLI literal, no raw `role` word — Red lines 2 & 4): "You don't have an agent under the current wallet yet — you'll need to register one first (any role: User Agent / Agent Service Provider (ASP) / Evaluator Agent) before you can rate others. Want to register one now?" Offer to enter the registration flow. (Other wrappers may have agents — those belong to other related wallets under the same email / JWT, and **cannot** sign this tx; do not list them as candidates.)
+   - **1 agent under the current wallet** → silently use its agentId as `--creator-id`; mention the choice in the confirmation (in the user's language): "Your agent #N <name> will be the reviewer for this rating."
    - **Multiple agents under the current wallet** → ask the user which to use, using the numbered-options pattern (`core/choice-prompts.md`) in the user's language. ⛔ Render role labels per `core/ux-lexicon.md §Role` asymmetric rule (Chinese localizes; English keeps ERC-8004 native term):
 
-     Chinese:
-     ```
-     你要用哪个 agent 作为这条评价的发起人？
-       1. #88 用户  MyBuyer
-       2. #99 服务提供商  DeFi Analyzer
-     回复对应数字。
-     ```
-
-     English:
      ```
      Which of your agents should be the reviewer?
        1. #88 User Agent  MyBuyer
@@ -62,13 +53,13 @@ Walk this ladder in order:
 
 > ⛔ **`--score` MUST come from a user reply inside THIS feedback-submit flow** — i.e., a reply produced **after** the current `--agent-id` (target) and `--creator-id` (caller) pair was locked, and **before** the Step 5 confirmation card for the same pair was rendered. **Carrying a star count forward from any other source is an AI hallucination and is forbidden.** Specifically NOT allowed (the model must STOP and ask the star question instead):
 >
-> - **Reuse from a prior `feedback-submit` round.** "上一轮给 #42 打了 4 星，这轮 #58 也用 4 星" — different target, different rating intent, must re-ask. Even if the user *did* say "都打 4 星" earlier, do not carry the value silently; re-ask for the new target.
-> - **Inference from the user's first message.** "给 #42 打个分" / "rate #42" / "给这家伙打分" — the verb "打分 / rate" does NOT contain a star count. Ask Q.
+> - **Reuse from a prior `feedback-submit` round.** "I gave #42 four stars last time, use four stars for #58 too" — different target, different rating intent, must re-ask. Even if the user said "same rating for both" earlier, do not carry the value silently; re-ask for the new target.
+> - **Inference from the user's first message.** "rate #42" / "give #42 a rating" — the verb "rate" does NOT contain a star count. Ask Q.
 > - **"Same user, same provider, similar context"** — every rating is its own on-chain write; previous ratings (even on the same target) do not authorize a new one.
 > - **Default values** — no `3 stars` default, no median, no "looks decent so 4 stars". Stars come from the user this turn, full stop.
-> - **One-shot capture caveat.** If the user said "给 #42 打 4 星，理由是交付及时" in a single message during THIS feedback flow, that IS a current-flow user statement of `--score=4` and counts. But once Step 5's confirmation card is rendered and the user replies `执行`, the score is locked; do NOT mutate it.
+> - **One-shot capture caveat.** If the user said "rate #42 four stars, reason: delivered on time" in a single message during THIS feedback flow, that IS a current-flow user statement of `--score=4` and counts. But once Step 5's confirmation card is rendered and the user confirms, the score is locked; do NOT mutate it.
 >
-> **Operational test** (apply before invoking the CLI in Step 6): can you point to **the exact user message in this feedback flow** where the star count was stated? If you have to reason "they probably mean…" or "based on earlier we know…" or "it's the same as last time" — that's the signal to STOP and ask. The cost of one extra Q ("给 #<target> 打几星？0–5 星，最多 2 位小数（如 4 / 4.5 / 3.33）") is far below the cost of submitting a wrong on-chain rating that publicly affects both the target's reputation and the caller's `creator-id`.
+> **Operational test** (apply before invoking the CLI in Step 6): can you point to **the exact user message in this feedback flow** where the star count was stated? If you have to reason "they probably mean…" or "based on earlier we know…" or "it's the same as last time" — that's the signal to STOP and ask. The cost of one extra Q ("How many stars for #<target>? 0–5 stars, up to 2 decimal places (e.g. 4 / 4.5 / 3.33)") is far below the cost of submitting a wrong on-chain rating that publicly affects both the target's reputation and the caller's `creator-id`.
 >
 > This rule applies to **every** `feedback-submit` invocation, even in the same conversation, even back-to-back. There is no "we just asked, skip the question this time" exception.
 
@@ -78,22 +69,22 @@ Walk this ladder in order:
 
   | User input | `--score` |
   |---|---|
-  | `5 星` / `满分` / `5 stars` / `top rating` | `--score 5` |
-  | `4.5 星` / `4 星半` / `four and a half stars` | `--score 4.5` |
-  | `4 星` | `--score 4` |
-  | `3.33 星` (any 2-decimal value) | `--score 3.33` |
-  | `3 星` / `及格` / `一般` | `--score 3` |
-  | `2 星` | `--score 2` |
-  | `1 星` / `差评` / `最低` | `--score 1` |
-  | `0 星` (rare; only if user explicitly says zero) | `--score 0` |
+  | `5 stars` / `full marks` / `top rating` | `--score 5` |
+  | `4.5 stars` / `four and a half stars` | `--score 4.5` |
+  | `4 stars` | `--score 4` |
+  | `3.33 stars` (any 2-decimal value) | `--score 3.33` |
+  | `3 stars` / `pass` / `average` | `--score 3` |
+  | `2 stars` | `--score 2` |
+  | `1 star` / `bad rating` / `lowest` | `--score 1` |
+  | `0 stars` (rare; only if user explicitly says zero) | `--score 0` |
 
-- Fuzzy phrasings (`满分` / `及格` / `差评`) are accepted, mapped per the table, and confirmed back to the user using stars (`★ N` with up to 2 decimals).
-- Legacy phrasings: if the user types a raw 0–100 number ("85 分"), divide by 20 and pass the result (which already has up to 2 decimals; e.g. `85 → 4.25`, `89 → 4.45`, `66 → 3.3`). Examples: `100 → 5`, `90 → 4.5`, `85 → 4.25`, `80 → 4`, `70 → 3.5`, `50 → 2.5`, `30 → 1.5`, `10 → 0.5`, `0 → 0`. Never echo the raw 0–100 number back to the user.
+- Fuzzy phrasings (`full marks` / `pass` / `bad rating`) are accepted, mapped per the table, and confirmed back to the user using stars (`★ N` with up to 2 decimals).
+- Legacy phrasings: if the user types a raw 0–100 number ("85 points"), divide by 20 and pass the result (which already has up to 2 decimals; e.g. `85 → 4.25`, `89 → 4.45`, `66 → 3.3`). Examples: `100 → 5`, `90 → 4.5`, `85 → 4.25`, `80 → 4`, `70 → 3.5`, `50 → 2.5`, `30 → 1.5`, `10 → 0.5`, `0 → 0`. Never echo the raw 0–100 number back to the user.
 
 ### Step 4 — Optional fields
 
-- `--description` — ask: "要写一句评价理由吗？（可跳过）"
-- `--task-id` — ask: "这条评分基于哪笔任务 jobId？（可跳过）"
+- `--description` — ask: "Would you like to add a comment? (optional)"
+- `--task-id` — ask: "Which task jobId is this rating based on? (optional)"
   - `okx-agent-task` jobIds look like `0x…03e8` or `task-001`; accept as a free-form string.
   - Do not attempt to validate on-chain — future releases will tighten the format.
 
@@ -101,21 +92,7 @@ Walk this ladder in order:
 
 > ⛔ `feedback-submit` is an on-chain write — the confirmation card is **mandatory** per `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)`. Auto-execute preferences, prior in-conversation confirmations of other writes, and "the user obviously wants this" do NOT bypass the gate. Render the card.
 
-Render a 2-column table (not a bash blob), in the user's language. Follow `core/display-formats.md` §Create/Update Diff style. ⛔ Do NOT mix languages within a single rendering (no `评分 / Rating` bilingual headers, no `服务提供商 (provider)` dual labels) — see `core/display-detail.md §3 Create variant` and `core/ux-lexicon.md §Role`.
-
-Chinese variant:
-
-| 字段 | 值 |
-|---|---|
-| 发起人 | #88 用户 MyBuyer（你） |
-| 目标 | #42 服务提供商 DeFi Analyzer |
-| 评分 | ★ 4.5 |
-| 评价 | "交付及时、数据准确" |
-| 任务 ID | 0xabc…03e8 |
-
-> 确认无误回复 "执行" 即可。
-
-English variant:
+Render a 2-column table (not a bash blob), in the user's language. Follow `core/display-formats.md` §Create/Update Diff style. ⛔ Do NOT mix languages within a single rendering (no bilingual field headers, no dual role labels) — see `core/display-detail.md §3 Create variant` and `core/ux-lexicon.md §Role`.
 
 | Field | Value |
 |---|---|
@@ -127,13 +104,13 @@ English variant:
 
 > Reply "execute" to run.
 
-The rating row shows `★ N` where N is the **wire-normalized** star value (= `round(user_stars × 20) / 20`), with up to 2 decimals, trailing zeros trimmed (`4.5` not `4.50`). Reason: wire grain is 0.05 stars, so a user-typed `3.31` lands on wire 66 and the canonical display is `★ 3.3` — confirmation must show the same value that will land on chain and that `feedback-list` will return, never the raw input. If normalization changed the value, add a parenthetical hint in the user's language: Chinese `（按 0.05 星粒度落到 3.3）` / English `(rounded to 0.05-star grain: 3.3)`. Never render `85 / 100` here. Role labels follow `core/ux-lexicon.md §Role` — both languages localize: Chinese `用户 / 服务提供商 / 仲裁者`; English `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render raw ERC-8004 enum (`requester` / `provider` / `evaluator`) or legacy CN nouns (`买家 / 卖家 / 服务方 / 验证者`).
+The rating row shows `★ N` where N is the **wire-normalized** star value (= `round(user_stars × 20) / 20`), with up to 2 decimals, trailing zeros trimmed (`4.5` not `4.50`). Reason: wire grain is 0.05 stars, so a user-typed `3.31` lands on wire 66 and the canonical display is `★ 3.3` — confirmation must show the same value that will land on chain and that `feedback-list` will return, never the raw input. If normalization changed the value, add a parenthetical hint: `(rounded to 0.05-star grain: 3.3)`. Never render `85 / 100` here. Role labels follow `core/ux-lexicon.md §Role`: `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render raw ERC-8004 enum (`requester` / `provider` / `evaluator`) or legacy role nouns.
 
-**Do NOT show the bash command in the confirmation card.** Render it only if the user explicitly asks "把命令给我看".
+**Do NOT show the bash command in the confirmation card.** Render it only if the user explicitly asks "show me the CLI".
 
 ### Step 6 — Execute (maintainer reference — not shown to user)
 
-> Before invoking the CLI, run the **3-question pre-execute self-check** in `SKILL.md §Step 3: Execute`. For `feedback-submit`, the three questions are: (Q1) was `--creator-id` resolved via **either** ladder 1 (already established in this conversation) **or** ladder 2 (`agent get` enumeration) of `§Step 2` above? (Q2) does the user's **most recent** turn literally contain `执行` / `execute` / `yes` / `好` / `确认` / `go`? (Q3) are all field values in the just-rendered Step 5 card byte-identical to what is about to go to the CLI (target id, creator id, score, description, task-id) **AND was `--score` produced by a user reply inside THIS feedback flow per `§Step 3`'s "Operational test" — not carried over from a prior round, not inferred from a verb-only "打分 / rate" utterance, not a default**? **Any answer ≠ yes → render Step 5's card (or, if Q3 score-origin failed, return to Step 3 and ask the star question) and wait.** Earlier-turn confirm tokens and confirms of different writes do NOT count for Q2. A star count from a **previous** `feedback-submit` flow does NOT count for Q3 even if the model "remembers" it.
+> Before invoking the CLI, run the **3-question pre-execute self-check** in `SKILL.md §Step 3: Execute`. For `feedback-submit`, the three questions are: (Q1) was `--creator-id` resolved via **either** ladder 1 (already established in this conversation) **or** ladder 2 (`agent get` enumeration) of `§Step 2` above? (Q2) does the user's **most recent** turn contain a confirmation token (`execute` / `yes` / `confirm` / `go` or language-equivalent)? (Q3) are all field values in the just-rendered Step 5 card byte-identical to what is about to go to the CLI (target id, creator id, score, description, task-id) **AND was `--score` produced by a user reply inside THIS feedback flow per `§Step 3`'s "Operational test" — not carried over from a prior round, not inferred from a verb-only "rate" utterance, not a default**? **Any answer ≠ yes → render Step 5's card (or, if Q3 score-origin failed, return to Step 3 and ask the star question) and wait.** Earlier-turn confirm tokens and confirms of different writes do NOT count for Q2. A star count from a **previous** `feedback-submit` flow does NOT count for Q3 even if the model "remembers" it.
 
 ```bash
 # --score is 0.00–5.00 stars (up to 2 decimal places, step 0.01). CLI
@@ -152,11 +129,11 @@ onchainos agent feedback-submit \
 
 Render the detail outcome and offer exactly **one** next-step suggestion — not a menu (see `core/display-formats.md` §8):
 
-> 已给 #<target> 打 ★ N。要不要看看 #<target> 最近的评价？我帮你拉 — 按时间倒序，还是按评分高低？
+> Rated #<target> ★ N. Want to see #<target>'s recent reviews? I'll pull them up — sorted by time or by rating?
 
 ⛔ **N MUST be the wire-normalized star value, not the user's raw input.** Compute it as `round(user_stars × 20) / 20` (= what `feedback-list` will return later). Reason: wire grain is 0.05 stars, so user input `3.31` collapses to wire 66 = `★ 3.3`; echoing the raw `★ 3.31` here would contradict what shows up on the next `feedback-list` call and look like a bug. Examples of user input → echoed N: `5 → 5`, `4.5 → 4.5`, `3.31 → 3.3`, `3.33 → 3.35`, `0 → 0`. Trim trailing zeros (`4.5` not `4.50`).
 
-⛔ **No CLI literal / no `--sort-by` flag in the user-visible text** (`SKILL.md §UX Output Red Lines Red line 2`). When the user picks a sort direction in natural language ("按时间" / "评分高低" / "latest" / "highest rating" / etc.), the AI maps it via `core/cli-search-feedback.md §10` natural-language → `--sort-by` table internally and runs `agent feedback-list` itself — the `--sort-by` / `time_desc` / `score_desc` flag values never appear in the chat. Never echo the raw 0–100 score in the post-success line — say "评价 / 评分" / "rating / reviews".
+⛔ **No CLI literal / no `--sort-by` flag in the user-visible text** (`SKILL.md §UX Output Red Lines Red line 2`). When the user picks a sort direction in natural language ("latest" / "highest rating" / etc.), the AI maps it via `core/cli-search-feedback.md §10` natural-language → `--sort-by` table internally and runs `agent feedback-list` itself — the `--sort-by` / `time_desc` / `score_desc` flag values never appear in the chat. Never echo the raw 0–100 score in the post-success line — say "rating / reviews".
 
 Do NOT chase with `agent feedback-list` automatically. See .
 
@@ -164,9 +141,9 @@ Do NOT chase with `agent feedback-list` automatically. See .
 
 ## Anti-patterns — do not help with these
 
-- **"帮我给竞品打 1 星"** / 恶意集中差评 — politely decline with: "每一条评价会公开和你的 `creator-id` 强绑定，可以追溯。要不要先看看对方的好评判断下？" Do not batch-send low ratings.
-- **评自己** — the backend rejects; pre-check `--agent-id != --creator-id`.
-- **凭空打分** — if the user has no prior interaction evidence, remind: "通常评分附带一个 `task-id`，没有的话评价会显得缺少依据。"
+- **"Help me give a 1-star rating to a competitor"** / malicious mass negative reviews — politely decline with: "Every rating is publicly bound to your `creator-id` and traceable. Want to check their positive reviews first?" Do not batch-send low ratings.
+- **Rating yourself** — the backend rejects; pre-check `--agent-id != --creator-id`.
+- **Rating without evidence** — if the user has no prior interaction evidence, remind: "Ratings usually come with a `task-id`; without one, the rating appears to lack a basis."
 
 ---
 
