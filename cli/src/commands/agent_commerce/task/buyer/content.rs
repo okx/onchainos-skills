@@ -29,9 +29,9 @@
 
 // ── Event::JobCreated ──────────────────────────────────────────────
 
-/// `Event::JobCreated` Step 0 — user notification that the job is confirmed on-chain.
-pub fn job_created_user_notify(job_id: &str, title: &str, notify_text: &str) -> String {
-    format!("[Job Created]【{title}】(`{job_id}`) confirmed on-chain. {notify_text}")
+/// `Event::JobCreated` Step 0 — user notification template (placeholders for agent to fill + localize).
+pub fn job_created_user_notify() -> &'static str {
+    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. <status_text>"
 }
 
 fn designated_asp_abc_prompt(short_id: &str, dp_id: &str, job_id: &str, reason: &str) -> String {
