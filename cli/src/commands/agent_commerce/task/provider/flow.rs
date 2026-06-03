@@ -217,6 +217,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              \x20\x20payload: {{\"taskMinVersion\":{TASK_MIN_VERSION}}}\n\
              ```\n\
              ⚠️ **`content` formatting rules**: plain natural language, **no** markdown / code blocks / JSON wrapper / `jobId:` / `type:` header lines — the XMTP plugin auto-wraps the message into an a2a-agent-chat envelope at send time.\n\
+             ⚠️ **`[intent:applied]` is a protocol routing tag** — the User Agent uses it to trigger `confirm-accept`. You MUST include it **verbatim** in the `content` string exactly as shown above. Do NOT remove, translate, or rephrase it. Missing this tag = User Agent cannot recognize the message = task stalls.\n\
              ⚠️ **`payload` is required** — copy the literal `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}` from above (the value is baked in at compile time).\n\n\
              After `xmtp_send` returns → **end this turn immediately**, wait for the `job_accepted` notification. (Reminder: Rule 5 + the JobCreated 5-step chain already specify that deliver only fires after `job_accepted` — do NOT call `deliver` in this provider_applied scene.)\n\n\
              [Follow-up events]\n\

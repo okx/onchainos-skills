@@ -284,11 +284,18 @@ pub fn has_designated_provider(job_id: &str) -> bool {
 pub fn get_designated_provider(job_id: &str) -> Result<Option<String>> {
     let path = state_dir(job_id)?.join("designated-provider.json");
     if !path.exists() {
+        if cfg!(feature = "debug-log") {
+            eprintln!("[designated-provider] file not found: {}", path.display());
+        }
         return Ok(None);
     }
     let raw = std::fs::read_to_string(&path)?;
     let v: serde_json::Value = serde_json::from_str(&raw)?;
-    Ok(v["agentId"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()))
+    let result = v["agentId"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string());
+    if cfg!(feature = "debug-log") {
+        eprintln!("[designated-provider] path={} agentId={:?}", path.display(), result);
+    }
+    Ok(result)
 }
 
 /// Remove the designated-provider file (used when mark-failed matches the current designated provider).
