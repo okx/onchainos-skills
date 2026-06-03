@@ -75,7 +75,6 @@ pub fn job_completed_user_notify(job_id: &str) -> String {
         "\x20\x20\x20\x20[💰 Job Completed] Job {job_id} (<title>) — approved by the User Agent; funds received.\n\
          \x20\x20\x20\x20  - Income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
-         \x20\x20\x20\x20  - Settled at: <current timestamp>\n\
          \x20\x20\x20\x20\n\
          \x20\x20\x20\x20This job is complete."
     )

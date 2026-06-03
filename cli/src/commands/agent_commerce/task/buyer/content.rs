@@ -112,7 +112,6 @@ pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: escrow\n\
          - txHash: <txHash>\n\
-         - Settled at: <timestamp from system notification, converted to human-readable e.g. \"2025-05-29 10:00 UTC\"; omit this line if not available>\n\
          This job is complete."
     )
 }
@@ -123,7 +122,6 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
         "[x402 Job Completed] {title} (`{job_id}`) — all steps complete.\n\
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: x402\n\
-         - Settled at: <timestamp from system notification, converted to human-readable e.g. \"2025-05-29 10:00 UTC\"; omit this line if not available>\n\
          - Deliverable saved to: <deliverableSavedPath from task-402-pay output; if not in context, omit this line>\n\
          - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>\n\
          This job is complete."
