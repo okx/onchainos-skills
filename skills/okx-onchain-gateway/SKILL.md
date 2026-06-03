@@ -1,6 +1,6 @@
 ---
 name: okx-onchain-gateway
-description: "Use this skill to 'broadcast transaction', 'send tx', 'estimate gas', 'simulate transaction', 'check tx status', 'track my transaction', 'get gas price', 'gas limit', 'broadcast signed tx', 'transaction hash confirmed on-chain', '交易哈希是否上链', '是否确认', or mentions broadcasting transactions, sending transactions on-chain, gas estimation, transaction simulation, tracking broadcast orders, or checking transaction status. Covers gas price, gas limit estimation, transaction simulation, transaction broadcasting, and order tracking across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use for swap quote or execution - use okx-dex-swap instead. Do NOT use for general programming questions about transaction handling. Do NOT use when the user says only a single word like 'gas' or 'broadcast' without specifying a chain, transaction, or any other context."
+description: "Onchain transaction gateway across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon and 20+ chains. Invoke for: broadcast a pre-signed tx, send tx on-chain, gas price, gas-limit estimate, simulate / dry-run a tx, track broadcast order or check tx-confirmed status. Not for swap quote / execution (use okx-dex-swap) or simple token transfers (use okx-agentic-wallet); ignore a bare 'gas' / 'broadcast' with no chain or tx context."
 license: MIT
 metadata:
   author: okx
@@ -14,52 +14,7 @@ metadata:
 
 ## Pre-flight Checks
 
-Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
-
-1. **Resolve latest stable version**: Fetch the latest stable release tag from the GitHub API:
-   ```
-   curl -sSL "https://api.github.com/repos/okx/onchainos-skills/releases/latest"
-   ```
-   Extract the `tag_name` field (e.g., `v1.0.5`) into `LATEST_TAG`.
-   If the API call fails and `onchainos` is already installed locally, skip steps 2-3
-   and continue with step 4 (the user may be offline or rate-limited; a stale
-   binary is better than blocking). If `onchainos` is **not** installed, **stop** and
-   tell the user to check their network connection or install manually from
-   https://github.com/okx/onchainos-skills.
-
-2. **Install or update**: If `onchainos` is not found, or if the cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows) is older than 12 hours:
-   - Download the installer and its checksum file from the latest release tag:
-     - **macOS/Linux**:
-       `curl -sSL "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.sh" -o /tmp/onchainos-install.sh`
-       `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -o /tmp/installer-checksums.txt`
-     - **Windows**:
-       `Invoke-WebRequest -Uri "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.ps1" -OutFile "$env:TEMP\onchainos-install.ps1"`
-       `Invoke-WebRequest -Uri "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -OutFile "$env:TEMP\installer-checksums.txt"`
-   - Verify the installer's SHA256 against `installer-checksums.txt`. On mismatch, **stop** and warn — the installer may have been tampered with.
-   - Execute: `sh /tmp/onchainos-install.sh` (or `& "$env:TEMP\onchainos-install.ps1"` on Windows).
-     The installer handles version comparison internally and only downloads the binary if needed.
-   - On other failures, point to https://github.com/okx/onchainos-skills.
-
-3. **Verify binary integrity** (once per session): Run `onchainos --version` to get the installed
-   version (e.g., `1.0.5` or `2.0.0-beta.0`). Construct the installed tag as `v<version>`.
-   Download `checksums.txt` for the **installed version's tag** (not necessarily LATEST_TAG):
-   `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/v<version>/checksums.txt" -o /tmp/onchainos-checksums.txt`
-   Look up the platform target and compare the installed binary's SHA256 against the checksum.
-   On mismatch, reinstall (step 2) and re-verify. If still mismatched, **stop** and warn.
-   - Platform targets — macOS: `arm64`->`aarch64-apple-darwin`, `x86_64`->`x86_64-apple-darwin`; Linux: `x86_64`->`x86_64-unknown-linux-gnu`, `aarch64`->`aarch64-unknown-linux-gnu`, `i686`->`i686-unknown-linux-gnu`, `armv7l`->`armv7-unknown-linux-gnueabihf`; Windows: `AMD64`->`x86_64-pc-windows-msvc`, `x86`->`i686-pc-windows-msvc`, `ARM64`->`aarch64-pc-windows-msvc`
-   - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
-
-4. **Version drift check** — REQUIRED, run even if steps 1-3 were skipped.
-   - Run `onchainos --version` → CLI version (e.g., `2.2.9`)
-   - Read `version` field from this file's YAML frontmatter (e.g., `version: "2.0.0"` at the top)
-   - If CLI version > skill version → warn: **"⚠️ Skill outdated (skill vX.Y.Z < CLI vA.B.C). Re-install skills to get the latest features and fixes."**
-   - Continue to the user's command.
-5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
-   `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
-6. **Rate limit errors.** If a command hits rate limits, the shared API key may
-   be throttled. Suggest creating a personal key at the
-   [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
-   user creates a `.env` file, remind them to add `.env` to `.gitignore`.
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Skill Routing
 
@@ -82,25 +37,6 @@ Users may use Chinese or informal terms. Map them to the correct commands:
 | 已签名交易 | signed transaction | `--signed-tx` param for `gateway broadcast` |
 | gas 价格 / 当前 gas | current gas price | `gateway gas` |
 | 支持哪些链 | supported chains for broadcasting | `gateway chains` |
-
-## Quickstart
-
-```bash
-# Get current gas price on XLayer
-onchainos gateway gas --chain xlayer
-
-# Estimate gas limit for a transaction
-onchainos gateway gas-limit --from 0xYourWallet --to 0xRecipient --chain xlayer
-
-# Simulate a transaction (dry-run)
-onchainos gateway simulate --from 0xYourWallet --to 0xContract --data 0x... --chain xlayer
-
-# Broadcast a signed transaction
-onchainos gateway broadcast --signed-tx 0xf86c...signed --address 0xYourWallet --chain xlayer
-
-# Track order status
-onchainos gateway orders --address 0xYourWallet --chain xlayer --order-id 123456789
-```
 
 ## Chain Name Support
 
@@ -134,55 +70,6 @@ The CLI accepts human-readable chain names and resolves them automatically.
 | okx-agentic-wallet | For raw tx broadcast | For simple token transfers |
 
 > **Rule of thumb:** okx-onchain-gateway handles raw transaction broadcasting and gas estimation; it does NOT generate swap calldata or handle token transfers.
-
-## Cross-Skill Workflows
-
-This skill is the **final mile** — it takes a signed transaction and sends it on-chain. It pairs with swap (to get tx data).
-
-### Workflow A: Swap → Broadcast → Track
-
-> User: "Swap 1 ETH for USDC and broadcast it"
-
-```
-1. okx-dex-swap     onchainos swap execute --from ... --to ... --amount ... --chain ethereum --wallet <addr>
-```
-
-### Workflow B: Batch Broadcast (Approve+Swap Merge)
-
-> User: "Swap 100 USDC for ETH" (EVM, merged approve+swap flow from okx-dex-swap)
-
-When `okx-dex-swap` determines that approve and swap should be merged (see okx-dex-swap Swap Flow), this skill handles the batch broadcast:
-
-```
-1. okx-dex-swap provides two signed transactions: approve (nonce=N) + swap (nonce=N+1)
-2. onchainos gateway broadcast --signed-tx <approve_signed_hex> --address <addr> --chain ethereum
-       ↓ broadcast approve first
-3. onchainos gateway broadcast --signed-tx <swap_signed_hex> --address <addr> --chain ethereum
-       ↓ broadcast swap immediately after (do NOT wait for approve confirmation)
-4. onchainos gateway orders --address <addr> --chain ethereum  → track both txs
-```
-
-**Error handling**: If approve broadcast fails, do NOT broadcast the swap tx. If approve succeeds but swap broadcast fails, the approval is on-chain and reusable — retry the swap only.
-
-### Workflow C: Simulate → Broadcast → Track
-
-> User: "Simulate this transaction first, then broadcast if safe"
-
-```
-1. onchainos gateway simulate --from 0xWallet --to 0xContract --data 0x... --chain ethereum
-       ↓ simulation passes (no revert)
-2. onchainos gateway broadcast --signed-tx <signed_hex> --address 0xWallet --chain ethereum
-3. onchainos gateway orders --address 0xWallet --chain ethereum --order-id <orderId>
-```
-
-### Workflow D: Gas Check → Swap → Broadcast
-
-> User: "Check gas, swap for USDC, then send it"
-
-```
-1. onchainos gateway gas --chain ethereum                                    → check gas prices
-2. okx-dex-swap     onchainos swap execute --from ... --to ... --amount ... --chain ethereum --wallet <addr>
-```
 
 ## Operation Flow
 
@@ -272,4 +159,4 @@ This skill is the broadcast layer where MEV protection is actually applied. The 
 - Gas price fields: use `eip1559Protocol.suggestBaseFee` + `proposePriorityFee` for EIP-1559 chains, `normal` for legacy
 - EVM contract addresses must be **all lowercase**
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values
+- The CLI handles authentication internally via environment variables — see Pre-flight Checks for details
