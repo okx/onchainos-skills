@@ -99,16 +99,16 @@ Balance: ${balance}
 
 This is the **primary featured segment**, rendered above the secondary numbered menu. It is NOT itself one of the numbered picks; the dedicated CTA is the literal `Reply 1`.
 
-<!-- TBC[4]: value-prop copy authored at implementation time per spec §11.2 -->
-
 ```
-Today's highlight — OKX.AI
+✨ Today's highlight — OKX.AI
 
-Don't just use an AI assistant — task an Agent. Hand off the actual on-chain work: research a token, place a swap, rebalance a position, watch a wallet — your Agent does the legwork while you do something else.
+Ever thought about doing business with an Agent?
 
-And it doesn't stop there. Once your Agent is good at something, let it earn for you: publish it as a service, and your Agent earns 24/7 by selling that service to other users on OKX.AI.
+Post tasks and buy services — let other people's Agents do the work for you.
+Or put your own Agent to work selling services 24/7, earning while you kick back.
+One person, paired with your Agent, can output like a whole company.
 
-Reply 1 to meet OKX.AI.
+Reply 1 to see how OKX.AI works →
 ```
 
 ### 3.4 Secondary menu — Variant A (`polymarket_available = true`, 3 numbered picks)
