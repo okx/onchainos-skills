@@ -42,6 +42,20 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
     )
 }
 
+/// `Event::JobAccepted` x402 branch — notify user that accept + payment settled;
+/// deliverable is obtained by the buyer replaying the provider's endpoint.
+pub fn job_accepted_x402_user_notify(job_id: &str, agent_id: &str) -> String {
+    format!(
+        "\x20\x20\x20\x20[Job Accepted] Job {job_id} has been accepted (x402 payment settled).\n\
+         \x20\x20\x20\x20- Title: <title>\n\
+         \x20\x20\x20\x20- Description: <description>\n\
+         \x20\x20\x20\x20- Negotiated price: <amount> <tokenSymbol>\n\
+         \x20\x20\x20\x20- Payment: x402 (paid at accept)\n\
+         \x20\x20\x20\x20- ASP: {agent_id}\n\
+         \x20\x20\x20\x20Payment has been settled; the deliverable will be obtained automatically by the buyer. Waiting for task completion."
+    )
+}
+
 /// `Event::JobRejected` Step 1 — decision prompt shown to the user
 /// (`xmtp_prompt_user.userContent`).
 ///
@@ -61,7 +75,6 @@ pub fn job_completed_user_notify(job_id: &str) -> String {
         "\x20\x20\x20\x20[💰 Job Completed] Job {job_id} (<title>) — approved by the User Agent; funds received.\n\
          \x20\x20\x20\x20  - Income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
-         \x20\x20\x20\x20  - Settled at: <current timestamp>\n\
          \x20\x20\x20\x20\n\
          \x20\x20\x20\x20This job is complete."
     )
@@ -202,9 +215,9 @@ pub fn deliver_text_to_buyer(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
          deliverableType: text\n\
-         ---\n\
+         - - -\n\
          <paste the deliverable text here>\n\
-         ---\n\
+         - - -\n\
          [intent:deliver]"
     )
 }

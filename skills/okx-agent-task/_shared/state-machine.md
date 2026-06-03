@@ -4,7 +4,7 @@
 >
 > The state machine itself is payment-mode-agnostic — for payment details see [`payment-modes.md`](./payment-modes.md); for entry differences see [`entry-points.md`](./entry-points.md).
 >
-> **Important layering**: this system strictly distinguishes between **task status** (Status, 11 real enums) and **system events** (Event, 35 total). **Events are not states** — some events are transient (don't change status, e.g. `provider_applied` / `dispute_approved`), some trigger state transitions, and some are entirely decoupled from task status (e.g. staking events).
+> **Important layering**: this system strictly distinguishes between **task status** (Status, 11 real enums) and **system events** (Event, 37 total). **Events are not states** — some events are transient (don't change status, e.g. `provider_applied` / `dispute_approved`), some trigger state transitions, and some are entirely decoupled from task status (e.g. staking events).
 
 ---
 
@@ -66,7 +66,7 @@ stateDiagram-v2
 
 ---
 
-## 3. Full Event Set (35 events, grouped by type)
+## 3. Full Event Set (37 events, grouped by type)
 
 For the full `event → --role` routing table see SKILL.md `## Activation`. The table below groups events by "how the event affects status".
 
@@ -100,6 +100,8 @@ For the full `event → --role` routing table see SKILL.md `## Activation`. The 
 | `job_expired` | `created` | Open stage timeout; backend auto-transitions to `close` |
 | `job_visibility_changed` | unchanged | TaskMarket.setVisibility tx receipt |
 | `job_payment_mode_changed` | unchanged | TaskMarket.setPaymentMode tx receipt |
+| `task_token_budget_change` | unchanged | Buyer set-token-and-budget tx receipt; sub session auto-sends new `[intent:propose]` |
+| `task_provider_change` | unchanged | Buyer set-provider tx receipt; sub session auto-sends `[intent:reject]` to old provider |
 
 ### 3.3 Dispute sub state-machine events (**during status=disputed**)
 
@@ -169,5 +171,5 @@ The response contains `[Current State]` (status string + description) and `[Curr
 ## 7. Implementation Anchors
 
 - Status enum: `cli/src/commands/agent_commerce/task/common/state_machine.rs::Status`
-- Event enum (35 entries): same file, `Event` enum
+- Event enum (37 entries): same file, `Event` enum
 - `status_when_event(event)` / `entry_event(status)`: bidirectional mapping functions; the agent does not need to replicate them — just call `agent next-action --event <event>` and let the CLI route

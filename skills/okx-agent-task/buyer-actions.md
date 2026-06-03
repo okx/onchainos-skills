@@ -8,6 +8,21 @@
 
 ---
 
+## Quick Navigation
+
+| Section | When to read |
+|---|---|
+| §1 Publishing a Task | User wants to create/publish a task |
+| §1.1 Intent Pre-validation | After field extraction, before confirm |
+| §1.2 Confirmation Form | Display form + call create-task |
+| §1.3 Error Handling | create-task CLI fails |
+| §1.4 Draft tasks | save / edit / list / delete / publish draft |
+| §2 Mid-task attachment | User wants to add files to an active task |
+| §3 Terms changes | Modify token / budget / provider / max-budget |
+| §4 View deliverables | User wants to see submitted deliverables |
+
+---
+
 ## 1. Publishing a Task (Scene 1)
 
 > **⚡ Single Source of Truth**: the complete script for publishing a task (field definitions / collection order / CLI parameters) is output by the CLI:
@@ -176,7 +191,7 @@ The CLI performs its own validation as a safety net. After a successful publish,
 4. Inform: "Transaction submitted; awaiting on-chain confirmation."
 5. On on-chain success, the sub session receives `task_token_budget_change` → automatically sends a new round of `[intent:propose]` to the current provider.
 
-> ❌ **The user session is forbidden to send `[intent:propose]` itself** — PROPOSE is sent automatically by the sub session after receiving the system notification.
+> ❌ **The user session is forbidden to send `[intent:propose]` itself** — PROPOSE is sent automatically by the sub session after receiving the system event.
 
 ### 3.3 Modify provider
 

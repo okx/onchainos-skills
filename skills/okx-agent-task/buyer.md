@@ -26,6 +26,25 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 
 ---
 
+## Quick Navigation
+
+| Section | When to read |
+|---|---|
+| §1 Trigger identification | Every inbound a2a-agent-chat |
+| §2 P2P reply | Before any `xmtp_send` to provider |
+| §3 Inbound Message Routing | Route each inbound by shape (#0-#6) |
+| §3.1 Publishing a task | User wants to create a task → buyer-actions.md |
+| §3.2 Negotiation phase | Sub receives provider messages |
+| §3.3–3.4 Designated-Provider flows | A2A / x402 entry paths |
+| §3.5 Accepted-execution discussion | After `job_accepted`, peer chat |
+| §3.5.1–3.7 Attachment / Terms / Deliverables | Mid-task modifications → buyer-actions.md |
+| §4 System event / user-decision relay | On `source:"system"` envelope |
+| §5 `user_decision_<source_event>` | User replied to a pending decision |
+| §6 Exception-escalation rules | On CLI / tool failure |
+| §7 Common helper commands | status / context / active-tasks |
+
+---
+
 ## 1. Trigger identification
 
 > **CRITICAL — role inference**: `sender.role` is the **counterparty's** role, not yours.
@@ -71,7 +90,7 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 > 📌 **`--peerTaskMinVersion`**: pass through `payload.taskMinVersion` from the inbound envelope; if absent → omit the parameter entirely (backward compatible).
 >
 > 0. **Skill prefetch** (source: self via `xmtp_dispatch_session`): content starts with `[SKILL_PREFETCH]` → load `SKILL.md` + `buyer.md`. The prefetch itself requires no action — **but any other inbound message in the same or later turn MUST be processed via #1–#6 as normal**. 🔴 I-prefetch-1: prefetch + ASP quote in same turn → agent applied "no action" to both → stuck. 🔴 I-prefetch-2: prefetch in turn 1, ASP quote in turn 2 → agent carried "prefetch mode" across turns, still refused to execute → stuck.
-> 1. **Provider apply notification** (source: peer): content contains `[intent:applied]`, or semantically expresses "apply submitted / please run confirm-accept" → **immediately** `onchainos agent next-action --jobid <jobId> --event provider_applied --role buyer --agentId <your agentId>` → execute `confirm-accept` per script. (⚠️ `confirm-accept` param is `--provider-agent-id`, NOT `--agent-id`. Buyer does NOT receive a `provider_applied` system notification; this is triggered by a2a-agent-chat. **Do NOT** query task API to validate.)
+> 1. **Provider apply notification** (source: peer): content contains `[intent:applied]`, or semantically expresses "apply submitted / please run confirm-accept" → **immediately** `onchainos agent next-action --jobid <jobId> --event provider_applied --role buyer --agentId <your agentId>` → execute `confirm-accept` per script. (⚠️ `confirm-accept` param is `--provider-agent-id`, NOT `--agent-id`. Buyer does NOT receive a `provider_applied` system event; this is triggered by a2a-agent-chat. **Do NOT** query task API to validate.)
 > 2. **Delivery notification** (source: peer): content contains `[intent:deliver]` → **immediately** `onchainos agent next-action --jobid <jobId> --event deliverable_received --role buyer --agentId <your agentId>` → follow playbook (download → save → brief user notification). Full deliverable shown at `job_submitted` acceptance card.
 > 3. **Negotiation structured marker** (source: peer) (🛑 literal `content.includes("[intent:")` only; semantic inference forbidden) → call `agent status <jobId>`:
 >    - status≥1 → `xmtp_send` "Negotiation is complete; parameters are locked." and end turn.
@@ -265,11 +284,11 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 
 ---
 
-## 4. Upon receiving a system notification / user-decision relay
+## 4. Upon receiving a system event / user-decision relay
 
-For any system notification → follow SKILL.md `## Activation` to call `next-action` (`--role buyer`) and execute the script.
+For any system event → follow SKILL.md `## Activation` to call `next-action` (`--role buyer`) and execute the script.
 
-> ⚠️ The `provider_applied` system notification is **NOT** delivered to the buyer. The buyer learns the provider has applied via an a2a-agent-chat message; upon receipt, run `confirm-accept` directly (see §3 routing #1).
+> ⚠️ The `provider_applied` system event is **NOT** delivered to the buyer. The buyer learns the provider has applied via an a2a-agent-chat message; upon receipt, run `confirm-accept` directly (see §3 routing #1).
 
 ---
 

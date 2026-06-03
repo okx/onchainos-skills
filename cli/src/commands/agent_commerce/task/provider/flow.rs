@@ -227,13 +227,17 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         // ─── Scene 4: User Agent has confirmed the apply; execute and deliver (branch by paymentMode) ──
         Event::JobAccepted => {
             let user_notify = super::content::job_accepted_user_notify(job_id, agent_id);
+            let user_notify_x402 = super::content::job_accepted_x402_user_notify(job_id, agent_id);
             let deliver_text = super::content::deliver_text_to_buyer(job_id);
             let deliver_file = super::content::deliver_file_to_buyer(job_id);
             format!(
-            "[Current state] job_accepted (User Agent has confirmed the apply; escrow funded)\n\
+            "[Current state] job_accepted (User Agent has confirmed the apply)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
-             **Step 1 — Use `xmtp_dispatch_user` to push the apply-accepted notification to the user**:\n\n\
+             **Step 1 — Fetch paymentMode**: call `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` and read the `paymentMode` field (int: 1=escrow, 3=x402).\n\n\
+             **Step 2 — Branch by paymentMode**:\n\n\
+             ━━━━━ Branch A: paymentMode=escrow (escrow trade, 1) ━━━━━\n\n\
+             **A-Step 1 — Use `xmtp_dispatch_user` to push the apply-accepted notification to the user**:\n\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              arguments:\n\
@@ -241,13 +245,12 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              {user_notify}\n\n\
              Field values are read from the output of `onchainos agent common context {job_id} --role provider --agent-id {agent_id}`.\n\
              ⚠️ Do NOT send `xmtp_send` `received apply confirmation` filler to the User Agent — the User Agent just ran confirm-accept; they already know.\n\n\
-             **Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
+             **A-Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
              {execute_task}\n\n\
-             **Step 3 — Branch by paymentMode for delivery** (you MUST first call `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` to confirm paymentMode):\n\n\
-             ━━━━━ Branch A: paymentMode=escrow (escrow trade, 1) ━━━━━\n\n\
+             **A-Step 3 — Deliver** (first `xmtp_send` the deliverable to the User Agent, then deliver on-chain):\n\n\
              ⚠️ **Order**: first `xmtp_send` the deliverable to the User Agent, then deliver on-chain. The on-chain deliver only advances the task state to submitted (giving the User Agent an acceptance entry point); the deliverable itself was already delivered via xmtp_send.\n\n\
-             **A-Step 1 — Prepare the deliverable (branch by type)**:\n\n\
-             ▸ **Plain text / URL deliverable**: assemble the text content directly, skip xmtp_file_upload, go to A-Step 2.\n\n\
+             **A-Step 3a — Prepare the deliverable (branch by type)**:\n\n\
+             ▸ **Plain text / URL deliverable**: assemble the text content directly, skip xmtp_file_upload, go to A-Step 3b.\n\n\
              ▸ **File deliverable** (image / PDF / document): call `xmtp_file_upload` with these arguments (mechanism: see skills/okx-agent-task/_shared/xmtp-tools.md → Path 8 `xmtp_file_upload`):\n\
              \x20\x20tool: xmtp_file_upload\n\
              \x20\x20arguments:\n\
@@ -255,7 +258,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              \x20\x20\x20\x20agentId: \"{agent_id}\"\n\
              \x20\x20\x20\x20jobId: \"{job_id}\"\n\
              \x20\x20Record all five return fields (`fileKey` / `digest` / `salt` / `nonce` / `secret` — decryption metadata).\n\n\
-             **A-Step 2 — `xmtp_send` the deliverable to the User Agent** (in the same turn, immediately following A-Step 1):\n\
+             **A-Step 3b — `xmtp_send` the deliverable to the User Agent** (in the same turn, immediately following A-Step 3a):\n\
              ⚠️ content **MUST end with the `[intent:deliver]` line as a trailing suffix** — the User Agent routes by this suffix to recognize the deliverable. Missing suffix = the User Agent cannot recognize it as a deliverable = the flow stalls.\n\n\
              Text-deliverable content:\n\
              {send_to_peer}\n\
@@ -263,19 +266,33 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              File-deliverable content (paste all 5 fields verbatim):\n\
              {send_to_peer}\n\
              {deliver_file}\n\n\
-             **A-Step 3 — Run `deliver` CLI to go on-chain** (advances task state to submitted so the User Agent gets the complete entry point):\n\
-             ▸ File deliverable — pass `--file` with the **local file path** used in A-Step 1 (the CLI auto-saves it to persistent deliverable storage after on-chain success):\n\
+             **A-Step 3c — Run `deliver` CLI to go on-chain** (advances task state to submitted so the User Agent gets the complete entry point):\n\
+             ▸ File deliverable — pass `--file` with the **local file path** used in A-Step 3a (the CLI auto-saves it to persistent deliverable storage after on-chain success):\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"<local file path from A-Step 1>\" --agent-id {agent_id}\n\
+             onchainos agent deliver {job_id} --file \"<local file path from A-Step 3a>\" --agent-id {agent_id}\n\
              ```\n\
              ▸ Text deliverable — pass `--file \"\"` and `--deliverable-text \"<the full deliverable text content>\"` (the CLI auto-saves the text to persistent deliverable storage):\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"\" --deliverable-text \"<the full text deliverable content from A-Step 2>\" --agent-id {agent_id}\n\
+             onchainos agent deliver {job_id} --file \"\" --deliverable-text \"<the full text deliverable content from A-Step 3b>\" --agent-id {agent_id}\n\
              ```\n\
              CLI internals: POST submit API → sign uopHash → broadcast on-chain → auto-save deliverable (file via --file, text via --deliverable-text).\n\n\
-             **A-Step 4 — After A-Step 3 ends this turn immediately** (the deliverable was already delivered to the User Agent in A-Step 2; when the subsequent `job_submitted` notification arrives, **observe only** — do not xmtp_send / xmtp_dispatch_user / any filler message).\n\n\
+             **A-Step 4 — After A-Step 3c ends this turn immediately** (the deliverable was already delivered to the User Agent in A-Step 3b; when the subsequent `job_submitted` notification arrives, **observe only** — do not xmtp_send / xmtp_dispatch_user / any filler message).\n\n\
              [Follow-up events]\n\
-             - On-chain task state enters submitted (the job_submitted system event may arrive; observe only, do not act) → wait for buyer complete/reject\n"
+             - On-chain task state enters submitted (the job_submitted system event may arrive; observe only, do not act) → wait for buyer complete/reject\n\n\
+             ━━━━━ Branch B: paymentMode=x402 (on-demand micropayment, 3) ━━━━━\n\n\
+             ⚠️ **x402 mode: the provider does NOT deliver.** The deliverable is obtained by the buyer replaying the provider's HTTP endpoint (402 challenge → sign x402_pay → replay). The task transitions directly from accepted → completed (skipping submitted) via the buyer calling `/direct/complete`.\n\n\
+             **B-Step 1 — Use `xmtp_dispatch_user` to notify the user that the task has been accepted**:\n\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending.\n\
+             tool: xmtp_dispatch_user\n\
+             arguments:\n\
+             \x20\x20content:\n\
+             {user_notify_x402}\n\n\
+             **B-Step 2 — End this turn immediately.** Wait for the `job_completed` system notification.\n\n\
+             ❌ **Do NOT call `onchainos agent deliver`** — deliver is an escrow-only on-chain action; x402 tasks do not go through submit.\n\
+             ❌ **Do NOT execute the task** — the buyer obtains the deliverable by replaying your HTTP endpoint; there is nothing for the provider agent to produce or send.\n\
+             ❌ **Do NOT `xmtp_send` any deliverable to the User Agent** — the buyer already received it via the 402 replay flow.\n\n\
+             [Follow-up events]\n\
+             - job_completed → task complete; run `onchainos agent next-action --jobid {job_id} --event job_completed --role provider --agentId {agent_id}`\n"
             )
         }
 
