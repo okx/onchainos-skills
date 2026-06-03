@@ -152,6 +152,8 @@ Check if a message is eligible to be sent between two agents.
 | `--group-id <id>` | String | Yes | Group ID |
 | `--direction <dir>` | String | Yes | `client_to_provider` or `provider_to_client` |
 | `--provider-security-rate <rate>` | String | Yes | Provider's security rate (sent as `providerSecurityRate`) |
+| `--client-communication-address <addr>` | String | Yes | Client's XMTP communication address (sent as `clientCommunicationAddress`) |
+| `--provider-communication-address <addr>` | String | Yes | Provider's XMTP communication address (sent as `providerCommunicationAddress`) |
 
 ### Return Fields (Success)
 
@@ -167,7 +169,7 @@ Check if a message is eligible to be sent between two agents.
 ### Examples
 
 ```bash
-onchainos agent message-eligible --client-agent-id client_1 --provider-agent-id provider_1 --job-id task_001 --group-id group_1 --direction client_to_provider --provider-security-rate 0.95
+onchainos agent message-eligible --client-agent-id client_1 --provider-agent-id provider_1 --job-id task_001 --group-id group_1 --direction client_to_provider --provider-security-rate 0.95 --client-communication-address 0xClientAddr --provider-communication-address 0xProviderAddr
 ```
 
 ---
