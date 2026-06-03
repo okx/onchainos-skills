@@ -11,8 +11,8 @@ Two variants by auth state. Both share the same 5-segment structure:
 Variant A (`polymarket_available = true`) has **4 picks total**: `1` = OKX.AI featured CTA, `2` = Polymarket, `3` = USDC APY, `4` = Daily brief.
 Variant B (`polymarket_available = false`) has **3 picks total**: `1` = OKX.AI featured CTA, `2` = USDC APY, `3` = Daily brief.
 
-- **Logged-out** — no addresses, no balance, includes a "login" hint at the menu trailer.
-- **Logged-in** — addresses + balance shown, no QR codes, no login hint.
+- **Logged-out** — no addresses, no balance.
+- **Logged-in** — addresses + balance shown, no QR codes.
 
 ## Step 1 — Free zone (conditional)
 
@@ -106,7 +106,7 @@ Ever thought about doing business with an Agent?
 
 Post tasks and buy services — let other people's Agents do the work for you.
 Or put your own Agent to work selling services 24/7, earning while you kick back.
-One person, paired with your Agent, can output like a whole company.
+One person, with a fleet of Agents, is a whole company.
 
 Reply 1 to see how OKX.AI works →
 ```
@@ -134,7 +134,6 @@ Other things you might like:
 
 ```
 Which one? Just reply with 1–N 👆
-(Or reply "login" to log in your wallet first.)
 ```
 
 **Logged-in**:

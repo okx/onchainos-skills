@@ -26,24 +26,6 @@ Tagged blocks indicate rule severity (higher wins on conflict):
 > Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 </MUST>
 
-## Trigger Criteria
-
-<MUST>
-Only trigger this skill when the user message is **open-ended / guidance-seeking**. Positive examples:
-
-- "how do I use this / what can I do / what is this / getting started"
-- "I just installed it, now what?"
-- "tutorial / onboarding / first time / where do I start"
-
-Negative examples (use the matching skill instead, **not** this one):
-
-- "check my balance" → `okx-agentic-wallet` / `okx-wallet-portfolio`
-- "swap 0.1 ETH for USDC" → `okx-dex-swap`
-- "what's the price of BTC" → `okx-dex-market`
-- "login" alone → `okx-agentic-wallet` (but `login` as a reply *to the welcome banner* is handled inside this skill — see **Login Method Choice**)
-- "search for PEPE token" → `okx-dex-token`
-</MUST>
-
 ## Authoring Pattern — Free Zone vs Fixed Zone
 
 Most user-facing copy in this flow is split into two parts:
@@ -170,31 +152,18 @@ If the user types something other than a numbered pick or `login`, answer in the
 |---|---|
 | meme sniping / pump.fun / new launches | `okx-dex-trenches` |
 | follow smart money / KOL / whale | `okx-dex-signal` (or load `smart-money-signals.md`) |
-| bridge / cross-chain / move tokens between chains | `okx-dex-bridge` |
 | yield / earn / stake / DeFi | `okx-defi-invest` |
-| is this token safe / approvals | `okx-security` |
-| swap / buy / sell | `okx-dex-swap` |
-| my holdings / portfolio | `okx-wallet-portfolio` |
-| trading competition / join contest / competition rank | `okx-growth-competition` |
 | login (free-form, not as a banner reply) | this skill's **Login Method Choice** |
 | named DApp + action verb (Aave / Hyperliquid / etc.) | `okx-dapp-discovery` |
-
-<SHOULD>
-If the user picks multiple options at once, execute them in order and bookmark unused picks ("we'll come back to 4 after this").
-</SHOULD>
 
 ---
 
 ## Acceptance Criteria
 
-1. **Banner variant matches auth state** — `loggedIn: false` renders the logged-out variant (no addresses, with "login" hint); `loggedIn: true` renders the logged-in variant (addresses + balance, no hint).
+1. **Banner variant matches auth state** — `loggedIn: false` renders the logged-out variant (no addresses); `loggedIn: true` renders the logged-in variant (addresses + balance).
 2. **Skill picks load without login gate** — Polymarket (option 2 in Variant A) and USDC APY (option 3 in A / option 2 in B) load even when logged out; each loaded skill handles its own auth.
 3. **OKX.AI (Reply 1) and Daily brief (option 4 in A / option 3 in B) gate on login** — when logged out, route through Login Method Choice first, then auto-resume the chosen target (`okx-ai-guide` or `daily-brief.md`) WITHOUT re-rendering the welcome banner. Smart-money / new-token intents are no longer numbered picks but remain reachable via the free-form fallback table (`okx-dex-signal` / `okx-dex-trenches`).
 4. **Turn budget** — ≤ 3 turns end-to-end for a new user; ≤ 2 turns for a returning user picking a workflow + login.
 5. **Disclaimer placement** — the disclaimer is the final segment of every rendered banner (both variants, both auth states).
 6. **Stale-session fallback** — when `wallet status` returns `loggedIn: true` but `wallet balance` fails (e.g. expired refresh token) or lacks the address / balance fields, the flow prompts re-login (routes to Login Method Choice) instead of rendering a partial or fabricated logged-in banner; after re-login it renders the logged-in banner.
 
-## Notes / Non-obvious
-
-- **Polymarket plugin is not pre-installed.** Pick 🔥 routes through `okx-dapp-discovery`, which handles plugin install + load. Don't try to load `web3-polymarket` directly.
-- **Workflow files are runtime resources** — at install time they live at `~/.onchainos/workflows/`; in this repo's source they're under `workflows/`.
