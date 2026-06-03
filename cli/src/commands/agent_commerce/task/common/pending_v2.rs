@@ -1407,7 +1407,8 @@ fn playbook_relay_and_advance(
 ) -> String {
     let list_view = render_list_markdown(q);
     format!(
-        "4 steps (Steps 1-3 in this turn, Step 4 in the future turn):\n\n\
+        "4 steps (Steps 1-3 in this turn, Step 4 in the future turn).\n\
+         🛑 **STRICTLY ORDERED — execute Step 1 → 2 → 3 sequentially in this turn; do NOT skip any step.**\n\n\
          **Step 1** — Forward the user's reply to the just-resolved sub session. Call `xmtp_dispatch_session` exactly once.\n\
          \x20\x20tool: xmtp_dispatch_session\n\
          \x20\x20sessionKey: {sub}\n\
