@@ -215,9 +215,9 @@ pub fn deliver_text_to_buyer(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
          deliverableType: text\n\
-         ---\n\
+         - - -\n\
          <paste the deliverable text here>\n\
-         ---\n\
+         - - -\n\
          [intent:deliver]"
     )
 }

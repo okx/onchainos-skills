@@ -141,8 +141,8 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
        --token-symbol \"<tokenSymbol from Step 0>\" --token-amount \"<tokenAmount from Step 0>\"\n\
      ```\n\
      If save fails, log the error but do NOT block.\n\n\
-     --- Case B: deliverableType=text (body content between `---` separators) ---\n\n\
-     Extract the text between `---` separators; **keep the original wording in full**.\n\n\
+     --- Case B: deliverableType=text (body content between `- - -` separators) ---\n\n\
+     Extract the text between `- - -` separators; **keep the original wording in full**.\n\n\
      🛑 **IMMEDIATELY after extraction**, write to a temp .txt file and persist (use values from Step 0):\n\
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
@@ -255,8 +255,8 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      After save, update localPath to the path printed by the save command (the file has been moved to the deliverables directory).\n\
      If save fails, log the error but do NOT block the review flow.\n\n\
      Deliverable display variables: deliverableType=file, localPath=<full path>, deliverableText=<note text, empty if none>\n\n\
-     --- Case B: deliverableType=text (body content between `---` separators) ---\n\n\
-     Extract the text between `---` separators in the `[intent:deliver]` message; **keep the original wording in full**, do not truncate or summarize.\n\n\
+     --- Case B: deliverableType=text (body content between `- - -` separators) ---\n\n\
+     Extract the text between `- - -` separators in the `[intent:deliver]` message; **keep the original wording in full**, do not truncate or summarize.\n\n\
      🛑 **IMMEDIATELY after extraction**, persist the text deliverable (REQUIRED — do NOT skip):\n\
      Write deliverableText to a temp .txt file, then:\n\
      ```bash\n\
