@@ -39,6 +39,8 @@ pub enum ChatCommand {
         group_id: String,
         direction: String,
         provider_security_rate: String,
+        client_communication_address: String,
+        provider_communication_address: String,
     },
     SystemConfig,
     Heartbeat {
@@ -74,6 +76,8 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
             group_id,
             direction,
             provider_security_rate,
+            client_communication_address,
+            provider_communication_address,
         } => {
             let client = ctx.client_async().await?;
             output::success(
@@ -86,6 +90,8 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
                     &group_id,
                     &direction,
                     &provider_security_rate,
+                    &client_communication_address,
+                    &provider_communication_address,
                 )
                 .await?,
             );
@@ -253,6 +259,8 @@ pub async fn fetch_message_eligible(
     group_id: &str,
     direction: &str,
     provider_security_rate: &str,
+    client_communication_address: &str,
+    provider_communication_address: &str,
 ) -> Result<Value> {
     let headers = agent_commerce_headers(agent_id);
     let resp = client
@@ -265,6 +273,8 @@ pub async fn fetch_message_eligible(
                 ("groupId", group_id),
                 ("direction", direction),
                 ("providerSecurityRate", provider_security_rate),
+                ("clientCommunicationAddress", client_communication_address),
+                ("providerCommunicationAddress", provider_communication_address),
             ],
             Some(&headers),
         )
