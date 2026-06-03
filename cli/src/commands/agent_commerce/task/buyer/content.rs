@@ -29,9 +29,14 @@
 
 // ── Event::JobCreated ──────────────────────────────────────────────
 
-/// `Event::JobCreated` Step 0 — user notification template (placeholders for agent to fill + localize).
-pub fn job_created_user_notify() -> &'static str {
-    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. <status_text>"
+/// `Event::JobCreated` Step 0 — user notification (no designated provider).
+pub fn job_created_public_user_notify() -> &'static str {
+    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. Auto-querying recommended ASPs."
+}
+
+/// `Event::JobCreated` Step 0 — user notification (with designated provider).
+pub fn job_created_designated_user_notify() -> &'static str {
+    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. Connecting to the designated ASP (<provider_agentId>)."
 }
 
 fn designated_asp_abc_prompt(short_id: &str, dp_id: &str, job_id: &str, reason: &str) -> String {

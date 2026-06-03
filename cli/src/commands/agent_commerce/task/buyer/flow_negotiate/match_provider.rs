@@ -19,10 +19,15 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
 
     let designated_provider = super::super::negotiate::get_designated_provider(job_id).ok().flatten();
 
-    let created_notify_tpl = super::super::content::job_created_user_notify();
-    let status_text = match &designated_provider {
-        Some(dp_id) => format!("Connecting to the designated ASP {dp_id}..."),
-        None => "Auto-querying recommended ASPs...".to_string(),
+    let (created_notify_tpl, created_fill) = match &designated_provider {
+        Some(dp_id) => (
+            super::super::content::job_created_designated_user_notify(),
+            format!("Fill: `<title>` = {title} | `<short_jobId>` = {short_id} | `<provider_agentId>` = {dp_id}"),
+        ),
+        None => (
+            super::super::content::job_created_public_user_notify(),
+            format!("Fill: `<title>` = {title} | `<short_jobId>` = {short_id}"),
+        ),
     };
 
     let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
@@ -126,7 +131,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
          **Step 0 - notify the user session + continue execution in the current sub/backup session:**\n\
          Call xmtp_dispatch_user to tell the user the job is on-chain:\n\
          \x20\x20content: {created_notify_tpl}\n\
-         Fill: `<title>` = {title} | `<short_jobId>` = {short_id} | `<status_text>` = {status_text}\n\
+         {created_fill}\n\
          {l10n_short}\n\n\
          ⚠️ Subsequent routing -> negotiation / acceptance all run in the **current session**; do NOT switch to the user session, do NOT sessions_spawn.\n\n\
          {attachment_section_created}\
