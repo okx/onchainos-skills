@@ -24,9 +24,9 @@
 | Mode | Trigger timing | Notes |
 |---|---|---|
 | escrow | accepted → submitted (after executing the task and submitting) | Standard flow: provider executes the task and delivers after accepted |
-| x402 | accepted → submitted | Same as escrow |
+| x402 | **N/A — no deliver step** | x402 skips submit entirely; the buyer obtains the deliverable by replaying the provider's HTTP endpoint (402 → sign x402_pay → replay), then calls `/direct/complete` to transition directly from accepted → completed |
 
-CLI command (identical across payment modes):
+CLI command (**escrow only**):
 ```bash
 onchainos agent deliver <jobId> --file "<url>" --message "<msg>"
 ```
@@ -36,7 +36,7 @@ onchainos agent deliver <jobId> --file "<url>" --message "<msg>"
 | Mode | Trigger timing | Buyer CLI | Fund action |
 |---|---|---|---|
 | escrow | submitted → completed (after accepting the deliverable) | `onchainos agent complete <jobId>` | Contract pre-complete two-sided signing → auto-release escrowed funds to provider |
-| x402 | submitted → completed | `onchainos agent complete <jobId>` | Funds were already paid at the accept stage; complete only changes status |
+| x402 | accepted → completed (skips submitted) | `onchainos agent complete <jobId>` (internally calls `/direct/complete`) | Funds were already paid at the accept stage; complete only changes status |
 
 ### `reject` (submitted → rejected, escrow only)
 
