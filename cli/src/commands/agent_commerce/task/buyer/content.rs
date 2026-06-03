@@ -29,9 +29,9 @@
 
 // ── Event::JobCreated ──────────────────────────────────────────────
 
-/// `Event::JobCreated` Step 0 — user notification that the job is confirmed on-chain.
-pub fn job_created_user_notify(job_id: &str, title: &str, notify_text: &str) -> String {
-    format!("[Job Created] **{title}** (`{job_id}`) confirmed on-chain. {notify_text}")
+/// `Event::JobCreated` Step 0 — user notification template (placeholders for agent to fill + localize).
+pub fn job_created_user_notify() -> &'static str {
+    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. <status_text>"
 }
 
 fn designated_asp_abc_prompt(short_id: &str, dp_id: &str, job_id: &str, reason: &str) -> String {
@@ -92,7 +92,7 @@ pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
 /// `Event::JobRejected` Step 1 — user notification that the rejection is confirmed on-chain.
 pub fn job_rejected_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "[Rejection Confirmed] The deliverable for **{title}** (`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
+        "[Rejection Confirmed] The deliverable for【{title}】(`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
          The ASP will choose: file a dispute or agree to a refund.\n\
          If the ASP takes no action, funds will be auto-refunded to your wallet."
     )
@@ -228,7 +228,7 @@ pub fn payment_mode_escrow_user_notify(job_id: &str, title: &str) -> String {
 /// x402 set-payment-mode confirmed on-chain; transition notification before task-402-pay.
 pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "Payment in progress — **{title}** (`{job_id}`) — x402 agreement reached with the ASP; \
+        "Payment in progress —【{title}】(`{job_id}`) — x402 agreement reached with the ASP; \
          fee: <tokenAmount> <tokenSymbol>. Paying and fetching the deliverable..."
     )
 }
@@ -327,6 +327,23 @@ pub fn wakeup_resume_user_notify(job_id: &str) -> String {
 /// `provider_conversation` B-Step 4 — no more ASPs pending (B-7-14).
 pub fn no_more_sellers_user_notify(job_id: &str) -> String {
     format!("[Job `{job_id}` — you are the User Agent] All pending ASPs have been contacted; none remaining. Choose next step:")
+}
+
+// ── Attachment user notifications ─────────────────────────────────
+
+/// Attachment sent successfully — notify the user.
+pub fn attachment_sent_user_notify() -> &'static str {
+    "[Job <short_jobId>] Attachment sent to the ASP."
+}
+
+/// Attachment saved locally (no active session yet) — notify the user.
+pub fn attachment_saved_user_notify() -> &'static str {
+    "[Job <short_jobId>] Attachment saved. It will be forwarded to the ASP once a negotiation session is established."
+}
+
+/// Attachment rejected — task is in review/terminal phase.
+pub fn attachment_phase_blocked_user_notify() -> &'static str {
+    "[Job <short_jobId>] The task has entered the review/terminal phase — attachments can no longer be added."
 }
 
 // ── Attachment (buyer → provider) ──────────────────────────────────

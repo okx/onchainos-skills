@@ -1,6 +1,6 @@
 ---
 name: okx-ai-guide
-description: "OKX.AI (the Agent economic system) intro & onboarding entry. Trigger when the user asks about OKX.AI — 'what is OKX.AI' / 'OKX.AI 是什么' / '什么是 OKX.AI' / '介绍一下 OKX.AI'; 'what can OKX.AI do' / 'OKX.AI 能做什么' / '有什么用' / 'OKX.AI 功能'; 'how to use OKX.AI' / 'OKX.AI 怎么用' / '如何使用 OKX.AI' / '操作方法'; 'how to start' / '怎么开始用 OKX.AI' / '如何入门' / 'OKX.AI 新手' / '怎么注册 OKX.AI'; 'OKX.AI help' / 'OKX.AI 不会用' / 'OKX.AI 帮助' / '求助'; 'OKX.AI tutorial' / 'OKX.AI 教程' / '新手教程' / '入门指南' / '教我用 OKX.AI'; the literal phrase 'OKX.AI 快速开始' / 'OKX.AI quick start' / 'OKX.AI quickstart'; or a handoff from the Onchain OS welcome banner pick 'see how OKX.AI works' / '看看 OKX.AI 怎么玩'. Detects the runtime platform, shows the OKX.AI intro + three roles (User / ASP / Evaluator), and routes the user into identity registration. NOT for: generic onchainOS onboarding (use okx-how-to-play), or direct task ops like publish/accept/deliver/dispute (use okx-agent-task)."
+description: "OKX.AI (the Agent economic system) intro & onboarding entry. Trigger when the user asks about OKX.AI — 'what is OKX.AI' / 'OKX.AI 是什么' / '什么是 OKX.AI' / '介绍一下 OKX.AI'; 'what can OKX.AI do' / 'OKX.AI 能做什么' / '有什么用' / 'OKX.AI 功能'; 'how to use OKX.AI' / 'OKX.AI 怎么用' / '如何使用 OKX.AI' / '操作方法'; 'how to start' / '怎么开始用 OKX.AI' / '如何入门' / 'OKX.AI 新手' / '怎么注册 OKX.AI'; 'OKX.AI help' / 'OKX.AI 不会用' / 'OKX.AI 帮助' / '求助'; 'OKX.AI tutorial' / 'OKX.AI 教程' / '新手教程' / '入门指南' / '教我用 OKX.AI'; the literal phrase 'OKX.AI 快速开始' / 'OKX.AI quick start' / 'OKX.AI quickstart'; or a handoff from the Onchain OS welcome banner pick 'see how OKX.AI works' / '看看 OKX.AI 怎么玩'. Also matches spelling / spacing / casing / typo variants of the name itself — 'OKXAI' / 'okxai' / 'OKX AI' / 'okx ai' / 'okx-ai' / lowercase 'okx.ai', and colloquial or mis-typed Chinese forms such as '什么okxai' / '什么是okxai' / '啥是okxai' / '什么事okxai' / 'okxai是什么'. Detects the runtime platform, shows the OKX.AI intro + three roles (User / ASP / Evaluator), and routes the user into identity registration. NOT for: generic onchainOS onboarding (use okx-how-to-play), or direct task ops like publish/accept/deliver/dispute (use okx-agent-task)."
 license: Apache-2.0
 metadata:
   author: okx
@@ -101,9 +101,3 @@ Login + consent + post-success comm-init are handled inside the registration pla
 4. `OKX.AI 快速开始` / `OKX.AI quick start` triggers this skill.
 5. Fixed-zone copy renders in the user's language; emojis / numbers / URLs / placeholders stay literal.
 6. Zero `onchainos agent create` calls in this skill; zero Rust changes.
-
-## Open items (tracked in the design doc)
-
-- `{install_doc_url}` real link pending (PRD 待补充; placeholder 404s). Locale rule: zh → `/zh-hans/` segment; en → no segment.
-- `{okx_ai_site}`: PRD wrote `okx.ai.com`; using `https://okx.ai` — confirm with PM.
-- `okx-how-to-play` banner pick "see how OKX.AI works" routes here (owned by that skill / Sher Zhou); do an end-to-end pass after both land.
