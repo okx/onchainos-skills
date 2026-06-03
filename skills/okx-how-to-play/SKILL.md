@@ -1,10 +1,10 @@
 ---
 name: okx-how-to-play
-description: "Onchain OS entry router for open-ended onboarding questions. Renders a welcome banner with a Quick-start menu and routes the user into the right skill or workflow (Polymarket, DeFi APY, smart-money signals, new-token screening, daily on-chain brief). Triggers: 'what is onchainos', 'what is onchain os', 'what does this do', 'what can it do', 'what can I do here', 'how do I use this', 'how do I play', 'how to use onchainos', 'how to play onchainos', 'how does this work', 'how do I start', 'getting started', 'how do I get started', 'tutorial', 'onboarding', 'first time', 'I just installed', 'now what', 'what do I do now', 'where do I start', 'who are you', 'what are you', 'introduce yourself', 'introduction', 'introduce onchainos', 'tell me about onchainos', 'I'm new'."
+description: "Onchain OS entry router for open-ended onboarding questions. Renders a welcome banner that features OKX.AI as the primary highlight (task an Agent — let your Agent do the on-chain work and earn 24/7 by selling its service) plus a secondary menu (Polymarket, USDC APY, daily on-chain brief), and routes the user into the right skill or workflow. Triggers: 'what is onchainos', 'what is onchain os', 'what does this do', 'what can it do', 'what can I do here', 'how do I use this', 'how do I play', 'how to use onchainos', 'how to play onchainos', 'how does this work', 'how do I start', 'getting started', 'how do I get started', 'tutorial', 'onboarding', 'first time', 'I just installed', 'now what', 'what do I do now', 'where do I start', 'who are you', 'what are you', 'introduce yourself', 'introduction', 'introduce onchainos', 'tell me about onchainos', 'I'm new'."
 license: MIT
 metadata:
   author: okx
-  version: "2.7.0"
+  version: "3.3.8"
   homepage: "https://web3.okx.com"
 ---
 
@@ -78,7 +78,7 @@ onchainos wallet status
 # Welcome Banner
 
 <MUST>
-Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 6 picks (OKX.AI + Polymarket allowed); Variant B = 5 picks (Polymarket geoblocked). Never fabricate addresses or balance.
+Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 4 picks (Polymarket allowed); Variant B = 3 picks (Polymarket geoblocked). Numbered picks are interpreted strictly against the currently-rendered menu (digit-routing contract per spec §2.2). Never fabricate addresses or balance. If `wallet balance` fails despite `loggedIn: true` (stale session — refresh token expired), prompt the user to log in again per welcome.md §2.2 instead of rendering a partial banner.
 </MUST>
 
 ---
@@ -155,7 +155,9 @@ On success → **Post-login routing** below. On login failure, surface the error
 
 After login completes successfully:
 
-- If the user came from picking a **workflow pick** while logged out: automatically load the corresponding workflow file (`~/.onchainos/workflows/<file>.md`) and follow it. Do NOT re-render the welcome banner.
+- If the user came from picking the **OKX.AI option** (Reply `1`) while logged out: automatically load `okx-ai-guide` and follow it. Do NOT re-render the welcome banner.
+- If the user came from picking the **Daily brief** option (option `4` in Variant A / option `3` in Variant B) while logged out: automatically load `~/.onchainos/workflows/daily-brief.md` and follow it. Do NOT re-render the welcome banner.
+- If the user came from picking any other **workflow pick** while logged out: automatically load the corresponding workflow file (`~/.onchainos/workflows/<file>.md`) and follow it. Do NOT re-render the welcome banner.
 - If the user came from replying `login` (or equivalent) to the logged-out banner: render the **logged-in** Welcome Banner so they see their addresses + balance.
 
 ---
@@ -166,7 +168,6 @@ If the user types something other than a numbered pick or `login`, answer in the
 
 | Intent | Route to |
 |---|---|
-| OKX.AI / agent economy / make money with Agents / register agent (user / ASP / evaluator) | `okx-ai-guide` |
 | meme sniping / pump.fun / new launches | `okx-dex-trenches` |
 | follow smart money / KOL / whale | `okx-dex-signal` (or load `smart-money-signals.md`) |
 | bridge / cross-chain / move tokens between chains | `okx-dex-bridge` |
@@ -187,9 +188,11 @@ If the user picks multiple options at once, execute them in order and bookmark u
 ## Acceptance Criteria
 
 1. **Banner variant matches auth state** — `loggedIn: false` renders the logged-out variant (no addresses, with "login" hint); `loggedIn: true` renders the logged-in variant (addresses + balance, no hint).
-2. **Skill picks load without login gate** — ✨ / 🔥 / 💰 load even when logged out; each loaded skill handles its own auth.
-3. **Workflow picks gate on login** — when logged out, 🐋 / 🆕 / ☕ route through Login Method Choice first, then auto-resume the workflow. User should not have to re-state their pick.
+2. **Skill picks load without login gate** — Polymarket (option 2 in Variant A) and USDC APY (option 3 in A / option 2 in B) load even when logged out; each loaded skill handles its own auth.
+3. **OKX.AI (Reply 1) and Daily brief (option 4 in A / option 3 in B) gate on login** — when logged out, route through Login Method Choice first, then auto-resume the chosen target (`okx-ai-guide` or `daily-brief.md`) WITHOUT re-rendering the welcome banner. Smart-money / new-token intents are no longer numbered picks but remain reachable via the free-form fallback table (`okx-dex-signal` / `okx-dex-trenches`).
 4. **Turn budget** — ≤ 3 turns end-to-end for a new user; ≤ 2 turns for a returning user picking a workflow + login.
+5. **Disclaimer placement** — the disclaimer is the final segment of every rendered banner (both variants, both auth states).
+6. **Stale-session fallback** — when `wallet status` returns `loggedIn: true` but `wallet balance` fails (e.g. expired refresh token) or lacks the address / balance fields, the flow prompts re-login (routes to Login Method Choice) instead of rendering a partial or fabricated logged-in banner; after re-login it renders the logged-in banner.
 
 ## Notes / Non-obvious
 
