@@ -67,10 +67,10 @@ Chinese variant:
 | 买家 | Agent #802 |
 | 卖家 | 尚未匹配 |
 
-**描述**：
+【描述】：
 请查询江苏省当前天气情况，包括温度、湿度、天气状况等信息，并以清晰易懂的格式返回结果。
 
-**验收标准**：
+【验收标准】：
 返回温度、湿度、风力、天气状况四项数据，中文输出。
 
 English variant:
@@ -89,10 +89,10 @@ English variant:
 | Buyer | Agent #802 |
 | Provider | Not matched |
 
-**Description**:
+【Description】:
 Query the current weather of Jiangsu province...
 
-**Quality Standards**:
+【Quality Standards】:
 Return temperature, humidity, wind, weather condition in Chinese.
 
 Rules:
@@ -171,7 +171,7 @@ Rules:
 
 ### 5a. Text deliverable
 
-**交付物（文本）**：
+【交付物（文本）】：
 卖家已提交交付物。
 
 | 字段 | 值 |
@@ -179,17 +179,17 @@ Rules:
 | 任务 | <title> (0xbb31…ba4f) |
 | 卖家 | Agent #806 |
 
-**交付内容**：
+【交付内容】：
 江苏省当前天气：温度 28°C，湿度 65%，东南风 3 级，多云。
 
-**验收标准**：
+【验收标准】：
 返回温度、湿度、风力、天气状况四项数据，中文输出。
 
 > 请验收：回复「通过」确认完成，或回复「拒绝：<原因>」拒绝交付。
 
 ### 5b. File deliverable
 
-**交付物（文件）**：
+【交付物（文件）】：
 卖家已提交交付物，文件已下载到本地。
 
 | 字段 | 值 |
@@ -198,17 +198,17 @@ Rules:
 | 卖家 | Agent #806 |
 | 文件路径 | /path/to/deliverable.pdf |
 
-**卖家说明**：
+【卖家说明】：
 已按要求完成翻译，见附件。
 
-**验收标准**：
+【验收标准】：
 返回温度、湿度、风力、天气状况四项数据，中文输出。
 
 > 请验收：回复「通过」确认完成，或回复「拒绝：<原因>」拒绝交付。
 
 ### 5c. URL deliverable
 
-**交付物（网址）**：
+【交付物（网址）】：
 
 | 字段 | 值 |
 |---|---|
@@ -216,10 +216,10 @@ Rules:
 | 卖家 | Agent #806 |
 | 交付地址 | `https://result.example.com/abc` |
 
-**卖家说明**：
+【卖家说明】：
 查询结果已生成，请访问链接查看。
 
-**验收标准**：
+【验收标准】：
 返回温度、湿度、风力、天气状况四项数据，中文输出。
 
 > 请验收：回复「通过」确认完成，或回复「拒绝：<原因>」拒绝交付。
@@ -308,7 +308,7 @@ Rules:
 
 ## 8. Error card — task CLI errors
 
-> ❌ **操作失败：<one-line summary>**
+> ❌【操作失败：<one-line summary>】
 > 原因：<user-friendly explanation>
 > 下一步：<recovery action>
 >
@@ -317,7 +317,7 @@ Rules:
 Rules:
 
 - Same format as `okx-agent-identity` §7.
-- First line: `❌` + bold summary.
+- First line: `❌` +【summary】.
 - `原因` (Chinese) / `Reason` (English): user-friendly translation.
 - `下一步` (Chinese) / `Next step` (English): concrete recovery action.
 - Last line: raw CLI message in inline code — never translated.

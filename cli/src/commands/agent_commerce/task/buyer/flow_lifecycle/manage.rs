@@ -132,7 +132,7 @@ onchainos agent create-task \\
   [--provider <provider agentId>]
 ```
 
-⚠️ `--provider` (optional): designate a provider agentId. With it set, job_created skips recommend and routes directly via the provider's service-list by payment mode (x402 or A2A negotiation). Pass it only when the user explicitly designates a provider.
+🛑 `--provider <agentId>`: when the confirmation form includes a designated provider (指定服务商), you **MUST** pass `--provider`. Omitting it = the designated provider info is lost = job_created falls back to the recommend flow instead of routing directly to the specified provider.
 
 🚫 **create-task only accepts the flags above. There is no --content / --period / --visibility / --amount / --token / --payment-mode flag.** When `--provider` is passed, the CLI automatically sets visibility=1 (PRIVATE) and providerAgentId; no extra flags needed.
 ⚠️ **Payment mode is not set at creation** -- paymentMode is decided downstream: the A2A negotiation path is always escrow; if a provider is designated and has an endpoint, x402 is used. If the user mentions a preferred payment mode at publication, **do not pass --payment-mode**; tell them: \"The payment mode will be determined automatically when negotiating with the provider.\"
@@ -322,6 +322,9 @@ pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> Str
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let attachment_template = super::super::content::attachment_file_to_seller(job_id);
+    let att_sent = super::super::content::attachment_sent_user_notify();
+    let att_saved = super::super::content::attachment_saved_user_notify();
+    let att_blocked = super::super::content::attachment_phase_blocked_user_notify();
 
     format!(
     "[Trigger] attachment_added (user session dispatched `[ATTACHMENT_ADDED]` — a file was saved locally and must be uploaded + forwarded to the provider)\n\
@@ -357,19 +360,22 @@ pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> Str
      🔴 Real incident: a model abbreviated `secret: SHUJoA...dqE=` (replaced the middle with `...`), the provider could not decrypt the file and the task stalled.\n\n\
      **A-Step 3 — Notify the user:**\n\
      Call xmtp_dispatch_user:\n\
-     \x20\x20content: [Job {short_id}] Attachment sent to the ASP.\n\
+     \x20\x20content: {att_sent}\n\
+     Fill: `<short_jobId>` = {short_id}\n\
      {l10n_short}\n\n\
      → **End this turn.**\n\n\
      --------- Branch B: status=0 (created) and NO active sub session ---------\n\n\
      The file is already stored locally under `~/.onchainos/task/<jobId>/attachments/`.\n\
      It will be uploaded to the provider automatically when the negotiation session starts.\n\n\
      Call xmtp_dispatch_user:\n\
-     \x20\x20content: [Job {short_id}] Attachment saved. It will be forwarded to the ASP once a negotiation session is established.\n\
+     \x20\x20content: {att_saved}\n\
+     Fill: `<short_jobId>` = {short_id}\n\
      {l10n_short}\n\n\
      → **End this turn.**\n\n\
      --------- Branch C: status≥2 (submitted / rejected / disputed / terminal) ---------\n\n\
      Call xmtp_dispatch_user:\n\
-     \x20\x20content: [Job {short_id}] The task has entered the review/terminal phase — attachments can no longer be added.\n\
+     \x20\x20content: {att_blocked}\n\
+     Fill: `<short_jobId>` = {short_id}\n\
      {l10n_short}\n\n\
      → **End this turn.**\n"
     )

@@ -5,6 +5,7 @@ use super::super::flow::FlowContext;
 // --- Event handler functions ------------------------------------------------
 
 pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
+    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let l10n_prompt = super::super::flow::L10N_PROMPT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
     let job_id = ctx.job_id;
@@ -18,12 +19,11 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
 
     let designated_provider = super::super::negotiate::get_designated_provider(job_id).ok().flatten();
 
-    let notify_text = match &designated_provider {
+    let created_notify_tpl = super::super::content::job_created_user_notify();
+    let status_text = match &designated_provider {
         Some(dp_id) => format!("Connecting to the designated ASP {dp_id}..."),
         None => "Auto-querying recommended ASPs...".to_string(),
     };
-
-    let created_notify = super::super::content::job_created_user_notify(job_id, ctx.title_display, &notify_text);
 
     let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
     let attachment_section_created = if attachment_paths.is_empty() {
@@ -125,8 +125,9 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
          [Your next actions (strict order)]\n\n\
          **Step 0 - notify the user session + continue execution in the current sub/backup session:**\n\
          Call xmtp_dispatch_user to tell the user the job is on-chain:\n\
-         \x20\x20content: {created_notify}\n\
-         🌐 **Canonical template — use verbatim after filling `<...>` placeholders; do NOT add extra information (price, budget, ASP capabilities, etc.) not present in the template. Localize per [Localization] rules before sending (rule 4: English → verbatim; rule 5: non-English → faithful translation).**\n\n\
+         \x20\x20content: {created_notify_tpl}\n\
+         Fill: `<title>` = {title} | `<short_jobId>` = {short_id} | `<status_text>` = {status_text}\n\
+         {l10n_short}\n\n\
          ⚠️ Subsequent routing -> negotiation / acceptance all run in the **current session**; do NOT switch to the user session, do NOT sessions_spawn.\n\n\
          {attachment_section_created}\
          {routing_section}\n\n"
