@@ -206,7 +206,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      In x402, the deliverable was the `replayBody` returned by `task-402-pay` in the earlier `job_payment_mode_changed` turn.\n\
      ✅ The CLI auto-saved the deliverable to disk during `task-402-pay` (no manual `task-deliverable-save` needed).\n\
      Look for the `replayBodyDisplay` value in this sub session's context (it was printed when the CLI output was processed).\n\
-     Set deliverable display variables: deliverableType=text, deliverableText=<replayBodyDisplay content>.\n\
+     Set deliverable display variables: deliverableType=text, deliverableText=<replayBodyDisplay content>, localPath=<path from Step 2a task-deliverable-list if available>.\n\
      Go to Step 3.\n\n".to_string() };
 
     let step2b_escrow = if pm == Some(3) { String::new() } else { format!("\
@@ -250,8 +250,9 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
        --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
        --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
      ```\n\
-     If save fails, log the error but do NOT block the review flow.\n\n\
-     Deliverable display variables: deliverableType=text, deliverableText=<full original text sent by the ASP>\n\n") };
+     If save fails, log the error but do NOT block the review flow.\n\
+     After save, record the path printed by the save command as localPath.\n\n\
+     Deliverable display variables: deliverableType=text, deliverableText=<full original text sent by the ASP>, localPath=<path from save command output>\n\n") };
 
     let step3_escrow = if pm == Some(3) { String::new() } else { format!("\
      --------- Branch A: escrow — push the review decision to the user ---------\n\n\
@@ -269,20 +270,33 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
      B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …' or '拒绝, 理由: …'\n\
      ```\n\n\
-     ▸ deliverableType=text:\n\
-     ```\n\
-     [Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
-     ---Deliverable---\n\
-     <deliverableText full content, no truncation, no summarization>\n\
-     ---End of deliverable---\n\
-     Deliverable URL: <deliverableUrl>\n\
-     Quality standards: <qualityStandards>\n\
-     Payment: escrow\n\
-     \n\
-     Choose:\n\
-     A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
-     B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …' or '拒绝, 理由: …'\n\
-     ```\n\n\
+     ▸ deliverableType=text — branch by localPath availability:\n\n\
+     \x20\x20✅ localPath is available (save succeeded):\n\
+     \x20\x20```\n\
+     \x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
+     \x20\x20Deliverable saved at: <localPath> (full absolute path)\n\
+     \x20\x20Deliverable URL: <deliverableUrl>\n\
+     \x20\x20Quality standards: <qualityStandards>\n\
+     \x20\x20Payment: escrow\n\
+     \x20\x20\n\
+     \x20\x20Choose:\n\
+     \x20\x20A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
+     \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …' or '拒绝, 理由: …'\n\
+     \x20\x20```\n\n\
+     \x20\x20⚠️ localPath is unavailable (save failed — fallback to inline full text):\n\
+     \x20\x20```\n\
+     \x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
+     \x20\x20---Deliverable---\n\
+     \x20\x20<deliverableText — full content, no truncation, no summarization>\n\
+     \x20\x20---End of deliverable---\n\
+     \x20\x20Deliverable URL: <deliverableUrl>\n\
+     \x20\x20Quality standards: <qualityStandards>\n\
+     \x20\x20Payment: escrow\n\
+     \x20\x20\n\
+     \x20\x20Choose:\n\
+     \x20\x20A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
+     \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …' or '拒绝, 理由: …'\n\
+     \x20\x20```\n\n\
      **Step 3b — Push to user via the 5-substep protocol** (use the composed `--user-content` from Step 3a; read ALL 5 sub-steps before running any command):\n\n\
      {l10n_prompt_bold}\n\n\
      {request_block}\n") };
@@ -299,14 +313,25 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\
      \x20\x20Quality standards: <qualityStandards>\n\n\
-     \x20\x20▸ deliverableType=text:\n\
-     \x20\x20content:\n\
-     \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
-     \x20\x20---Deliverable---\n\
-     \x20\x20<deliverableText full content, no truncation, no summarization>\n\
-     \x20\x20---End of deliverable---\n\
-     \x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20Quality standards: <qualityStandards>\n\n\
+     \x20\x20▸ deliverableType=text — branch by localPath availability:\n\n\
+     \x20\x20\x20\x20✅ localPath is available (save succeeded):\n\
+     \x20\x20\x20\x20content:\n\
+     \x20\x20\x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
+     \x20\x20\x20\x20---Deliverable (preview)---\n\
+     \x20\x20\x20\x20<first 500 characters of deliverableText; if total length ≤ 500, show full text and use ---Deliverable--- / ---End of deliverable--- headers instead>\n\
+     \x20\x20\x20\x20---End of preview---\n\
+     \x20\x20\x20\x20<if deliverableText was truncated, append: (… truncated; full content saved locally)>\n\
+     \x20\x20\x20\x20Deliverable saved at: <localPath> (full absolute path)\n\
+     \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
+     \x20\x20\x20\x20Quality standards: <qualityStandards>\n\n\
+     \x20\x20\x20\x20⚠️ localPath is unavailable (save failed — fallback to inline full text):\n\
+     \x20\x20\x20\x20content:\n\
+     \x20\x20\x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
+     \x20\x20\x20\x20---Deliverable---\n\
+     \x20\x20\x20\x20<deliverableText — full content, no truncation, no summarization>\n\
+     \x20\x20\x20\x20---End of deliverable---\n\
+     \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
+     \x20\x20\x20\x20Quality standards: <qualityStandards>\n\n\
      🛑 Do NOT end this turn — B-Step 2 (auto-rate) and B-Step 2.5 (notify rating) below are MANDATORY.\n\n\
      **B-Step 2 — 🛑 Auto-rate the ASP (MANDATORY):**\n\
      Based on the deliverable content vs the task description and quality standards, generate:\n\
