@@ -14,13 +14,13 @@ Scope = **all** display fields of the agent (every check in the tables below, ag
 
 **Trigger B — Provider edit (changed-fields scope).** Run inside the `§Update` flow (SKILL.md), after the user's changes are collected and **before** the Update Diff card is confirmed, when:
 - The target agent's `role` is `provider`, **AND**
-- The user is changing at least one QA-governed field: agent `name`, `description`, `picture`, or any service field (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`), incl. adding/removing a service.
+- The user is changing at least one QA-governed field: agent `name`, `description`, `picture`, or any service field (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`), incl. adding/removing a service. (For `picture`, only the format advisories L2/L3 apply — presence is never AI-checked; see §Logo.)
 
 Scope = **only the fields the user is actually modifying**. Do NOT flag pre-existing issues in fields the user left untouched — those were already on-chain and re-surfacing them mid-edit is noise. Concretely:
-- Changed agent `name` → run N1–N7 + U1–U3 on the new name only.
+- Changed agent `name` → run N1–N7 (incl. N4b public-figure list) + U1–U3 on the new name only.
 - Changed `description` → run D1–D10 on the new description only.
 - Changed/added service → run T1–T3 / S1–S6 / P1–P5 / D-rules + U1–U4 on **that** service only; leave sibling services alone.
-- Changed `picture` (new upload) → L2/L3 advisory only (L1 cannot fail on an edit that supplies a picture).
+- Changed `picture` (new upload) → L2/L3 advisory only (ratio / size); never L1 (presence) — see §Logo.
 - A field the user did NOT touch → skip every check for it, even if it looks non-compliant.
 
 If the role is `requester` or `evaluator`, skip this file under both triggers — it does not apply (those roles have no service fields).
@@ -29,13 +29,13 @@ If the role is `requester` or `evaluator`, skip this file under both triggers �
 
 1. Use the `agent get --agent-ids <N>` data already in context (do **NOT** make an extra CLI call just for QA).
 2. Determine scope by trigger:
-   - **Trigger A (pre-listing):** extract top-level `name`, `description`, `picture`, and all `services[]` entries. Check everything.
+   - **Trigger A (pre-listing):** extract top-level `name`, `description`, and all `services[]` entries. Check everything. For the avatar, run **only L2/L3 (format, advisory)** — never L1 (presence); see §Logo.
    - **Trigger B (provider edit):** extract **only the user's new/changed values** (the deltas you collected in the `§Update` flow). Check only those — ignore untouched fields entirely.
 3. Run the relevant checks in the tables below against the in-scope values (per-service for any in-scope service).
 4. **All checks pass** → proceed to the trigger's next step with no report: Trigger A → `agent submit-approval`; Trigger B → render the Update Diff card as usual.
 5. **Any check fails** → render the §QA Report (with two explicit options) and stop. Wait for the user to choose.
-   - **Trigger A exception:** L1 (no avatar) is always blocking — if `picture` is absent, do NOT offer option 2 (submit anyway); only offer option 1 (fix first).
-   - **Trigger B** never evaluates L1 (an edit can only fail L1 by clearing an existing avatar, which the diff card already surfaces). Option 2 wording for Trigger B is "Submit the change anyway" (proceeds to the Update Diff card → `agent update`), not "list anyway".
+   - **Avatar presence is never a QA finding** (Trigger A or B) — the AI does not check whether an avatar was uploaded; see §Logo. There is no L1 (presence) block. Avatar *format* (L2 ratio / L3 size) may appear as ⚠️ advisory only and never blocks; both triggers always offer option 2 (proceed anyway).
+   - **Trigger B** option 2 wording is "Submit the change anyway" (proceeds to the Update Diff card → `agent update`), not "list anyway".
 
 ---
 
@@ -58,13 +58,14 @@ If the role is `requester` or `evaluator`, skip this file under both triggers �
 | N2 | No agent ID embedded | Contains `#123`, `_1083`, or any numeric agent ID | Remove the ID |
 | N3 | No ordinal suffixes | Ends with bare digit, `_2`, `_v2`, `(2)`, or a language-native ordinal suffix (e.g. `No.3`, `#3`) | Remove the ordinal |
 | N4 | No personal names or account labels | Contains personal name, email prefix, or wallet account label (e.g. `Account2`, `Jim`, `bob123`) | Remove the personal reference |
+| N4b | No public-figure / celebrity names | Name contains any well-known public figure — the listing spec calls these out explicitly: **Trump / Donald Trump / Elon Musk / Steve Jobs / Justin Sun / CZ / Obama / Putin / Biden / Jeff Bezos / Mark Zuckerberg / Sam Altman / SBF / Michael Saylor / Warren Buffett**. The list is illustrative, not exhaustive — flag any other obvious public figure too. Matching is case-insensitive and applies to both the standalone name and substrings (e.g. `Elon's Trade Bot`, `CZ Signal`). | Remove the public-figure reference; pick a neutral product brand name |
 | N5 | Brand name — not a sentence | Reads as a full verb + object sentence rather than a product brand | Rewrite as a short brand name |
 | N6 | Bilingual separator | Bilingual name must use `NativeName · EnglishName` format (middle dot `·` + spaces) | Fix the separator |
 | N7 | No test / environment markers in name | Name contains any U1 marker — e.g. `WeatherBot-test` / `MyAgent_dev` / `SentryX(beta)` / `AgentX staging`. This is the **#1 reported rejection reason for names** and must be checked explicitly even though U1 also covers it globally. Caution: `Predict` is NOT a violation (`pre` is embedded in a genuine word); only flag when the marker is delimited (parentheses / bracket / hyphen / underscore / trailing space). | Remove the marker; pick a clean brand name |
 
 **Good:** `Predict-Raven` / `Luminos · ChainMirror` / `SentryX` / `WakeMeUp` / `PMAlpha`
 
-**Bad:** `FitnessBot(pre)` / `WeatherHelper_test` / `MyAgent-dev` / `SentryX(beta)` / `Account2buyer`
+**Bad:** `FitnessBot(pre)` / `WeatherHelper_test` / `MyAgent-dev` / `SentryX(beta)` / `Account2buyer` / `Elon Musk Bot` / `CZ Alpha` / `Trump Predictor`
 
 ---
 
@@ -137,17 +138,18 @@ If the role is `requester` or `evaluator`, skip this file under both triggers �
 
 ---
 
-## Logo — Required (missing avatar blocks activation)
+## Logo — do NOT check whether an avatar was uploaded; format stays advisory
 
-Avatar upload is **mandatory** — the platform no longer provides a default. Check the `picture` field from `agent get`.
+- ⛔ **No presence check.** The AI does NOT check whether an avatar was uploaded. Do NOT block `agent activate` / `submit-approval` on a missing avatar, and do NOT raise "avatar not uploaded" as a QA finding. There is **no L1 (presence) check**.
+
+The AI still gives **advisory** (⚠️, never blocking) guidance on avatar *format* when a picture is present or being uploaded:
 
 | # | Rule | Failing pattern | Fix |
 |---|------|----------------|-----|
-| L1 | Avatar must be uploaded | `picture` field is empty, null, or absent | Ask the user to upload an avatar via `agent upload` before listing |
-| L2 | 1:1 aspect ratio | Non-square image | Re-upload a square image |
+| L2 | 1:1 aspect ratio | Non-square image | Suggest re-uploading a square image |
 | L3 | < 1 MB | File too large | Compress and re-upload via `modules/avatar-upload.md` |
 
-L1 is a **blocking** check (❌) — do not proceed to `agent activate` without an avatar. L2 and L3 are ⚠️ warnings (cannot always be verified post-upload; surface at upload time).
+L2 / L3 are ⚠️ warnings only — best surfaced at upload time (they cannot always be verified post-upload); they never block listing. The upload-time 1 MB guard in `modules/avatar-upload.md` is the enforcement point for L3.
 
 ---
 

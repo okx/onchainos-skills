@@ -22,7 +22,7 @@
 
 - **Purpose**: Profile photo shown in agent cards, search results, and detail pages.
 - **Visibility**: Stored with the agent identity; rendered in cards and search results.
-- **Please note**: Optional (a default photo is used when skipped); if you have a local image just send it and I'll handle the upload; recommend 1:1 square, PNG/JPEG/WebP.
+- **Please note**: Optional (a default photo is used when skipped); if you have a local image just send it and I'll handle the upload; recommend 1:1 square, PNG/JPEG/WebP, < 1 MB, and — for the best display — avoid rounded corners and borders (a plain full-bleed square renders best). This display tip MUST be surfaced in the avatar prompt, not just the format hints (see `modules/avatar-upload.md §Policy 7`).
 - **Example**: A local image the user sends / an existing image link.
 
 ## Service-level fields (ASP only)
