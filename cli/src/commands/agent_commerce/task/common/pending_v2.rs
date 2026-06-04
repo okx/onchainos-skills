@@ -1261,17 +1261,15 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
 /// `xmtp_prompt_user` tool, since CLI mode runs outside of an MCP host.
 fn playbook_push_cli(entry: &PendingEntry) -> String {
     let llm_content = resolve_llm_content_cli(entry);
-    // Bash double-quoted strings: escape `\` and `"` so multi-line / quote-bearing
-    // user_content + llm_content survive shell parsing intact.
-    let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let user_content_q = escape(&entry.user_content);
-    let llm_content_q = escape(&llm_content);
+    // Single-quote the bash args; only `'` itself needs escaping via the canonical `'\''` trick.
+    let user_content_q = entry.user_content.replace('\'', "'\\''");
+    let llm_content_q = llm_content.replace('\'', "'\\''");
     format!(
         "Now run the EXACT CLI command below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the command returns.\n\n\
          ```bash\n\
          okx-a2a user decision-request \\\n\
-         \x20\x20--user-content \"{user}\" \\\n\
-         \x20\x20--llm-content \"{llm}\" \\\n\
+         \x20\x20--user-content '{user}' \\\n\
+         \x20\x20--llm-content '{llm}' \\\n\
          \x20\x20--json\n\
          ```\n",
         user = user_content_q,
@@ -1365,26 +1363,19 @@ fn playbook_relay_only(sub_key: &str, relay_content: &str) -> String {
 /// CLI subprocess instead of the MCP-only `xmtp_dispatch_session` tool, since
 /// CLI mode runs outside of an MCP host. Same semantics: relay once, then end.
 fn playbook_relay_only_cli(sub_key: &str, relay_content: &str) -> String {
-    // Bash double-quoted strings: escape `\` and `"` so multi-line / quote-bearing
-    // sub_key + relay_content survive shell parsing intact.
-    let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let sub_key_q = escape(sub_key);
-    let relay_content_q = escape(relay_content);
+    // Single-quote the bash args; only `'` itself needs escaping via the canonical `'\''` trick.
+    let sub_key_q = sub_key.replace('\'', "'\\''");
+    let relay_content_q = relay_content.replace('\'', "'\\''");
     format!(
-        "Relay the user's decision to the just-resolved sub session, then end the turn.\n\n\
+        "Relay the user's decision to the just-resolved sub session.\n\n\
          ```bash\n\
          okx-a2a session send \\\n\
-         \x20\x20--session-key \"{key}\" \\\n\
-         \x20\x20--content \"{content}\" \\\n\
+         \x20\x20--session-key '{key}' \\\n\
+         \x20\x20--content '{content}' \\\n\
          \x20\x20--no-wait --json\n\
          ```\n\n\
-         ⚠️ Run this command **exactly once** — when it returns success = end the turn immediately \
-         (no more tool / Exec calls). Repeated runs cause the sub to receive N identical relays → \
-         event-recursion loop. Skipping it = sub never gets the user's decision = task stalls.\n\n\
-         🛑 **CONSUMPTION MARKER** — The user's reply has been DISPATCHED above and is **already consumed**. \
-         Do NOT call `pending-decisions-v2 resolve-with-sessionkey` again with the same reply (now or in \
-         any later turn). Do NOT reference it as the answer to any subsequently-rendered card. Future \
-         decisions need a FRESH user_message — wait for the user to type something new.\n",
+         ⚠️ Run this command **exactly once**. Repeated runs cause the sub to receive N identical relays → event-recursion loop. Skipping it = sub never gets the user's decision = task stalls.\n\n\
+         🛑 **CONSUMPTION MARKER** — The user's reply has been DISPATCHED above and is **already consumed**. Do NOT call `pending-decisions-v2 resolve-with-sessionkey` again with the same reply (now or in any later turn). Do NOT reference it as the answer to any subsequently-rendered card. Future decisions need a FRESH user_message — wait for the user to type something new.\n",
         key = sub_key_q,
         content = relay_content_q,
     )

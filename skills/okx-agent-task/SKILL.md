@@ -178,6 +178,27 @@ Read-only; safe to call multiple times. ⚠️ Under system envelope entry, **ne
 
 **Real incidents** (full studies in `references/incidents.md`): I-1 ASP skipped next-action. I-2 ASP self-quoted without preamble. I-3 Backup self-queried instead of next-action. I-4 Envelope-routing miss. I-5 Backup sessions_spawn.
 
+## Live task-progress monitor — `okx-a2a user watch`
+
+> 🛑 **MANDATORY ROUTING — NOT a cron / scheduled / interval-polling task.** When a trigger phrase below matches, immediately run the §Action command **once, verbatim**. The command is a single long-poll call (waits up to 5 min per call for events); do **NOT** wrap in `/loop`, `Cron`, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, scheduler frameworks, or "set up a recurring job". Do **NOT** ask "how often should I check?" — `--timeout 300` IS the wait. Do **NOT** substitute `agent status` / `agent active-tasks` polling.
+
+**Trigger phrases — match any → run §Action verbatim**:
+- Chinese: `监听任务进展` / `开始监听任务` / `关注任务进展` / `使用监听 skill 监听任务进展` / `帮我盯着任务` / `任务有进度就告诉我` / `任务有动静告诉我` / `开监听` / `watch 任务`
+- English: `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching`
+
+**Action**:
+
+```bash
+okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50
+```
+
+**🚫 Anti-patterns**:
+- Do NOT use `/loop`, Cron, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, or any self-rolled polling around `onchainos agent status` / `agent active-tasks`.
+- There is **NO** `task watch` / `onchainos task watch` / `agent task watch` subcommand — do not invent one.
+- Do NOT pass `--from-now`. Watch **must** first drain SQLite-backed pending items, **then** wait for new changes.
+
+**Full protocol** — `kind` dispatch (`notification` claim / `decision_request` relay), user-session authority boundary, stop condition, terminal signals: see [`references/user-watch-protocol.md`](./references/user-watch-protocol.md). **You MUST read it before processing any returned items.**
+
 ## sessionKey Discrimination (user vs sub)
 
 | Type | sessionKey shape | Key marker |
@@ -316,60 +337,6 @@ CLI builds relay envelope and returns playbook (`playbook_relay_only` / `playboo
 | Stake (Evaluator) | "I want to stake" | [`evaluator-staking.md §2`](./references/evaluator-staking.md) |
 | Re-submit / nudge / change terms | "重新提交 / 催一下 / 换币种" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
 | Task list / status / close / decision list | "我的任务 / 查看决策 / close task" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
-
-### Live task-progress monitor — `okx-a2a user watch`
-
-**User wants the AI watcher to listen for task progress** — triggers:
-- Chinese: `监听任务进展` / `开始监听任务` / `关注任务进展` / `使用监听 skill 监听任务进展`
-- English: `task watch` / `user watch`
-
-**Action — Codex / Claude / any AI watcher MUST run exactly this**:
-
-```bash
-okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50
-```
-
-- `--timeout 300` (recommended) — prevents short-cycle empty polls from spamming "no new messages" into the user thread.
-- ❌ Do NOT pass `--from-now`. Watch **must** first drain the SQLite-backed pending items, **then** wait for new changes.
-- If no item is returned before the timeout, **stay silent** and wait for the next wake-up; do not announce an empty result.
-
-**🚫 Anti-patterns** — the command above is the ONLY supported mechanism:
-- Do NOT use `/loop`, Cron, `$CODEX_HOME/automations`, or any self-rolled polling around `onchainos agent status`.
-
-**Why**: the current CLI has no `task watch` subcommand. A2A progress is pushed via the SQLite `user_attention` table (kinds `notification` / `decision_request`), not via generic polling; `user watch` is the only consumer. SQLite is the single source of truth (states are only `pending` / `handled`); `user_attention.changed` is just a wake-up event — always re-read SQLite after waking.
-
-#### Dispatch by `kind`
-
-A returned item is always one of two `kind`s, handled completely differently:
-
-- **`kind == notification`** — **just render `user_content` to the user verbatim**. Do not trigger any thinking, do not parse `llm_content`. This is a pure-display notification: claim it directly, no relay.
-- **`kind == decision_request`** — render `user_content` to the user verbatim, **and treat `llm_content` as the current turn's instruction set to think about and execute**. The user's reply is the input to that thinking.
-
-##### `decision_request`: rendering choices
-
-Each JSON item already carries a `choices` array auto-derived by the CLI from `user_content` (recognizing `请回复「xxx」` / `请选择` followed by a numbered or lettered list). If `choices` is missing or empty, parse `user_content` yourself by the same rules and always append `自定义回复`. `decision_request` items must always allow an open-ended reply even when no parsed choices exist.
-
-Choice semantics: `保留` / `稍后` / `暂不` / `skip` → keep pending; everything else → reply (treated as the user's verbatim answer to this item, which triggers `llm_content` thinking via the flow below).
-
-##### `decision_request`: handling the user reply — concurrency-safe relay
-
-1. User picks `保留` / `skip` → **do NOT** claim; leave the item pending.
-2. Otherwise claim first: `okx-a2a user check --todo-ids <id> --json`.
-3. On `handled` → **execute the relay per `llm_content`'s instructions**. `llm_content` itself tells you which command to run, which target to relay to, and how to assemble the payload — just follow it. **Do NOT** semantically interpret the user's reply (no provider picking, no session creation, no XMTP solicitation), and do not bypass `llm_content` through any other path. For non-terminal items, return to watching immediately after handing the relay off to the target session — do not wait for the target sub to finish.
-4. On `alreadyHandled` → tell the user "this item was processed in another window" and stop; do not execute the relay again.
-5. Claim succeeded but relay failed → create a new `okx-a2a user notify` with the failure reason and a retry command; **do NOT** flip the original item back to pending.
-
-🛑 **User-session authority boundary**: while handling a `decision_request` item, the user session is only a **relay endpoint**, not a business executor. The user's reply (`956`, `1`, `关闭`, `approve`, …) is the verbatim answer to that item — it must not be reinterpreted as a new "pick a provider / start negotiation / create a group / solicit a quote" intent. In the user session, **never** execute: `okx-a2a session create` / `okx-a2a xmtp-send` / `xmtp_start_conversation` / `xmtp_send` / `onchainos agent next-action` / `agent common context` / `agent recommend` / `agent service-list`. Those business steps belong to the target job/session after it has received the relay.
-
-#### Stop condition after terminal items
-
-Terminal signals — `user_content` contains "本任务流程结束" / "任务完成" / "已验收通过" / "已退款" / "已关闭" / "已超时" / "已失败", or the event resolves to `job_completed` / `job_auto_completed` / `job_refunded` / `job_auto_refunded` / `job_closed` / `job_expired` / `dispute_resolved` in a terminal state.
-
-After handling such an item:
-1. `okx-a2a user list --json --limit 50` — if any are still pending, process those first.
-2. Empty queue → `onchainos agent active-tasks`.
-3. `totalTasks: 0` / `tasks: []` → briefly tell the user "no other active tasks; monitoring ends" and stop; **do NOT** restart `user watch`.
-4. Still has active non-terminal tasks → keep watching.
 
 ## Cross-Skill Routing
 
