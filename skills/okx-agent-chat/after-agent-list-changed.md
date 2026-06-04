@@ -38,6 +38,7 @@ All steps are idempotent — re-running this flow is safe.
 
 - `tools.alsoAllow` MUST contain `'group:plugins'`
 - `session.dmScope` MUST equal `'per-channel-peer'`
+- `plugins.entries.okx-a2a.hooks.allowConversationAccess` MUST equal `true`
 
 ## Decision Tree
 
@@ -56,7 +57,7 @@ Step 5  (Uninstall legacy openclaw-okx-a2a-extension if present) → install @ok
 
 ## Why Config Goes Before Install
 
-`openclaw plugins install` automatically restarts the gateway when it succeeds. That auto-restart is the only restart in the flow. Update `tools.alsoAllow` and `session.dmScope` **before** install so the single auto-restart loads the new plugin alongside the updated config in one pass. Both config keys are general (not coupled to any specific plugin id), so it is safe to set them while the plugin is not yet installed.
+`openclaw plugins install` automatically restarts the gateway when it succeeds. That auto-restart is the only restart in the flow. Update `tools.alsoAllow`, `session.dmScope`, and the OKX A2A hook config **before** install so the single auto-restart loads the new plugin alongside the updated config in one pass. These config keys are safe to set while the plugin is not yet installed; the plugin-specific hook key prepares the `okx-a2a` entry OpenClaw will use once the plugin is loaded.
 
 ## Execution Flow
 
@@ -141,6 +142,12 @@ fi
 CURRENT=$(openclaw config get session.dmScope 2>/dev/null || echo '')
 if [ "$CURRENT" != '"per-channel-peer"' ]; then
   openclaw config set session.dmScope '"per-channel-peer"' --strict-json 2>&1
+fi
+
+# 4.3 — plugins.entries.okx-a2a.hooks.allowConversationAccess MUST equal true
+CURRENT=$(openclaw config get plugins.entries.okx-a2a.hooks.allowConversationAccess 2>/dev/null || echo '')
+if [ "$CURRENT" != 'true' ]; then
+  openclaw config set plugins.entries.okx-a2a.hooks.allowConversationAccess true 2>&1
 fi
 ```
 
