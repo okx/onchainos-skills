@@ -10,13 +10,104 @@
 ///   POST /priapi/v5/wallet/agentic/competition/join
 ///   POST /priapi/v5/wallet/agentic/competition/claim
 use anyhow::{bail, Result};
+use chrono::{DateTime, FixedOffset};
 use clap::Subcommand;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use super::Context;
 use crate::client::ApiClient;
 use crate::output;
 use crate::wallet_store;
+
+// ── Time formatting helpers ──────────────────────────────────────────
+//
+// Competition timestamps are product-mandated to render in UTC+8. Doing this
+// in the CLI keeps the skill prompt small (no epoch math, no unit-confusion
+// rules) and matches the backend's own `startTimeFormatted` convention used
+// in `competition_detail`.
+//
+// All helpers ADD `<key>Formatted` fields alongside the raw `<key>` numeric
+// — raw fields stay so non-AI callers can still do time math.
+
+const UTC8_OFFSET_SECS: i32 = 8 * 3600;
+
+fn utc8() -> FixedOffset {
+    FixedOffset::east_opt(UTC8_OFFSET_SECS).expect("UTC+8 is a valid offset")
+}
+
+fn format_utc8_seconds(epoch_s: i64) -> Option<String> {
+    DateTime::from_timestamp(epoch_s, 0).map(|dt| {
+        dt.with_timezone(&utc8())
+            .format("%Y-%m-%d %H:%M:%S (UTC+8)")
+            .to_string()
+    })
+}
+
+fn format_utc8_millis(epoch_ms: i64) -> Option<String> {
+    DateTime::from_timestamp_millis(epoch_ms).map(|dt| {
+        dt.with_timezone(&utc8())
+            .format("%Y-%m-%d %H:%M:%S (UTC+8)")
+            .to_string()
+    })
+}
+
+fn format_utc8_date(epoch_s: i64) -> Option<String> {
+    DateTime::from_timestamp(epoch_s, 0)
+        .map(|dt| dt.with_timezone(&utc8()).format("%Y-%m-%d").to_string())
+}
+
+/// Backend-provided `*Formatted` strings (`competition_detail`) ship without
+/// a `(UTC+8)` suffix. Append one if missing so every response shape is uniform.
+fn ensure_utc8_suffix(s: &str) -> String {
+    let trimmed = s.trim_end();
+    if trimmed.ends_with("(UTC+8)") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed} (UTC+8)")
+    }
+}
+
+/// Read `obj[src]` as i64 epoch and, if positive, insert `obj[dst] = formatted`.
+/// Null / 0 / non-numeric / out-of-range silently no-op (preserves raw shape).
+fn add_formatted_seconds(obj: &mut Map<String, Value>, src: &str, dst: &str) {
+    if let Some(epoch) = obj.get(src).and_then(Value::as_i64) {
+        if epoch > 0 {
+            if let Some(s) = format_utc8_seconds(epoch) {
+                obj.insert(dst.to_string(), Value::String(s));
+            }
+        }
+    }
+}
+
+fn add_formatted_millis(obj: &mut Map<String, Value>, src: &str, dst: &str) {
+    if let Some(epoch) = obj.get(src).and_then(Value::as_i64) {
+        if epoch > 0 {
+            if let Some(s) = format_utc8_millis(epoch) {
+                obj.insert(dst.to_string(), Value::String(s));
+            }
+        }
+    }
+}
+
+/// Add the three `*Formatted` fields a list/activity entry exposes:
+/// `startTimeFormatted` / `endTimeFormatted` (full timestamp) and
+/// `timeRangeFormatted` (compact `YYYY-MM-DD ~ YYYY-MM-DD`).
+fn enrich_activity_time_fields(obj: &mut Map<String, Value>) {
+    add_formatted_seconds(obj, "startTime", "startTimeFormatted");
+    add_formatted_seconds(obj, "endTime", "endTimeFormatted");
+    let start_date = obj.get("startTime").and_then(Value::as_i64).and_then(format_utc8_date);
+    let end_date = obj.get("endTime").and_then(Value::as_i64).and_then(format_utc8_date);
+    if let (Some(s), Some(e)) = (start_date, end_date) {
+        obj.insert("timeRangeFormatted".to_string(), Value::String(format!("{s} ~ {e}")));
+    }
+}
+
+/// Enrich a `userStatus` entry (or batch entry) with `joinTimeFormatted`
+/// / `claimTimeFormatted` next to the raw seconds fields.
+fn enrich_user_status_time_fields(obj: &mut Map<String, Value>) {
+    add_formatted_seconds(obj, "joinTime", "joinTimeFormatted");
+    add_formatted_seconds(obj, "claimTime", "claimTimeFormatted");
+}
 
 #[derive(Subcommand)]
 pub enum CompetitionCommand {
@@ -50,7 +141,7 @@ pub enum CompetitionCommand {
         /// activity chain (validated against `competition_detail.chainId`).
         #[arg(long)]
         wallet: Option<String>,
-        /// Sort type: 1=PnL% (realized ROI), 7=PnL (realized profit). The exact values for a
+        /// Sort type: 1=PnL%, 7=PnL. The exact values for a
         /// given competition come from `competition detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend`;
         /// future activities may add more. Default 1 matches the typical primary leaderboard.
         #[arg(long, default_value = "1")]
@@ -188,19 +279,45 @@ pub async fn list(
         query.push(("status", s));
     }
 
-    client
+    let mut data = client
         .get("/priapi/v1/dapp/agentic/competition/list", &query)
-        .await
+        .await?;
+
+    // Enrich each activity with formatted time fields next to the raw epoch
+    // values, so the skill prompt never has to deal with UTC+8 conversion.
+    if let Some(arr) = data["availableCompetitions"].as_array_mut() {
+        for entry in arr.iter_mut() {
+            if let Some(obj) = entry.as_object_mut() {
+                enrich_activity_time_fields(obj);
+            }
+        }
+    }
+
+    Ok(data)
 }
 
 /// GET /priapi/v1/dapp/agentic/competition/detail
 pub async fn detail(client: &mut ApiClient, activity_id: &str) -> Result<Value> {
-    client
+    let mut data = client
         .get(
             "/priapi/v1/dapp/agentic/competition/detail",
             &[("activityId", activity_id)],
         )
-        .await
+        .await?;
+
+    // Backend ships `startTimeFormatted` / `endTimeFormatted` without a `(UTC+8)`
+    // suffix. Append it so every response shape across competition endpoints is
+    // uniform — skill prompt assumes "all *Formatted strings already end in (UTC+8)".
+    if let Some(obj) = data.as_object_mut() {
+        for key in ["startTimeFormatted", "endTimeFormatted"] {
+            if let Some(s) = obj.get(key).and_then(Value::as_str) {
+                let fixed = ensure_utc8_suffix(s);
+                obj.insert(key.to_string(), Value::String(fixed));
+            }
+        }
+    }
+
+    Ok(data)
 }
 
 /// GET /priapi/v1/dapp/agentic/competition/rank
@@ -234,6 +351,12 @@ pub async fn rank(
         data["allRankInfos"] = json!(truncated);
     }
 
+    // rankUpdateTime is in milliseconds (13-digit) — distinct from list/user-status
+    // fields which are seconds (10-digit). Enrich with a formatted sibling field.
+    if let Some(obj) = data.as_object_mut() {
+        add_formatted_millis(obj, "rankUpdateTime", "rankUpdateTimeFormatted");
+    }
+
     Ok(data)
 }
 
@@ -246,12 +369,16 @@ pub async fn user_status(
     identity: &CompetitionIdentity,
 ) -> Result<Value> {
     let (id_key, id_val) = identity.as_query();
-    client
+    let mut data = client
         .get(
             "/priapi/v1/dapp/agentic/competition/userStatus",
             &[("activityId", activity_id), (id_key, id_val)],
         )
-        .await
+        .await?;
+    if let Some(obj) = data.as_object_mut() {
+        enrich_user_status_time_fields(obj);
+    }
+    Ok(data)
 }
 
 /// GET /priapi/v1/dapp/agentic/competition/batchUserStatus
@@ -296,7 +423,13 @@ pub async fn batch_user_status(
             )
             .await?;
         if let Some(entries) = data["activities"].as_array() {
-            all_entries.extend(entries.iter().cloned());
+            for entry in entries.iter() {
+                let mut owned = entry.clone();
+                if let Some(obj) = owned.as_object_mut() {
+                    enrich_user_status_time_fields(obj);
+                }
+                all_entries.push(owned);
+            }
         }
     }
     Ok(all_entries)
@@ -416,89 +549,42 @@ pub async fn resolve_activity_id_by_name(
     }
 }
 
-/// MCP-facing wrapper for `user_status_all`. Identical to the inner CLI
-/// version, plus a `_render` hint that nudges the AI toward the correct
-/// SKILL.md section so it doesn't paraphrase the response.
+/// MCP-facing wrapper for `user_status_all`. Returns the same data as the
+/// inner CLI version; rendering guidance lives in the MCP tool description.
 ///
 /// `activityId` is intentionally retained so downstream tools
 /// (`competition_detail` / `competition_claim`) can chain to it. Display
-/// safety is enforced by the SKILL.md Output Rules — never by stripping
-/// the field at the data layer (doing so broke the join → detail chain).
+/// safety (never showing internal ids in user-facing output) is enforced
+/// by the tool description, not by stripping the field at the data layer
+/// (doing so broke the join → detail chain).
 pub async fn user_status_all_for_mcp(
     client: &mut ApiClient,
     activity_id: Option<&str>,
     account_id: &str,
 ) -> Result<Value> {
-    let mut data = user_status_all(client, activity_id, account_id).await?;
-    inject_render_hint(
-        &mut data,
-        "User-facing message MUST follow okx-growth-competition SKILL.md Step 5 \
-         'Check participation status' rules. NEVER show activityId / chainIndex / \
-         accountId in the output (Output Rules <NEVER>). Identify activities by activityName only.",
-    );
-    Ok(data)
+    user_status_all(client, activity_id, account_id).await
 }
 
-/// MCP-facing wrapper for `list` that adds a `_render` hint. The SKILL.md
-/// Step 1 template is strict about column names, the hardcoded `Solana, …`
-/// chain prefix, and never showing `activityId`; this hint reminds the AI
-/// at the data-layer point of consumption.
+/// MCP-facing wrapper for `list`. Returns the same data as the inner CLI
+/// version; rendering guidance lives in the MCP tool description.
 pub async fn list_for_mcp(
     client: &mut ApiClient,
     page_size: u32,
     page_num: u32,
     status: Option<u32>,
 ) -> Result<Value> {
-    let mut data = list(client, page_size, page_num, status).await?;
-    inject_render_hint(
-        &mut data,
-        "User-facing message MUST follow okx-growth-competition SKILL.md Step 1 fixed table template \
-         structure, rendered in the user's language. English canonical column headers: \
-         Name / Chain / Time / Total Prize Pool / Details — translate these headers naturally for \
-         non-English users while preserving the column order and meaning. \
-         Do NOT add an ID column. Do NOT show activityId anywhere in the table or surrounding text. \
-         The Chain cell MUST be 'Solana, {chainName}' when chainName is not Solana \
-         (hardcoded Solana prefix until backend exposes a multi-chain field); if chainName is Solana, \
-         write just 'Solana'. If results contain BOTH activityStatus=3 (active) and activityStatus=4 \
-         (ended), split into two tables under bold subheadings — English canonical \
-         '**Active**' / '**Ended**' (translate naturally for other languages) — in that order.",
-    );
-    Ok(data)
+    list(client, page_size, page_num, status).await
 }
 
-/// MCP-facing wrapper for `detail` that adds a `_render` hint pointing at
-/// SKILL.md Step 2 (the four-section reward template with the leading
-/// Basic-info block, rendered in the user's language).
+/// MCP-facing wrapper for `detail`. Returns the same data as the inner CLI
+/// version; rendering guidance lives in the MCP tool description.
 pub async fn detail_for_mcp(client: &mut ApiClient, activity_id: &str) -> Result<Value> {
-    let mut data = detail(client, activity_id).await?;
-    inject_render_hint(
-        &mut data,
-        "User-facing message MUST follow okx-growth-competition SKILL.md Step 2 fixed display template, \
-         rendered in the user's language. Copy the English canonical block and translate naturally \
-         while preserving every required content invariant. \
-         REQUIRED structure: 'Basic info:' block with chain line using hardcoded 'Solana, {chainName}' prefix; \
-         numbered 'Reward categories:' list 1./2./3./4. \
-         Section titles MUST map exactly to the four canonical English names: \
-         1. Realized ROI Pool, 2. Realized PnL Pool, 3. Participation Reward, 4. Skill Quality Award \
-         (DO NOT substitute synonyms like 'PnL% Ranking Award'). \
-         Sections 1 and 2 rank tables headers MUST be 'Rank / Reward' (translate naturally), and end with a Total row. \
-         Section 3 description MUST include the concepts: Agentic Wallet, $100 cumulative trading volume, \
-         $100 total assets, asset snapshot. \
-         Section 4 description MUST include the dual-scoring mechanism (AI pre-screening + human review) \
-         and the phrase 'top {skillTopN} each receive {skillPerCreatorReward}' — DO NOT invent rank rules by dividing pool. \
-         Read actual rank distribution from prizePoolDistribution[].rules[]. \
-         NEVER show activityId, chainIndex, or any internal numeric id to the user. \
-         NEVER use '-' bullet markers inside the numbered sections.",
-    );
-    Ok(data)
+    detail(client, activity_id).await
 }
 
-/// MCP-facing wrapper for `rank` that adds a `_render` hint reminding the AI
-/// of two critical Step 5 rules:
-///   1. A user can be on multiple leaderboards simultaneously — call this
-///      once per `sort_type` from `tabConfigs[].rankFieldConfig[].sortValueMap.descend`.
-///   2. The user-facing summary must follow Step 5 CASE 1 / 2 / 3 fixed
-///      template structure (rendered in the user's language).
+/// MCP-facing wrapper for `rank`. Returns the same data as the inner CLI
+/// version; rendering guidance (call once per `sort_type`, render one
+/// section per leaderboard) lives in the MCP tool description.
 pub async fn rank_for_mcp(
     client: &mut ApiClient,
     activity_id: &str,
@@ -506,32 +592,7 @@ pub async fn rank_for_mcp(
     sort_type: i32,
     limit: u32,
 ) -> Result<Value> {
-    let mut data = rank(client, activity_id, identity, sort_type, limit).await?;
-    inject_render_hint(
-        &mut data,
-        "User-facing message MUST follow okx-growth-competition SKILL.md Step 5 'Check user's own rank' \
-         CASE 1 / CASE 2 / CASE 3 fixed template structure, rendered in the user's language. \
-         BEFORE rendering, you MUST first call competition_detail to enumerate \
-         tabConfigs[].rankFieldConfig[].sortValueMap.descend, then call competition_rank ONCE PER \
-         sort_type so you have data for every leaderboard the activity exposes. A user can rank on \
-         multiple leaderboards (e.g. PnL% and PnL) at the same time — never assume one leaderboard \
-         is enough. Classify outcome as CASE 1 (ranked on all), CASE 2 (ranked on some), or CASE 3 \
-         (ranked on none) and emit the matching template. Never invent your own table layout, never \
-         collapse multi-leaderboard sections into one.",
-    );
-    Ok(data)
-}
-
-/// Insert a `_render` field into a JSON response without disturbing real
-/// payload fields. Works for both object and array shapes; for arrays the
-/// hint is wrapped into a sibling object so it doesn't mutate row entries.
-fn inject_render_hint(data: &mut Value, hint: &str) {
-    if let Some(obj) = data.as_object_mut() {
-        obj.insert("_render".to_string(), json!(hint));
-    }
-    // Note: we deliberately do NOT inject into bare arrays — wrapping the
-    // shape would change the public response contract. The list and detail
-    // APIs already return objects, so this is fine in practice.
+    rank(client, activity_id, identity, sort_type, limit).await
 }
 
 const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
@@ -578,22 +639,16 @@ pub async fn join(
         Err(e) => return Err(e),
     }
     // API returns data: null on success — construct a useful confirmation object.
-    // `activityId` is included for downstream tool calls (e.g. competition_detail
-    // takes an id to fetch totalPrizePool / chainName for rendering the success
-    // template). Output Rules apply to USER-FACING display only, not internal
-    // data flow between tools. The AI must still follow the SKILL.md rule of
-    // never showing this id in messages it produces for the user.
-    //
-    // The `_render` field is an inline reminder for the AI: if it didn't already
-    // load SKILL.md Step 3, this nudges it to follow the fixed copy template
-    // instead of paraphrasing.
+    // `activityId` is included so downstream tools (e.g. competition_detail) can
+    // chain off it to fetch totalPrizePool / participateChainIds when rendering
+    // the success message. The MCP tool description tells the AI to never show
+    // this id in user-facing output; we do not strip it at the data layer.
     Ok(json!({
         "joined": true,
         "activityId": activity_id,
         "evmAddress": evm_wallet,
         "solAddress": sol_wallet,
         "chainIndex": chain_index,
-        "_render": "Follow okx-growth-competition SKILL.md Step 3 'Successful registration' fixed template, rendered in the user's language (translate naturally from the English canonical). Required content: lead phrase 'Registered successfully!', dual-chain sentence ('runs on {chainName} and Solana'), total prize pool, the dual-axis PnL%/realized PnL ranking note, the participation+Skill awards mention, and a closing question. Required trailing line on its own line: the bracketed disclaimer '[Disclaimer: ...]' (translate naturally for non-English users). Use the returned `activityId` to call competition_detail and fetch chainName + totalPrizePool, but NEVER show activityId to the user.",
     }))
 }
 
@@ -644,7 +699,7 @@ pub async fn claim(
 /// Twitter) for a top-tier winner so the operations team can reach out
 /// about merchandise. Invoked after a successful claim when the user
 /// chooses to share a contact (the `needContact: true` signal on the
-/// claim response indicates eligibility — see SKILL.md Step 6).
+/// claim response indicates eligibility).
 ///
 /// `accountId` is loaded from the local wallet store; `walletAddress` is
 /// looked up from `joinedAddress` on a fresh batch user-status read so the
@@ -734,9 +789,6 @@ pub async fn submit_contact(
         "submitted": true,
         "activityId": activity_id,
         "contactType": contact_type,
-        "_render": "User-facing confirmation rendered in the user's language. \
-                    English canonical: 'Got it. Thanks for sharing! We will reach out shortly — please keep an eye on your messages.' \
-                    Translate naturally for other languages. Do NOT echo the contact value back to the user. Do NOT show internal ids (activityId, accountId).",
     }))
 }
 
@@ -812,14 +864,7 @@ pub async fn claim_and_submit(
             .and_then(|f| f["error"].as_str())
             .unwrap_or("unknown error");
         bail!(
-            "claim failed for all {} entries; first error: {}. \
-             AI rendering hint: surface the error verbatim, then append the SKILL.md Step 6 \
-             'Suggestions' block (English canonical: 'Suggestions: \
-             - The claim process requires Gas, please confirm your Gas balance is sufficient. \
-             - Try again later (could be a transient network issue). \
-             - If it fails repeatedly, please contact customer support.') translated naturally \
-             into the user's language, UNLESS the error is a semantic pre-check rejection \
-             (rewardStatus 0/2/3, code 11002, code 11008) — those are not transient and the suggestion is misleading.",
+            "claim failed for all {} entries; first error: {}",
             total,
             first_err
         );
@@ -855,20 +900,14 @@ pub async fn claim_and_submit(
         "totalEntries": total,
         "succeeded": succeeded,
         "failed": failed,
-        // Fields needed by the downstream contact-collection flow.
-        // `needContact: true` means the user is a top-tier winner who has
-        // not yet submitted a contact method — the AI should follow the
-        // SKILL.md Step 6 contact-prompt template after the success line.
+        // `needContact: true` flags a top-tier winner who has not yet submitted
+        // a contact method. The MCP tool description for `competition_claim`
+        // tells the AI how to handle this (invite the user to share Telegram /
+        // WeChat / Email / Twitter, then call `competition_submit_contact`).
         "needContact": need_contact,
         "activityId": activity_id,
         "accountId": account_id,
         "joinedAddress": joined_address,
-        "_render": "User-facing message rendered in the user's language (translate naturally from the English canonical). \
-                    For each entry in succeeded[] report the English canonical line 'Claimed {rewardAmount} {rewardUnit}, txHash: {txHash}'. \
-                    If failed[] is non-empty (partial success), list the failed entries with their `error`, then append the SKILL.md Step 6 'Fixed failure-suggestion block' (English canonical: 'Suggestions: - The claim process requires Gas, please confirm your Gas balance is sufficient. - Try again later (could be a transient network issue). - If it fails repeatedly, please contact customer support.'). \
-                    Skip the suggestion block when the failures are pre-check semantic rejections (rewardStatus 0/2/3, code 11002, code 11008). \
-                    Do NOT re-run claim blindly on partial success — already-broadcasted txs would hit the dedup guard. \
-                    If `needContact: true` is present in this response, append the SKILL.md Step 6 'Contact-collection prompt' template after the success line — invite the user (NOT force) to share ONE contact method (Telegram / WeChat / Email / Twitter). Once the user provides it, parse contactType + contactValue and call the `competition_submit_contact` MCP tool with this same `activityId` (use `activity_name` for cross-tool chaining) to record it.",
     }))
 }
 
@@ -1245,4 +1284,95 @@ async fn ensure_logged_in_client() -> Result<(String, ApiClient)> {
     };
     let auth_client = ApiClient::new_async(None).await?;
     Ok((account_id, auth_client))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 2026-03-24 10:13:20 (UTC+8) — equivalently 2026-03-24 02:13:20 UTC
+    const EPOCH_S: i64 = 1_774_318_400;
+    const EPOCH_MS: i64 = 1_774_318_400_000;
+
+    #[test]
+    fn format_utc8_seconds_renders_with_suffix() {
+        let s = format_utc8_seconds(EPOCH_S).expect("valid epoch");
+        assert_eq!(s, "2026-03-24 10:13:20 (UTC+8)");
+    }
+
+    #[test]
+    fn format_utc8_millis_renders_with_suffix() {
+        let s = format_utc8_millis(EPOCH_MS).expect("valid epoch");
+        assert_eq!(s, "2026-03-24 10:13:20 (UTC+8)");
+    }
+
+    #[test]
+    fn format_utc8_date_omits_time_and_suffix() {
+        let s = format_utc8_date(EPOCH_S).expect("valid epoch");
+        assert_eq!(s, "2026-03-24");
+    }
+
+    #[test]
+    fn ensure_utc8_suffix_is_idempotent() {
+        let already = "2026-03-24 10:13:20 (UTC+8)";
+        assert_eq!(ensure_utc8_suffix(already), already);
+    }
+
+    #[test]
+    fn ensure_utc8_suffix_appends_when_missing() {
+        assert_eq!(
+            ensure_utc8_suffix("2026-05-07 18:00:00"),
+            "2026-05-07 18:00:00 (UTC+8)"
+        );
+    }
+
+    #[test]
+    fn ensure_utc8_suffix_trims_trailing_whitespace_before_appending() {
+        assert_eq!(
+            ensure_utc8_suffix("2026-05-07 18:00:00  "),
+            "2026-05-07 18:00:00 (UTC+8)"
+        );
+    }
+
+    #[test]
+    fn enrich_activity_adds_three_formatted_fields() {
+        let mut entry = json!({
+            "name": "Test Comp",
+            "startTime": EPOCH_S,
+            "endTime": EPOCH_S + 7 * 86400,
+        });
+        enrich_activity_time_fields(entry.as_object_mut().unwrap());
+        assert_eq!(entry["startTimeFormatted"], "2026-03-24 10:13:20 (UTC+8)");
+        assert_eq!(entry["endTimeFormatted"], "2026-03-31 10:13:20 (UTC+8)");
+        assert_eq!(entry["timeRangeFormatted"], "2026-03-24 ~ 2026-03-31");
+        // Raw fields preserved
+        assert_eq!(entry["startTime"].as_i64(), Some(EPOCH_S));
+    }
+
+    #[test]
+    fn enrich_activity_skips_missing_or_zero_epoch() {
+        let mut entry = json!({ "name": "Legacy", "startTime": 0, "endTime": null });
+        enrich_activity_time_fields(entry.as_object_mut().unwrap());
+        assert!(entry.get("startTimeFormatted").is_none());
+        assert!(entry.get("endTimeFormatted").is_none());
+        assert!(entry.get("timeRangeFormatted").is_none());
+    }
+
+    #[test]
+    fn enrich_user_status_skips_null_claim_time() {
+        let mut entry = json!({
+            "joinStatus": 1,
+            "joinTime": EPOCH_S,
+            "claimTime": null,
+        });
+        enrich_user_status_time_fields(entry.as_object_mut().unwrap());
+        assert_eq!(entry["joinTimeFormatted"], "2026-03-24 10:13:20 (UTC+8)");
+        assert!(entry.get("claimTimeFormatted").is_none());
+    }
+
+    #[test]
+    fn format_utc8_seconds_handles_out_of_range() {
+        // chrono returns None for genuinely invalid timestamps
+        assert!(format_utc8_seconds(i64::MAX).is_none());
+    }
 }

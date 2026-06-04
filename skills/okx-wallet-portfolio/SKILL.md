@@ -1,10 +1,10 @@
 ---
 name: okx-wallet-portfolio
-description: "Public-address portfolio lookup across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon and 20+ chains. Invoke when the user supplies a wallet address and wants its: balance, token holdings, total portfolio value, or DeFi positions (e.g. 'check balance of 0xAbc', 'what tokens does 0xAbc hold', 'portfolio value of this address'). Requires an explicit address — for the user's own logged-in wallet with no address use okx-agentic-wallet. Not for PnL / DEX history (use okx-dex-market)."
+description: "Public-address portfolio lookup across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon and 20+ chains. Invoke when the user supplies a wallet address and wants its: balance, token holdings, total portfolio value, or DeFi positions (e.g. 'check balance of 0xAbc', 'what tokens does 0xAbc hold', 'portfolio value of this address'). Requires an explicit address — for the user's own logged-in wallet with no address use okx-agentic-wallet."
 license: MIT
 metadata:
   author: okx
-  version: "3.3.8"
+  version: "3.3.9"
   homepage: "https://web3.okx.com"
 ---
 
@@ -28,16 +28,9 @@ metadata:
 
 ## Chain Name Support
 
-The CLI accepts human-readable chain names and resolves them automatically.
+> Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
-| Chain | Name | chainIndex |
-|---|---|---|
-| XLayer | `xlayer` | `196` |
-| Solana | `solana` | `501` |
-| Ethereum | `ethereum` | `1` |
-| Base | `base` | `8453` |
-| BSC | `bsc` | `56` |
-| Arbitrum | `arbitrum` | `42161` |
+The CLI accepts human-readable chain names and resolves them automatically (name or numeric chainIndex).
 
 **Address format note**: EVM addresses (`0x...`) work across Ethereum/BSC/Polygon/Arbitrum/Base etc. Solana addresses (Base58) and Bitcoin addresses (UTXO) have different formats. Do NOT mix formats across chain types.
 
