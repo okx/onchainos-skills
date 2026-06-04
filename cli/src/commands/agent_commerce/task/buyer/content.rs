@@ -166,7 +166,7 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
 /// User notification after the buyer agent auto-rates the ASP.
 pub fn rating_submitted_user_notify(job_id: &str) -> String {
     format!(
-        "[📝 Rating Submitted] Task <title> (`{job_id}`) — rated.\n\
+        "[📝 Rating Submitted] Job <title> (`{job_id}`) — rated.\n\
          Score: <score> / 5.00\n\
          💬 Comment: <description>"
     )
@@ -174,7 +174,7 @@ pub fn rating_submitted_user_notify(job_id: &str) -> String {
 
 pub fn rating_failed_user_notify(job_id: &str) -> String {
     format!(
-        "[⚠️ Rating Skipped] Task <title> (`{job_id}`) — auto-rating could not be submitted: <error reason>.\n\
+        "[⚠️ Rating Skipped] Job <title> (`{job_id}`) — auto-rating could not be submitted: <error reason>.\n\
          This does not affect the task completion or payment."
     )
 }
@@ -419,14 +419,14 @@ pub fn complete_failed_user_notify(job_id: &str) -> String {
 
 /// create_task success — no designated provider.
 pub fn create_task_public_user_notify() -> String {
-    "Task submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
+    "Job submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
      Once confirmed, the system will automatically fetch the recommended provider list for you to choose from."
         .to_string()
 }
 
 /// create_task success — with designated provider.
 pub fn create_task_designated_user_notify() -> String {
-    "Task submitted; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); \
+    "Job submitted; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); \
      awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider."
         .to_string()
 }
@@ -483,7 +483,7 @@ pub fn pending_list_empty_user_notify() -> String {
 /// Preamble escalation hard rule 2) CLI execution error (B-6-2).
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
     format!(
-        "[⚠️ Operation Failed] Task `{job_id}`\n\
+        "[⚠️ Operation Failed] Job `{job_id}`\n\
          - Action: <e.g. recommend providers / submit review / pay via x402>\n\
          - Error: <one-sentence summary of stderr / error field>\n\
          - Current status: <status>\n\

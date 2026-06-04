@@ -150,7 +150,7 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
 /// Preamble exception-escalation hard rule 2) execution error — content template.
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
     format!(
-        "[⚠️ Operation Failed] Task {job_id}\n\
+        "[⚠️ Operation Failed] Job {job_id}\n\
          - Action: <e.g. submit deliverable / accept job / fetch paymentId>\n\
          - Error: <one-sentence summary of stderr / error field>\n\
          - Current status: <status>\n\
@@ -191,7 +191,7 @@ pub fn submit_deadline_warn_user_prompt(short_id: &str) -> String {
 /// User notification after the provider agent auto-rates the buyer.
 pub fn rating_submitted_user_notify(job_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[📝 Rating Submitted] Task <title> (`{job_id}`) — rated.\n\
+        "\x20\x20\x20\x20[📝 Rating Submitted] Job <title> (`{job_id}`) — rated.\n\
          \x20\x20\x20\x20Score: <score> / 5.00\n\
          \x20\x20\x20\x20💬 Comment: <description>"
     )
@@ -199,7 +199,7 @@ pub fn rating_submitted_user_notify(job_id: &str) -> String {
 
 pub fn rating_failed_user_notify(job_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[⚠️ Rating Skipped] Task <title> (`{job_id}`) — auto-rating could not be submitted: <error reason>.\n\
+        "\x20\x20\x20\x20[⚠️ Rating Skipped] Job <title> (`{job_id}`) — auto-rating could not be submitted: <error reason>.\n\
          \x20\x20\x20\x20This does not affect the task completion or payment."
     )
 }
