@@ -2,8 +2,6 @@
 
 All commands: `onchainos competition <subcommand> [flags]`
 
----
-
 ## competition list
 
 List Agentic Wallet exclusive trading competitions.
@@ -31,6 +29,9 @@ onchainos competition list [--status <0|1|2>] [--page-size <n>] [--page-num <n>]
       "rewards": "50000 HIPPO",
       "startTime": 1742913600,
       "endTime": 1743432000,
+      "startTimeFormatted": "2025-03-26 02:13:20 (UTC+8)",
+      "endTimeFormatted": "2025-04-01 02:13:20 (UTC+8)",
+      "timeRangeFormatted": "2025-03-26 ~ 2025-04-01",
       "chainId": 196,
       "chainName": "X Layer",
       "status": 3
@@ -39,6 +40,8 @@ onchainos competition list [--status <0|1|2>] [--page-size <n>] [--page-num <n>]
   "totalCount": 2
 }
 ```
+
+**`*Formatted` rule (whole file)**: any `*Formatted` sibling is a CLI-computed UTC+8 string with the ` (UTC+8)` suffix included — render verbatim, never recompute from the raw Unix value.
 
 **Note**: Response `status` field uses different values from the query param:
 - Query param: `0`=active, `1`=ended, `2`=all
@@ -63,19 +66,10 @@ onchainos competition detail --activity-id <id>
 | `--activity-id` | Yes | Activity ID from `competition list` |
 
 **Output:** Competition object. Key fields:
-- `chainId` / `chainName`: the activity's **primary chain** — it is BOTH a trading chain (its trades count toward the competition standing) AND the **claim chain** (rewards / activity contract live here).
-- `participateChainIds`: array of **additional trading chains** beyond `chainId` (e.g. with `chainId=196` and `participateChainIds=[501]`, trades on both X Layer and Solana count). Returned by **both `list` and `detail`** endpoints. May be empty on activities created before the field was added. Trading-eligibility = `{chainId} ∪ participateChainIds` (dedup). Claim path = `chainId` only.
-- `startTime` / `endTime`: 10-digit Unix timestamps (raw — kept for backward compat, not recommended for display)
-- `startTimeFormatted` / `endTimeFormatted`: pre-formatted UTC+8 strings (`yyyy-MM-dd HH:mm:ss`, e.g. `"2026-05-07 18:00:00"`) — **use these for display**, just append ` (UTC+8)` for the timezone suffix; do not recompute from epoch
-- `tabConfigs[]`: one entry per leaderboard tab
-  - `tab`: `1`=volume, `3`=realized PnL, `4`=boost token volume
-  - `tabDetails[].title` / `tabDetails[].desc`: rules text (paragraphs separated by `\n`)
-  - `prizePoolDistribution[].rules[].interval`: rank range (e.g. `"1"`, `"4-10"`)
-  - `prizePoolDistribution[].rules[].reward`: reward amount for that range
-  - `prizePoolDistribution[].rewardUnit`: reward token symbol
-  - `prizePoolDistribution[].totalReward`: current total prize pool
-  - `prizePoolDistribution[].rewardType`: `5`=volume pool, `7`=PnL pool, `8`=boost token pool
-  - `rankFieldConfig[]`: column definitions for the leaderboard table
+- `chainId` / `chainName`: the activity's **claim / reward chain ONLY** — the reward contract and activity address live on this chain. NOT a trading chain unless it also appears in `participateChainIds`.
+- `participateChainIds`: the **trading-chain set** — only trades on chains in this array count toward the competition standing. Returned by **both `list` and `detail`** endpoints. Trading-eligibility = `participateChainIds`. Claim path = `chainId`.
+- `startTime` / `endTime`: raw Unix seconds (do not display; use the `*Formatted` siblings).
+- `tabConfigs[]`: per-leaderboard config. `rankFieldConfig[].title` / `.key` / `.sortValueMap.descend` drive the rank tool. `prizePoolDistribution[].rules[]` (`interval`, `reward`) + `rewardUnit` / `totalReward` / `rewardType` (`5`=volume, `7`=PnL, `8`=boost) populate the details template. May be empty on pre-prod.
 
 ---
 
@@ -95,7 +89,7 @@ onchainos competition rank --activity-id <id> [--wallet <addr>] --sort-type <typ
 |------|----------|---------|-------------|
 | `--activity-id` | Yes | — | Activity ID |
 | `--wallet` | No | (uses active account's `accountId` instead) | Optional wallet address — pass to query someone else's rank (chain-validated against the activity). |
-| `--sort-type` | Yes | 1 | Currently observed: 1=PnL% (realized ROI), 7=PnL (realized profit). Future activities may add more — discover via `competition detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend`. |
+| `--sort-type` | Yes | 1 | Currently observed: 1=PnL%, 7=PnL. Future activities may add more — discover via `competition detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend`. |
 | `--limit` | No | 20 | Max entries in `allRankInfos` (max 100; applied client-side) |
 
 **Output:**
@@ -111,17 +105,14 @@ onchainos competition rank --activity-id <id> [--wallet <addr>] --sort-type <typ
   },
   "allRankInfos": [ ... ],
   "rankUpdateTime": 1774359000638,
+  "rankUpdateTimeFormatted": "2026-03-24 18:50:00 (UTC+8)",
   "agenticActivity": true,
   "totalRewardToken": "1000000",
   "rewardTokenSymbol": "HIPPO"
 }
 ```
 
-`format`: `1`=number, `2`=percentage, `3`=token amount with unit
-
-`userTotal` meaning is dictated by the activity's `tabConfigs[].rankFieldConfig[]` — read `title` (display name) and `key` (internal field) from there. Currently observed metrics: PnL% (`pnl`, sort-type 1), PnL (`realizedProfit`, sort-type 7).
-
-`rankUpdateTime`: milliseconds (13-digit timestamp)
+`format`: `1`=number, `2`=percentage, `3`=token amount with unit. `userTotal` semantics come from `tabConfigs[].rankFieldConfig[].title` / `.key`.
 
 ---
 
@@ -143,22 +134,24 @@ onchainos competition user-status [--activity-id <id>]
 |------|----------|-------------|
 | `--activity-id` | No | Activity ID; omit to check **all** activities (active + ended) |
 
-When `--activity-id` is omitted, the CLI calls `competition list --status 2` first to get all activity IDs, then queries them via the **batch** endpoint (`batchUserStatus`, chunked at 20 ids per call) and returns an array with activity metadata merged in — fewer round-trips than the old loop-and-call approach.
-
-Per-activity `userStatus` payload from the batch endpoint also includes extra fields not present in the single-activity response: `joinedAddress`, `winnerDownUrl`, `needContact`.
+Per-activity payload from `batchUserStatus` also carries `joinedAddress`, `winnerDownUrl`, `needContact` — fields absent from the single-activity response.
 
 **Output (single activity):**
 ```json
 {
   "joinStatus": 1,
   "joinTime": 1742920000,
+  "joinTimeFormatted": "2025-03-26 03:46:40 (UTC+8)",
   "rewardStatus": 1,
   "claimTime": null,
+  "claimTimeFormatted": null,
   "rewardAmount": "10000",
   "rewardUnit": "HIPPO",
   "winnerDownUrl": "https://..."
 }
 ```
+
+`joinTime` / `claimTime`: raw Unix seconds (`null` if no event yet). `*Formatted` siblings are `null` when the source is `null`/`0`.
 
 **Output (all activities — no --activity-id):**
 ```json
@@ -188,7 +181,7 @@ Per-activity `userStatus` payload from the batch endpoint also includes extra fi
 Register for a competition. **Requires wallet login.**
 
 ```
-onchainos competition join --activity-id <id> --evm-wallet <evm_addr> --sol-wallet <sol_addr>
+onchainos competition join --activity-id <id> --evm-wallet <evm_addr> --sol-wallet <sol_addr> --chain-index <chain_id>
 ```
 
 **API**: `POST /priapi/v5/wallet/agentic/competition/join`
@@ -200,20 +193,11 @@ onchainos competition join --activity-id <id> --evm-wallet <evm_addr> --sol-wall
 | `--activity-id` | Yes | Activity ID |
 | `--evm-wallet` | Yes | EVM wallet address (XLayer) |
 | `--sol-wallet` | Yes | Solana wallet address |
+| `--chain-index` | Yes | Competition chain id (e.g. `"1"` Ethereum, `"196"` X Layer). Read from `competition_detail` → `chainIndex`. |
 
-**Request body fields** (built automatically):
-
-| Field | Source |
-|-------|--------|
-| `activityId` | `--activity-id` |
-| `evmAddress` | `--evm-wallet` |
-| `solAddress` | `--sol-wallet` |
-| `nickname` | Auto: `"Agentic....{last4 of evm}"` |
-| `accountId` | `wallet_store.selected_account_id` (from login session) |
-
-**API response**: `{ "code": 0, "data": null }` — CLI constructs a confirmation object:
+Body is built automatically: `accountId` is loaded from `wallet_store` (active session); other fields come from the flags verbatim. CLI wraps the bare `{ "code": 0 }` API response into a confirmation object:
 ```json
-{ "joined": true, "activityId": "100", "evmAddress": "0x...", "solAddress": "...", "nickname": "Agentic....abcd" }
+{ "joined": true, "activityId": "100", "evmAddress": "0x...", "solAddress": "...", "chainIndex": "1" }
 ```
 
 **Errors:**
@@ -265,12 +249,7 @@ onchainos competition claim --activity-id <id> --evm-wallet <evm_addr> --sol-wal
 }
 ```
 
-Internally the command:
-1. Calls `competition_user_status` to verify `rewardStatus == 1` (won, unclaimed). Bails with a plain error if 0 (not won), 2 (already claimed), 3 (expired), or 4 (pending draw — winners not announced yet).
-2. Calls the claim API to fetch unsigned calldata for each entry.
-3. For Solana entries: extracts the unsigned tx bytes from `tx.data` (Buffer JSON shape) and base58-encodes them locally — empirically `base58CallData` is empty in real responses, so this fallback is always taken.
-4. For EVM entries: takes the 0x-prefixed `input` directly.
-5. Pipes each entry through `wallet contract-call` (TEE session signing + broadcast) and collects the resulting txHash.
+Pre-checks `rewardStatus` before signing — bails on 0 (not won), 2 (already claimed), 3 (expired), 4 (pending draw). Otherwise signs + broadcasts each entry atomically (Solana entries fall back to base58-encoding `tx.data` because `base58CallData` is empirically empty).
 
 **Errors:**
 - code 11002 `not eligible for reward` → user did not win
@@ -298,8 +277,6 @@ onchainos competition submit-contact --activity-id <id> --contact-type <type> --
 | `--activity-id` | Yes | Activity ID |
 | `--contact-type` | Yes | One of: `Telegram`, `WeChat`, `Email`, `Twitter` (case-sensitive — backend rejects other values) |
 | `--contact-value` | Yes | The contact value (max 256 chars). e.g. `@username` for Telegram/Twitter, the WeChat ID, the email address |
-
-`accountId` and `walletAddress` are resolved internally: accountId comes from the local wallet store, walletAddress is looked up from `joinedAddress` via a fresh `batchUserStatus` call (ensures the address we submit matches the one the user actually joined with).
 
 **Output:**
 ```json

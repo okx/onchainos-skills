@@ -40,7 +40,9 @@ Every time before running any `onchainos` command, always follow these steps in 
 4. **Version drift check** — REQUIRED, run even if steps 1-3 were skipped.
    - Run `onchainos --version` → CLI version (e.g., `2.2.9`)
    - Read `version` field from the active skill's YAML frontmatter (e.g., `version: "2.0.0"` at the top of SKILL.md)
-   - If CLI version > skill version → warn: **"⚠️ Skill outdated (skill vX.Y.Z < CLI vA.B.C). Re-install skills to get the latest features and fixes."**
+   - If CLI version > skill version → warn the user and offer to refresh skills:
+     **"⚠️ Skill outdated (skill vX.Y.Z < CLI vA.B.C). Run `onchainos upgrade` to refresh both the CLI and any locally cloned skill checkouts (`~/.codex/onchainos-skills`, `~/.openclaw/onchainos-skills`, `~/.cursor/onchainos-skills`, `~/.opencode/onchainos-skills`). For skills installed via a plugin manager (Claude Code `/plugin`, npm, Cursor marketplace), update through that manager instead — `onchainos upgrade` will skip those paths and print guidance."**
+   - After the user re-runs the skill (or confirms they've updated), re-read SKILL.md so subsequent steps use the fresh content.
    - Continue to the user's command.
 5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
    `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
