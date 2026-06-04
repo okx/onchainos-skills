@@ -30,7 +30,7 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 
 ## OKX A2A Runtime Bridge
 
-This skill still names legacy OpenClaw A2A tools such as `xmtp_send`, `xmtp_start_conversation`, `xmtp_prompt_user`, `xmtp_dispatch_user`, `xmtp_dispatch_session`, `xmtp_get_conversation_history`, `xmtp_sessions_query`, and `session_status`.
+This skill still names legacy OpenClaw A2A tools such as `xmtp_send`, `xmtp_start_conversation` `xmtp_start_evaluate_conversation`, `xmtp_prompt_user`, `xmtp_dispatch_user`, `xmtp_dispatch_session`, `xmtp_get_conversation_history`, `xmtp_sessions_query`, and `session_status`.
 
 When a playbook step needs one of those tools, first load [`okx-agent-chat/references/okx-a2a-legacy-tool-bridge/SKILL.md`](../okx-agent-chat/references/okx-a2a-legacy-tool-bridge/SKILL.md). That bridge owns the runtime check:
 
@@ -188,6 +188,27 @@ Read-only; safe to call multiple times. ⚠️ Under system envelope entry, **ne
 **Correct flow** (a2a → ASP): receive → infer role from `sender.role=1` → read `provider.md` → `common context` → `next-action --event job_created` → three-step handshake → wait for `[intent:confirm]` → `apply` → wait for `job_accepted` → `deliver`.
 
 **Real incidents** (full studies in `references/incidents.md`): I-1 ASP skipped next-action. I-2 ASP self-quoted without preamble. I-3 Backup self-queried instead of next-action. I-4 Envelope-routing miss. I-5 Backup sessions_spawn.
+
+## Live task-progress monitor — `okx-a2a user watch`
+
+> 🛑 **MANDATORY ROUTING — NOT a cron / scheduled / interval-polling task.** When a trigger phrase below matches, immediately run the §Action command **once, verbatim**. The command is a single long-poll call (waits up to 5 min per call for events); do **NOT** wrap in `/loop`, `Cron`, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, scheduler frameworks, or "set up a recurring job". Do **NOT** ask "how often should I check?" — `--timeout 300` IS the wait. Do **NOT** substitute `agent status` / `agent active-tasks` polling.
+
+**Trigger phrases — match any → run §Action verbatim**:
+- Chinese: `监听任务进展` / `开始监听任务` / `关注任务进展` / `使用监听 skill 监听任务进展` / `帮我盯着任务` / `任务有进度就告诉我` / `任务有动静告诉我` / `开监听` / `watch 任务`
+- English: `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching`
+
+**Action**:
+
+```bash
+okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50
+```
+
+**🚫 Anti-patterns**:
+- Do NOT use `/loop`, Cron, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, or any self-rolled polling around `onchainos agent status` / `agent active-tasks`.
+- There is **NO** `task watch` / `onchainos task watch` / `agent task watch` subcommand — do not invent one.
+- Do NOT pass `--from-now`. Watch **must** first drain SQLite-backed pending items, **then** wait for new changes.
+
+**Full protocol** — `kind` dispatch (`notification` claim / `decision_request` relay), user-session authority boundary, stop condition, terminal signals: see [`references/user-watch-protocol.md`](./references/user-watch-protocol.md). **You MUST read it before processing any returned items.**
 
 ## sessionKey Discrimination (user vs sub)
 

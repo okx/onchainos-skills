@@ -94,7 +94,7 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              - Exact match → proceed to Step 2.\n\
              - Any character differs → call `xmtp_dispatch_session` (`sessionKey=arbKey`, `content=<the entire current inbound envelope as a JSON string>`, **insert all fields verbatim, no rewriting**), then **end this turn**.\n\n\
              **Step 2 — Notify the user that you've been selected as a juror:**\n\n\
-             Extract from `message`: `jobTitle`, `budget`, `tokenSymbol`, `commitDeadline` (epoch seconds), `agentName`. Render `commitDeadline` (epoch seconds) into the user's local time as `commitDeadlineLocal`, and compute `hoursLeft` = `max(0, ceil((commitDeadline - now_epoch_seconds) / 3600))`. **Substitute every `<message.jobTitle>` below with the actual value extracted from `message.jobTitle`.**\n\
+             Extract from `message`: `jobTitle`, `budget`, `tokenSymbol`, `commitDeadline` (epoch seconds), `agentName`. Render `commitDeadline` (epoch seconds) into the user's local time as `commitDeadlineLocal`, and compute `hoursLeft` = `floor((commitDeadline - now_epoch_seconds) / 3600)`. Render `hoursLeftText`: if `hoursLeft >= 1` use `<hoursLeft> hours`; else if the deadline has not passed (`commitDeadline > now_epoch_seconds`) use `less than 1 hour`; else treat as expired (drop the entire `⏰ Key deadline` block). **Substitute every `<message.jobTitle>` below with the actual value extracted from `message.jobTitle`.**\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20【Your Agent <agentName> has been selected as juror for task [<message.jobTitle>]】\n\
@@ -102,11 +102,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20Task ID: #{job_id}\n\
              \x20\x20\x20\x20Task Amount: <budget> <tokenSymbol>\n\
              \x20\x20\x20\x20⏰ Key deadline\n\
-             \x20\x20\x20\x20Your Agent must vote within <hoursLeft> hours\n\n\
+             \x20\x20\x20\x20Your Agent must vote within <hoursLeftText>\n\n\
              [Field-missing fallbacks] Apply each independently — do **not** invent placeholders.\n\
              - `agentName` missing → degrade header to `You have been selected as juror for task [<message.jobTitle>]`.\n\
              - `budget` / `tokenSymbol` missing → drop the `Amount:` line.\n\
-             - `commitDeadline` missing or `hoursLeft` is 0 → drop the entire `⏰ Key deadline` block.\n\n\
+             - `commitDeadline` missing or deadline already passed → drop the entire `⏰ Key deadline` block.\n\n\
              → **Once Step 2 has attempted the `xmtp_dispatch_user` call (whether it succeeds or errors), continue with Step 3 in this same turn.** Step 2 is a user-facing notification, not a precondition for Step 3.\n\n\
              **Step 3 — Fetch evidence (`--round-num` comes from the envelope's top-level `roundNum`; if missing, abort this turn and log `missing roundNum in payload; abort`):**\n\
              ```bash\n\
@@ -138,14 +138,14 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
 
         "vote_commit_deadline_warn" => format!(
             "[Current Status] vote_commit_deadline_warn\n\n\
-             Extract from `message`: `jobTitle`, `commitDeadline`, `slashTimeoutBps`, `slashedCooldownSeconds`. Compute `commitDeadlineLocal` from `commitDeadline` (local time) and `minutesLeft` = `max(0, ceil((commitDeadline - now_epoch_seconds) / 60))`. Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
+             Extract from `message`: `jobTitle`, `commitDeadline`, `slashTimeoutBps`, `slashedCooldownSeconds`. Compute `commitDeadlineLocal` from `commitDeadline` (local time) and `minutesLeft` = `floor((commitDeadline - now_epoch_seconds) / 60)`. Render `minutesLeftText`: if `minutesLeft >= 1` use `<minutesLeft> minutes remaining`; else if the deadline has not passed (`commitDeadline > now_epoch_seconds`) use `less than 1 minute remaining`; else treat as expired (drop the `Commit deadline:` line). Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
              Use `xmtp_dispatch_user` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.**\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20【⏰ URGENT: Arbitration vote for task [<message.jobTitle>] is about to close】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Commit deadline: <commitDeadlineLocal> (<minutesLeft> minutes remaining)\n\
+             \x20\x20\x20\x20Commit deadline: <commitDeadlineLocal> (<minutesLeftText>)\n\
              \x20\x20\x20\x20Current Status: Agent has not committed yet\n\
              \x20\x20\x20\x20🚨 Timeout consequences:\n\
              \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\
@@ -153,21 +153,21 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20• Miss the base validation fee\n\
              \x20\x20\x20\x20⚡ Have the Agent vote immediately\n\n\
              [Field-missing fallbacks]\n\
-             - `commitDeadline` missing → drop the `Commit deadline:` line.\n\
+             - `commitDeadline` missing or deadline already passed → drop the `Commit deadline:` line.\n\
              - `slashTimeoutBps` missing → drop the `• Stake slashed` bullet.\n\
              - `slashedCooldownSeconds` missing → drop the `• Enter a ... cooldown` bullet.\n"
         ),
 
         "vote_reveal_deadline_warn" => format!(
             "[Current Status] vote_reveal_deadline_warn\n\n\
-             Extract from `message`: `jobTitle`, `revealDeadline`, `slashTimeoutBps`, `slashedCooldownSeconds`. Compute `revealDeadlineLocal` from `revealDeadline` (local time) and `minutesLeft` = `max(0, ceil((revealDeadline - now_epoch_seconds) / 60))`. Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
+             Extract from `message`: `jobTitle`, `revealDeadline`, `slashTimeoutBps`, `slashedCooldownSeconds`. Compute `revealDeadlineLocal` from `revealDeadline` (local time) and `minutesLeft` = `floor((revealDeadline - now_epoch_seconds) / 60)`. Render `minutesLeftText`: if `minutesLeft >= 1` use `<minutesLeft> minutes remaining`; else if the deadline has not passed (`revealDeadline > now_epoch_seconds`) use `less than 1 minute remaining`; else treat as expired (drop the `Reveal deadline:` line). Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
              Use `xmtp_dispatch_user` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.**\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20【⏰ URGENT: Arbitration reveal for task [<message.jobTitle>] is about to close】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Reveal deadline: <revealDeadlineLocal> (<minutesLeft> minutes remaining)\n\
+             \x20\x20\x20\x20Reveal deadline: <revealDeadlineLocal> (<minutesLeftText>)\n\
              \x20\x20\x20\x20Current Status: Agent has not revealed yet\n\
              \x20\x20\x20\x20🚨 Timeout consequences:\n\
              \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\
@@ -175,7 +175,7 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20• Miss the base validation fee\n\
              \x20\x20\x20\x20⚡ Have the Agent reveal immediately\n\n\
              [Field-missing fallbacks]\n\
-             - `revealDeadline` missing → drop the `Reveal deadline:` line.\n\
+             - `revealDeadline` missing or deadline already passed → drop the `Reveal deadline:` line.\n\
              - `slashTimeoutBps` missing → drop the `• Stake slashed` bullet.\n\
              - `slashedCooldownSeconds` missing → drop the `• Enter a ... cooldown` bullet.\n"
         ),
@@ -357,14 +357,16 @@ pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> S
          - Read success and evidence already output → produce the final `vote` and the verdict text per the rubric's Verdict section (whichever heading defines the verdict template).\n\n\
          → **Once Step 4's verdict text is produced, continue with Step 5 in this same turn.**\n\n\
          **Step 5 — Execute commit:**\n\
-         - **Flatten the entire verdict text into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; pass via `--reason`:\n\
+         - **Flatten the entire verdict text into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; pass via `--reason`.\n\
+         - **Compress the verdict into a ≤30-character one-sentence summary** that captures the decision. Count is Unicode characters, not bytes — CJK and Latin characters each count as 1. The CLI hard-fails if the value is empty or exceeds 30 characters. Pass via `--reason-summary`.\n\
          ```bash\n\
-         onchainos agent vote-commit {job_id} --vote <0|1> --reason \"<flattened verdict text from Step 4, with every real newline replaced by the two-character escape \\n>\" --agent-id {agent_id}\n\
+         onchainos agent vote-commit {job_id} --vote <0|1> --reason \"<flattened verdict text from Step 4, with every real newline replaced by the two-character escape \\n>\" --reason-summary \"<≤30-char one-sentence summary>\" --agent-id {agent_id}\n\
          ```\n\
          ⚠️ **Only 0 (Approve / Client wins) or 1 (Reject / Provider wins) — skip is forbidden**.\n\
          ⚠️ **The `<0|1>` value MUST come from Step 5** — it is the binary vote that Step 5 derived by applying `references/evaluator-decision-rubric.md` (whatever decision procedure that document defines) to the evidence. Do **not** commit a vote that bypassed Step 5 — guessing / pattern-matching / averaging a value here violates the rubric and produces an unfounded ruling.\n\
          ⚠️ **`--reason` is the full verdict produced by Step 5**. Empty / whitespace-only values are rejected by the CLI. CLI un-escapes `\\n` → newline, `\\t` → tab, `\\r` → CR, `\\\\` → `\\`, `\\\"` → `\"` before sending to backend; the backend stores it as the human-readable on-chain audit trail. If the user-customized rubric (no verdict template defined), still pass a minimal one-line reason such as `\"Verdict not generated — rubric verdict missing.\"` \n\
-         - **Character taboos inside the `--reason` value** (otherwise the shell will corrupt the argument before the CLI even sees it):\n\
+         ⚠️ **`--reason-summary` is a ≤30-Unicode-character one-sentence headline** distilled from the same verdict — no markdown / line breaks / bullet markers. If you can't compress further, drop low-information words first; do not truncate mid-character to dodge the limit (the CLI counts after trim and rejects overflows).\n\
+         - **Character taboos inside both `--reason` and `--reason-summary` values** (otherwise the shell will corrupt the argument before the CLI even sees it):\n\
          \x20\x20- `\"` (double quote) → escape as `\\\"`\n\
          \x20\x20- `` ` `` (backtick) → either replace with `'` (single quote) or escape as `` \\` ``; an unescaped backtick triggers shell command substitution\n\
          \x20\x20- `$` → escape as `\\$` to prevent shell variable expansion\n\
