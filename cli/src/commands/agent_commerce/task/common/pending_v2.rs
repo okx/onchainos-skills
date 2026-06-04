@@ -474,27 +474,44 @@ fn handle_request(
         return Ok(());
     }
 
-    // Non-CLI mode: emit the `prompt user` CLI subprocess playbook (same shape
-    // as playbook_push_cli, just a different binary). Like the cli_mode branch,
-    // this also bypasses the queue file entirely — build an ad-hoc entry and
-    // return the playbook directly. The queue-file logic further below is kept
-    // for reference but currently unreachable.
+    // Non-CLI mode: emit the MCP `xmtp_prompt_user` playbook via playbook_push_prompt_user.
+    // Unlike cli_mode, this branch DOES persist the entry to the queue file (always as
+    // Status::Queued — no single-active invariant; the multi-card disambig in the playbook
+    // handles user routing). Dedupe by sub_key: an entry with the same sub_key is replaced
+    // in place (created_at preserved). At resolve time, `handle_resolve_prompt` looks up by
+    // sub_key and removes the entry.
     {
         let now = Utc::now();
-        let entry = PendingEntry {
-            sub_key,
-            job_id,
-            role,
-            agent_id,
-            user_content,
-            list_label,
-            llm_content_override: llm_content,
-            source_event,
-            status: Status::Active,
+        let new_entry_template = PendingEntry {
+            sub_key: sub_key.clone(),
+            job_id: job_id.clone(),
+            role: role.clone(),
+            agent_id: agent_id.clone(),
+            user_content: user_content.clone(),
+            list_label: list_label.clone(),
+            llm_content_override: llm_content.clone(),
+            source_event: source_event.clone(),
+            status: Status::Queued,
             created_at: now,
             updated_at: now,
         };
-        print!("{}", playbook_push_prompt_user(&entry));
+
+        let _lock = acquire_lock()?;
+        let mut q = read_queue()?;
+        let original_created_at = q
+            .entries
+            .iter()
+            .find(|e| e.sub_key == sub_key)
+            .map(|e| e.created_at)
+            .unwrap_or(now);
+        q.entries.retain(|e| e.sub_key != sub_key);
+        q.entries.push(PendingEntry {
+            created_at: original_created_at,
+            ..new_entry_template
+        });
+        write_queue_atomic(&q)?;
+        let entry = q.entries.last().unwrap();
+        print!("{}", playbook_push_prompt_user(entry));
         return Ok(());
     }
 
@@ -688,6 +705,26 @@ fn handle_resolve_prompt(
             "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",
             agent_id, relay_event, user_reply, job_id, role,
         ));
+
+    // Best-effort remove the matching entry from the queue (paired with the
+    // `handle_request` non-CLI write path). If lock / IO fails, log + continue —
+    // the relay playbook below is the critical path and must still be emitted.
+    match acquire_lock() {
+        Ok(_lock) => match read_queue() {
+            Ok(mut q) => {
+                let before = q.entries.len();
+                q.entries.retain(|e| e.sub_key != sub_key);
+                if q.entries.len() != before {
+                    if let Err(e) = write_queue_atomic(&q) {
+                        trace_log(&format!("handle_resolve_prompt: write_queue_atomic failed: {e}"));
+                    }
+                }
+            }
+            Err(e) => trace_log(&format!("handle_resolve_prompt: read_queue failed: {e}")),
+        },
+        Err(e) => trace_log(&format!("handle_resolve_prompt: acquire_lock failed: {e}")),
+    }
+
     print!("{}", playbook_relay_only_prompt(&sub_key, &relay_content));
     Ok(())
 }
@@ -853,38 +890,11 @@ fn handle_pick(index: usize) -> Result<()> {
         }
     }
 
-    // Three cases by current status:
-    //   (a) The picked entry IS already active → re-render its card (no state change).
-    //       User likely wants to re-see the card after scrolling past it.
-    //   (b) The picked entry is queued AND no active exists → promote it (selection-mode flow).
-    //   (c) The picked entry is queued AND a DIFFERENT entry is currently active →
-    //       **swap**: demote the current active to queued, promote the picked one to active.
-    //       Neither decision is lost; the user can come back to either by `pick --index <N>`.
-    let already_active = q.entries[entry_idx].status == Status::Active;
-    let picked_sub_key = q.entries[entry_idx].sub_key.clone();
-    if !already_active {
-        // If another entry is currently active, demote it to queued (swap, not drop).
-        for e in q.entries.iter_mut() {
-            if e.status == Status::Active {
-                e.status = Status::Queued;
-            }
-        }
-        q.entries[entry_idx].status = Status::Active;
-        // Re-sort so the newly-promoted active sits at index 0 (active-first invariant).
-        ensure_invariant_and_evict(&mut q);
-        // Refresh snapshot so a subsequent `pick --index N` reflects the new order
-        // (otherwise the next pick would resolve indices against the stale pre-pick layout).
-        let new_snap = build_snapshot(&q);
-        write_snapshot_atomic(&new_snap)?;
-        write_queue_atomic(&q)?;
-    }
-    // entry_idx may now be invalid after the sort — look up the entry by its sub_key.
-    let render_idx = q
-        .entries
-        .iter()
-        .position(|e| e.sub_key == picked_sub_key)
-        .expect("picked entry must still exist after promotion + sort");
-    print!("{}", playbook_render(&q.entries[render_idx]));
+    // New behaviour (all-Queued model): pick is render-only — no status mutation, no swap,
+    // no auto-promote. We just render the selected card so the user can see its full
+    // content. The previous Active/Queued promotion logic was removed because nothing
+    // downstream (handle_resolve_prompt) reads Status::Active anymore.
+    print!("{}", playbook_render(&q.entries[entry_idx]));
     Ok(())
 }
 
