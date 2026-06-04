@@ -12,6 +12,8 @@ use std::time::Instant;
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
+const DEBUG_LOG: bool = false;
+
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::wallet_api::WalletApiClient;
@@ -130,7 +132,7 @@ impl TaskApiClient {
         let token = get_access_token().await?;
         let query: Vec<(&str, &str)> = vec![];
         let headers: Vec<(&str, &str)> = vec![("agenticId", agent_id)];
-        if cfg!(feature = "debug-log") {
+        if DEBUG_LOG {
             eprintln!("[TaskAPI] GET(jwt+agenticId) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
         }
         let started = Instant::now();
@@ -138,14 +140,14 @@ impl TaskApiClient {
         let elapsed = started.elapsed();
         match &result {
             Ok(data) => {
-                if cfg!(feature = "debug-log") {
+                if DEBUG_LOG {
                     eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← {data}");
                 }
                 log_api("get", path, agent_id, true, elapsed, None, None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
-                if cfg!(feature = "debug-log") {
+                if DEBUG_LOG {
                     eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← ERROR: {err_msg}");
                 }
                 log_api("get", path, agent_id, false, elapsed, Some(&err_msg), None);
@@ -166,7 +168,7 @@ impl TaskApiClient {
         let query: Vec<(&str, &str)> = cert.as_deref()
             .map(|c| vec![("sessionCert", c)])
             .unwrap_or_default();
-        if cfg!(feature = "debug-log") {
+        if DEBUG_LOG {
             eprintln!("[TaskAPI] GET {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
         }
         let headers = [("agenticId", agent_id)];
@@ -177,14 +179,14 @@ impl TaskApiClient {
         let elapsed = started.elapsed();
         match &result {
             Ok(data) => {
-                if cfg!(feature = "debug-log") {
+                if DEBUG_LOG {
                     eprintln!("[TaskAPI] GET {url} ← {data}");
                 }
                 log_api("get", path, agent_id, true, elapsed, None, None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
-                if cfg!(feature = "debug-log") {
+                if DEBUG_LOG {
                     eprintln!("[TaskAPI] GET {url} ← ERROR: {err_msg}");
                 }
                 log_api("get", path, agent_id, false, elapsed, Some(&err_msg), None);
@@ -211,7 +213,7 @@ impl TaskApiClient {
         ) {
             headers.insert(name, val);
         }
-        if cfg!(feature = "debug-log") {
+        if DEBUG_LOG {
             eprintln!(
                 "[TaskAPI] GET(bytes) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}",
                 token.len()
@@ -305,7 +307,7 @@ impl TaskApiClient {
         let body = inject_session_cert(body);
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await?;
-        if cfg!(feature = "debug-log") {
+        if DEBUG_LOG {
             eprintln!("[TaskAPI] POST {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {body}", token.len());
         }
         let headers = [("agenticId", agent_id)];
@@ -316,14 +318,14 @@ impl TaskApiClient {
         let elapsed = started.elapsed();
         match &result {
             Ok(data) => {
-                if cfg!(feature = "debug-log") {
+                if DEBUG_LOG {
                     eprintln!("[TaskAPI] POST {url} ← {data}");
                 }
                 log_api("post", path, agent_id, true, elapsed, None, None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
-                if cfg!(feature = "debug-log") {
+                if DEBUG_LOG {
                     eprintln!("[TaskAPI] POST {url} ← ERROR: {err_msg}");
                 }
                 log_api("post", path, agent_id, false, elapsed, Some(&err_msg), None);
@@ -347,7 +349,7 @@ impl TaskApiClient {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await?;
         let content_len = body.len();
-        if cfg!(feature = "debug-log") {
+        if DEBUG_LOG {
             eprintln!(
                 "[TaskAPI] POST(raw) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}, Content-Type={content_type}, Content-Length={content_len}",
                 token.len(),
@@ -362,14 +364,14 @@ impl TaskApiClient {
         let elapsed = started.elapsed();
         match &result {
             Ok(data) => {
-                if cfg!(feature = "debug-log") {
+                if DEBUG_LOG {
                     eprintln!("[TaskAPI] POST(raw) {url} ← {data}");
                 }
                 log_api("post_raw", path, agent_id, true, elapsed, None, Some(&extra_meta));
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
-                if cfg!(feature = "debug-log") {
+                if DEBUG_LOG {
                     eprintln!("[TaskAPI] POST(raw) {url} ← ERROR: {err_msg}");
                 }
                 log_api("post_raw", path, agent_id, false, elapsed, Some(&err_msg), Some(&extra_meta));
