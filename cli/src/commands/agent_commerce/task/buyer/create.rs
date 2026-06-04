@@ -213,7 +213,7 @@ pub async fn handle_create(
         Ok(()) => None,
     };
 
-    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(&buyer_agent_id).await?;
 
     let mut body = serde_json::json!({
         "title":              validated.title,

@@ -56,6 +56,34 @@ pub fn resolve_wallet(
     Ok((acct_id, addr_info.address))
 }
 
+/// Resolve wallet account_id and address by looking up the agent's registered wallet address.
+///
+/// Used by provider operations where `agent_id` is known but the wallet address isn't.
+/// Fetches `agentWalletAddress` from the agent registry, then resolves to the local wallet account.
+pub async fn resolve_wallet_by_agent_id(agent_id: &str) -> Result<(String, String)> {
+    let id = agent_id.trim();
+    if id.is_empty() {
+        bail!("agent_id must not be empty; pass the provider's own agentId");
+    }
+
+    let wallet_address = fetch_my_agent_by_id(id)
+        .await
+        .and_then(|a| {
+            a.get("agentWalletAddress")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_default();
+
+    if wallet_address.is_empty() {
+        bail!(
+            "cannot resolve wallet for agentId={id}; agentWalletAddress not found in `onchainos agent get`"
+        );
+    }
+
+    resolve_wallet(None, Some(&wallet_address))
+}
+
 /// Query task detail to resolve the buyer's wallet **and** agentId for signing.
 ///
 /// If `explicit_agent_id` is provided (from `--agent-id` CLI flag), it is used
@@ -111,7 +139,11 @@ pub async fn resolve_wallet_and_agent_for_provider(
         .unwrap_or("")
         .to_string();
 
-    let (account_id, address) = resolve_wallet(None, None)?;
+    let provider_address = resp["providerAgentAddress"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("task detail missing providerAgentAddress field"))?;
+
+    let (account_id, address) = resolve_wallet(None, Some(provider_address))?;
     Ok((account_id, address, provider_agent_id))
 }
 

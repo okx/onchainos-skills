@@ -543,7 +543,7 @@ pub async fn handle_draft_publish(
     }
 
     // ── Sign + Broadcast ─────────────────────────────────────────
-    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(&buyer_agent_id).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client,
