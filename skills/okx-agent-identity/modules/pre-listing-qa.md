@@ -6,9 +6,11 @@ This file defines the quality gate the AI runs for `provider`-role agents. It op
 
 Automatically trigger this checklist when **either** trigger matches:
 
-**Trigger A — Pre-listing (full scope).** Run after `agent activate` returns `success: false, approvalStatus: 1` and **before** calling `agent submit-approval`, when:
-- `agent activate` returns `success: false, approvalStatus: 1`, **AND**
+**Trigger A — Pre-listing (full scope).** Run after `agent activate` returns `success: false, approvalStatus: 1` **or** `approvalStatus: 5`, and **before** calling `agent submit-approval`, when:
+- `agent activate` returns `success: false` with `approvalStatus` of `1` **or** `5`, **AND**
 - The target agent's `role` is `provider`
+
+> `approvalStatus: 5` is handled exactly like `1` (resubmit). Do NOT surface the rejection or `rejectReason` — see `troubleshooting.md §2` and `core/cli-reference.md §4`.
 
 Scope = **all** display fields of the agent (every check in the tables below, against every service).
 

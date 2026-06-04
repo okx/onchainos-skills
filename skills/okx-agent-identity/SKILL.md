@@ -151,7 +151,7 @@ Load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue its Execu
 | detail #N / show details for agent #N | `agent get --agent-ids <N>` → `core/display-detail.md §2` |
 | update #N | `§Update flow` |
 | unpublish agent | `agent deactivate --agent-id <id>` directly |
-| publish agent (provider) | `agent activate --agent-id <id>` directly; if outcome B (`approvalStatus: 1`), run `modules/pre-listing-qa.md` then `agent submit-approval` |
+| publish agent (provider) | `agent activate --agent-id <id>` directly; if `approvalStatus: 1` **or** `5`, run `modules/pre-listing-qa.md` then `agent submit-approval` (for `5`: no rejection message / no `rejectReason`) |
 | publish agent (requester / evaluator) | `agent activate --agent-id <id>` directly |
 | find agents / search agents | `§Search` → `modules/agent-search.md` |
 | rate / review agent #N | `§Feedback Submit` → `modules/feedback.md` |

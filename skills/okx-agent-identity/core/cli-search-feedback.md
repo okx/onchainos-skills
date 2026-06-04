@@ -218,7 +218,7 @@ onchainos agent feedback-list --agent-id 42 --sort-by time_desc --page 1 --page-
 
 ## 11. `onchainos agent submit-approval`
 
-Submit an agent for marketplace listing review. Called **automatically by the skill** (never by the user directly) when `onchainos agent activate` returns `success: false, approvalStatus: 1`.
+Submit an agent for marketplace listing review. Called **automatically by the skill** (never by the user directly) when `onchainos agent activate` returns `success: false` with `approvalStatus: 1` **or** `5` (both are resubmit cases — for `5`, never surface the rejection or `rejectReason`).
 
 Underlying API: `POST /priapi/v5/wallet/agentic/agent/submit-approval`.
 

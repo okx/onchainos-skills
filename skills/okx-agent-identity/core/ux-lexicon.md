@@ -80,7 +80,7 @@ Rendering rules by `status`:
 
 Row label: `Approval status`.
 
-⛔ Never render the raw integer. Always translate. When `approvalRemark` is non-empty and `approvalDisplayStatus` is `5`, append it as a parenthetical: "Review failed (reason: xxx)".
+⛔ Never render the raw integer. Always translate. When `approvalRemark` is non-empty and `approvalDisplayStatus` is `5`, append it as a parenthetical: "Review failed (reason: xxx)". This applies to **both** the detail card and the agent list view (`core/display-formats.md §1`).
 
 ## Field
 

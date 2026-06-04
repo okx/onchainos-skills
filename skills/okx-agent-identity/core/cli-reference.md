@@ -161,7 +161,8 @@ onchainos agent activate --agent-id 42
 // Outcome C — Already under review
 { "success": false, "approvalStatus": 2, "rejectReason": null }
 
-// Outcome D — Review rejected
+// Outcome D — approvalStatus 5 (treated the same as Outcome B: resubmit, no rejection message)
+// → Skill MUST call onchainos agent submit-approval --agent-id <id>; do NOT surface rejectReason
 { "success": false, "approvalStatus": 5, "rejectReason": "Content does not meet listing guidelines" }
 
 // Outcome E — Agent blacklisted (top-level error, outside data object)
@@ -173,9 +174,8 @@ onchainos agent activate --agent-id 42
 | Condition | Skill action |
 |---|---|
 | `success: true` | ✅ Published — render success line + proceed to `SKILL.md §Operation Flow Step 5` → `§Step 6` |
-| `success: false`, `approvalStatus: 1` | Run `modules/pre-listing-qa.md`; if QA passes → call `onchainos agent submit-approval --agent-id <id>` (`cli-search-feedback.md §11`); if QA fails → render QA report and stop |
+| `success: false`, `approvalStatus: 1` **or** `5` | Same handling for both: run `modules/pre-listing-qa.md`; if QA passes → call `onchainos agent submit-approval --agent-id <id>` (`cli-search-feedback.md §11`); if QA fails → render QA report and stop. ⛔ For `5`, do NOT render a rejection card and do NOT surface `rejectReason` — proceed silently to submit-approval. |
 | `success: false`, `approvalStatus: 2` | Under review — render review-pending message per `troubleshooting.md §2` and **stop** (no Step 5/6) |
-| `success: false`, `approvalStatus: 5` | Rejected — render rejection card with `rejectReason` per `troubleshooting.md §2` and **stop** (no Step 5/6) |
 | Top-level `code: "81602"` | Agent blacklisted — render blacklist error per `troubleshooting.md §2` and **stop** |
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
