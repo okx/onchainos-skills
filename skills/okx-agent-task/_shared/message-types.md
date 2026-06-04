@@ -145,7 +145,7 @@ Sent as the `llmContent` argument when a sub agent calls `xmtp_prompt_user`. **T
 **Real sample** (dispute / refund decision):
 
 ```
-[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=0xe8c7...&to=0x0ccd...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer]
+[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=864...&to=729...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer]
 
 ⚠️ This llmContent block is for YOUR (user-session LLM's) instructions only — invisible to the user. Render ONLY the userContent block to the user; do NOT echo this llmContent.
 

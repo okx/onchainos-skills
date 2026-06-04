@@ -476,7 +476,7 @@ fn handle_request(
             "Invalid --sub-key: {}\n\n\
              Two valid shapes (both must contain `:okx-a2a:group:`):\n\
                • task sub (after xmtp_start_conversation with a peer):\n  \
-                 agent:main:okx-a2a:group:okx-xmtp:my=0x...&to=0x...&job=<jobId>&gid=...\n\
+                 agent:main:okx-a2a:group:okx-xmtp:my=<agentId>&to=<agentId>&job=<jobId>&gid=...\n\
                • backup sub (per-jobId) (handles chain events for this agent BEFORE a task sub exists,\n\
                  e.g. job_created):\n  \
                  agent:main:okx-a2a:group:okx-xmtp:backup:<jobId>\n\n\
