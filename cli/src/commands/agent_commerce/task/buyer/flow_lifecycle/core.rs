@@ -42,25 +42,21 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
     let accepted_escrow_notify = super::super::content::job_accepted_escrow_user_notify(job_id, title_display);
     let accepted_x402_fail = super::super::content::job_accepted_x402_replay_fail_user_notify(job_id);
     let complete_failed = super::super::content::complete_failed_user_notify(job_id);
-    format!(
-    "[Current Status] job_accepted (user has confirmed accept; task enters execution stage)\n\
-     [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
-     [Your next actions (strict order)]\n\n\
-     **Step 1 -- Fetch full task info:**\n\
-     ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\
-     Extract: {title_in_extract}description, providerAgentId, paymentMode (int: 1=escrow, 3=x402), tokenAmount, tokenSymbol.\n\
-     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n\
-     **Step 2 -- Branch by payment mode:**\n\n\
+
+    let pm = ctx.payment_mode;
+    let pm_extract = if pm.is_some() { "" } else { "paymentMode (int: 1=escrow, 3=x402), " };
+    let branch_header = if pm.is_none() { "**Step 2 -- Branch by payment mode:**\n\n" } else { "" };
+
+    let escrow_section = if pm == Some(3) { String::new() } else { format!("\
      --------- Branch A: escrow ---------\n\n\
      Call xmtp_dispatch_user to notify the user that accept succeeded:\n\
      {l10n_dispatch}\n\
      \x20\x20content:\n\
      {accepted_escrow_notify}\n\n\
      [Follow-up events]\n\
-     - job_submitted → review the deliverable\n\n\
+     - job_submitted → review the deliverable\n\n") };
+
+    let x402_section = if pm == Some(1) { String::new() } else { format!("\
      --------- Branch B: x402 ---------\n\n\
      In x402 mode, accept has already been settled on-chain (funds paid); task-402-pay was executed in the previous turn (job_payment_mode_changed).\n\n\
      **B-Step 1 -- Determine replaySuccess from the previous turn's task-402-pay:**\n\
@@ -95,7 +91,22 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Follow the returned playbook (it will guide you to notify the user that the job is complete).\n\
      ❌ **NEVER** ignore the `job_completed` event -- ignoring it = user never learns the job is done.\n\
-     ❌ **NEVER** skip `next-action` and compose the completion notice yourself -- the playbook contains the full summary.\n"
+     ❌ **NEVER** skip `next-action` and compose the completion notice yourself -- the playbook contains the full summary.\n") };
+
+    format!(
+    "[Current Status] job_accepted (user has confirmed accept; task enters execution stage)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 1 -- Fetch full task info:**\n\
+     ```bash\n\
+     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+     ```\n\
+     Extract: {title_in_extract}description, providerAgentId, {pm_extract}tokenAmount, tokenSymbol.\n\
+     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n\
+     {branch_header}\
+     {escrow_section}\
+     {x402_section}"
     )
 }
 
@@ -185,47 +196,20 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
         "job_submitted",
     );
 
-    format!(
-    "[Current Status] job_submitted (ASP has submitted the deliverable)\n\
-     [Role] User (User Agent)\n\n\
-     🛑🛑🛑 **ABSOLUTE REQUIREMENT -- in escrow mode you MUST push the review decision to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT `xmtp_dispatch_user`)**.\n\
-     `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → the review flow deadlocks. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `xmtp_prompt_user` (with llmContent + userContent) so the user session can relay the review decision back.\n\
-     🔴 Real incident: a Minimax model received job_submitted, called xmtp_dispatch_user with \"the ASP has submitted; awaiting your review\" -- the user never saw the deliverable, could not relay a decision, and the task was stuck.\n\n\
-     🛑🛑🛑 **Even if you already processed the ASP's a2a-agent-chat deliverable message earlier in this turn (e.g. called xmtp_file_download), upon receiving job_submitted you MUST still execute every Step below in full**.\n\
-     Handling a2a-agent-chat (file download) != the review flow -- the review must be driven by the job_submitted playbook, and the deliverable content (file path / text) MUST be placed into the `--user-content` of `pending-decisions-v2 request` for the user to see.\n\n\
-     🛑 **In escrow mode auto-approval is strictly forbidden**: you must wait for the user's relayed decision; the agent must not decide on behalf of the user, regardless of deliverable quality or how close to deadline.\n\
-     ⚠️ In x402 mode: funds are already paid; just notify the user of the deliverable content; the user cannot reject.\n\n\
-     [Your next actions (strict order)]\n\n\
-     **Step 1 — Query task details; extract deliverable and payment mode:**\n\
-     ```bash\n\
-     onchainos agent status {job_id}\n\
-     ```\n\
-     Extract `paymentMode` (int: 1=escrow, 3=x402). The status endpoint does not return deliverableUrl; extract that from the chat history in Step 2. Get qualityStandards from `onchainos agent common context` (the value at task creation time is authoritative).\n\n\
-     **Step 2 — Obtain the deliverable content (check saved first, then fallback to chat history):**\n\n\
-     ⚠️ The deliverable content MUST appear in Step 3's userContent — the user has not seen the body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\n\
-     **Step 2a — Check if deliverable was already saved** (by the earlier `deliverable_received` playbook):\n\
-     ```bash\n\
-     onchainos agent task-deliverable-list --job-id {job_id} --role buyer\n\
-     ```\n\
-     If `deliverables` array is non-empty → the deliverable has already been downloaded and saved:\n\
-     \x20\x20- Use the `path` from the first entry as `localPath`\n\
-     \x20\x20- Use the `deliverableType` from the first entry\n\
-     \x20\x20- For text deliverables, read the file content at `path` to get `deliverableText`\n\
-     \x20\x20- **Skip Step 2b entirely** (no need to re-download or re-save)\n\
-     \x20\x20- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)\n\
-     \x20\x20- From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards`; if empty, skip that line\n\
-     \x20\x20- Go to Step 3\n\n\
-     If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n\
-     **Step 2b — Fallback: fetch from chat history and save** (only if Step 2a found no saved deliverable):\n\
-     First call `session_status` to get the current sub session's sessionKey (reused later; do not call it again this turn).\n\
-     From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards` (the review standard as of task creation); if empty, skip that line.\n\n\
-     **Branch by paymentMode** (from Step 1):\n\n\
+    let pm = ctx.payment_mode;
+    let pm_extract = if pm.is_some() { "" } else { "Extract `paymentMode` (int: 1=escrow, 3=x402). " };
+    let step2b_branch_header = if pm.is_none() { "**Branch by paymentMode** (from Step 1):\n\n" } else { "" };
+    let step3_branch_header = if pm.is_none() { "**Step 3 — Branch by payment mode:**\n\n" } else { "" };
+
+    let step2b_x402 = if pm == Some(1) { String::new() } else { "\
      ━━━ paymentMode=x402 (3) ━━━\n\
      In x402, the deliverable was the `replayBody` returned by `task-402-pay` in the earlier `job_payment_mode_changed` turn.\n\
      ✅ The CLI auto-saved the deliverable to disk during `task-402-pay` (no manual `task-deliverable-save` needed).\n\
      Look for the `replayBodyDisplay` value in this sub session's context (it was printed when the CLI output was processed).\n\
      Set deliverable display variables: deliverableType=text, deliverableText=<replayBodyDisplay content>.\n\
-     Go to Step 3.\n\n\
+     Go to Step 3.\n\n".to_string() };
+
+    let step2b_escrow = if pm == Some(3) { String::new() } else { format!("\
      ━━━ paymentMode=escrow (1) ━━━\n\
      Call `xmtp_get_conversation_history` (sessionKey = the value obtained above) and find the ASP message **carrying the `[intent:deliver]` suffix tag** (scan newest to oldest; first match is the deliverable), and branch on `deliverableType`:\n\n\
      --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret decryption fields) ---\n\n\
@@ -267,8 +251,9 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
        --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
      ```\n\
      If save fails, log the error but do NOT block the review flow.\n\n\
-     Deliverable display variables: deliverableType=text, deliverableText=<full original text sent by the ASP>\n\n\
-     **Step 3 — Branch by payment mode:**\n\n\
+     Deliverable display variables: deliverableType=text, deliverableText=<full original text sent by the ASP>\n\n") };
+
+    let step3_escrow = if pm == Some(3) { String::new() } else { format!("\
      --------- Branch A: escrow — push the review decision to the user ---------\n\n\
      **Step 3a — Compose `--user-content` from the Step 2 deliverable variables using the template that matches `deliverableType`** (English source — fill `<placeholder>` from runtime values, THEN localize per [Localization] rules):\n\n\
      ▸ deliverableType=file:\n\
@@ -300,7 +285,9 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      ```\n\n\
      **Step 3b — Push to user via the 5-substep protocol** (use the composed `--user-content` from Step 3a; read ALL 5 sub-steps before running any command):\n\n\
      {l10n_prompt_bold}\n\n\
-     {request_block}\n\
+     {request_block}\n") };
+
+    let step3_x402 = if pm == Some(1) { String::new() } else { format!("\
      --------- Branch B: x402 — notify the user (no rejection allowed) ---------\n\n\
      ⚠️ In x402 funds are already paid at job_accepted; the user **cannot reject the deliverable**, just notify.\n\n\
      **B-Step 1 — Call xmtp_dispatch_user to notify the user** — split by deliverableType:\n\
@@ -344,7 +331,48 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      Task fully complete.\n\n\
      [Follow-up events]\n\
      - escrow: job_completed → task complete / job_rejected → wait for ASP to choose dispute or refund\n\
-     - x402: flow ends here\n"
+     - x402: flow ends here\n") };
+
+    format!(
+    "[Current Status] job_submitted (ASP has submitted the deliverable)\n\
+     [Role] User (User Agent)\n\n\
+     🛑🛑🛑 **ABSOLUTE REQUIREMENT -- in escrow mode you MUST push the review decision to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT `xmtp_dispatch_user`)**.\n\
+     `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → the review flow deadlocks. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `xmtp_prompt_user` (with llmContent + userContent) so the user session can relay the review decision back.\n\
+     🔴 Real incident: a Minimax model received job_submitted, called xmtp_dispatch_user with \"the ASP has submitted; awaiting your review\" -- the user never saw the deliverable, could not relay a decision, and the task was stuck.\n\n\
+     🛑🛑🛑 **Even if you already processed the ASP's a2a-agent-chat deliverable message earlier in this turn (e.g. called xmtp_file_download), upon receiving job_submitted you MUST still execute every Step below in full**.\n\
+     Handling a2a-agent-chat (file download) != the review flow -- the review must be driven by the job_submitted playbook, and the deliverable content (file path / text) MUST be placed into the `--user-content` of `pending-decisions-v2 request` for the user to see.\n\n\
+     🛑 **In escrow mode auto-approval is strictly forbidden**: you must wait for the user's relayed decision; the agent must not decide on behalf of the user, regardless of deliverable quality or how close to deadline.\n\
+     ⚠️ In x402 mode: funds are already paid; just notify the user of the deliverable content; the user cannot reject.\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 1 — Query task details; extract deliverable and payment mode:**\n\
+     ```bash\n\
+     onchainos agent status {job_id}\n\
+     ```\n\
+     {pm_extract}The status endpoint does not return deliverableUrl; extract that from the chat history in Step 2. Get qualityStandards from `onchainos agent common context` (the value at task creation time is authoritative).\n\n\
+     **Step 2 — Obtain the deliverable content (check saved first, then fallback to chat history):**\n\n\
+     ⚠️ The deliverable content MUST appear in Step 3's userContent — the user has not seen the body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\n\
+     **Step 2a — Check if deliverable was already saved** (by the earlier `deliverable_received` playbook):\n\
+     ```bash\n\
+     onchainos agent task-deliverable-list --job-id {job_id} --role buyer\n\
+     ```\n\
+     If `deliverables` array is non-empty → the deliverable has already been downloaded and saved:\n\
+     \x20\x20- Use the `path` from the first entry as `localPath`\n\
+     \x20\x20- Use the `deliverableType` from the first entry\n\
+     \x20\x20- For text deliverables, read the file content at `path` to get `deliverableText`\n\
+     \x20\x20- **Skip Step 2b entirely** (no need to re-download or re-save)\n\
+     \x20\x20- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)\n\
+     \x20\x20- From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards`; if empty, skip that line\n\
+     \x20\x20- Go to Step 3\n\n\
+     If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n\
+     **Step 2b — Fallback: fetch from chat history and save** (only if Step 2a found no saved deliverable):\n\
+     First call `session_status` to get the current sub session's sessionKey (reused later; do not call it again this turn).\n\
+     From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards` (the review standard as of task creation); if empty, skip that line.\n\n\
+     {step2b_branch_header}\
+     {step2b_x402}\
+     {step2b_escrow}\
+     {step3_branch_header}\
+     {step3_escrow}\
+     {step3_x402}"
     )
 }
 
@@ -418,20 +446,12 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
     let completed_x402_notify = super::super::content::job_completed_x402_user_notify(job_id, title_display);
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
     let rating_failed_notify = super::super::content::rating_failed_user_notify(job_id);
-    format!(
-    "[Current Status] job_completed (task payment pipeline complete)\n\
-     [Role] User (User Agent)\n\n\
-     🛑🛑🛑 **ABSOLUTE REQUIREMENT -- on job_completed the buyer MUST call `xmtp_dispatch_user` to notify the user**.\n\
-     job_completed is a **dual-recipient event** (buyer + provider both receive it); the buyer MUST handle it.\n\
-     Do not produce a plain text reply inside the sub session (see Hard Rule 9) -- a text reply = the user does not see it = the task is complete but the user does not know.\n\
-     🔴 Real incident: a model assumed job_completed only went to the provider, skipped xmtp_dispatch_user, and the user never received a completion notification.\n\n\
-     **Step 1 -- Fetch task info and payment mode:**\n\
-     ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\
-     Extract: {title_in_extract}tokenAmount, tokenSymbol, paymentMode (int: 1=escrow, 3=x402).\n\
-     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Completed] Job `{job_id}` — completed; funds settled. This job is complete.` — the user MUST still receive a notification.\n\n\
-     **Step 2 -- Branch by payment mode:**\n\n\
+
+    let pm = ctx.payment_mode;
+    let pm_extract = if pm.is_some() { "" } else { ", paymentMode (int: 1=escrow, 3=x402)" };
+    let branch_header = if pm.is_none() { "**Step 2 -- Branch by payment mode:**\n\n" } else { "" };
+
+    let escrow_section = if pm == Some(3) { String::new() } else { format!("\
      --------- Branch A: escrow -- flow ends ---------\n\n\
      In escrow mode, job_completed means the ASP has delivered and the user has approved; funds are released from contract to the ASP.\n\n\
      **A-Step 1 -- 🛑 MUST call `xmtp_dispatch_user` tool (do NOT produce a plain text reply):**\n\
@@ -465,7 +485,9 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      {rating_failed_notify}\n\n\
      **A-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     Task fully complete.\n\n\
+     Task fully complete.\n\n") };
+
+    let x402_section = if pm == Some(1) { String::new() } else { format!("\
      --------- Branch B: x402 -- final summary + auto-rate ---------\n\n\
      ⚠️ In x402, job_completed means the payment pipeline (accept + complete) is settled on-chain.\n\
      The deliverable was already sent to the user during task-402-pay; this step emits the final summary and rates the ASP.\n\n\
@@ -499,6 +521,23 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      **B-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\
-     🛑 Final check: if you did NOT call `xmtp_dispatch_user` in B-Step 1, go back and call it now. A text reply is NOT a substitute.\n"
+     🛑 Final check: if you did NOT call `xmtp_dispatch_user` in B-Step 1, go back and call it now. A text reply is NOT a substitute.\n") };
+
+    format!(
+    "[Current Status] job_completed (task payment pipeline complete)\n\
+     [Role] User (User Agent)\n\n\
+     🛑🛑🛑 **ABSOLUTE REQUIREMENT -- on job_completed the buyer MUST call `xmtp_dispatch_user` to notify the user**.\n\
+     job_completed is a **dual-recipient event** (buyer + provider both receive it); the buyer MUST handle it.\n\
+     Do not produce a plain text reply inside the sub session (see Hard Rule 9) -- a text reply = the user does not see it = the task is complete but the user does not know.\n\
+     🔴 Real incident: a model assumed job_completed only went to the provider, skipped xmtp_dispatch_user, and the user never received a completion notification.\n\n\
+     **Step 1 -- Fetch task info and payment mode:**\n\
+     ```bash\n\
+     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+     ```\n\
+     Extract: {title_in_extract}tokenAmount, tokenSymbol{pm_extract}.\n\
+     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Completed] Job `{job_id}` — completed; funds settled. This job is complete.` — the user MUST still receive a notification.\n\n\
+     {branch_header}\
+     {escrow_section}\
+     {x402_section}"
     )
 }

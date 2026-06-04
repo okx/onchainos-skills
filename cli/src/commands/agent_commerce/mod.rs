@@ -1050,7 +1050,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
-            if let Some(w) = check_status_freshness(&job_id, &event, &agent_id).await {
+            let (freshness_warning, payment_mode) = check_status_freshness(&job_id, &event, &agent_id).await;
+            if let Some(w) = freshness_warning {
                 println!("{w}");
                 return Ok(());
             }
@@ -1086,7 +1087,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref())
+                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode)
                 }
                 "evaluator" => {
                     crate::audit::log(
@@ -1196,7 +1197,7 @@ fn tx_failure_label(event: &str) -> &'static str {
 ///
 /// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
 /// returns None on network/parse failure (does not block script output, graceful fallback).
-async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_id: &str) -> Option<String> {
+async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_id: &str) -> (Option<String>, Option<i64>) {
     use task::common::network::task_api_client::TaskApiClient;
     use task::common::state_machine::{parse_status_or_event, status_when_event, Event, Status};
 
@@ -1216,7 +1217,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
         "wakeup_notify",
     ];
     if PSEUDO_EVENTS.contains(&job_status_or_event) {
-        return None;
+        return (None, None);
     }
 
     let event = parse_status_or_event(job_status_or_event);
@@ -1226,15 +1227,22 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // also skip validation (to avoid false positives on unrecognized events)
     if matches!(expected, Status::Other(ref s) if s == "unknown") {
         eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
-        return None;
+        return (None, None);
     }
 
     let mut c = TaskApiClient::new();
     // Must include the agenticId header — without it the beta backend returns code=3001 auth fail.
     // The next-action command itself requires --agentId, so use it directly here without an empty fallback.
-    let resp = c.get_with_identity(&c.task_path(job_id), agent_id).await.ok()?;
+    let resp = match c.get_with_identity(&c.task_path(job_id), agent_id).await {
+        Ok(r) => r,
+        Err(_) => return (None, None),
+    };
+    let payment_mode = resp.get("paymentMode").and_then(|v| v.as_i64());
     // Backend spec: response is flat, status is an int
-    let actual = Status::from_int(i32::try_from(resp.get("status")?.as_i64()?).ok()?);
+    let actual = match resp.get("status").and_then(|v| v.as_i64()).and_then(|v| i32::try_from(v).ok()) {
+        Some(s) => Status::from_int(s),
+        None => return (None, payment_mode),
+    };
     let actual_str = actual.as_str().to_string();
 
     // DisputeResolved special case: when the arbitration verdict lands on-chain, the actual status
@@ -1250,9 +1258,9 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     );
 
     if actual == expected || dispute_resolved_ok {
-        return None;
+        return (None, payment_mode);
     }
-    Some(format!(
+    (Some(format!(
         "🛑 **状态脱节，剧本已 block**（next-action 入参与任务真实状态不一致，不输出步骤防止你按 stale event 上链）\n\n\
          - 你传的 event = `{job_status_or_event}`，对应任务状态应为 `{expected_str}`\n\
          - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\n\
@@ -1261,5 +1269,5 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
          2. 如果当前 inbound 是 **system event** → 重调 next-action 并传 `--event {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
          **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 xmtp_dispatch_user 推用户。\n",
         expected_str = expected.as_str(),
-    ))
+    )), payment_mode)
 }
