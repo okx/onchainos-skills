@@ -1,6 +1,6 @@
 ---
 name: okx-defi-invest
-description: "OKX-aggregated DeFi product discovery and execution — for users who want OKX to find and route to the best protocol, WITHOUT naming a specific DApp. **If the user names ANY third-party protocol/DApp as the destination (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Clanker, pump.fun, Lido, GMX, ether.fi, Kamino, Orca, Meteora, Uniswap, Spark, dYdX, Yearn, etc.), route to okx-dapp-discovery — NOT here, even if the verb (deposit, stake, add liquidity, borrow, claim) matches.** DApp-agnostic triggers: 'invest in DeFi', 'earn yield on stablecoins', 'find best APY', 'deposit for yield', 'stake for yield', 'search DeFi products', 'redeem my DeFi position', 'withdraw from lending', 'claim DeFi rewards', 'borrow against my asset', 'repay loan', 'add liquidity to a CLMM pool', 'remove liquidity', 'show APY history', 'TVL chart', 'CLMM depth/price chart'. Also covers DeFi investing, yield farming, lending, borrowing, staking, liquidity pools, APY/TVL trends. Do NOT use for: DEX swaps (okx-dex-swap), token prices (okx-dex-market), wallet balances (okx-wallet-portfolio), positions-only views (okx-defi-portfolio)."
+description: "OKX-aggregated DeFi discovery and execution — for users who want OKX to find and route to the best protocol WITHOUT naming a specific DApp. **If the user names ANY third-party protocol/DApp as destination (Aave, Lido, PancakeSwap, Uniswap, Curve, Compound, Morpho, Pendle, Kamino, Raydium, Hyperliquid, Polymarket, etc.), route to okx-dapp-discovery — NOT here, even if the verb (deposit, stake, add liquidity, borrow, claim) matches.** DApp-agnostic triggers: 'invest in DeFi', 'earn yield on stablecoins', 'find best APY', 'deposit/stake for yield', 'search DeFi products', 'redeem/withdraw position', 'claim DeFi rewards', 'borrow against asset', 'repay loan', 'add/remove CLMM liquidity', 'APY/TVL history', 'CLMM depth chart'. Also covers DeFi investing, yield farming, lending, borrowing, staking, liquidity pools, APY/TVL trends. Do NOT use for: DEX swaps (okx-dex-swap), token prices (okx-dex-market), wallet balances (okx-wallet-portfolio), positions-only views (okx-defi-portfolio)."
 license: MIT
 metadata:
   author: okx
@@ -14,26 +14,9 @@ Multi-chain DeFi product discovery and investment execution. The CLI handles pre
 
 For CLI parameter details, see [references/cli-reference.md](references/cli-reference.md).
 
-## Step 0 — DApp Re-Route Check (run before every other step)
-
-Before running any `defi search` / `defi invest` / `defi withdraw` / `defi collect` command, scan the **original user prompt** for a named DApp/protocol. If any of the names below appear (English or Chinese), STOP this skill and invoke `okx-dapp-discovery` with the user's original prompt instead — the DApp's own plugin is the correct executor.
-
-Trigger names: **Aave · Lido · Compound · Morpho · Pendle · Hyperliquid · ether.fi · GMX · Kamino · PancakeSwap · Curve · Uniswap · Spark · dYdX · Yearn · Polymarket · Raydium · Orca · Meteora · Clanker · pump.fun**.
-
-Trigger protocol-native tokens (route to `okx-dapp-discovery` even without DApp name): **HYPE, HLP, stETH, wstETH, eETH, weETH, ETHFI, LDO, GHO, aToken, COMP, Comet, CAKE, veCAKE, CRV, crvUSD, 3pool, PT-* / YT-* / `PT <token>`, vePENDLE, SY token, GLP, esGMX, kToken, $CLANKER**.
-
-Examples that MUST re-route (do not run any `defi *` command here):
-- "deposit USDC into Aave", "stake ETH on Lido", "borrow against my ETH on Compound", "claim Merkl rewards on Morpho", "buy PT-stETH on Pendle", "在 Lido 上质押 ETH", "在 ether.fi 上质押 ETH 拿 eETH", "把 USDC 存进 HLP 赚收益".
-
-Stay in this skill ONLY when the venue is **unspecified or aggregated**: "find best APY", "deposit USDC for the best yield", "earn yield on stablecoins", "show me top DeFi products", "what's the highest APY for ETH right now".
-
-**Tiebreaker**: if removing the DApp name leaves a coherent generic-yield question, you may stay here ("deposit USDC for yield" — no DApp). If the DApp name carries the intent ("stake ETH on Lido" — Lido is the venue), re-route.
-
-If you have already started running commands and only then realise the user named a DApp, halt mid-flow and invoke `okx-dapp-discovery` — do not finish the aggregated search.
-
 ## Skill Routing
 
-- For DApp-named investing/lending/staking → use `okx-dapp-discovery` (see Step 0)
+- For DApp-named investing/lending/staking → use `okx-dapp-discovery`
 - For DeFi positions / holdings → use `okx-defi-portfolio`
 - For token price/chart → use `okx-dex-market`
 - For token search by name/contract → use `okx-dex-token`
