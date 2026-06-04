@@ -172,8 +172,9 @@ Four gates in order — never skip, never combine:
 1. `agent get --agent-ids <id>` → show current detail card.
 2. **Ownership check** (skill-side, before Q&A): if the returned agent's `ownerAddress` ≠ currently selected XLayer wallet address → stop. Say: "This agent doesn't belong to your current wallet." Do NOT proceed.
 3. Collect user's changes one field per turn.
-4. Render Update Diff card (`core/display-detail.md §3`). Get confirm token. Execute.
-5. Skill-side rule: if no fields changed, refuse to call CLI ("No changes to submit"). `--service` is wholesale replacement — always start from current full services list.
+4. **Provider QA on changed fields** (skill-side, before the Diff card): if the agent's `role` is `provider` and the changes touch any QA-governed field (name / description / picture / any service field), run `modules/pre-listing-qa.md` **Trigger B** scoped to the changed fields only. If it reports issues, resolve per its §QA Report (Trigger B options) before continuing. Requester/evaluator edits skip this step.
+5. Render Update Diff card (`core/display-detail.md §3`). Get confirm token. Execute.
+6. Skill-side rule: if no fields changed, refuse to call CLI ("No changes to submit"). `--service` is wholesale replacement — always start from current full services list.
 
 ### Search
 Read `modules/agent-search.md` before invoking `agent search`. User's full sentence → verbatim `--query`. Extract four filter dimensions simultaneously. Credit score 0 → "No rating yet". One `agent search` per intent.

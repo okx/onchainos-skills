@@ -17,11 +17,13 @@ The right path depends on the runtime. Do not force the user down a path their e
 2. **Detect the runtime first.** If the session has an attachment facility (Claude Code attachments, editor drag-drop), allow "user-provided image". If it is a terminal-only chat, do not ask the user for a path.
 2. **Default to "skip".** If the user doesn't bring up avatar, do not prompt for one; create/update succeeds with a backend-assigned default image.
 3. **When prompting, match the user's language and use the numbered-options pattern:**
-   - **Claude Code (attachments supported) — 3 options:** want an avatar? → 1. send image (upload it, recommend 1:1 PNG/JPEG/WebP) / 2. generate from keywords / 3. skip (default avatar). Reply 1/2/3.
+   - **Claude Code (attachments supported) — 3 options:** want an avatar? → 1. send image (upload it, recommend 1:1 PNG/JPEG/WebP, no rounded corners or borders — see §Policy 7) / 2. generate from keywords / 3. skip (default avatar). Reply 1/2/3.
    - **Terminal (no attachments) — 2 options:** open with "can't receive attachments here" — then: 1. generate from keywords (1:1 recommended) / 2. skip (default avatar). Reply 1/2.
 4. **AI-generation requires explicit prompt.** Do not invent image content. Ask the user in their language: "Describe the avatar — a few keywords is enough."
 5. **Upload result is a URL — show it to the user.** Pass it to `--picture`, and render the URL verbatim in the Picture row of the confirmation card and the detail card (see `core/display-formats.md §Picture row rule`). Do **not** hide the URL behind "uploaded" or any placeholder. Do not re-upload an already-uploaded image.
 6. **Aspect ratio guidance.** When the user sends a non-1:1 image, accept it and upload anyway — do not reject or demand re-crop. But when *proactively* recommending dimensions, say "1:1 square" rather than a specific pixel size like 512×512 (the backend does not enforce 512, and pixel specifics date quickly).
+7. **Display-quality tip (advisory, never blocking).** When prompting the user to *send/upload* an image — at the moment you offer the "send image" option, and again right before you accept an attachment — surface a one-line tip **in the user's language**: avoid **rounded corners** and avoid a **border/frame** — a plain full-bleed square renders best on the marketplace. This is purely a recommendation: if the user sends a rounded/bordered image anyway, accept it and upload — do NOT reject, do NOT auto-crop or strip the border (altering the user's image is forbidden, see §Validation). Only mention it at upload time; do not raise it for AI-generated avatars unless the user is choosing reference imagery.
+   - Example phrasing (localize, do not hard-code any one language): "For the best display, avoid rounded corners and borders — a plain square image works best."
 
 ---
 

@@ -1,23 +1,41 @@
 # Pre-Listing Quality Assurance
 
-This file defines the quality gate the AI runs **after `agent activate` returns `approvalStatus: 1`** (review required, not yet submitted) for any `provider`-role agent, and **before calling `agent submit-approval`**. It operationalises the five display-field standards from the OKX marketplace listing specification.
+This file defines the quality gate the AI runs for `provider`-role agents. It operationalises the five display-field standards from the OKX marketplace listing specification. It fires in **two** situations: at listing time (full agent), and when editing an already-existing provider (changed fields only).
 
 ## When to Run
 
-Automatically trigger this checklist when:
+Automatically trigger this checklist when **either** trigger matches:
 
+**Trigger A — Pre-listing (full scope).** Run after `agent activate` returns `success: false, approvalStatus: 1` and **before** calling `agent submit-approval`, when:
 - `agent activate` returns `success: false, approvalStatus: 1`, **AND**
 - The target agent's `role` is `provider`
 
-If the role is `requester` or `evaluator`, skip this file — it does not apply (those roles have no service fields).
+Scope = **all** display fields of the agent (every check in the tables below, against every service).
+
+**Trigger B — Provider edit (changed-fields scope).** Run inside the `§Update` flow (SKILL.md), after the user's changes are collected and **before** the Update Diff card is confirmed, when:
+- The target agent's `role` is `provider`, **AND**
+- The user is changing at least one QA-governed field: agent `name`, `description`, `picture`, or any service field (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`), incl. adding/removing a service.
+
+Scope = **only the fields the user is actually modifying**. Do NOT flag pre-existing issues in fields the user left untouched — those were already on-chain and re-surfacing them mid-edit is noise. Concretely:
+- Changed agent `name` → run N1–N7 + U1–U3 on the new name only.
+- Changed `description` → run D1–D10 on the new description only.
+- Changed/added service → run T1–T3 / S1–S6 / P1–P5 / D-rules + U1–U4 on **that** service only; leave sibling services alone.
+- Changed `picture` (new upload) → L2/L3 advisory only (L1 cannot fail on an edit that supplies a picture).
+- A field the user did NOT touch → skip every check for it, even if it looks non-compliant.
+
+If the role is `requester` or `evaluator`, skip this file under both triggers — it does not apply (those roles have no service fields).
 
 ## How to Run
 
 1. Use the `agent get --agent-ids <N>` data already in context (do **NOT** make an extra CLI call just for QA).
-2. Extract: top-level `name`, `description`, `picture`, and all `services[]` entries (each with `name`, `servicedescription`, `servicetype`, `fee`, `endpoint`).
-3. Run **every** check in the tables below against each service.
-4. **All checks pass** → proceed to `agent submit-approval`. No report needed.
-5. **Any check fails** → render the §QA Report (with two explicit options) and stop. Wait for the user to choose. **Exception: L1 (no avatar) is always blocking** — if `picture` is absent, do NOT offer option 2 (submit anyway); only offer option 1 (fix first).
+2. Determine scope by trigger:
+   - **Trigger A (pre-listing):** extract top-level `name`, `description`, `picture`, and all `services[]` entries. Check everything.
+   - **Trigger B (provider edit):** extract **only the user's new/changed values** (the deltas you collected in the `§Update` flow). Check only those — ignore untouched fields entirely.
+3. Run the relevant checks in the tables below against the in-scope values (per-service for any in-scope service).
+4. **All checks pass** → proceed to the trigger's next step with no report: Trigger A → `agent submit-approval`; Trigger B → render the Update Diff card as usual.
+5. **Any check fails** → render the §QA Report (with two explicit options) and stop. Wait for the user to choose.
+   - **Trigger A exception:** L1 (no avatar) is always blocking — if `picture` is absent, do NOT offer option 2 (submit anyway); only offer option 1 (fix first).
+   - **Trigger B** never evaluates L1 (an edit can only fail L1 by clearing an existing avatar, which the diff card already surfaces). Option 2 wording for Trigger B is "Submit the change anyway" (proceeds to the Update Diff card → `agent update`), not "list anyway".
 
 ---
 
@@ -135,8 +153,9 @@ L1 is a **blocking** check (❌) — do not proceed to `agent activate` without 
 
 ## §QA Report Format
 
-When any check fails, render the report below in the user's language, then ask whether to fix first or proceed anyway.
+When any check fails, render the report below in the user's language, then ask whether to fix first or proceed anyway. The header line and option 2 wording depend on the trigger.
 
+**Trigger A (pre-listing):**
 ```
 QA check found some issues before listing:
 
@@ -153,15 +172,30 @@ How would you like to proceed?
   2. List anyway (⚠️ non-compliant information may cause listing failure)
 ```
 
+**Trigger B (provider edit — only the changed fields appear):**
+```
+QA check found some issues with your changes:
+
+**Agent #<id> — <name>**
+
+  ⚠️ <Field> — <issue> → <suggestion>
+(only fields the user is changing; repeat per changed field / service)
+
+---
+How would you like to proceed?
+  1. Fix and submit (Recommended)
+  2. Submit the change anyway (⚠️ non-compliant information may be rejected on review)
+```
+
 **Rules for the report:**
 
 - Use ⚠️ (warning), not ❌ (error) — this is advisory, not a hard block.
-- Group failures by service (service index + name); list all failing checks.
+- Group failures by service (service index + name); list all failing checks. For Trigger B, only list fields/services the user is actually changing.
 - Use fix instructions from the tables above, translated to the user's language.
 - ⛔ Do NOT show raw JSON, field key names (`servicedescription`, `servicetype`), or CLI flag names — use the user-facing labels from `core/ux-lexicon.md`.
 - ⛔ Do NOT auto-correct values — the user must supply corrected content (Red line 6 in `SKILL.md`).
-- **On option 1 (fix first)**: route through `§Update` flow (`agent update` → re-run QA → `agent submit-approval`).
-- **On option 2 (submit anyway)**: invoke `agent submit-approval` immediately without re-prompting.
+- **Trigger A — option 1 (fix first)**: route through `§Update` flow (`agent update` → re-run QA → `agent submit-approval`). **Option 2 (list anyway)**: invoke `agent submit-approval` immediately without re-prompting.
+- **Trigger B — option 1 (fix first)**: re-collect the corrected value (one field per turn), re-run this checklist on the new value, then continue to the Update Diff card. **Option 2 (submit anyway)**: proceed directly to the Update Diff card → confirm → `agent update`, no re-prompting.
 
 ---
 
