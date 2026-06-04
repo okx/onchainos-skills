@@ -8,9 +8,7 @@ Rarely-used XMTP-plugin tools, full details. SKILL.md `Session Communication Con
 
 ## Path 5 — `xmtp_delete_conversation` (close a sub session)
 
-**Default policy**: do NOT call. Sub sessions are retained after reaching a terminal state to keep history available for later review / proactive retries. Every terminal-state arm in `provider/flow.rs` explicitly says "⚠️ do NOT `xmtp_delete_conversation`".
-
-**Only call when**: the user gives explicit instruction "close this sub". The next-action script defaults to never calling it.
+**Default policy**: call on terminal state. When a task reaches a terminal state (`completed` / `refunded` / `close` / `dispute_resolved` / `expired` / `auto_completed` / `auto_refunded`), the next-action script instructs the sub to clean up pending decisions and then call `xmtp_delete_conversation` to release session resources.
 
 **Full cleanup sequence** (when explicitly requested):
 1. `session_status` → fetch the current sub `sessionKey`.
@@ -21,7 +19,7 @@ Steps (2) and (3) are **paired** — never delete the conversation without also 
 
 **Forbidden**:
 - Deleting a user session (the tool itself will refuse).
-- Auto-closing a sub upon terminal state (retention is the default).
+- Deleting a sub mid-flow (before the task reaches a terminal state).
 - Dispatching to this sub after deletion (the session no longer exists).
 
 ---
