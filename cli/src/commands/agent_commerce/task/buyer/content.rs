@@ -29,9 +29,14 @@
 
 // ── Event::JobCreated ──────────────────────────────────────────────
 
-/// `Event::JobCreated` Step 0 — user notification template (placeholders for agent to fill + localize).
-pub fn job_created_user_notify() -> &'static str {
-    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. <status_text>"
+/// `Event::JobCreated` Step 0 — user notification (no designated provider).
+pub fn job_created_public_user_notify() -> &'static str {
+    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. Auto-querying recommended ASPs."
+}
+
+/// `Event::JobCreated` Step 0 — user notification (with designated provider).
+pub fn job_created_designated_user_notify() -> &'static str {
+    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. Connecting to the designated ASP (<provider_agentId>)."
 }
 
 fn designated_asp_abc_prompt(short_id: &str, dp_id: &str, job_id: &str, reason: &str) -> String {
@@ -107,7 +112,6 @@ pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: escrow\n\
          - txHash: <txHash>\n\
-         - Settled at: <timestamp from system notification, converted to human-readable e.g. \"2025-05-29 10:00 UTC\"; omit this line if not available>\n\
          This job is complete."
     )
 }
@@ -118,7 +122,6 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
         "[x402 Job Completed] {title} (`{job_id}`) — all steps complete.\n\
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: x402\n\
-         - Settled at: <timestamp from system notification, converted to human-readable e.g. \"2025-05-29 10:00 UTC\"; omit this line if not available>\n\
          - Deliverable saved to: <deliverableSavedPath from task-402-pay output; if not in context, omit this line>\n\
          - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>\n\
          This job is complete."
@@ -127,12 +130,22 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
 
 // ── Event::DisputeResolved ─────────────────────────────────────────
 
+/// Per-arbiter verdict rationales block shared by both `DisputeResolved` outcomes.
+/// Source field: `message.voteReportSummaries[*].voterReportSummary` from the system envelope.
+const ARBITRATION_REASONS_BLOCK: &str = concat!(
+    "- Arbitration reasons:\n",
+    "    Arbiter 1: <voterReportSummary from message.voteReportSummaries[0]>\n",
+    "    Arbiter 2: <voterReportSummary from message.voteReportSummaries[1]>\n",
+    "    ... (one line per entry; first skip entries whose voterReportSummary is missing / empty / whitespace, then number the kept entries consecutively starting at 1 in array order — do NOT preserve gaps from the original index; omit this whole `- Arbitration reasons:` section if voteReportSummaries is missing, not an array, empty, or every entry would be skipped — do NOT print a header with no body, do NOT fabricate filler text)",
+);
+
 /// `Event::DisputeResolved` — user wins (B-5-4).
 pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
          - Refund: <tokenAmount> <tokenSymbol>\n\
          - Outcome: ClientWins\n\
+         {ARBITRATION_REASONS_BLOCK}\n\
          This job is complete."
     )
 }
@@ -143,6 +156,7 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
         "[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
          - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
          - Outcome: ProviderWins\n\
+         {ARBITRATION_REASONS_BLOCK}\n\
          This job is complete."
     )
 }

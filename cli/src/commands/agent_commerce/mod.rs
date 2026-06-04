@@ -438,7 +438,8 @@ pub enum AgentCommand {
         round_num: String,
     },
     /// Commit a vote (Phase 1 of commit-reveal). vote: 0 = Approve (Client wins), 1 = Reject (Provider wins).
-    /// Body sent to backend carries `{ vote, reason }`. Backend resolves the active dispute round from jobId.
+    /// Broadcast bizContext carries `{ vote, voteReport, voteReportSummary }`. Backend resolves the active
+    /// dispute round from jobId.
     #[command(name = "vote-commit")]
     VoteCommit {
         job_id: String,
@@ -446,12 +447,18 @@ pub enum AgentCommand {
         vote: u8,
         /// Full verdict text produced by Step 5 per the Verdict template defined in
         /// `references/evaluator-decision-rubric.md` (whichever heading the user-customized
-        /// rubric uses to define it; required). Sent to backend in the commit body as the
-        /// on-chain audit trail — whatever fields the rubric's Verdict template prescribes.
-        /// Flatten to a single line with `\n` / `\t` / `\r` / `\\` / `\"` escapes (CLI
-        /// unescapes before transport); escape `"` / `` ` `` / `$` to survive the shell.
+        /// rubric uses to define it; required). Sent to backend in the broadcast bizContext as
+        /// `voteReport` — the human-readable on-chain audit trail; whatever fields the rubric's
+        /// Verdict template prescribes. Flatten to a single line with `\n` / `\t` / `\r` / `\\` / `\"`
+        /// escapes (CLI unescapes before transport); escape `"` / `` ` `` / `$` to survive the shell.
         #[arg(long = "reason")]
         reason: String,
+        /// One-sentence summary of the verdict, ≤30 Unicode characters (counted by
+        /// `chars().count()`). Produced by Step 5 by compressing the full verdict text;
+        /// sent to backend as `voteReportSummary` alongside the full `voteReport`. Empty
+        /// values and overlength inputs are rejected by the CLI.
+        #[arg(long = "reason-summary")]
+        reason_summary: String,
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
         agent_id: String,
@@ -634,6 +641,10 @@ pub enum AgentCommand {
         direction: String,
         #[arg(long)]
         provider_security_rate: String,
+        #[arg(long)]
+        client_communication_address: String,
+        #[arg(long)]
+        provider_communication_address: String,
     },
 
     /// Get XMTP system config (system account addresses)
@@ -896,9 +907,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
             task::evaluator::info::handle_info(&mut c, &job_id, &agent_id, &round_num).await
         }
-        AgentCommand::VoteCommit { job_id, vote, reason, agent_id } => {
+        AgentCommand::VoteCommit { job_id, vote, reason, reason_summary, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::commit::handle_commit(&mut c, &job_id, vote, &reason, &agent_id).await
+            task::evaluator::commit::handle_commit(&mut c, &job_id, vote, &reason, &reason_summary, &agent_id).await
         }
         AgentCommand::VoteReveal { job_id, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
@@ -1120,6 +1131,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             group_id,
             direction,
             provider_security_rate,
+            client_communication_address,
+            provider_communication_address,
         } => chat::run(
             chat::ChatCommand::MessageEligible {
                 agent_id,
@@ -1129,6 +1142,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 group_id,
                 direction,
                 provider_security_rate,
+                client_communication_address,
+                provider_communication_address,
             },
             ctx,
         ).await,

@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::payment_mode::PaymentMode;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 use crate::commands::agent_commerce::task::signing;
 
@@ -54,6 +55,33 @@ pub async fn handle_deliver(
              Do NOT call xmtp_send to rush the buyer — confirm-accept is a user decision driven by the buyer's session.",
             status_int,
             status.as_str(),
+        );
+    }
+
+    let pm_int = task_resp["paymentMode"]
+        .as_i64()
+        .and_then(|n| i32::try_from(n).ok())
+        .unwrap_or(1);
+    let pm = PaymentMode::from_int(pm_int);
+    if pm != PaymentMode::Escrow {
+        audit::log(
+            "cli",
+            "provider/deliver_blocked_wrong_payment_mode",
+            false,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("paymentMode={pm_int}"),
+                format!("paymentModeStr={}", pm.as_str()),
+            ]),
+            Some("deliver is escrow-only"),
+        );
+        bail!(
+            "Deliver rejected: paymentMode = {} ({}) — deliver/submit is only supported for escrow (1).\n\
+             x402 tasks skip the submit step; the buyer obtains the deliverable by replaying the provider's endpoint and calls /direct/complete.",
+            pm_int,
+            pm.as_str(),
         );
     }
 

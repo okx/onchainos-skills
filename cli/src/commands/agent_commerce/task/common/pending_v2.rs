@@ -161,6 +161,17 @@ fn acquire_lock() -> Result<std::fs::File> {
     }
 }
 
+/// Append a timestamped line to /tmp/onchainos-cli-mode.log for verifying the
+/// CLI-mode bypass branches in handle_request / handle_resolve. Best-effort;
+/// any IO error is swallowed so trace failures never break the main flow.
+fn trace_log(line: &str) {
+    let _ = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/onchainos-cli-mode.log")
+        .and_then(|mut f| writeln!(f, "[{}] {}", Utc::now().to_rfc3339(), line));
+}
+
 fn read_queue() -> Result<Queue> {
     let path = queue_path()?;
     if !path.exists() {
@@ -321,6 +332,48 @@ pub enum PendingDecisionsV2Command {
         user_reply: String,
     },
 
+    /// (user-session, CLI-driver bypass) Resolve a decision without consulting
+    /// the queue file — caller passes every routing field explicitly so the
+    /// envelope can be built and dispatched. Pairs with `request`'s
+    /// OKX_A2A_IS_CLI=1 bypass; used when a non-MCP CLI loop owns turn-taking
+    /// and never persists queue state to disk.
+    #[command(name = "resolve-with-sessionkey")]
+    ResolveWithSessionkey {
+        #[arg(long = "user-reply")]
+        user_reply: String,
+        #[arg(long = "sub-key")]
+        sub_key: String,
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "source-event")]
+        source_event: String,
+    },
+
+    /// (user-session, MCP variant of resolve-with-sessionkey) Same envelope
+    /// construction as `resolve-with-sessionkey`, but emits a playbook that
+    /// dispatches via the MCP `xmtp_dispatch_session` tool instead of the
+    /// `okx-a2a session send` CLI subprocess. Pairs with `playbook_push_prompt_user`
+    /// (the MCP push variant), so an MCP push → MCP relay round-trip stays consistent.
+    #[command(name = "resolve-prompt")]
+    ResolvePrompt {
+        #[arg(long = "user-reply")]
+        user_reply: String,
+        #[arg(long = "sub-key")]
+        sub_key: String,
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "source-event")]
+        source_event: String,
+    },
+
     /// (user-session) Pick entry by 1-based index from the displayed list.
     Pick {
         #[arg(long)]
@@ -366,6 +419,12 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             source_event,
         } => handle_request(sub_key, job_id, role, agent_id, user_content, list_label, llm_content, source_event),
         PendingDecisionsV2Command::Resolve { user_reply } => handle_resolve(user_reply),
+        PendingDecisionsV2Command::ResolveWithSessionkey {
+            user_reply, sub_key, job_id, role, agent_id, source_event,
+        } => handle_resolve_with_sessionkey(user_reply, sub_key, job_id, role, agent_id, source_event),
+        PendingDecisionsV2Command::ResolvePrompt {
+            user_reply, sub_key, job_id, role, agent_id, source_event,
+        } => handle_resolve_prompt(user_reply, sub_key, job_id, role, agent_id, source_event),
         PendingDecisionsV2Command::Pick { index } => handle_pick(index),
         PendingDecisionsV2Command::List { format } => handle_list(format),
         PendingDecisionsV2Command::Cancel { sub_key, index } => handle_cancel(sub_key, index),
@@ -375,6 +434,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
 // ─── Handlers ──────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
+#[allow(unreachable_code)]
 fn handle_request(
     sub_key: String,
     job_id: String,
@@ -385,6 +445,76 @@ fn handle_request(
     llm_content: Option<String>,
     source_event: Option<String>,
 ) -> Result<()> {
+    // CLI mode: the driver (a non-MCP CLI loop) owns turn-taking and doesn't need
+    // queue routing. Bypass the queue file entirely — build an ad-hoc entry and
+    // emit playbook_push so the LLM calls xmtp_prompt_user immediately.
+    let cli_mode_env = std::env::var("OKX_A2A_IS_CLI").unwrap_or_default();
+    let cli_mode = cli_mode_env == "1";
+    trace_log(&format!(
+        "handle_request {} (OKX_A2A_IS_CLI={:?}): job_id={} role={} sub_key={}",
+        if cli_mode { "CLI_MODE" } else { "QUEUE_MODE" },
+        cli_mode_env, job_id, role, sub_key,
+    ));
+    if cli_mode {
+        let now = Utc::now();
+        let entry = PendingEntry {
+            sub_key,
+            job_id,
+            role,
+            agent_id,
+            user_content,
+            list_label,
+            llm_content_override: llm_content,
+            source_event,
+            status: Status::Active,
+            created_at: now,
+            updated_at: now,
+        };
+        print!("{}", playbook_push_cli(&entry));
+        return Ok(());
+    }
+
+    // Non-CLI mode: emit the MCP `xmtp_prompt_user` playbook via playbook_push_prompt_user.
+    // Unlike cli_mode, this branch DOES persist the entry to the queue file (always as
+    // Status::Queued — no single-active invariant; the multi-card disambig in the playbook
+    // handles user routing). Dedupe by sub_key: an entry with the same sub_key is replaced
+    // in place (created_at preserved). At resolve time, `handle_resolve_prompt` looks up by
+    // sub_key and removes the entry.
+    {
+        let now = Utc::now();
+        let new_entry_template = PendingEntry {
+            sub_key: sub_key.clone(),
+            job_id: job_id.clone(),
+            role: role.clone(),
+            agent_id: agent_id.clone(),
+            user_content: user_content.clone(),
+            list_label: list_label.clone(),
+            llm_content_override: llm_content.clone(),
+            source_event: source_event.clone(),
+            status: Status::Queued,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let _lock = acquire_lock()?;
+        let mut q = read_queue()?;
+        let original_created_at = q
+            .entries
+            .iter()
+            .find(|e| e.sub_key == sub_key)
+            .map(|e| e.created_at)
+            .unwrap_or(now);
+        q.entries.retain(|e| e.sub_key != sub_key);
+        q.entries.push(PendingEntry {
+            created_at: original_created_at,
+            ..new_entry_template
+        });
+        write_queue_atomic(&q)?;
+        let entry = q.entries.last().unwrap();
+        print!("{}", playbook_push_prompt_user(entry));
+        return Ok(());
+    }
+
     // Reject hallucinated sub_key shapes early. The only valid sub_key is the
     // full XMTP sessionKey returned by `session_status` — anything else (e.g.
     // `review-<jobId>`, the bare jobId, a label) silently breaks `xmtp_dispatch_session`
@@ -481,6 +611,121 @@ fn handle_request(
             }
         }
     }
+    Ok(())
+}
+
+/// CLI-driver bypass: build the full system-shaped relay envelope from the
+/// caller-supplied routing fields and emit `playbook_relay_only`. Mirrors the
+/// queue-based `handle_resolve` envelope shape exactly (same fields, same
+/// `user_decision_<source_event>` event), so the receiving sub routes via the
+/// same `next-action --event user_decision_<X>` handler regardless of mode.
+fn handle_resolve_with_sessionkey(
+    user_reply: String,
+    sub_key: String,
+    job_id: String,
+    role: String,
+    agent_id: String,
+    source_event: String,
+) -> Result<()> {
+    trace_log(&format!(
+        "handle_resolve_with_sessionkey: sub_key={} job_id={} role={} agent_id={} source_event={} user_reply={:?}",
+        sub_key, job_id, role, agent_id, source_event, user_reply,
+    ));
+    let relay_event = format!("user_decision_{}", source_event);
+    let description = format!(
+        "User-decision relay envelope (CLI mode). Call `onchainos agent next-action \
+         --jobid {jid} --event {evt} --role {role} --agentId {agent} \
+         --data \"<message.data verbatim>\"` to fetch the routing playbook; follow it. \
+         ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
+         user-session-only; the user-session already issued this relay envelope.",
+        jid = job_id, evt = relay_event, role = role, agent = agent_id,
+    );
+    let relay_envelope = serde_json::json!({
+        "agentId": agent_id,
+        "message": {
+            "event": relay_event,
+            "data": user_reply,
+            "code": 0,
+            "description": description,
+            "source": "system",
+            "jobId": job_id,
+            "role": role,
+            "timestamp": Utc::now().timestamp(),
+        }
+    });
+    let relay_content = serde_json::to_string(&relay_envelope)
+        .unwrap_or_else(|_| format!(
+            "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",
+            agent_id, relay_event, user_reply, job_id, role,
+        ));
+    print!("{}", playbook_relay_only_cli(&sub_key, &relay_content));
+    Ok(())
+}
+
+/// MCP variant of `handle_resolve_with_sessionkey`. Builds the same
+/// system-shaped relay envelope from the caller-supplied routing fields, but
+/// emits `playbook_relay_only_prompt` (MCP `xmtp_dispatch_session` tool call)
+/// instead of `playbook_relay_only_cli` (`okx-a2a session send` bash). Pairs
+/// with `playbook_push_prompt_user` so an MCP push lands an MCP relay.
+fn handle_resolve_prompt(
+    user_reply: String,
+    sub_key: String,
+    job_id: String,
+    role: String,
+    agent_id: String,
+    source_event: String,
+) -> Result<()> {
+    trace_log(&format!(
+        "handle_resolve_prompt: sub_key={} job_id={} role={} agent_id={} source_event={} user_reply={:?}",
+        sub_key, job_id, role, agent_id, source_event, user_reply,
+    ));
+    let relay_event = format!("user_decision_{}", source_event);
+    let description = format!(
+        "User-decision relay envelope (MCP prompt mode). Call `onchainos agent next-action \
+         --jobid {jid} --event {evt} --role {role} --agentId {agent} \
+         --data \"<message.data verbatim>\"` to fetch the routing playbook; follow it. \
+         ❌ Do NOT call `pending-decisions-v2 resolve` / `resolve-with-sessionkey` / `resolve-prompt` / `pick` / `cancel` — those are user-session-only; the user-session already issued this relay envelope.",
+        jid = job_id, evt = relay_event, role = role, agent = agent_id,
+    );
+    let relay_envelope = serde_json::json!({
+        "agentId": agent_id,
+        "message": {
+            "event": relay_event,
+            "data": user_reply,
+            "code": 0,
+            "description": description,
+            "source": "system",
+            "jobId": job_id,
+            "role": role,
+            "timestamp": Utc::now().timestamp(),
+        }
+    });
+    let relay_content = serde_json::to_string(&relay_envelope)
+        .unwrap_or_else(|_| format!(
+            "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",
+            agent_id, relay_event, user_reply, job_id, role,
+        ));
+
+    // Best-effort remove the matching entry from the queue (paired with the
+    // `handle_request` non-CLI write path). If lock / IO fails, log + continue —
+    // the relay playbook below is the critical path and must still be emitted.
+    match acquire_lock() {
+        Ok(_lock) => match read_queue() {
+            Ok(mut q) => {
+                let before = q.entries.len();
+                q.entries.retain(|e| e.sub_key != sub_key);
+                if q.entries.len() != before {
+                    if let Err(e) = write_queue_atomic(&q) {
+                        trace_log(&format!("handle_resolve_prompt: write_queue_atomic failed: {e}"));
+                    }
+                }
+            }
+            Err(e) => trace_log(&format!("handle_resolve_prompt: read_queue failed: {e}")),
+        },
+        Err(e) => trace_log(&format!("handle_resolve_prompt: acquire_lock failed: {e}")),
+    }
+
+    print!("{}", playbook_relay_only_prompt(&sub_key, &relay_content));
     Ok(())
 }
 
@@ -645,38 +890,11 @@ fn handle_pick(index: usize) -> Result<()> {
         }
     }
 
-    // Three cases by current status:
-    //   (a) The picked entry IS already active → re-render its card (no state change).
-    //       User likely wants to re-see the card after scrolling past it.
-    //   (b) The picked entry is queued AND no active exists → promote it (selection-mode flow).
-    //   (c) The picked entry is queued AND a DIFFERENT entry is currently active →
-    //       **swap**: demote the current active to queued, promote the picked one to active.
-    //       Neither decision is lost; the user can come back to either by `pick --index <N>`.
-    let already_active = q.entries[entry_idx].status == Status::Active;
-    let picked_sub_key = q.entries[entry_idx].sub_key.clone();
-    if !already_active {
-        // If another entry is currently active, demote it to queued (swap, not drop).
-        for e in q.entries.iter_mut() {
-            if e.status == Status::Active {
-                e.status = Status::Queued;
-            }
-        }
-        q.entries[entry_idx].status = Status::Active;
-        // Re-sort so the newly-promoted active sits at index 0 (active-first invariant).
-        ensure_invariant_and_evict(&mut q);
-        // Refresh snapshot so a subsequent `pick --index N` reflects the new order
-        // (otherwise the next pick would resolve indices against the stale pre-pick layout).
-        let new_snap = build_snapshot(&q);
-        write_snapshot_atomic(&new_snap)?;
-        write_queue_atomic(&q)?;
-    }
-    // entry_idx may now be invalid after the sort — look up the entry by its sub_key.
-    let render_idx = q
-        .entries
-        .iter()
-        .position(|e| e.sub_key == picked_sub_key)
-        .expect("picked entry must still exist after promotion + sort");
-    print!("{}", playbook_render(&q.entries[render_idx]));
+    // New behaviour (all-Queued model): pick is render-only — no status mutation, no swap,
+    // no auto-promote. We just render the selected card so the user can see its full
+    // content. The previous Active/Queued promotion logic was removed because nothing
+    // downstream (handle_resolve_prompt) reads Status::Active anymore.
+    print!("{}", playbook_render(&q.entries[entry_idx]));
     Ok(())
 }
 
@@ -1117,6 +1335,109 @@ fn playbook_push(entry: &PendingEntry) -> String {
     )
 }
 
+/// CLI-driver variant of `resolve_llm_content`. The queue file is bypassed in
+/// CLI mode, so the future `resolve` call cannot reverse-lookup routing fields
+/// from a queue entry — embed all of them up front so the LLM passes them
+/// verbatim to `resolve-with-sessionkey`.
+fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
+    if let Some(ref custom) = entry.llm_content_override {
+        return custom.clone();
+    }
+    let source_event_str = entry.source_event.clone().unwrap_or_default();
+    format!(
+        "[USER_DECISION_REQUEST][sub_key: {}][job: {}][role: {}]\n\n\
+         Step 1 — Card was just delivered via `xmtp_prompt_user`. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
+         Step 2 — When the user actually replies (next turn):\n\
+         \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
+         \x20\x20\x20\x20· else → run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --sub-key \"{}\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\" --source-event \"{}\"` exactly once, then follow the relay playbook it returns.",
+        entry.sub_key,
+        entry.job_id,
+        entry.role,
+        DEFER_KEYWORDS.join(" / "),
+        entry.sub_key,
+        entry.job_id,
+        entry.role,
+        entry.agent_id,
+        source_event_str,
+    )
+}
+
+/// Variant of `resolve_llm_content_cli` for the `playbook_push_prompt_user`
+/// (non-OKX_A2A_IS_CLI) path. Adds a multi-decision disambiguation branch in
+/// Step 2 so that when multiple [USER_DECISION_REQUEST] blocks coexist in the
+/// LLM's context, the LLM first asks the user which jobId they're answering
+/// rather than guessing.
+fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
+    if let Some(ref custom) = entry.llm_content_override {
+        return custom.clone();
+    }
+    let source_event_str = entry.source_event.clone().unwrap_or_default();
+    format!(
+        "[USER_DECISION_REQUEST]\n\
+         [sub_key: {sub}][job: {job}][role: {role}]\n\
+         (Anything above this marker is stale — NOT a reply to this card.)\n\n\
+         Step 1 — Card just delivered.\n\n\
+         Step 2 — Scan your current context for OTHER [USER_DECISION_REQUEST] blocks. \
+         If you find any, render the warning below to the user as your assistant response (in user's language), e.g.:\n\
+         \x20\x20`⚠️ You have multiple decisions pending — please prefix your reply with the jobId short hash, e.g. \\`0x7091: approve\\`, so it routes correctly.`\n\
+         If no other blocks → skip this step.\n\n\
+         Step 3 — **END THE TURN NOW**, wait for user reply. Do NOT call any tool.\n\n\
+         🛑 **The block below runs ONLY in a future turn**, AFTER the user has actually replied. Do NOT run anything in the current turn.\n\
+         On the user's next reply, re-scan your context for [USER_DECISION_REQUEST] blocks (the count may have changed since Step 2), then walk this decision tree:\n\
+         \x20\x20· defer keyword ({defer}) → END TURN, do NOT run anything.\n\
+         \x20\x20· Reply starts with `0x...:` prefix → strip the prefix + colon, use the prefix to match each block's `[job: 0x...]` header, locate THAT block, then run THAT block's command template with `--user-reply` set to the stripped wording (without the prefix).\n\
+         \x20\x20· No prefix + only THIS block in context (single) → run THIS block's command template with the full reply.\n\
+         \x20\x20· 🔁 No prefix + **multiple** [USER_DECISION_REQUEST] blocks in context → user forgot to add the jobId prefix. Ask them which jobId they're answering (number the candidates `1. Job 0x...`, `2. Job 0x...`, one per line — short_jobId only), **END THE TURN**, wait for the pick (hex prefix `0x7091` or list number `1`); locate THAT block via `[job: 0x...]` header (or list order), then run THAT block's command template. Never guess, never collapse.\n\n\
+         **Command template** (pre-filled for THIS block; only run AFTER the user has replied):\n\
+         \x20\x20`onchainos agent pending-decisions-v2 resolve-prompt --user-reply \"<user wording, without any jobId prefix>\" --sub-key \"{sub}\" --job-id \"{job}\" --role \"{role}\" --agent-id \"{agent}\" --source-event \"{src}\"`\n\n\
+         After running, follow the relay playbook the command returns.",
+        sub = entry.sub_key,
+        job = entry.job_id,
+        role = entry.role,
+        agent = entry.agent_id,
+        src = source_event_str,
+        defer = DEFER_KEYWORDS.join(" / "),
+    )
+}
+
+/// CLI-driver variant of `playbook_push`. Uses the `okx-a2a user decision-request`
+/// CLI subprocess (writes SQLite `user_attention`) instead of the MCP-only
+/// `xmtp_prompt_user` tool, since CLI mode runs outside of an MCP host.
+fn playbook_push_cli(entry: &PendingEntry) -> String {
+    let llm_content = resolve_llm_content_cli(entry);
+    // Single-quote the bash args; only `'` itself needs escaping via the canonical `'\''` trick.
+    let user_content_q = entry.user_content.replace('\'', "'\\''");
+    let llm_content_q = llm_content.replace('\'', "'\\''");
+    format!(
+        "Now run the EXACT CLI command below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the command returns.\n\n\
+         ```bash\n\
+         okx-a2a user decision-request \\\n\
+         \x20\x20--user-content '{user}' \\\n\
+         \x20\x20--llm-content '{llm}' \\\n\
+         \x20\x20--json\n\
+         ```\n",
+        user = user_content_q,
+        llm = llm_content_q,
+    )
+}
+
+/// Default (non-CLI) variant of `playbook_push`. Same MCP `xmtp_prompt_user`
+/// tool invocation shape as `playbook_push`; the only difference is the
+/// embedded llmContent comes from `resolve_llm_content_prompt_user` (with
+/// multi-decision disambiguation). Used by `handle_request` when
+/// `OKX_A2A_IS_CLI` is NOT set.
+fn playbook_push_prompt_user(entry: &PendingEntry) -> String {
+    let llm_content = resolve_llm_content_prompt_user(entry);
+    format!(
+        "Now call xmtp_prompt_user with the EXACT arguments below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the tool returns 'sent'.\n\n\
+         tool: xmtp_prompt_user\n\
+         llmContent:\n{}\n\
+         userContent:\n{}\n",
+        indent(&llm_content, "  "),
+        indent(&entry.user_content, "  "),
+    )
+}
+
 fn playbook_wait(position: usize) -> String {
     format!(
         "The user is currently answering a prior decision. Your decision is queued (position {}).\n\n\
@@ -1188,14 +1509,48 @@ fn playbook_relay_only(sub_key: &str, relay_content: &str) -> String {
          tool: xmtp_dispatch_session\n\
          sessionKey: {}\n\
          content: {}\n\n\
-         ⚠️ Call `xmtp_dispatch_session` **exactly once** — when the tool returns 'Message dispatched' = end \
-         the turn immediately (no more xmtp / Exec calls). Repeated calls cause sub to receive N identical \
-         relays → event-recursion loop. Skipping it = sub never gets the user's decision = task stalls.\n\n\
-         🛑 **CONSUMPTION MARKER** — The user's reply has been DISPATCHED above and is **already consumed**. \
-         Do NOT call `pending-decisions-v2 resolve` again with the same reply (now or in any later turn). \
-         Do NOT reference it as the answer to any subsequently-rendered card. Future decisions need a \
-         FRESH user_message — wait for the user to type something new.\n",
+         ⚠️ Call `xmtp_dispatch_session` **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
+         🛑 User reply consumed — do NOT reuse it for future cards; wait for a fresh user message.\n",
         sub_key, relay_content
+    )
+}
+
+/// MCP variant of `playbook_relay_only_cli` — same `xmtp_dispatch_session` tool
+/// invocation as `playbook_relay_only`, just with the CONSUMPTION MARKER's
+/// command name pinned to `resolve-prompt` so the LLM doesn't accidentally
+/// retry against another resolver. Pairs with `handle_resolve_prompt` /
+/// `playbook_push_prompt_user` for the MCP push → MCP relay round-trip.
+fn playbook_relay_only_prompt(sub_key: &str, relay_content: &str) -> String {
+    format!(
+        "Relay the user's decision to the just-resolved sub session, then end the turn.\n\n\
+         tool: xmtp_dispatch_session\n\
+         sessionKey: {}\n\
+         content: {}\n\n\
+         ⚠️ Call `xmtp_dispatch_session` **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
+         🛑 User reply consumed — do NOT reuse it (no `resolve-prompt` retry, no future-card reference); wait for a fresh user message.\n",
+        sub_key, relay_content
+    )
+}
+
+/// CLI-driver variant of `playbook_relay_only`. Uses the `okx-a2a session send`
+/// CLI subprocess instead of the MCP-only `xmtp_dispatch_session` tool, since
+/// CLI mode runs outside of an MCP host. Same semantics: relay once, then end.
+fn playbook_relay_only_cli(sub_key: &str, relay_content: &str) -> String {
+    // Single-quote the bash args; only `'` itself needs escaping via the canonical `'\''` trick.
+    let sub_key_q = sub_key.replace('\'', "'\\''");
+    let relay_content_q = relay_content.replace('\'', "'\\''");
+    format!(
+        "Relay the user's decision to the just-resolved sub session.\n\n\
+         ```bash\n\
+         okx-a2a session send \\\n\
+         \x20\x20--session-key '{key}' \\\n\
+         \x20\x20--content '{content}' \\\n\
+         \x20\x20--no-wait --json\n\
+         ```\n\n\
+         ⚠️ Run this command **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
+         🛑 User reply consumed — do NOT reuse it (no `resolve-with-sessionkey` retry, no future-card reference); wait for a fresh user message.\n",
+        key = sub_key_q,
+        content = relay_content_q,
     )
 }
 
@@ -1216,7 +1571,8 @@ fn playbook_relay_and_advance(
 ) -> String {
     let list_view = render_list_markdown(q);
     format!(
-        "4 steps (Steps 1-3 in this turn, Step 4 in the future turn):\n\n\
+        "4 steps (Steps 1-3 in this turn, Step 4 in the future turn).\n\
+         🛑 **STRICTLY ORDERED — execute Step 1 → 2 → 3 sequentially in this turn; do NOT skip any step.**\n\n\
          **Step 1** — Forward the user's reply to the just-resolved sub session. Call `xmtp_dispatch_session` exactly once.\n\
          \x20\x20tool: xmtp_dispatch_session\n\
          \x20\x20sessionKey: {sub}\n\

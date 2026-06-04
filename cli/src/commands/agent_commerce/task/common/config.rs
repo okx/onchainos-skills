@@ -19,7 +19,7 @@
 /// - `false` = **release** — each terminal arm emits "task is in a terminal state, you may call
 ///   `xmtp_delete_conversation` to release conversation resources".
 ///   Use case: large-scale production where too many sessions burden the frontend / IM bridge and need active cleanup.
-pub const KEEP_CONVERSATION_ON_TERMINAL: bool = true;
+pub const KEEP_CONVERSATION_ON_TERMINAL: bool = false;
 
 /// Task protocol version number — a single value used in both directions: it is both
 /// "the version I am currently on" and "the minimum version I require the peer to be on".
