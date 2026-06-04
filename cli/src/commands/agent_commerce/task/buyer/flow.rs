@@ -82,6 +82,10 @@ pub(super) fn pending_cmd(job_id: &str, agent_id: &str, list_label: &str, source
     format!("onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"{list_label}\" --source-event {source_event}")
 }
 
+pub(super) fn pending_cmd_file(job_id: &str, agent_id: &str, list_label: &str, source_event: &str) -> String {
+    format!("onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content-file \"<card file path from Step 1 output>\" --list-label \"{list_label}\" --source-event {source_event}")
+}
+
 /// Shared context parameter pack across all event handler functions.
 pub(super) struct FlowContext<'a> {
     pub job_id: &'a str,
@@ -218,7 +222,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     // The old `xmtp_dispatch_session` shape (sessionKey omitted + `[STATUS_NOTIFY]` wrapping) has been replaced by
     // `xmtp_dispatch_user` / `xmtp_prompt_user` — this file no longer uses dispatch_session to push to the user.
     // ──────────────────────────────────────────────────────────────────────
-    let terminal_session_hint = if crate::commands::agent_commerce::task::common::config::KEEP_CONVERSATION_ON_TERMINAL {
+    let terminal_session_hint = if crate::commands::agent_commerce::task::common::config::keep_conversation_on_terminal() {
         "ℹ️ Task is at a terminal state. Clean up the stale pending decision entry but keep the conversation:\n\
          \x20\x201. Call `session_status` to fetch the current sub `sessionKey`.\n\
          \x20\x202. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"<sessionKey from step 1>\"` to remove any leftover pending decision entry (otherwise it waits 7-day TTL and pollutes the queue).\n\
@@ -421,7 +425,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
                     "[User decision relay] source_event=`recommend_pick`, user's verbatim reply: `{reply}`\n\n\
                      The push was the recommended-ASP list. **Semantic mapping** — decide what the user means:\n\n\
                      \x20\x20• **Pick an ASP** — user gave an index (1/2/3/...) or a 3-digit agentId (e.g. `864`). Map index → agentId from the recommend list shown in the source-scene; the user picked agentId=`<X>`. Action: call `onchainos agent next-action --jobid {job_id} --event job_created --role buyer --agentId {agent_id} --provider <X>` and follow the returned playbook (xmtp_start_conversation + xmtp_send `[intent:propose]` — see match_provider.rs Branch A).\n\
-                     \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent recommend {job_id} --next-page`. If results → re-push the same recommend_pick decision (`pending-decisions-v2 request --source-event recommend_pick` with the new list as `--user-content`; --list-label `[Recommend <shortJobId>] <task title> ASP-pick decision`). **`--user-content` and `--list-label` must be localized to the user's language**. If empty → enqueue the no-ASP next-step decision:\n\
+                     \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent recommend {job_id} --next-page`. If results → the CLI writes a new card file (path printed as `Card file: <path>`); re-push the same recommend_pick decision (`pending-decisions-v2 request --source-event recommend_pick --user-content-file \"<card file path>\"`; --list-label `[Recommend <shortJobId>] <task title> ASP-pick decision`). **`--list-label` must be localized to the user's language**. If the user's language is not English, read the card file, translate field labels + footer, and pass via `--user-content` instead. If empty → enqueue the no-ASP next-step decision:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] <task title> next-step decision\" --source-event no_asp_found\n\
                      \x20\x20\x20\x20```\n\
@@ -454,7 +458,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
                 "negotiate_over_budget" => format!(
                     "[User decision relay] source_event=`negotiate_over_budget`, user's verbatim reply: `{reply}`\n\n\
                      The push was during negotiation when the ASP's quote exceeded max_budget — different A/B/C from the designated-flow `over_budget` (this one offers `view recommendations` not `make public`). **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **A — View recommendations** — typical intents: A / 选A / `推荐` / `recommend` / `列表` / `list` / `看看有谁`. Action: `onchainos agent recommend {job_id} --agent-id {agent_id}` then push the resulting list via `pending-decisions-v2 request --source-event recommend_pick` (use the recommend_pick scene template).\n\
+                     \x20\x20• **A — View recommendations** — typical intents: A / 选A / `推荐` / `recommend` / `列表` / `list` / `看看有谁`. Action: `onchainos agent recommend {job_id} --agent-id {agent_id}` — the CLI writes a card file (path printed as `Card file: <path>`); push the resulting list via `pending-decisions-v2 request --source-event recommend_pick --user-content-file \"<card file path>\"`. If the user's language is not English, read the card file, translate field labels + footer, and pass via `--user-content` instead.\n\
                      \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId in the reply** (e.g. `B 864` / `指定 864` / `换 864`). Action: extract agentId → `onchainos agent next-action --jobid {job_id} --event job_created --role buyer --agentId {agent_id} --provider <agentId>` and follow the returned playbook.\n\
                      \x20\x20\x20\x20⚠️ If user said B / specify **without** an agentId: re-ask via `pending-decisions-v2 request --source-event negotiate_over_budget` asking for the agentId; **`--user-content` and `--list-label` must be localized to the user's language** (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
                      \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
@@ -464,7 +468,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
                     "[User decision relay] source_event=`x402_price_mismatch`, user's verbatim reply: `{reply}`\n\n\
                      The push was an Accept/Reject choice (x402 endpoint price differs from the registered fee). **Semantic mapping** — decide:\n\n\
                      \x20\x20• **Accept** — typical intents: A / 选A / `accept` / `接受` / `同意` / `agree` / yes / OK. Action: continue with the x402 flow at DX-Step 3 (budget check + set-payment-mode). Call `onchainos agent next-action --jobid {job_id} --event job_created --role buyer --agentId {agent_id} --provider <designated agentId>` to re-enter the designated flow at DX-Step 3.\n\
-                     \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`. Action: `onchainos agent mark-failed {job_id} --provider <designated agentId>` then `onchainos agent recommend {job_id} --agent-id {agent_id}` to fetch alternatives; if list non-empty → push via `--source-event recommend_pick`; if empty → push via `--source-event no_asp_found`.\n\n\
+                     \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`. Action: `onchainos agent mark-failed {job_id} --provider <designated agentId>` then `onchainos agent recommend {job_id} --agent-id {agent_id}` to fetch alternatives; if list non-empty → the CLI writes a card file (path in stdout); push via `--source-event recommend_pick --user-content-file \"<card file path>\"` (translate field labels if non-English); if empty → push via `--source-event no_asp_found`.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event x402_price_mismatch`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=accept this price  B=reject and switch ASP\".\n"
                 ),
                 _ => format!(

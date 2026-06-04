@@ -148,7 +148,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     // Terminal-state (completed / refunded / close / dispute_resolved, etc.) session
     // retain-vs-release policy is governed by common::config::KEEP_CONVERSATION_ON_TERMINAL —
     // change the default by modifying that const.
-    let terminal_session_hint = if crate::commands::agent_commerce::task::common::config::KEEP_CONVERSATION_ON_TERMINAL {
+    let terminal_session_hint = if crate::commands::agent_commerce::task::common::config::keep_conversation_on_terminal() {
         "ℹ️ Task is in terminal state. Clean up the stale pending decision entry but keep the conversation:\n\
          \x20\x201. Call `session_status` to fetch the current sub `sessionKey`.\n\
          \x20\x202. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"<sessionKey from step 1>\"` to remove any leftover pending decision entry (otherwise it waits 7-day TTL and pollutes the queue).\n\

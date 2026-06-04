@@ -13,13 +13,32 @@
 /// Whether terminal task states (`completed` / `refunded` / `close` / `dispute_resolved`) keep the
 /// sub session history.
 ///
-/// - `true` (default) = **keep** — each terminal arm emits "**do not call `xmtp_delete_conversation`** —
+/// - `true` = **keep** — each terminal arm emits "**do not call `xmtp_delete_conversation`** —
 ///   keep the conversation history for post-mortem review".
 ///   Use case: agent debugging / customer support / early-product need to replay the full task message log.
-/// - `false` = **release** — each terminal arm emits "task is in a terminal state, you may call
+/// - `false` (default) = **release** — each terminal arm emits "task is in a terminal state, you may call
 ///   `xmtp_delete_conversation` to release conversation resources".
 ///   Use case: large-scale production where too many sessions burden the frontend / IM bridge and need active cleanup.
-pub const KEEP_CONVERSATION_ON_TERMINAL: bool = false;
+///
+/// Precedence: runtime `ONCHAINOS_KEEP_SESSION` env > compile-time `ONCHAINOS_KEEP_SESSION` > hardcoded default.
+///
+/// Pack script sets `ONCHAINOS_KEEP_SESSION=true cargo build` to bake it in;
+/// runtime env var still overrides the baked-in value.
+const KEEP_CONVERSATION_ON_TERMINAL_DEFAULT: bool = false;
+
+fn parse_bool(s: &str) -> bool {
+    s.eq_ignore_ascii_case("true") || s == "1"
+}
+
+pub fn keep_conversation_on_terminal() -> bool {
+    std::env::var("ONCHAINOS_KEEP_SESSION")
+        .map(|v| parse_bool(&v))
+        .unwrap_or_else(|_| {
+            option_env!("ONCHAINOS_KEEP_SESSION")
+                .map(parse_bool)
+                .unwrap_or(KEEP_CONVERSATION_ON_TERMINAL_DEFAULT)
+        })
+}
 
 /// Task protocol version number — a single value used in both directions: it is both
 /// "the version I am currently on" and "the minimum version I require the peer to be on".

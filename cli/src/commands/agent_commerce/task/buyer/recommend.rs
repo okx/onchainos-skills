@@ -11,6 +11,7 @@ use anyhow::Result;
 
 use super::negotiate;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::util::short_job_id;
 use crate::commands::agent_commerce::task::signing;
 
 /// Fetch recommended providers (default mode: call the API + cache).
@@ -79,12 +80,13 @@ pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id
         return Ok(());
     }
 
-    println!("Recommended providers (page {}, {} available):", page + 1, visible.len());
-    for (i, p) in visible.iter().enumerate() {
-        print_provider(i, p);
-    }
-    println!();
-    println!("Pick a provider (enter the AgentID at the chosen index), or run `onchainos agent recommend {} --next-page` to see the next page.", job_id);
+    let cards_path = write_cards_file(job_id, &visible, page)?;
+    println!(
+        "Recommended ASPs (page {}, {} available). Card file: {}",
+        page + 1,
+        visible.len(),
+        cards_path,
+    );
 
     Ok(())
 }
@@ -139,6 +141,83 @@ pub async fn handle_recommend_next_page(client: &mut TaskApiClient, job_id: &str
         anyhow::bail!("No local buyer identity; please register or pass --agent-id");
     }
     handle_recommend(client, job_id, &agent_id, next_page).await
+}
+
+const DESC_MAX_CHARS: usize = 120;
+
+/// Write pre-formatted card text to `~/.onchainos/task/{jobId}/recommend-cards.txt`.
+///
+/// Returns the absolute path to the written file. The card format matches the
+/// `--user-content` template specified in `match_provider.rs`, so the sub
+/// agent can pass the file path directly instead of composing cards from raw
+/// CLI output — eliminating one full copy of the card content from the sub
+/// session context.
+fn write_cards_file(
+    job_id: &str,
+    visible: &[&negotiate::ProviderInfo],
+    page: usize,
+) -> Result<String> {
+    let sid = short_job_id(job_id);
+
+    let mut buf = String::new();
+    buf.push_str(&format!(
+        "[Job {sid} — you are the User Agent] Recommended ASPs (page {}):\n",
+        page + 1,
+    ));
+
+    for (i, p) in visible.iter().enumerate() {
+        let svc = p.services.first();
+        let svc_name = svc.map(|s| s.service_name.as_str()).unwrap_or("-");
+        buf.push_str(&format!(
+            "\n━━━ {}. #{} | {} ━━━\n",
+            i + 1,
+            p.provider_agent_id,
+            svc_name,
+        ));
+        if let Some(s) = svc {
+            let desc = truncate_desc(&s.service_description);
+            buf.push_str(&format!("Description: {desc}\n"));
+            let sym = if s.fee_token_symbol.is_empty() { &s.fee_token } else { &s.fee_token_symbol };
+            buf.push_str(&format!("Fee: {} {}\n", s.fee_amount, sym));
+        }
+        let mode = if p.support_a2mcp { "x402" } else { "Escrow" };
+        buf.push_str(&format!("Payment: {mode}\n"));
+
+        // additional services
+        for extra in p.services.iter().skip(1) {
+            let extra_desc = truncate_desc(&extra.service_description);
+            let extra_sym = if extra.fee_token_symbol.is_empty() { &extra.fee_token } else { &extra.fee_token_symbol };
+            let extra_mode = if extra.service_type == "A2MCP" { "x402" } else { "Escrow" };
+            buf.push_str(&format!(
+                "  ┊ {} — {}\n  ┊ Fee: {} {} | Payment: {}\n",
+                extra.service_name, extra_desc, extra.fee_amount, extra_sym, extra_mode,
+            ));
+        }
+    }
+
+    buf.push_str("\n---\nPlease choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP; or reply \"next\" to see more / \"public\" / \"close\".\n");
+
+    let base = match std::env::var("ONCHAINOS_HOME") {
+        Ok(p) if !p.is_empty() => std::path::PathBuf::from(p),
+        _ => dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("could not resolve HOME"))?
+            .join(".onchainos"),
+    };
+    let dir = base.join("task").join(job_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("recommend-cards.txt");
+    std::fs::write(&path, &buf)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn truncate_desc(desc: &str) -> String {
+    let chars: Vec<char> = desc.chars().collect();
+    if chars.len() <= DESC_MAX_CHARS {
+        desc.to_string()
+    } else {
+        let truncated: String = chars[..DESC_MAX_CHARS].iter().collect();
+        format!("{truncated}...")
+    }
 }
 
 /// Print the routing guide: x402 direct accept vs. A2A negotiation.

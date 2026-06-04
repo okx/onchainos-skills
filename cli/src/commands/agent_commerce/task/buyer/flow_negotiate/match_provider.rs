@@ -12,7 +12,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let title = ctx.title_display;
-    let cmd_recommend = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Recommend {short_id}] {title} ASP-pick decision"), "recommend_pick");
+    let cmd_recommend = super::super::flow::pending_cmd_file(job_id, agent_id, &format!("[Recommend {short_id}] {title} ASP-pick decision"), "recommend_pick");
     // Note: the "next-page returns empty -> push no_asp_found A/B/C" sub-branch
     // is delegated to the `user_decision_recommend_pick` handler in flow.rs,
     // which embeds the no_asp_found enqueue command + user-content template.
@@ -62,7 +62,8 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              ```bash\n\
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\
              ```\n\
-             Outputs the ASP list (Agent Name / service description / credit / payment modes); ASPs that previously failed negotiation are auto-filtered.\n\n\
+             The CLI fetches from the API, caches the list locally, and writes a pre-formatted card file. The stdout is compact — it shows the ASP count and the **card file path** (e.g. `Card file: /path/to/recommend-cards.txt`). Extract that path for Step 2.\n\
+             If the output says \"empty\" or \"no matching providers\" → jump to the no_asp_found branch (Step 3 below).\n\n\
              🛑🛑🛑 **ABSOLUTE PROHIBITION - iron rule: in the current session (sub/backup) you must NOT directly print the recommendation list or any text reply.**\n\
              You are inside a sub session or backup session - **the user cannot see any output here**.\n\
              You must push the list to the user session via `pending-decisions-v2 request`; that is the **only** way the user sees the list.\n\
@@ -70,28 +71,15 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              ❌ Absolutely forbidden: replacing the `pending-decisions-v2 request` call with a text reply - text reply = invisible to user = task stalls.\n\
              ❌ Absolutely forbidden: using xmtp_dispatch_user instead of `pending-decisions-v2 request` - dispatch_user is pure notification, the user's choice cannot be relayed back.\n\
              ❌ Absolutely forbidden: printing text \"for the user to see\" first and then calling the tool - text output in a sub session never reaches the user.\n\n\
-             **Step 2 - show the list to the user and let them choose:**\n\
+             **Step 2 - push the card file to the user session via `pending-decisions-v2 request`:**\n\
              🛑🛑🛑 **DO NOT call `xmtp_start_conversation` in this step** — there is no peer agent to talk to yet (the user hasn't picked an ASP). `xmtp_start_conversation` only happens AFTER the user picks (handled by the `next-action --provider <X>` playbook in a later turn). 🔴 Real incident: a model in backup, instead of calling `session_status` to fetch its own backup-key, called `xmtp_start_conversation` to create a brand-new (peer-less) conversation, which produced an unusable sessionKey and broke the relay chain.\n\
              **Action**: call `session_status` (NOT `xmtp_start_conversation`) to get the **current sub/backup session's** sessionKey (call once per turn, reuse the result). The returned string is what you must pass verbatim to `--sub-key` below. For backup-session callers, the key looks like `agent:main:okx-a2a:group:okx-xmtp:backup:<jobId>`; for task-sub callers, it contains `&job=<jobId>&gid=<...>`.\n\
-             Then run:\n\
+             Then run (pass the card file path from Step 1 as `--user-content-file`):\n\
              ```bash\n\
              {cmd_recommend}\n\
              ```\n\
-             `--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-             [Job {short_id} — you are the User Agent] Recommended ASPs:\n\
-             <For each ASP from the recommend output, render one card block using the format below. Preserve ALL fields — do NOT omit any.>\n\n\
-             Card format per ASP (repeat for each — field mapping: AgentID=`providerAgentId`, serviceName/serviceDescription/feeAmount/feeTokenSymbol/serviceType from `services[0]`):\n\
-             ━━━ <index>. #<providerAgentId> | <serviceName> ━━━\n\
-             Description: <serviceDescription, no truncation>\n\
-             Fee: <feeAmount> <feeTokenSymbol>\n\
-             Payment: <map serviceType: A2A→Escrow, A2MCP→x402>\n\
-             <If the ASP has multiple services, append each additional service as a sub-block:>\n\
-             \x20\x20┊ <service name> — <description>\n\
-             \x20\x20┊ Fee: <fee> | Payment: <map serviceType: A2A→Escrow, A2MCP→x402>\n\
-             <blank line between cards>\n\n\
-             After the last card:\n\
-             ---\n\
-             Please choose: reply with an index (e.g. 1, 2, 3) or an AgentID (e.g. 864) to pick an ASP; or reply \"next\" (下一页) to see more / \"public\" (公开) / \"close\" (关闭).\n\n\
+             ⚠️ The `--list-label` MUST be localized to the user's language before running the command (translate the keyword inside the bracket and the suffix phrase; preserve the shortJobId hex). See [Localization] rules above.\n\
+             ⚠️ The card file content is canonical English; the user-session will present it as-is for English users, or the sub agent should localize field labels (Description/Fee/Payment) and the footer reply-hint line if the user's language is not English — read the file, translate the localizable parts, then pass via `--user-content` instead of `--user-content-file`.\n\n\
              {l10n_prompt}\n\
              {follow_playbook}\n\n\
              -> **end this turn** and wait for the user's reply to be relayed back.\n\n\

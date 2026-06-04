@@ -305,8 +305,13 @@ pub enum PendingDecisionsV2Command {
         #[arg(long = "agent-id")]
         agent_id: String,
         /// Full user-facing text (verbatim rendered to chat).
-        #[arg(long = "user-content")]
-        user_content: String,
+        #[arg(long = "user-content", required_unless_present = "user_content_file")]
+        user_content: Option<String>,
+        /// Path to a file whose content is used as user-facing text.
+        /// Mutually exclusive with `--user-content`. CLI reads the file
+        /// internally so the caller never needs to hold the content.
+        #[arg(long = "user-content-file", conflicts_with = "user_content")]
+        user_content_file: Option<String>,
         /// Short one-line label for the multi-decision list view.
         #[arg(long = "list-label")]
         list_label: String,
@@ -393,10 +398,21 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             role,
             agent_id,
             user_content,
+            user_content_file,
             list_label,
             llm_content,
             source_event,
-        } => handle_request(sub_key, job_id, role, agent_id, user_content, list_label, llm_content, source_event),
+        } => {
+            let resolved_content = match (user_content, user_content_file) {
+                (Some(c), _) => c,
+                (None, Some(path)) => {
+                    std::fs::read_to_string(&path)
+                        .map_err(|e| anyhow::anyhow!("failed to read --user-content-file {path}: {e}"))?
+                }
+                (None, None) => bail!("either --user-content or --user-content-file is required"),
+            };
+            handle_request(sub_key, job_id, role, agent_id, resolved_content, list_label, llm_content, source_event)
+        }
         PendingDecisionsV2Command::Resolve { user_reply } => handle_resolve(user_reply),
         PendingDecisionsV2Command::ResolveWithSessionkey {
             user_reply, sub_key, job_id, role, agent_id, source_event,
