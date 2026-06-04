@@ -207,6 +207,7 @@ okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50
 - Do NOT use `/loop`, Cron, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, or any self-rolled polling around `onchainos agent status` / `agent active-tasks`.
 - There is **NO** `task watch` / `onchainos task watch` / `agent task watch` subcommand — do not invent one.
 - Do NOT pass `--from-now`. Watch **must** first drain SQLite-backed pending items, **then** wait for new changes.
+- Do NOT pass `--job-id` — **never** watch a single task. `user watch` is a user-session-wide monitor; narrowing to one job defeats its purpose and misses cross-task events.
 
 **Full protocol** — `kind` dispatch (`notification` claim / `decision_request` relay), user-session authority boundary, stop condition, terminal signals: see [`references/user-watch-protocol.md`](./references/user-watch-protocol.md). **You MUST read it before processing any returned items.**
 
