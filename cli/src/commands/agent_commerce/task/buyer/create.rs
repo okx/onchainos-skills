@@ -291,6 +291,13 @@ pub async fn handle_create(
     } else {
         println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
     }
+    let cli_mode_env = std::env::var("OKX_A2A_IS_CLI").unwrap_or_default();
+    let cli_mode = cli_mode_env == "1";
+    if cli_mode {
+        println!();
+        println!("[Watch] Start monitoring task progress:");
+        println!("okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50");
+    }
     println!("🛑 Do NOT call set-payment-mode. End this turn.");
     Ok(())
 }
