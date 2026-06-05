@@ -100,7 +100,7 @@ onchainos agent stake --amount <N> --agent-id <evaluatorAgentId>
 
 ### Step 4 — Handoff after success
 
-When the CLI exit code = 0 and stdout contains `stake submitted`, **same-turn handoff** to the Execution Flow of `/skills/okx-agent-chat/after-agent-list-changed.md` (the agent list state has changed; needs to sync to OpenClaw).
+When the CLI exit code = 0 and stdout contains `stake submitted`, **same-turn handoff** to the Execution Flow of `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` (the OKX A2A plugin and communication channel must be ready).
 
 ---
 

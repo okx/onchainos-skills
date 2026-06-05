@@ -40,15 +40,11 @@ Run the detection function below and read its single-line output. `compatible` =
 
 ```bash
 detect_harness() {
-  if [ "${CLAUDECODE:-}" = "1" ]; then
-    echo "Claude Code"
-  elif [ -n "${HERMES_INTERACTIVE:-}" ] || [ -n "${HERMES_SESSION_SOURCE:-}" ] \
+  if [ -n "${HERMES_INTERACTIVE:-}" ] || [ -n "${HERMES_SESSION_SOURCE:-}" ] \
     || [ -n "${HERMES_YOLO_MODE:-}" ] || [ -n "${HERMES_QUIET:-}" ]; then
     echo "Hermes"
   elif [ -n "${OPENCLAW_CLI:-}" ] || [ -n "${OPENCLAW_SHELL:-}" ]; then
     echo "OpenClaw"
-  elif [ -n "${CODEX_THREAD_ID:-}" ] || [ -n "${CODEX_CI:-}" ]; then
-    echo "Codex"
   else
     echo "unknown"
   fi
@@ -56,7 +52,7 @@ detect_harness() {
 detect_harness
 ```
 
-- Output ∈ {`Claude Code`, `Hermes`, `OpenClaw`, `Codex`} → **compatible** → Step 1A.
+- Output ∈ {`OpenClaw`, `Hermes`} → **compatible** → Step 1A.
 - Output = `unknown` → **incompatible** → Step 1B.
 
 ## Step 1A — Compatible: role selection page

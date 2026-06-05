@@ -13,7 +13,7 @@ Glossary (PRD §5): 用户 = User · ASP（Agent 服务商）= ASP (Agent Servic
 
 ## Variant A — Compatible (role selection page)
 
-Render when `detect_harness` returns one of: Claude Code / Hermes / OpenClaw / Codex. After rendering, wait for the user to reply `1` / `2` / `3`.
+Render when `detect_harness` returns one of: OpenClaw / Hermes. After rendering, wait for the user to reply `1` / `2` / `3`.
 
 ```
 One person, one company, a million a year — powered by your Agent.
@@ -76,7 +76,7 @@ The more accurate you are, the steadier the income. Stake 100 OKB to enter.
 
 Heads-up: your current platform has limited compatibility.
 
-OKX.AI needs to run inside an Agent platform. For the best experience, use Claude Code · CodeX · Hermes · OpenClaw.
+OKX.AI needs to run inside an Agent platform. For the best experience, use OpenClaw · Hermes.
 
 Already have one installed: open it and type "OKX.AI quick start".
 Not installed yet: see the install guide ({install_doc_url}).
