@@ -169,12 +169,11 @@ After success, call `xmtp_dispatch_user` to notify the user:\n\
 - With --provider → content: \"{create_designated}\"\n\
 {l10n_short}\n\n\
 ===============================================================\n\
-🛑🛑🛑 STOP -- after create-task + task-attach (if any) + watch (if prompted), you **MUST end this turn**\n\
+🛑🛑🛑 STOP -- after create-task + task-attach (if any) you **MUST end this turn immediately**\n\
 ===============================================================\n\
-✅ **Exception: `[Watch]` hint** -- if the CLI output contains `[Watch] Start monitoring task progress:` followed by an `okx-a2a user watch ...` command, you **MUST** execute that exact command before ending the turn. This starts the event listener that drives the task forward on CLI-mode platforms.\n\
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.\n\
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.\n\
-❌ **Do not call any other onchainos agent commands** (except `task-attach` in Step 6.5 and `okx-a2a user watch` above) -- all further actions are driven by on-chain events.\n\
+❌ **Do not call any onchainos agent commands** (except `task-attach` in Step 6.5 above) -- this turn ends here; all further actions are driven by on-chain events.\n\
 ❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.\n\
 ===============================================================\n\n\
 ================================================\n\
