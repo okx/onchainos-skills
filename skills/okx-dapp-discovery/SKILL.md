@@ -7,7 +7,7 @@ description: |
 license: MIT
 metadata:
   author: okx
-  version: "1.1.0"
+  version: "3.4.0-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -98,6 +98,44 @@ When the user's message references a DApp directly or implicitly, score it again
 | "X 5min" / "X 15min" / "X 5 分钟" / "X 15 分钟" / "X up or down" / "5min updown" / "5 分钟涨跌" (X = BTC/ETH/SOL/XRP/BNB/DOGE/HYPE) | Polymarket |
 
 **DApp-name-beats-verb override (Rule 0, see routing rules below):** when any generic verb appears with a DApp name (in any language) OR a protocol-native token/phrase from the table above, the DApp wins. Do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, or any other generic skill.
+
+### Top-5 cohort (used by Rule 5b fallback only)
+
+The PM-prioritised Top-5 subset of the 20 supported DApps is the recommended fallback when a prompt engages this skill but scores `<50` against every resolver-table DApp **and** mentions no specific DApp name (the Rule 5b path). The Top-5 are:
+
+| # | DApp | Primary verticals |
+|---|---|---|
+| 1 | **Polymarket** | Prediction market, UpDown short-term, outcome-token bets |
+| 2 | **Aave V3** | Lending, borrowing, GHO mint, aToken supply |
+| 3 | **Hyperliquid** | Perpetuals / leveraged spot, HLP, HYPE staking |
+| 4 | **PancakeSwap** (V3 AMM default) | AMM swap (BNB Chain), CAKE/Syrup/IFO |
+| 5 | **Morpho V1 Optimizer** | Lending (capital-efficient layer on Aave/Compound), market-supplied positions |
+
+#### Top-5 action-verb matrix
+
+When Rule 5b fires (no DApp named, score `<50` everywhere), filter the Top-5 by the prompt's dominant action verb. Use this matrix:
+
+| Action verb category | Matching Top-5 DApp(s) |
+|---|---|
+| Prediction / bet / 涨跌 / updown / 预测 / 押注 | Polymarket |
+| Lend / supply / lend out / 借出 / 存进生息 / earn yield from lending | Aave V3, Morpho V1 Optimizer (Aave V3 default) |
+| Borrow / take a loan / 借 / 抵押借出 | Aave V3, Morpho V1 Optimizer (Aave V3 default) |
+| Perp / perpetual / futures / leverage Nx / long Nx / short Nx / 做多 N倍 / 做空 N倍 / 永续 / 合约 | Hyperliquid |
+| Swap / exchange / trade tokens / 换成 / 兑换 (BNB Chain hint) | PancakeSwap |
+| Generic deposit / earn / yield (no specific verb sub-category) | Aave V3 (default lend), Morpho V1 Optimizer |
+
+#### Recommendation logic
+
+After filtering:
+
+- **Exactly 1 Top-5 match** → recommend that DApp; apply Rule 2 (silent install + forward).
+- **Multiple Top-5 matches** → recommend the **highest-scoring** one as the default; do NOT show a picker. (Tiebreakers in order: action-verb specificity, then table order — Polymarket > Aave > Hyperliquid > PancakeSwap > Morpho.)
+- **Zero Top-5 matches** → fall through to the categorized 20-DApp enumeration (the current Rule 5b behaviour, retained as the last-resort fallback).
+
+The user-facing language in the recommendation must follow Rule 0's "do not show scores or framework vocabulary" rule. Example outputs:
+- ✅ "Sounds like Hyperliquid is the right fit for a perp long — getting the plugin ready."
+- ✅ "I'll set up Aave for that lending intent."
+- ❌ "Top-5 action-verb filter matched Hyperliquid at confidence 80."
 
 ---
 
@@ -585,7 +623,23 @@ Apply **Step 1B** directly — the GitHub Contents API probe (~0.1s) checks whet
 
 **Rule 5b — User did NOT name a specific DApp** (purely generic terms only):
 
-Do not install anything. Show the user the supported DApps and ask which one matches their intent:
+Apply the Top-5 fallback (see `## Confidence Framework` → `### Top-5 cohort` for the matrix):
+
+1. **Identify the dominant action verb** in the prompt. Use the action-verb matrix to filter the Top-5 set to candidates whose primary verticals match.
+2. **If exactly one Top-5 candidate matches the action verb:** apply Rule 2 (silent install + forward). Do not show a picker.
+3. **If multiple Top-5 candidates match the action verb:** recommend the highest-scoring one as the default (apply Rule 2). Tiebreaker order: Polymarket > Aave > Hyperliquid > PancakeSwap > Morpho. Do not show a picker.
+4. **If zero Top-5 candidates match the action verb** (the action is outside the Top-5's vertical coverage — e.g. Solana DEX, liquid staking, yield trading, meme launchpad): fall through to **Rule 5b-fallback** below.
+
+### Examples (Top-5 routes directly)
+
+- `/okx-dapp-discovery 开10u的10倍BTC看多` → perp action → only Hyperliquid in Top-5 → install `hyperliquid-plugin`, forward prompt. *(No "Hyperliquid vs GMX" picker. GMX is correctly excluded as non-Top-5.)*
+- `/okx-dapp-discovery I want to lend my USDC` → lending action → Aave V3 + Morpho both match → recommend Aave V3 (tiebreaker default) → install `aave-v3-plugin`.
+- `/okx-dapp-discovery 5 分钟涨跌 BTC` → prediction action → Polymarket only → install `polymarket-plugin`.
+- `/okx-dapp-discovery swap some BNB to CAKE` → CAKE is protocol-native (Rule 0 wins before Rule 5 fires) → install `pancakeswap-plugin`. *(Top-5 not invoked.)*
+
+### Rule 5b-fallback — no Top-5 match (last resort)
+
+Reached only when the action verb is outside Top-5 coverage (e.g. a Solana DEX swap, liquid staking, PT/YT yield trading, meme launchpad). Apply the **previous Rule 5b behaviour** — do not install anything; show the categorized 20-DApp table and let the user pick:
 
 > The following third-party DApps are currently routable — let me know which one matches your intent:
 >

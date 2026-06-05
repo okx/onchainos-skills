@@ -9,6 +9,7 @@ use crate::client::ApiClient;
 use crate::commands::token;
 use crate::commands::Context;
 use crate::output;
+use crate::token_alias;
 
 use super::api;
 use super::session;
@@ -33,6 +34,10 @@ const DEFAULT_LIMIT_ORDER_FEE_LEVEL: i64 = 2;
 const ACTIVATE_DEFAULT_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// `sourceType` value for Agentic-Wallet origin (BE-confirmed 2026-05-12).
 const SOURCE_TYPE_AGENTIC: i32 = 4;
+
+// order-id labels — const to avoid singular/plural typos.
+const ORDER_ID_LABEL: &str = "order-id";
+const ORDER_IDS_LABEL: &str = "order-ids";
 
 // ── create-limit ──
 
@@ -76,10 +81,6 @@ pub struct CreateLimitArgs {
     /// when omitted. Pass it to save one HTTP round-trip.
     #[arg(long)]
     pub current_price: Option<String>,
-
-    /// Order TTL in seconds (default 604800 = 7 days).
-    #[arg(long, default_value_t = DEFAULT_EXPIRES_SECS)]
-    pub expires_in: i64,
 }
 
 fn parse_direction_value(raw: &str) -> Result<i32, String> {
@@ -167,9 +168,15 @@ async fn fetch_token_price(
             serde_json::to_string(item).unwrap_or_default()
         )
     })?;
-    price_str
-        .parse::<f64>()
-        .map_err(|e| anyhow!("market price `{price_str}` is not a number: {e}"))
+    let price: f64 = price_str
+        .parse()
+        .map_err(|e| anyhow!("market price `{price_str}` is not a number: {e}"))?;
+    if price <= 0.0 || !price.is_finite() {
+        bail!(
+            "market price for `{address}` on chain `{chain_index}` must be positive finite, got `{price_str}`"
+        );
+    }
+    Ok(price)
 }
 
 pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
@@ -188,22 +195,40 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
         );
     }
 
+    // Alias → CA + chain-aware format check (shared with swap / wallet send).
+    let from_token =
+        token_alias::resolve_and_validate(&resolved_chain, &args.from_token, "from-token")?;
+    let to_token =
+        token_alias::resolve_and_validate(&resolved_chain, &args.to_token, "to-token")?;
+
     let dir = args.direction;
 
     let trigger_price_num: f64 = args.trigger_price.parse().map_err(|e| {
         anyhow!("--trigger-price `{}` is not a number: {e}", args.trigger_price)
     })?;
+    if trigger_price_num <= 0.0 || !trigger_price_num.is_finite() {
+        bail!(
+            "--trigger-price must be a positive finite number, got `{}`",
+            args.trigger_price
+        );
+    }
 
     // Buy compares against to-token price, sell against from-token.
     let price_query_token = match dir {
-        direction::BUY => &args.to_token,
-        direction::SELL => &args.from_token,
+        direction::BUY => &to_token,
+        direction::SELL => &from_token,
         _ => unreachable!("clap restricts --direction to buy/sell"),
     };
     let current_price_num: f64 = match args.current_price.as_deref() {
-        Some(s) => s
-            .parse()
-            .map_err(|e| anyhow!("--current-price `{s}` is not a number: {e}"))?,
+        Some(s) => {
+            let v: f64 = s
+                .parse()
+                .map_err(|e| anyhow!("--current-price `{s}` is not a number: {e}"))?;
+            if v <= 0.0 || !v.is_finite() {
+                bail!("--current-price must be a positive finite number, got `{s}`");
+            }
+            v
+        }
         None => fetch_token_price(&mut client, price_query_token, &resolved_chain)
             .await
             .with_context(|| {
@@ -217,24 +242,25 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
 
     // Raw amount used only in signMsg "From Amount(precision adjusted)";
     // rule.fromAmount stays human-readable (BE contract 2026-05-07).
-    let from_decimals = fetch_token_decimals(&mut client, &args.from_token, &resolved_chain)
+    let from_decimals = fetch_token_decimals(&mut client, &from_token, &resolved_chain)
         .await
         .with_context(|| {
             format!(
                 "fetch decimals for fromToken `{}` on chain `{}`",
-                args.from_token, resolved_chain
+                from_token, resolved_chain
             )
         })?;
-    let from_amount_raw = trader_mode::shift_value(&args.amount, from_decimals)?;
+    let from_amount_raw = trader_mode::human_decimal_to_raw_integer(&args.amount, from_decimals)?;
 
     let rule = Rule {
-        from_token_address: args.from_token.clone(),
-        to_token_address: args.to_token.clone(),
+        from_token_address: from_token.clone(),
+        to_token_address: to_token.clone(),
         from_amount: args.amount.clone(),
         trigger_price: Some(args.trigger_price.clone()),
     };
 
     let slippage_raw = args.slippage.as_deref().unwrap_or(DEFAULT_SLIPPAGE_VALUE);
+    crate::validators::validate_slippage(slippage_raw)?;
     let preset = build_default_preset(slippage_raw, args.mev_protection.to_opt_bool(), dir);
 
     // 2. Build the time fields of the intent: Created At / Expired At /
@@ -242,7 +268,7 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     let now = Utc::now();
     let now_ms = now.timestamp_millis();
     let created_at = now.to_rfc3339_opts(SecondsFormat::Millis, true);
-    let expire_time_ms = now_ms.saturating_add(args.expires_in.saturating_mul(1000));
+    let expire_time_ms = now_ms.saturating_add(DEFAULT_EXPIRES_SECS.saturating_mul(1000));
     let expired_at = chrono::DateTime::<Utc>::from_timestamp_millis(expire_time_ms)
         .ok_or_else(|| anyhow!("expire_time {expire_time_ms} ms out of chrono range"))?
         .to_rfc3339_opts(SecondsFormat::Millis, true);
@@ -258,8 +284,8 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     let intent_str = trader_mode::build_intent(BuildIntentArgs {
         chain_id: chain_id_long,
         recipient: &user_wallet_address,
-        from_token: &args.from_token,
-        to_token: &args.to_token,
+        from_token: &from_token,
+        to_token: &to_token,
         from_amount_raw: &from_amount_raw,
         created_at: &created_at,
         expired_at: &expired_at,
@@ -436,6 +462,9 @@ fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq
         if parsed.is_empty() {
             bail!("--order-ids parsed into an empty list");
         }
+        for id in &parsed {
+            crate::validators::validate_order_id_numeric(id, ORDER_IDS_LABEL)?;
+        }
         return Ok(CancelReq {
             account_id: account_id.to_string(),
             order_ids: Some(parsed),
@@ -443,6 +472,7 @@ fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq
         });
     }
     if let Some(id) = args.order_id.as_ref() {
+        crate::validators::validate_order_id_numeric(id, ORDER_ID_LABEL)?;
         return Ok(CancelReq {
             account_id: account_id.to_string(),
             order_ids: Some(vec![id.clone()]),
@@ -684,10 +714,15 @@ pub async fn resume(ctx: &Context, args: ResumeArgs) -> Result<()> {
     let session = session::load()?;
 
     let order_ids = if let Some(ids) = args.order_ids.as_ref() {
-        ids.split(',')
+        let parsed: Vec<String> = ids
+            .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
+            .collect();
+        for id in &parsed {
+            crate::validators::validate_order_id_numeric(id, ORDER_IDS_LABEL)?;
+        }
+        parsed
     } else {
         discover_resumable(&mut client, &session).await?
     };
@@ -790,21 +825,44 @@ mod tests {
     #[test]
     fn build_cancel_single_id() {
         let mut a = cancel_args();
-        a.order_id = Some("ord-1".into());
+        a.order_id = Some("17296046425729984".into());
         let req = build_cancel_request("acc-1", &a).unwrap();
-        assert_eq!(req.order_ids.as_deref(), Some(&["ord-1".to_string()][..]));
+        assert_eq!(
+            req.order_ids.as_deref(),
+            Some(&["17296046425729984".to_string()][..])
+        );
         assert_eq!(req.cancel_all, Some(false));
     }
 
     #[test]
     fn build_cancel_csv_splits_and_trims() {
         let mut a = cancel_args();
-        a.order_ids = Some("a, b ,,c ".into());
+        a.order_ids = Some("17296046425729984, 17296046425729985 ,,17296046425729986 ".into());
         let req = build_cancel_request("acc-1", &a).unwrap();
         assert_eq!(
             req.order_ids.as_deref(),
-            Some(&["a".to_string(), "b".to_string(), "c".to_string()][..])
+            Some(
+                &[
+                    "17296046425729984".to_string(),
+                    "17296046425729985".to_string(),
+                    "17296046425729986".to_string(),
+                ][..]
+            )
         );
+    }
+
+    #[test]
+    fn build_cancel_rejects_non_numeric_id() {
+        let mut a = cancel_args();
+        a.order_id = Some("ord-1".into());
+        assert!(build_cancel_request("acc-1", &a).is_err());
+    }
+
+    #[test]
+    fn build_cancel_rejects_non_numeric_csv() {
+        let mut a = cancel_args();
+        a.order_ids = Some("17296046425729984,not-a-number".into());
+        assert!(build_cancel_request("acc-1", &a).is_err());
     }
 
     #[test]

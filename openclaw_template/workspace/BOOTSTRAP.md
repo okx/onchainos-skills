@@ -119,7 +119,12 @@ Your literal next message must be **exactly** the following block, with no addit
 
 When the user replies with an email:
 
-1. **Validate the email before invoking the CLI.** It must match the regex `^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$` **and** be ≤ 254 characters total. The character class is intentionally restrictive — it rejects shell metacharacters (`;`, `|`, `&`, `` ` ``, `$`, `(`, `)`, quotes, whitespace) so that an adversarial reply like `a$(rm -rf ~)@x.io` cannot reach the shell. If validation fails, your literal next message is:
+1. **Validate the email before invoking the CLI.** Two checks, in order:
+
+   **1a.** If the reply contains a `+` character, the wallet backend does not support sub-addressed emails (e.g. `user+tag@example.com`). Do **not** invoke any CLI command. Your literal next message is:
+   > Sub-addressed emails (containing `+`) aren't supported. Please send your email without the `+tag` part.
+
+   **1b.** Otherwise, the email must match the regex `^[A-Za-z0-9._%-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$` **and** be ≤ 254 characters total. The character class is intentionally restrictive — it rejects shell metacharacters (`;`, `|`, `&`, `` ` ``, `$`, `(`, `)`, quotes, whitespace) so that an adversarial reply like `a$(rm -rf ~)@x.io` cannot reach the shell. If validation fails, your literal next message is:
    > That doesn't look like a valid email. Please send your email again.
    Do **not** invoke any CLI command, and do **not** interpolate the raw user reply into the shell.
 2. Default `locale` to `en` unless the user has stated otherwise.

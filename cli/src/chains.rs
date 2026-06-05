@@ -1,10 +1,63 @@
 use anyhow::Result;
 
+// ---------------------------------------------------------------------------
+// Permit2 — canonical Uniswap Permit2 + x402 proxy addresses.
+//
+// Both are CREATE2 vanity deployments by the Arachnid factory, so they have
+// the same address on every EVM chain. Hardcoding is intentional: any change
+// here breaks all signature verification across the system.
+// ---------------------------------------------------------------------------
+
+/// Uniswap canonical Permit2 contract address (same on all EVM chains).
+///
+/// Buyers must `IERC20(token).approve(PERMIT2_ADDRESS, type(uint256).max)`
+/// once per token before their first Permit2 payment.
+pub const PERMIT2_ADDRESS: &str = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+
+/// x402 exact-scheme Permit2 proxy address (same on all EVM chains).
+///
+/// The buyer's Permit2 signature names this proxy as the spender. The
+/// facilitator calls `proxy.settle(...)`, which then invokes
+/// `PERMIT2.permitWitnessTransferFrom(...)` to transfer tokens.
+pub const X402_EXACT_PERMIT2_PROXY: &str = "0x402085c248EeA27D92E8b30b2C58ed07f9E20001";
+
+/// x402 upto-scheme Permit2 proxy address (same on all EVM chains).
+///
+/// Like the exact-scheme proxy but enforces two additional on-chain
+/// invariants: `msg.sender == witness.facilitator` (the facilitator
+/// binding) and `settlementAmount <= permit.permitted.amount` (the cap).
+/// Buyer Permit2 signatures for upto use this proxy as `spender`.
+pub const X402_UPTO_PERMIT2_PROXY: &str = "0x4020e7393B728A3939659E5732F87fdd8e680002";
+
+// ---------------------------------------------------------------------------
+// EVM RPC endpoints — used by Permit2 allowance pre-check.
+//
+// Only X Layer is wired up in this iteration; new chains land here as the
+// product expands. Until then `rpc_url_for_chain` returns None and the buyer
+// flow refuses to attempt allowance pre-check on unsupported chains.
+// ---------------------------------------------------------------------------
+
+/// X Layer mainnet public RPC endpoint.
+pub const XLAYER_RPC_URL: &str = "https://rpc.xlayer.tech";
+
+/// Look up the public EVM RPC endpoint for a given chain index, if supported.
+///
+/// Returns `None` for chains where we haven't wired up an endpoint yet.
+/// Callers in the x402 Permit2 flow should treat `None` as "cannot pre-check
+/// allowance on this chain — fall back to letting settle revert on chain or
+/// route through a backend allowance API".
+pub fn rpc_url_for_chain(chain_index: &str) -> Option<&'static str> {
+    match chain_index {
+        "196" => Some(XLAYER_RPC_URL),
+        _ => None,
+    }
+}
+
 /// All known chain indices produced by [`resolve_chain`].
 /// Used by callers that need to reject unrecognised chains early.
 pub const SUPPORTED_CHAIN_INDICES: &[&str] = &[
-    "1", "10", "56", "137", "195", "196", "250", "324", "501", "534352", "607", "784", "8453",
-    "42161", "43114", "59144",
+    "1", "10", "56", "137", "195", "196", "250", "324", "501", "534352", "607", "784", "1952",
+    "8453", "42161", "43114", "59144",
 ];
 
 /// Validate that `chain_index` is a known chain. Returns an error that
@@ -253,6 +306,46 @@ mod tests {
     }
 
     #[test]
+    fn permit2_canonical_address_unchanged() {
+        // Any change here breaks signature verification across the entire
+        // x402 Permit2 system — both buyer and facilitator recompute the
+        // EIP-712 hash using this address as `domain.verifyingContract`.
+        assert_eq!(PERMIT2_ADDRESS, "0x000000000022D473030F116dDEE9F6B43aC78BA3");
+    }
+
+    #[test]
+    fn x402_exact_permit2_proxy_unchanged() {
+        // The proxy address is the buyer-signed `spender`. If it drifts from
+        // the on-chain deployment, every Permit2 signature fails verification.
+        assert_eq!(
+            X402_EXACT_PERMIT2_PROXY,
+            "0x402085c248EeA27D92E8b30b2C58ed07f9E20001"
+        );
+    }
+
+    #[test]
+    fn x402_upto_permit2_proxy_unchanged() {
+        // The upto proxy is a different deployment from the exact proxy
+        // (different ABI: settle takes an extra settlementAmount arg).
+        // Same drift risk — pin it explicitly.
+        assert_eq!(
+            X402_UPTO_PERMIT2_PROXY,
+            "0x4020e7393B728A3939659E5732F87fdd8e680002"
+        );
+    }
+
+    #[test]
+    fn rpc_url_for_chain_xlayer_only() {
+        // Only X Layer is wired up for now — verify both that it works and
+        // that we don't accidentally claim to support other chains.
+        assert_eq!(rpc_url_for_chain("196"), Some(XLAYER_RPC_URL));
+        assert_eq!(rpc_url_for_chain("8453"), None); // Base
+        assert_eq!(rpc_url_for_chain("1"), None); // Ethereum
+        assert_eq!(rpc_url_for_chain("1952"), None); // X Layer testnet — explicitly not wired
+        assert_eq!(rpc_url_for_chain(""), None);
+    }
+
+    #[test]
     fn chain_family_loose_bucketing_documents_drift_risk() {
         // chain_family is loose — only Solana is split. Documenting current
         // behavior so a change here is intentional, not accidental.
@@ -260,5 +353,13 @@ mod tests {
         assert_eq!(chain_family("1"), "evm");
         assert_eq!(chain_family("195"), "evm"); // Tron buckets to evm by default — loose bucketing only
         assert_eq!(chain_family("unknown"), "evm");
+    }
+
+    #[test]
+    fn ensure_supported_chain_accepts_xlayer_testnet_offline() {
+        // No chain_cache.json is written by this test, so load_chain_cache()
+        // returns Ok(default) with an empty `chains` vec; the dynamic branch
+        // finds nothing, then SUPPORTED_CHAIN_INDICES covers "1952".
+        assert!(ensure_supported_chain("1952", "xlayer_test").is_ok());
     }
 }

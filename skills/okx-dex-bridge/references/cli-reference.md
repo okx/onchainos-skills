@@ -536,3 +536,27 @@ onchainos cross-chain status --tx-hash <swap_tx_hash> --bridge-id 636 --from-cha
 | (other) | run `cross-chain bridges` for the live list |
 
 Do NOT hardcode bridgeId in skill prompts beyond debugging — always derive from `quote.routerList[]` or `bridges`.
+
+## Cross-chain supported scope
+
+Static hint only — a "Yes" means the chain is in cross-chain scope, NOT that a route exists for a given pair. Real availability is decided at runtime by `cross-chain bridges --from-chain <X> --to-chain <Y>` (SKILL.md Step 2.5).
+
+| # | Chain | chainIndex | Cross-chain |
+|---|---|---|---|
+| 1 | XLayer | 196 | Yes |
+| 2 | Solana | 501 | Yes |
+| 3 | Polygon | 137 | Yes |
+| 4 | Avalanche C | 43114 | Yes |
+| 5 | Optimism | 10 | Yes |
+| 6 | Blast | 81457 | Yes |
+| 7 | Scroll | 534352 | Yes |
+| 8 | Sonic | 146 | Yes |
+| 9 | Ethereum | 1 | Yes |
+| 10 | BNB Chain | 56 | Yes |
+| 11 | Arbitrum One | 42161 | Yes |
+| 12 | Base | 8453 | Yes |
+| 13 | zkSync Era | 324 | Yes |
+| 14 | Linea | 59144 | Yes |
+| 15 | Fantom | 250 | No |
+| 16 | Monad | 143 | No |
+| 17 | Conflux | 1030 | No |

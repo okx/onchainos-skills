@@ -435,6 +435,18 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         );
     }
 
+    // Server returns code=0 even when the credential is rejected by business
+    // logic (e.g. insufficient balance) — the per-payment outcome lives in
+    // `data.success`. Surface errorReason so the caller doesn't mistake a
+    // refusal for a settling payment.
+    if cred_resp.get("success").and_then(Value::as_bool) == Some(false) {
+        let reason = cred_resp
+            .get("errorReason")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        bail!("payment {} rejected (reason={reason})", p.payment_id);
+    }
+
     Ok(PayOutput {
         payment_id: p.payment_id,
         status: cred_resp["status"]

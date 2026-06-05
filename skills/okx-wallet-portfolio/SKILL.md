@@ -1,10 +1,10 @@
 ---
 name: okx-wallet-portfolio
-description: "Use this skill when the user provides a specific wallet address and wants to check its balance, token holdings, portfolio value, or DeFi positions. Typical triggers: 'check balance of 0xAbc...', 'show tokens in this address', 'what tokens does 0xAbc hold', 'portfolio value of this address', address portfolio value, multi-chain balance lookup for a given address. Supports XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use when the user asks about their own wallet without providing an address (e.g., 'check my wallet balance', 'show my assets', '查看我的余额') — use okx-agentic-wallet instead, which queries the logged-in wallet. Do NOT use for PnL analysis, DEX history, realized/unrealized profit — use okx-dex-market. Do NOT use for signal tracking — use okx-dex-signal. Do NOT use for meme scanning — use okx-dex-trenches. Do NOT use for programming questions about balance APIs or integration."
+description: "Public-address portfolio lookup across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon and 20+ chains. Invoke when the user supplies a wallet address and wants its: balance, token holdings, total portfolio value, or DeFi positions (e.g. 'check balance of 0xAbc', 'what tokens does 0xAbc hold', 'portfolio value of this address'). Requires an explicit address — for the user's own logged-in wallet with no address use okx-agentic-wallet."
 license: MIT
 metadata:
   author: okx
-  version: "1.0.4"
+  version: "3.4.0-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -14,52 +14,7 @@ metadata:
 
 ## Pre-flight Checks
 
-Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
-
-1. **Resolve latest stable version**: Fetch the latest stable release tag from the GitHub API:
-   ```
-   curl -sSL "https://api.github.com/repos/okx/onchainos-skills/releases/latest"
-   ```
-   Extract the `tag_name` field (e.g., `v1.0.5`) into `LATEST_TAG`.
-   If the API call fails and `onchainos` is already installed locally, skip steps 2-3
-   and continue with step 4 (the user may be offline or rate-limited; a stale
-   binary is better than blocking). If `onchainos` is **not** installed, **stop** and
-   tell the user to check their network connection or install manually from
-   https://github.com/okx/onchainos-skills.
-
-2. **Install or update**: If `onchainos` is not found, or if the cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows) is older than 12 hours:
-   - Download the installer and its checksum file from the latest release tag:
-     - **macOS/Linux**:
-       `curl -sSL "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.sh" -o /tmp/onchainos-install.sh`
-       `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -o /tmp/installer-checksums.txt`
-     - **Windows**:
-       `Invoke-WebRequest -Uri "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.ps1" -OutFile "$env:TEMP\onchainos-install.ps1"`
-       `Invoke-WebRequest -Uri "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -OutFile "$env:TEMP\installer-checksums.txt"`
-   - Verify the installer's SHA256 against `installer-checksums.txt`. On mismatch, **stop** and warn — the installer may have been tampered with.
-   - Execute: `sh /tmp/onchainos-install.sh` (or `& "$env:TEMP\onchainos-install.ps1"` on Windows).
-     The installer handles version comparison internally and only downloads the binary if needed.
-   - On other failures, point to https://github.com/okx/onchainos-skills.
-
-3. **Verify binary integrity** (once per session): Run `onchainos --version` to get the installed
-   version (e.g., `1.0.5` or `2.0.0-beta.0`). Construct the installed tag as `v<version>`.
-   Download `checksums.txt` for the **installed version's tag** (not necessarily LATEST_TAG):
-   `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/v<version>/checksums.txt" -o /tmp/onchainos-checksums.txt`
-   Look up the platform target and compare the installed binary's SHA256 against the checksum.
-   On mismatch, reinstall (step 2) and re-verify. If still mismatched, **stop** and warn.
-   - Platform targets — macOS: `arm64`->`aarch64-apple-darwin`, `x86_64`->`x86_64-apple-darwin`; Linux: `x86_64`->`x86_64-unknown-linux-gnu`, `aarch64`->`aarch64-unknown-linux-gnu`, `i686`->`i686-unknown-linux-gnu`, `armv7l`->`armv7-unknown-linux-gnueabihf`; Windows: `AMD64`->`x86_64-pc-windows-msvc`, `x86`->`i686-pc-windows-msvc`, `ARM64`->`aarch64-pc-windows-msvc`
-   - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
-
-4. **Version drift check** — REQUIRED, run even if steps 1-3 were skipped.
-   - Run `onchainos --version` → CLI version (e.g., `2.2.9`)
-   - Read `version` field from this file's YAML frontmatter (e.g., `version: "2.0.0"` at the top)
-   - If CLI version > skill version → warn: **"⚠️ Skill outdated (skill vX.Y.Z < CLI vA.B.C). Re-install skills to get the latest features and fixes."**
-   - Continue to the user's command.
-5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
-   `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
-6. **Rate limit errors.** If a command hits rate limits, the shared API key may
-   be throttled. Suggest creating a personal key at the
-   [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
-   user creates a `.env` file, remind them to add `.env` to `.gitignore`.
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Skill Routing
 
@@ -71,34 +26,11 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
 
-## Quickstart
-
-```bash
-# Get supported chains for balance queries
-onchainos portfolio chains
-
-# Get total asset value on XLayer and Solana
-onchainos portfolio total-value --address 0xYourWallet --chains "xlayer,solana"
-
-# Get all token balances
-onchainos portfolio all-balances --address 0xYourWallet --chains "xlayer,solana,ethereum"
-
-# Check specific tokens (native OKB + USDC on XLayer)
-onchainos portfolio token-balances --address 0xYourWallet --tokens "196:,196:0x74b7f16337b8972027f6196a17a631ac6de26d22"
-```
-
 ## Chain Name Support
 
-The CLI accepts human-readable chain names and resolves them automatically.
+> Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
-| Chain | Name | chainIndex |
-|---|---|---|
-| XLayer | `xlayer` | `196` |
-| Solana | `solana` | `501` |
-| Ethereum | `ethereum` | `1` |
-| Base | `base` | `8453` |
-| BSC | `bsc` | `56` |
-| Arbitrum | `arbitrum` | `42161` |
+The CLI accepts human-readable chain names and resolves them automatically (name or numeric chainIndex).
 
 **Address format note**: EVM addresses (`0x...`) work across Ethereum/BSC/Polygon/Arbitrum/Base etc. Solana addresses (Base58) and Bitcoin addresses (UTXO) have different formats. Do NOT mix formats across chain types.
 
@@ -110,70 +42,6 @@ The CLI accepts human-readable chain names and resolves them automatically.
 | 2 | `onchainos portfolio total-value --address <address> --chains <chains>` | Get total asset value for a wallet (both params required) |
 | 3 | `onchainos portfolio all-balances --address <address> --chains <chains>` | Get all token balances for a wallet (both params required) |
 | 4 | `onchainos portfolio token-balances --address ... --tokens ...` | Get specific token balances |
-
-## Related Workflows
-
-When one of the following commands is used, show the related workflow hint after displaying results:
-
-| Command | Workflow | File |
-|---------|----------|------|
-| `portfolio all-balances` | Daily Brief | `~/.onchainos/workflows/daily-brief.md` |
-| `portfolio all-balances`, `portfolio total-value` | Portfolio Check | `~/.onchainos/workflows/portfolio-check.md` |
-| `portfolio all-balances` | Wallet Analysis | `~/.onchainos/workflows/wallet-analysis.md` |
-
-> Hint format: *"You can also try out our **[workflow name]** workflow for more comprehensive results. Would you like to try it?"*
-
-## Cross-Skill Workflows
-
-This skill is often used **before swap** (to verify sufficient balance) or **as portfolio entry point**.
-
-### Workflow A: Pre-Swap Balance Check
-
-> User: "Swap 1 SOL for BONK"
-
-```
-1. okx-dex-token    onchainos token search --query BONK --chains solana               → get tokenContractAddress
-       ↓ tokenContractAddress
-2. okx-wallet-portfolio  onchainos portfolio all-balances --address <addr> --chains solana
-       → verify SOL balance >= 1
-       ↓ balance field (UI units) → convert to minimal units for swap
-3. okx-dex-swap     onchainos swap quote --from 11111111111111111111111111111111 --to <BONK_address> --amount 1000000000 --chain solana
-4. okx-dex-swap     onchainos swap execute --from ... --to <BONK_address> --amount 1000000000 --chain solana --wallet <addr>
-```
-
-**Data handoff**:
-- `tokenContractAddress` from token search → feeds into swap `--from` / `--to`
-- `balance` from portfolio is **UI units**; swap needs **minimal units** → multiply by `10^decimal`
-- If balance < required amount → inform user, do NOT proceed to swap
-
-### Workflow B: Portfolio Overview + Analysis
-
-> User: "Show my portfolio"
-
-```
-1. okx-wallet-portfolio  onchainos portfolio total-value --address <addr> --chains "xlayer,solana,ethereum"
-       → total USD value
-2. okx-wallet-portfolio  onchainos portfolio all-balances --address <addr> --chains "xlayer,solana,ethereum"
-       → per-token breakdown
-       ↓ top holdings by USD value
-2b. (okx-dex-market) onchainos market portfolio-overview --address <addr> --chain ethereum  -> PnL summary and win rate
-3. okx-dex-token    onchainos token price-info --address <address> --chain <chain>  → enrich with 24h change, market cap
-4. okx-dex-market   onchainos market kline --address <address> --chain <chain>      → price charts for tokens of interest
-```
-
-### Workflow C: Sell Underperforming Tokens
-
-```
-1. okx-wallet-portfolio  onchainos portfolio all-balances --address <addr> --chains "xlayer,solana,ethereum"
-       → list all holdings
-       ↓ tokenContractAddress + chainIndex for each
-2. okx-dex-token    onchainos token price-info --address <address> --chain <chain>  → get priceChange24H per token
-3. Filter by negative change → user confirms which to sell
-4. okx-dex-swap     onchainos swap quote --from <token_addr> --to <native_addr> --amount ... --chain <chain>  → get quote
-5. okx-dex-swap     onchainos swap execute --from <token_addr> --to <native_addr> --amount ... --chain <chain> --wallet <addr>
-```
-
-**Key conversion**: `balance` (UI units) × `10^decimal` = `amount` (minimal units) for swap.
 
 ## Operation Flow
 
@@ -246,4 +114,4 @@ To search for specific command details: `grep -n "onchainos portfolio <command>"
 - `--exclude-risk` only works on ETH(`1`)/BSC(`56`)/SOL(`501`)/BASE(`8453`)
 - `token-balances` supports max **20** token entries
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values
+- The CLI handles authentication internally via environment variables — see Pre-flight Checks for details

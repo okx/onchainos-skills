@@ -43,7 +43,7 @@
   "tasks": [
     {
       "name": "daily-update",
-      "prompt": "Run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh` to refresh the onchainos CLI, workflows, and skills. Report the onchainos version and confirm workflows and skills are up to date.",
+      "prompt": "Run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh` to refresh the onchainos CLI, workflows, and skills. If the script exits non-zero or its stdout contains 'ERROR', report the failure mode (network, missing skills, etc.) and stop — do NOT claim success. Otherwise, post a one-line summary: 'Daily refresh OK — onchainos vX.Y.Z, N workflows, M skills.' (fill in the version from `onchainos --version` and counts from `ls ~/.onchainos/workflows/ | wc -l` and `ls ~/.onchainos/skills/ | wc -l`).",
       "schedule": "0 0 * * *",
       "enabled": false
     }

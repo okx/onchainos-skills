@@ -50,7 +50,17 @@ headerValue = btoa(JSON.stringify(paymentPayload))
 <header-name>: <headerValue>
 ```
 
-Expected: `HTTP 200`. Return the body to the user.
+Expected: `HTTP 200`. The response carries a `PAYMENT-RESPONSE` header
+(base64-encoded JSON). Decode with:
+
+```bash
+echo '<header value>' | base64 -d | jq .
+```
+
+关键字段：`status` / `transaction` / `amount` / `payer`。
+**`aggr_deferred` 的 `status` 可能是 `pending`（facilitator 异步结算，链上稍后出现），不是失败。**
+
+Return the body to the user.
 
 ## CLI Reference
 

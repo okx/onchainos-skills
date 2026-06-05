@@ -8,7 +8,8 @@ pub enum WalletCommand {
     Login {
         /// Email address to receive OTP (optional — omit for AK login)
         email: Option<String>,
-        /// Locale (e.g. "en-US", "zh-CN"). Optional.
+        /// Locale for OTP email template. Supported: "en_US", "zh_CN".
+        /// Invalid values fall back to "en_US" with a stderr warning.
         #[arg(long)]
         locale: Option<String>,
         /// Force re-login, skip API Key switch confirmation
@@ -381,7 +382,7 @@ async fn resolve_send_amount(
             }
         };
 
-        return crate::commands::swap::readable_to_minimal_str(readable, decimal);
+        return crate::validators::readable_to_minimal_str(readable, decimal);
     }
 
     bail!("Either --amt or --readable-amount is required")
@@ -442,6 +443,18 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             enable_gas_station,
         } => {
             let chain = crate::chains::resolve_chain(&chain);
+            // Resolve `--contract-token` alias (`usdc`, `usdt`, ...) → CA and
+            // run the same chain-aware format check that swap uses, so a
+            // typo / symbol leak is rejected here (before any BE round-trip
+            // or auth refresh) rather than at the BE error layer.
+            let contract_token = match contract_token {
+                Some(ct) => Some(crate::token_alias::resolve_and_validate(
+                    &chain,
+                    &ct,
+                    "contract-token",
+                )?),
+                None => None,
+            };
             let raw_amt = resolve_send_amount(
                 amt.as_deref(),
                 readable_amount.as_deref(),
