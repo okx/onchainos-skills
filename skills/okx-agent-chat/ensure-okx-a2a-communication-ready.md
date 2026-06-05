@@ -89,7 +89,7 @@ If OpenClaw is below the minimum, inform the user it needs upgrading and stop. D
 #### 2.2.2 Update OpenClaw Config
 
 <MUST>
-Update config **before** running `openclaw plugins install`. The install command triggers a single automatic gateway restart; that restart needs to load the new plugin and the updated config together.
+Update config **before** running `openclaw plugins install`. After the install succeeds, you MUST run `openclaw gateway restart` so the new plugin and the updated config are loaded together.
 </MUST>
 
 Run as a single shell block so each check is independent:
@@ -121,7 +121,7 @@ If any `openclaw config set` call fails, surface the error and stop — do not p
 
 Before running the install command, tell the user in English:
 
-> Installing the OKX A2A plugin from npm package `@okxweb3/a2a-openclaw`. The OpenClaw gateway will restart automatically after installation; this is expected, and no manual action is required.
+> Installing the OKX A2A plugin from npm package `@okxweb3/a2a-openclaw`. After installation succeeds, I will run `openclaw gateway restart` as a required step so the gateway loads the plugin and updated config.
 
 Run:
 
@@ -131,7 +131,15 @@ openclaw plugins install @okxweb3/a2a-openclaw
 
 If the install fails, surface the error verbatim and stop.
 
-On success, `openclaw plugins install` auto-restarts the gateway, loads the new plugin, and picks up the config changes from Step 2.2.2 in the same restart. Flow ends here — no manual gateway restart and no follow-up `xmtp_refresh_agents` call is needed.
+After the install succeeds, run:
+
+```bash
+openclaw gateway restart
+```
+
+If the restart fails, surface the error verbatim and stop.
+
+On success, the gateway loads the new plugin and picks up the config changes from Step 2.2.2. Flow ends here — no follow-up `xmtp_refresh_agents` call is needed.
 
 ## Step 3: Hermes Flow
 
