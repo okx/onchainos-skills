@@ -127,6 +127,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::competition::CompetitionCommand,
     },
+    /// A2A Pay — Buyer ↔ Seller charge / escrow flow (Smart-Account backend)
+    #[command(name = "a2a-pay")]
+    A2aPay {
+        #[command(subcommand)]
+        command: commands::payment::a2a_pay::A2aPayCommand,
+    },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
@@ -155,6 +161,12 @@ pub enum Commands {
 
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
+
+    /// AI Agent commerce: identity, tasks, chat, file attachments
+    Agent {
+        #[command(subcommand)]
+        command: commands::agent_commerce::AgentCommand,
+    },
 }
 
 fn main() {
@@ -173,7 +185,18 @@ fn main() {
 async fn run() {
     dotenvy::dotenv().ok();
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+
+    // The agent subsystem runs only on XLayer (chainId=196, chain name "xlayer").
+    // `--chain` is a top-level global flag, and clap 4 has no clean way to hide
+    // a global arg per-subcommand, so we just force-override the chain to "xlayer"
+    // at runtime for any agent subcommand — whatever the user passes (or omits)
+    // is silently ignored. agent_commerce internals already use the constant
+    // XLAYER_CHAIN_INDEX="196"; this just keeps Context::chain_override in sync
+    // so nothing downstream misreads it.
+    if matches!(cli.command, Commands::Agent { .. }) {
+        cli.chain = Some("xlayer".to_string());
+    }
 
     // Propagate --base-url to env so WalletApiClient and refresh_jwt_inline pick it up.
     if let Some(ref url) = cli.base_url {
@@ -215,11 +238,13 @@ async fn run() {
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::payment::execute(command).await,
         Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
+        Commands::A2aPay { command } => commands::payment::a2a_pay::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Strategy { command } => commands::strategy::execute(&ctx, *command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
+        Commands::Agent { command } => commands::agent_commerce::run(command, &ctx).await,
     };
 
     let elapsed = start.elapsed();
