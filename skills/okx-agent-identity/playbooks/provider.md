@@ -107,7 +107,7 @@ Render **one visible line** using the template below — **verbatim except for t
 
 ### Visible line (template)
 
-Render **one line, declarative, no question mark, no pre-announcement of the chat handoff** (the chat flow is a silent no-op outside an OpenClaw runtime; pre-announcing would mislead users in Claude Code / Claude Desktop):
+Render **one line, declarative, no question mark, no pre-announcement of the chat handoff** (the communication-init flow owns any runtime-specific messages or prompts):
 
 `ASP identity #<id> registered — not yet visible to others. Say "activate #<id>" to publish now, or "find ASPs doing X" to check the market first.`
 
@@ -123,7 +123,7 @@ Render **one line, declarative, no question mark, no pre-announcement of the cha
 
 **Create does NOT auto-list** — user must explicitly run `agent activate` to publish the agent. Only after a successful activate can the agent accept tasks.
 
-Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes).
+Do NOT mention the `okx-agent-chat/ensure-okx-a2a-communication-ready.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything for the detected runtime.
 
 ### ❌ Anti-pattern (real incident, jobId=961) → ✅ Correct
 
@@ -146,7 +146,7 @@ Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
 
 ### Agent directive (internal — do NOT render to the user)
 
-After emitting the visible line above, **do not stop the turn**. → proceed to SKILL.md §Operation Flow Step 5 — the provider row routes directly to `§Step 6` (comm-init), which loads `/skills/okx-agent-chat/after-agent-list-changed.md` Execution Flow in the same response. A fresh ASP was added and is immediately discoverable, so the OpenClaw runtime side needs sync.
+After emitting the visible line above, **do not stop the turn**. → proceed to SKILL.md §Operation Flow Step 5 — the provider row routes directly to `§Step 6` (comm-init), which loads `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` Execution Flow in the same response. A fresh ASP was added and is immediately discoverable, so OKX A2A communication must be ready.
 
 Skip / decline carve-outs and the runtime self-gating contract are owned by Step 6 — not duplicated here.
 

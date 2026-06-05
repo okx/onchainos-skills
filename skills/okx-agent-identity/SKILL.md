@@ -58,7 +58,7 @@ After **any** `onchainos agent ...` CLI call, first user-visible output must com
 **⛔ Sub-rule — confirm the right CLI ran before rendering a create-success line.** Before rendering any "identity registered / #N created" line: (1) confirm the CLI that just ran was `onchainos agent <subcommand>`, NOT `onchainos wallet add` or any non-agent command; (2) match the role to the template — `--role requester` → requester template only, never swap. If a smaller model produces an identity success line but only a wallet CLI ran this turn, treat it as hallucination: say "Only a wallet account was added — not an agent identity. Want to register a User Agent identity now?" and re-enter the create flow.
 
 ### Post-Create Comm-Init (Step 6)
-After any local-agent-list-mutating success (`create / update / activate / deactivate`), proceed to `§Operation Flow Step 5` → `§Step 6`: load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue its Execution Flow in the same response. The callee self-gates on env vars — never pre-judge runtime. `feedback-submit` is excluded. Passive onboarding (`intent=need-requester`) routes to Step 5's "back to task" branch, not Step 6.
+After any local-agent-list-mutating success (`create / update / activate / deactivate`), proceed to `§Operation Flow Step 5` → `§Step 6`: load `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` and continue its Execution Flow in the same response. The callee self-gates on env vars — never pre-judge runtime. `feedback-submit` is excluded. Passive onboarding (`intent=need-requester`) routes to Step 5's "back to task" branch, not Step 6.
 
 ## §Cost Disclosure (P0)
 Read `core/cost-disclosure.md` — OKX covers all gas, zero platform commission. Render the standard line before any creating mutation. "Give me an example" → run `agent search` first, never improvise.
@@ -84,7 +84,7 @@ Read `_shared/no-polling.md` — one intent = one CLI call; never poll, never au
 ### Skill Routing (outbound)
 - Task lifecycle → `okx-agent-task`
 - Wallet login / balance / transfer → `okx-agentic-wallet`
-- Post-create agent-list sync → `okx-agent-chat` `after-agent-list-changed.md` (via Step 6)
+- Post-create communication init → `okx-agent-chat` `ensure-okx-a2a-communication-ready.md` (via Step 6)
 - OKB staking for evaluator → `/skills/okx-agent-task/references/evaluator-staking.md`
 - Address / contract security → `okx-security`
 - Broadcast raw tx → `okx-onchain-gateway`
@@ -138,7 +138,7 @@ Success → detail card (`core/display-detail.md §2`) + one next-step suggestio
 | All else (search / get / service-list / feedback) | **Stop.** |
 
 ### Step 6: Communication Init (unconditional from this skill's side)
-Load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue its Execution Flow in the same response. Callee self-gates. Skip only when user explicitly declined chat setup earlier this conversation.
+Load `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` and continue its Execution Flow in the same response. Callee self-gates. Skip only when user explicitly declined chat setup earlier this conversation.
 
 ## Sub-flows
 

@@ -75,7 +75,7 @@ For system events, top-level `agentId` IS the target (no lookup needed). For use
 > 1. **Wallet is logged in**: `onchainos wallet status` — if not, hand off to `okx-agentic-wallet`.
 > 2. **Agent exists for required role**: `onchainos agent my-agents --role <buyer|provider|evaluator>` → empty = `agent create`. Evaluator additionally requires staking onboarding in `references/evaluator-staking.md §2`.
 >    - ⚠️ `my-agents` only shows the current account's agents. For envelope routing always use `agent profile <id>`.
-> 3. **Communication channel**: **Run** [`okx-agent-chat/after-agent-list-changed.md`](../okx-agent-chat/after-agent-list-changed.md) — verifies OKX A2A plugin is installed. On non-OpenClaw runtimes it auto-no-ops.
+> 3. **Communication channel**: **Run** [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) — verifies OKX A2A communication is ready. OpenClaw uses the plugin path; Node runtimes use the `okx-a2a` CLI; Hermes is reserved.
 
 ## ⚠️ Critical Field Mapping Table (always look it up, don't guess)
 
