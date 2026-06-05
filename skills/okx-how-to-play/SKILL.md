@@ -4,7 +4,7 @@ description: "Onchain OS onboarding entry router. Triggers: 'what is onchainos',
 license: MIT
 metadata:
   author: okx
-  version: "3.3.9"
+  version: "3.4.0-beta"
   homepage: "https://web3.okx.com"
 ---
 
