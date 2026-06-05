@@ -1,6 +1,6 @@
 ---
 name: okx-how-to-play
-description: "Onchain OS entry router for open-ended onboarding questions. Renders a welcome banner that features OKX.AI as the primary highlight (task an Agent — let your Agent do the on-chain work and earn 24/7 by selling its service) plus a secondary menu (Polymarket, USDC APY, daily on-chain brief), and routes the user into the right skill or workflow. Triggers: 'what is onchainos', 'what is onchain os', 'what does this do', 'what can it do', 'what can I do here', 'how do I use this', 'how do I play', 'how to use onchainos', 'how to play onchainos', 'how does this work', 'how do I start', 'getting started', 'how do I get started', 'tutorial', 'onboarding', 'first time', 'I just installed', 'now what', 'what do I do now', 'where do I start', 'who are you', 'what are you', 'introduce yourself', 'introduction', 'introduce onchainos', 'tell me about onchainos', 'I'm new'."
+description: "Onchain OS onboarding entry router. Triggers: 'what is onchainos', 'what is onchain os', 'what can onchainos do', 'what does onchainos do', 'how do I use this', 'how do I play', 'how to use onchainos', 'how to play onchainos', 'how does onchainos work', 'how do I start', 'getting started', 'tutorial', 'onboarding', 'first time', 'I just installed', 'now what', 'what do I do now', 'where do I start', 'who are you', 'what are you', 'introduce onchainos', 'tell me about onchainos', 'I'm new'. NOT for: questions where the subject is explicitly 'OKX.AI' — use okx-ai-guide instead."
 license: MIT
 metadata:
   author: okx
