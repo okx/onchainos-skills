@@ -35,7 +35,7 @@ Read `core/ux-lexicon.md` for the complete translation table. Key rules:
 3. **No internal labels.** ⛔ `pre-check / Phase 1 / Phase 2 / Q1: / Q2: / S1: / pre-execute self-check / confirmation gate / status=0` → use natural language; see `core/ux-lexicon.md §Flow`.
 4. **Use lexicon translations.** Role (`requester` → User Agent), status integers, service types, field JSON keys → all follow `core/ux-lexicon.md`. Legacy role nouns (buyer / seller / service-provider / verifier) are deprecated.
 5. **No alarmist agent counts.** When total agents ≥ 5 after `agent get`, append the reassurance footer per `core/display-formats.md §1`.
-6. **Fields from user input only.** `name / description / picture / service.*` MUST come from the user's literal reply to the matching Q. ⛔ Never pre-fill from `userEmail`, session metadata, wallet name, XMTP sender, or any source other than what the user typed this turn.
+6. **Fields from user input only.** `name / description / picture / service.*` MUST come from the user's literal reply to the matching Q. ⛔ Never pre-fill from `userEmail`, session metadata, wallet name, XMTP sender, or any source other than what the user typed this turn. **Single carve-out:** for `servicedescription`, the AI MAY (a) reformat the user's **own supplied wording** into the required 3-part structure, (b) auto-trim it to the length limits, and (c) draft 1–3 example prompts that **illustrate the capability the user already stated** — all adding no new capability/claim/metric, all presented for explicit approval. This is formatting + illustration of the user's content, not fabrication. Details + guardrail: `playbooks/provider-services.md §Description: AI drafts it`.
 
 **Pre-send sweep:** before emitting any message, scan for violations of Red lines 1–6. Rewrite before sending.
 
@@ -165,8 +165,8 @@ Load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue its Execu
 Four gates in order — never skip, never combine:
 1. **Ask role** using numbered-options pattern (`core/choice-prompts.md`). Accept written role name as fallback.
 2. **Pre-check** — run `agent get` once. See `playbooks/README.md §Pre-check` for uniqueness rules and K=1/K≥2 branching for providers.
-3. **Role Q&A** — load `playbooks/requester.md / provider.md / evaluator.md`. One field per turn. Phase preview before Q1, no `Q1:` prefix in user text.
-4. **Confirmation card** (`core/display-detail.md §3`) — mandatory. Execute only after explicit confirm token.
+3. **Role Q&A** — load `playbooks/requester.md / provider.md / evaluator.md`. **For providers this is a two-step flow** (`playbooks/provider.md`): Step 1 · Identity and Step 2 · Service, each opening with a **numbered checklist of its fields annotated with requirements**, then collecting (batch or one-at-a-time). No `Q1:` / `Phase` prefix in user text.
+4. **Confirmation card(s)** (`core/display-detail.md §3`) — mandatory. Execute only after explicit confirm token. **For providers, collection + confirmation are split into TWO steps** (`playbooks/provider.md §Confirmation cards — two steps`): **Step 1 · Identity** → **identity card**, confirming ("next") advances to Step 2 and does NOT call the CLI; **Step 2 · Service** → **service card**, "execute" runs the single `agent create` (carries both, since the CLI requires ≥1 service). QA pre-check (`modules/pre-listing-qa.md` Trigger C) runs silently per card, inline ⚠️; the avatar is **actively prompted at the identity card's closing 📷 CTA** (send-image / "generate" / skip — not a passive row hint); the service description is **AI-drafted from the user's plain words** (format + trim + illustrate, never bounce the user repeatedly — `playbooks/provider-services.md §Description: AI drafts it`); fields are editable in place. Confirming the service card with QA warnings present = register-anyway. (Two-step / QA / avatar / description-assist apply to providers only; requester / evaluator render a single plain card.)
 
 ### Update
 1. `agent get --agent-ids <id>` → show current detail card.
@@ -211,8 +211,8 @@ After rendering the result card, append exactly **one** declarative suggestion l
 ## Resources
 - `playbooks/README.md` — shared rules + role router
 - `playbooks/requester.md` — User Agent Q&A + passive onboarding
-- `playbooks/provider.md` — ASP Phase 1 Q&A + confirmation + post-success + endpoint anti-pattern
-- `playbooks/provider-services.md` — Phase 2: per-service Q&A loop (name/description/type/fee/endpoint)
+- `playbooks/provider.md` — ASP batch-first collection (overview + identity fields) + confirmation + post-success + endpoint anti-pattern
+- `playbooks/provider-services.md` — per-service field set (name/description/type/fee/endpoint), single service by default
 - `playbooks/evaluator.md` — Evaluator Q&A
 - `playbooks/consent.md` — first-time consent card (read when CLI returns non-null `consent`)
 - `modules/feedback.md` — feedback submission flow (read before any feedback-submit intent)

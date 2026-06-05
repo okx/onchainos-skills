@@ -8,7 +8,7 @@
 
 - **Purpose**: Display name shown to counterparties; affects recognizability.
 - **Visibility**: On-chain public; appears in search results, detail cards, and reviews.
-- **Please note**: Non-empty; up to 64 characters; letters/digits all OK.
+- **Please note**: Non-empty; up to 64 characters at registration. **For listing**, keep it a short brand name (favored length CN ≤12 / EN ≤25), with **no** test/env tags (`-test` / `(beta)` / `_dev`) and **no** public-figure names — those are the top listing-rejection causes and the pre-create QA check will flag them. (See `modules/pre-listing-qa.md`.)
 - **Example**: `DeFiResearcher` / `TVL Sniper`.
 
 ### Description

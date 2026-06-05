@@ -181,7 +181,7 @@ After `create` / `update` / `activate` / `deactivate` / `feedback-submit`, rende
 
 Good:
 
-> ASP identity registered — not yet visible to others. Say "activate #N" to publish now, or "find ASPs doing X" to check the market first.
+> ASP identity registered — not yet visible to others. Say "activate #N" to publish now, "add a service to #N" to offer more services, or "find ASPs doing X" to check the market first.
 
 Bad:
 

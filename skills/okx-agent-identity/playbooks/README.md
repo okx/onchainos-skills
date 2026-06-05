@@ -29,26 +29,25 @@ Do NOT default. Do NOT guess from the name / description fields.
 
 All eight fields (Name / Description / Profile photo / `name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) have standardized four-segment specs — **Purpose / Visibility / Please note / Example**. See `core/field-specs.md`. When you ask the user a field, inline all four segments with the question in the user's language only (never mix languages in one message).
 
-## STRICT — one question per turn
+## STRICT — numbered requirements checklist per step → batch or one-at-a-time
 
-Applies to every role flow. Applies to every service sub-field. No exceptions.
+Applies to every role flow and every service sub-field.
 
-- Never list "Please provide 1. Name 2. Description 3. ..." in one message as an **imperative ask**.
-- Never enumerate more than one field per turn in an **asking** message.
-- If the user volunteered multiple values in one sentence ("named Alice, focused on DeFi"), you may capture them at parse time (see `core/choice-prompts.md §One-Shot Capture`) — but the confirmation card still renders one row per field, and any still-unanswered fields are still asked one at a time.
-- The rationale is not just UX; users answer one question more accurately than a list. List format causes dropped fields and typos that force re-prompting, which is worse than the extra turns.
+- **Open each step with a numbered requirements checklist.** Each step (for providers: Step 1 Identity, Step 2 Service) opens with a **numbered list of its fields, each annotated with its requirement** (length, format, bans), framed as "send all at once, or one at a time". This is a **declarative requirements preview**, not a banned imperative ask — it tells the user *what's needed and the rules*, and explicitly permits batching. Capture whatever they batch (`core/choice-prompts.md §One-Shot Capture`).
+- **Ask the remainder one at a time.** For fields the user did **not** batch, ask one field per **asking** message — never re-enumerate the whole list as sequential single demands, and never leak a `Q1:` prefix.
+- The confirmation card always renders one row per field regardless of how the values were collected.
+- The rationale: the numbered checklist sets expectations and surfaces the rules up front (fewer rejections), lets fast users one-shot, and the one-at-a-time fallback keeps accuracy for piecemeal answers.
 
 ### Preview ≠ multi-field ask
 
-Showing a **declarative preview** at the start of each phase ("Next we'll collect: Name, Description, Profile photo (optional).") is **allowed and encouraged** — it sets expectations and lets users decide whether to one-shot. Previews are statements, not asks; they are always followed by a single field question, **asked in natural language — no `Q1：` / `Q1:` prefix** in the user-visible prompt (see `SKILL.md §UX Output Red Lines Red line 3` and `core/ux-lexicon.md` flow-term table).
+What matters is that the list is a **requirements checklist offering batch**, not a sequential single-answer demand:
 
-The distinction is verb mood:
+- ✅ Allowed (numbered requirements checklist + batch invite — the provider step opener): "Step 1 of 2 · Identity — please provide these 3 items (send all at once, or one at a time):\n  1. Name (required) — 2–12 chars CN…\n  2. Description (required) — …\n  3. Profile photo (optional) — …" — lists fields + rules, explicitly permits batching.
+- ✅ Allowed (declarative preamble + single natural-language follow-up for a missing field): "What's the name of this ASP?" — no `Q1:` prefix.
+- ❌ Banned (Q-prefix leak): "…\n\n**Q1: What's the name of this ASP?**" — the `Q1:` prefix leaks an internal label (Red line 3).
+- ❌ Banned (re-enumerating the list as forced sequential single answers, or hiding required rules).
 
-- ❌ Banned (imperative, multi-field): "Please provide: 1. Name 2. Description 3. Profile photo"
-- ❌ Banned (declarative preamble + Q-prefix leak): "Next we'll collect: …\n\n**Q1: What's the name of this ASP?**" — the `Q1:` prefix leaks an internal label into chat output (Red line 3).
-- ✅ Allowed (declarative preamble + single natural-language question): "Next we'll collect: Name, Description, Profile photo (optional).\n\nWhat's the name of this ASP?" — use `ASP` per `core/ux-lexicon.md §Role` (the raw ERC-8004 enum `provider` is wire-only).
-
-If in doubt: the preamble describes what will happen; the Q asks for exactly one thing.
+If in doubt: the checklist states *what's needed + the rules + "batch ok"*; any follow-up asks for exactly one still-missing thing.
 
 ## Pre-check existing agents (normal onboarding only)
 
@@ -109,7 +108,7 @@ The prompt **must match the user's language**. Follow .
 
 ## Confirmation card
 
-> ⛔ The card is **mandatory before every content-creating on-chain write** — `agent create` / `update` / `feedback-submit`. This is enforced by the mandatory confirmation gate in SKILL.md; that section is the canonical source. Memory preferences, plan-mode exit, one-shot capture, urgency, and "intent is obvious" all do **NOT** bypass it — see the rationalization list in `SKILL.md §Core Flow` gate 4. State toggles (`agent activate` / `agent deactivate`) are NOT gated and run directly via `SKILL.md §Intent → Sub-flow`.
+> ⛔ The card is **mandatory before every content-creating on-chain write** — `agent create` / `update` / `feedback-submit`. This is enforced by the mandatory confirmation gate in SKILL.md; that section is the canonical source. Memory preferences, plan-mode exit, one-shot capture, urgency, and "intent is obvious" all do **NOT** bypass it — see the rationalization list in `SKILL.md §Core Flow` (the confirmation-card gate). State toggles (`agent activate` / `agent deactivate`) are NOT gated and run directly via `SKILL.md §Intent → Sub-flow`.
 
 Always a table of fields — never a bash blob. Match the user's language. Render field labels and row values in one language only. ⛔ The `role` row MUST follow `core/ux-lexicon.md §Role`: `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. **Never render the raw ERC-8004 enum (`requester / provider / evaluator`) or legacy nouns; never render bilingual parentheticals** (`SKILL.md §UX Output Red Lines Red line 4`). See `core/display-formats.md` §Create/Update Diff for the full template.
 
