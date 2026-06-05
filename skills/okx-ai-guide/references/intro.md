@@ -8,8 +8,8 @@ Glossary (PRD §5): 用户 = User · ASP（Agent 服务商）= ASP (Agent Servic
 
 | Placeholder | Value / rule |
 |---|---|
-| `{okx_ai_site}` | OKX.AI official site: `https://aibeta.okex.org/zh-hans`. |
-| `{install_doc_url}` | Install guide URL: `https://web3pre.okex.org/zh-hans/pisces?okfeOkcDocsUrl=dev/1.6.172&autoSet=false&react=min&forward=%2Fonchainos%2Fdev-docs%2Fokxai%2Fagent-installation-guide`. |
+| `{okx_ai_site}` | OKX.AI official site: `https://okx.ai`. |
+| `{install_doc_url}` | Install guide URL: `https://web3.okx.com/onchainos/dev-docs/home/how-to-install-openclaw.md`. Static, no locale segment — same for every language (matches the repo convention for `web3.okx.com` doc links; the site handles any locale redirect itself). |
 
 ## Variant A — Compatible (role selection page)
 
