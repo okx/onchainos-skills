@@ -176,7 +176,7 @@ Interpret the status output by its explicit state. Do not infer state from unrel
 
   Then tell the user in English:
 
-  > OKX A2A server has started. Please wait a few seconds, then retry.
+  > OKX A2A server has started.
 
   Flow ends here.
 
