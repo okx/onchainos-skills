@@ -1,6 +1,6 @@
 # Avatar Upload — Runtime Decision Matrix
 
-`--picture` on `agent create` / `agent update` takes a URL. To get a URL, you either (a) already have one, or (b) run `onchainos agent upload --file <path>` to get one from a local image. **The "CDN" / "upload pipeline" are implementation details — never expose these words to the user.** To the user it's simply "发一张图片给我，我帮你上传" / "send me an image, I'll handle the upload".
+`--picture` on `agent create` / `agent update` takes a URL. To get a URL, you either (a) already have one, or (b) run `onchainos agent upload --file <path>` to get one from a local image. **The "CDN" / "upload pipeline" are implementation details — never expose these words to the user.** To the user it's simply "send me an image, I'll handle the upload".
 
 The right path depends on the runtime. Do not force the user down a path their environment cannot support.
 
@@ -18,17 +18,17 @@ The right path depends on the runtime. Do not force the user down a path their e
 2. **Default to "skip".** If the user doesn't bring up avatar, do not prompt for one; create/update succeeds with a backend-assigned default image.
 3. **When prompting, match the user's language and use the numbered-options pattern:**
    - **Claude Code (attachments supported) — 3 options:** want an avatar? → 1. send image (upload it, recommend 1:1 PNG/JPEG/WebP) / 2. generate from keywords / 3. skip (default avatar). Reply 1/2/3.
-   - **Terminal (no attachments) — 2 options:** open with "can't receive attachments here" / 当前环境没法直接收图 — then: 1. generate from keywords (1:1 recommended) / 2. skip (default avatar). Reply 1/2.
-4. **AI-generation requires explicit prompt.** Do not invent image content. Ask the user in their language: "你希望头像长什么样？几个关键词就够。" / "Describe the avatar — a few keywords is enough."
-5. **Upload result is a URL — show it to the user.** Pass it to `--picture`, and render the URL verbatim in the Picture row of the confirmation card and the detail card (see `core/display-formats.md §Picture row rule`). Do **not** hide the URL behind "已上传" / "uploaded" or any placeholder. Do not re-upload an already-uploaded image.
-6. **Aspect ratio guidance.** When the user sends a non-1:1 image, accept it and upload anyway — do not reject or demand re-crop. But when *proactively* recommending dimensions, say "1:1 方图 / 1:1 square" rather than a specific pixel size like 512×512 (the backend does not enforce 512, and pixel specifics date quickly).
+   - **Terminal (no attachments) — 2 options:** open with "can't receive attachments here" — then: 1. generate from keywords (1:1 recommended) / 2. skip (default avatar). Reply 1/2.
+4. **AI-generation requires explicit prompt.** Do not invent image content. Ask the user in their language: "Describe the avatar — a few keywords is enough."
+5. **Upload result is a URL — show it to the user.** Pass it to `--picture`, and render the URL verbatim in the Picture row of the confirmation card and the detail card (see `core/display-formats.md §Picture row rule`). Do **not** hide the URL behind "uploaded" or any placeholder. Do not re-upload an already-uploaded image.
+6. **Aspect ratio guidance.** When the user sends a non-1:1 image, accept it and upload anyway — do not reject or demand re-crop. But when *proactively* recommending dimensions, say "1:1 square" rather than a specific pixel size like 512×512 (the backend does not enforce 512, and pixel specifics date quickly).
 
 ---
 
 ## Claude Code flow (attachment-supported)
 
 ```
-User: "帮我注册 provider，名字 Alice，顺便用这张图做头像" [attaches file]
+User: "Register a provider named Alice, use this image as the avatar" [attaches file]
 Skill:
   1. Save attachment → /tmp/<random>.png
   2. Check file size — if > 1 MB: STOP, prompt the user (see Validation §File size), do NOT proceed to step 3
@@ -39,18 +39,17 @@ Skill:
 ```
 
 After the upload succeeds, move to the next step of the flow silently — or with a one-line ack that includes the URL so the user can see what was set:
-- 中文："好，头像已加好：`<url>`"
-- English: "Got it, avatar set: `<url>`"
+- "Got it, avatar set: `<url>`"
 
-The URL **must** appear verbatim in the Picture row of the confirmation card (`core/display-formats.md §Picture row rule`), and in the detail card after success. Never replace it with `已上传` / `uploaded` / `CDN` or any placeholder phrase. Never mention the word "CDN" to the user.
+The URL **must** appear verbatim in the Picture row of the confirmation card (`core/display-formats.md §Picture row rule`), and in the detail card after success. Never replace it with "uploaded" / "CDN" or any placeholder phrase. Never mention the word "CDN" to the user.
 
 ## Claude Code flow (AI-generated)
 
 ```
-User: "用一只戴眼镜的青蛙当头像"
+User: "Use a frog wearing glasses as the avatar"
 Skill:
   1. Call image-gen tool with prompt → /tmp/<random>.png
-  2. Show the generated image to the user, confirm ("这张 OK 吗？" / "Does this work?")
+  2. Show the generated image to the user, confirm ("Does this work?")
   3. onchainos agent upload --file /tmp/<random>.png → URL
   4. Proceed with agent create / update
 ```
@@ -58,16 +57,16 @@ Skill:
 ## Terminal flow (no attachments)
 
 ```
-User: "上传个头像"
+User: "Upload an avatar"
 Skill: (render the 2-option numbered prompt — see Policy §3, Terminal variant)
-  - User replies "1" / "生成" / "generate" → ask keywords → image-gen → upload → URL (silently)
-  - User replies "2" / "跳过" / "skip" → proceed without --picture
+  - User replies "1" / "generate" → ask keywords → image-gen → upload → URL (silently)
+  - User replies "2" / "skip" → proceed without --picture
   - Anything else → re-render the numbered prompt once; never silently default.
 ```
 
 ## User-provided URL
 
-If the user already hands over a URL (e.g., "用这个 twitter 头像 https://..."), trust it and pass directly as `--picture`. Do not re-download and re-upload.
+If the user already hands over a URL (e.g., "Use this Twitter avatar https://..."), trust it and pass directly as `--picture`. Do not re-download and re-upload.
 
 ---
 
@@ -78,10 +77,8 @@ If the user already hands over a URL (e.g., "用这个 twitter 头像 https://..
   - ⛔ **Do NOT call `onchainos agent upload` or any backend API.**
   - ⛔ **Do NOT proactively compress, resize, or modify the file.** The user owns the image; altering it without explicit instruction is forbidden.
   - Prompt the user in their language to supply a smaller image and stop the upload flow:
-    - 中文："图片超过 1 MB（当前约 X MB），无法上传。请压缩后再发给我，或换一张 1 MB 以内的图片。"
-    - English: "The image exceeds 1 MB (~X MB) and can't be uploaded. Please compress it or send a smaller image (under 1 MB)."
+    - "The image exceeds 1 MB (~X MB) and can't be uploaded. Please compress it or send a smaller image (under 1 MB)."
   - Replace `X` with the actual file size rounded to one decimal place (e.g. `1.4 MB`). If the exact size is unavailable, omit the parenthetical size note.
 - **URL shape** — must be HTTPS. On invalid shape, in the user's language:
-  - 中文："头像链接必须是 https:// 开头的。"
-  - English: "The avatar link must start with https://."
+  - "The avatar link must start with https://."
 - **Global availability** — the image service is region-agnostic; do not advise the user to switch region. Do not mention "CDN" to the user.

@@ -17,8 +17,8 @@
 | **§1** | `agent create` | Register new agent (requester / provider / evaluator); consent flow; finding newly-minted agentId |
 | **§2** | `agent update` | Update existing agent fields (name / description / picture / services) |
 | **§3** | `agent get` | List own agents (default) or fetch by id(s); double-layer envelope structure |
-| **§4** | `agent activate` | Publish agent (上架); 5 outcome branches + approvalStatus handling |
-| **§5** | `agent deactivate` | Unpublish agent (下架) |
+| **§4** | `agent activate` | Publish agent; 5 outcome branches + approvalStatus handling |
+| **§5** | `agent deactivate` | Unpublish agent |
 | **§6** | `agent upload` | Upload local image → returns HTTPS URL |
 | **§7–§11** | (moved) | Search, service-list, feedback-submit, feedback-list, submit-approval → see `core/cli-search-feedback.md` |
 
@@ -69,8 +69,8 @@ For routing between `get` and `search` see `SKILL.md` §"Disambiguation: search 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
 | `--agent-ids` | ✗ | comma-separated integers | Fetch one or more by id. Any id is accepted — own or someone else's. |
-| `--page` | ✗ | integer | 未传时不上送，由后端取默认。Only meaningful in default-list mode. |
-| `--page-size` | ✗ | integer | 未传时不上送，由后端取默认。Only meaningful in default-list mode. |
+| `--page` | ✗ | integer | Omitted when not provided; backend uses its default. Only meaningful in default-list mode. |
+| `--page-size` | ✗ | integer | Omitted when not provided; backend uses its default. Only meaningful in default-list mode. |
 
 **Examples:**
 ```bash
@@ -144,7 +144,7 @@ onchainos agent activate --agent-id 42
 
 | Field | Type | Description |
 |---|---|---|
-| `success` | boolean | `true` = 上架成功；`false` = 上架失败 |
+| `success` | boolean | `true` = listed successfully; `false` = listing failed |
 
 **Skill-side handling:**
 
@@ -176,9 +176,9 @@ onchainos agent deactivate --agent-id 42
 
 | Field | Type | Description |
 |---|---|---|
-| `success` | boolean | `true` = 下架成功；`false` = 下架失败 |
-| `approvalStatus` | integer \| null | 下架场景忽略此字段 |
-| `rejectReason` | string \| null | 下架场景忽略此字段 |
+| `success` | boolean | `true` = unpublished successfully; `false` = unpublish failed |
+| `approvalStatus` | integer \| null | Ignored in the deactivate scenario |
+| `rejectReason` | string \| null | Ignored in the deactivate scenario |
 
 **Skill-side handling:** only read `success`. `approvalStatus` and `rejectReason` are ignored for deactivate.
 
