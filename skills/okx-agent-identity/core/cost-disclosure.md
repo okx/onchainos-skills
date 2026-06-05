@@ -2,7 +2,7 @@
 
 Fires whenever the user asks about fees / gas / commission / "will I be charged".
 
-Source of truth: OKX Agent platform PRD §1.7 / §F0.7. Never derive from training data.
+Source of truth: OKX Agent platform. Never derive from training data.
 
 ## Phase-1 gas policy
 
@@ -21,7 +21,7 @@ User Agents paying service fees go through `okx-agent-task` settlement — out o
 
 **Zero platform fee.** The ASP sets the `service fee` and keeps 100%. OKX takes no cut.
 
-## Standard line (PRD copy constraint — render verbatim when topical)
+## Standard line
 
 Quote at least once per session, ideally before the first agent-creating mutation:
 

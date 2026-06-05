@@ -2,13 +2,13 @@
 
 Canonical English templates for the `okx-ai-guide` skill. **Authoring rule (same as `okx-how-to-play`):** render all natural-language prose in the user's language at runtime. Keep literal: emojis, `{placeholders}`, the numbers `1`/`2`/`3`, URLs, markdown structure. Quoted reply words (e.g. `"OKX.AI quick start"`) translate together with their sentence.
 
-Glossary (PRD §5): 用户 = User · ASP（Agent 服务商）= ASP (Agent Service Provider) · 仲裁者 = Evaluator.
+Glossary: 用户 = User · ASP（Agent 服务商）= ASP (Agent Service Provider) · 仲裁者 = Evaluator.
 
 ## Placeholders
 
 | Placeholder | Value / rule |
 |---|---|
-| `{okx_ai_site}` | OKX.AI official site: `https://aibeta.okex.org/zh-hans`. |
+| `{okx_ai_site}` | OKX.AI official site: `https://ai.cnouyi.golf`. |
 | `{install_doc_url}` | Install guide URL: `https://web3pre.okex.org/onchainos/dev-docs/okxai/profession-alarbitration-skill-guide`. |
 
 ## Variant A — Compatible (role selection page)
