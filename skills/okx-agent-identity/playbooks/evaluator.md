@@ -136,7 +136,7 @@ Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
 
 After emitting the two visible lines above, **do not stop the turn**. → proceed to SKILL.md §Operation Flow Step 5 — the evaluator row routes first to `/skills/okx-agent-task/references/evaluator-staking.md` §2 (Step 1 → Step 2); render its staking confirmation card as the next part of the same response. The stake amount is owned by that skill — identity does not pass one. Staking's terminal handoff feeds `§Step 6` (comm-init); the fallback path (staking declined / errored) is documented in Step 5's evaluator row.
 
-Skip carve-out (staking ONLY, not comm-init): if the user has already declined staking earlier in this conversation — see §Good / bad cases row "I don't want to stake". This skips the staking handoff (do NOT load `evaluator-staking.md`), but **Step 5's evaluator fallback still applies** — proceed to `SKILL.md §Operation Flow Step 6` (comm-init) from this skill before stopping the turn. The local agent list still changed when `create` succeeded, so the OpenClaw cache still needs sync regardless of stake status. Comm-init decline is a **separate** axis owned by Step 6.
+Skip carve-out (staking ONLY, not comm-init): if the user has already declined staking earlier in this conversation — see §Good / bad cases row "I don't want to stake". This skips the staking handoff (do NOT load `evaluator-staking.md`), but **Step 5's evaluator fallback still applies** — proceed to `SKILL.md §Operation Flow Step 6` (comm-init) from this skill before stopping the turn. The agent was created, so the OKX A2A plugin and communication channel must still be ready regardless of stake status. Comm-init decline is a **separate** axis owned by Step 6.
 
 ---
 

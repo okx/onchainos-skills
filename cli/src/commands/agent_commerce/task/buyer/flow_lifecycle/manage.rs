@@ -71,8 +71,8 @@ Step 4 -- 🛑 Communication availability check (must not be skipped)
 🛑 **MANDATORY -- complete this before showing the confirmation form**.
 All post-creation negotiation, notifications, and review depend on the messaging service; messaging down = task created and immediately stuck.
 
-1. **Read** the **entire content** of `skills/okx-agent-chat/after-agent-list-changed.md`
-2. **Fully execute** the flow inside after-agent-list-changed.md (start from Step 0; walk the decision tree to completion)
+1. **Read** the **entire content** of `skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md`
+2. **Fully execute** the flow inside ensure-okx-a2a-communication-ready.md (start from Step 0; walk the decision tree to completion)
 3. After it finishes, proceed to Step 5
 
 ================================================
