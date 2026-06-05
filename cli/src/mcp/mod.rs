@@ -2537,7 +2537,7 @@ impl McpServer {
 
     #[tool(
         name = "competition_list",
-        description = "List Agentic Wallet exclusive trading competitions. After this returns, follow okx-growth-competition SKILL.md Step 1 fixed table template structure (5 columns: Name / Chain / Time / Total Prize Pool / Details), rendered in the user's language. NEVER add an ID column or show activityId. Chain cell MUST be computed from `participateChainIds` ONLY (the trading-chain set); `chainId` is the claim chain and MUST NOT be displayed as a trading chain unless it also appears in `participateChainIds`. Legacy fallback: if `participateChainIds` is empty/missing, fall back to `[chainId]`."
+        description = "List Agentic Wallet exclusive trading competitions. Returns `availableCompetitions[]` with `name`, `shortName`, `chainId` (claim chain), `participateChainIds` (trading chains), `startTime`/`endTime` (raw Unix seconds for arithmetic), plus pre-formatted UTC+8 strings (`startTimeFormatted`, `endTimeFormatted`, `timeRangeFormatted` for compact `YYYY-MM-DD ~ YYYY-MM-DD`) — render the `*Formatted` fields verbatim, do not recompute, do not append `(UTC+8)` again. Also includes `rewards`, `status` (3=active, 4=ended). Identify activities by `name` — never expose internal numeric ids (`activityId`, `chainIndex`)."
     )]
     async fn competition_list(
         &self,
@@ -2558,7 +2558,7 @@ impl McpServer {
 
     #[tool(
         name = "competition_detail",
-        description = "Get trading competition details: rules, prize pool distribution, participation requirements, timeline. The activity_id parameter accepts EITHER the numeric id from a prior competition_list response OR the activity name / shortName — both are auto-resolved server-side. After this returns, follow okx-growth-competition SKILL.md Step 2 fixed display template structure, rendered in the user's language. Required structure: a Basic-info block ('Basic info:') with the chain line computed from `participateChainIds` ONLY (the trading-chain set; `chainId` is the claim chain and MUST NOT be displayed as a trading chain unless it also appears in `participateChainIds`; legacy fallback to `[chainId]` only when `participateChainIds` is empty/missing), plus a Reward-categories numbered list (1./2./3./4.) with rank-breakdown tables for sections 1 and 2. Sections 3 (Participation Reward) and 4 (Skill Quality Award) have specific required content — preserve meaning in any language. NEVER show activityId or other internal numeric ids to the user."
+        description = "Get trading competition details (rules, prize pool, timeline). `activity_id` accepts a numeric id or the activity `name` / `shortName` — both resolved server-side. Returns `chainId` (claim chain), `participateChainIds` (trading chains), pre-formatted UTC+8 time strings `startTimeFormatted` / `endTimeFormatted` (already end in `(UTC+8)` — render verbatim, do not recompute, do not re-append the suffix), `tabConfigs[]` (leaderboards), `prizePoolDistribution[]` (read `rules[]` for actual rank distribution — never derive rank rules by dividing the pool). Identify the activity by `name` — never expose `activityId` / `chainIndex`."
     )]
     async fn competition_detail(
         &self,
@@ -2577,12 +2577,7 @@ impl McpServer {
 
     #[tool(
         name = "competition_rank",
-        description = "Get one leaderboard for a trading competition: top-N entries plus the user's own rank, estimated reward, and gap to next tier. \
-The activity_id parameter accepts EITHER the numeric id from a prior competition_list response OR the activity name / shortName — both are auto-resolved server-side. \
-A competition can have multiple leaderboards (PnL%, PnL, ...) — this tool returns ONE per call, scoped by `sort_type`. \
-Before answering 'what's my rank?' style questions, call `competition_detail` first, enumerate \
-`tabConfigs[].rankFieldConfig[].sortValueMap.descend`, then call this tool ONCE PER sort_type so you cover every leaderboard. \
-After this returns, follow okx-growth-competition SKILL.md Step 5 fixed CASE 1 / CASE 2 / CASE 3 template structure, rendered in the user's language — never invent a freeform table layout, never collapse multi-leaderboard sections into one."
+        description = "Get ONE leaderboard for a trading competition: top-N entries (`allRankInfos[]`) plus the user's own rank (`myRankInfo`). `activity_id` accepts a numeric id or activity `name` / `shortName`. Scoped by `sort_type` — discover available values from `competition_detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend` (do not hardcode). A competition can have multiple leaderboards (PnL%, PnL, ...); to answer 'my overall rank', call once per `sort_type` so every board is covered. `nickName` is already backend-masked — render verbatim, do not re-mask. `format` field: 1=number, 2=percentage, 3=token+unit. `rankUpdateTime` ships alongside `rankUpdateTimeFormatted` (UTC+8 string ending in `(UTC+8)`) — render the formatted field verbatim."
     )]
     async fn competition_rank(
         &self,
@@ -2619,7 +2614,7 @@ After this returns, follow okx-growth-competition SKILL.md Step 5 fixed CASE 1 /
 
     #[tool(
         name = "competition_user_status",
-        description = "Check user's competition participation status and reward eligibility (joinStatus, rewardStatus). Omit activity_name to check all activities including ended ones. Identify competitions by activity name in subsequent tool calls — internal numeric ids are intentionally not exposed."
+        description = "Check the user's competition participation and reward status. Returns `joinStatus` (0/1), `rewardStatus` (0=not won, 1=won unclaimed, 2=claimed, 3=expired, 4=pending draw), `joinedAddress`, `needContact`, plus `joinTimeFormatted` / `claimTimeFormatted` (UTC+8 strings ending in `(UTC+8)`; `null` when the corresponding event has not happened) — render the formatted fields verbatim. Omit `activity_name` to check all activities (active + ended). Identify activities by `name` — never expose internal ids."
     )]
     async fn competition_user_status(
         &self,
@@ -2651,12 +2646,10 @@ After this returns, follow okx-growth-competition SKILL.md Step 5 fixed CASE 1 /
 
     #[tool(
         name = "competition_join",
-        description = "Register user for a trading competition. Requires wallet login. Pass activity_name from a prior competition_list result; internal ids are resolved server-side. \
-BEFORE calling this tool, you MUST first call competition_user_status for the same activity to read the current account's joinStatus: \
-- joinStatus=1 → current account already registered, do NOT call this tool, render Scenario A template from SKILL.md Step 3 instead. \
-- joinStatus=0 → safe to call. \
-After this returns `joined: true`, render the SKILL.md Step 3 'Successful registration' fixed template structure (lead phrase + dual-chain sentence + ranking note + closing question + bracketed disclaimer on its own line) in the user's language. \
-On error code=11016 (Participation limit reached) → another account in the same login is registered; render Scenario B template (find the registered account by iterating other accounts in wallet_store and calling competition_user_status until one returns joinStatus=1)."
+        description = "Register the user for a trading competition. Requires wallet login. Pass `activity_name` from a prior `competition_list` result. \
+SAFETY: MUST first call `competition_user_status` to read the current account's `joinStatus`. If `joinStatus=1` (already joined), do NOT call this tool — registering again is a no-op for the current account. \
+ERRORS: code=11016 (Participation limit reached) means a different account in the same login already holds the registration; the user must switch to that account to trade. \
+Returns `joined: true` plus `activityId` (internal — never show to the user) and the registered EVM / Solana addresses."
     )]
     async fn competition_join(
         &self,
@@ -2688,7 +2681,10 @@ On error code=11016 (Participation limit reached) → another account in the sam
 
     #[tool(
         name = "competition_claim",
-        description = "Atomic competition reward claim: fetch calldata → sign with TEE session → broadcast on-chain → return txHash array. Requires wallet login. Pass activity_name from a prior competition_list / competition_user_status result; internal ids are resolved server-side. Do NOT chain `gateway_broadcast` after this — the on-chain submission already happened inside this tool. If the response includes `needContact: true`, follow the SKILL.md Step 6 contact-collection template after the success line — ask the user to share ONE contact method (Telegram / WeChat / Email / Twitter) and then call `competition_submit_contact` with the parsed contactType + contactValue."
+        description = "Atomic competition reward claim: fetch calldata → TEE-sign → broadcast on-chain → return tx hashes. Requires wallet login. Pass `activity_name` from a prior result. \
+SAFETY: Do NOT chain `gateway_broadcast` after this — the on-chain submission already happened inside this tool. Do NOT re-run claim on partial success — successful entries are already on-chain and will hit the dedup guard. \
+Returns: `rewardAmount` / `rewardUnit` plus per-entry `succeeded[]` (with `txHash`) and `failed[]` (with `error`). `needContact: true` flags a top-tier winner who has not yet submitted contact info — if so, ask the user (do NOT force) for ONE contact method (Telegram / WeChat / Email / Twitter), then call `competition_submit_contact`. \
+Pre-check rejections (rewardStatus 0/2/3, code 11002, code 11008) are semantic — not retryable; surface the backend error message as-is."
     )]
     async fn competition_claim(
         &self,
@@ -2719,7 +2715,7 @@ On error code=11016 (Participation limit reached) → another account in the sam
 
     #[tool(
         name = "competition_submit_contact",
-        description = "Submit a contact method (Telegram / WeChat / Email / Twitter) for a top-tier competition winner so the operations team can reach out about merchandise. Call this ONLY after a `competition_claim` that returned `needContact: true`, and only when the user has affirmatively shared a contact in the conversation. accountId + walletAddress are resolved server-side from the active account's joinedAddress. After this returns `submitted: true`, render the SKILL.md Step 6 contact-confirmation template (translated to the user's language) — do NOT echo the contact value back. contact_type MUST be the exact case-sensitive string `Telegram` / `WeChat` / `Email` / `Twitter`; the backend rejects other strings."
+        description = "Submit a contact method for a top-tier competition winner (merchandise outreach). Call ONLY after `competition_claim` returns `needContact: true` AND the user has affirmatively shared a contact in this conversation. `contact_type` MUST be the exact case-sensitive string: `Telegram` / `WeChat` / `Email` / `Twitter` — backend rejects anything else. SAFETY: never echo `contact_value` back to the user."
     )]
     async fn competition_submit_contact(
         &self,

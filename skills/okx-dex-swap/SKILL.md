@@ -1,10 +1,10 @@
 ---
 name: okx-dex-swap
-description: "NOTE (gating): route to okx-dapp-discovery (NOT this skill) when prompt names a specific DApp as the swap venue: Polymarket, Aave V3, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound V3, Pendle, Lido, ether.fi, GMX V2, Kamino, Orca, Meteora, Clanker, pump.fun, Uniswap. Examples that go to okx-dapp-discovery: 'swap on PancakeSwap', 'swap SOL for USDC on Raydium', 'use Hyperliquid to long ETH', '在 Curve 上换 USDT', 'swap on Uniswap'. okx-dapp-discovery installs the DApp's plugin and uses its native interface; this skill is for OKX-aggregated swaps without a named venue. Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', 'get swap calldata', 'build unsigned tx', or mentions swapping/trading/buying/selling/exchanging tokens across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any 20+ supported chains. Aggregates 500+ DEX sources for optimal routing/price. Supports slippage control, price impact protection, and cross-DEX route optimization."
+description: "Use this skill to swap, trade, buy, sell, exchange, or convert tokens, get a swap quote, execute a trade, find the best or cheapest swap route, compare swap rates, get swap calldata, or build an unsigned swap tx across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or 20+ chains. OKX-aggregated routing over 500+ DEX sources with slippage control, price-impact protection, and cross-DEX route optimization. For OKX-aggregated swaps with no named venue. If the prompt names a specific DApp as the swap venue (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Lido, ether.fi, GMX, Kamino, Orca, Meteora, Clanker, pump.fun, Uniswap), route to okx-dapp-discovery instead, e.g. 'swap on PancakeSwap', 'swap SOL for USDC on Raydium', '在 Curve 上换 USDT', 'swap on Uniswap'."
 license: MIT
 metadata:
   author: okx
-  version: "3.3.8"
+  version: "3.3.9"
   homepage: "https://web3.okx.com"
 ---
 
