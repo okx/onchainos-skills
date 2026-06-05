@@ -6,7 +6,7 @@ use crate::token_alias::validate_address_for_chain;
 use crate::validators::{validate_amount, validate_non_negative_integer};
 use crate::keyring_store;
 use crate::output;
-use crate::wallet_api::WalletApiClient;
+use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 use crate::wallet_store::{self, AddressInfo, WalletsJson};
 
 use super::auth::{ensure_tokens_refreshed, format_api_error};
@@ -51,6 +51,85 @@ pub(crate) fn resolve_address(
             bail!("no address for chain={} in account={}", chain, acct_id);
         }
     }
+}
+
+// ── sign_and_build_extra_data ─────────────────────────────────────────
+
+/// Sign the unsigned info and build the serialized `extraData` JSON string
+/// used by `broadcast_transaction`.
+#[allow(clippy::too_many_arguments)]
+fn sign_and_build_extra_data(
+    unsigned: &UnsignedInfoResponse,
+    session_cert: &str,
+    encrypted_session_sk: &str,
+    session_key: &str,
+    is_contract_call: bool,
+    mev_protection: bool,
+    force: bool,
+) -> Result<String> {
+    let signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, session_key)?;
+    let signing_seed_b64 = base64::engine::general_purpose::STANDARD.encode(signing_seed);
+
+    let mut msg_for_sign_map = serde_json::Map::new();
+
+    if !unsigned.hash.is_empty() {
+        let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, &signing_seed, "hex")?;
+        msg_for_sign_map.insert("signature".into(), json!(sig));
+    }
+    if !unsigned.auth_hash_for7702.is_empty() {
+        let sig =
+            crate::crypto::ed25519_sign_hex(&unsigned.auth_hash_for7702, &signing_seed_b64)?;
+        msg_for_sign_map.insert("authSignatureFor7702".into(), json!(sig));
+    }
+    if !unsigned.unsigned_tx_hash.is_empty() {
+        let sig = crate::crypto::ed25519_sign_encoded(
+            &unsigned.unsigned_tx_hash,
+            &signing_seed_b64,
+            &unsigned.encoding,
+        )?;
+        msg_for_sign_map.insert("unsignedTxHash".into(), json!(&unsigned.unsigned_tx_hash));
+        msg_for_sign_map.insert("sessionSignature".into(), json!(sig));
+    }
+    if !unsigned.unsigned_tx.is_empty() {
+        msg_for_sign_map.insert("unsignedTx".into(), json!(&unsigned.unsigned_tx));
+    }
+    if !unsigned.jito_unsigned_tx.is_empty() {
+        let jito_sig = crate::crypto::ed25519_sign_encoded(
+            &unsigned.jito_unsigned_tx,
+            &signing_seed_b64,
+            &unsigned.encoding,
+        )?;
+        msg_for_sign_map.insert("jitoUnsignedTx".into(), json!(&unsigned.jito_unsigned_tx));
+        msg_for_sign_map.insert("jitoSessionSignature".into(), json!(jito_sig));
+    }
+    if !session_cert.is_empty() {
+        msg_for_sign_map.insert("sessionCert".into(), json!(session_cert));
+    }
+
+    let msg_for_sign = Value::Object(msg_for_sign_map);
+
+    let mut extra_data_obj = if unsigned.extra_data.is_object() {
+        unsigned.extra_data.clone()
+    } else {
+        json!({})
+    };
+    extra_data_obj["checkBalance"] = json!(true);
+    extra_data_obj["uopHash"] = json!(unsigned.uop_hash);
+    extra_data_obj["encoding"] = json!(unsigned.encoding);
+    extra_data_obj["signType"] = json!(unsigned.sign_type);
+    extra_data_obj["msgForSign"] = json!(msg_for_sign);
+    if !is_contract_call {
+        extra_data_obj["txType"] = json!(2);
+    }
+    if mev_protection {
+        extra_data_obj["isMEV"] = json!(true);
+    }
+    if force {
+        extra_data_obj["skipWarning"] = json!(true);
+    }
+
+    serde_json::to_string(&extra_data_obj).context("failed to serialize extraData")
 }
 
 /// Resolve address with a one-shot refresh fallback.
@@ -550,6 +629,52 @@ async fn sign_and_broadcast(
     Ok(broadcast_resp)
 }
 
+// ── build_broadcast_body ─────────────────────────────────────────────
+
+/// Build the JSON body for `broadcast_transaction` from an `UnsignedInfoResponse`.
+///
+/// Loads the stored TEE session, signs the unsigned data, builds extraData,
+/// and returns the complete broadcast request body as a JSON `Value`:
+/// ```json
+/// { "accountId": "…", "address": "…", "chainIndex": "…", "extraData": "…" }
+/// ```
+///
+/// Internal CLI use only (e.g., agent-commerce task flows).
+#[allow(clippy::too_many_arguments)]
+pub async fn build_broadcast_body(
+    unsigned: &UnsignedInfoResponse,
+    account_id: &str,
+    address: &str,
+    chain_index: &str,
+    is_contract_call: bool,
+    mev_protection: bool,
+    force: bool,
+) -> Result<Value> {
+    let session = wallet_store::load_session()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let session_cert = session.session_cert;
+    let encrypted_session_sk = session.encrypted_session_sk;
+    let session_key = keyring_store::get("session_key")
+        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+
+    let extra_data_str = sign_and_build_extra_data(
+        unsigned,
+        &session_cert,
+        &encrypted_session_sk,
+        &session_key,
+        is_contract_call,
+        mev_protection,
+        force,
+    )?;
+
+    Ok(json!({
+        "accountId": account_id,
+        "address": address,
+        "chainIndex": chain_index,
+        "extraData": extra_data_str,
+    }))
+}
+
 // ── batch_sign_and_broadcast ─────────────────────────────────────────
 // EVM only, no Gas Station / 7702 / Jito. Any executeResult=false fails the
 // whole batch (no partial rollback). Broadcast dispatch: response.len==1 →
@@ -589,8 +714,7 @@ fn validate_batch_unsigned_responses(
             || !unsigned.auth_hash_for7702.is_empty();
         if !has_sign_data {
             bail!(
-                "batch element {i}: backend returned empty signing materials \
-                 (gasStationStatus={:?})",
+                "batch element {i}: backend returned empty signing materials                  (gasStationStatus={:?})",
                 unsigned.gas_station_status
             );
         }
@@ -852,6 +976,7 @@ pub async fn batch_sign_and_broadcast(
             .map_err(|e| handle_confirming_error(e, force))
     }
 }
+
 
 // ── send ─────────────────────────────────────────────────────────────
 
@@ -1524,6 +1649,7 @@ fn force_setup_required_for_tx_params(
 
 /// Call-site adapter for the `cmd_send` path: build the `original_args` payload
 /// from send-style args, then delegate to `build_gs_setup_required`.
+#[allow(clippy::too_many_arguments)]
 fn force_setup_required_for_send(
     is_reenable: bool,
     chain: &str,
@@ -1829,6 +1955,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+    use crate::commands::agentic_wallet::common::handle_confirming_error;
     use crate::wallet_store::{AccountMapEntry, AddressInfo, WalletsJson};
 
     fn make_test_wallets() -> WalletsJson {

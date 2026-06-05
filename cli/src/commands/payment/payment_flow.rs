@@ -243,6 +243,14 @@ pub(crate) struct ResolvedEntry {
     pub(crate) scheme: Option<String>,
 }
 
+/// Extract a minimal-unit amount string from an accepts entry, ignoring tiered
+/// schemas (treats `amount` strictly as a scalar). Convenience wrapper around
+/// `resolve_amount` for callers that only need the legacy `amount` /
+/// `maxAmountRequired` shape.
+pub fn extract_amount(entry: &Value) -> Result<String> {
+    resolve_amount(entry, None)
+}
+
 /// Extract a minimal-unit amount string from an accepts entry.
 ///
 /// Supports three server formats:
@@ -339,6 +347,22 @@ fn resolve_entry(
 /// schema; for legacy scalar `amount` / `maxAmountRequired` it is ignored.
 /// Returns the signed proof and the selected entry so callers can build a
 /// header with the right scheme.
+/// Parse a raw x402 `accepts` JSON string and produce a `PaymentProof` via
+/// `sign_payment_with_preference`. Convenience wrapper for callers (e.g. the
+/// agent-commerce buyer flow) that receive `accepts` as the raw HTTP-402 body
+/// and want to sign exactly what the server said without consulting the
+/// stored default-asset preference.
+pub async fn x402_pay_from_accepts(
+    accepts: &str,
+    from: Option<String>,
+) -> Result<PaymentProof> {
+    let accepts_value: Value =
+        serde_json::from_str(accepts).context("accepts must be a valid JSON array")?;
+    let (proof, _entry) =
+        sign_payment_with_preference(&accepts_value, from.as_deref(), None, None).await?;
+    Ok(proof)
+}
+
 pub async fn sign_payment(
     accepts: &Value,
     from: Option<&str>,

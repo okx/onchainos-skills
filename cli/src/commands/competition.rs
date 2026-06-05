@@ -920,6 +920,7 @@ pub async fn claim_and_submit(
 /// support so EVM/XLayer responses go through the same pattern they use:
 ///   - swap.rs reads `tx.to`, `tx.data`, `tx.value`, `tx.gas`
 ///   - cross_chain.rs reads `tx.to`, `tx.data`, `tx.value`, `tx.gasLimit`
+///
 /// We accept either gas key. Top-level legacy keys (`input`, `value`,
 /// `contractAddress`, `gasLimit`) are also honored as a fallback.
 async fn submit_one_calldata(entry: &Value) -> Result<Value> {
@@ -1115,8 +1116,8 @@ async fn force_refresh_access_token_for_competition() -> Result<()> {
 /// version:
 ///   - top level: `data` / `unsignedTx` / `serializedTx` / `rawTx`
 ///   - nested:    `tx` / `v0.tx` (preferred — these are the *unsigned* tx;
-///                we avoid `*.txSigned` because despite the name those
-///                bytes still have a zero signature placeholder).
+///     we avoid `*.txSigned` because despite the name those bytes still have
+///     a zero signature placeholder).
 ///
 /// Returns `None` if no plausible byte array is found.
 fn encode_solana_byte_array(entry: &Value) -> Option<String> {
