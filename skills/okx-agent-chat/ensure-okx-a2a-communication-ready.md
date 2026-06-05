@@ -5,7 +5,7 @@
 Runtime families:
 
 - **OpenClaw**: uses the OpenClaw OKX A2A plugin and native `xmtp_*` tools.
-- **Hermes agent**: reserved; do not run setup until the Hermes flow is defined.
+- **Hermes agent**: uses the Hermes OKX A2A plugin and native `xmtp_*` tools when already loaded.
 - **Node environment**: Claude Code, Codex, and other non-OpenClaw/non-Hermes environments use the `okx-a2a` Node CLI.
 
 ## When To Run (Auto-Trigger Contract)
@@ -30,7 +30,7 @@ Step 1  Runtime detection by shell environment
   ├─ OPENCLAW_SHELL is set, or existing OpenClaw compatibility signal OPENCLAW_CLI is set
   │    └─ Step 2 OpenClaw flow
   ├─ HERMES_SESSION_ID is set and HERMES_DESKTOP_CWD is not set
-  │    └─ Step 3 Hermes flow (placeholder)
+  │    └─ Step 3 Hermes flow
   └─ Otherwise
        └─ Step 4 Node environment flow (Claude Code / Codex / other Node CLI runtimes)
 ```
@@ -137,7 +137,16 @@ On success, `openclaw plugins install` auto-restarts the gateway, loads the new 
 
 Use this branch when a Hermes user needs to install the `okx-a2a` plugin from the npm package and restart Hermes Gateway.
 
-### Step 3.1: Check Node.js Version
+### Step 3.1: Fast Path — Refresh Via Plugin Tool
+
+If the OKX A2A Hermes plugin is already installed and loaded, the agent's toolset will expose a tool named `xmtp_refresh_agents`.
+
+Inspect the **current toolset**:
+
+- **Tool present** -> call `xmtp_refresh_agents` (no arguments unless its schema requires them) and surface the result to the user. If the call returns an error, surface the error verbatim and stop. Flow ends here.
+- **Tool not present** -> the plugin is not yet installed or not loaded. Proceed to Step 3.2 for the full Hermes install flow.
+
+### Step 3.2: Check Node.js Version
 
 Run:
 
@@ -151,7 +160,7 @@ Requirements:
 
 If Node.js is below the minimum, inform the user it needs upgrading and stop. Do not proceed.
 
-### Step 3.2: Download The Hermes Plugin Package
+### Step 3.3: Download The Hermes Plugin Package
 
 Create a temporary working directory and download the latest npm package:
 
@@ -190,7 +199,7 @@ On macOS, remove quarantine attributes from native files bundled in the plugin p
 xattr -dr com.apple.quarantine .
 ```
 
-### Step 3.3: Install Or Upgrade The Plugin
+### Step 3.4: Install Or Upgrade The Plugin
 
 Before running the install command, tell the user in English:
 
@@ -213,7 +222,7 @@ The install script copies the plugin to the Hermes plugin directory, usually one
 
 On success, Hermes communication initialization is complete. Flow ends here.
 
-### Step 3.4: Manual Gateway Restart Fallback
+### Step 3.5: Manual Gateway Restart Fallback
 
 If the install script should not restart Hermes Gateway automatically, install only:
 
@@ -378,7 +387,8 @@ On success, OKX A2A communication initialization is complete. Flow ends here.
 | `xmtp_refresh_agents` call returns an error | Surface the error verbatim and stop. |
 | OpenClaw < 2026.4.20 | Inform the user OpenClaw is too old and stop. |
 | `openclaw config set` fails | Surface the error and stop — do not run install with partial config. |
-| Hermes runtime detected | Stop with no side effects; Hermes setup is reserved. |
+| Hermes runtime and tool `xmtp_refresh_agents` is present | Take the Hermes fast path — call it and end. |
+| Hermes runtime and tool `xmtp_refresh_agents` is missing | Continue to the Hermes install flow. |
 | Node runtime and `okx-a2a status` reports `stopped` | Run `okx-a2a restart`, tell the user the server started, and end. |
 | Node runtime and `okx-a2a status` reports `running` | Run `okx-a2a agent refresh` and end. |
 | Node runtime and `okx-a2a status` is unclear | Surface the output/error verbatim and stop. |
