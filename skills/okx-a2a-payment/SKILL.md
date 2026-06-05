@@ -4,7 +4,7 @@ description: "DEPRECATED legacy alias — a2a-pay support has been merged into `
 license: MIT
 metadata:
   author: okx
-  version: "3.4.0-beta"
+  version: "3.4.2-beta"
   homepage: "https://web3.okx.com"
   deprecated: true
   successor: okx-agent-payments-protocol
