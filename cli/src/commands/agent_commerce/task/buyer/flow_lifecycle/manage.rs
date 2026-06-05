@@ -3,7 +3,6 @@
 // --- User-action: create task ------------------------------------------
 
 pub(crate) fn create_task() -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     "\
 🔒 **Pre-flight check**: have you read `skills/okx-agent-task/SKILL.md` and `skills/okx-agent-task/buyer.md`?\n\
 If not → **stop executing this playbook immediately**; first load SKILL.md per the CLAUDE.md routing rules → confirm role is buyer → read buyer.md → then come back here.\n\
@@ -159,15 +158,13 @@ If the user's message did NOT include any files, skip this step entirely.
 
 ================================================
 
-⚠️ **Balance warning relay**: if the CLI output contains a `⚠️ Insufficient ... balance` warning line, \
-you **MUST** append it to the `xmtp_dispatch_user` content below.\n\
-🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
-After success, call `xmtp_dispatch_user` to notify the user:\n\
+After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you are already in the user session):\n\
 ".to_string()
     + &format!("\
-- No --provider → content: \"{create_public}\"\n\
-- With --provider → content: \"{create_designated}\"\n\
-{l10n_short}\n\n\
+- No --provider → \"{create_public}\"\n\
+- With --provider → \"{create_designated}\"\n\
+⚠️ If the CLI output contains a `⚠️ Insufficient ... balance` warning line, append it to the message above.\n\
+🌐 Localize to the user's language.\n\n\
 ===============================================================\n\
 🛑🛑🛑 STOP -- after create-task + task-attach (if any) + watch (if prompted), you **MUST end this turn**\n\
 ===============================================================\n\
@@ -217,9 +214,9 @@ onchainos agent draft create \\\\\n\
 ```bash\n\
 onchainos agent task-attach --file \"<local file path>\" <jobId>\n\
 ```\n\n\
-After success, call `xmtp_dispatch_user` to notify the user:\n\
+After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you are already in the user session):\n\
 - content: \"{draft_saved}\"\n\
-{l10n_short}\n\n\
+🌐 Localize to the user's language.\n\n\
 → **End this turn.**\n\
 ===============================================================\n",
         create_public = super::super::content::create_task_public_user_notify(),
@@ -231,8 +228,6 @@ After success, call `xmtp_dispatch_user` to notify the user:\n\
 // --- User-action: publish draft ----------------------------------------
 
 pub(crate) fn draft_publish(job_id: &str) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
-
     format!("\
 [Current Operation] Publish draft (draft_publish)
 [Role] User (User Agent)
@@ -294,14 +289,11 @@ This command validates all required fields, checks balance (blocking), signs the
 Step 4 -- Notify user
 ================================================
 
-⚠️ **Balance warning relay**: if the CLI output contains a `⚠️ Insufficient ... balance` warning line, \
-you **MUST** append it to the `xmtp_dispatch_user` content below.
-🌐 Canonical template — localize per [Localization] rules before sending.
-
-After success, call `xmtp_dispatch_user` to notify the user:
-- No designated provider → content: \"{publish_public}\"
-- With designated provider → content: \"{publish_designated}\"
-{l10n_short}
+After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you are already in the user session):
+- No designated provider → \"{publish_public}\"
+- With designated provider → \"{publish_designated}\"
+⚠️ If the CLI output contains a `⚠️ Insufficient ... balance` warning line, append it to the message above.
+🌐 Localize to the user's language.
 
 ===============================================================
 🛑🛑🛑 STOP -- after draft publish you **MUST end this turn immediately**
