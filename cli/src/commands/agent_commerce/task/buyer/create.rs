@@ -298,6 +298,6 @@ pub async fn handle_create(
         println!("[Watch] Start monitoring task progress:");
         println!("okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50");
     }
-    println!("🛑 Do NOT call set-payment-mode.");
+    println!("🛑 Do NOT call set-payment-mode. End this turn.");
     Ok(())
 }
