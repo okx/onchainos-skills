@@ -52,7 +52,7 @@ All fields ready → **identity & balance check**:
 1. Check whether the current account already has a buyer agent → if yes, use it directly (one account has at most 1 buyer; a wallet may have multiple accounts).
 2. No buyer agent → guide the user to create one first (`onchainos agent create --role 1 --name <name> --description <desc>`).
 3. Insufficient balance → warn but **do not block**.
-4. **Execute** [`okx-agent-chat/after-agent-list-changed.md`](../okx-agent-chat/after-agent-list-changed.md) to check messaging-service availability.
+4. **Execute** [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) to check OKX A2A messaging-service availability.
 
 ⚠️ **Language matching**: the confirmation form field labels **MUST** match the user's conversation language. Chinese conversation → Chinese labels (标题 / 摘要 / 描述 / 支付代币 / 预算 / 最高预算 / 任务过期时间 / 预期工作时长); English conversation → English labels (Title / Summary / Description / Currency / Budget / Max Budget / Acceptance Window / Delivery Window). The playbook is written in English; this does NOT mean the output should be English — always match the **user's** language.
 

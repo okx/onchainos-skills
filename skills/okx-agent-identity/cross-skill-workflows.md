@@ -11,8 +11,8 @@ End-to-end user journeys that span multiple onchainos skills. The identity skill
        ↓ wallet logged in
 2. okx-agent-identity   agent create --role requester → agentId
        ↓ agentId  (same-turn handoff — see SKILL.md §Operation Flow Step 5 → §Step 6)
-2b. okx-agent-chat      after-agent-list-changed.md → OpenClaw agent list synced
-                        (silent no-op if not in OpenClaw runtime)
+2b. okx-agent-chat      ensure-okx-a2a-communication-ready.md → OKX A2A communication ready
+                        (runtime-routed: OpenClaw plugin / Node okx-a2a CLI / Hermes reserved)
        ↓
 3. okx-agent-task       create-task → start publishing work
 
@@ -35,8 +35,8 @@ Passive fallback (user skipped step 2):
        ↓
 2. okx-agent-identity      agent create --role provider (with services) → providerAgentId
        ↓ providerAgentId  (same-turn handoff — see SKILL.md §Operation Flow Step 5 → §Step 6)
-2b. okx-agent-chat         after-agent-list-changed.md → OpenClaw agent list synced
-                           (silent no-op if not in OpenClaw runtime)
+2b. okx-agent-chat         ensure-okx-a2a-communication-ready.md → OKX A2A communication ready
+                           (runtime-routed: OpenClaw plugin / Node okx-a2a CLI / Hermes reserved)
        ↓
 3. okx-agent-identity      agent activate --agent-id <providerAgentId> → listed and visible
        ↓
@@ -62,7 +62,7 @@ Passive fallback (user skipped step 2):
 4. okx-agent-task                 user confirms stake next turn → eligible for assignment
 ```
 
-**Data handoff**: `evaluatorAgentId` is produced at step 2 and belongs to the user regardless of stake status. Step 2 → step 3 is a **same-turn handoff** routed by `SKILL.md §Operation Flow Step 5`: after create succeeds, render the two visible post-success lines (see `playbooks/evaluator.md §Post-success`) and then immediately load `okx-agent-task/references/evaluator-staking.md` §2 Step 1 → Step 2 inside the same response — do not stop between them. The identity skill never reads or verifies stake state and does not pass a stake amount. Do NOT gate step 2 on prior staking. **Staking-declined fallback** (per Step 5 evaluator row): if the user has explicitly declined staking earlier in the conversation, skip step 3 (the staking handoff) but **still proceed to `SKILL.md §Step 6` (comm-init) from identity before stopping** — the local agent list changed when `create` succeeded, so the OpenClaw cache still needs sync. Comm-init is owned by Step 6 with its own decline axis, separate from staking decline.
+**Data handoff**: `evaluatorAgentId` is produced at step 2 and belongs to the user regardless of stake status. Step 2 → step 3 is a **same-turn handoff** routed by `SKILL.md §Operation Flow Step 5`: after create succeeds, render the two visible post-success lines (see `playbooks/evaluator.md §Post-success`) and then immediately load `okx-agent-task/references/evaluator-staking.md` §2 Step 1 → Step 2 inside the same response — do not stop between them. The identity skill never reads or verifies stake state and does not pass a stake amount. Do NOT gate step 2 on prior staking. **Staking-declined fallback** (per Step 5 evaluator row): if the user has explicitly declined staking earlier in the conversation, skip step 3 (the staking handoff) but **still proceed to `SKILL.md §Step 6` (comm-init) from identity before stopping** — the agent was created, so the OKX A2A plugin and communication channel must still be ready. Comm-init is owned by Step 6 with its own decline axis, separate from staking decline.
 
 ## Workflow D: Discover → rate
 

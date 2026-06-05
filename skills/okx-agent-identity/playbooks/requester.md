@@ -91,7 +91,7 @@ Render **one visible line** using the template below — **verbatim except for t
 
 ### Visible line (template)
 
-Render **one line, declarative, no question mark, no pre-announcement of the chat handoff** (the chat flow is a silent no-op outside an OpenClaw runtime; pre-announcing would mislead users in Claude Code / Claude Desktop):
+Render **one line, declarative, no question mark, no pre-announcement of the chat handoff** (the communication-init flow owns any runtime-specific messages or prompts):
 
 `User Agent identity #<id> is live — say "publish a task for X" whenever you're ready and I'll take you through it.`
 
@@ -105,7 +105,7 @@ Render **one line, declarative, no question mark, no pre-announcement of the cha
 - If **both** source 1 and source 2 miss — i.e. CLI returned `txHash` only **AND** the post-create `agentList` segment is absent (WS + HTTP both failed, per `core/cli-create.md §1`) **OR** the diff yielded no new candidate under the current wallet — → **omit the `#<id> ` substring entirely** — do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, and do NOT borrow an id from the pre-check list. Fallback line:
   - `User Agent identity is live — say "publish a task for X" whenever you're ready and I'll take you through it.`
 
-Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes).
+Do NOT mention the `okx-agent-chat/ensure-okx-a2a-communication-ready.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything for the detected runtime.
 
 ### ❌ Anti-pattern → ✅ Correct
 
@@ -115,7 +115,7 @@ Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user
 Why this is a violation of the mandatory post-execute gate in SKILL.md + `§UX Output Red Lines`:
 
 - Adds `txHash` to the user-visible line — not in the template (txHash lives in the detail card if rendered, not the suggestion line).
-- Adds a follow-up question — turns a declarative line into a question. The same-turn handoff to `after-agent-list-changed.md` does not wait for a reply; a trailing question creates a stuck prompt.
+- Adds a follow-up question — turns a declarative line into a question. The same-turn handoff to `ensure-okx-a2a-communication-ready.md` does not wait for a reply; a trailing question creates a stuck prompt.
 - Adds reassurance phrasing not in the template — paraphrasing.
 - Leaks the literal skill name `okx-agent-task` to the user (`§UX Red Line 1` — never expose `okx-*` skill identifiers).
 
@@ -127,7 +127,7 @@ Why this is a violation of the mandatory post-execute gate in SKILL.md + `§UX O
 
 ### Agent directive (internal — do NOT render to the user)
 
-After emitting the visible line above, **do not stop the turn**. → proceed to SKILL.md §Operation Flow Step 5 — the requester row routes directly to `§Step 6` (comm-init), which loads `/skills/okx-agent-chat/after-agent-list-changed.md` Execution Flow in the same response.
+After emitting the visible line above, **do not stop the turn**. → proceed to SKILL.md §Operation Flow Step 5 — the requester row routes directly to `§Step 6` (comm-init), which loads `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` Execution Flow in the same response.
 
 Skip / decline carve-outs and the runtime self-gating contract are owned by Step 6. The **passive onboarding** path is filtered out at Step 5 (different row — see `§Passive Onboarding After success` below).
 
@@ -167,7 +167,7 @@ Without id:
 
 Do NOT ask "want to publish a task?" — the task skill already has the pending intent; it will resume.
 
-Do NOT load `/skills/okx-agent-chat/after-agent-list-changed.md` here — passive mode is contracted to hand strictly back to `okx-agent-task` with the single line above (see the passive onboarding section below "No other chatter"). The task skill triggers the chat post-hook itself when its flow needs it.
+Do NOT load `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` here — passive mode is contracted to hand strictly back to `okx-agent-task` with the single line above (see the passive onboarding section below "No other chatter"). The task skill triggers communication initialization itself when its flow needs it.
 
 > **Why no detail card here?** Normal (non-passive) requester onboarding renders a detail card after success per `§Post-success`; passive mode deliberately omits it because (a) the user just saw all fields on the confirmation card one turn earlier, (b) the goal of passive mode is the leanest possible handoff back to `okx-agent-task`, and (c) detail-card-only fields the user might want later (full address, txHash) are always retrievable via `agent get --agent-ids <id>`. If you want to change this, change it in the passive onboarding messages below and `SKILL.md §Passive Onboarding` together.
 

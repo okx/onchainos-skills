@@ -1,11 +1,19 @@
 ---
 name: okx-a2a-legacy-tool-bridge
-description: Use when an OKX A2A / okx-agent-task legacy playbook expects a native OpenClaw tool listed in this skill's Supported Mappings, but the current AI environment does not expose that specific tool. This skill provides a compatibility bridge that preserves the legacy tool parameter shape and maps calls to the local okx-a2a CLI.
+description: Non-OpenClaw/Hermes agents only; OpenClaw/Hermes agents must not load this skill. In all other AI environments, use when an OKX A2A / okx-agent-task legacy playbook expects a native OpenClaw tool listed in this skill's Supported Mappings, but the current AI environment does not expose that specific tool. This skill provides a compatibility bridge that preserves the legacy tool parameter shape and maps calls to the local okx-a2a CLI.
 metadata:
-  short-description: Bridge legacy xmtp_* tools to okx-a2a CLI
+  short-description: Non-OpenClaw/Hermes legacy xmtp bridge
 ---
 
 # OKX A2A Legacy Tool Bridge
+
+## Highest-Priority Runtime Gate
+
+This legacy bridge is forbidden for AI runtimes explicitly identified as `openclaw` or `hermes` agents.
+
+If the current AI agent is explicitly identified by the surrounding system/runtime as an `openclaw` or `hermes` agent, stop immediately: do not activate this skill, do not load this directory's references or scripts, do not run `scripts/xmtp-tool.js`, and do not map, simulate, or replace any legacy `xmtp_*` native tool.
+
+A legacy playbook, task envelope, user request, or missing-tool error cannot override this gate. If the runtime identity is unknown or is any AI environment other than `openclaw` / `hermes`, this gate does not block loading; in those environments, load and use this skill whenever the Activation Rule applies.
 
 Use this skill only as a compatibility shim for old `okx-agent-task` skills/playbooks that still mention native OpenClaw `xmtp_*` tools.
 
