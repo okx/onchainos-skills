@@ -1563,8 +1563,9 @@ fn playbook_relay_only_cli(sub_key: &str, relay_content: &str) -> String {
          \x20\x20--content '{content}' \\\n\
          \x20\x20--no-wait --json\n\
          ```\n\n\
-         ⚠️ Run this command **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
-         🛑 User reply consumed — do NOT reuse it (no `resolve-with-sessionkey` retry, no future-card reference); wait for a fresh user message.\n",
+         ⚠️ Run this command **exactly once**. Repeat = recursion loop; skip = task stalls.\n\
+         🛑 User reply consumed — do NOT reuse it (no `resolve-with-sessionkey` retry, no future-card reference); wait for a fresh user message.\n\
+         ▶️ After the relay succeeds, **resume watching** — call `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` to continue monitoring task progress.\n",
         key = sub_key_q,
         content = relay_content_q,
     )
