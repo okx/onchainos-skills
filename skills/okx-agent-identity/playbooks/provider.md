@@ -12,7 +12,7 @@ Once role is `provider` and pre-check resolved (either "no existing provider" or
 Step 1 of 2 · Identity — please provide these 3 items (send all at once, or one at a time):
   1. Name (required) — 2–12 chars CN / 3–25 EN; a short brand name; ❌ no test tags (-test/(beta)/_dev), ❌ no public-figure names
   2. Description (required) — ≤ 500 chars; one line: what it does, which chain, your edge
-  3. Profile photo (optional) — 1:1 square PNG/JPEG/WebP, < 1 MB; skip to use the default
+  3. Profile photo (optional) — 1:1 square PNG/JPEG/WebP, < 1 MB; for best display avoid rounded corners and borders (a plain square renders best); skip to use the default
 ```
 
 - The checklist is a **declarative requirements preview** (allowed — `playbooks/README.md §STRICT`); it lists fields + rules, then the user fills them (batched or one-at-a-time). Localize to the user's language.
@@ -70,7 +70,7 @@ The two-step flow has **two confirmation cards**: the Identity card closes Step 
 | Description | On-chain data analysis and yield simulation. |
 | Profile photo | default (not set) |
 
-> 📷 Profile photo is the default — **send an image or say "generate" to set one**, it makes your listing stand out.
+> 📷 Profile photo is the default — **send an image or say "generate" to set one** (for best display: a plain square, no rounded corners or borders — see `modules/avatar-upload.md §Policy 7`).
 > Identity good? Reply "next" to set up your service (or change anything above).
 
 - **Avatar is actively prompted here at the card's close — not a passive row hint** (real runs showed a faint row hint is ignored, leaving every agent on the default image). The user skips by replying "next". On opt-in (image / "generate") run `modules/avatar-upload.md` and show the URL in the row.
