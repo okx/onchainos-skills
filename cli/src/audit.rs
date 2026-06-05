@@ -672,6 +672,7 @@ fn competition_sub(c: &CompetitionCommand) -> &'static str {
         CompetitionCommand::UserStatus { .. } => "user-status",
         CompetitionCommand::Join { .. } => "join",
         CompetitionCommand::Claim { .. } => "claim",
+        CompetitionCommand::SubmitContact { .. } => "submit-contact",
     }
 }
 

@@ -11,13 +11,25 @@ use crate::output;
 const REPO: &str = "okx/onchainos-skills";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Known locations where onchainos-skills may be installed as a git checkout.
-/// Paths are relative to the user's home directory.
+/// Known locations where onchainos-skills may be installed as a single
+/// monorepo git checkout. Paths are relative to the user's home directory.
 const SKILL_INSTALL_PATHS: &[&str] = &[
     ".codex/onchainos-skills",
     ".openclaw/onchainos-skills",
     ".cursor/onchainos-skills",
     ".config/opencode/onchainos-skills",
+    ".claude/onchainos-skills",
+];
+
+/// Parent directories where individual skills may be installed as their own
+/// git checkouts (per-skill installer topology). For each entry, every
+/// immediate child directory is treated as a candidate skill checkout.
+const SKILL_HOME_DIRS: &[&str] = &[
+    ".agents/skills",
+    ".claude/skills",
+    ".codex/skills",
+    ".openclaw/skills",
+    ".cursor/skills",
 ];
 
 #[derive(clap::Args)]
@@ -249,24 +261,68 @@ fn run_git(cwd: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
     Command::new("git").arg("-C").arg(cwd).args(args).output()
 }
 
-fn remote_belongs_to_repo(path: &Path) -> bool {
-    match run_git(path, &["remote", "get-url", "origin"]) {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).contains("onchainos-skills")
-        }
-        _ => false,
+/// Returns true if the origin URL points to a repo we trust to fast-forward.
+/// Accepts:
+///   • any onchainos-skills checkout (monorepo topology), or
+///   • any github.com/okx/* or github.com:okx/* checkout (per-skill topology).
+fn remote_is_trusted_okx(path: &Path) -> bool {
+    let Ok(out) = run_git(path, &["remote", "get-url", "origin"]) else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
     }
+    let url = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .to_ascii_lowercase();
+    url.contains("onchainos-skills")
+        || url.contains("github.com/okx/")
+        || url.contains("github.com:okx/")
 }
 
 /// Resolve the set of candidate skill checkout paths under $HOME.
 fn discover_skill_paths() -> Vec<PathBuf> {
-    let Some(home) = dirs::home_dir() else {
-        return vec![];
-    };
-    SKILL_INSTALL_PATHS
+    let home = dirs::home_dir().unwrap_or_default();
+    discover_skill_paths_in(&home)
+}
+
+/// Testable variant of [`discover_skill_paths`] that accepts an explicit home
+/// directory. Walks both topologies and dedupes via `canonicalize` to avoid
+/// double-pulling when one path symlinks to another (common when
+/// `~/.claude/skills/X` is a symlink to `~/.agents/skills/X`).
+pub(super) fn discover_skill_paths_in(home: &Path) -> Vec<PathBuf> {
+    // Topology A: single monorepo checkout at a fixed path.
+    let monorepo = SKILL_INSTALL_PATHS
         .iter()
         .map(|rel| home.join(rel))
-        .filter(|p| p.exists())
+        .filter(|p| p.exists());
+
+    // Topology B: per-skill checkouts under a skills-home directory. Walk
+    // each home dir's immediate children; later filters in
+    // update_skill_checkouts will skip anything that isn't a git checkout
+    // pointing at an okx-owned remote.
+    let per_skill = SKILL_HOME_DIRS
+        .iter()
+        .map(|rel| home.join(rel))
+        .filter(|p| p.is_dir())
+        .flat_map(|home_dir| {
+            std::fs::read_dir(&home_dir)
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .filter(|p| p.is_dir())
+                .collect::<Vec<_>>()
+        });
+
+    let mut seen = std::collections::HashSet::new();
+    monorepo
+        .chain(per_skill)
+        .filter(|p| {
+            let key = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+            seen.insert(key)
+        })
         .collect()
 }
 
@@ -298,11 +354,11 @@ fn update_skill_checkouts() -> Vec<Value> {
             continue;
         }
 
-        if !remote_belongs_to_repo(&path) {
+        if !remote_is_trusted_okx(&path) {
             results.push(json!({
                 "path": path_str,
                 "status": "skipped",
-                "reason": "remote 'origin' does not point to onchainos-skills",
+                "reason": "remote 'origin' is not an okx-owned repo",
             }));
             continue;
         }
@@ -427,7 +483,89 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::semver_gt;
+    use super::{discover_skill_paths_in, remote_is_trusted_okx, semver_gt};
+    use std::path::Path;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn init_git_repo(dir: &Path, origin_url: &str) {
+        Command::new("git").arg("init").arg(dir).output().unwrap();
+        Command::new("git")
+            .args(["-C", dir.to_str().unwrap(), "remote", "add", "origin", origin_url])
+            .output()
+            .unwrap();
+    }
+
+    #[test]
+    fn discovers_monorepo_checkout_for_claude() {
+        let tmp = TempDir::new().unwrap();
+        let claude_mono = tmp.path().join(".claude/onchainos-skills");
+        std::fs::create_dir_all(&claude_mono).unwrap();
+        init_git_repo(&claude_mono, "https://github.com/okx/onchainos-skills.git");
+
+        let paths = discover_skill_paths_in(tmp.path());
+        let canon_target = std::fs::canonicalize(&claude_mono).unwrap();
+        assert!(
+            paths
+                .iter()
+                .any(|p| std::fs::canonicalize(p).unwrap() == canon_target),
+            "expected to discover {} in {:?}",
+            claude_mono.display(),
+            paths
+        );
+    }
+
+    #[test]
+    fn discovers_per_skill_checkouts() {
+        let tmp = TempDir::new().unwrap();
+        let agents = tmp.path().join(".agents/skills");
+        std::fs::create_dir_all(agents.join("okx-dex-swap")).unwrap();
+        std::fs::create_dir_all(agents.join("onchainos-dapp-scaffold")).unwrap();
+
+        let paths = discover_skill_paths_in(tmp.path());
+        assert!(paths.iter().any(|p| p.ends_with("okx-dex-swap")));
+        assert!(paths.iter().any(|p| p.ends_with("onchainos-dapp-scaffold")));
+    }
+
+    #[test]
+    fn trusts_onchainos_skills_origin() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path(), "https://github.com/okx/onchainos-skills.git");
+        assert!(remote_is_trusted_okx(tmp.path()));
+    }
+
+    #[test]
+    fn trusts_other_okx_owned_origin() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path(), "git@github.com:okx/dapp-connect-agenticwallet.git");
+        assert!(remote_is_trusted_okx(tmp.path()));
+    }
+
+    #[test]
+    fn rejects_unrelated_origin() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path(), "https://github.com/random/other.git");
+        assert!(!remote_is_trusted_okx(tmp.path()));
+    }
+
+    #[test]
+    fn dedupes_symlinked_paths() {
+        let tmp = TempDir::new().unwrap();
+        let real = tmp.path().join(".agents/skills/okx-dex-swap");
+        std::fs::create_dir_all(&real).unwrap();
+        init_git_repo(&real, "https://github.com/okx/okx-dex-swap.git");
+        let link_parent = tmp.path().join(".claude/skills");
+        std::fs::create_dir_all(&link_parent).unwrap();
+        let link = link_parent.join("okx-dex-swap");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let paths = discover_skill_paths_in(tmp.path());
+        let canon: std::collections::HashSet<_> = paths
+            .iter()
+            .map(|p| std::fs::canonicalize(p).unwrap())
+            .collect();
+        assert_eq!(canon.len(), paths.len(), "duplicate entries after canonicalize");
+    }
 
     #[test]
     fn stable_newer_than_older_stable() {

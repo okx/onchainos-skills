@@ -551,7 +551,20 @@ pub async fn handle_task_402_pay(
     eprintln!("[task-402-pay] Step 1: x402_pay signing");
     eprintln!("[task-402-pay] accepts: {accepts}");
     let proof = payment_flow::x402_pay_from_accepts(accepts, from.map(|s| s.to_string())).await?;
-    eprintln!("[task-402-pay] x402_pay complete: signature={}", proof.signature);
+    let (proof_signature, proof_authorization, proof_session_cert) = match proof {
+        payment_flow::PaymentProof::Eip3009 {
+            signature,
+            authorization,
+            session_cert,
+        } => (signature, authorization, session_cert),
+        payment_flow::PaymentProof::Permit2 { .. } | payment_flow::PaymentProof::Upto { .. } => {
+            bail!(
+                "task-402-pay only supports the EIP-3009 (exact / aggr_deferred) x402 schemes; \
+                 got a Permit2/upto proof from x402_pay_from_accepts"
+            );
+        }
+    };
+    eprintln!("[task-402-pay] x402_pay complete: signature={proof_signature}");
 
     // Step 2: direct/accept on-chain (tolerant: if already accepted, skip).
     eprintln!("[task-402-pay] Step 2: direct/accept on-chain");
@@ -601,9 +614,9 @@ pub async fn handle_task_402_pay(
                 "replaySuccess": false,
                 "replayStatus": 0,
                 "replayBody": { "error": format!("GET endpoint failed: {e}") },
-                "signature": proof.signature,
-                "authorization": proof.authorization,
-                "sessionCert": proof.session_cert,
+                "signature": proof_signature,
+                "authorization": proof_authorization,
+                "sessionCert": proof_session_cert,
                 "txHash": tx_hash,
                 "endpoint": endpoint,
                 "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
@@ -634,9 +647,9 @@ pub async fn handle_task_402_pay(
             "replayStatus": initial_status,
             "replayBody": body,
             "replayBodyDisplay": format_replay_body_display(&body),
-            "signature": proof.signature,
-            "authorization": proof.authorization,
-            "sessionCert": proof.session_cert,
+            "signature": proof_signature,
+            "authorization": proof_authorization,
+            "sessionCert": proof_session_cert,
             "txHash": tx_hash,
         });
         if let Some(p) = early_saved {
@@ -655,9 +668,9 @@ pub async fn handle_task_402_pay(
                 "replaySuccess": false,
                 "replayStatus": 402,
                 "replayBody": { "error": format!("failed to read 402 response body: {e}") },
-                "signature": proof.signature,
-                "authorization": proof.authorization,
-                "sessionCert": proof.session_cert,
+                "signature": proof_signature,
+                "authorization": proof_authorization,
+                "sessionCert": proof_session_cert,
                 "txHash": tx_hash,
                 "endpoint": endpoint,
                 "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
@@ -673,9 +686,9 @@ pub async fn handle_task_402_pay(
                 "replaySuccess": false,
                 "replayStatus": 402,
                 "replayBody": { "error": format!("failed to decode 402 response: {e}"), "rawBody": resp_body_text },
-                "signature": proof.signature,
-                "authorization": proof.authorization,
-                "sessionCert": proof.session_cert,
+                "signature": proof_signature,
+                "authorization": proof_authorization,
+                "sessionCert": proof_session_cert,
                 "txHash": tx_hash,
                 "endpoint": endpoint,
                 "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
@@ -688,10 +701,10 @@ pub async fn handle_task_402_pay(
         x402_payload.resource.is_some());
 
     let x402_proof = x402_flow::X402PaymentProof {
-        signature: proof.signature.clone(),
-        authorization: serde_json::to_value(&proof.authorization)
+        signature: proof_signature.clone(),
+        authorization: serde_json::to_value(&proof_authorization)
             .unwrap_or(serde_json::Value::Null),
-        session_cert: proof.session_cert.clone(),
+        session_cert: proof_session_cert.clone(),
     };
     let (header_name, header_value) = match x402_flow::assemble_payment_header(&x402_proof, &x402_payload) {
         Ok(hv) => hv,
@@ -701,9 +714,9 @@ pub async fn handle_task_402_pay(
                 "replaySuccess": false,
                 "replayStatus": 402,
                 "replayBody": { "error": format!("failed to assemble payment header: {e}") },
-                "signature": proof.signature,
-                "authorization": proof.authorization,
-                "sessionCert": proof.session_cert,
+                "signature": proof_signature,
+                "authorization": proof_authorization,
+                "sessionCert": proof_session_cert,
                 "txHash": tx_hash,
                 "endpoint": endpoint,
                 "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
@@ -769,9 +782,9 @@ pub async fn handle_task_402_pay(
         "replayStatus": replay_status,
         "replayBody": replay_body,
         "replayBodyDisplay": format_replay_body_display(&replay_body),
-        "signature": proof.signature,
-        "authorization": proof.authorization,
-        "sessionCert": proof.session_cert,
+        "signature": proof_signature,
+        "authorization": proof_authorization,
+        "sessionCert": proof_session_cert,
         "txHash": tx_hash,
     });
     if let Some(p) = saved_path {

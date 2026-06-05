@@ -8,6 +8,38 @@ State machine: **open → N vouchers → close**, with optional **topUp** betwee
 
 **TEE-only** — local private key signing is NOT supported on this path. If the wallet session is unavailable and the user can't log in, stop.
 
+> **🔑 Action-first, URL-stays-the-same** — When a user asks for ANY
+> mid-session operation ("open / 开通道", "buy a translation", "top up /
+> 充值", "close / 关闭"), the action lives in the credential
+> `payload.action`, NOT in the URL path. The URL is **always the
+> original business URL** — the same one the user asked to access.
+>
+> | User intent (any language) | `payload.action` | CLI command |
+> |---|---|---|
+> | open / 开通道 / start session | `open` | `payment session open` |
+> | buy / call / 调用 / use service | `voucher` | `payment session voucher` |
+> | top up / 充值 / add deposit | `topUp` | `payment session topup` |
+> | close / 关闭 / end session / settle | `close` | `payment session close` |
+>
+> All four flows share ONE URL and ONE pattern:
+> 1. Re-issue the **original business URL** with no `Authorization` →
+>    seller responds `402 + WWW-Authenticate: Payment ... intent="session"`.
+> 2. Pick the right CLI command above and pass the WWW-Authenticate as
+>    `--challenge`. The CLI sets `payload.action` for you.
+> 3. Resend to the **same original business URL** with
+>    `Authorization: <authorization_header>`.
+>
+> **`<authorization_header>` already includes the `Payment ` scheme
+> prefix** — paste the CLI's `data.authorization_header` value verbatim
+> into the `Authorization` header. **Do NOT** prepend another `Payment `
+> yourself; that would produce `Payment Payment <b64>` and the seller
+> will reject it.
+>
+> **Never probe** for `/open`, `/voucher`, `/topup`, `/close`,
+> `/<resource>/topup`, etc. — they don't exist. If you can't think of
+> a URL, the answer is always "the original business URL the user
+> asked about".
+
 ## Talk to users in plain language
 
 Match the user's language. Use action-verb phrasing — "issue a voucher / 签发凭证", "top up your balance / 补充余额", "close the channel / 关闭通道", "your prepaid balance / 通道余额" — don't dump bare jargon (`voucher`, `topUp`, `close`, `escrow`, `cumulativeAmount`) on the user. Field names are fine in **state echo** since the user copy-pastes those across sessions.
@@ -43,7 +75,7 @@ Track in conversation context. Across conversations, ask the user to re-supply `
 
 First step of any session. Decide the **deposit** with the user:
 
-> A streaming session needs you to lock a prepaid balance up front (held in escrow). How much would you like to prepay?
+> A session payment needs you to lock a prepaid balance up front (held in escrow). How much would you like to prepay?
 > Suggested: `<human(suggestedDeposit)> (<suggestedDeposit>)` (or `unit_amount × 100` if no suggestion — enough for ~100 requests).
 > Each request draws from this balance. You can add more later, or close the channel anytime to refund whatever's unused.
 
@@ -80,9 +112,12 @@ onchainos payment session open \
   --challenge '<full WWW-Authenticate header value>' \
   --deposit '<atomic units>' \
   --tx-hash '0x<64-char hex>' \
+  --salt '0x<64-char hex>' \
   [--initial-cum '<atomic>' | --prepay-first] \
   [--from '<0xPayer>']
 ```
+
+`--salt` MUST be the same bytes32 the user passed to the on-chain `escrow.open(...)` call. The CLI recomputes `channelId = keccak256(abi.encode(payer, payee, token, salt, authorizedSigner, escrow, chainId))` and the seller compares it to what the on-chain event emitted — supply a fresh random salt and the open is rejected with a channelId mismatch. If the user broadcast through `okx-onchain-gateway`, the salt is the bytes32 they (or you) passed into the gateway's contract-call arguments.
 
 CLI still TEE-signs the initial voucher; only the deposit tx is replaced by the supplied hash.
 
@@ -268,7 +303,15 @@ CLI signs an EIP-712 Voucher(channelId, final_cum) via TEE — same signing path
 Authorization: <authorization_header>
 ```
 
-Seller settles on-chain (transfers `final_cum` to merchant, refunds the rest to payer) and returns a receipt. **Clear session state** — channel is closed.
+Seller settles on-chain (transfers `final_cum` to merchant, refunds the rest to payer) and returns a `Payment-Receipt` header (base64-encoded JSON). Decode with:
+
+```bash
+echo '<header value>' | base64 -d | jq .
+```
+
+关键字段：`status` / `transaction`（on-chain tx hash，S3.4 报给用户用）/ `chainId`。
+
+**Clear session state** — channel is closed.
 
 ### S3.4: Confirm to user
 

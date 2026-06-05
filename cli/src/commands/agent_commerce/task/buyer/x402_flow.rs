@@ -282,7 +282,7 @@ pub fn minimal_to_human(amount_minimal: &str, decimals: u8) -> Result<f64> {
 
 /// Convert a human-readable amount string to a minimal-unit string (reuses swap's pure-string impl; no precision loss).
 pub fn human_to_minimal(amount_human: &str, decimals: u8) -> Result<String> {
-    crate::commands::swap::readable_to_minimal_str(amount_human, decimals as u32)
+    crate::validators::readable_to_minimal_str(amount_human, decimals as u32)
 }
 
 /// Enrich pricing info: resolve token symbol, decimals, and human-readable amount.

@@ -10,13 +10,104 @@
 ///   POST /priapi/v5/wallet/agentic/competition/join
 ///   POST /priapi/v5/wallet/agentic/competition/claim
 use anyhow::{bail, Result};
+use chrono::{DateTime, FixedOffset};
 use clap::Subcommand;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use super::Context;
 use crate::client::ApiClient;
 use crate::output;
 use crate::wallet_store;
+
+// ── Time formatting helpers ──────────────────────────────────────────
+//
+// Competition timestamps are product-mandated to render in UTC+8. Doing this
+// in the CLI keeps the skill prompt small (no epoch math, no unit-confusion
+// rules) and matches the backend's own `startTimeFormatted` convention used
+// in `competition_detail`.
+//
+// All helpers ADD `<key>Formatted` fields alongside the raw `<key>` numeric
+// — raw fields stay so non-AI callers can still do time math.
+
+const UTC8_OFFSET_SECS: i32 = 8 * 3600;
+
+fn utc8() -> FixedOffset {
+    FixedOffset::east_opt(UTC8_OFFSET_SECS).expect("UTC+8 is a valid offset")
+}
+
+fn format_utc8_seconds(epoch_s: i64) -> Option<String> {
+    DateTime::from_timestamp(epoch_s, 0).map(|dt| {
+        dt.with_timezone(&utc8())
+            .format("%Y-%m-%d %H:%M:%S (UTC+8)")
+            .to_string()
+    })
+}
+
+fn format_utc8_millis(epoch_ms: i64) -> Option<String> {
+    DateTime::from_timestamp_millis(epoch_ms).map(|dt| {
+        dt.with_timezone(&utc8())
+            .format("%Y-%m-%d %H:%M:%S (UTC+8)")
+            .to_string()
+    })
+}
+
+fn format_utc8_date(epoch_s: i64) -> Option<String> {
+    DateTime::from_timestamp(epoch_s, 0)
+        .map(|dt| dt.with_timezone(&utc8()).format("%Y-%m-%d").to_string())
+}
+
+/// Backend-provided `*Formatted` strings (`competition_detail`) ship without
+/// a `(UTC+8)` suffix. Append one if missing so every response shape is uniform.
+fn ensure_utc8_suffix(s: &str) -> String {
+    let trimmed = s.trim_end();
+    if trimmed.ends_with("(UTC+8)") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed} (UTC+8)")
+    }
+}
+
+/// Read `obj[src]` as i64 epoch and, if positive, insert `obj[dst] = formatted`.
+/// Null / 0 / non-numeric / out-of-range silently no-op (preserves raw shape).
+fn add_formatted_seconds(obj: &mut Map<String, Value>, src: &str, dst: &str) {
+    if let Some(epoch) = obj.get(src).and_then(Value::as_i64) {
+        if epoch > 0 {
+            if let Some(s) = format_utc8_seconds(epoch) {
+                obj.insert(dst.to_string(), Value::String(s));
+            }
+        }
+    }
+}
+
+fn add_formatted_millis(obj: &mut Map<String, Value>, src: &str, dst: &str) {
+    if let Some(epoch) = obj.get(src).and_then(Value::as_i64) {
+        if epoch > 0 {
+            if let Some(s) = format_utc8_millis(epoch) {
+                obj.insert(dst.to_string(), Value::String(s));
+            }
+        }
+    }
+}
+
+/// Add the three `*Formatted` fields a list/activity entry exposes:
+/// `startTimeFormatted` / `endTimeFormatted` (full timestamp) and
+/// `timeRangeFormatted` (compact `YYYY-MM-DD ~ YYYY-MM-DD`).
+fn enrich_activity_time_fields(obj: &mut Map<String, Value>) {
+    add_formatted_seconds(obj, "startTime", "startTimeFormatted");
+    add_formatted_seconds(obj, "endTime", "endTimeFormatted");
+    let start_date = obj.get("startTime").and_then(Value::as_i64).and_then(format_utc8_date);
+    let end_date = obj.get("endTime").and_then(Value::as_i64).and_then(format_utc8_date);
+    if let (Some(s), Some(e)) = (start_date, end_date) {
+        obj.insert("timeRangeFormatted".to_string(), Value::String(format!("{s} ~ {e}")));
+    }
+}
+
+/// Enrich a `userStatus` entry (or batch entry) with `joinTimeFormatted`
+/// / `claimTimeFormatted` next to the raw seconds fields.
+fn enrich_user_status_time_fields(obj: &mut Map<String, Value>) {
+    add_formatted_seconds(obj, "joinTime", "joinTimeFormatted");
+    add_formatted_seconds(obj, "claimTime", "claimTimeFormatted");
+}
 
 #[derive(Subcommand)]
 pub enum CompetitionCommand {
@@ -50,7 +141,7 @@ pub enum CompetitionCommand {
         /// activity chain (validated against `competition_detail.chainId`).
         #[arg(long)]
         wallet: Option<String>,
-        /// Sort type: 1=PnL% (realized ROI), 7=PnL (realized profit). The exact values for a
+        /// Sort type: 1=PnL%, 7=PnL. The exact values for a
         /// given competition come from `competition detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend`;
         /// future activities may add more. Default 1 matches the typical primary leaderboard.
         #[arg(long, default_value = "1")]
@@ -59,17 +150,12 @@ pub enum CompetitionCommand {
         #[arg(long, default_value = "20")]
         limit: u32,
     },
-    /// Get user participation and reward status (omit --activity-id to check all activities)
+    /// Get user participation and reward status (omit --activity-id to check all activities).
+    /// Always uses the active user's accountId — no wallet args needed.
     UserStatus {
         /// Activity ID (omit to check all activities including ended ones)
         #[arg(long)]
         activity_id: Option<String>,
-        /// EVM wallet address
-        #[arg(long)]
-        evm_wallet: String,
-        /// SOL wallet address
-        #[arg(long)]
-        sol_wallet: String,
     },
     /// Join a trading competition (requires wallet login)
     Join {
@@ -100,6 +186,21 @@ pub enum CompetitionCommand {
         #[arg(long)]
         sol_wallet: String,
     },
+    /// Submit a contact method for a top-tier winner (called after claim
+    /// when the claim response surfaces `needContact: true`). Requires
+    /// wallet login. accountId + walletAddress are resolved internally.
+    SubmitContact {
+        /// Activity ID
+        #[arg(long)]
+        activity_id: String,
+        /// Contact method type — must be one of: Telegram, WeChat, Email, Twitter
+        #[arg(long)]
+        contact_type: String,
+        /// Contact value (max 256 chars). e.g. `@username` for Telegram/Twitter,
+        /// the WeChat ID, or the email address.
+        #[arg(long)]
+        contact_value: String,
+    },
 }
 
 pub async fn execute(ctx: &Context, command: CompetitionCommand) -> Result<()> {
@@ -117,19 +218,18 @@ pub async fn execute(ctx: &Context, command: CompetitionCommand) -> Result<()> {
             sort_type,
             limit,
         } => {
-            let wallet = resolve_or_validate_wallet_for_activity(
+            let identity = resolve_competition_identity(
                 &mut client,
                 &activity_id,
                 wallet.as_deref(),
             )
             .await?;
-            rank(&mut client, &activity_id, &wallet, sort_type, limit).await?
+            rank(&mut client, &activity_id, &identity, sort_type, limit).await?
         }
-        CompetitionCommand::UserStatus {
-            activity_id,
-            evm_wallet,
-            sol_wallet,
-        } => user_status_all(&mut client, activity_id.as_deref(), &evm_wallet, &sol_wallet).await?,
+        CompetitionCommand::UserStatus { activity_id } => {
+            let account_id = load_selected_account_id()?;
+            user_status_all(&mut client, activity_id.as_deref(), &account_id).await?
+        }
         CompetitionCommand::Join {
             activity_id,
             evm_wallet,
@@ -148,6 +248,11 @@ pub async fn execute(ctx: &Context, command: CompetitionCommand) -> Result<()> {
             evm_wallet,
             sol_wallet,
         } => claim_and_submit(&mut client, &activity_id, &evm_wallet, &sol_wallet).await?,
+        CompetitionCommand::SubmitContact {
+            activity_id,
+            contact_type,
+            contact_value,
+        } => submit_contact(&mut client, &activity_id, &contact_type, &contact_value).await?,
     };
     output::success(data);
     Ok(())
@@ -174,37 +279,66 @@ pub async fn list(
         query.push(("status", s));
     }
 
-    client
+    let mut data = client
         .get("/priapi/v1/dapp/agentic/competition/list", &query)
-        .await
+        .await?;
+
+    // Enrich each activity with formatted time fields next to the raw epoch
+    // values, so the skill prompt never has to deal with UTC+8 conversion.
+    if let Some(arr) = data["availableCompetitions"].as_array_mut() {
+        for entry in arr.iter_mut() {
+            if let Some(obj) = entry.as_object_mut() {
+                enrich_activity_time_fields(obj);
+            }
+        }
+    }
+
+    Ok(data)
 }
 
 /// GET /priapi/v1/dapp/agentic/competition/detail
 pub async fn detail(client: &mut ApiClient, activity_id: &str) -> Result<Value> {
-    client
+    let mut data = client
         .get(
             "/priapi/v1/dapp/agentic/competition/detail",
             &[("activityId", activity_id)],
         )
-        .await
+        .await?;
+
+    // Backend ships `startTimeFormatted` / `endTimeFormatted` without a `(UTC+8)`
+    // suffix. Append it so every response shape across competition endpoints is
+    // uniform — skill prompt assumes "all *Formatted strings already end in (UTC+8)".
+    if let Some(obj) = data.as_object_mut() {
+        for key in ["startTimeFormatted", "endTimeFormatted"] {
+            if let Some(s) = obj.get(key).and_then(Value::as_str) {
+                let fixed = ensure_utc8_suffix(s);
+                obj.insert(key.to_string(), Value::String(fixed));
+            }
+        }
+    }
+
+    Ok(data)
 }
 
 /// GET /priapi/v1/dapp/agentic/competition/rank
 /// `limit` is applied client-side by truncating `allRankInfos` (not a server param).
+/// The backend accepts EITHER `accountId` (self) or `walletAddress` (cross-user)
+/// — this is enforced by the `CompetitionIdentity` enum.
 pub async fn rank(
     client: &mut ApiClient,
     activity_id: &str,
-    wallet: &str,
+    identity: &CompetitionIdentity,
     sort_type: i32,
     limit: u32,
 ) -> Result<Value> {
     let sort_type_s = sort_type.to_string();
+    let (id_key, id_val) = identity.as_query();
     let mut data = client
         .get(
             "/priapi/v1/dapp/agentic/competition/rank",
             &[
                 ("activityId", activity_id),
-                ("walletAddress", wallet),
+                (id_key, id_val),
                 ("sortType", &sort_type_s),
             ],
         )
@@ -217,36 +351,106 @@ pub async fn rank(
         data["allRankInfos"] = json!(truncated);
     }
 
+    // rankUpdateTime is in milliseconds (13-digit) — distinct from list/user-status
+    // fields which are seconds (10-digit). Enrich with a formatted sibling field.
+    if let Some(obj) = data.as_object_mut() {
+        add_formatted_millis(obj, "rankUpdateTime", "rankUpdateTimeFormatted");
+    }
+
     Ok(data)
 }
 
 /// GET /priapi/v1/dapp/agentic/competition/userStatus
+/// The backend accepts EITHER `accountId` (self) or `walletAddress`
+/// (cross-user) — enforced by the `CompetitionIdentity` enum.
 pub async fn user_status(
     client: &mut ApiClient,
     activity_id: &str,
-    wallet: &str,
+    identity: &CompetitionIdentity,
 ) -> Result<Value> {
-    client
+    let (id_key, id_val) = identity.as_query();
+    let mut data = client
         .get(
             "/priapi/v1/dapp/agentic/competition/userStatus",
-            &[("activityId", activity_id), ("walletAddress", wallet)],
+            &[("activityId", activity_id), (id_key, id_val)],
         )
-        .await
+        .await?;
+    if let Some(obj) = data.as_object_mut() {
+        enrich_user_status_time_fields(obj);
+    }
+    Ok(data)
 }
 
-/// If activity_id is Some, query that single activity.
-/// If None, fetch all activities (status=2) and query each one, returning an array.
-/// Uses evm_wallet for EVM chains and sol_wallet for Solana chains.
+/// GET /priapi/v1/dapp/agentic/competition/batchUserStatus
+///
+/// Batch-fetch user status across multiple activities in a single request.
+/// Self-only (the endpoint accepts `accountId` only, not `walletAddress`).
+///
+/// The backend caps each call at 20 ids; this helper chunks the input
+/// transparently and concatenates the per-chunk results, so callers can pass
+/// any number of activity ids. Returns a flat `Vec<Value>` — one entry per
+/// activity, each with the response shape:
+///
+/// ```json
+/// {
+///   "activityId": <number>,
+///   "joinStatus": 0|1,
+///   "joinedAddress": "<wallet>" | null,
+///   "joinTime": <epoch_s> | null,
+///   "rewardStatus": <number>,
+///   "rewardAmount": "<amount>" | null,
+///   "rewardUnit": "<symbol>" | null,
+///   "claimTime": <epoch_s> | null,
+///   "winnerDownUrl": "<url>" | null,
+///   "needContact": <bool> | null
+/// }
+/// ```
+pub async fn batch_user_status(
+    client: &mut ApiClient,
+    account_id: &str,
+    activity_ids: &[String],
+) -> Result<Vec<Value>> {
+    if activity_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut all_entries: Vec<Value> = Vec::with_capacity(activity_ids.len());
+    for chunk in activity_ids.chunks(20) {
+        let ids_param = chunk.join(",");
+        let data = client
+            .get(
+                "/priapi/v1/dapp/agentic/competition/batchUserStatus",
+                &[("accountId", account_id), ("activityIds", &ids_param)],
+            )
+            .await?;
+        if let Some(entries) = data["activities"].as_array() {
+            for entry in entries.iter() {
+                let mut owned = entry.clone();
+                if let Some(obj) = owned.as_object_mut() {
+                    enrich_user_status_time_fields(obj);
+                }
+                all_entries.push(owned);
+            }
+        }
+    }
+    Ok(all_entries)
+}
+
+/// Self-query for participation/reward status. Both single-activity and
+/// multi-activity modes route through the **batch** endpoint
+/// (`/batchUserStatus`) — it is the only user-status endpoint that accepts
+/// `accountId` (the legacy `/userStatus` requires `walletAddress`, which
+/// the self-query path no longer carries). Single mode passes one id;
+/// multi mode passes every activity id from the list (chunked at 20).
+/// Single-activity callers get the raw entry shape so existing consumers
+/// (CLI / MCP `competition_user_status`) keep working.
 pub async fn user_status_all(
     client: &mut ApiClient,
     activity_id: Option<&str>,
-    evm_wallet: &str,
-    sol_wallet: &str,
+    account_id: &str,
 ) -> Result<Value> {
     if let Some(id) = activity_id {
-        let detail_data = detail(client, id).await?;
-        let wallet = pick_wallet_by_chain(&detail_data, evm_wallet, sol_wallet);
-        return user_status(client, id, wallet).await;
+        let entries = batch_user_status(client, account_id, &[id.to_string()]).await?;
+        return Ok(entries.into_iter().next().unwrap_or(Value::Null));
     }
 
     // Fetch all activities (active + ended)
@@ -256,14 +460,32 @@ pub async fn user_status_all(
         None => return Ok(json!([])),
     };
 
+    // Collect activity ids in list order, skipping entries without a numeric id.
+    let activity_ids: Vec<String> = activities
+        .iter()
+        .filter_map(|a| a["id"].as_u64().map(|i| i.to_string()))
+        .collect();
+
+    // Batch-query — internally chunked to ≤20 ids per request.
+    let entries = batch_user_status(client, account_id, &activity_ids).await?;
+
+    // Index per-activity status by activityId for O(1) merge below.
+    let mut status_by_id: std::collections::HashMap<u64, Value> =
+        std::collections::HashMap::with_capacity(entries.len());
+    for entry in entries {
+        if let Some(id) = entry["activityId"].as_u64() {
+            status_by_id.insert(id, entry);
+        }
+    }
+
+    // Merge per-activity status with activity metadata, preserving list order.
     let mut results = Vec::new();
     for activity in &activities {
         let id = match activity["id"].as_u64() {
-            Some(i) => i.to_string(),
+            Some(i) => i,
             None => continue,
         };
-        let wallet = pick_wallet_by_chain(activity, evm_wallet, sol_wallet);
-        let status = user_status(client, &id, wallet).await?;
+        let status = status_by_id.remove(&id).unwrap_or(Value::Null);
         // activityStatus: 3=active, 4=ended
         results.push(json!({
             "activityId": activity["id"],
@@ -276,17 +498,6 @@ pub async fn user_status_all(
     }
 
     Ok(json!(results))
-}
-
-/// Pick the EVM or Solana address for a single-chain competition entry,
-/// based on the entry's `chainId` (preferred — passed through the unified
-/// `chains::chain_family` helper) or `chainName` as a string fallback.
-fn pick_wallet_by_chain<'a>(entry: &Value, evm_wallet: &'a str, sol_wallet: &'a str) -> &'a str {
-    if is_solana_entry(entry) {
-        sol_wallet
-    } else {
-        evm_wallet
-    }
 }
 
 /// Whether a competition activity / detail entry is on Solana.
@@ -338,118 +549,50 @@ pub async fn resolve_activity_id_by_name(
     }
 }
 
-/// MCP-facing wrapper for `user_status_all`. Identical to the inner CLI
-/// version, plus a `_render` hint that nudges the AI toward the correct
-/// SKILL.md section so it doesn't paraphrase the response.
+/// MCP-facing wrapper for `user_status_all`. Returns the same data as the
+/// inner CLI version; rendering guidance lives in the MCP tool description.
 ///
 /// `activityId` is intentionally retained so downstream tools
 /// (`competition_detail` / `competition_claim`) can chain to it. Display
-/// safety is enforced by the SKILL.md Output Rules — never by stripping
-/// the field at the data layer (doing so broke the join → detail chain).
+/// safety (never showing internal ids in user-facing output) is enforced
+/// by the tool description, not by stripping the field at the data layer
+/// (doing so broke the join → detail chain).
 pub async fn user_status_all_for_mcp(
     client: &mut ApiClient,
     activity_id: Option<&str>,
-    evm_wallet: &str,
-    sol_wallet: &str,
+    account_id: &str,
 ) -> Result<Value> {
-    let mut data = user_status_all(client, activity_id, evm_wallet, sol_wallet).await?;
-    inject_render_hint(
-        &mut data,
-        "User-facing message MUST follow okx-growth-competition SKILL.md Step 5 \
-         'Check participation status' rules. NEVER show activityId / chainIndex / \
-         accountId in the output (Output Rules <NEVER>). Identify activities by activityName only.",
-    );
-    Ok(data)
+    user_status_all(client, activity_id, account_id).await
 }
 
-/// MCP-facing wrapper for `list` that adds a `_render` hint. The SKILL.md
-/// Step 1 template is strict about column names, the hardcoded `Solana, …`
-/// chain prefix, and never showing `activityId`; this hint reminds the AI
-/// at the data-layer point of consumption.
+/// MCP-facing wrapper for `list`. Returns the same data as the inner CLI
+/// version; rendering guidance lives in the MCP tool description.
 pub async fn list_for_mcp(
     client: &mut ApiClient,
     page_size: u32,
     page_num: u32,
     status: Option<u32>,
 ) -> Result<Value> {
-    let mut data = list(client, page_size, page_num, status).await?;
-    inject_render_hint(
-        &mut data,
-        "User-facing message MUST follow okx-growth-competition SKILL.md Step 1 fixed table template \
-         structure, rendered in the user's language (English canonical column headers: \
-         Name / Chain / Time / Total Prize Pool / Details — Chinese: 活动名称 / 活动链 / 时间 / 总奖池 / 详情链接). \
-         Do NOT add an ID column. Do NOT show activityId anywhere in the table or surrounding text. \
-         The Chain cell MUST be 'Solana, {chainName}' when chainName is not Solana \
-         (hardcoded Solana prefix until backend exposes a multi-chain field); if chainName is Solana, \
-         write just 'Solana'. If results contain BOTH activityStatus=3 (active) and activityStatus=4 \
-         (ended), split into two tables under bold subheadings — '**Active**' / '**Ended**' for English, \
-         '**进行中**' / '**已结束**' for Chinese — in that order.",
-    );
-    Ok(data)
+    list(client, page_size, page_num, status).await
 }
 
-/// MCP-facing wrapper for `detail` that adds a `_render` hint pointing at
-/// SKILL.md Step 2 (the four-section reward template with the leading
-/// Basic-info block, rendered in the user's language).
+/// MCP-facing wrapper for `detail`. Returns the same data as the inner CLI
+/// version; rendering guidance lives in the MCP tool description.
 pub async fn detail_for_mcp(client: &mut ApiClient, activity_id: &str) -> Result<Value> {
-    let mut data = detail(client, activity_id).await?;
-    inject_render_hint(
-        &mut data,
-        "User-facing message MUST follow okx-growth-competition SKILL.md Step 2 fixed display template. \
-         For Chinese-speaking users: copy the Chinese rendering block character-for-character (only fill placeholders); for English: copy the English block. \
-         For other languages: translate while preserving required content invariants. \
-         REQUIRED structure: '基本信息：'/'Basic info:' block with chain line using hardcoded 'Solana, {chainName}' prefix; \
-         numbered '奖励分类：'/'Reward categories:' list 1./2./3./4. \
-         Section titles MUST be exact: 已实现收益率奖池/Realized ROI Pool, 已实现收益额奖池/Realized PnL Pool, 参与奖/Participation Reward, Skill 质量奖/Skill Quality Award (DO NOT substitute synonyms like 'PnL% 排名奖'). \
-         Sections 1 and 2 rank tables headers MUST be 名次/奖励 (Chinese) or Rank/Reward (English), end with a 合计/Total row. \
-         Section 3 description MUST include 'Agentic Wallet', '$100 累计交易量', '$100 总资产', '资产快照'. \
-         Section 4 description MUST include 'AI 初筛 + 人工评审' (双评分机制) and 'top {skillTopN} 每人获得 {skillPerCreatorReward}' — DO NOT invent rank rules by dividing pool. \
-         Read actual rank distribution from prizePoolDistribution[].rules[]. \
-         NEVER show activityId, chainIndex, or any internal numeric id to the user. \
-         NEVER use '-' bullet markers inside the numbered sections.",
-    );
-    Ok(data)
+    detail(client, activity_id).await
 }
 
-/// MCP-facing wrapper for `rank` that adds a `_render` hint reminding the AI
-/// of two critical Step 5 rules:
-///   1. A user can be on multiple leaderboards simultaneously — call this
-///      once per `sort_type` from `tabConfigs[].rankFieldConfig[].sortValueMap.descend`.
-///   2. The user-facing summary must follow Step 5 CASE 1 / 2 / 3 fixed
-///      template structure (rendered in the user's language).
+/// MCP-facing wrapper for `rank`. Returns the same data as the inner CLI
+/// version; rendering guidance (call once per `sort_type`, render one
+/// section per leaderboard) lives in the MCP tool description.
 pub async fn rank_for_mcp(
     client: &mut ApiClient,
     activity_id: &str,
-    wallet: &str,
+    identity: &CompetitionIdentity,
     sort_type: i32,
     limit: u32,
 ) -> Result<Value> {
-    let mut data = rank(client, activity_id, wallet, sort_type, limit).await?;
-    inject_render_hint(
-        &mut data,
-        "User-facing message MUST follow okx-growth-competition SKILL.md Step 5 'Check user's own rank' \
-         CASE 1 / CASE 2 / CASE 3 fixed template structure, rendered in the user's language. \
-         BEFORE rendering, you MUST first call competition_detail to enumerate \
-         tabConfigs[].rankFieldConfig[].sortValueMap.descend, then call competition_rank ONCE PER \
-         sort_type so you have data for every leaderboard the activity exposes. A user can rank on \
-         multiple leaderboards (e.g. PnL% and PnL) at the same time — never assume one leaderboard \
-         is enough. Classify outcome as CASE 1 (ranked on all), CASE 2 (ranked on some), or CASE 3 \
-         (ranked on none) and emit the matching template. Never invent your own table layout, never \
-         collapse multi-leaderboard sections into one.",
-    );
-    Ok(data)
-}
-
-/// Insert a `_render` field into a JSON response without disturbing real
-/// payload fields. Works for both object and array shapes; for arrays the
-/// hint is wrapped into a sibling object so it doesn't mutate row entries.
-fn inject_render_hint(data: &mut Value, hint: &str) {
-    if let Some(obj) = data.as_object_mut() {
-        obj.insert("_render".to_string(), json!(hint));
-    }
-    // Note: we deliberately do NOT inject into bare arrays — wrapping the
-    // shape would change the public response contract. The list and detail
-    // APIs already return objects, so this is fine in practice.
+    rank(client, activity_id, identity, sort_type, limit).await
 }
 
 const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
@@ -462,7 +605,7 @@ pub async fn join(
     sol_wallet: &str,
     chain_index: &str,
 ) -> Result<Value> {
-    let (account_id, mut auth_client) = ensure_logged_in_client().await?;
+    let account_id = load_selected_account_id()?;
     let body = json!({
         "activityId": activity_id,
         "evmAddress": evm_wallet,
@@ -470,30 +613,42 @@ pub async fn join(
         "chainIndex": chain_index,
         "accountId": account_id,
     });
-    auth_client
-        .post_with_headers(
-            "/priapi/v5/wallet/agentic/competition/join",
-            &body,
-            Some(&[("OK-ACCESS-PROJECT", PROJECT_HEADER)]),
-        )
-        .await?;
+
+    // Authenticated endpoint — handles backend-side token revocation:
+    // if the call comes back with `Invalid access token` (code=10008), force
+    // a refresh (bypassing local exp check) and retry once with a fresh
+    // client. Covers the case where local JWT exp is still in the future
+    // but the token has been revoked server-side (re-login on another
+    // device, password change, etc.).
+    let path = "/priapi/v5/wallet/agentic/competition/join";
+    let headers = [("OK-ACCESS-PROJECT", PROJECT_HEADER)];
+
+    let (_, mut auth_client) = ensure_logged_in_client().await?;
+    let first = auth_client
+        .post_with_headers(path, &body, Some(&headers))
+        .await;
+    match first {
+        Ok(_) => {}
+        Err(e) if is_invalid_token_error(&e) => {
+            force_refresh_access_token_for_competition().await?;
+            let (_, mut auth_client_retry) = ensure_logged_in_client().await?;
+            auth_client_retry
+                .post_with_headers(path, &body, Some(&headers))
+                .await?;
+        }
+        Err(e) => return Err(e),
+    }
     // API returns data: null on success — construct a useful confirmation object.
-    // `activityId` is included for downstream tool calls (e.g. competition_detail
-    // takes an id to fetch totalPrizePool / chainName for rendering the success
-    // template). Output Rules apply to USER-FACING display only, not internal
-    // data flow between tools. The AI must still follow the SKILL.md rule of
-    // never showing this id in messages it produces for the user.
-    //
-    // The `_render` field is an inline reminder for the AI: if it didn't already
-    // load SKILL.md Step 3, this nudges it to follow the fixed copy template
-    // instead of paraphrasing.
+    // `activityId` is included so downstream tools (e.g. competition_detail) can
+    // chain off it to fetch totalPrizePool / participateChainIds when rendering
+    // the success message. The MCP tool description tells the AI to never show
+    // this id in user-facing output; we do not strip it at the data layer.
     Ok(json!({
         "joined": true,
         "activityId": activity_id,
         "evmAddress": evm_wallet,
         "solAddress": sol_wallet,
         "chainIndex": chain_index,
-        "_render": "Follow okx-growth-competition SKILL.md Step 3 'Successful registration' fixed template, rendered in the user's language (English, Chinese, etc.). Required content: lead phrase 'Registered successfully! / 报名成功！', dual-chain sentence ('runs on {chainName} and Solana / 同时在 {chainName} 和 Solana 两条链上进行'), total prize pool, the dual-axis PnL%/realized PnL ranking note, the participation+Skill awards mention, and a closing question. Required trailing line on its own line: the bracketed disclaimer ('[Disclaimer: ...]' for English / '[免责声明：...]' for Chinese). Use the returned `activityId` to call competition_detail and fetch chainName + totalPrizePool, but NEVER show activityId to the user.",
     }))
 }
 
@@ -509,20 +664,132 @@ pub async fn claim(
     evm_wallet: &str,
     sol_wallet: &str,
 ) -> Result<Value> {
-    let (account_id, mut auth_client) = ensure_logged_in_client().await?;
+    let account_id = load_selected_account_id()?;
     let body = json!({
         "activityId": activity_id,
         "evmAddress": evm_wallet,
         "solAddress": sol_wallet,
         "accountId": account_id,
     });
-    auth_client
-        .post_with_headers(
-            "/priapi/v5/wallet/agentic/competition/claim",
-            &body,
-            Some(&[("OK-ACCESS-PROJECT", PROJECT_HEADER)]),
-        )
-        .await
+
+    // Same invalid-token retry pattern as `join` — handles server-side
+    // token revocation while local JWT exp is still in the future.
+    let path = "/priapi/v5/wallet/agentic/competition/claim";
+    let headers = [("OK-ACCESS-PROJECT", PROJECT_HEADER)];
+
+    let (_, mut auth_client) = ensure_logged_in_client().await?;
+    let first = auth_client
+        .post_with_headers(path, &body, Some(&headers))
+        .await;
+    match first {
+        Ok(v) => Ok(v),
+        Err(e) if is_invalid_token_error(&e) => {
+            force_refresh_access_token_for_competition().await?;
+            let (_, mut auth_client_retry) = ensure_logged_in_client().await?;
+            auth_client_retry
+                .post_with_headers(path, &body, Some(&headers))
+                .await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// POST /priapi/v5/wallet/agentic/competition/submitContact — requires
+/// wallet login. Records a contact method (Telegram / WeChat / Email /
+/// Twitter) for a top-tier winner so the operations team can reach out
+/// about merchandise. Invoked after a successful claim when the user
+/// chooses to share a contact (the `needContact: true` signal on the
+/// claim response indicates eligibility).
+///
+/// `accountId` is loaded from the local wallet store; `walletAddress` is
+/// looked up from `joinedAddress` on a fresh batch user-status read so the
+/// caller never has to know it. The AI just supplies activity id, contact
+/// type, and contact value.
+///
+/// Backend validates the contact type as one of the 4 enums; we mirror
+/// that check locally so a typo from the caller fails fast.
+pub async fn submit_contact(
+    _client: &mut ApiClient,
+    activity_id: &str,
+    contact_type: &str,
+    contact_value: &str,
+) -> Result<Value> {
+    const ALLOWED_CONTACT_TYPES: &[&str] = &["Telegram", "WeChat", "Email", "Twitter"];
+    if !ALLOWED_CONTACT_TYPES.contains(&contact_type) {
+        bail!(
+            "contactType must be one of: Telegram, WeChat, Email, Twitter — got `{}`",
+            contact_type
+        );
+    }
+    if contact_value.is_empty() {
+        bail!("contactValue is empty");
+    }
+    if contact_value.len() > 256 {
+        bail!(
+            "contactValue exceeds 256 character limit (got {} chars)",
+            contact_value.len()
+        );
+    }
+
+    let account_id = load_selected_account_id()?;
+
+    // Resolve the wallet address registered for this activity. The backend
+    // requires walletAddress in the submit body; using the user-status
+    // `joinedAddress` guarantees we send the same address the user joined
+    // with (chain-correct, never a guess).
+    let mut auth_check_client = ApiClient::new_async(None).await?;
+    let entries =
+        batch_user_status(&mut auth_check_client, &account_id, &[activity_id.to_string()]).await?;
+    let status = entries
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("user_status not found for activity {}", activity_id))?;
+    if status["joinStatus"].as_i64().unwrap_or(0) != 1 {
+        bail!(
+            "not registered for activity {} — cannot submit contact for an unjoined activity",
+            activity_id
+        );
+    }
+    let wallet_address = status["joinedAddress"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("backend returned empty joinedAddress for activity {}", activity_id)
+        })?
+        .to_string();
+
+    let body = json!({
+        "activityId": activity_id,
+        "accountId": account_id,
+        "walletAddress": wallet_address,
+        "contactType": contact_type,
+        "contactValue": contact_value,
+    });
+
+    // Same invalid-token retry pattern as `join` / `claim`.
+    let path = "/priapi/v5/wallet/agentic/competition/submitContact";
+    let headers = [("OK-ACCESS-PROJECT", PROJECT_HEADER)];
+
+    let (_, mut auth_client) = ensure_logged_in_client().await?;
+    let first = auth_client
+        .post_with_headers(path, &body, Some(&headers))
+        .await;
+    match first {
+        Ok(_) => {}
+        Err(e) if is_invalid_token_error(&e) => {
+            force_refresh_access_token_for_competition().await?;
+            let (_, mut auth_client_retry) = ensure_logged_in_client().await?;
+            auth_client_retry
+                .post_with_headers(path, &body, Some(&headers))
+                .await?;
+        }
+        Err(e) => return Err(e),
+    }
+
+    Ok(json!({
+        "submitted": true,
+        "activityId": activity_id,
+        "contactType": contact_type,
+    }))
 }
 
 /// Atomic claim flow for MCP: pre-check reward eligibility → claim API →
@@ -550,22 +817,7 @@ pub async fn claim_and_submit(
     evm_wallet: &str,
     sol_wallet: &str,
 ) -> Result<Value> {
-    // ── Step 1: pre-check eligibility & capture reward metadata ──────────
-    let detail_data = detail(client, activity_id).await?;
-    let pre_check_wallet = pick_wallet_by_chain(&detail_data, evm_wallet, sol_wallet);
-    let status = user_status(client, activity_id, pre_check_wallet).await?;
-    let reward_status = status["rewardStatus"].as_i64().unwrap_or(-1);
-    let reward_amount = status["rewardAmount"].as_str().unwrap_or("").to_string();
-    let reward_unit = status["rewardUnit"].as_str().unwrap_or("").to_string();
-    match reward_status {
-        1 => { /* won, not yet claimed — proceed */ }
-        0 => bail!("not eligible for reward — you did not win this competition"),
-        2 => bail!("reward already claimed"),
-        3 => bail!("reward has expired and can no longer be claimed"),
-        _ => bail!("unexpected rewardStatus {} from user_status", reward_status),
-    }
-
-    // ── Step 2: fetch unsigned calldata ─────────────────────────────────
+    // ── Step 1: fetch unsigned calldata ─────────────────────────────────
     // Authenticated endpoint — handles backend-side token revocation:
     // if the call comes back with `Invalid access token` (code=10008), force a
     // refresh (bypassing local exp check) and retry once. This covers the
@@ -584,7 +836,7 @@ pub async fn claim_and_submit(
         bail!("claim API returned no calldata to submit");
     }
 
-    // ── Step 3: broadcast each entry, collecting per-entry outcomes ─────
+    // ── Step 2: broadcast each entry, collecting per-entry outcomes ─────
     let total = entries.len();
     let mut succeeded = Vec::new();
     let mut failed = Vec::new();
@@ -612,15 +864,35 @@ pub async fn claim_and_submit(
             .and_then(|f| f["error"].as_str())
             .unwrap_or("unknown error");
         bail!(
-            "claim failed for all {} entries; first error: {}. \
-             AI rendering hint: surface the error verbatim, then append the SKILL.md Step 6 \
-             '建议' block (建议：领取过程需要支付Gas，请确认Gas是否充足 / 稍后再试一次（可能是暂时性网络问题） / \
-             如果多次失败，请联系客服处理) UNLESS the error is a semantic pre-check rejection \
-             (rewardStatus 0/2/3, code 11002, code 11008) — those are not transient and the suggestion is misleading.",
+            "claim failed for all {} entries; first error: {}",
             total,
             first_err
         );
     }
+
+    // ── Step 3: POST-claim fetch reward metadata + contact eligibility ───
+    // Only runs after we know at least one entry succeeded on-chain. Best
+    // effort — if the batch endpoint fails here, we fall back to empty
+    // metadata and `needContact: false`, so the user still sees the claim
+    // success but might miss the contact prompt. Worst case the user can
+    // submit contact later via the explicit `competition_submit_contact`
+    // path. Running this AFTER claim (not before) means a pre-fetch
+    // network blip doesn't silently lose `needContact: true` for an
+    // otherwise eligible top-tier winner.
+    let account_id = load_selected_account_id().unwrap_or_default();
+    let (reward_amount, reward_unit, need_contact, joined_address) =
+        match batch_user_status(client, &account_id, &[activity_id.to_string()]).await {
+            Ok(entries) => match entries.first() {
+                Some(status) => (
+                    status["rewardAmount"].as_str().unwrap_or("").to_string(),
+                    status["rewardUnit"].as_str().unwrap_or("").to_string(),
+                    status["needContact"].as_bool().unwrap_or(false),
+                    status["joinedAddress"].as_str().unwrap_or("").to_string(),
+                ),
+                None => (String::new(), String::new(), false, String::new()),
+            },
+            Err(_) => (String::new(), String::new(), false, String::new()),
+        };
 
     Ok(json!({
         "rewardAmount": reward_amount,
@@ -628,10 +900,14 @@ pub async fn claim_and_submit(
         "totalEntries": total,
         "succeeded": succeeded,
         "failed": failed,
-        "_render": "User-facing message rendered in the user's language: for each entry in succeeded[] report 'Claimed {rewardAmount} {rewardUnit}, txHash: {txHash}' (Chinese: '已领取 {rewardAmount} {rewardUnit}，交易哈希: {txHash}'). \
-                    If failed[] is non-empty (partial success), list the failed entries with their `error`, then append the SKILL.md Step 6 'Fixed failure-suggestion block' (English canonical: 'Suggestions: - The claim process requires Gas... - Try again later... - If it fails repeatedly, contact customer support.' / Chinese: '建议：领取过程需要支付Gas... 稍后再试一次... 如果多次失败，请联系客服处理'). \
-                    Skip the suggestion block when the failures are pre-check semantic rejections (rewardStatus 0/2/3, code 11002, code 11008). \
-                    Do NOT re-run claim blindly on partial success — already-broadcasted txs would hit the dedup guard.",
+        // `needContact: true` flags a top-tier winner who has not yet submitted
+        // a contact method. The MCP tool description for `competition_claim`
+        // tells the AI how to handle this (invite the user to share Telegram /
+        // WeChat / Email / Twitter, then call `competition_submit_contact`).
+        "needContact": need_contact,
+        "activityId": activity_id,
+        "accountId": account_id,
+        "joinedAddress": joined_address,
     }))
 }
 
@@ -884,62 +1160,48 @@ fn bytes_from_buffer_or_array(v: &Value) -> Option<String> {
     Some(bs58::encode(bytes).into_string())
 }
 
-/// Pick the chain-appropriate wallet address for a single-chain query
-/// (e.g. `competition_rank`). Looks up the activity's `chainId` via
-/// `competition_detail` and returns the SOL address for Solana activities,
-/// the EVM address otherwise. Both addresses are read from the local
-/// wallet_store via `resolve_default_addresses`.
-pub async fn resolve_wallet_for_activity(
-    client: &mut ApiClient,
-    activity_id: &str,
-) -> Result<String> {
-    let (evm, sol) = resolve_default_addresses()?;
-    pick_wallet_for_activity(client, activity_id, &evm, &sol).await
+/// Identity for a single-address competition query (`competition_rank` /
+/// `competition_user_status`). The backend accepts EITHER `accountId` (for
+/// self-query — multi-chain by design) or `walletAddress` (for cross-user
+/// query on a specific chain); never both. This enum makes the mutual
+/// exclusion a compile-time guarantee.
+pub enum CompetitionIdentity {
+    /// Self-query via the active user's accountId. Covers every chain in
+    /// the competition's `participateChainIds` in one request.
+    Account(String),
+    /// Cross-user query via a specific wallet address. The address's chain
+    /// family (EVM `0x...` else Solana) MUST match the activity's primary
+    /// chain — validated upfront by `resolve_competition_identity`.
+    Wallet(String),
 }
 
-/// Like `resolve_wallet_for_activity`, but uses caller-provided addresses
-/// instead of reading from local wallet_store. The chainId from
-/// `competition_detail` is **always** the source of truth — the caller
-/// cannot bypass chain checking by passing a single wallet, which prevents
-/// the AI from accidentally querying rank/status with the wrong-chain
-/// address (e.g. SOL address for an X Layer activity).
-pub async fn pick_wallet_for_activity(
-    client: &mut ApiClient,
-    activity_id: &str,
-    evm_wallet: &str,
-    sol_wallet: &str,
-) -> Result<String> {
-    let detail_data = detail(client, activity_id).await?;
-    Ok(if is_solana_entry(&detail_data) {
-        sol_wallet.to_string()
-    } else {
-        evm_wallet.to_string()
-    })
+impl CompetitionIdentity {
+    /// Convert into the (param_name, param_value) pair the backend expects.
+    fn as_query(&self) -> (&str, &str) {
+        match self {
+            Self::Account(id) => ("accountId", id.as_str()),
+            Self::Wallet(addr) => ("walletAddress", addr.as_str()),
+        }
+    }
 }
 
-/// Resolve the wallet to use for a single-address competition query
-/// (`competition_rank`, etc.) with chain-safety enforcement.
+/// Resolve the identity to use for a single-address competition query.
 ///
-/// Two modes, depending on whether the caller passed a wallet:
-///
-/// - **`wallet = Some(addr)`** (e.g. querying someone else's rank): validate
-///   that the address's chain matches the activity's chainId from
-///   `competition_detail`. Address format determines its chain — `0x...` is
-///   EVM, anything else is treated as Solana. If chains mismatch, return an
-///   error rather than silently querying the wrong leaderboard.
-///
-/// - **`wallet = None`** (querying the active user's own rank): auto-resolve
-///   the chain-appropriate address from the local wallet_store (same as
-///   `resolve_wallet_for_activity`).
-pub async fn resolve_or_validate_wallet_for_activity(
+/// - `wallet = Some(addr)` (cross-user query): fetch `competition_detail`,
+///   compare the address's chain family (EVM `0x...` else Solana) against
+///   the activity's primary chain. Mismatch errors out rather than silently
+///   querying the wrong leaderboard.
+/// - `wallet = None` (self-query): load the active user's accountId from
+///   the local wallet_store. The backend treats accountId as multi-chain;
+///   a single call covers every chain in `participateChainIds`.
+pub async fn resolve_competition_identity(
     client: &mut ApiClient,
     activity_id: &str,
     wallet: Option<&str>,
-) -> Result<String> {
-    let detail_data = detail(client, activity_id).await?;
-    let activity_is_solana = is_solana_entry(&detail_data);
-
+) -> Result<CompetitionIdentity> {
     if let Some(addr) = wallet {
+        let detail_data = detail(client, activity_id).await?;
+        let activity_is_solana = is_solana_entry(&detail_data);
         let addr_is_evm = addr.starts_with("0x");
         let addr_is_solana = !addr_is_evm;
         if activity_is_solana != addr_is_solana {
@@ -950,11 +1212,22 @@ pub async fn resolve_or_validate_wallet_for_activity(
                 if activity_is_solana { "Solana" } else { "EVM" },
             );
         }
-        return Ok(addr.to_string());
+        return Ok(CompetitionIdentity::Wallet(addr.to_string()));
     }
+    let account_id = load_selected_account_id()?;
+    Ok(CompetitionIdentity::Account(account_id))
+}
 
-    let (evm, sol) = resolve_default_addresses()?;
-    Ok(if activity_is_solana { sol } else { evm })
+/// Load the active user's accountId from local wallet_store WITHOUT setting
+/// up an authenticated API client (rank / user_status are public endpoints
+/// that just need the accountId as a query param).
+pub fn load_selected_account_id() -> Result<String> {
+    let wallets = wallet_store::load_wallets()?
+        .ok_or_else(|| anyhow::anyhow!("not logged in — please run: onchainos wallet login"))?;
+    if wallets.selected_account_id.is_empty() {
+        bail!("not logged in — please run: onchainos wallet login");
+    }
+    Ok(wallets.selected_account_id)
 }
 
 /// Resolve the user's default EVM and Solana wallet addresses from the local
@@ -1012,4 +1285,95 @@ async fn ensure_logged_in_client() -> Result<(String, ApiClient)> {
     };
     let auth_client = ApiClient::new_async(None).await?;
     Ok((account_id, auth_client))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 2026-03-24 10:13:20 (UTC+8) — equivalently 2026-03-24 02:13:20 UTC
+    const EPOCH_S: i64 = 1_774_318_400;
+    const EPOCH_MS: i64 = 1_774_318_400_000;
+
+    #[test]
+    fn format_utc8_seconds_renders_with_suffix() {
+        let s = format_utc8_seconds(EPOCH_S).expect("valid epoch");
+        assert_eq!(s, "2026-03-24 10:13:20 (UTC+8)");
+    }
+
+    #[test]
+    fn format_utc8_millis_renders_with_suffix() {
+        let s = format_utc8_millis(EPOCH_MS).expect("valid epoch");
+        assert_eq!(s, "2026-03-24 10:13:20 (UTC+8)");
+    }
+
+    #[test]
+    fn format_utc8_date_omits_time_and_suffix() {
+        let s = format_utc8_date(EPOCH_S).expect("valid epoch");
+        assert_eq!(s, "2026-03-24");
+    }
+
+    #[test]
+    fn ensure_utc8_suffix_is_idempotent() {
+        let already = "2026-03-24 10:13:20 (UTC+8)";
+        assert_eq!(ensure_utc8_suffix(already), already);
+    }
+
+    #[test]
+    fn ensure_utc8_suffix_appends_when_missing() {
+        assert_eq!(
+            ensure_utc8_suffix("2026-05-07 18:00:00"),
+            "2026-05-07 18:00:00 (UTC+8)"
+        );
+    }
+
+    #[test]
+    fn ensure_utc8_suffix_trims_trailing_whitespace_before_appending() {
+        assert_eq!(
+            ensure_utc8_suffix("2026-05-07 18:00:00  "),
+            "2026-05-07 18:00:00 (UTC+8)"
+        );
+    }
+
+    #[test]
+    fn enrich_activity_adds_three_formatted_fields() {
+        let mut entry = json!({
+            "name": "Test Comp",
+            "startTime": EPOCH_S,
+            "endTime": EPOCH_S + 7 * 86400,
+        });
+        enrich_activity_time_fields(entry.as_object_mut().unwrap());
+        assert_eq!(entry["startTimeFormatted"], "2026-03-24 10:13:20 (UTC+8)");
+        assert_eq!(entry["endTimeFormatted"], "2026-03-31 10:13:20 (UTC+8)");
+        assert_eq!(entry["timeRangeFormatted"], "2026-03-24 ~ 2026-03-31");
+        // Raw fields preserved
+        assert_eq!(entry["startTime"].as_i64(), Some(EPOCH_S));
+    }
+
+    #[test]
+    fn enrich_activity_skips_missing_or_zero_epoch() {
+        let mut entry = json!({ "name": "Legacy", "startTime": 0, "endTime": null });
+        enrich_activity_time_fields(entry.as_object_mut().unwrap());
+        assert!(entry.get("startTimeFormatted").is_none());
+        assert!(entry.get("endTimeFormatted").is_none());
+        assert!(entry.get("timeRangeFormatted").is_none());
+    }
+
+    #[test]
+    fn enrich_user_status_skips_null_claim_time() {
+        let mut entry = json!({
+            "joinStatus": 1,
+            "joinTime": EPOCH_S,
+            "claimTime": null,
+        });
+        enrich_user_status_time_fields(entry.as_object_mut().unwrap());
+        assert_eq!(entry["joinTimeFormatted"], "2026-03-24 10:13:20 (UTC+8)");
+        assert!(entry.get("claimTimeFormatted").is_none());
+    }
+
+    #[test]
+    fn format_utc8_seconds_handles_out_of_range() {
+        // chrono returns None for genuinely invalid timestamps
+        assert!(format_utc8_seconds(i64::MAX).is_none());
+    }
 }

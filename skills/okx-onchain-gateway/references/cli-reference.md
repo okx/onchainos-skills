@@ -102,7 +102,7 @@ onchainos gateway simulate --from <address> --to <address> --data <hex> --chain 
 Broadcast a signed transaction.
 
 ```bash
-onchainos gateway broadcast --signed-tx <tx> --address <address> --chain <chain>
+onchainos gateway broadcast --signed-tx <tx> --address <address> --chain <chain> [--mev-protection]
 ```
 
 | Param | Required | Default | Description |
@@ -110,6 +110,7 @@ onchainos gateway broadcast --signed-tx <tx> --address <address> --chain <chain>
 | `--signed-tx` | Yes | - | Fully signed transaction (hex for EVM, base58 for Solana) |
 | `--address` | Yes | - | Sender wallet address |
 | `--chain` | Yes | - | Chain name |
+| `--mev-protection` | No | `false` | Boolean flag (no value). Enable MEV protection on EVM chains — sends `enableMevProtection: true`. See the SKILL's MEV Protection section for per-chain support. |
 
 **Return fields**:
 
