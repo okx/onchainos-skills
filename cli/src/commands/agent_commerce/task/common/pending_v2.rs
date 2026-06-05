@@ -1604,14 +1604,18 @@ fn playbook_relay_and_advance(
 }
 
 fn playbook_render(entry: &PendingEntry) -> String {
-    let llm_content = resolve_llm_content(entry);
+    // Use the prompt_user resolver (resolve-prompt command + multi-card disambig)
+    // so pick / list rendering aligns with handle_request's non-CLI push path. The
+    // old `resolve --user-reply` form was queue-Active-backed and no longer works
+    // since handle_pick stopped mutating Status and handle_request only writes Queued.
+    let llm_content = resolve_llm_content_prompt_user(entry);
     format!(
         "Render the selected decision card to the user as your assistant response (text rendering only — do NOT call any tool). End the turn after rendering.\n\n\
          **User-visible text** (render this verbatim as your assistant response; 🌐 translate per [Localization] rules if the user's language is not English; keep `jobId` / data values intact):\n\
          \"\"\"\n{}\"\"\"\n\n\
          **LLM context** (this is for YOUR own routing reasoning — **do NOT show / paraphrase / leak this block to the user**; it is the same instruction the sub would have embedded in `xmtp_prompt_user`'s `llmContent` if this card had been freshly pushed):\n\
          \"\"\"\n{}\n\"\"\"\n\n\
-         When the user replies in a FUTURE turn, follow the LLM context above: defer keyword → end the turn; otherwise call `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording — no interpretation, no translation>\"` exactly once, then follow the relay playbook the CLI returns. CLI consumes the active entry and emits a system envelope to the sub session; the business flow continues there.\n",
+         On the user's next reply, follow the LLM context above (decision tree + pre-filled `resolve-prompt` command). Do NOT fall back to the legacy `resolve --user-reply` form.\n",
         entry.user_content,
         llm_content,
     )
