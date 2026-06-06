@@ -50,8 +50,8 @@ This framework is the single source of truth for service-type localization; all 
 
 | Internal (`status` int) | User-facing label |
 |---|---|
-| `1` | active |
-| `2` | not listed |
+| `1` | active (CN: listed/published — NOT "deactivated/offline") |
+| `2` | not listed (CN: not yet published — NOT "taken down") |
 | `3` | This agent is currently unavailable |
 | `4` | This agent is currently unavailable |
 | `5` | This agent is currently unavailable |
@@ -60,7 +60,15 @@ This framework is the single source of truth for service-type localization; all 
 
 ## ApprovalDisplayStatus
 
-**Only render `approvalDisplayStatus` when `status == 2` (not listed).** If `status` is any other value, skip the approval status row entirely.
+Rendering rules by `status`:
+
+| Agent `status` | Approval status cell |
+|---|---|
+| `1` (active / listed) | `Approved` — translate to user language |
+| `2` (inactive / not listed) | Translate `approvalDisplayStatus` per table below |
+| other | `—` |
+
+`approvalDisplayStatus` translation table (used only when `status == 2`):
 
 | `approvalDisplayStatus` | User-facing label |
 |---|---|
@@ -72,7 +80,7 @@ This framework is the single source of truth for service-type localization; all 
 
 Row label: `Approval status`.
 
-⛔ Never render the raw integer. Always translate. When `approvalRemark` is non-empty and `approvalDisplayStatus` is `5`, append it as a parenthetical: "Review failed (reason: xxx)".
+⛔ Never render the raw integer. Always translate. When `approvalRemark` is non-empty and `approvalDisplayStatus` is `5`, append it as a parenthetical: "Review failed (reason: xxx)". This applies to **both** the detail card and the agent list view (`core/display-formats.md §1`).
 
 ## Field
 
@@ -106,7 +114,7 @@ Row label: `Approval status`.
 
 **Chain / blockchain / NFT phrasing** (used inside user-visible "Please note" segments, post-success lines, error cards):
 - `on-chain NFT` in cost/reversibility copy → render as `your record on the blockchain` — most non-engineer users don't think of identities as "NFTs", and the NFT framing is wire detail.
-- `gas` / `network transaction fee` in cost copy → render as `transaction fees`. Drop the "phase 1 / OKX phase 1" framing; just say "OKX covers them" — phase-numbering is a product-roadmap concern, not user-facing.
+- `gas` / `network transaction fee` in cost copy → render as `transaction fees`. Drop the "phase 1 / OKX phase 1" framing — phase-numbering is a product-roadmap concern, not user-facing.
 
 ## Flow / internal-section terms (jargon)
 

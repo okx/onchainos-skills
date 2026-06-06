@@ -1,54 +1,49 @@
 # Role: provider (Agent Service Provider — ASP)
 
-> Registers an ASP identity **with at least one service**. Longest Q&A — take it one step at a time.
+> Registers an ASP identity **with at least one service**, in **two explicit steps**: Step 1 Identity → Step 2 Service. Each step opens with a **numbered checklist of its fields, each annotated with its requirement**, so the user sees exactly what to provide and the rules up front. Within a step the user may batch all items in one message or go one at a time. (The on-chain write is still a single `agent create` carrying both — `ensure_provider_has_service`.)
 
-## STRICT — one question per turn
+Field definitions live in `core/field-specs.md`; listing requirements (lengths, bans) come from `modules/pre-listing-qa.md`. The numbered checklist below merges both so the user can comply first-try.
 
-No listing "Please provide 1. Name 2. Description 3. Service Name ..." in one message. Every field, including every service sub-field, is a separate turn in the user's language.
+## Step 1 · Identity
 
-Field definitions live in `core/field-specs.md`. Inline the four segments (`Purpose / Visibility / Please note / Example`) in the user's language only, so they don't need to read a separate file to answer.
-
-## Phase 1 — identity Q&A
-
-### Phase 1 preview (render BEFORE Q1)
-
-Once role is `provider` and pre-check resolved (either "no existing provider" or user chose "1. Register a new ASP" on the pre-check numbered prompt), render the Phase-1 preview, then start Q1.
+Once role is `provider` and pre-check resolved (either "no existing provider" or user chose "1. Register a new ASP"), render the Step-1 checklist, then collect.
 
 ```
-Got it — starting a new Agent Service Provider (ASP) registration. First we'll collect identity info:
-  1. Name
-  2. Description
-  3. Profile photo (optional)
-(The service list is collected after identity is confirmed.)
+Step 1 of 2 · Identity — please provide these 3 items (send all at once, or one at a time):
+  1. Name (required) — 2–12 chars CN / 3–25 EN; a short brand name; ❌ no test tags (-test/(beta)/_dev), ❌ no public-figure names
+  2. Description (required) — ≤ 500 chars; one line: what it does, which chain, your edge
+  3. Profile photo (optional) — 1:1 square PNG/JPEG/WebP, < 1 MB; for best display avoid rounded corners and borders (a plain square renders best); skip to use the default
 ```
 
-The preview is declarative; Q1 follows after a blank line. See `playbooks/README.md §STRICT — Preview ≠ multi-field ask`.
+- The checklist is a **declarative requirements preview** (allowed — `playbooks/README.md §STRICT`); it lists fields + rules, then the user fills them (batched or one-at-a-time). Localize to the user's language.
+- ⛔ Field values from the user's literal reply only (Red line 6) — never pre-fill from userEmail / wallet name / session metadata. Anti-pattern: "Jim's ASP".
+- Capture whatever the user batches (`core/choice-prompts.md §One-Shot Capture`); ask only the **still-missing** item(s), one at a time — no `Q1:` prefix (Red line 3).
+- **Profile photo (item 3)** can't be batched (image links are rejected; it needs the upload/generate interaction). Surface it as part of the **identity confirmation card's closing CTA** (📷 send an image / "generate" / skip) — not a separate collection turn.
+- When identity is collected, render the **identity confirmation card** (`§Confirmation cards — two steps`); confirming it advances to Step 2 and does NOT call the CLI.
 
-### Q&A
+## Step 2 · Service
 
-> ⛔ Fields from user's literal reply only — never pre-fill from userEmail, wallet name, or session metadata. Anti-pattern to avoid: "Jim's ASP" / "Alice's ASP". Full rules: SKILL.md Red line 6.
+After the identity card is confirmed, render the Step-2 checklist, then collect the service fields (full per-field spec + validation in `playbooks/provider-services.md`).
 
-The `Q1 / Q2 / Q3` labels in the column below are **maintainer-internal only** — they help this document index questions but **MUST NOT** appear in the prompt strings the AI sends to the user. The prompts in the Prompt column are the literal text rendered to the user; they carry no `Q1：` / `Q1:` prefix. See `SKILL.md §UX Output Red Lines Red line 3` (no Q/S/Phase leakage) and `core/ux-lexicon.md` for the canonical rule. Each prompt inlines the four-segment field spec from `core/field-specs.md` in the user's language only. Skip any Q whose field was already captured via §One-shot capture.
+```
+Step 2 of 2 · Service (at least one) — please provide these 5 items (send all at once, or one at a time):
+  1. Service name (required) — 5–30 chars; a noun phrase; ❌ not identical to the agent name, ❌ no price in the name
+  2. Service description (required) — 3-part: ① summary ≤50 ② capabilities ≤150 ③ 1–3 example prompts ≤80 each (just say it in plain words — I'll format it for you)
+  3. Type (required) — 1. API-interface (pay-per-call, needs endpoint) / 2. agent-to-agent (negotiated, no endpoint)
+  4. Fee — API: required, "number + currency" (USDT/USDG), ≤6 decimals, e.g. 10 USDT; agent-to-agent: optional (leave blank to negotiate)
+  5. Endpoint — API only, required: starts with https://, publicly reachable, really deployed (❌ localhost / private IP / mock)
+```
 
-| Q | Prompt | Validation |
-|---|---|---|
-| Q1 | `What's the name of this ASP?` + 4 segments | non-empty, ≤ 64 chars (Chinese input: ≤ 30 characters) |
-| Q2 | `Describe this ASP in a sentence.` + 4 segments | non-empty, ≤ 500 chars |
-| Q3 | `Profile photo? Use the default or upload one?` + Choice prompt (see `modules/avatar-upload.md`) | — |
-
-**Strict phase boundary**: Phase 1 only captures `name` / `description` / `picture`. Even if the user mentions service info ("charging 10 USDT"), do NOT capture it here — see `core/choice-prompts.md §One-Shot Capture rule 4`.
-
-After Q3 answered, render the Phase-1 confirmation card (identity only, no service rows yet — but note: that is **not** the final `create` — final confirmation happens after Phase 2). Or alternatively, hold identity in-memory and show one combined confirmation at the end of Phase 2. **This skill does the latter**: one final confirmation card after all services are collected. Phase-1 end transitions directly to Phase-2 preview.
-
-
-> **Phase 2 — service Q&A** (per-service loop: name / description / type / fee / endpoint) has been moved to `playbooks/provider-services.md` to keep this file under 300 lines.
+- Same rules: declarative checklist → batch or one-at-a-time → capture, ask only what's missing.
+- ⚠️ Item 5 is the dead-end risk — if the user picks API but has no deployed endpoint, say so now (deploy first, or switch to agent-to-agent), don't collect the rest first.
+- When the service is collected, render the **service confirmation card**; "execute" runs the single `agent create` (identity from Step 1 + this service).
 
 ## Good / bad cases
 
 | User input | Action |
 |---|---|
-| "I want to offer a data analysis service, charging 10 USDT" **(said in Phase 1)** | Do **NOT** capture `fee=10` at Phase 1 — phase boundary is strict (`core/choice-prompts.md §One-Shot Capture` rule 4). Continue Phase 1 Q&A; when Phase 2 starts fresh, ask Q3 (`servicetype`) first, then Q4 (`fee`) where the user can re-supply 10 if still relevant. |
-| "I want to offer a data analysis service, charging 10 USDT" **(said during a service in Phase 2)** | Capture `fee=10` when Q4 asks it; still confirm `servicetype` at Q3 first. |
+| "I want to offer a data analysis service, charging 10 USDT" **(batched up front)** | Capture `fee=10` into the service buffer (`core/choice-prompts.md §One-Shot Capture` rule 4 — batch capture, no longer discarded). Still confirm `servicetype` explicitly (it's a choice field — never infer it from the service name); ask only the service fields the user did not batch. |
+| "data analysis service, 10 USDT, API-interface, https://…" | Capture `name` / `fee` / `servicetype=A2MCP` / `endpoint` from the batch; ask only the missing `servicedescription`. |
 | "Write me some services" | Refuse to fabricate. Ask what they actually want to offer. |
 | User pastes JSON blob | Thank them, but re-confirm **field by field** — typos in `servicetype` are the #1 cause of create failures. Do not pipe JSON straight to the CLI. |
 | "endpoint is http://..." | Reject. Ask for HTTPS. |
@@ -56,37 +51,57 @@ After Q3 answered, render the Phase-1 confirmation card (identity only, no servi
 | User answers multiple service fields in one sentence | Parse what you can, but next turn still asks the remaining fields individually. |
 | "service type HTTP" | Reject politely and re-render the Q3 numbered prompt verbatim (see `core/choice-prompts.md`) — do not fabricate a new phrasing. |
 
-## Confirmation
+## Confirmation cards — two steps (identity card → service card)
 
-> ⛔ Mandatory before invoking the CLI — applies to both single-service and multi-service provider creates. See the mandatory confirmation gate in SKILL.md for the canonical rule + the rationalizations (`auto-execute` / plan-mode exit / one-shot capture / urgency / "intent obvious") that do **NOT** bypass it.
+The two-step flow has **two confirmation cards**: the Identity card closes Step 1, the Service card closes Step 2 and triggers the create. The on-chain write is still one `agent create` carrying both (the CLI requires a provider to have ≥1 service — `ensure_provider_has_service`).
 
-Two-column table (`core/display-formats.md` §Create/Update Diff), services numbered inline. Render in the user's language — pick ONE variant.
+> ⛔ Both cards are mandatory before the CLI runs (the confirmation gate in SKILL.md). The rationalizations (`auto-execute` / plan-mode exit / one-shot capture / urgency / "intent obvious") do **NOT** bypass either. Even if the user batched everything in Step 1, render both cards in order.
+>
+> Token note: two cards cost ~1 extra turn vs a single merged card — this is the user-requested two-step structure; the trade is accepted for the clearer identity/service separation.
 
-> ⛔ The `<user-provided-endpoint>` token in the example below is a **doc-only placeholder** — at runtime substitute it with the **literal URL the user gave you in Phase 2 Q5** (or, on `update`, the new value the user just typed). **Never** copy any `https://api.example.com/...` / `https://cdn.example.com/...` / any other sample URL from these docs into the user's confirmation card. See `core/display-formats.md` top "URL literals are doc-only" rule.
+### Identity card (closes Step 1 — does NOT create anything)
+
+**Run identity-scope QA silently first** (`modules/pre-listing-qa.md` Trigger C — name N1–N7, description U1–U4); inline ⚠️ on any offending row.
 
 | Field | Value |
 |---|---|
 | Role | Agent Service Provider (ASP) |
 | Name | DeFi Analyzer |
 | Description | On-chain data analysis and yield simulation. |
-| Profile photo | default |
+| Profile photo | default (not set) |
+
+> 📷 Profile photo is the default — **send an image or say "generate" to set one** (for best display: a plain square, no rounded corners or borders — see `modules/avatar-upload.md §Policy 7`).
+> Identity good? Reply "next" to set up your service (or change anything above).
+
+- **Avatar is actively prompted here at the card's close — not a passive row hint** (real runs showed a faint row hint is ignored, leaving every agent on the default image). The user skips by replying "next". On opt-in (image / "generate") run `modules/avatar-upload.md` and show the URL in the row.
+- **Editable in place** — apply, re-run identity QA, re-render.
+- **Confirming the identity card ("next") advances to Step 2 — it does NOT call the CLI.**
+
+### Service card (closes Step 2 — this is the create confirmation)
+
+**Run service-scope QA silently first** (`modules/pre-listing-qa.md` Trigger C — T/S/P/D + U on the service); inline ⚠️ on offending rows.
+
+> ⛔ The `<user-provided-endpoint>` token below is a **doc-only placeholder** — substitute the **literal endpoint URL the user gave**. **Never** copy any `https://api.example.com/...` / sample URL from these docs into the card. See `core/display-formats.md` top "URL literals are doc-only" rule.
+
+| Field | Value |
+|---|---|
 | Service [1] Name | TVL Query |
 | Service [1] Description | Query protocol TVL by chain via MCP. |
 | Service [1] Type | API service |
 | Service [1] Fee | 10 USDT |
 | Service [1] Endpoint | `<user-provided-endpoint>` |
-| Service [2] Name | Yield Check |
-| Service [2] Type | agent-to-agent |
-| Service [2] Fee | (skipped — negotiated directly) |
 
 > Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
-> Reply "execute" to run it.
+> Want to change anything? Just say so (e.g. "fee 5 USDT"). Otherwise reply "execute" to register (with the identity from Step 1).
 
-**Maintainer note (not rendered):** for `agent-to-agent` (servicetype=A2A) the Fee row renders the user's value verbatim (e.g., `5 USDT`) when supplied, otherwise `(skipped — negotiated directly)`. Do NOT render `A2A` to the user in this card.
+- **Editable in place** — apply, re-run service QA, re-render. To change an identity field here, accept it and note it'll be included.
+- **QA inline** — append ` ⚠️ <issue> → <fix>` to any offending row. Confirming with warnings present = "register anyway" (issues resurface at listing).
 
-Service-field **labels in the card** are localized (see mapping table in `core/display-detail.md §Create/Update Diff`: `Name / Description / Type / Fee / Endpoint`). The **JSON keys actually sent to the CLI** (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) are lowercase schema per `models.rs::AgentService` — they only show up in the raw bash command, which we render only if the user explicitly asks.
+**Maintainer note (not rendered):** for `agent-to-agent` (servicetype=A2A) the Fee row renders the user's value verbatim (e.g., `5 USDT`) when supplied, otherwise `(skipped — negotiated directly)`. Do NOT render `A2A` to the user.
 
-**Do NOT show bash** in the confirmation card. Only render the bash command if the user explicitly asks ("show me the CLI").
+Service-field **labels in the cards** are localized (`core/display-detail.md §Create/Update Diff`: `Name / Description / Type / Fee / Endpoint`). The CLI JSON keys (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) are wire-only schema per `models.rs::AgentService` — they appear only in the raw bash command, rendered only if the user explicitly asks.
+
+**Do NOT show bash** in either card. Only render the bash command if the user explicitly asks ("show me the CLI").
 
 ## Execute (maintainer reference — not shown to user)
 
@@ -109,7 +124,7 @@ Render **one visible line** using the template below — **verbatim except for t
 
 Render **one line, declarative, no question mark, no pre-announcement of the chat handoff** (the communication-init flow owns any runtime-specific messages or prompts):
 
-`ASP identity #<id> registered — not yet visible to others. Say "activate #<id>" to publish now, or "find ASPs doing X" to check the market first.`
+`ASP identity #<id> registered — not yet visible to others. Say "activate #<id>" to publish now, "add a service to #<id>" to offer more services, or "find ASPs doing X" to check the market first.`
 
 **`#<id>` substitution rule** (per `core/display-formats.md` top, `#<id>` placeholder rule, **with provider-specific carve-out**):
 
@@ -119,7 +134,7 @@ Render **one line, declarative, no question mark, no pre-announcement of the cha
   3. (Future) a follow-up `agent get` in a later turn — irrelevant for this immediate response.
 - ⚠️ **Provider-specific danger zone — DO NOT pick any id directly from the pre-check list as `#<id>`.** Pre-check reflects state *before* this `create`, so its rows are all older providers, never the newly minted one. Source 2 above is **diff-based** (post-create envelope MINUS pre-check snapshot), not "borrow from pre-check"; it picks the id that's in the post-create envelope but **not** in the pre-check snapshot. Conflating the two is a real failure mode — the agent that does "I see provider #88 in pre-check, must be the new one" instead of running the diff will surface an older provider's id as if it were freshly created, which is misleading.
 - If **both** source 1 (CLI direct id) and source 2 (envelope diff) miss — i.e. CLI returned `txHash` only **AND** the post-create `agentList` segment is also absent (WS + HTTP both failed, per `core/cli-create.md §1`) **OR** the diff yielded no new candidate under the current wallet — **omit the `#<id> ` substring entirely**: do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, do NOT borrow from the pre-check list. Fallback line:
-  - `ASP identity registered — not yet visible to others. Say "activate #N" to publish now, or "find ASPs doing X" to check the market first.`
+  - `ASP identity registered — not yet visible to others. Say "activate #N" to publish now, "add a service to #N" to offer more services, or "find ASPs doing X" to check the market first.`
 
 **Create does NOT auto-list** — user must explicitly run `agent activate` to publish the agent. Only after a successful activate can the agent accept tasks.
 
@@ -139,10 +154,10 @@ Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
 - Uses raw wire-level identifiers in user-visible text — violates `SKILL.md §UX Output Red Lines` and `core/ux-lexicon.md`.
 
 ✅ Correct (with id):
-> ASP identity #961 registered — not yet visible to others. Say "activate #961" to publish now, or "find ASPs doing X" to check the market first.
+> ASP identity #961 registered — not yet visible to others. Say "activate #961" to publish now, "add a service to #961" to offer more services, or "find ASPs doing X" to check the market first.
 
 ✅ Correct (id unknown, txHash-only return):
-> ASP identity registered — not yet visible to others. Say "activate #N" to publish now, or "find ASPs doing X" to check the market first.
+> ASP identity registered — not yet visible to others. Say "activate #N" to publish now, "add a service to #N" to offer more services, or "find ASPs doing X" to check the market first.
 
 ### Agent directive (internal — do NOT render to the user)
 
@@ -154,7 +169,7 @@ Skip / decline carve-outs and the runtime self-gating contract are owned by Step
 
 ## Error recovery
 
-If `provider agents require at least one service; provide --service` surfaces, return to Phase 2 Q1 of service[1]. If `missing required field in --service: name` surfaces, return to the specific Q (see `troubleshooting.md`). Never silently retry with a filler value.
+If `provider agents require at least one service; provide --service` surfaces, return to service collection and collect service[1]'s name first. If `missing required field in --service: name` surfaces, return to the specific service field (see `troubleshooting.md`). Never silently retry with a filler value.
 
 ---
 

@@ -34,12 +34,6 @@ When a write command fails, the recovery path is **always** through the user, no
 - Do NOT queue the retry. Do NOT pre-edit the command. Wait for the user to reply.
 - The raw CLI `bail!` string lives in the card footer for debugging; the translation sits above it (see `troubleshooting.md`).
 
-## Why this rule exists
-
-Silent extra calls make every agent action feel slow and opaque. A user who says "deactivate #42" expects one network round-trip and a line of confirmation — not a `get` + `deactivate` + `get` triple that the CLI printer has to unwind. Errors compound: a hidden pre-check that fails obscures the actual command the user wanted to run.
-
-Treat each user message as a contract: execute exactly what they asked for, surface what happened, then stop.
-
 ## No Shell-Stitching of CLI Output (P0 — symmetric counterpart of "no polling")
 
 The five rules above forbid **over-querying** (extra CLI calls). This rule forbids the symmetric failure: **under-querying — reading your own session log, writing bash parsers, and stitching together a response from `grep` / `sed` instead of re-invoking the CLI.** Empirically this is more damaging than polling because the stitched data **does not error out** — it silently turns into hallucinated values that look plausible to the user.

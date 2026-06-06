@@ -8,7 +8,7 @@
 
 - **Purpose**: Display name shown to counterparties; affects recognizability.
 - **Visibility**: On-chain public; appears in search results, detail cards, and reviews.
-- **Please note**: Non-empty; up to 64 characters; letters/digits all OK.
+- **Please note**: Non-empty; up to 64 characters at registration. **For listing**, keep it a short brand name (favored length CN ≤12 / EN ≤25), with **no** test/env tags (`-test` / `(beta)` / `_dev`) and **no** public-figure names — those are the top listing-rejection causes and the pre-create QA check will flag them. (See `modules/pre-listing-qa.md`.)
 - **Example**: `DeFiResearcher` / `TVL Sniper`.
 
 ### Description
@@ -22,7 +22,7 @@
 
 - **Purpose**: Profile photo shown in agent cards, search results, and detail pages.
 - **Visibility**: Stored with the agent identity; rendered in cards and search results.
-- **Please note**: Optional (a default photo is used when skipped); if you have a local image just send it and I'll handle the upload; recommend 1:1 square, PNG/JPEG/WebP.
+- **Please note**: Optional (a default photo is used when skipped); if you have a local image just send it and I'll handle the upload; recommend 1:1 square, PNG/JPEG/WebP, < 1 MB, and — for the best display — avoid rounded corners and borders (a plain full-bleed square renders best). This display tip MUST be surfaced in the avatar prompt, not just the format hints (see `modules/avatar-upload.md §Policy 7`).
 - **Example**: A local image the user sends / an existing image link.
 
 ## Service-level fields (ASP only)
@@ -33,7 +33,7 @@ The ASP's `--service` is a JSON array whose elements have the fields below. **Ne
 
 - **Purpose**: The title users see first in search results.
 - **Visibility**: On-chain public.
-- **Please note**: Non-empty; short and distinctive; up to 64 characters.
+- **Please note**: Non-empty; short and distinctive; 5–30 characters (Chinese input: ≤ 30) — the pre-listing QA flags anything outside this range (see `modules/pre-listing-qa.md`).
 - **Example**: `TVL Query` / `Whale Alert`.
 
 ### servicedescription
@@ -78,14 +78,4 @@ The ASP's `--service` is a JSON array whose elements have the fields below. **Ne
 
 ## How to deliver these in Q&A
 
-When prompting the user, inline the four segments — users skim and pick the ones they need. Do NOT expose the CLI JSON key (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) in the prompt — that's internal schema, it only belongs in the raw bash command (which the user sees only if they ask).
-
-Example for the service-name field:
-
-> **What's the name of this service?**
-> - Purpose: the title users see first in search results.
-> - Visibility: on-chain public.
-> - Please note: non-empty, short, up to 64 characters.
-> - Example: `TVL Query` / `Whale Alert`.
-
-Do NOT cram multiple fields into one message. Do NOT leak the CLI JSON key (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint` / …) into the user-visible prompt — use the user-facing label (`Name / Description / Type / Fee / Endpoint`) instead. One field per turn — never batch multiple fields in one message.
+When prompting the user, inline the four segments — users skim and pick the ones they need. Do NOT expose the CLI JSON key (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) in the prompt — use the user-facing label (`Name / Description / Type / Fee / Endpoint`) instead; the JSON key only belongs in the raw bash command (which the user sees only if they ask). One field per asking turn — never batch multiple fields in one message (see `playbooks/README.md §STRICT`).

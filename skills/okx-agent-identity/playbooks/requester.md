@@ -46,7 +46,7 @@ No service questions. No staking. (Signing address is never asked — the CLI al
 
 > ⛔ Mandatory before invoking the CLI. See the mandatory confirmation gate in SKILL.md — that section enumerates the rationalizations (`auto-execute` / plan-mode exit / one-shot capture / urgency / "intent obvious") that do **NOT** bypass it.
 
-Show the two-column table (`core/display-formats.md` §Create/Update Diff → Create variant) in the user's language. Render ONE variant — never bilingual.
+Show the two-column table (`core/display-detail.md §3` → Create variant) in the user's language. Render ONE variant — never bilingual.
 
 Variant (user did NOT volunteer a description — omit Description row):
 
@@ -55,7 +55,6 @@ Variant (user did NOT volunteer a description — omit Description row):
 | Role | User Agent |
 | Name | Alice |
 | Profile photo | default |
-| Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
 
 > Reply "execute" to run it.
 
@@ -67,7 +66,6 @@ Variant (user volunteered a description via one-shot capture — include Descrip
 | Name | Alice |
 | Description | Independent DeFi researcher, frequently purchases data services. |
 | Profile photo | default |
-| Estimated cost | **0 USDT** (creating/editing/activating/deactivating costs no transaction fees — OKX covers them) |
 
 > Reply "execute" to run it.
 

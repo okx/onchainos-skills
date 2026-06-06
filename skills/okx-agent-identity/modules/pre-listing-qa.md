@@ -1,23 +1,56 @@
 # Pre-Listing Quality Assurance
 
-This file defines the quality gate the AI runs **before invoking `agent activate`** for any `provider`-role agent. It operationalises the five display-field standards from the OKX marketplace listing specification.
+This file defines the quality gate the AI runs for `provider`-role agents. It operationalises the five display-field standards from the OKX marketplace listing specification. It fires in **three** situations: **before registering** a new provider (full agent, advisory — Trigger C), at listing time (full agent — Trigger A), and when editing an already-existing provider (changed fields only — Trigger B).
+
+> **Why a pre-create trigger.** The hard gate is at listing (`activate`), not at `create`. Without Trigger C a user can register a provider whose name/description/services are doomed to be rejected at listing, then has to fix and resubmit. Trigger C pulls those findings forward to **before registration**, so the listing-blocking issues are caught while the user is still composing — no register→reject→fix→resubmit loop. It is **advisory**: the user may always register anyway.
 
 ## When to Run
 
-Automatically trigger this checklist when:
+Automatically trigger this checklist when **any** trigger matches:
 
-- The user intends to activate an agent, **AND**
-- The target agent's `role` is `provider` (determined from the most recent `agent get` response already in context)
+**Trigger C — Pre-create (advisory, folded into the two confirmation cards).** Run inside the `agent create` provider flow, **as part of rendering** each confirmation card, when the role being created is `provider`. The provider create is a **two-step flow with two cards** (`playbooks/provider.md §Confirmation cards — two steps`); Trigger C runs in two scopes, one per card:
+- **Identity card (Step 1):** agent `name` (N1–N7) and `description` (U1–U4 only — there is no agent-level D-rule). Avatar → L2/L3 advisory only.
+- **Service card (Step 2):** every collected service (T1–T3 / S1–S6 / P1–P5 / D1–D10 + U rules).
 
-If the role is `requester` or `evaluator`, skip this file — it does not apply (those roles have no service fields).
+This trigger is **advisory** — it never blocks `create`. Unlike Trigger A/B, it does **not** render a separate §QA Report: findings are surfaced **inline on the offending field's row** of the card that owns it (a ⚠️ + fix suggestion), and each card's edit/confirm affordance is the "fix now / register anyway" choice. Confirming the service card with warnings still present = register anyway. Purpose: surface listing blockers before they are minted on-chain, not to gate registration. See `playbooks/provider.md §Confirmation cards — two steps`.
+
+**Trigger A — Pre-listing (full scope).** Run after `agent activate` returns `success: false, approvalStatus: 1` **or** `approvalStatus: 5`, and **before** calling `agent submit-approval`, when:
+- `agent activate` returns `success: false` with `approvalStatus` of `1` **or** `5`, **AND**
+- The target agent's `role` is `provider`
+
+> `approvalStatus: 5` is handled exactly like `1` (resubmit). Do NOT surface the rejection or `rejectReason` — see `troubleshooting.md §2` and `core/cli-reference.md §4`.
+
+Scope = **all** display fields of the agent (every check in the tables below, against every service).
+
+**Trigger B — Provider edit (changed-fields scope).** Run inside the `§Update` flow (SKILL.md), after the user's changes are collected and **before** the Update Diff card is confirmed, when:
+- The target agent's `role` is `provider`, **AND**
+- The user is changing at least one QA-governed field: agent `name`, `description`, `picture`, or any service field (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`), incl. adding/removing a service. (For `picture`, only the format advisories L2/L3 apply — presence is never AI-checked; see §Logo.)
+
+Scope = **only the fields the user is actually modifying**. Do NOT flag pre-existing issues in fields the user left untouched — those were already on-chain and re-surfacing them mid-edit is noise. Concretely:
+- Changed agent `name` → run N1–N7 (incl. N4b public-figure list) + U1–U3 on the new name only.
+- Changed `description` → run D1–D10 on the new description only.
+- Changed/added service → run T1–T3 / S1–S6 / P1–P5 / D-rules + U1–U4 on **that** service only; leave sibling services alone.
+- Changed `picture` (new upload) → L2/L3 advisory only (ratio / size); never L1 (presence) — see §Logo.
+- A field the user did NOT touch → skip every check for it, even if it looks non-compliant.
+
+If the role is `requester` or `evaluator`, skip this file under all three triggers — it does not apply (those roles have no service fields).
 
 ## How to Run
 
-1. Use the `agent get --agent-ids <N>` data already fetched during the activate pre-check (do **NOT** make an extra CLI call just for QA).
-2. Extract: top-level `name`, `description`, `picture`, and all `services[]` entries (each with `name`, `servicedescription`, `servicetype`, `fee`, `endpoint`).
-3. Run **every** check in the tables below against each service.
-4. **All checks pass** → proceed to `agent activate`. No report needed.
-5. **Any check fails** → render the §QA Report (with two explicit options) and stop. Wait for the user to choose. **Exception: L1 (no avatar) is always blocking** — if `picture` is absent, do NOT offer option 2 (list anyway); only offer option 1 (fix first).
+1. Source the values to check:
+   - **Trigger A / B:** use the `agent get --agent-ids <N>` data already in context (do **NOT** make an extra CLI call just for QA).
+   - **Trigger C:** the agent does **not** exist yet — use the **field values buffered during collection** (no `agent get`, no CLI call).
+2. Determine scope by trigger:
+   - **Trigger C (pre-create):** two scopes, one per card — **Identity card**: collected `name` (N1–N7) + `description` (U1–U4); **Service card**: all collected service entries (T/S/P/D + U). Avatar → L2/L3 advisory only.
+   - **Trigger A (pre-listing):** extract top-level `name`, `description`, and all `services[]` entries. Check everything. For the avatar, run **only L2/L3 (format, advisory)** — never L1 (presence); see §Logo.
+   - **Trigger B (provider edit):** extract **only the user's new/changed values** (the deltas you collected in the `§Update` flow). Check only those — ignore untouched fields entirely.
+3. Run the relevant checks in the tables below against the in-scope values (per-service for any in-scope service).
+4. **All checks pass** → proceed to the trigger's next step with no report: Trigger C → render that step's card (Step 1 identity card / Step 2 service card); Trigger A → `agent submit-approval`; Trigger B → render the Update Diff card as usual.
+5. **Any check fails:**
+   - **Trigger A / B** → render the §QA Report (two explicit options) and stop; wait for the user to choose.
+   - **Trigger C** → do **not** render a separate report. Fold each finding inline onto the offending field's row of the card that owns it (Step 1 identity card / Step 2 service card) (⚠️ + fix) and let each card's edit/confirm affordance be the choice — see `playbooks/provider.md §Confirmation cards — two steps`. Confirming the service card unchanged = register anyway.
+   - **Avatar presence is never a QA finding** (Trigger A, B, or C) — the AI does not check whether an avatar was uploaded; see §Logo. There is no L1 (presence) block. Avatar *format* (L2 ratio / L3 size) may appear as ⚠️ advisory only and never blocks; every trigger always lets the user proceed anyway.
+   - **Trigger B** option 2 wording is "Submit the change anyway" (proceeds to the Update Diff card → `agent update`), not "list anyway".
 
 ---
 
@@ -40,13 +73,14 @@ If the role is `requester` or `evaluator`, skip this file — it does not apply 
 | N2 | No agent ID embedded | Contains `#123`, `_1083`, or any numeric agent ID | Remove the ID |
 | N3 | No ordinal suffixes | Ends with bare digit, `_2`, `_v2`, `(2)`, or a language-native ordinal suffix (e.g. `No.3`, `#3`) | Remove the ordinal |
 | N4 | No personal names or account labels | Contains personal name, email prefix, or wallet account label (e.g. `Account2`, `Jim`, `bob123`) | Remove the personal reference |
+| N4b | No public-figure / celebrity names | Name contains any well-known public figure — the listing spec calls these out explicitly: **Trump / Donald Trump / Elon Musk / Steve Jobs / Justin Sun / CZ / Obama / Putin / Biden / Jeff Bezos / Mark Zuckerberg / Sam Altman / SBF / Michael Saylor / Warren Buffett**. The list is illustrative, not exhaustive — flag any other obvious public figure too. Matching is case-insensitive and applies to both the standalone name and substrings (e.g. `Elon's Trade Bot`, `CZ Signal`). | Remove the public-figure reference; pick a neutral product brand name |
 | N5 | Brand name — not a sentence | Reads as a full verb + object sentence rather than a product brand | Rewrite as a short brand name |
 | N6 | Bilingual separator | Bilingual name must use `NativeName · EnglishName` format (middle dot `·` + spaces) | Fix the separator |
 | N7 | No test / environment markers in name | Name contains any U1 marker — e.g. `WeatherBot-test` / `MyAgent_dev` / `SentryX(beta)` / `AgentX staging`. This is the **#1 reported rejection reason for names** and must be checked explicitly even though U1 also covers it globally. Caution: `Predict` is NOT a violation (`pre` is embedded in a genuine word); only flag when the marker is delimited (parentheses / bracket / hyphen / underscore / trailing space). | Remove the marker; pick a clean brand name |
 
 **Good:** `Predict-Raven` / `Luminos · ChainMirror` / `SentryX` / `WakeMeUp` / `PMAlpha`
 
-**Bad:** `FitnessBot(pre)` / `WeatherHelper_test` / `MyAgent-dev` / `SentryX(beta)` / `Account2buyer`
+**Bad:** `FitnessBot(pre)` / `WeatherHelper_test` / `MyAgent-dev` / `SentryX(beta)` / `Account2buyer` / `Elon Musk Bot` / `CZ Alpha` / `Trump Predictor`
 
 ---
 
@@ -119,24 +153,28 @@ If the role is `requester` or `evaluator`, skip this file — it does not apply 
 
 ---
 
-## Logo — Required (missing avatar blocks activation)
+## Logo — do NOT check whether an avatar was uploaded; format stays advisory
 
-Avatar upload is **mandatory** — the platform no longer provides a default. Check the `picture` field from `agent get`.
+- ⛔ **No presence check (no L1).** Do NOT check whether an avatar was uploaded, do NOT block `agent activate` / `submit-approval` on a missing avatar, and do NOT raise "avatar not uploaded" as a QA finding.
+
+The AI still gives **advisory** (⚠️, never blocking) guidance on avatar *format* when a picture is present or being uploaded:
 
 | # | Rule | Failing pattern | Fix |
 |---|------|----------------|-----|
-| L1 | Avatar must be uploaded | `picture` field is empty, null, or absent | Ask the user to upload an avatar via `agent upload` before listing |
-| L2 | 1:1 aspect ratio | Non-square image | Re-upload a square image |
+| L2 | 1:1 aspect ratio | Non-square image | Suggest re-uploading a square image |
 | L3 | < 1 MB | File too large | Compress and re-upload via `modules/avatar-upload.md` |
 
-L1 is a **blocking** check (❌) — do not proceed to `agent activate` without an avatar. L2 and L3 are ⚠️ warnings (cannot always be verified post-upload; surface at upload time).
+L2 / L3 are ⚠️ warnings only — best surfaced at upload time (they cannot always be verified post-upload); they never block listing. The upload-time 1 MB guard in `modules/avatar-upload.md` is the enforcement point for L3.
 
 ---
 
 ## §QA Report Format
 
-When any check fails, render the report below in the user's language, then ask whether to fix first or proceed anyway.
+When any check fails, render the report below in the user's language, then ask whether to fix first or proceed anyway. The header line and option 2 wording depend on the trigger.
 
+**Trigger C (pre-create) — no separate report.** Findings are surfaced **inline on the card that owns the field** (Step 1 identity card / Step 2 service card): append ` ⚠️ <issue> → <suggestion>` to the offending field's value row (localized, user-facing labels only — never raw JSON keys). Each card's edit/confirm affordance carries the choice (edit a field → re-run the check → re-render; confirm the service card unchanged → register anyway). Full behavior: `playbooks/provider.md §Confirmation cards — two steps`.
+
+**Trigger A (pre-listing):**
 ```
 QA check found some issues before listing:
 
@@ -153,22 +191,38 @@ How would you like to proceed?
   2. List anyway (⚠️ non-compliant information may cause listing failure)
 ```
 
+**Trigger B (provider edit — only the changed fields appear):**
+```
+QA check found some issues with your changes:
+
+**Agent #<id> — <name>**
+
+  ⚠️ <Field> — <issue> → <suggestion>
+(only fields the user is changing; repeat per changed field / service)
+
+---
+How would you like to proceed?
+  1. Fix and submit (Recommended)
+  2. Submit the change anyway (⚠️ non-compliant information may be rejected on review)
+```
+
 **Rules for the report:**
 
 - Use ⚠️ (warning), not ❌ (error) — this is advisory, not a hard block.
-- Group failures by service (service index + name); list all failing checks.
+- Group failures by service (service index + name); list all failing checks. For Trigger B, only list fields/services the user is actually changing.
 - Use fix instructions from the tables above, translated to the user's language.
 - ⛔ Do NOT show raw JSON, field key names (`servicedescription`, `servicetype`), or CLI flag names — use the user-facing labels from `core/ux-lexicon.md`.
 - ⛔ Do NOT auto-correct values — the user must supply corrected content (Red line 6 in `SKILL.md`).
-- **On option 1 (fix first)**: route through `§Update` flow (`agent update` → re-run QA → `agent activate`).
-- **On option 2 (list anyway)**: invoke `agent activate` immediately without re-prompting.
+- **Trigger C — option 1 (fix now)**: re-collect the corrected value(s) one field per turn (focused step, with the relevant field guidance inline), re-run this checklist on the new value(s), then proceed to the create confirmation card. **Option 2 (register anyway)**: proceed directly to the create confirmation card → confirm → `agent create`, no re-prompting. Trigger C never calls a CLI itself — it only gates whether the confirmation card is rendered now or after a fix.
+- **Trigger A — option 1 (fix first)**: route through `§Update` flow (`agent update` → re-run QA → `agent submit-approval`). **Option 2 (list anyway)**: invoke `agent submit-approval` immediately without re-prompting.
+- **Trigger B — option 1 (fix first)**: re-collect the corrected value (one field per turn), re-run this checklist on the new value, then continue to the Update Diff card. **Option 2 (submit anyway)**: proceed directly to the Update Diff card → confirm → `agent update`, no re-prompting.
 
 ---
 
 ## Pass Message (all checks green)
 
-No separate message needed — silently proceed to `agent activate`. The post-activate line from `§Suggest Next Steps` is the only user-visible output.
+No separate message needed — silently proceed to `agent submit-approval`. The post-submit line from `troubleshooting.md §2` is the only user-visible output.
 
-If you want to surface the clean result (optional, e.g. when the user explicitly asked for a QA check without intending to activate right away):
+If you want to surface the clean result (optional, e.g. when the user explicitly asked for a QA check without intending to submit right away):
 
-- "QA passed — all fields meet listing requirements. Say the word and I'll activate it."
+- "QA passed — all fields meet listing requirements. Say the word and I'll submit for review."

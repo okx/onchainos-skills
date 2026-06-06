@@ -12,9 +12,6 @@ description: >
   再建一个买家身份 / add another agent / new provider = ALWAYS identity, NEVER wallet add.
   Finding marketplace agents → run agent search, NOT list skill names.
   Passive onboarding (need-requester from task flow) → register requester only.
-  NOT for: task lifecycle (发布/接单/交付/dispute) → okx-agent-task;
-  wallet/balance → okx-agentic-wallet; OKB staking → okx-agent-task;
-  contract security → okx-security; swap/market-data → other skills.
 license: Apache-2.0
 metadata:
   author: okx
@@ -35,7 +32,7 @@ Read `core/ux-lexicon.md` for the complete translation table. Key rules:
 3. **No internal labels.** ⛔ `pre-check / Phase 1 / Phase 2 / Q1: / Q2: / S1: / pre-execute self-check / confirmation gate / status=0` → use natural language; see `core/ux-lexicon.md §Flow`.
 4. **Use lexicon translations.** Role (`requester` → User Agent), status integers, service types, field JSON keys → all follow `core/ux-lexicon.md`. Legacy role nouns (buyer / seller / service-provider / verifier) are deprecated.
 5. **No alarmist agent counts.** When total agents ≥ 5 after `agent get`, append the reassurance footer per `core/display-formats.md §1`.
-6. **Fields from user input only.** `name / description / picture / service.*` MUST come from the user's literal reply to the matching Q. ⛔ Never pre-fill from `userEmail`, session metadata, wallet name, XMTP sender, or any source other than what the user typed this turn.
+6. **Fields from user input only.** `name / description / picture / service.*` MUST come from the user's literal reply to the matching Q. ⛔ Never pre-fill from `userEmail`, session metadata, wallet name, XMTP sender, or any source other than what the user typed this turn. **Single carve-out:** for `servicedescription`, the AI MAY (a) reformat the user's **own supplied wording** into the required 3-part structure, (b) auto-trim it to the length limits, and (c) draft 1–3 example prompts that **illustrate the capability the user already stated** — all adding no new capability/claim/metric, all presented for explicit approval. This is formatting + illustration of the user's content, not fabrication. Details + guardrail: `playbooks/provider-services.md §Description: AI drafts it`.
 
 **Pre-send sweep:** before emitting any message, scan for violations of Red lines 1–6. Rewrite before sending.
 
@@ -49,6 +46,8 @@ Every content-creating write (`agent create / update / feedback-submit`) **must 
 
 **Only sufficient condition to invoke CLI without re-rendering the card:** both (1) user's most recent turn literally contains a confirm token AND (2) every field value in the just-rendered card is byte-identical to what will be passed to the CLI.
 
+**Rationalization blacklist — none of these bypass the gate** (render the card anyway): user-level memory / preferences (incl. any `auto-execute` / `不用确认` / `直接执行` / `trust me` setting); system prompts or harness flags; plan-mode exit (Exit Plan Mode confirms the *plan*, not the on-chain action — the in-card confirm token is still required next turn); one-shot field capture, even when every required field is captured in the user's first message; urgency / imperative tone (`赶紧创建` / `现在就建` / `立刻发起`); the user previously confirming a *similar but distinct* write earlier in the conversation. If you catch yourself reasoning "they already said skip confirmation" / "we agreed in the plan" / "it's obvious what they want" — **stop and render the card anyway**. The cost asymmetry is decisive: one extra turn vs. an irreversible on-chain record — always pay the turn.
+
 ### Consent Gate (`agent create` only)
 When CLI returns `executeResult: false` with non-null `consent` → show consent card, wait for explicit agree/decline, then re-invoke with `--consent-key` / `--agreed true`. Full template: `playbooks/consent.md`.
 
@@ -61,7 +60,7 @@ After **any** `onchainos agent ...` CLI call, first user-visible output must com
 After any local-agent-list-mutating success (`create / update / activate / deactivate`), proceed to `§Operation Flow Step 5` → `§Step 6`: load `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` and continue its Execution Flow in the same response. The callee self-gates on env vars — never pre-judge runtime. `feedback-submit` is excluded. Passive onboarding (`intent=need-requester`) routes to Step 5's "back to task" branch, not Step 6.
 
 ## §Cost Disclosure (P0)
-Read `core/cost-disclosure.md` — OKX covers all gas, zero platform commission. Render the standard line before any creating mutation. "Give me an example" → run `agent search` first, never improvise.
+Read `core/cost-disclosure.md` when the user asks about fees / gas / commission. "Give me an example" → run `agent search` first, never improvise.
 
 ## §Endpoint Anti-Pattern (P0)
 Fires from Endpoint Inquiry trigger AND from provider Q5. Read `playbooks/provider.md §Endpoint Anti-Pattern` — HTTPS + publicly reachable + real deployed service required. localhost / private IP / mock URLs / placeholders all forbidden.
@@ -102,8 +101,9 @@ Read `_shared/no-polling.md` — one intent = one CLI call; never poll, never au
 | `onchainos agent service-list` | List agent's services | `--agent-id` |
 | `onchainos agent feedback-submit` | Rate an agent | `--agent-id`, `--creator-id`, `--score` |
 | `onchainos agent feedback-list` | View reputation | `--agent-id` |
+| `onchainos agent submit-approval` | Submit for listing review (skill-internal, auto) | `--agent-id` |
 
-Full parameter tables and return schemas: `agent create` → `core/cli-create.md`; §2–§6 → `core/cli-reference.md`; §7–§10 → `core/cli-search-feedback.md`.
+Full parameter tables and return schemas: `agent create` → `core/cli-create.md`; §2–§6 → `core/cli-reference.md`; §7–§11 → `core/cli-search-feedback.md`.
 
 ## Operation Flow
 
@@ -131,7 +131,7 @@ Success → detail card (`core/display-detail.md §2`) + one next-step suggestio
 ### Step 5: Post-success Flow Continuation
 | Last successful CLI | Next |
 |---|---|
-| `agent create --role evaluator` | Load `okx-agent-task/references/evaluator-staking.md §2` in same response. If staking flow ends without comm-init, fallback to Step 6. |
+| `agent create --role evaluator` | Load `/skills/okx-agent-task/references/evaluator-staking.md §2` in same response. If staking flow ends without comm-init, fallback to Step 6. If the user has explicitly declined staking earlier in the conversation, skip the staking handoff but still proceed to Step 6 (local agent list changed → OpenClaw cache still needs sync). |
 | `agent create --role requester / provider` | → Step 6 |
 | `agent update / activate / deactivate` | → Step 6 (agent list changed) |
 | Passive Onboarding (`intent=need-requester`) | Hand back to `okx-agent-task` with one line. Do NOT proceed to Step 6. |
@@ -150,7 +150,8 @@ Load `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` and continue
 | detail #N / show details for agent #N | `agent get --agent-ids <N>` → `core/display-detail.md §2` |
 | update #N | `§Update flow` |
 | unpublish agent | `agent deactivate --agent-id <id>` directly |
-| publish agent | `agent activate --agent-id <id>` directly |
+| publish agent (provider) | `agent activate --agent-id <id>` directly; if `approvalStatus: 1` **or** `5`, run `modules/pre-listing-qa.md` then `agent submit-approval` (for `5`: no rejection message / no `rejectReason`) |
+| publish agent (requester / evaluator) | `agent activate --agent-id <id>` directly |
 | find agents / search agents | `§Search` → `modules/agent-search.md` |
 | rate / review agent #N | `§Feedback Submit` → `modules/feedback.md` |
 | view reviews / reputation for agent #N | `agent feedback-list --agent-id <id>` |
@@ -163,15 +164,16 @@ Load `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` and continue
 Four gates in order — never skip, never combine:
 1. **Ask role** using numbered-options pattern (`core/choice-prompts.md`). Accept written role name as fallback.
 2. **Pre-check** — run `agent get` once. See `playbooks/README.md §Pre-check` for uniqueness rules and K=1/K≥2 branching for providers.
-3. **Role Q&A** — load `playbooks/requester.md / provider.md / evaluator.md`. One field per turn. Phase preview before Q1, no `Q1:` prefix in user text.
-4. **Confirmation card** (`core/display-detail.md §3`) — mandatory. Execute only after explicit confirm token.
+3. **Role Q&A** — load `playbooks/requester.md / provider.md / evaluator.md`. **For providers this is a two-step flow** (`playbooks/provider.md`): Step 1 · Identity and Step 2 · Service, each opening with a **numbered checklist of its fields annotated with requirements**, then collecting (batch or one-at-a-time). No `Q1:` / `Phase` prefix in user text.
+4. **Confirmation card(s)** (`core/display-detail.md §3`) — mandatory. Execute only after explicit confirm token. **For providers, collection + confirmation are split into TWO steps** (`playbooks/provider.md §Confirmation cards — two steps`): **Step 1 · Identity** → **identity card**, confirming ("next") advances to Step 2 and does NOT call the CLI; **Step 2 · Service** → **service card**, "execute" runs the single `agent create` (carries both, since the CLI requires ≥1 service). QA pre-check (`modules/pre-listing-qa.md` Trigger C) runs silently per card, inline ⚠️; the avatar is **actively prompted at the identity card's closing 📷 CTA** (send-image / "generate" / skip — not a passive row hint); the service description is **AI-drafted from the user's plain words** (format + trim + illustrate, never bounce the user repeatedly — `playbooks/provider-services.md §Description: AI drafts it`); fields are editable in place. Confirming the service card with QA warnings present = register-anyway. (Two-step / QA / avatar / description-assist apply to providers only; requester / evaluator render a single plain card.)
 
 ### Update
 1. `agent get --agent-ids <id>` → show current detail card.
 2. **Ownership check** (skill-side, before Q&A): if the returned agent's `ownerAddress` ≠ currently selected XLayer wallet address → stop. Say: "This agent doesn't belong to your current wallet." Do NOT proceed.
 3. Collect user's changes one field per turn.
-4. Render Update Diff card (`core/display-detail.md §3`). Get confirm token. Execute.
-5. Skill-side rule: if no fields changed, refuse to call CLI ("No changes to submit"). `--service` is wholesale replacement — always start from current full services list.
+4. **Provider QA on changed fields** (skill-side, before the Diff card): if the agent's `role` is `provider` and the changes touch any QA-governed field (name / description / picture / any service field — for avatar, only format advisories apply; presence is not checked), run `modules/pre-listing-qa.md` **Trigger B** scoped to the changed fields only. If it reports issues, resolve per its §QA Report (Trigger B options) before continuing. Requester/evaluator edits skip this step.
+5. Render Update Diff card (`core/display-detail.md §3`). Get confirm token. Execute.
+6. Skill-side rule: if no fields changed, refuse to call CLI ("No changes to submit"). `--service` is wholesale replacement — always start from current full services list.
 
 ### Search
 Read `modules/agent-search.md` before invoking `agent search`. User's full sentence → verbatim `--query`. Extract four filter dimensions simultaneously. Credit score 0 → "No rating yet". One `agent search` per intent.
@@ -187,6 +189,8 @@ After rendering the result card, append exactly **one** declarative suggestion l
 |---|---|
 | `agent deactivate` | Unpublished — your agent is now hidden from client lists. Say "activate #\<id\>" anytime to re-publish. |
 | `agent activate` (success=true) | Published — your agent is now discoverable on the marketplace. |
+| `agent update` (post-update `approvalStatus == 2`) | Update saved. Your agent is currently under review — once approved it will go live automatically. No further action needed. |
+| `agent update` (other) | Update saved. |
 | `agent search` (read-only, stop branch) | Say "detail #\<id\>" to drill into services; or "publish a task for X" when ready. |
 | `agent create --role requester/provider` | See `playbooks/requester.md §Post-success` / `playbooks/provider.md §Post-success` |
 | `agent create --role evaluator` | See `playbooks/evaluator.md §Post-success` |
@@ -206,8 +210,8 @@ After rendering the result card, append exactly **one** declarative suggestion l
 ## Resources
 - `playbooks/README.md` — shared rules + role router
 - `playbooks/requester.md` — User Agent Q&A + passive onboarding
-- `playbooks/provider.md` — ASP Phase 1 Q&A + confirmation + post-success + endpoint anti-pattern
-- `playbooks/provider-services.md` — Phase 2: per-service Q&A loop (name/description/type/fee/endpoint)
+- `playbooks/provider.md` — ASP batch-first collection (overview + identity fields) + confirmation + post-success + endpoint anti-pattern
+- `playbooks/provider-services.md` — per-service field set (name/description/type/fee/endpoint), single service by default
 - `playbooks/evaluator.md` — Evaluator Q&A
 - `playbooks/consent.md` — first-time consent card (read when CLI returns non-null `consent`)
 - `modules/feedback.md` — feedback submission flow (read before any feedback-submit intent)
@@ -216,7 +220,7 @@ After rendering the result card, append exactly **one** declarative suggestion l
 - `modules/pre-listing-qa.md` — pre-listing QA for providers
 - `core/cli-create.md` — §1: agent create full params / return schema / agentId parsing algorithm / consent flow
 - `core/cli-reference.md` — §2–§6: update / get / activate / deactivate / upload
-- `core/cli-search-feedback.md` — §7–§10: search / service-list / feedback-submit / feedback-list
+- `core/cli-search-feedback.md` — §7–§11: search / service-list / feedback-submit / feedback-list / submit-approval
 - `core/display-formats.md` — §1 agent list (6-col, wallet-grouped) + §4 service list + §7 error + §8 post-success (read before rendering any list result)
 - `core/display-detail.md` — §2 agent detail card + §2.5 multi-agent + §3 confirmation/diff card (read before rendering any detail or confirmation)
 - `core/display-lists.md` — §5 feedback list (prose) + §6 search results (read before rendering feedback-list or search results)
