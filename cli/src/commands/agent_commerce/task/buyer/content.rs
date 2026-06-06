@@ -35,8 +35,9 @@ pub fn job_created_public_user_notify() -> &'static str {
 }
 
 /// `Event::JobCreated` Step 0 — user notification (with designated provider).
+/// Used both for first-time creation and re-entry (recommend_pick / no_asp_found designate).
 pub fn job_created_designated_user_notify() -> &'static str {
-    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. Connecting to the designated ASP (<provider_agentId>)."
+    "[Connecting ASP]【<title>】(<short_jobId>) — connecting to the designated ASP (<provider_agentId>)."
 }
 
 fn designated_asp_abc_prompt(short_id: &str, dp_id: &str, job_id: &str, reason: &str) -> String {
