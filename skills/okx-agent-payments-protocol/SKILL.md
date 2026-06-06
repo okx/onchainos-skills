@@ -4,7 +4,7 @@ description: "⚠️ READ FIRST — ZERO-TEXT-ON-TRIGGER + NEVER-SKIP-USER-GATES
 license: MIT
 metadata:
   author: okx
-  version: "3.4.0-beta"
+  version: "3.4.3-beta"
   homepage: "https://web3.okx.com"
 ---
 

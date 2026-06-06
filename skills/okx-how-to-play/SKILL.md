@@ -4,7 +4,7 @@ description: "Onchain OS onboarding entry router. Triggers: 'what is onchainos',
 license: MIT
 metadata:
   author: okx
-  version: "3.4.0-beta"
+  version: "3.4.3-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -60,7 +60,7 @@ onchainos wallet status
 # Welcome Banner
 
 <MUST>
-Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 4 picks (Polymarket allowed); Variant B = 3 picks (Polymarket geoblocked). Numbered picks are interpreted strictly against the currently-rendered menu (digit-routing contract per spec §2.2). Never fabricate addresses or balance. If `wallet balance` fails despite `loggedIn: true` (stale session — refresh token expired), prompt the user to log in again per welcome.md §2.2 instead of rendering a partial banner.
+Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 4 picks (Polymarket allowed); Variant B = 3 picks (Polymarket geoblocked). Numbered picks are interpreted strictly against the currently-rendered menu (digit-routing contract per welcome.md §4). Never fabricate addresses or balance. If `wallet balance` fails despite `loggedIn: true` (stale session — refresh token expired), prompt the user to log in again per welcome.md §2.2 instead of rendering a partial banner.
 </MUST>
 
 ---
