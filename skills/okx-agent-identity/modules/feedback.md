@@ -92,7 +92,7 @@ Walk this ladder in order:
 
 > ⛔ `feedback-submit` is an on-chain write — the confirmation card is **mandatory** per `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)`. Auto-execute preferences, prior in-conversation confirmations of other writes, and "the user obviously wants this" do NOT bypass the gate. Render the card.
 
-Render a 2-column table (not a bash blob), in the user's language. Follow `core/display-formats.md` §Create/Update Diff style. ⛔ Do NOT mix languages within a single rendering (no bilingual field headers, no dual role labels) — see `core/display-detail.md §3 Create variant` and `core/ux-lexicon.md §Role`.
+Render a 2-column table (not a bash blob), in the user's language. Follow `core/display-detail.md §3` style. ⛔ Do NOT mix languages within a single rendering (no bilingual field headers, no dual role labels) — see `core/display-detail.md §3 Create variant` and `core/ux-lexicon.md §Role`.
 
 | Field | Value |
 |---|---|
@@ -135,7 +135,7 @@ Render the detail outcome and offer exactly **one** next-step suggestion — not
 
 ⛔ **No CLI literal / no `--sort-by` flag in the user-visible text** (`SKILL.md §UX Output Red Lines Red line 2`). When the user picks a sort direction in natural language ("latest" / "highest rating" / etc.), the AI maps it via `core/cli-search-feedback.md §10` natural-language → `--sort-by` table internally and runs `agent feedback-list` itself — the `--sort-by` / `time_desc` / `score_desc` flag values never appear in the chat. Never echo the raw 0–100 score in the post-success line — say "rating / reviews".
 
-Do NOT chase with `agent feedback-list` automatically. See .
+Do NOT chase with `agent feedback-list` automatically. See `_shared/no-polling.md`.
 
 ---
 

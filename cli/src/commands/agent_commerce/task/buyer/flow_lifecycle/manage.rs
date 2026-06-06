@@ -3,7 +3,6 @@
 // --- User-action: create task ------------------------------------------
 
 pub(crate) fn create_task() -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     "\
 🔒 **Pre-flight check**: have you read `skills/okx-agent-task/SKILL.md` and `skills/okx-agent-task/buyer.md`?\n\
 If not → **stop executing this playbook immediately**; first load SKILL.md per the CLAUDE.md routing rules → confirm role is buyer → read buyer.md → then come back here.\n\
@@ -159,21 +158,20 @@ If the user's message did NOT include any files, skip this step entirely.
 
 ================================================
 
-⚠️ **Balance warning relay**: if the CLI output contains a `⚠️ Insufficient ... balance` warning line, \
-you **MUST** append it to the `xmtp_dispatch_user` content below.\n\
-🌐 Canonical template — localize per [Localization] rules before sending.\n\n\
-After success, call `xmtp_dispatch_user` to notify the user:\n\
+After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you are already in the user session):\n\
 ".to_string()
     + &format!("\
-- No --provider → content: \"{create_public}\"\n\
-- With --provider → content: \"{create_designated}\"\n\
-{l10n_short}\n\n\
+- No --provider → \"{create_public}\"\n\
+- With --provider → \"{create_designated}\"\n\
+⚠️ If the CLI output contains a `⚠️ Insufficient ... balance` warning line, append it to the message above.\n\
+🌐 Localize to the user's language.\n\n\
 ===============================================================\n\
-🛑🛑🛑 STOP -- after create-task + task-attach (if any) you **MUST end this turn immediately**\n\
+🛑🛑🛑 STOP -- after create-task + task-attach (if any) + watch (if prompted), you **MUST end this turn**\n\
 ===============================================================\n\
+✅ **Exception: `[Watch]` hint** -- if the CLI output contains `[Watch] Start monitoring task progress:` followed by an `okx-a2a user watch ...` command, you **MUST** execute that exact command before ending the turn. This starts the event listener that drives the task forward on CLI-mode platforms.\n\
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.\n\
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.\n\
-❌ **Do not call any onchainos agent commands** (except `task-attach` in Step 6.5 above) -- this turn ends here; all further actions are driven by on-chain events.\n\
+❌ **Do not call any other onchainos agent commands** (except `task-attach` in Step 6.5 and `okx-a2a user watch` above) -- all further actions are driven by on-chain events.\n\
 ❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.\n\
 ===============================================================\n\n\
 ================================================\n\
@@ -216,9 +214,9 @@ onchainos agent draft create \\\\\n\
 ```bash\n\
 onchainos agent task-attach --file \"<local file path>\" <jobId>\n\
 ```\n\n\
-After success, call `xmtp_dispatch_user` to notify the user:\n\
+After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you are already in the user session):\n\
 - content: \"{draft_saved}\"\n\
-{l10n_short}\n\n\
+🌐 Localize to the user's language.\n\n\
 → **End this turn.**\n\
 ===============================================================\n",
         create_public = super::super::content::create_task_public_user_notify(),
@@ -230,8 +228,6 @@ After success, call `xmtp_dispatch_user` to notify the user:\n\
 // --- User-action: publish draft ----------------------------------------
 
 pub(crate) fn draft_publish(job_id: &str) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
-
     format!("\
 [Current Operation] Publish draft (draft_publish)
 [Role] User (User Agent)
@@ -293,21 +289,19 @@ This command validates all required fields, checks balance (blocking), signs the
 Step 4 -- Notify user
 ================================================
 
-⚠️ **Balance warning relay**: if the CLI output contains a `⚠️ Insufficient ... balance` warning line, \
-you **MUST** append it to the `xmtp_dispatch_user` content below.
-🌐 Canonical template — localize per [Localization] rules before sending.
-
-After success, call `xmtp_dispatch_user` to notify the user:
-- No designated provider → content: \"{publish_public}\"
-- With designated provider → content: \"{publish_designated}\"
-{l10n_short}
+After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you are already in the user session):
+- No designated provider → \"{publish_public}\"
+- With designated provider → \"{publish_designated}\"
+⚠️ If the CLI output contains a `⚠️ Insufficient ... balance` warning line, append it to the message above.
+🌐 Localize to the user's language.
 
 ===============================================================
-🛑🛑🛑 STOP -- after draft publish you **MUST end this turn immediately**
+🛑🛑🛑 STOP -- after draft publish + watch (if prompted), you **MUST end this turn**
 ===============================================================
+✅ **Exception: `[Watch]` hint** -- if the CLI output contains `[Watch] Start monitoring task progress:` followed by an `okx-a2a user watch ...` command, you **MUST** execute that exact command before ending the turn. This starts the event listener that drives the task forward on CLI-mode platforms.
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- draft publish only submits the transaction; it is not yet confirmed on-chain.
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification.
-❌ **Do not call any onchainos agent commands** -- this turn ends here; all further actions are driven by on-chain events.
+❌ **Do not call any other onchainos agent commands** (except `okx-a2a user watch` above) -- all further actions are driven by on-chain events.
 ===============================================================\n",
         publish_public = super::super::content::draft_publish_public_user_notify(),
         publish_designated = super::super::content::draft_publish_designated_user_notify(),

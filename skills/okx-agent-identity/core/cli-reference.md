@@ -36,10 +36,10 @@ Update fields on an existing agent.
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
 | `--agent-id` | ✓ | integer | The agent to edit. |
-| `--name` | at least one (skill rule) | string | See note above — CLI does not enforce. |
-| `--description` | at least one (skill rule) | string | See note above — CLI does not enforce. |
-| `--picture` | at least one (skill rule) | URL string | See note above — CLI does not enforce. |
-| `--service` | at least one (skill rule) | JSON array string | Full replacement — supply the complete service list, not a diff. See note above — CLI does not enforce. |
+| `--name` | at least one (skill rule) | string | — |
+| `--description` | at least one (skill rule) | string | — |
+| `--picture` | at least one (skill rule) | URL string | — |
+| `--service` | at least one (skill rule) | JSON array string | Full replacement — supply the complete service list, not a diff. |
 
 **Example — change description only:**
 ```bash
@@ -64,7 +64,7 @@ Two modes:
 - **Default (no `--agent-ids`)** — list the caller's **own** agents (paged). The backend filters by the caller's identity via the JWT in this mode.
 - **With `--agent-ids`** — fetch the specified agent(s) by id. **Open lookup**: the ids may belong to the caller or to anyone else; the backend does not require ownership for id-based queries.
 
-For routing between `get` and `search` see `SKILL.md` §"Disambiguation: search vs get".
+For routing between `get` and `search` see `SKILL.md` §Intent → Sub-flow.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
@@ -144,14 +144,39 @@ onchainos agent activate --agent-id 42
 
 | Field | Type | Description |
 |---|---|---|
-| `success` | boolean | `true` = listed successfully; `false` = listing failed |
+| `success` | boolean | `true` = listed successfully; `false` = listing not effective, check `approvalStatus` |
+| `approvalStatus` | integer \| null | Review status: `1` = not submitted / `2` = under review / `5` = rejected; `null` when `success=true` |
+| `rejectReason` | string \| null | Rejection reason; non-null only when `approvalStatus=5` |
 
-**Skill-side handling:**
+**Five possible outcomes:**
+
+```json
+// Outcome A — Listed immediately
+{ "success": true, "approvalStatus": null, "rejectReason": null }
+
+// Outcome B — Review required, not yet submitted
+// → Skill MUST call onchainos agent submit-approval --agent-id <id>
+{ "success": false, "approvalStatus": 1, "rejectReason": null }
+
+// Outcome C — Already under review
+{ "success": false, "approvalStatus": 2, "rejectReason": null }
+
+// Outcome D — approvalStatus 5 (treated the same as Outcome B: resubmit, no rejection message)
+// → Skill MUST call onchainos agent submit-approval --agent-id <id>; do NOT surface rejectReason
+{ "success": false, "approvalStatus": 5, "rejectReason": "Content does not meet listing guidelines" }
+
+// Outcome E — Agent blacklisted (top-level error, outside data object)
+{ "code": "81602", "msg": "Agent is blocked", "data": null }
+```
+
+**Skill-side handling (reads `success` + `approvalStatus` + top-level `code`, NOT just HTTP status):**
 
 | Condition | Skill action |
 |---|---|
 | `success: true` | ✅ Published — render success line + proceed to `SKILL.md §Operation Flow Step 5` → `§Step 6` |
-| `success: false` | Render error card per `troubleshooting.md §2` and **stop** |
+| `success: false`, `approvalStatus: 1` **or** `5` | Same handling for both: run `modules/pre-listing-qa.md`; if QA passes → call `onchainos agent submit-approval --agent-id <id>` (`cli-search-feedback.md §11`); if QA fails → render QA report and stop. ⛔ For `5`, do NOT render a rejection card and do NOT surface `rejectReason` — proceed silently to submit-approval. |
+| `success: false`, `approvalStatus: 2` | Under review — render review-pending message per `troubleshooting.md §2` and **stop** (no Step 5/6) |
+| Top-level `code: "81602"` | Agent blacklisted — render blacklist error per `troubleshooting.md §2` and **stop** |
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 

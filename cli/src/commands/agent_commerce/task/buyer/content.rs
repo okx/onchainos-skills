@@ -35,8 +35,9 @@ pub fn job_created_public_user_notify() -> &'static str {
 }
 
 /// `Event::JobCreated` Step 0 — user notification (with designated provider).
+/// Used both for first-time creation and re-entry (recommend_pick / no_asp_found designate).
 pub fn job_created_designated_user_notify() -> &'static str {
-    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. Connecting to the designated ASP (<provider_agentId>)."
+    "[Connecting ASP]【<title>】(<short_jobId>) — connecting to the designated ASP (<provider_agentId>)."
 }
 
 fn designated_asp_abc_prompt(short_id: &str, dp_id: &str, job_id: &str, reason: &str) -> String {
@@ -111,8 +112,7 @@ pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
         "[Job Completed] {title} (`{job_id}`) — approved by the User Agent; funds released to the ASP.\n\
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: escrow\n\
-         - txHash: <txHash>\n\
-         This job is complete."
+         - txHash: <txHash>"
     )
 }
 
@@ -123,8 +123,7 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: x402\n\
          - Deliverable saved to: <deliverableSavedPath from task-402-pay output; if not in context, omit this line>\n\
-         - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>\n\
-         This job is complete."
+         - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>"
     )
 }
 
@@ -169,13 +168,6 @@ pub fn rating_submitted_user_notify(job_id: &str) -> String {
         "[📝 Rating Submitted] Job <title> (`{job_id}`) — rated.\n\
          Score: <score> / 5.00\n\
          💬 Comment: <description>"
-    )
-}
-
-pub fn rating_failed_user_notify(job_id: &str) -> String {
-    format!(
-        "[⚠️ Rating Skipped] Job <title> (`{job_id}`) — auto-rating could not be submitted: <error reason>.\n\
-         This does not affect the task completion or payment."
     )
 }
 
@@ -307,7 +299,7 @@ pub fn review_expired_user_notify(job_id: &str) -> String {
 pub fn job_auto_completed_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "[Job Auto-Completed] {title} (`{job_id}`) — the review window expired and the ASP has claimed the funds.\n\
-         Status: completed. This job is complete."
+         Status: completed."
     )
 }
 
