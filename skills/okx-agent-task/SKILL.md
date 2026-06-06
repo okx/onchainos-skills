@@ -264,7 +264,7 @@ The 4 XMTP tools are strictly partitioned:
 |---|---|---|
 | **System event** | `source:"system"` | 🛑 Immediately `next-action` → execute script. Push to user only if script says so. |
 | **User-decision relay** | `event:"user_decision_<src>"` | 🛑 Same — `next-action --data "<message.data>"`. ❌ Do NOT call `resolve`/`pick`/`cancel` (user-session-only). |
-| **Peer message** | a2a-agent-chat | Pass Communication Boundary Layer 0/1 → route per role file's Inbound Message Routing. Use the event specified by the role file, NOT status from `common context`. ⚠️ Counter-example: User Agent received ASP's reply, used `common context` status (`created`) → `next-action --event job_created` → got init script → re-sent first inquiry. Correct: buyer.md §3 #6 → `negotiate_reply`. |
+| **Peer message** | a2a-agent-chat | Pass Communication Boundary Layer 0/1 → route per role file's Inbound Message Routing. Use the event specified by the role file, NOT status from `common context`. ⚠️ Counter-example: User Agent received ASP's reply, used `common context` status (`created`) → `next-action --event job_created` → got init script → re-sent first inquiry. Correct: buyer.md §3.5 #6 → `negotiate_reply`. |
 
 **🛑 Push is opt-in** (only when script says so):
 - Do NOT push just because "user should know" or "CLI finished".

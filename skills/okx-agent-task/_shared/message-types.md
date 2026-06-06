@@ -328,7 +328,7 @@ See SKILL.md `Session Communication Contract §1` "❌ Envelope rejection list" 
 
 ### 6.1 `[ATTACHMENT_ADDED]` — user session → sub session (path 3)
 
-Sent via `xmtp_dispatch_session` when the user adds an attachment to a task mid-flow. The sub session receives it and processes per `buyer.md` §3 routing rule #5.
+Sent via `xmtp_dispatch_session` when the user adds an attachment to a task mid-flow. The sub session receives it and processes per `buyer.md` §3.5 routing rule #5.
 
 ```
 [ATTACHMENT_ADDED] /path/to/file.pdf
