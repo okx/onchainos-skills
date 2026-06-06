@@ -1310,7 +1310,25 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
         Ok(r) => r,
         Err(_) => return (None, None),
     };
-    let prefetched = Some(PreFetchedTaskContext::from_api_response(&resp));
+    let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
+
+    // For job_submitted: check local deliverable manifest to avoid an extra CLI round-trip.
+    if job_status_or_event == "job_submitted" {
+        if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("buyer", job_id) {
+            if let Some(entry) = manifest.entries.first() {
+                let dir = task::common::deliverables::deliverables_dir("buyer", job_id)
+                    .map(|d| d.join(&entry.filename).display().to_string())
+                    .unwrap_or_default();
+                ctx.deliverable = Some(task::common::PreFetchedDeliverable {
+                    path: dir,
+                    deliverable_type: entry.deliverable_type.clone(),
+                    original_name: entry.original_name.clone(),
+                });
+            }
+        }
+    }
+
+    let prefetched = Some(ctx);
 
     // Pre-fetch-only events: return data without freshness validation.
     if is_prefetch_only {

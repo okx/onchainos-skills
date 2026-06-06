@@ -119,6 +119,13 @@ struct TaskDetail {
 /// `generate_next_action` so the playbook can inline key fields and skip the
 /// redundant "Step 1: run common context" CLI round-trip.
 #[derive(Debug, Clone)]
+pub struct PreFetchedDeliverable {
+    pub path: String,
+    pub deliverable_type: String,
+    pub original_name: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct PreFetchedTaskContext {
     pub title: String,
     pub description: String,
@@ -130,6 +137,7 @@ pub struct PreFetchedTaskContext {
     pub buyer_agent_id: Option<String>,
     pub visibility: Option<i64>,
     pub status: Option<i64>,
+    pub deliverable: Option<PreFetchedDeliverable>,
 }
 
 impl PreFetchedTaskContext {
@@ -146,6 +154,7 @@ impl PreFetchedTaskContext {
             buyer_agent_id: v["buyerAgentId"].as_str().map(String::from),
             visibility: v["visibility"].as_i64(),
             status: v["status"].as_i64(),
+            deliverable: None,
         }
     }
 
@@ -165,12 +174,20 @@ impl PreFetchedTaskContext {
         } else {
             format!("\x20\x20description: {}\n", self.description)
         };
+        let deliv_line = match &self.deliverable {
+            Some(d) => format!(
+                "\x20\x20deliverable: saved | path: {} | type: {} | name: {}\n",
+                d.path, d.deliverable_type, d.original_name
+            ),
+            None => String::new(),
+        };
         format!(
             "[Pre-fetched task context] (from status-check API — no need to call `common context` again unless a field below is missing)\n\
              \x20\x20title: {title}\n\
              {desc_line}\
              \x20\x20tokenSymbol: {sym} | tokenAmount: {amt} | paymentMode: {pm}\n\
-             \x20\x20maxBudget (paymentMostTokenAmount): {max_b} | providerAgentId: {prov} | buyerAgentId: {buyer}\n",
+             \x20\x20maxBudget (paymentMostTokenAmount): {max_b} | providerAgentId: {prov} | buyerAgentId: {buyer}\n\
+             {deliv_line}",
             title = self.title,
             sym = self.token_symbol,
             amt = self.token_amount,
