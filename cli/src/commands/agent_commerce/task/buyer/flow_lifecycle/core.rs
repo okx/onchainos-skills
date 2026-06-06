@@ -84,7 +84,9 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      onchainos agent complete {job_id}\n\
      ```\n\
      (Internally: POST /priapi/v1/aieco/task/{job_id}/direct/complete → get calldata → sign uopHash → broadcast on-chain.)\n\n\
-     ⚠️ **Do not notify the user** -- the deliverable was already sent after task-402-pay; the final summary is owned by the job_completed event.\n\n\
+     🛑 **broadcast ≠ on-chain confirmed**: `complete` CLI success = transaction broadcast submitted, not on-chain confirmed.\n\
+     ❌ Do NOT call `xmtp_dispatch_user` here — the final completion summary is owned by the `job_completed` event (fired after on-chain confirmation).\n\
+     ❌ Do NOT say \"task complete\" / \"funds settled\" / \"任务完成\" — factually wrong at this point.\n\n\
      ⚠️ **complete failure fallback**: if `onchainos agent complete` returns an error (CLI output contains `\"ok\": false` or stderr error),\n\
      call xmtp_dispatch_user to notify the user and provide a retry command:\n\
      \x20\x20content ({l10n_short}): {complete_failed}\n\
@@ -426,32 +428,31 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
 
 pub(crate) fn approve_review(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
-    let _agent_id = ctx.agent_id;
 
     format!(
-    "[Current Action] Approve review -- run complete to release funds\n\
+    "[Current Action] Approve review — broadcast the complete transaction\n\
      [Role] User (User Agent)\n\n\
      🛑🛑🛑 You are the **sub session** (executor). Your job is to run the on-chain `complete` command below — NOT to relay, forward, or dispatch the decision.\n\
      ❌ Do NOT call `xmtp_dispatch_session` — that is the user-session agent's tool, not yours.\n\
      ❌ Do NOT skip Step 1 (`onchainos agent complete`) — skipping it = funds stay locked forever.\n\n\
      Routed in via the buyer-side keyword router (the user approved the deliverable in their reply). The pending-decisions-v2 entry was already cleared by `resolve` in the user-session; no manual remove needed here.\n\n\
-     **Step 1 -- Dual-signature approval, release funds:**\n\
+     **Step 1 -- Broadcast the dual-signature approval:**\n\
      ```bash\n\
      onchainos agent complete {job_id}\n\
      ```\n\
-     Internal flow:\n\
-     \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-complete (EIP-712 standard, not uop) → get digest\n\
-     \x20\x202. ED25519 sign digest → signature\n\
-     \x20\x203. POST /priapi/v1/aieco/task/{job_id}/complete (body: {{\"signature\": \"<sig>\"}}) → get uopData\n\
-     \x20\x204. Sign uopHash → broadcast on-chain\n\
-     \x20\x20→ Task status becomes Complete; funds released from contract to the ASP.\n\n\
-     🛑 **CLI success of complete != task ended** -- `complete` only submits the on-chain transaction; **the user has not been notified that the task is complete**.\n\
-     Do not xmtp_dispatch_user / xmtp_prompt_user here -- after on-chain confirmation you will receive the `job_completed` system event (`source:\"system\"`),\n\
-     and that event's playbook is responsible for notifying the user via xmtp_dispatch_user. Notifying here = duplicate card.\n\
-     Remember the txHash from the CLI output; the `job_completed` playbook will use it.\n\n\
-     After Step 1 → **end this turn**.\n\
-     ⚠️ **Your work is not finished** -- when the `job_completed` system event (`source:\"system\"`) arrives, you MUST handle it per SKILL.md Activation rules,\n\
-     otherwise the user will never receive a \"task complete\" notification and will not know funds have been released.\n"
+     If this command fails → push a `cli_failed` decision to the user (see Rule 2), end turn.\n\n\
+     🛑🛑🛑 **CRITICAL — broadcast ≠ on-chain confirmed:**\n\
+     `complete` CLI success = transaction **broadcast** submitted to the network.\n\
+     It does NOT mean the transaction is confirmed on-chain.\n\
+     ❌ Do NOT call `xmtp_dispatch_user` / `xmtp_prompt_user` here — the user has NOT received funds confirmation yet.\n\
+     ❌ Do NOT say \"task complete\" / \"funds released\" / \"任务完成\" in any output — that is factually wrong at this point.\n\
+     ❌ Do NOT auto-rate the ASP here — rating happens after on-chain confirmation.\n\n\
+     After Step 1 succeeds → **end this turn immediately**.\n\n\
+     ⚠️⚠️⚠️ **WHAT HAPPENS NEXT (READ CAREFULLY):**\n\
+     After on-chain confirmation, a `job_completed` system event (`source:\"system\"`) will be fired.\n\
+     That event is the **on-chain confirmation** — it is the ONLY moment when \"funds released\" becomes true.\n\
+     When `job_completed` arrives, you **MUST** run `onchainos agent next-action` and follow its playbook to notify the user.\n\
+     🔴 **If you do not handle `job_completed`, the user will never know funds have been released. This is a critical failure.**\n"
     )
 }
 
@@ -482,6 +483,11 @@ pub(crate) fn reject_review(ctx: &FlowContext<'_>) -> String {
 
 // --- Terminal states ---------------------------------------------------
 
+/// Primary `job_completed` playbook — on-chain confirmation notification.
+///
+/// This event fires when the blockchain confirms the `complete` transaction.
+/// It is the ONLY place where "funds released" is factually true.
+/// `approve_review` only broadcasts; this event confirms.
 pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
     let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
@@ -563,24 +569,28 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
      **B-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     Task fully complete.\n\
-     🛑 Final check: if you did NOT call `xmtp_dispatch_user` in B-Step 1, go back and call it now. A text reply is NOT a substitute.\n") };
+     Task fully complete.\n\n") };
 
     format!(
-    "[Current Status] job_completed (task payment pipeline complete)\n\
+    "🚨🚨🚨 **NEW SYSTEM EVENT — ON-CHAIN CONFIRMATION** 🚨🚨🚨\n\
+     This is `job_completed` — the blockchain has **confirmed** the complete transaction.\n\
+     ⚠️ You may have called `onchainos agent complete` earlier — that was only the **broadcast**.\n\
+     This event is NOT a duplicate or confirmation of your previous action — it is a **new mandatory event** carrying the on-chain result.\n\
+     🔴 **The user has NOT received the completion summary yet.** If you skip this playbook, the user will never know the task is done.\n\n\
+     [Current Status] job_completed (on-chain confirmed — task settled)\n\
      [Role] User (User Agent)\n\n\
-     🛑🛑🛑 **ABSOLUTE REQUIREMENT -- on job_completed the buyer MUST call `xmtp_dispatch_user` to notify the user**.\n\
-     job_completed is a **dual-recipient event** (buyer + provider both receive it); the buyer MUST handle it.\n\
-     Do not produce a plain text reply inside the sub session (see Hard Rule 9) -- a text reply = the user does not see it = the task is complete but the user does not know.\n\
-     🔴 Real incident: a model assumed job_completed only went to the provider, skipped xmtp_dispatch_user, and the user never received a completion notification.\n\n\
-     **Step 1 -- Fetch task info and payment mode:**\n\
+     🛑 You are inside a sub/backup session. Execute the steps below verbatim, in order. \
+     Do NOT add steps, do NOT skip. Do NOT treat this as redundant.\n\n\
+     **Step 1 -- Fetch task context (if needed):**\n\
+     Extract {title_in_extract}providerAgentId, tokenAmount, tokenSymbol{pm_extract} from this sub session's context.\n\
+     If not available, run:\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     Extract: {title_in_extract}tokenAmount, tokenSymbol{pm_extract}.\n\
-     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Completed] Job `{job_id}` — completed; funds settled. This job is complete.` — the user MUST still receive a notification.\n\n\
+     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Completed] Job `{job_id}` — completed; funds settled.` — the user MUST still receive a notification.\n\n\
      {branch_header}\
      {escrow_section}\
-     {x402_section}"
+     {x402_section}\
+     🛑 Forbidden: `xmtp_dispatch_session`, `sessions_spawn`, `sessions_yield`, `xmtp_send` to provider, plain text replies.\n"
     )
 }
