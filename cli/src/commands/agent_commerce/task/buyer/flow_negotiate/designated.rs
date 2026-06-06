@@ -40,9 +40,9 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20```bash\n\
              \x20\x20{cmd_not_provider}\n\
              \x20\x20```\n\
-             \x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-             \x20\x20{not_provider}\n\
              \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
+             \x20\x20`--user-content` template (canonical English):\n\
+             \x20\x20{not_provider}\n\
              \x20\x20{follow_playbook}\n\
              \x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20{route_hint}\n\n\
@@ -55,9 +55,9 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20```bash\n\
              \x20\x20{cmd_offline}\n\
              \x20\x20```\n\
-             \x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-             \x20\x20{provider_offline}\n\
              \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
+             \x20\x20`--user-content` template (canonical English):\n\
+             \x20\x20{provider_offline}\n\
              \x20\x20{follow_playbook}\n\
              \x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20{route_hint}\n\
@@ -75,12 +75,12 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20```bash\n\
              \x20\x20\x20\x20{cmd_x402_invalid}\n\
              \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
+             \x20\x20\x20\x20{l10n_prompt}\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English):\n\
              \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The x402 endpoint of the designated ASP (agentId={dp_id}) is invalid and cannot be used. Choose next step:\n\
              \x20\x20\x20\x20A. Specify another ASP — provide the agentId\n\
              \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20\x20\x20C. Close the job\n\
-             \x20\x20\x20\x20{l10n_prompt}\n\
              \x20\x20\x20\x20{follow_playbook}\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20\x20\x20{route_hint}\n\n\
@@ -91,11 +91,11 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20```bash\n\
              \x20\x20\x20\x20{cmd_x402_price}\n\
              \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
+             \x20\x20\x20\x20{l10n_prompt}\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English):\n\
              \x20\x20\x20\x20Job `{job_id}` — the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
              \x20\x20\x20\x20A. Accept — continue with this price\n\
              \x20\x20\x20\x20B. Reject — switch to another ASP\n\
-             \x20\x20\x20\x20{l10n_prompt}\n\
              \x20\x20\x20\x20{follow_playbook_short}\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20\x20\x20{route_hint}\n\
@@ -112,12 +112,12 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20```bash\n\
              \x20\x20\x20\x20{cmd_over_budget}\n\
              \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
+             \x20\x20\x20\x20{l10n_prompt}\n\
+             \x20\x20\x20\x20`--user-content` template (canonical English):\n\
              \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The x402 fee from the designated ASP (agentId={dp_id}) is <amountHuman> <tokenSymbol>, which exceeds your max budget and cannot be used. Choose next step:\n\
              \x20\x20\x20\x20A. Specify another ASP — provide the ASP's agentId\n\
              \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20\x20\x20C. Close the job\n\
-             \x20\x20\x20\x20{l10n_prompt}\n\
              \x20\x20\x20\x20{follow_playbook}\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20\x20\x20{route_hint}\n\

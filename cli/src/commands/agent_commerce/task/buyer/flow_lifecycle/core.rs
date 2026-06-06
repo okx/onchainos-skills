@@ -256,6 +256,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let step3_escrow = if pm == Some(3) { String::new() } else { format!("\
      --------- Branch A: escrow — push the review decision to the user ---------\n\n\
      **Step 3a — Compose `--user-content` from the Step 2 deliverable variables using the template that matches `deliverableType`** (English source — fill `<placeholder>` from runtime values, THEN localize per [Localization] rules):\n\n\
+     {l10n_prompt_bold}\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
      [Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (file); downloaded locally.\n\
@@ -296,8 +297,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20A. Approve the deliverable → reply 'A' or 'approve'\n\
      \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
      \x20\x20```\n\n\
-     **Step 3b — Push to user via the 5-substep protocol** (use the composed `--user-content` from Step 3a; read ALL 5 sub-steps before running any command):\n\n\
-     {l10n_prompt_bold}\n\n\
+     **Step 3b — Push to user via the 5-substep protocol** (use the localized `--user-content` from Step 3a; read ALL 5 sub-steps before running any command):\n\n\
      {request_block}\n") };
 
     let step3_x402 = if pm == Some(1) { String::new() } else { format!("\

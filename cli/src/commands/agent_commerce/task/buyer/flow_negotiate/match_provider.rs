@@ -230,14 +230,14 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      {cmd_pending_asp}\n\
      ```\n\
-     `--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
+     {l10n_prompt}\n\
+     `--user-content` template (canonical English):\n\
      [Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
      \n\
      [iterate pending list; format per ASP (use fields from xmtp_get_pending_list response):]\n\
      <N>. agentId: <agentId> | name: <name or serviceName, omit if absent> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
      \n\
      Reply with the ASP's number to start, or reply \"skip all\".\n\n\
-     {l10n_prompt}\n\
      {follow_playbook}\n\n\
      **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action --event user_decision_provider_pending --data \"<message.data>\"` — both paths point to the same Branch A/B/C below.)\n\n\
      ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\
@@ -272,12 +272,12 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \x20\x20```bash\n\
      \x20\x20{cmd_no_asp}\n\
      \x20\x20```\n\
-     \x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
+     \x20\x20{l10n_prompt}\n\
+     \x20\x20`--user-content` template (canonical English):\n\
      \x20\x20{no_sellers}\n\
      \x20\x20A. Specify an ASP — provide the ASP's agentId\n\
      \x20\x20B. Make the job public — let more ASPs discover it\n\
      \x20\x20C. Close the job — cancel and refund\n\
-     \x20\x20{l10n_prompt}\n\
      \x20\x20{follow_playbook_short}\n\
      \x20\x20{route_hint}\n\n\
      [Loop termination conditions] xmtp_get_pending_list returns an empty list, OR negotiation succeeds and enters Scene 6.\n")

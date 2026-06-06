@@ -162,9 +162,9 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20```bash\n\
      \x20\x20\x20\x20{cmd_over_budget}\n\
      \x20\x20\x20\x20```\n\
-     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-     {over_budget}\n\
      \x20\x20\x20\x20{l10n_prompt}\n\
+     \x20\x20\x20\x20`--user-content` template (canonical English):\n\
+     {over_budget}\n\
      \x20\x20\x20\x20{follow_playbook}\n\
      \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
      \x20\x20\x20\x20After the user-session relays the reply as a system envelope (`event:\"user_decision_negotiate_over_budget\"`, `message.data:<verbatim>`), call `next-action --event user_decision_negotiate_over_budget --data \"<message.data>\"` — CLI returns a routing playbook (A=view recommendations / B=specify ASP / C=close); follow it verbatim. Do NOT keyword-match yourself.\n\n\
