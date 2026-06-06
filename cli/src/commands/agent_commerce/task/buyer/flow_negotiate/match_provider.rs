@@ -51,12 +51,6 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
         super::designated::designated_provider_d_steps(job_id, agent_id, short_id, dp_id, ctx.title_display)
     } else {
         format!("\
-             **Step 0 - idempotency check: query whether a pending decision already exists for this job:**\n\
-             ```bash\n\
-             onchainos agent pending-decisions-v2 list --format json\n\
-             ```\n\
-             If the returned `entries` array already contains an entry with job_id={job_id} and role=buyer -> **the user has already been notified; this is a duplicate event - end the turn without notifying again.**\n\
-             If not present -> continue to Step 1.\n\n\
              🛑 **Do NOT ask the user whether to fetch the recommendation list** -- proceed to Step 1 directly and automatically. The recommend query is mandatory, not optional.\n\n\
              **Step 1 - query the recommended ASP list:**\n\
              ```bash\n\
@@ -116,6 +110,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
          Ending the turn without executing = user never gets notified = task stalls permanently.\n\
          🔴 Real incident: a model called next-action, received this playbook, then said \"end turn, wait for User Agent\" without executing any step — the user was never notified and the task was permanently stuck.\n\n\
          [Your next actions (strict order)]\n\n\
+         🔧 `xmtp_dispatch_user`, `xmtp_send`, `session_status`, `xmtp_prompt_user`, `xmtp_start_conversation`, `xmtp_file_upload`, `xmtp_get_pending_list` are already in your tool list — call them **directly**. Do NOT use ToolSearch / select to look them up; do NOT read any legacy bridge SKILL file.\n\n\
          **Step 0 - notify the user session + continue execution in the current sub/backup session:**\n\
          Call xmtp_dispatch_user to tell the user the job is on-chain:\n\
          \x20\x20content: {created_notify_tpl}\n\

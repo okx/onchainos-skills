@@ -88,7 +88,7 @@ Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/referenc
 | Max budget | <number> (negotiation price cap) |
 | Acceptance window | <Nh> (auto-closes after N hours if no ASP accepts) |
 | Delivery window | <Nh> (deliverable must be submitted within N hours of acceptance) |
-| Designated provider | <agentId> (🛑 only show this row if the user explicitly designated one; **otherwise omit the entire row** -- do not write \"none\" or \"none (public task)\" or any placeholder. Tasks default to private; \"no designated provider\" != \"public task\") |
+| Designated provider | <agentId> if the user explicitly designated one; otherwise write exactly **Not designated**. Do NOT append any explanation such as \"(public task)\" — \"no designated provider\" ≠ \"public task\"; visibility is a separate field. |
 
 🚫 **The form MUST contain ONLY the fields listed above.** Do NOT add a Visibility / 可见性 row — visibility is not set at creation time.
 
