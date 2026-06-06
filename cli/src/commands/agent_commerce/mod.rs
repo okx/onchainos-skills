@@ -82,6 +82,25 @@ pub enum AgentCommand {
         #[arg(long)] current: bool,
         #[arg(long)] page: Option<usize>,
         #[arg(long = "next-page")] next_page: bool,
+        /// Enqueue the recommendation card as a `pending-decisions-v2`
+        /// `recommend_pick` decision and emit the standard "push card via
+        /// xmtp_prompt_user" playbook. Requires `--sub-key`. By default the
+        /// CLI reuses the canonical English card written to
+        /// `~/.onchainos/task/<jobId>/recommend-cards.txt`; pass
+        /// `--user-content "<localized text>"` to enqueue a sub-prepared
+        /// (e.g. translated) version instead.
+        #[arg(long = "emit-decision")] emit_decision: bool,
+        /// Full XMTP sessionKey (from `session_status`). Required with
+        /// `--emit-decision`.
+        #[arg(long = "sub-key")] sub_key: Option<String>,
+        /// Task title for the decision label (optional). Defaults to
+        /// `<title>` placeholder.
+        #[arg(long = "job-title")] job_title: Option<String>,
+        /// Pre-localized card body to enqueue instead of the auto-written
+        /// canonical English card file. Use when the sub session needs to
+        /// translate fields the user-session runtime cannot localize at
+        /// render time.
+        #[arg(long = "user-content")] user_content: Option<String>,
     },
 
     /// Mark a provider as failed negotiation (excluded from future recommend lists)
@@ -749,8 +768,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }, ctx,
         ).await,
 
-        AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page } =>
-            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page }, ctx).await,
+        AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } =>
+            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content }, ctx).await,
 
         AgentCommand::MarkFailed { job_id, provider_agent_id } =>
             task::buyer::run_task(T::MarkFailed { job_id, provider_agent_id }, ctx).await,
