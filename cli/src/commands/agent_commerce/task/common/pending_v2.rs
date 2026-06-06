@@ -491,11 +491,9 @@ fn handle_request(
     }
 
     // Non-CLI mode: emit the MCP `xmtp_prompt_user` playbook via playbook_push_prompt_user.
-    // Unlike cli_mode, this branch DOES persist the entry to the queue file (always as
-    // Status::Queued — no single-active invariant; the multi-card disambig in the playbook
-    // handles user routing). Dedupe by sub_key: an entry with the same sub_key is replaced
-    // in place (created_at preserved). At resolve time, `handle_resolve_prompt` looks up by
-    // sub_key and removes the entry.
+    // Persist the entry to the queue file as Status::Queued, keyed by sub_key (same sub_key
+    // overwrites in place, preserving created_at). At resolve time, `handle_resolve_prompt`
+    // looks up by sub_key and removes the entry.
     {
         let now = Utc::now();
         let new_entry_template = PendingEntry {
@@ -1397,7 +1395,7 @@ fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
          If you find any, render the warning below to the user as your assistant response (in user's language), e.g.:\n\
          \x20\x20`⚠️ You have multiple decisions pending — please prefix your reply with the jobId short hash, e.g. \\`0x7091: approve\\`, so it routes correctly.`\n\
          If no other blocks → skip this step.\n\n\
-         Step 3 — **END THE TURN NOW**, wait for user reply. Do NOT call any tool.\n\n\
+         Step 3 — **END THE TURN NOW**, wait for user reply.\n\n\
          🛑 **The block below runs ONLY in a future turn**, AFTER the user has actually replied. Do NOT run anything in the current turn.\n\
          On the user's next reply, re-scan your context for [USER_DECISION_REQUEST] blocks (the count may have changed since Step 2), then walk this decision tree:\n\
          \x20\x20· defer keyword ({defer}) → END TURN, do NOT run anything.\n\
@@ -1616,7 +1614,7 @@ fn playbook_render(entry: &PendingEntry) -> String {
          \"\"\"\n{}\"\"\"\n\n\
          **LLM context** (this is for YOUR own routing reasoning — **do NOT show / paraphrase / leak this block to the user**; it is the same instruction the sub would have embedded in `xmtp_prompt_user`'s `llmContent` if this card had been freshly pushed):\n\
          \"\"\"\n{}\n\"\"\"\n\n\
-         On the user's next reply, follow the LLM context above (decision tree + pre-filled `resolve-prompt` command). Do NOT fall back to the legacy `resolve --user-reply` form.\n",
+         On the user's next reply, follow the LLM context above (decision tree + pre-filled `resolve-prompt` command).\n",
         entry.user_content,
         llm_content,
     )

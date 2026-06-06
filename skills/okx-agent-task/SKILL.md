@@ -252,7 +252,7 @@ The 4 XMTP tools are strictly partitioned:
 |---|---|---|---|
 | **Idle** | Session established / round wrapped up | Wait for user input or sub dispatch | — |
 | **Rendering** | `xmtp_dispatch_user` or `xmtp_prompt_user` received | Render `content`/`userContent` verbatim (translate to user's language). After dispatch_user → Idle; after prompt_user → Waiting. | ❌ Paraphrase/summarize the body ❌ Add greetings/closers ❌ `xmtp_dispatch_session` (no acks) ❌ `onchainos agent` CLIs ❌ Re-activating the skill |
-| **Waiting for user reply** | `xmtp_prompt_user` with `[USER_DECISION_REQUEST]` | Render → end turn → on user input: `resolve --user-reply "<verbatim>"` exactly once → follow relay playbook → Idle. 🛑 `resolve` is the ONLY action regardless of what user types — even `cancel/close/关闭` are options on the active card, not queue-management commands. | ❌ Fabricate decision + resolve in same turn ❌ `pending-decisions-v2 cancel` ❌ Skip to task CLIs ❌ Fabricate system envelopes ❌ `resolve` more than once |
+| **Waiting for user reply** | `xmtp_prompt_user` with `[USER_DECISION_REQUEST]` (marker on its own line; `[sub_key:][job:][role:]` on the next) | Render `userContent` → end turn → on user input: **scope rule** — the LATEST `[USER_DECISION_REQUEST]` (single block above the `(... stale)` line) is the ONLY active card; blocks above the stale line are already consumed / expired, do NOT scan them and do NOT ask the user to pick among them. Run the **pre-filled `resolve-prompt` command template embedded in the block's llmContent verbatim** (`onchainos agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --sub-key ... --job-id ... --role ... --agent-id ... --source-event ...`). 🛑 This is the ONLY action — even `cancel/close/关闭` are options on the active card, not queue-management commands. | ❌ Fabricate decision + run resolve-prompt in same turn ❌ Call `pending-decisions-v2 list / pick / cancel` to disambiguate before resolving ❌ Skip to task CLIs ❌ Fabricate system envelopes ❌ Run resolve-prompt more than once |
 
 **Cannot find `[sub_key: ...]`**: respond "sub session identifier is missing; please re-initiate the task flow". Do not guess.
 
@@ -295,32 +295,36 @@ onchainos agent pending-decisions-v2 request \
 ```
 CLI returns a playbook (`playbook_push` / `playbook_wait` / `playbook_wait_with_reprompt`) — follow verbatim. ⚠️ Do NOT render any part of `llmContent` to the user; render **ONLY** the `userContent` block.
 
-**Path 3: user → sub relay** (`pending-decisions-v2 resolve`):
+**Path 3: user → sub relay** (`pending-decisions-v2 resolve-prompt`):
 ```bash
-onchainos agent pending-decisions-v2 resolve --user-reply "<verbatim>"
+onchainos agent pending-decisions-v2 resolve-prompt \
+  --user-reply "<verbatim>" \
+  --sub-key "<from [USER_DECISION_REQUEST] block's [sub_key: ...]>" \
+  --job-id "<from [job: ...]>" --role "<from [role: ...]>" \
+  --agent-id "<from block's command template>" --source-event "<from block's command template>"
 ```
-CLI builds relay envelope and returns playbook (`playbook_relay_only` / `playbook_relay_and_render` / `playbook_relay_and_list`) — follow verbatim. Never hand-craft the relay content. ⚠️ Omitting `--user-reply` is wrong — the user's verbatim text is the relay payload; without it the sub receives an empty decision.
+The command template is **pre-filled** in the LLM context of every `[USER_DECISION_REQUEST]` block — copy that template verbatim (only fill in `--user-reply`). CLI builds the relay envelope (deletes the queue entry by sub-key) and returns `playbook_relay_only_prompt` — follow verbatim. Never hand-craft the relay content.
 
 **Paths 5-9** (long-tail tools): see [`_shared/xmtp-tools.md`](./_shared/xmtp-tools.md).
 
 **❌ Forbidden**: outputting xmtp content as assistant TEXT (peer won't receive it); paraphrasing after tool call (user sees duplicate); fabricating task status before relay completes; asking the user for confirmation before calling `xmtp_send` (unless the task explicitly requires human adjudication such as a dispute vote).
 
-> 🚫 Counter-example: sub used `pending-decisions-v2 request` to let user choose dispute/refund; user replied "my work is fine"; user-session agent thought "I should execute on the user's behalf" and ran `onchainos agent dispute raise 123 ...` — **wrong**. `resolve --user-reply` → relay to sub → sub calls `next-action`. User-session never runs task CLIs directly.
+> 🚫 Counter-example: sub used `pending-decisions-v2 request` to let user choose dispute/refund; user replied "my work is fine"; user-session agent thought "I should execute on the user's behalf" and ran `onchainos agent dispute raise 123 ...` — **wrong**. `resolve-prompt` (with the pre-filled `--sub-key` / `--job-id` / `--role` / `--agent-id` / `--source-event` from the block) → relay to sub → sub calls `next-action`. User-session never runs task CLIs directly.
 
 ### 5. `pending-decisions-v2` queue
 
-**Unique key** = `sub_key`. Same key → overwrite; different key → queue alongside. At most ONE `active` entry; others `queued` (FIFO by `created_at`).
+**Unique key** = `sub_key`. Same key → overwrite (preserve `created_at`, refresh `updated_at`); different key → adds a new entry. Routing on user reply uses the pre-filled `resolve-prompt` command in each block's llmContent (the queue is a soft snapshot for `list` / `pick` / `cancel`).
 
 **The four commands**:
 
 | Command | Caller | When |
 |---|---|---|
 | `request --sub-key ... --job-id ... --role ... --agent-id ... --user-content "..." --list-label "..."` | Sub | Script says "push decision to user". Follow returned playbook. |
-| `resolve --user-reply "<verbatim>"` | User-session | After user replies to `[USER_DECISION_REQUEST]`. Follow returned playbook. |
-| `pick --index <N>` | User-session | User selects from multi-decision list. Behavior: target=active → re-render only; target=queued + no active → promote + render; target=queued + active exists → swap (demote current active to queued, promote picked). |
-| `cancel --sub-key <key> \| --index <N>` | User-session | **ONLY** when user is NOT replying to active card AND explicitly says "ignore/delete the decision". 🛑 In "Waiting" state, always use `resolve` — even if user types `cancel/关闭/取消`. (🔴 I-9: `cancel` used instead of `resolve` → decision lost → task stuck.) |
+| `resolve-prompt --user-reply "<verbatim>" --sub-key ... --job-id ... --role ... --agent-id ... --source-event ...` | User-session | After user replies to `[USER_DECISION_REQUEST]`. Copy the command template from the block's llmContent verbatim — only fill in `--user-reply`. Follow returned playbook. |
+| `pick --index <N>` | User-session | Render-only: re-display the selected card's content (no status mutation). Use when the user wants to revisit a queued card. |
+| `cancel --sub-key <key> \| --index <N>` | User-session | **ONLY** when user is NOT replying to active card AND explicitly says "ignore/delete the decision". 🛑 In "Waiting" state, always use `resolve-prompt` — even if user types `cancel/关闭/取消`. (🔴 I-9: `cancel` used instead of resolve → decision lost → task stuck.) |
 
-**Defer keyword**: `等会儿/等等/等一下/稍后/晚点/先放着/先不管/回头再看/skip/later/wait/hold on/not now/defer` → do NOT call `resolve`; end turn.
+**Defer keyword**: `等会儿/等等/等一下/稍后/晚点/先放着/先不管/回头再看/skip/later/wait/hold on/not now/defer` → do NOT call `resolve-prompt`; end turn.
 
 **Caller-side key patterns**: sub re-asks on unrecognized reply by calling `request` again with same `--sub-key` (CLI overwrites in place). Anti-buried-card reprompt: when new `request` lands as `queued`, CLI's `playbook_wait_with_reprompt` tells new sub to re-push the **active** card (canonical English wrapper → sub LLM translates to user's language).
 
