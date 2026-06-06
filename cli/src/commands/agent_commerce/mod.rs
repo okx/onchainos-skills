@@ -1036,40 +1036,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
 
-            // ── job_created API fallback: when --provider is absent and no local file exists,
-            // query the task detail API for providerAgentId and persist it.
-            // This covers the case where draft-publish wrote the file under a different jobId path.
-            // Safe at job_created time because no provider switch has occurred yet;
-            // subsequent switches overwrite the file via set-provider.
-            if provider.is_none()
-                && matches!(role.as_str(), "buyer" | "client")
-                && event == "job_created"
-                && !task::buyer::negotiate::has_designated_provider(&job_id)
-            {
-                let mut fb_client = task::common::network::task_api_client::TaskApiClient::new();
-                if let Ok(resp) = fb_client.get_with_identity(&fb_client.task_path(&job_id), &agent_id).await {
-                    if let Some(pid) = resp["providerAgentId"].as_str().filter(|s| !s.is_empty()) {
-                        eprintln!("[next-action] job_created fallback: API providerAgentId={pid}, persisting");
-                        if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
-                            eprintln!("[next-action] save_designated_provider (fallback) failed: {e}");
-                        }
-                    }
-                }
-            }
-
-            // ── review gate: auto-mark buyer's review gate ──────────────────────
-            if matches!(role.as_str(), "buyer" | "client") {
-                if event == "job_submitted" {
-                    if let Err(e) = task::common::review_gate::mark_pending(&job_id) {
-                        eprintln!("[next-action] review_gate mark_pending failed: {e}");
-                    }
-                } else if event == "approve_review" {
-                    if let Err(e) = task::common::review_gate::mark_approved(&job_id) {
-                        eprintln!("[next-action] review_gate mark_approved failed: {e}");
-                    }
-                }
-            }
-
             // Resolve `--role auto` by direct-lookup against the agent registry, so
             // the caller doesn't have to run `agent profile <id>` as a separate LLM
             // turn. Uses `query_agent_by_id_direct` (backend-direct lookup, no
@@ -1093,6 +1059,39 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 role.clone()
             };
             eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
+
+            // ── job_created API fallback: when --provider is absent and no local file exists,
+            // query the task detail API for providerAgentId and persist it.
+            // Must run AFTER role resolution so --role auto is correctly resolved.
+            if provider.is_none()
+                && matches!(resolved_role.as_str(), "buyer" | "client")
+                && event == "job_created"
+                && !task::buyer::negotiate::has_designated_provider(&job_id)
+            {
+                let mut fb_client = task::common::network::task_api_client::TaskApiClient::new();
+                if let Ok(resp) = fb_client.get_with_identity(&fb_client.task_path(&job_id), &agent_id).await {
+                    if let Some(pid) = resp["providerAgentId"].as_str().filter(|s| !s.is_empty()) {
+                        eprintln!("[next-action] job_created fallback: API providerAgentId={pid}, persisting");
+                        if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
+                            eprintln!("[next-action] save_designated_provider (fallback) failed: {e}");
+                        }
+                    }
+                }
+            }
+
+            // ── review gate: auto-mark buyer's review gate ──────────────────────
+            // Must run AFTER role resolution so --role auto is correctly resolved.
+            if matches!(resolved_role.as_str(), "buyer" | "client") {
+                if event == "job_submitted" {
+                    if let Err(e) = task::common::review_gate::mark_pending(&job_id) {
+                        eprintln!("[next-action] review_gate mark_pending failed: {e}");
+                    }
+                } else if event == "approve_review" {
+                    if let Err(e) = task::common::review_gate::mark_approved(&job_id) {
+                        eprintln!("[next-action] review_gate mark_approved failed: {e}");
+                    }
+                }
+            }
 
             // Duplicate-event short-circuit: several chain events (job_created in
             // particular) can fire into both the task sub and the backup sub for the
