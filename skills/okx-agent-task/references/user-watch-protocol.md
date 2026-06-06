@@ -14,7 +14,7 @@ A returned item is always one of two `kind`s, handled completely differently:
      ```
      ⚠️ **Skipping step 2 = the item stays `pending` and resurfaces on every subsequent watch wake-up**, spamming the user with duplicates. Step 2 is non-optional — render AND claim, in that order, every time.
 
-  After step 2, **re-enter `okx-a2a user watch ...`** — no relay, no `llm_content` thinking.
+  3. **Resume watching** — call `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` again. No relay, no `llm_content` thinking.
 
 - **`kind == decision_request`** — render `user_content` to the user verbatim (same anti-paraphrase rules as `notification` above), **and treat `llm_content` as the current turn's instruction set to think about and execute**. The user's reply is the input to that thinking.
 
@@ -32,29 +32,22 @@ Choice semantics: `保留` / `稍后` / `暂不` / `skip` → keep pending; ever
 4. On `alreadyHandled` → tell the user "this item was processed in another window"; **then re-enter `okx-a2a user watch ...`** (the watch session continues — only the duplicate item is dropped). Do not execute the relay again.
 5. Claim succeeded but relay failed → create a new `okx-a2a user notify` with the failure reason and a retry command; **do NOT** flip the original item back to pending. **Then re-enter `okx-a2a user watch ...`**.
 
-🛑 **After `decision_request` outcomes 3, 4, 5 above, the watch loop continues — re-enter `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` exactly as a fresh wake, and reset `empty_streak` to `0`.** Outcome 1 (`保留` / `skip`) is a hard STOP — see §Stop condition. Do NOT stop in outcomes 3/4/5 just because the relay completed / the item turned out duplicate / the relay failed.
+🛑 **After `decision_request` outcomes 3, 4, 5 above, resume watching** — call `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` again. Outcome 1 (`保留` / `skip`) is a hard STOP — see §Stop condition. Do NOT stop in outcomes 3/4/5 just because the relay completed / the item turned out duplicate / the relay failed.
 
 🛑 **User-session authority boundary**: while handling a `decision_request` item, the user session is only a **relay endpoint**, not a business executor. The user's reply (`956`, `1`, `关闭`, `approve`, …) is the verbatim answer to that item — it must not be reinterpreted as a new "pick a provider / start negotiation / create a group / solicit a quote" intent. In the user session, **never** execute: `okx-a2a session create` / `okx-a2a xmtp-send` / `xmtp_start_conversation` / `xmtp_send` / `onchainos agent next-action` / `agent common context` / `agent recommend` / `agent service-list`. Those business steps belong to the target job/session after it has received the relay.
 
 ## Stop condition
 
 🛑 **The ONLY valid stop conditions:**
-- **Two consecutive empty watch turns** — see the empty-watch counter below.
 - **User picks `保留` / `稍后` / `暂不` / `skip` on a `decision_request`** — item stays pending (un-claimed), but the watch loop ends here. Re-entering would re-drain the same pending item and infinite-loop the prompt; the user has to re-trigger watch when they're ready.
 - The user explicitly says stop — e.g. `停止监听` / `不用监听了` / `stop watching` / `unsubscribe`.
 
-### Empty-watch counter
+### Re-enter after processing
 
-Maintain a single in-memory counter `empty_streak` across watch iterations, initialized to `0` when monitoring starts.
+After processing all returned items, **always** call `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` again to resume watching. The only exceptions are the stop conditions listed above.
 
-| Watch result | Action |
-|---|---|
-| Returned ≥ 1 item | Process each per §Dispatch by `kind` above, **reset `empty_streak = 0`**, re-enter `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50`. |
-| Returned 0 items (empty result / `--timeout 300` elapsed with no events) | `empty_streak += 1`. If `empty_streak >= 2` → tell the user "连续两个 5 分钟窗口都没有任务进展，监听结束" and **stop**. Otherwise re-enter watch. |
-
-🚫 **NOT stop conditions** — every one of these requires re-entering `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50`:
-- A `notification` was just rendered + claimed (counter resets).
-- A `decision_request` was just handled — relay completed (step 3) / `alreadyHandled` (step 4) / claim-succeeded-but-relay-failed (step 5) — counter resets in all three. **Note**: `保留` / `skip` (step 1) is a STOP, listed above.
-- A single empty / timeout watch turn (only the **second consecutive** empty turn triggers stop).
-
-⚠️ The most common bug is treating "fetched data → no rows → stop". That is **wrong** — one empty turn just means no events arrived during this 300s window. Re-enter watch and let the counter decide.
+🚫 **NOT stop conditions** — every one of these requires re-entering watch:
+- A `notification` was just rendered + claimed.
+- A `notification` whose content contains `[Job Completed]` / `[Job Auto-Completed]` — **the task's terminal state ≠ the watch loop's terminal state**. After completion, the sub agent still auto-rates the ASP and pushes a rating notification; stopping here = the user never sees the rating result.
+- A `decision_request` was just handled — relay completed (step 3) / `alreadyHandled` (step 4) / claim-succeeded-but-relay-failed (step 5). **Note**: `保留` / `skip` (step 1) is a STOP, listed above.
+- Watch returned 0 items (empty result / `--timeout 300` elapsed with no events) — re-enter watch and keep waiting.

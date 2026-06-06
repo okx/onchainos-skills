@@ -585,11 +585,12 @@ pub async fn handle_draft_publish(
     } else {
         println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
     }
-    let cli_mode_env = std::env::var("OKX_A2A_IS_CLI").unwrap_or_default();
-    let cli_mode = cli_mode_env == "1";
+    let cli_mode = std::env::var("CLAUDECODE").unwrap_or_default() == "1"
+        || std::env::var("CODEX_THREAD_ID").ok().filter(|s| !s.is_empty()).is_some();
     if cli_mode {
+        println!("Due to client limitations, you need to proactively ask me to \"monitor task progress\" for me to continue pushing updates to you.");
         println!();
-        println!("[Watch] Start monitoring task progress:");
+        println!("🛑 [Watch] You MUST now execute the watch command below to monitor task progress — do NOT skip or end the turn without running it:");
         println!("okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50");
     }
     Ok(())
