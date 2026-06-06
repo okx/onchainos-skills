@@ -1075,6 +1075,31 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             };
             eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
 
+            // Duplicate-event short-circuit: several chain events (job_created in
+            // particular) can fire into both the task sub and the backup sub for the
+            // same (jobId, role) pair. If a pending decision already exists for this
+            // pair, the user has already been notified — emit a no-op playbook so the
+            // current turn ends without re-notifying.
+            //
+            // Only dedup events that push a decision/notification to the user;
+            // negotiation / handshake / lifecycle-only events have no user-visible
+            // side effect and must always run their playbook.
+            let dedup_eligible = matches!(
+                event.as_str(),
+                "job_created" | "job_submitted" | "review_deadline_warn" | "job_disputed" | "job_rejected"
+            );
+            if dedup_eligible
+                && task::common::pending_v2::has_pending_for_job(&job_id, &resolved_role)
+            {
+                eprintln!(
+                    "[next-action] duplicate event short-circuit: jobId={job_id} role={resolved_role} event={event} (pending entry already exists)"
+                );
+                println!(
+                    "[Duplicate event] An entry for jobId={job_id} role={resolved_role} is already in the pending-decisions queue. The user has been notified already. **End the turn without re-notifying.** No tool calls required."
+                );
+                return Ok(());
+            }
+
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
             let (freshness_warning, payment_mode) = check_status_freshness(&job_id, &event, &agent_id).await;
