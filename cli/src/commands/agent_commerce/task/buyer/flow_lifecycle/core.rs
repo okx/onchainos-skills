@@ -183,7 +183,6 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let title_display = ctx.title_display;
     let terminal_session_hint = ctx.terminal_session_hint;
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
-    let rating_failed_notify = super::super::content::rating_failed_user_notify(job_id);
     // Branch A (escrow) push protocol — user_content is composed at runtime from the
     // deliverable variables extracted in Step 2 (file vs text); pass the placeholder
     // and the templates below the helper output guide the LLM through the composition.
@@ -267,8 +266,8 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      Payment: escrow\n\
      \n\
      Choose:\n\
-     A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
-     B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …' or '拒绝, 理由: …'\n\
+     A. Approve the deliverable → reply 'A' or 'approve'\n\
+     B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
      ```\n\n\
      ▸ deliverableType=text — branch by localPath availability:\n\n\
      \x20\x20✅ localPath is available (save succeeded):\n\
@@ -280,8 +279,8 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20Payment: escrow\n\
      \x20\x20\n\
      \x20\x20Choose:\n\
-     \x20\x20A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
-     \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …' or '拒绝, 理由: …'\n\
+     \x20\x20A. Approve the deliverable → reply 'A' or 'approve'\n\
+     \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
      \x20\x20```\n\n\
      \x20\x20⚠️ localPath is unavailable (save failed — fallback to inline full text):\n\
      \x20\x20```\n\
@@ -294,8 +293,8 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20Payment: escrow\n\
      \x20\x20\n\
      \x20\x20Choose:\n\
-     \x20\x20A. Approve the deliverable → reply 'A' or 'approve' / '通过'\n\
-     \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …' or '拒绝, 理由: …'\n\
+     \x20\x20A. Approve the deliverable → reply 'A' or 'approve'\n\
+     \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
      \x20\x20```\n\n\
      **Step 3b — Push to user via the 5-substep protocol** (use the composed `--user-content` from Step 3a; read ALL 5 sub-steps before running any command):\n\n\
      {l10n_prompt_bold}\n\n\
@@ -348,9 +347,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      - ✅ **Success** (output contains `txHash`):\n\
      content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
      {rating_notify}\n\
-     - ❌ **Failure** (error / non-zero exit code) → still notify; do NOT retry:\n\
-     content (fill `<title>` from task context; fill `<error reason>` from feedback-submit stderr):\n\
-     {rating_failed_notify}\n\n\
+     - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
      **B-Step 3 — Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\n\
@@ -470,7 +467,6 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
     let completed_escrow_notify = super::super::content::job_completed_escrow_user_notify(job_id, title_display);
     let completed_x402_notify = super::super::content::job_completed_x402_user_notify(job_id, title_display);
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
-    let rating_failed_notify = super::super::content::rating_failed_user_notify(job_id);
 
     let pm = ctx.payment_mode;
     let pm_extract = if pm.is_some() { "" } else { ", paymentMode (int: 1=escrow, 3=x402)" };
@@ -505,9 +501,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      - ✅ **Success** (output contains `txHash`):\n\
      content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in A-Step 2; fill `<title>` from task context):\n\
      {rating_notify}\n\
-     - ❌ **Failure** (error / non-zero exit code) → still notify; do NOT retry:\n\
-     content (fill `<title>` from task context; fill `<error reason>` from feedback-submit stderr):\n\
-     {rating_failed_notify}\n\n\
+     - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
      **A-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\n") };
@@ -540,9 +534,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      - ✅ **Success** (output contains `txHash`):\n\
      content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
      {rating_notify}\n\
-     - ❌ **Failure** (error / non-zero exit code) → still notify; do NOT retry:\n\
-     content (fill `<title>` from task context; fill `<error reason>` from feedback-submit stderr):\n\
-     {rating_failed_notify}\n\n\
+     - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
      **B-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\

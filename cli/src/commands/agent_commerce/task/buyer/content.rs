@@ -172,13 +172,6 @@ pub fn rating_submitted_user_notify(job_id: &str) -> String {
     )
 }
 
-pub fn rating_failed_user_notify(job_id: &str) -> String {
-    format!(
-        "[⚠️ Rating Skipped] Job <title> (`{job_id}`) — auto-rating could not be submitted: <error reason>.\n\
-         This does not affect the task completion or payment."
-    )
-}
-
 // ── Event::JobRefunded ─────────────────────────────────────────────
 
 /// `Event::JobRefunded` — refund settled (B-5-1).
