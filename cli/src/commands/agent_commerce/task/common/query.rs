@@ -31,7 +31,7 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
 
     let t = &resp;
     let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
-    println!("Task status: {}", t["statusStr"].as_str().unwrap_or("?"));
+    println!("Task status: {}", t["status"].as_i64().map(status_name).unwrap_or("?"));
     println!("  jobId:    {job_id}");
     println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
     println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
