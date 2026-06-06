@@ -62,7 +62,7 @@ pub async fn handle_list(
     for t in &tasks {
         let sym = t["tokenSymbol"].as_str().unwrap_or("?");
         println!("  [{}] {} — {} {}",
-            t["statusStr"].as_str().unwrap_or("?"),
+            t["status"].as_i64().map(status_name).unwrap_or("?"),
             t["jobId"].as_str().unwrap_or("?"),
             t["tokenAmount"].as_str().unwrap_or("?"),
             sym,
@@ -74,7 +74,7 @@ pub async fn handle_list(
 
 // ─── active-tasks ───────────────────────────────────────────────────────
 
-fn status_name(code: i64) -> &'static str {
+pub fn status_name(code: i64) -> &'static str {
     match code {
         0 => "created",
         1 => "accepted",
