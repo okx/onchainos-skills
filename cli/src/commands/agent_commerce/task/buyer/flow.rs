@@ -28,13 +28,13 @@ pub(super) const LOCALIZATION_PREFIX: &str = "\
 🔴 Real incident: a model treated the template as a loose \"sample\", translated English to Chinese in an English environment, and fabricated \"预计1-2小时内交付\" (estimated 1-2h delivery) — information that did not exist in the template. The user received inaccurate information.\n\n";
 
 pub(super) const L10N_DISPATCH_SHORT: &str = "\
-🌐 Canonical template — localize per [Localization] rules before sending.";
+🌐🛑 **MUST translate** the content below to the user's language before passing to `xmtp_dispatch_user` (rule 5: non-English → faithful translation; rule 4: English → verbatim). Sending English content to a Chinese user is a violation.";
 
 pub(super) const L10N_PROMPT: &str = "\
-🌐 Localize both `--user-content` and `--list-label` per [Localization] rules (rule 4: English → verbatim; rule 5: non-English → faithful translation).";
+🌐🛑 **MUST translate** `--user-content` AND `--list-label` to the user's language before running (rule 5: non-English → faithful translation; rule 4: English → verbatim). Sending English content to a Chinese user is a violation.";
 
 pub(super) const L10N_PROMPT_BOLD: &str = "\
-🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** before running (rule 4: English users → verbatim; rule 5: non-English → faithful translation keeping all field labels, data values, and structure).";
+🌐🛑 **MUST translate `--user-content` AND `--list-label` to the user's language** before running (rule 5: non-English → faithful translation keeping all field labels, data values, and structure; rule 4: English → verbatim). Sending English content to a Chinese user is a violation.";
 
 // ── Shared prompt fragments (pending-decisions / playbook / routing) ──────────
 
