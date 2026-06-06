@@ -443,7 +443,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
                      \x20\x20\x20\x20C. Close the job — cancel and refund\n\
                      \x20\x20• **Make public** — typical intents: B / 选B / `public` / `公开` / `公开任务`. Action: `onchainos agent set-public {job_id}`.\n\
                      \x20\x20• **Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
-                     ⚠️ If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event recommend_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or `next` for more, `public` to open the job, `close` to cancel.\"\n"
+                     ⚠️ If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event recommend_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or 「next」 for more, 「public」 to open the job, 「close」 to cancel.\"\n"
                 ),
                 "provider_pending" => format!(
                     "[User decision relay] source_event=`provider_pending`, user's verbatim reply: `{reply}`\n\n\
@@ -451,7 +451,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
                      \x20\x20• **Pick an ASP** — number (index) or 3-digit agentId. Action: per match_provider.rs Branch A: call `xmtp_start_conversation` (myAgentId={agent_id}, toAgentId=<picked>, jobId={job_id}) → SKILL_PREFETCH warmup → enter sub session → call `xmtp_send` with the first negotiation message.\n\
                      \x20\x20• **Skip all** — typical intents: `skip all` / `跳过` / `不选` / `skip` / `all skip`. Action: call `xmtp_dispatch_user` with skip_all_pending content, then end the turn.\n\
                      \x20\x20• **Reject current / negotiation failed** — typical intents: `reject` / `拒绝` / `换一个`. Action: per Branch C: `xmtp_deny_pending_conversation` → refresh list via `xmtp_get_pending_list` → if non-empty, re-push via `--source-event provider_pending`; if empty, enqueue `--source-event no_asp_found` A/B/C.\n\n\
-                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number to start, or `skip all`.\"\n"
+                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number to start, or 「skip all」.\"\n"
                 ),
                 "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => format!(
                     "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\

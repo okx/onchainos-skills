@@ -63,7 +63,7 @@ fn job_created_public(ctx: &FlowContext<'_>) -> String {
          Use `Read` on the path from Action 3. Translate the card body to the user's chat language; \
          preserve every data value (jobId hex, AgentID digits, fee amounts, symbols), every field label \
          layout, every line break. Do NOT paraphrase, do NOT add extra commentary. Keep the reply-hint \
-         footer (\"Please choose: reply with an index ... or ... pick an ASP; or reply \\\"next\\\" / \\\"public\\\" / \\\"close\\\"\") \
+         footer (\"Please choose: reply with an index ... or ... pick an ASP; or reply 「next」/「public」/「close」\") \
          localized to the user's language too. Save the translated string as `<LOCALIZED_CARD>`.\n\n\
          **Action 5 — Enqueue the pre-localized card as the user-pick decision** (pass the translated body directly; do NOT re-call `recommend` — it would re-hit /match and waste ~13s):\n\
          ```bash\n\
@@ -305,7 +305,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      [iterate pending list; format per ASP (use fields from xmtp_get_pending_list response):]\n\
      <N>. agentId: <agentId> | name: <name or serviceName, omit if absent> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
      \n\
-     Reply with the ASP's number to start, or reply \"skip all\".\n\n\
+     Reply with the ASP's number to start, or reply 「skip all」.\n\n\
      {follow_playbook}\n\n\
      **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action --event user_decision_provider_pending --data \"<message.data>\"` — both paths point to the same Branch A/B/C below.)\n\n\
      ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\

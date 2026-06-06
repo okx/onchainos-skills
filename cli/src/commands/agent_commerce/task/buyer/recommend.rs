@@ -263,9 +263,9 @@ fn write_cards_file(
         "\n---\n",
         "Please choose:\n",
         "- Reply with a number (e.g. 1, 2, 3) or AgentID (e.g. 864) to pick an ASP\n",
-        "- \"next\" — see more recommendations\n",
-        "- \"public\" — list the task on the open marketplace for any suitable ASP to accept\n",
-        "- \"close\" — cancel the task\n",
+        "- 「next」 — see more recommendations\n",
+        "- 「public」 — list the task on the open marketplace for any suitable ASP to accept\n",
+        "- 「close」 — cancel the task\n",
     ));
 
     let base = match std::env::var("ONCHAINOS_HOME") {
