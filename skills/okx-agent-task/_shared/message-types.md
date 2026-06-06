@@ -125,7 +125,7 @@ See SKILL.md `## Activation` (the MANDATORY three steps for `source:"system"` ev
 | Path | Tool | String contract | What the receiver does with the prefix |
 |---|---|---|---|
 | 2a | `xmtp_dispatch_user(content)` | **No mandatory prefix**; plain natural-language notification; optionally a leading `[tag emoji] ...` summary line | User-session agent shows the message to the user, calls no tools |
-| 2b | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` must contain `[USER_DECISION_REQUEST][sub_key: <full string>][job: <id>] <relay instruction>`; `userContent` is plain natural language shown to the user | User-session agent uses `userContent` to display the question; once the user replies, calls `pending-decisions-v2 resolve --user-reply "<verbatim>"` — the CLI returns a relay playbook telling user-session the exact `xmtp_dispatch_session(sessionKey=<sub_key>, content=<envelope JSON>)` to make (do NOT hand-craft the dispatch) |
+| 2b | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` must contain `[USER_DECISION_REQUEST][sub_key: <full string>][job: <id>] <relay instruction>`; `userContent` is plain natural language shown to the user | User-session agent uses `userContent` to display the question; once the user replies, calls `pending-decisions-v2 resolve-prompt --user-reply "<verbatim>"` — the CLI returns a relay playbook telling user-session the exact `xmtp_dispatch_session(sessionKey=<sub_key>, content=<envelope JSON>)` to make (do NOT hand-craft the dispatch) |
 | 3 | `xmtp_dispatch_session(sessionKey, content)` | `content` is a **JSON envelope** (NOT a text prefix) shaped like a chain notification: `{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role, code:0, description, timestamp}}` — built by CLI; user-session passes it through verbatim | Sub agent treats it as a `source:"system"` event → calls `next-action --event user_decision_<source_event> --data "<message.data>"` → CLI's per-scene handler does LLM semantic mapping → playbook drives the actual on-chain action |
 
 > Paths 1 / 4 (chain → sub / sub ↔ peer sub) use real envelopes — see §1 / §2 above.
@@ -136,28 +136,40 @@ See SKILL.md `## Activation` (the MANDATORY three steps for `source:"system"` ev
 
 Sent as the `llmContent` argument when a sub agent calls `xmtp_prompt_user`. **The user does not see it**; it serves only as a system instruction to the user-session agent's LLM, telling it "this is a request that requires the user's decision before relaying it back to the sub."
 
-**Field syntax**:
+**Field syntax** (current — header marker on its own line; routing fields on the next line):
 
 ```
-[USER_DECISION_REQUEST][sub_key: <full sessionKey of the sub session that issued the prompt>][job: <jobId>][role: <buyer|provider|evaluator>] <relay instruction text>
+[USER_DECISION_REQUEST]
+[sub_key: <full sessionKey of the sub session that issued the prompt>][job: <jobId>][role: <buyer|provider|evaluator>]
+(Anything above this marker is stale — already consumed / expired, NOT a reply to this card and NOT to be counted as an open card.)
+
+<relay instruction text — Step 1 / Step 2 / scope rule / decision tree / pre-filled resolve-prompt command template>
 ```
 
 **Real sample** (dispute / refund decision):
 
 ```
-[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=864...&to=729...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer]
+[USER_DECISION_REQUEST]
+[sub_key: agent:main:xmtp:group:okx-xmtp:my=864...&to=729...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer]
+(Anything above this marker is stale — already consumed / expired, NOT a reply to this card and NOT to be counted as an open card.)
 
-⚠️ This llmContent block is for YOUR (user-session LLM's) instructions only — invisible to the user. Render ONLY the userContent block to the user; do NOT echo this llmContent.
+Step 1 — Card just delivered.
 
-Phase 1 (THIS turn): Render userContent verbatim to the user. End the turn. Do NOT call any tool.
+Step 2 — END THE TURN NOW, wait for user reply. Do NOT call any tool.
 
-🛑🛑🛑 HARDSTOP — the ONLY valid user reply is an actual user message arriving as an inbound in a LATER turn's tool_result (NOT this turn). After rendering, you MUST end the turn; the user has NOT spoken yet. Specifically forbidden: synthesizing a decision from the option list; reusing prior chat messages / task title as a user decision; fabricating user wording. If no genuine user-input inbound, `resolve` is forbidden — potential escrow loss.
+🛑 The block below runs ONLY in a future turn, AFTER the user has actually replied. Do NOT run anything in the current turn.
 
-Phase 2 (NEXT turn, when the user actually replies):
-- Defer keyword (等会儿 / skip / later / ...) → just end the turn.
-- Otherwise → call `onchainos agent pending-decisions-v2 resolve --user-reply "<verbatim user wording>"` **exactly once**. CLI returns a relay playbook; execute its `xmtp_dispatch_session` Step once and end the turn.
+Scope rule (read FIRST) — THIS block (the SINGLE LATEST [USER_DECISION_REQUEST] above this line) is the only active card. Every [USER_DECISION_REQUEST] above the (... is stale) line is already resolved or expired — do NOT count them, do NOT scan them, do NOT ask the user to pick among them.
 
-See SKILL.md `Session Communication Contract §5. pending-decisions-v2` for details.
+On the user's next reply:
+  · defer keyword (等会儿 / skip / later / ...) → END TURN.
+  · Reply starts with `0x...:` prefix (explicitly tagged a different jobId) → strip prefix, locate matching block via `[job: 0x...]` header (non-stale only), then run THAT block's command template with --user-reply = stripped wording.
+  · Anything else → run THIS block's pre-filled command template (below) with the full reply verbatim. Do NOT ask 'which jobId?'. Do NOT call `pending-decisions-v2 list / pick`.
+
+Command template (pre-filled for THIS block; only run AFTER user replies):
+  `onchainos agent pending-decisions-v2 resolve-prompt --user-reply "<user wording>" --sub-key "agent:main:..." --job-id "0x1b76dabd..." --role "buyer" --agent-id "864" --source-event "job_rejected"`
+
+After running, follow the relay playbook the command returns.
 ```
 
 **Paired `userContent` sample** (what the user actually sees, sent in the same `xmtp_prompt_user` call as the `llmContent` above):
@@ -180,7 +192,7 @@ Please reply with "agree to refund" / "raise dispute" / "accept delivery".
 | `[sub_key: <full string>]` | Embedded field | Full sessionKey of the sub session that issued the prompt; the user agent's subsequent `xmtp_dispatch_session` must **completely** fill this string back into the `sessionKey` parameter (including the entire `agent:main:xmtp:group:okx-xmtp:my=...&to=...&job=...&gid=...` segment) |
 | `[job: <jobId>]` | Embedded field | Task ID (lets the user agent reference the specific task when echoing to the user). |
 | `[role: <buyer\|provider\|evaluator>]` | Embedded field | The sub session's own role; CLI propagates it through `pending-decisions-v2` routing |
-| `<relay instruction text>` | Natural language | Execution guide for the user agent LLM (HARDSTOP rules + Phase 1/2 instructions). In v2 the canonical guide tells the user-session to call `pending-decisions-v2 resolve --user-reply "<verbatim>"` exactly once and follow the CLI's returned relay playbook |
+| `<relay instruction text>` | Natural language | Execution guide for the user agent LLM (HARDSTOP rules + Phase 1/2 instructions). In v2 the canonical guide tells the user-session to call `pending-decisions-v2 resolve-prompt --user-reply "<verbatim>"` exactly once and follow the CLI's returned relay playbook |
 
 **❌ Receiver-side error modes**:
 - Missing `[sub_key: ...]` → user agent must output "sub session identifier missing, please re-initiate the task flow", **do not** guess, **do not** fall back to executing task CLI yourself
@@ -191,20 +203,20 @@ Please reply with "agree to refund" / "raise dispute" / "accept delivery".
 
 ### 3.1.1 🛑 Anti-pattern — Do NOT treat `[USER_DECISION_REQUEST]` as "the user has already replied"
 
-**This is a real incident that has happened**: the user-session agent received an `llmContent` (containing `[USER_DECISION_REQUEST]`) pushed via `xmtp_prompt_user`, **mistook it for "the user has chosen"**, and immediately called `pending-decisions-v2 resolve --user-reply "agree"` (or equivalent fabricated text) — the user said **not a single word** the entire time, yet the on-chain action (confirm-accept / agree-refund etc.) ended up executing on chain based on this fabricated decision. **This is a data-integrity incident and must be eliminated**.
+**This is a real incident that has happened**: the user-session agent received an `llmContent` (containing `[USER_DECISION_REQUEST]`) pushed via `xmtp_prompt_user`, **mistook it for "the user has chosen"**, and immediately called `pending-decisions-v2 resolve-prompt --user-reply "agree"` (or equivalent fabricated text) — the user said **not a single word** the entire time, yet the on-chain action (confirm-accept / agree-refund etc.) ended up executing on chain based on this fabricated decision. **This is a data-integrity incident and must be eliminated**.
 
 **Correct mental model** (mandatory reading for the user-session agent):
 
 | Phase | What you see | What it is | What you should do |
 |---|---|---|---|
 | ① | `[USER_DECISION_REQUEST]` arrives in your session | **System notification**: "the sub sent a request that needs the user's decision" | Display the question to the user via `userContent`, **end the current turn and wait for the user's input**. **Forbidden** to call any tool immediately |
-| ② | User types a reply in the terminal (e.g. "reject, reason X") | **The user's real decision** | Call `pending-decisions-v2 resolve --user-reply "reject, reason X"` (verbatim, no interpretation). CLI builds the relay envelope and returns a playbook telling user-session the exact `xmtp_dispatch_session` call to make |
+| ② | User types a reply in the terminal (e.g. "reject, reason X") | **The user's real decision** | Call `pending-decisions-v2 resolve-prompt --user-reply "reject, reason X"` (verbatim, no interpretation). CLI builds the relay envelope and returns a playbook telling user-session the exact `xmtp_dispatch_session` call to make |
 
 **❌ Wrong flow**:
 ```
 sub → xmtp_prompt_user(llmContent=[USER_DECISION_REQUEST]...)
 user agent → 〈thought: "ah, the user probably wants to agree"〉  ← hallucination
-user agent → pending-decisions-v2 resolve --user-reply "agree"  ← fabrication
+user agent → pending-decisions-v2 resolve-prompt --user-reply "agree"  ← fabrication
 sub → receives user_decision_<src> envelope → calls confirm-accept on chain  ← user never agreed, funds wrongly released
 ```
 
@@ -214,7 +226,7 @@ sub → xmtp_prompt_user(llmContent=[USER_DECISION_REQUEST]..., userContent="...
 user agent → renders userContent to the user → 〈end turn, wait for input〉
 ... waiting ...
 user → types "reject, because X"
-user agent → pending-decisions-v2 resolve --user-reply "reject, because X"
+user agent → pending-decisions-v2 resolve-prompt --user-reply "reject, because X"
 user agent → follows the relay playbook: one xmtp_dispatch_session call with the envelope CLI built
 sub → receives envelope (event:user_decision_<src>, data:"reject, because X") → routes to reject flow per the user's literal reply
 ```
@@ -237,7 +249,7 @@ sub → receives envelope (event:user_decision_<src>, data:"reject, because X") 
 
 > **Format**: the relay is a **JSON envelope shaped exactly like a chain event**, so sub sessions route it through their normal `next-action` handler — same path as `job_submitted` / `job_refused` / `job_disputed` etc.
 
-**Caller**: user-session agent, via `pending-decisions-v2 resolve --user-reply "<verbatim>"` (NEVER hand-crafted). The CLI returns a relay playbook that tells user-session the exact `xmtp_dispatch_session(sessionKey=<sub_key>, content=<envelope-json-string>)` call to make.
+**Caller**: user-session agent, via `pending-decisions-v2 resolve-prompt --user-reply "<verbatim>"` (NEVER hand-crafted). The CLI returns a relay playbook that tells user-session the exact `xmtp_dispatch_session(sessionKey=<sub_key>, content=<envelope-json-string>)` call to make.
 
 **Envelope contract** (the `content` argument is a JSON string with these fields):
 
@@ -275,7 +287,7 @@ sub → receives envelope (event:user_decision_<src>, data:"reject, because X") 
 ```
 
 **❌ Caller-side prohibitions**:
-- **User-session must NOT hand-craft this envelope.** Always go through `pending-decisions-v2 resolve --user-reply "<verbatim>"` — the CLI builds the envelope and returns the dispatch playbook.
+- **User-session must NOT hand-craft this envelope.** Always go through `pending-decisions-v2 resolve-prompt --user-reply "<verbatim>"` — the CLI builds the envelope and returns the dispatch playbook.
 - Omitting the `sessionKey` argument — `xmtp_dispatch_session` will loop back into the user session.
 - Using a fake/short `sessionKey` like `agent:main:main` — the sub will not receive it. The `sessionKey` returned by the resolve playbook is authoritative; never substitute it.
 - Sub agent dispatching the envelope back to itself (or to another session) after receiving it — that's the final destination; forwarding = infinite loop.

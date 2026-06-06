@@ -98,7 +98,7 @@ recommend → pending-decisions-v2 request (--source-event recommend_pick)
 
 **What happened**: User saw the recommend_pick decision card (options A=specify ASP / B=public / C=close), replied "关闭" intending to pick option C → user-session called `pending-decisions-v2 cancel` (thinking "user wants to dismiss the decision") → card silently deleted from queue → sub never received the envelope → task stayed open.
 
-**Rule**: when user-session is in "Waiting for user reply" state, **always** call `resolve --user-reply "<verbatim>"`. `cancel` / `close` / `关闭` / `取消` are **options on the active card**, NOT requests to drop the queue entry. The CLI's `user_decision_<src>` handler routes `关闭` → `onchainos agent close <jobId>` semantically.
+**Rule**: when user-session is in "Waiting for user reply" state, **always** run the pre-filled `resolve-prompt` command from the block's llmContent (`onchainos agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --sub-key ... --job-id ... --role ... --agent-id ... --source-event ...`). `cancel` / `close` / `关闭` / `取消` are **options on the active card**, NOT requests to drop the queue entry. The CLI's `user_decision_<src>` handler routes `关闭` → `onchainos agent close <jobId>` semantically.
 
 ---
 
