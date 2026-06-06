@@ -96,6 +96,7 @@ pub(super) struct FlowContext<'a> {
     pub title_in_extract: &'a str,
     pub terminal_session_hint: String,
     pub payment_mode: Option<i64>,
+    pub prefetched: Option<&'a crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
 }
 
 /// List of CLI commands the buyer can execute under a given status (used in the menu at the tail of `agent common context` output).
@@ -180,7 +181,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
 /// and status names (open / submitted / ...), uniformly parsed by state_machine.
-pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>) -> String {
+pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol version handshake.
@@ -285,6 +286,19 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
          ⚠️ The `[Next Actions]` section in the `common context` output is a **status-level reference menu**, not your to-do list for this event. Only execute the steps in the playbook below — do NOT call CLIs from `[Next Actions]` (e.g. `recommend` / `set-public` / `close`) unless the playbook explicitly instructs you to.\n\n"
     );
 
+    let preamble_medium = "\
+         🔒 If `skills/okx-agent-task/SKILL.md Session Communication Contract` has not been read this turn → read it first.\n\n\
+         🛑🛑🛑 **IRON RULE 0 — Follow the playbook steps literally; any deviation risks user funds.** Steps are ordered, parameterized, and event-gated; on-chain actions are irreversible. Do NOT skip / reorder / batch / anticipate steps; do NOT invent CLI invocations from intuition.\n\n\
+         ⚠️ **Key rules** (condensed from full set; see SKILL.md for details):\n\
+         \x20\x202) Execution error (`onchainos agent <cmd>` failed) → **do NOT retry**; push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation for the full 5-substep protocol).\n\
+         \x20\x20\x20\x20**Exception**: JWT expired → re-login once automatically; on continued failure, fall back to the push protocol.\n\
+         \x20\x206) Call `session_status` at most once per turn; reuse the result.\n\
+         \x20\x206b) Do NOT confuse the counterpart's `role` with your own — you are **always the buyer**.\n\
+         \x20\x207) No technical jargon (tool names / event names / CLI flags / status enums) in user-visible content — use natural language.\n\
+         \x20\x209) 🛑 Sub/backup session text output is **invisible to the user**. All user-facing content MUST go via `xmtp_dispatch_user` (notification) or `pending-decisions-v2 request` (decision needed).\n\
+         \x20\x2010) Do NOT call `sessions_spawn` / `sessions_yield` — you execute the playbook yourself.\n\n\
+         🔧 **Tool routing**: `session_status`, `xmtp_send`, `xmtp_dispatch_user`, `xmtp_prompt_user` are XMTP bridge tools — call them directly, do NOT use ToolSearch.\n\n";
+
     let preamble_slim = format!(
         "🔒 If `skills/okx-agent-task/SKILL.md Session Communication Contract` has not been read this turn → read it first.\n\n\
          🛑 **Core rules** (see SKILL.md for full set; the following are non-negotiable):\n\
@@ -301,6 +315,10 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
          ⚠️ The `[Next Actions]` section in the `common context` output is a **status-level reference menu**, not your to-do list for this event. Only execute the steps in the playbook below.\n\n"
     );
 
+    // Pre-fetched context block — when available, inlined at the top of the playbook so the agent
+    // can skip the "Step 1: run common context" CLI round-trip.
+    let prefetched_block = prefetched.map(|p| p.format_inline()).unwrap_or_default();
+
     let ctx = FlowContext {
         job_id,
         agent_id,
@@ -310,6 +328,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         title_in_extract,
         terminal_session_hint,
         payment_mode,
+        prefetched,
     };
 
     let event = parse_status_or_event(event_str);
@@ -495,12 +514,17 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         "reward_claimed" | "dispute_resolved" | "close" | "set_public" |
         "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved"
     );
+    let use_medium_preamble = matches!(event_str,
+        "provider_applied" | "job_accepted" | "deliverable_received" | "job_visibility_changed"
+    );
     let core = if event_str == "create_task" || event_str == "switch_provider" {
         body
     } else if use_slim_preamble {
         format!("{preamble_slim}{body}")
+    } else if use_medium_preamble {
+        format!("{preamble_medium}{prefetched_block}{body}")
     } else {
-        format!("{context_preamble}{body}")
+        format!("{context_preamble}{prefetched_block}{body}")
     };
     let result = format!("{localization_prefix}{version_prefix}{core}");
     let preview: String = result.chars().take(200).collect();

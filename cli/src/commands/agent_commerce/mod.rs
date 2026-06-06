@@ -1050,11 +1050,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
-            let (freshness_warning, payment_mode) = check_status_freshness(&job_id, &event, &agent_id).await;
+            let (freshness_warning, prefetched) = check_status_freshness(&job_id, &event, &agent_id).await;
             if let Some(w) = freshness_warning {
                 println!("{w}");
                 return Ok(());
             }
+            let payment_mode = prefetched.as_ref().and_then(|p| p.payment_mode);
             let title_ref = job_title.as_deref();
             let prompt = match role.as_str() {
                 "provider" | "seller" => {
@@ -1087,7 +1088,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode)
+                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode, prefetched.as_ref())
                 }
                 "evaluator" => {
                     crate::audit::log(
@@ -1197,57 +1198,62 @@ fn tx_failure_label(event: &str) -> &'static str {
 ///
 /// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
 /// returns None on network/parse failure (does not block script output, graceful fallback).
-async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_id: &str) -> (Option<String>, Option<i64>) {
+async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_id: &str) -> (Option<String>, Option<task::common::PreFetchedTaskContext>) {
     use task::common::network::task_api_client::TaskApiClient;
     use task::common::state_machine::{parse_status_or_event, status_when_event, Event, Status};
+    use task::common::PreFetchedTaskContext;
 
-    // user-instruction pseudo events are not chain events and do not directly correspond to a status —
-    // they are triggered under some status and only change the status on-chain afterward. Validating
-    // their "corresponding status" would produce false positives, so skip directly here.
-    // wakeup_notify is a network/restart recovery event; the real status is in envelope.message.jobStatus;
-    // the agent should re-invoke next-action with message.jobStatus, so skip validation here and let
-    // the WakeupNotify arm output the guidance script.
-    const PSEUDO_EVENTS: &[&str] = &[
-        "create_task", "switch_provider", "attachment_added", "deliverable_received",
-        "dispute_raise", "agree_refund", "approve_review", "reject_review",
-        "close", "set_public",
+    // Events that skip freshness validation but still benefit from pre-fetching task data
+    // (they have a valid jobId and their handlers currently run `common context` as Step 0/1).
+    const PREFETCH_ONLY_EVENTS: &[&str] = &[
+        "deliverable_received",
+    ];
+
+    // Events that skip both freshness validation AND pre-fetching (no jobId yet, or irrelevant).
+    const SKIP_ALL_EVENTS: &[&str] = &[
+        "create_task", "switch_provider",
+        "approve_review", "reject_review", "attachment_added", "close", "set_public",
+        "dispute_raise", "agree_refund",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
         "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",
         "reward_claimed",
         "wakeup_notify",
     ];
-    if PSEUDO_EVENTS.contains(&job_status_or_event) {
+
+    let is_prefetch_only = PREFETCH_ONLY_EVENTS.contains(&job_status_or_event);
+
+    if SKIP_ALL_EVENTS.contains(&job_status_or_event) {
         return (None, None);
     }
 
+    // For non-skip events, parse and check if the event is recognized.
     let event = parse_status_or_event(job_status_or_event);
     let expected = status_when_event(&event);
-
-    // If event parses to Status::Other("unknown") (i.e. an unrecognized Event::Other),
-    // also skip validation (to avoid false positives on unrecognized events)
-    if matches!(expected, Status::Other(ref s) if s == "unknown") {
+    if !is_prefetch_only && matches!(expected, Status::Other(ref s) if s == "unknown") {
         eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
         return (None, None);
     }
 
+    // Fetch task data — shared by both freshness-check and pre-fetch paths.
     let mut c = TaskApiClient::new();
-    // Must include the agenticId header — without it the beta backend returns code=3001 auth fail.
-    // The next-action command itself requires --agentId, so use it directly here without an empty fallback.
     let resp = match c.get_with_identity(&c.task_path(job_id), agent_id).await {
         Ok(r) => r,
         Err(_) => return (None, None),
     };
-    let payment_mode = resp.get("paymentMode").and_then(|v| v.as_i64());
-    // Backend spec: response is flat, status is an int
+    let prefetched = Some(PreFetchedTaskContext::from_api_response(&resp));
+
+    // Pre-fetch-only events: return data without freshness validation.
+    if is_prefetch_only {
+        return (None, prefetched);
+    }
+
+    // Freshness validation for chain events.
     let actual = match resp.get("status").and_then(|v| v.as_i64()).and_then(|v| i32::try_from(v).ok()) {
         Some(s) => Status::from_int(s),
-        None => return (None, payment_mode),
+        None => return (None, prefetched),
     };
     let actual_str = actual.as_str().to_string();
 
-    // DisputeResolved special case: when the arbitration verdict lands on-chain, the actual status
-    // may be Completed (provider wins) or Failed (buyer wins); the exact direction can't be inferred
-    // from the event alone — as long as `actual` is one of these two, treat it as valid.
     let dispute_resolved_ok = matches!(event, Event::DisputeResolved)
         && matches!(actual, Status::Completed | Status::Failed);
 
@@ -1258,7 +1264,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     );
 
     if actual == expected || dispute_resolved_ok {
-        return (None, payment_mode);
+        return (None, prefetched);
     }
     (Some(format!(
         "🛑 **状态脱节，剧本已 block**（next-action 入参与任务真实状态不一致，不输出步骤防止你按 stale event 上链）\n\n\
@@ -1269,5 +1275,5 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
          2. 如果当前 inbound 是 **system event** → 重调 next-action 并传 `--event {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
          **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 xmtp_dispatch_user 推用户。\n",
         expected_str = expected.as_str(),
-    )), payment_mode)
+    )), prefetched)
 }

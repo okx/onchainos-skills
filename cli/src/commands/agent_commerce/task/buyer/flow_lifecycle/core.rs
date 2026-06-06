@@ -8,16 +8,30 @@ pub(crate) fn provider_applied(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
+    let step1 = if ctx.prefetched.is_some() {
+        format!("\
+         **Step 1 -- Use pre-fetched task context above:**\n\
+         Read providerAgentId, paymentMode, tokenSymbol, tokenAmount from the `[Pre-fetched task context]` block.\n\
+         ⚠️ If any field is missing, fall back to:\n\
+         ```bash\n\
+         onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+         ```\n\
+         ⚠️ paymentMode should be escrow (1) at this point.\n\n")
+    } else {
+        format!("\
+         **Step 1 -- Fetch task info:**\n\
+         ```bash\n\
+         onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+         ```\n\
+         Extract: providerAgentId, paymentMode, tokenSymbol, tokenAmount.\n\
+         ⚠️ paymentMode should be escrow (1) at this point.\n\n")
+    };
+
     format!(
     "[Current Status] provider_applied (ASP has submitted an on-chain apply)\n\
      [Role] User (User Agent)\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 1 -- Fetch task info:**\n\
-     ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\
-     Extract: providerAgentId, paymentMode, tokenSymbol, tokenAmount.\n\
-     ⚠️ paymentMode should be escrow (1) at this point.\n\n\
+     {step1}\
      **Step 2 -- Run confirm-accept (settle the accept on-chain):**\n\
      ```bash\n\
      onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
@@ -93,17 +107,28 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ❌ **NEVER** ignore the `job_completed` event -- ignoring it = user never learns the job is done.\n\
      ❌ **NEVER** skip `next-action` and compose the completion notice yourself -- the playbook contains the full summary.\n") };
 
-    format!(
-    "[Current Status] job_accepted (user has confirmed accept; task enters execution stage)\n\
-     [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
-     [Your next actions (strict order)]\n\n\
+    let step1 = if ctx.prefetched.is_some() {
+        format!("\
+     **Step 1 -- Use pre-fetched task context above:**\n\
+     Read {title_in_extract}description, providerAgentId, {pm_extract}tokenAmount, tokenSymbol from the `[Pre-fetched task context]` block.\n\
+     ⚠️ If any field is missing, fall back to `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}`.\n\
+     [Failure fallback] If all sources fail, degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n")
+    } else {
+        format!("\
      **Step 1 -- Fetch full task info:**\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
      Extract: {title_in_extract}description, providerAgentId, {pm_extract}tokenAmount, tokenSymbol.\n\
-     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n\
+     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n")
+    };
+
+    format!(
+    "[Current Status] job_accepted (user has confirmed accept; task enters execution stage)\n\
+     [Role] User (User Agent)\n\n\
+     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     [Your next actions (strict order)]\n\n\
+     {step1}\
      {branch_header}\
      {escrow_section}\
      {x402_section}"
@@ -123,15 +148,16 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      Its sole purpose is: **download → save → brief notification**. The full review card is owned by `job_submitted`.\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 0 — Load task context for save metadata**:\n\
+     Read from the `[Pre-fetched task context]` block above if available; otherwise fall back to:\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     Extract and record for use in the save commands below:\n\
+     Fields needed for the save commands below:\n\
      \x20\x20- `title` (task title)\n\
      \x20\x20- `providerAgentId` (ASP agentId — the counterparty)\n\
-     \x20\x20- `providerName` (ASP display name, if available)\n\
+     \x20\x20- `providerName` (ASP display name, if available — may not be in pre-fetched data; use best-effort)\n\
      \x20\x20- `tokenSymbol`, `tokenAmount`\n\
-     ⚠️ If the command fails (e.g. network error), use best-effort values from session context; a missing title does not block the save.\n\n\
+     ⚠️ If all sources fail (e.g. network error), use best-effort values from session context; a missing title does not block the save.\n\n\
      **Step 1 — Extract deliverable metadata from the inbound `[intent:deliver]` message** and branch by type:\n\n\
      --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret) ---\n\n\
      Call the xmtp_file_download tool:\n\

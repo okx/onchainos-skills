@@ -112,6 +112,73 @@ struct TaskDetail {
     create_time: Option<i64>,
 }
 
+// ─── Pre-fetched task context (lightweight, for playbook inline) ────────
+
+/// Lightweight snapshot of the task detail, built from the same GET /task/{jobId}
+/// response that `check_status_freshness` already makes. Passed into
+/// `generate_next_action` so the playbook can inline key fields and skip the
+/// redundant "Step 1: run common context" CLI round-trip.
+#[derive(Debug, Clone)]
+pub struct PreFetchedTaskContext {
+    pub title: String,
+    pub description: String,
+    pub token_symbol: String,
+    pub token_amount: String,
+    pub payment_mode: Option<i64>,
+    pub max_budget: Option<String>,
+    pub provider_agent_id: Option<String>,
+    pub buyer_agent_id: Option<String>,
+    pub visibility: Option<i64>,
+    pub status: Option<i64>,
+}
+
+impl PreFetchedTaskContext {
+    /// Build from the raw `serde_json::Value` returned by GET /task/{jobId}.
+    pub fn from_api_response(v: &serde_json::Value) -> Self {
+        Self {
+            title: v["title"].as_str().unwrap_or("").to_string(),
+            description: v["description"].as_str().unwrap_or("").to_string(),
+            token_symbol: v["tokenSymbol"].as_str().unwrap_or("USDT").to_string(),
+            token_amount: v["tokenAmount"].as_str().unwrap_or("").to_string(),
+            payment_mode: v["paymentMode"].as_i64(),
+            max_budget: v["paymentMostTokenAmount"].as_str().map(String::from),
+            provider_agent_id: v["providerAgentId"].as_str().map(String::from),
+            buyer_agent_id: v["buyerAgentId"].as_str().map(String::from),
+            visibility: v["visibility"].as_i64(),
+            status: v["status"].as_i64(),
+        }
+    }
+
+    /// Format as the inline `[Pre-fetched task context]` block for playbook output.
+    pub fn format_inline(&self) -> String {
+        let pm_label = match self.payment_mode {
+            Some(1) => String::from("escrow (1)"),
+            Some(3) => String::from("x402 (3)"),
+            Some(v) => format!("{v} (unknown)"),
+            None => String::from("unknown"),
+        };
+        let max_b = self.max_budget.as_deref().unwrap_or("not set");
+        let prov = self.provider_agent_id.as_deref().unwrap_or("none");
+        let buyer = self.buyer_agent_id.as_deref().unwrap_or("none");
+        let desc_line = if self.description.is_empty() {
+            String::new()
+        } else {
+            format!("\x20\x20description: {}\n", self.description)
+        };
+        format!(
+            "[Pre-fetched task context] (from status-check API — no need to call `common context` again unless a field below is missing)\n\
+             \x20\x20title: {title}\n\
+             {desc_line}\
+             \x20\x20tokenSymbol: {sym} | tokenAmount: {amt} | paymentMode: {pm}\n\
+             \x20\x20maxBudget (paymentMostTokenAmount): {max_b} | providerAgentId: {prov} | buyerAgentId: {buyer}\n",
+            title = self.title,
+            sym = self.token_symbol,
+            amt = self.token_amount,
+            pm = pm_label,
+        )
+    }
+}
+
 // ─── Agent profile response structure ───────────────────────────────────
 
 #[derive(Debug, Deserialize, Clone)]
