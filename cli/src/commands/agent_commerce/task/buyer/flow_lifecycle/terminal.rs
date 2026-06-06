@@ -5,7 +5,7 @@ use super::super::flow::FlowContext;
 pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
-    let terminal_session_hint = ctx.terminal_session_hint;
+    let terminal_session_hint = &ctx.terminal_session_hint;
 
     let refunded_notify = super::super::content::job_refunded_user_notify(job_id);
     format!(
@@ -27,7 +27,7 @@ pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
-    let terminal_session_hint = ctx.terminal_session_hint;
+    let terminal_session_hint = &ctx.terminal_session_hint;
 
     let auto_refunded_notify = super::super::content::job_auto_refunded_user_notify(job_id, title_display);
     format!(
@@ -65,7 +65,7 @@ pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
-    let terminal_session_hint = ctx.terminal_session_hint;
+    let terminal_session_hint = &ctx.terminal_session_hint;
 
     let closed_notify = super::super::content::job_closed_user_notify(job_id, title_display);
     format!(
@@ -170,7 +170,7 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
-    let terminal_session_hint = ctx.terminal_session_hint;
+    let terminal_session_hint = &ctx.terminal_session_hint;
 
     let auto_completed_notify = super::super::content::job_auto_completed_user_notify(job_id, title_display);
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);

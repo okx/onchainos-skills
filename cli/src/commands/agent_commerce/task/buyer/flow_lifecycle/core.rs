@@ -181,7 +181,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let title_display = ctx.title_display;
-    let terminal_session_hint = ctx.terminal_session_hint;
+    let terminal_session_hint = &ctx.terminal_session_hint;
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
     // Branch A (escrow) push protocol — user_content is composed at runtime from the
     // deliverable variables extracted in Step 2 (file vs text); pass the placeholder
@@ -462,7 +462,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
     let title_in_extract = ctx.title_in_extract;
-    let terminal_session_hint = ctx.terminal_session_hint;
+    let terminal_session_hint = &ctx.terminal_session_hint;
 
     let completed_escrow_notify = super::super::content::job_completed_escrow_user_notify(job_id, title_display);
     let completed_x402_notify = super::super::content::job_completed_x402_user_notify(job_id, title_display);

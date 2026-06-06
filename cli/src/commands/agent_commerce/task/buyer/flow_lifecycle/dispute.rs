@@ -87,7 +87,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
     let title_in_extract = ctx.title_in_extract;
-    let terminal_session_hint = ctx.terminal_session_hint;
+    let terminal_session_hint = &ctx.terminal_session_hint;
 
     let dispute_won = super::super::content::dispute_won_user_notify(job_id, title_display);
     let dispute_lost = super::super::content::dispute_lost_user_notify(job_id, title_display);
