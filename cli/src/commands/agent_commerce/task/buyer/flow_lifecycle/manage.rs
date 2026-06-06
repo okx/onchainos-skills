@@ -166,11 +166,12 @@ After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you 
 ⚠️ If the CLI output contains a `⚠️ Insufficient ... balance` warning line, append it to the message above.\n\
 🌐 Localize to the user's language.\n\n\
 ===============================================================\n\
-🛑🛑🛑 STOP -- after create-task + task-attach (if any) you **MUST end this turn immediately**\n\
+🛑🛑🛑 STOP -- after create-task + task-attach (if any) + watch (if prompted), you **MUST end this turn**\n\
 ===============================================================\n\
+✅ **Exception: `[Watch]` hint** -- if the CLI output contains `[Watch] Start monitoring task progress:` followed by an `okx-a2a user watch ...` command, you **MUST** execute that exact command before ending the turn. This starts the event listener that drives the task forward on CLI-mode platforms.\n\
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.\n\
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.\n\
-❌ **Do not call any onchainos agent commands** (except `task-attach` in Step 6.5 above) -- this turn ends here; all further actions are driven by on-chain events.\n\
+❌ **Do not call any other onchainos agent commands** (except `task-attach` in Step 6.5 and `okx-a2a user watch` above) -- all further actions are driven by on-chain events.\n\
 ❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.\n\
 ===============================================================\n\n\
 ================================================\n\
@@ -295,11 +296,12 @@ After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you 
 🌐 Localize to the user's language.
 
 ===============================================================
-🛑🛑🛑 STOP -- after draft publish you **MUST end this turn immediately**
+🛑🛑🛑 STOP -- after draft publish + watch (if prompted), you **MUST end this turn**
 ===============================================================
+✅ **Exception: `[Watch]` hint** -- if the CLI output contains `[Watch] Start monitoring task progress:` followed by an `okx-a2a user watch ...` command, you **MUST** execute that exact command before ending the turn. This starts the event listener that drives the task forward on CLI-mode platforms.
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- draft publish only submits the transaction; it is not yet confirmed on-chain.
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification.
-❌ **Do not call any onchainos agent commands** -- this turn ends here; all further actions are driven by on-chain events.
+❌ **Do not call any other onchainos agent commands** (except `okx-a2a user watch` above) -- all further actions are driven by on-chain events.
 ===============================================================\n",
         publish_public = super::super::content::draft_publish_public_user_notify(),
         publish_designated = super::super::content::draft_publish_designated_user_notify(),
