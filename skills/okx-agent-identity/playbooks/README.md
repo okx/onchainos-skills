@@ -102,15 +102,15 @@ Do not auto-choose for provider. Don't silently default. **Do not collapse the K
 
 ### Language
 
-The prompt **must match the user's language**. Follow .
+The prompt **must match the user's language**. Follow `SKILL.md §Conventions` (Language Matching).
 
 **Skip this pre-check entirely for passive onboarding** (`intent=need-requester`) — see `playbooks/requester.md §Passive Onboarding`.
 
 ## Confirmation card
 
-> ⛔ The card is **mandatory before every content-creating on-chain write** — `agent create` / `update` / `feedback-submit`. This is enforced by the mandatory confirmation gate in SKILL.md; that section is the canonical source. Memory preferences, plan-mode exit, one-shot capture, urgency, and "intent is obvious" all do **NOT** bypass it — see the rationalization list in `SKILL.md §Core Flow` (the confirmation-card gate). State toggles (`agent activate` / `agent deactivate`) are NOT gated and run directly via `SKILL.md §Intent → Sub-flow`.
+> ⛔ The card is **mandatory before every content-creating on-chain write** — `agent create` / `update` / `feedback-submit`. This is enforced by the mandatory confirmation gate in SKILL.md; that section is the canonical source. Memory preferences, plan-mode exit, one-shot capture, urgency, and "intent is obvious" all do **NOT** bypass it — see the rationalization list in `SKILL.md §⛔ MANDATORY Gates → Confirmation Gate`. State toggles (`agent activate` / `agent deactivate`) are NOT gated and run directly via `SKILL.md §Intent → Sub-flow`.
 
-Always a table of fields — never a bash blob. Match the user's language. Render field labels and row values in one language only. ⛔ The `role` row MUST follow `core/ux-lexicon.md §Role`: `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. **Never render the raw ERC-8004 enum (`requester / provider / evaluator`) or legacy nouns; never render bilingual parentheticals** (`SKILL.md §UX Output Red Lines Red line 4`). See `core/display-formats.md` §Create/Update Diff for the full template.
+Always a table of fields — never a bash blob. Match the user's language. Render field labels and row values in one language only. ⛔ The `role` row MUST follow `core/ux-lexicon.md §Role`: `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. **Never render the raw ERC-8004 enum (`requester / provider / evaluator`) or legacy nouns; never render bilingual parentheticals** (`SKILL.md §UX Output Red Lines Red line 4`). See `core/display-detail.md §3` for the full template.
 
 | Field | Value |
 |---|---|
@@ -134,7 +134,7 @@ After the user replies "execute" / "yes" / equivalent:
 2. On success → read `core/display-detail.md §2` + the role-specific `§Post-success` in the matching playbook before rendering anything. Render the detail card + the role-specific next-step line (see each role file). **Exception — passive onboarding** (`intent=need-requester`): render **only one line** and **no detail card** per the passive onboarding section in `playbooks/requester.md` + `playbooks/requester.md §Passive Onboarding`. **For the list-mutating writes** (`requester` / `provider` / `evaluator` create, `update`, plus `activate` / `deactivate`), control then flows into `SKILL.md §Operation Flow Step 5` (dispatcher) → `§Step 6` (comm-init) in the same response. The Step 6 invocation is **unconditional from this skill's side** — runtime gating lives inside the callee's Step 0, not in this skill's pre-decision. Do not stop between visible line and Step 5. See each role file's §Post-success "Agent directive" block. **Passive onboarding lands in Step 5's "back to task" branch** — no Step 6.
 3. On failure → render the error card (`core/display-formats.md` §Error card) + the recovery action (see `troubleshooting.md`). **Do NOT auto-retry.**
 
-See  — do NOT follow up with `agent get` / status poll. The Step 5 → Step 6 same-turn chain is explicitly allowed (it is not polling).
+See `_shared/no-polling.md` — do NOT follow up with `agent get` / status poll. The Step 5 → Step 6 same-turn chain is explicitly allowed (it is not polling).
 
 ## bash blocks in these files
 

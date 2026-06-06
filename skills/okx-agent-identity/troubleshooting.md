@@ -83,7 +83,7 @@ Some conditions the user might hit are enforced by the **skill itself** before t
 
 1. **Translate, don't parrot.** Always show the user the friendly translated version; the raw message goes into the footer of the error card (`core/display-formats.md` §7) for debuggability.
 2. **Recover, don't abort.** For every row above, there is a concrete "resume at which step" action. Keep the user in the flow.
-3. **Do not retry silently** for business errors (4xx-class). Render the error card and stop — the user decides the next step. See .
+3. **Do not retry silently** for business errors (4xx-class). Render the error card and stop — the user decides the next step. See `_shared/no-polling.md`.
 4. **Retry once** for transient 5xx/network errors. If it fails a second time, surface the error and move on. Never loop.
 5. **Do not chase failures with a `get`.** If `activate` fails, do NOT run `agent get` to "see what happened" — the error message is authoritative. Render the card and wait.
 6. **Update this file** the moment `cli/src/commands/agent_commerce/identity/**` changes a `bail!` string, or the moment you observe a backend message whose keywords don't match any row here — otherwise translations will silently rot.

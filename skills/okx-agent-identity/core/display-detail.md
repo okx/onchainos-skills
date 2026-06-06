@@ -37,7 +37,7 @@ Rules:
 
 - Two-column table. Never the Unicode box-drawing "Field / Value" art.
 - Render `Role` using the user-facing label: `User Agent / Agent Service Provider (ASP) / Evaluator Agent`. Never render the raw ERC-8004 enum (`requester / provider / evaluator`).
-- Render `Status` using `active / inactive`.
+- Render `Status` per `core/ux-lexicon.md §Status` (`1` → active, `2` → not listed, `3`/`4`/`5` → unavailable) — never render the raw integer.
 - `Approval status` row: render `approvalDisplayStatus` per `core/ux-lexicon.md §ApprovalDisplayStatus` — never expose the raw integer. When `approvalRemark` is non-empty, append it as a parenthetical. This field is independent of `status` (on-chain publish state); both rows always appear in the card when the field is present.
 - Short-form address: `0x`first 4`…`last 4 hex chars. Show the full address only when the user asks.
 - **⛔ `Services` rows are provider-only.** Role definitions for `requester` and `evaluator` have no service — when rendering their detail cards, **omit every `Services` row entirely** (no `Services | none` / `Services | —` / `Services | (empty)` placeholders, just drop the rows). This holds even when the backend returns `services: []` or `services: null` (or, by anomaly, a non-empty array for a non-provider role): render Service rows **only when `role == provider`**. Same constraint applies to the §3 Create / Update Diff variants.

@@ -36,10 +36,10 @@ Update fields on an existing agent.
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
 | `--agent-id` | ✓ | integer | The agent to edit. |
-| `--name` | at least one (skill rule) | string | See note above — CLI does not enforce. |
-| `--description` | at least one (skill rule) | string | See note above — CLI does not enforce. |
-| `--picture` | at least one (skill rule) | URL string | See note above — CLI does not enforce. |
-| `--service` | at least one (skill rule) | JSON array string | Full replacement — supply the complete service list, not a diff. See note above — CLI does not enforce. |
+| `--name` | at least one (skill rule) | string | — |
+| `--description` | at least one (skill rule) | string | — |
+| `--picture` | at least one (skill rule) | URL string | — |
+| `--service` | at least one (skill rule) | JSON array string | Full replacement — supply the complete service list, not a diff. |
 
 **Example — change description only:**
 ```bash
@@ -64,7 +64,7 @@ Two modes:
 - **Default (no `--agent-ids`)** — list the caller's **own** agents (paged). The backend filters by the caller's identity via the JWT in this mode.
 - **With `--agent-ids`** — fetch the specified agent(s) by id. **Open lookup**: the ids may belong to the caller or to anyone else; the backend does not require ownership for id-based queries.
 
-For routing between `get` and `search` see `SKILL.md` §"Disambiguation: search vs get".
+For routing between `get` and `search` see `SKILL.md` §Intent → Sub-flow.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|

@@ -4,7 +4,7 @@
 
 Field definitions live in `core/field-specs.md`; listing requirements (lengths, bans) come from `modules/pre-listing-qa.md`. The numbered checklist below merges both so the user can comply first-try.
 
-## Step 1 · Identity (身份)
+## Step 1 · Identity
 
 Once role is `provider` and pre-check resolved (either "no existing provider" or user chose "1. Register a new ASP"), render the Step-1 checklist, then collect.
 
@@ -21,7 +21,7 @@ Step 1 of 2 · Identity — please provide these 3 items (send all at once, or o
 - **Profile photo (item 3)** can't be batched (image links are rejected; it needs the upload/generate interaction). Surface it as part of the **identity confirmation card's closing CTA** (📷 send an image / "generate" / skip) — not a separate collection turn.
 - When identity is collected, render the **identity confirmation card** (`§Confirmation cards — two steps`); confirming it advances to Step 2 and does NOT call the CLI.
 
-## Step 2 · Service (服务)
+## Step 2 · Service
 
 After the identity card is confirmed, render the Step-2 checklist, then collect the service fields (full per-field spec + validation in `playbooks/provider-services.md`).
 

@@ -2,7 +2,7 @@
 
 Fires whenever the user asks about fees / gas / commission / "will I be charged".
 
-Source of truth: OKX Agent platform PRD §1.7 / §F0.7. Never derive from training data.
+Never derive cost information from training data — use only what's written in this file.
 
 ## Phase-1 gas policy
 

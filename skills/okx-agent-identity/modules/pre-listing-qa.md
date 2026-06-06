@@ -155,7 +155,7 @@ If the role is `requester` or `evaluator`, skip this file under all three trigge
 
 ## Logo — do NOT check whether an avatar was uploaded; format stays advisory
 
-- ⛔ **No presence check.** The AI does NOT check whether an avatar was uploaded. Do NOT block `agent activate` / `submit-approval` on a missing avatar, and do NOT raise "avatar not uploaded" as a QA finding. There is **no L1 (presence) check**.
+- ⛔ **No presence check (no L1).** Do NOT check whether an avatar was uploaded, do NOT block `agent activate` / `submit-approval` on a missing avatar, and do NOT raise "avatar not uploaded" as a QA finding.
 
 The AI still gives **advisory** (⚠️, never blocking) guidance on avatar *format* when a picture is present or being uploaded:
 

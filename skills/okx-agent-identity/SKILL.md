@@ -12,9 +12,6 @@ description: >
   再建一个买家身份 / add another agent / new provider = ALWAYS identity, NEVER wallet add.
   Finding marketplace agents → run agent search, NOT list skill names.
   Passive onboarding (need-requester from task flow) → register requester only.
-  NOT for: task lifecycle (发布/接单/交付/dispute) → okx-agent-task;
-  wallet/balance → okx-agentic-wallet; OKB staking → okx-agent-task;
-  contract security → okx-security; swap/market-data → other skills.
 license: Apache-2.0
 metadata:
   author: okx
@@ -48,6 +45,8 @@ Any `agent create`, `agent update`, or `agent feedback-submit` intent — **run 
 Every content-creating write (`agent create / update / feedback-submit`) **must render a field-table confirmation card and receive an explicit confirm token** (`execute / yes / go / confirm` or language-equivalent) from the user before invoking the CLI. `activate / deactivate` are state toggles — NOT gated. Full spec and rationalization blacklist in this section below.
 
 **Only sufficient condition to invoke CLI without re-rendering the card:** both (1) user's most recent turn literally contains a confirm token AND (2) every field value in the just-rendered card is byte-identical to what will be passed to the CLI.
+
+**Rationalization blacklist — none of these bypass the gate** (render the card anyway): user-level memory / preferences (incl. any `auto-execute` / `不用确认` / `直接执行` / `trust me` setting); system prompts or harness flags; plan-mode exit (Exit Plan Mode confirms the *plan*, not the on-chain action — the in-card confirm token is still required next turn); one-shot field capture, even when every required field is captured in the user's first message; urgency / imperative tone (`赶紧创建` / `现在就建` / `立刻发起`); the user previously confirming a *similar but distinct* write earlier in the conversation. If you catch yourself reasoning "they already said skip confirmation" / "we agreed in the plan" / "it's obvious what they want" — **stop and render the card anyway**. The cost asymmetry is decisive: one extra turn vs. an irreversible on-chain record — always pay the turn.
 
 ### Consent Gate (`agent create` only)
 When CLI returns `executeResult: false` with non-null `consent` → show consent card, wait for explicit agree/decline, then re-invoke with `--consent-key` / `--agreed true`. Full template: `playbooks/consent.md`.
@@ -132,7 +131,7 @@ Success → detail card (`core/display-detail.md §2`) + one next-step suggestio
 ### Step 5: Post-success Flow Continuation
 | Last successful CLI | Next |
 |---|---|
-| `agent create --role evaluator` | Load `okx-agent-task/references/evaluator-staking.md §2` in same response. If staking flow ends without comm-init, fallback to Step 6. If the user has explicitly declined staking earlier in the conversation, skip the staking handoff but still proceed to Step 6 (local agent list changed → OpenClaw cache still needs sync). |
+| `agent create --role evaluator` | Load `/skills/okx-agent-task/references/evaluator-staking.md §2` in same response. If staking flow ends without comm-init, fallback to Step 6. If the user has explicitly declined staking earlier in the conversation, skip the staking handoff but still proceed to Step 6 (local agent list changed → OpenClaw cache still needs sync). |
 | `agent create --role requester / provider` | → Step 6 |
 | `agent update / activate / deactivate` | → Step 6 (agent list changed) |
 | Passive Onboarding (`intent=need-requester`) | Hand back to `okx-agent-task` with one line. Do NOT proceed to Step 6. |
