@@ -85,6 +85,22 @@ pub enum TaskCommand {
         /// Advance to next page
         #[arg(long = "next-page")]
         next_page: bool,
+        /// Emit a pending-decisions-v2 recommend_pick decision after fetching
+        /// the list. Requires `--sub-key`. By default uses the auto-written
+        /// canonical English card; pass `--user-content` to override with a
+        /// sub-localized version.
+        #[arg(long = "emit-decision")]
+        emit_decision: bool,
+        /// Full XMTP sessionKey (from `session_status`). Required with `--emit-decision`.
+        #[arg(long = "sub-key")]
+        sub_key: Option<String>,
+        /// Task title used in the decision list label (defaults to `<title>`).
+        #[arg(long = "job-title")]
+        job_title: Option<String>,
+        /// Pre-localized card body to enqueue instead of the auto-written
+        /// canonical English card file.
+        #[arg(long = "user-content")]
+        user_content: Option<String>,
     },
     /// Mark a provider as failed negotiation (excluded from future recommend lists)
     MarkFailed {
@@ -256,7 +272,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 description, description_summary, budget, max_budget, currency,
                 deadline_open, deadline_submit, title, provider, attachments,
             }).await,
-        TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page } => {
+        TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } => {
             if next {
                 recommend::handle_recommend_next(&job_id)
             } else if current {
@@ -265,7 +281,19 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 recommend::handle_recommend_next_page(&mut client, &job_id).await
             } else {
                 let p = page.unwrap_or(0);
-                recommend::handle_recommend(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), p).await
+                recommend::handle_recommend(
+                    &mut client,
+                    &job_id,
+                    agent_id.as_deref().unwrap_or(""),
+                    p,
+                    recommend::EmitDecisionOpts {
+                        enabled: emit_decision,
+                        sub_key,
+                        job_title,
+                        user_content,
+                    },
+                )
+                .await
             }
         }
         TaskCommand::MarkFailed { job_id, provider_agent_id } => {

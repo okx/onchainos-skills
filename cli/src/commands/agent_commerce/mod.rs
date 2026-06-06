@@ -82,6 +82,25 @@ pub enum AgentCommand {
         #[arg(long)] current: bool,
         #[arg(long)] page: Option<usize>,
         #[arg(long = "next-page")] next_page: bool,
+        /// Enqueue the recommendation card as a `pending-decisions-v2`
+        /// `recommend_pick` decision and emit the standard "push card via
+        /// xmtp_prompt_user" playbook. Requires `--sub-key`. By default the
+        /// CLI reuses the canonical English card written to
+        /// `~/.onchainos/task/<jobId>/recommend-cards.txt`; pass
+        /// `--user-content "<localized text>"` to enqueue a sub-prepared
+        /// (e.g. translated) version instead.
+        #[arg(long = "emit-decision")] emit_decision: bool,
+        /// Full XMTP sessionKey (from `session_status`). Required with
+        /// `--emit-decision`.
+        #[arg(long = "sub-key")] sub_key: Option<String>,
+        /// Task title for the decision label (optional). Defaults to
+        /// `<title>` placeholder.
+        #[arg(long = "job-title")] job_title: Option<String>,
+        /// Pre-localized card body to enqueue instead of the auto-written
+        /// canonical English card file. Use when the sub session needs to
+        /// translate fields the user-session runtime cannot localize at
+        /// render time.
+        #[arg(long = "user-content")] user_content: Option<String>,
     },
 
     /// Mark a provider as failed negotiation (excluded from future recommend lists)
@@ -569,6 +588,9 @@ pub enum AgentCommand {
         #[arg(long = "event")] event: String,
         /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab)
         #[arg(long = "agentId", alias = "agent-id")] agent_id: String,
+        /// Role: `buyer` / `provider` / `evaluator`, or `auto` to let the CLI
+        /// resolve the role from `--agentId` (saves a separate `agent profile`
+        /// round-trip).
         #[arg(long)] role: String,
         /// envelope message.code (tx receipt); non-zero = tx failed
         #[arg(long, default_value_t = 0)]
@@ -746,8 +768,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }, ctx,
         ).await,
 
-        AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page } =>
-            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page }, ctx).await,
+        AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } =>
+            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content }, ctx).await,
 
         AgentCommand::MarkFailed { job_id, provider_agent_id } =>
             task::buyer::run_task(T::MarkFailed { job_id, provider_agent_id }, ctx).await,
@@ -1048,6 +1070,55 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
             }
 
+            // Resolve `--role auto` by direct-lookup against the agent registry, so
+            // the caller doesn't have to run `agent profile <id>` as a separate LLM
+            // turn. Uses `query_agent_by_id_direct` (backend-direct lookup, no
+            // pagination) — the same helper that powers `handle_profile`.
+            let resolved_role: String = if role == "auto" {
+                match task::common::query_agent_by_id_direct(&agent_id).await {
+                    Ok(agent) => match agent["role"].as_i64() {
+                        Some(1) => "buyer".to_string(),
+                        Some(2) => "provider".to_string(),
+                        Some(3) => "evaluator".to_string(),
+                        other => anyhow::bail!(
+                            "agentId={agent_id} has unsupported role={:?}; pass --role explicitly",
+                            other
+                        ),
+                    },
+                    Err(e) => anyhow::bail!(
+                        "could not resolve role for agentId={agent_id}: {e}; pass --role explicitly"
+                    ),
+                }
+            } else {
+                role.clone()
+            };
+            eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
+
+            // Duplicate-event short-circuit: several chain events (job_created in
+            // particular) can fire into both the task sub and the backup sub for the
+            // same (jobId, role) pair. If a pending decision already exists for this
+            // pair, the user has already been notified — emit a no-op playbook so the
+            // current turn ends without re-notifying.
+            //
+            // Only dedup events that push a decision/notification to the user;
+            // negotiation / handshake / lifecycle-only events have no user-visible
+            // side effect and must always run their playbook.
+            let dedup_eligible = matches!(
+                event.as_str(),
+                "job_created" | "job_submitted" | "review_deadline_warn" | "job_disputed" | "job_rejected"
+            );
+            if dedup_eligible
+                && task::common::pending_v2::has_pending_for_job(&job_id, &resolved_role)
+            {
+                eprintln!(
+                    "[next-action] duplicate event short-circuit: jobId={job_id} role={resolved_role} event={event} (pending entry already exists)"
+                );
+                println!(
+                    "[Duplicate event] An entry for jobId={job_id} role={resolved_role} is already in the pending-decisions queue. The user has been notified already. **End the turn without re-notifying.** No tool calls required."
+                );
+                return Ok(());
+            }
+
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
             let (freshness_warning, prefetched) = check_status_freshness(&job_id, &event, &agent_id).await;
@@ -1057,7 +1128,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
             let payment_mode = prefetched.as_ref().and_then(|p| p.payment_mode);
             let title_ref = job_title.as_deref();
-            let prompt = match role.as_str() {
+            let prompt = match resolved_role.as_str() {
                 "provider" | "seller" => {
                     crate::audit::log(
                         "cli",

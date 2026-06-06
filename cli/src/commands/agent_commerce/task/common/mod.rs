@@ -565,15 +565,15 @@ fn parse_role_filter(raw: &str) -> Option<i64> {
     }
 }
 
-/// `onchainos agent profile <agent_id>` — look up a single agent by id and
-/// return its flat JSON profile. Works for **any** agent (current account or
-/// peer), used to verify peer / designated-provider identities.
+/// Internal helper: by-id direct lookup against the agent registry. Returns
+/// the matched agent JSON object without printing anything. Suitable for
+/// reuse by other handlers (e.g. `next-action --role auto`) that need an
+/// agent's metadata mid-flow without polluting stdout.
 ///
-/// Internally calls `agent get --agent-ids <id>` then walks the response via
-/// `flatten_agent_groups` to find the matching agent and prints it as the
-/// `data` payload. Errors when agentId is empty, the subprocess fails, the
-/// response shape is broken, or no agent matches the queried id.
-pub async fn handle_profile(agent_id: &str) -> Result<()> {
+/// Spawns `onchainos agent get --agent-ids <id>` (backend-direct lookup, no
+/// pagination), flattens the response groups, and filters by `agentId`. No
+/// ownerAddress restriction — works for any agent (current account or peer).
+pub async fn query_agent_by_id_direct(agent_id: &str) -> Result<serde_json::Value> {
     let id = agent_id.trim();
     if id.is_empty() {
         bail!("agent_id must not be empty");
@@ -601,17 +601,21 @@ pub async fn handle_profile(agent_id: &str) -> Result<()> {
 
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
     let all = flatten_agent_groups(&data);
-    let matched = all.into_iter().find(|a| {
-        a.get("agentId").and_then(|v| v.as_str()) == Some(id)
-    });
+    all.into_iter()
+        .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(id))
+        .ok_or_else(|| anyhow::anyhow!("agentId={id} not found in `agent get` response"))
+}
 
-    match matched {
-        Some(agent) => {
-            crate::output::success(agent);
-            Ok(())
-        }
-        None => bail!("agentId={id} not found in `agent get` response"),
-    }
+/// `onchainos agent profile <agent_id>` — look up a single agent by id and
+/// return its flat JSON profile. Works for **any** agent (current account or
+/// peer), used to verify peer / designated-provider identities.
+///
+/// Thin wrapper over `query_agent_by_id_direct` that adds CLI-style output
+/// (prints the agent JSON via `crate::output::success`).
+pub async fn handle_profile(agent_id: &str) -> Result<()> {
+    let agent = query_agent_by_id_direct(agent_id).await?;
+    crate::output::success(agent);
+    Ok(())
 }
 
 /// `onchainos agent my-agents [--role <r>]` — flat list of the current active

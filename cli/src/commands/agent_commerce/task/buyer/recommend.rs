@@ -11,11 +11,37 @@ use anyhow::Result;
 
 use super::negotiate;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::pending_v2;
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 use crate::commands::agent_commerce::task::signing;
 
+/// Bundle of args controlling the "auto-enqueue recommend card as a pending
+/// decision" behavior. When `enabled` is true, after writing the card file
+/// `handle_recommend` directly forwards content to
+/// `pending-decisions-v2 request --source-event recommend_pick` (in-process),
+/// eliminating the LLM-driven `pending-decisions-v2 request` round-trip.
+///
+/// `user_content`: when set, used verbatim as the decision card body (e.g. a
+/// sub-prepared localized version). When `None`, the auto-written canonical
+/// English card file is read and used. This split exists because some runtimes
+/// (notably OpenClaw) do not translate `xmtp_prompt_user.userContent` at
+/// render time — the sub session must pre-localize before enqueueing.
+#[derive(Default)]
+pub struct EmitDecisionOpts {
+    pub enabled: bool,
+    pub sub_key: Option<String>,
+    pub job_title: Option<String>,
+    pub user_content: Option<String>,
+}
+
 /// Fetch recommended providers (default mode: call the API + cache).
-pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id: &str, page: usize) -> Result<()> {
+pub async fn handle_recommend(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    agent_id: &str,
+    page: usize,
+    emit: EmitDecisionOpts,
+) -> Result<()> {
     let resolved;
     let agent_id = if agent_id.is_empty() {
         use crate::commands::agent_commerce::task::common::AGENT_ROLE_BUYER;
@@ -73,7 +99,9 @@ pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id
     if visible.is_empty() {
         if !providers.is_empty() {
             println!("All providers on this page have failed negotiation; auto-advancing to the next page...");
-            return Box::pin(handle_recommend(client, job_id, agent_id, page + 1)).await;
+            // Forward the caller's emit options (sub_key / title) so the auto-advanced
+            // page can also short-circuit the LLM round-trips if it has visible cards.
+            return Box::pin(handle_recommend(client, job_id, agent_id, page + 1, emit)).await;
         }
         println!("The recommended provider list is empty; no matching providers.");
         print_empty_guidance(job_id);
@@ -81,6 +109,42 @@ pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id
     }
 
     let cards_path = write_cards_file(job_id, &visible, page)?;
+
+    // Short-circuit the LLM "request" round-trip by enqueueing the card
+    // directly. Card body source order:
+    //   1. `--user-content` (sub pre-localized) if provided
+    //   2. otherwise read the canonical English card file just written
+    // The OpenClaw runtime does not auto-translate xmtp_prompt_user.userContent,
+    // so when the user's language is non-English the sub session is expected to
+    // Read the card file, translate, and pass the result via `--user-content`.
+    if emit.enabled {
+        let sub_key = emit.sub_key.ok_or_else(|| {
+            anyhow::anyhow!(
+                "--emit-decision requires --sub-key (full sessionKey from session_status)"
+            )
+        })?;
+        let card_body = match emit.user_content {
+            Some(c) => c,
+            None => std::fs::read_to_string(&cards_path)
+                .map_err(|e| anyhow::anyhow!("read card file {cards_path}: {e}"))?,
+        };
+        let title = emit.job_title.as_deref().unwrap_or("<title>");
+        let short_id = short_job_id(job_id);
+        let list_label = format!("[Recommend {short_id}] {title} ASP-pick decision");
+        eprintln!(
+            "[recommend] emit-decision: jobId={job_id} sub_key={sub_key} list_label={list_label} body_len={}",
+            card_body.len()
+        );
+        return pending_v2::enqueue_recommend_decision(
+            sub_key,
+            job_id.to_string(),
+            "buyer".to_string(),
+            agent_id.to_string(),
+            card_body,
+            list_label,
+        );
+    }
+
     println!(
         "Recommended ASPs (page {}, {} available). Card file: {}",
         page + 1,
@@ -140,7 +204,7 @@ pub async fn handle_recommend_next_page(client: &mut TaskApiClient, job_id: &str
     if agent_id.is_empty() {
         anyhow::bail!("No local buyer identity; please register or pass --agent-id");
     }
-    handle_recommend(client, job_id, &agent_id, next_page).await
+    handle_recommend(client, job_id, &agent_id, next_page, EmitDecisionOpts::default()).await
 }
 
 const DESC_MAX_CHARS: usize = 120;

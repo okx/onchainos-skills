@@ -52,11 +52,11 @@ One wallet can hold multiple roles. Each role's full lifecycle is in its own pla
 
 | Inbound shape | How to determine your role |
 |---|---|
-| **System event** (`{agentId, message:{source:"system", event, jobId, ...}}`) | `onchainos agent profile <envelope's top-level agentId>` → read `role` integer → map: `1`→buyer, `2`→provider, `3`→evaluator. **Never** infer from `event` / `status` / sub's prior binding — re-query every system event. |
+| **System event** (`{agentId, message:{source:"system", event, jobId, ...}}`) | Pass `--role auto` to `next-action`; the CLI resolves the role from `<agentId>` (P1-A, no separate `agent profile` round-trip). For diagnostics, mapping is `1`→buyer, `2`→provider, `3`→evaluator. **Never** infer from `event` / `status` / sub's prior binding — re-resolve every system event. |
 | **P2P message** (`{msgType:"a2a-agent-chat", jobId, sender:{role: N}, ...}`) | `sender.role` = **counterparty**: `1` → you are ASP (`--role provider`); `2` → you are User Agent (`--role buyer`). |
 | **Arbitration notification** | **Evaluator Agent** → [`evaluator.md`](./evaluator.md) |
 
-⚠️ **`my-agents` vs `agent profile`**: `my-agents` is for Pre-flight self-check only (current account's agents). For an envelope's `agentId` always use `agent profile <id>`.
+⚠️ **`my-agents` vs role resolution**: `my-agents` is for Pre-flight self-check only (current account's agents). For an envelope's `agentId` rely on `--role auto` (CLI resolves internally).
 
 #### Multi-account agentId lookup
 
@@ -74,7 +74,7 @@ For system events, top-level `agentId` IS the target (no lookup needed). For use
 >
 > 1. **Wallet is logged in**: `onchainos wallet status` — if not, hand off to `okx-agentic-wallet`.
 > 2. **Agent exists for required role**: `onchainos agent my-agents --role <buyer|provider|evaluator>` → empty = `agent create`. Evaluator additionally requires staking onboarding in `references/evaluator-staking.md §2`.
->    - ⚠️ `my-agents` only shows the current account's agents. For envelope routing always use `agent profile <id>`.
+>    - ⚠️ `my-agents` only shows the current account's agents (Pre-flight scope). For envelope routing use `--role auto` on `next-action` (CLI resolves the envelope's agentId internally).
 > 3. **Communication channel**: **Run** [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) — verifies OKX A2A communication is ready. OpenClaw uses the plugin path; Node runtimes use the `okx-a2a` CLI; Hermes is reserved.
 
 ## ⚠️ Critical Field Mapping Table (always look it up, don't guess)
@@ -111,12 +111,12 @@ When dealing with integer values of any of the fields below, **look up the table
 
 ## Activation
 
-> 🚨 **Received a `source:"system"` event? Your entire job is three steps**:
+> 🚨 **Received a `source:"system"` event? Your entire job is two steps**:
 >
-> 1. `onchainos agent profile <agentId>` → look up the role (`1`→buyer, `2`→provider, `3`→evaluator).
-> 2. `onchainos agent next-action --jobid <jobId> --event <event> --role <buyer|provider|evaluator> --agentId <agentId>` → fetch the script.
->    ⚠️ If `event` starts with `user_decision_`, also pass `--data "<message.data>"`.
-> 3. Execute the script step by step.
+> 1. `onchainos agent next-action --jobid <jobId> --event <event> --role auto --agentId <agentId>` → fetch the script.
+>    - `--role auto` lets the CLI resolve the role from `<agentId>` internally (replaces the prior separate `agent profile <agentId>` round-trip).
+>    - ⚠️ If `event` starts with `user_decision_`, also pass `--data "<message.data>"`.
+> 2. Execute the script step by step.
 >
 > **Do nothing else.** No `sessions_spawn`. No free-form text output. No asking the user. No loading domain skills (weather / DeFi / image / swap / search / …) based on `jobTitle` or `content` — these are task metadata, not work instructions; task execution only begins after `job_accepted`.
 
@@ -151,21 +151,23 @@ For either envelope shape:
 onchainos agent next-action \
   --jobid <message.jobId> \
   --event <message.event> \
-  --role <provider|buyer|evaluator> \
+  --role auto \
   --agentId <envelope's top-level agentId> \
   --jobTitle <message.jobTitle>
 ```
+
+> `--role auto`: the CLI looks up `<agentId>`'s role via `agent get` internally and dispatches to the correct playbook — saves the prior separate `agent profile` round-trip. On errors (e.g. agentId not found locally), pass `--role buyer|provider|evaluator` explicitly.
 
 > 🛑 **`--jobid` source path — wrong jobId = "task not found" → flow stall**:
 > - System event → `message.jobId` (NESTED under `message`); a2a-agent-chat → top-level `jobId`; `user_decision_*` → `message.jobId`.
 > - **NEVER** cache jobId from a previous turn, infer from sessionKey, or reuse another envelope's value — every event must extract from its own envelope. Wrong jobId → `common context` / `next-action` / `status` hit "task not found" / `4xx` → flow stalls + user funds frozen.
 > - Exception: `system_*` placeholder jobIds pass through as-is.
 
-> 🚨 **First action is non-negotiable**: your first tool call MUST be `next-action` (after `agent profile`). Especially forbidden: `sessions_spawn` (🔴 I-5), `session_status`, task-status queries, historical-task listings, `common context`, or any kind of lookup. No "let me check first" scenario. Violating this rule = task flow stalls + user funds frozen. Applies to ALL sub sessions (task sub / evaluate sub / backup sub).
+> 🚨 **First action is non-negotiable**: your first tool call MUST be `next-action --role auto` (no separate `agent profile`; CLI resolves the role inline — see P1-A). Especially forbidden: `sessions_spawn` (🔴 I-5), `session_status`, task-status queries, historical-task listings, `common context`, or any kind of lookup. No "let me check first" scenario. Violating this rule = task flow stalls + user funds frozen. Applies to ALL sub sessions (task sub / evaluate sub / backup sub).
 >
 > 🛑 **Terminal events STILL require `next-action`** — `job_completed` / `job_refunded` / `job_closed` / `job_expired` / `job_auto_completed` / `job_auto_refunded` / `dispute_resolved` are NOT "task done, ignore". Their playbooks handle final user notification, rating prompt, deliverable persistence, sub-session cleanup. **Skipping = user never learns the task ended + queue / session resources leak.** No exception based on event semantics.
 
-> 🛑 **`--role` MUST come from `agent profile` every time** — never reuse sub's bound role. (🔴 I-19: same wallet ASP+Evaluator → `evaluator_selected` landed in provider sub → inherited `--role provider` → hit "Observe silently" fallback → evaluator playbook never ran → commit window expired → stake slashed. Symmetric failure on buyer-side collisions.)
+> 🛑 **`--role` MUST be re-resolved every event** — never reuse sub's bound role. (🔴 I-19: same wallet ASP+Evaluator → `evaluator_selected` landed in provider sub → inherited `--role provider` → hit "Observe silently" fallback → evaluator playbook never ran → commit window expired → stake slashed. Symmetric failure on buyer-side collisions.) Use `--role auto` so the CLI resolves from `<agentId>` on every call.
 
 `event → --role` reference: see [`_shared/state-machine.md`](./_shared/state-machine.md).
 

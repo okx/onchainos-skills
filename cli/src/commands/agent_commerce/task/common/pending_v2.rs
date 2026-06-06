@@ -184,6 +184,58 @@ fn read_queue() -> Result<Queue> {
     Ok(serde_json::from_str::<Queue>(&raw).unwrap_or_default())
 }
 
+/// P0-A: in-process equivalent of `pending-decisions-v2 request
+/// --source-event recommend_pick ...` for the `recommend --emit-decision`
+/// flow. Reuses `handle_request` (same dedup-by-sub_key, same
+/// CLI-vs-MCP-prompt mode branch, same playbook emission), so callers get the
+/// identical behavior they would have gotten from spawning a separate CLI
+/// subprocess — without the round-trip.
+///
+/// Always emits the chosen playbook to stdout (same as the CLI subcommand).
+pub fn enqueue_recommend_decision(
+    sub_key: String,
+    job_id: String,
+    role: String,
+    agent_id: String,
+    user_content: String,
+    list_label: String,
+) -> Result<()> {
+    handle_request(
+        sub_key,
+        job_id,
+        role,
+        agent_id,
+        user_content,
+        list_label,
+        None,
+        Some("recommend_pick".to_string()),
+    )
+}
+
+/// P1-B idempotency helper for `next-action`: returns `true` when the queue
+/// already contains a pending decision entry for the given (job_id, role)
+/// pair. Used to short-circuit duplicate chain events (e.g. job_created
+/// firing into both task sub + backup sub) without forcing the LLM to run
+/// `pending-decisions-v2 list --format json` as a separate turn.
+///
+/// Best-effort: read-only, no lock; on read failure returns `false` so the
+/// caller falls back to the normal event flow.
+pub fn has_pending_for_job(job_id: &str, role: &str) -> bool {
+    let queue = match read_queue() {
+        Ok(q) => q,
+        Err(e) => {
+            trace_log(&format!(
+                "has_pending_for_job read_queue failed: {e}; returning false"
+            ));
+            return false;
+        }
+    };
+    queue
+        .entries
+        .iter()
+        .any(|e| e.job_id == job_id && e.role == role)
+}
+
 fn write_queue_atomic(queue: &Queue) -> Result<()> {
     let path = queue_path()?;
     let dir = path.parent().ok_or_else(|| anyhow::anyhow!("no parent dir"))?;

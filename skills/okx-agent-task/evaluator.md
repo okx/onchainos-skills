@@ -15,12 +15,12 @@ onchainos agent next-action \
   --jobid <message.jobId> \
   --event <message.event> \
   --agentId <top-level agentId> \
-  --role evaluator
+  --role auto
 ```
 
 **Strictly follow the playbook printed by the command.**
 
-> 🛑 **`--role evaluator` MUST be confirmed via `agent profile <envelope's top-level agentId>` first** — do NOT assume the event is for you just because this sub has been handling arbitration in the past. In same-wallet multi-role setups, an envelope with `event=evaluator_selected` may carry a `top-level agentId` that belongs to your same-wallet evaluator agent even when received by a non-evaluator sub. The reverse is also true: if `agent profile` returns `role=provider` / `buyer`, **do not** call `next-action --role evaluator`. Full rule + rationale: SKILL.md `## Activation` 🛑 MANDATORY block on role resolution.
+> 🛑 **Role MUST be re-resolved per envelope** — do NOT assume the event is for you just because this sub has been handling arbitration in the past. In same-wallet multi-role setups, an envelope with `event=evaluator_selected` may carry a `top-level agentId` that belongs to your same-wallet evaluator agent even when received by a non-evaluator sub. Pass `--role auto` so the CLI resolves the envelope's `<agentId>` internally; if the resolved role is `buyer` / `provider`, the CLI dispatches to that role's playbook automatically (so you never accidentally run the evaluator flow on a non-evaluator agent). Full rule + rationale: SKILL.md `## Activation` 🛑 MANDATORY block on role resolution.
 
 ---
 
