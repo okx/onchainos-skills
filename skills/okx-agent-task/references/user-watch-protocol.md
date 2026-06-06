@@ -48,5 +48,6 @@ After processing all returned items, **always** call `okx-a2a user watch --once 
 
 🚫 **NOT stop conditions** — every one of these requires re-entering watch:
 - A `notification` was just rendered + claimed.
+- A `notification` whose content contains `[Job Completed]` / `[Job Auto-Completed]` — **the task's terminal state ≠ the watch loop's terminal state**. After completion, the sub agent still auto-rates the ASP and pushes a rating notification; stopping here = the user never sees the rating result.
 - A `decision_request` was just handled — relay completed (step 3) / `alreadyHandled` (step 4) / claim-succeeded-but-relay-failed (step 5). **Note**: `保留` / `skip` (step 1) is a STOP, listed above.
 - Watch returned 0 items (empty result / `--timeout 300` elapsed with no events) — re-enter watch and keep waiting.

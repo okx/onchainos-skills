@@ -112,8 +112,7 @@ pub fn job_completed_escrow_user_notify(job_id: &str, title: &str) -> String {
         "[Job Completed] {title} (`{job_id}`) — approved by the User Agent; funds released to the ASP.\n\
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: escrow\n\
-         - txHash: <txHash>\n\
-         This job is complete."
+         - txHash: <txHash>"
     )
 }
 
@@ -124,8 +123,7 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
          - Spent: <tokenAmount> <tokenSymbol>\n\
          - Payment: x402\n\
          - Deliverable saved to: <deliverableSavedPath from task-402-pay output; if not in context, omit this line>\n\
-         - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>\n\
-         This job is complete."
+         - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>"
     )
 }
 
@@ -301,7 +299,7 @@ pub fn review_expired_user_notify(job_id: &str) -> String {
 pub fn job_auto_completed_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "[Job Auto-Completed] {title} (`{job_id}`) — the review window expired and the ASP has claimed the funds.\n\
-         Status: completed. This job is complete."
+         Status: completed."
     )
 }
 
