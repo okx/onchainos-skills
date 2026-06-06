@@ -569,6 +569,9 @@ pub enum AgentCommand {
         #[arg(long = "event")] event: String,
         /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab)
         #[arg(long = "agentId", alias = "agent-id")] agent_id: String,
+        /// Role: `buyer` / `provider` / `evaluator`, or `auto` to let the CLI
+        /// resolve the role from `--agentId` (saves a separate `agent profile`
+        /// round-trip).
         #[arg(long)] role: String,
         /// envelope message.code (tx receipt); non-zero = tx failed
         #[arg(long, default_value_t = 0)]
@@ -1048,6 +1051,30 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
             }
 
+            // Resolve `--role auto` by direct-lookup against the agent registry, so
+            // the caller doesn't have to run `agent profile <id>` as a separate LLM
+            // turn. Uses `query_agent_by_id_direct` (backend-direct lookup, no
+            // pagination) — the same helper that powers `handle_profile`.
+            let resolved_role: String = if role == "auto" {
+                match task::common::query_agent_by_id_direct(&agent_id).await {
+                    Ok(agent) => match agent["role"].as_i64() {
+                        Some(1) => "buyer".to_string(),
+                        Some(2) => "provider".to_string(),
+                        Some(3) => "evaluator".to_string(),
+                        other => anyhow::bail!(
+                            "agentId={agent_id} has unsupported role={:?}; pass --role explicitly",
+                            other
+                        ),
+                    },
+                    Err(e) => anyhow::bail!(
+                        "could not resolve role for agentId={agent_id}: {e}; pass --role explicitly"
+                    ),
+                }
+            } else {
+                role.clone()
+            };
+            eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
+
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
             let (freshness_warning, payment_mode) = check_status_freshness(&job_id, &event, &agent_id).await;
@@ -1056,7 +1083,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
             let title_ref = job_title.as_deref();
-            let prompt = match role.as_str() {
+            let prompt = match resolved_role.as_str() {
                 "provider" | "seller" => {
                     crate::audit::log(
                         "cli",
