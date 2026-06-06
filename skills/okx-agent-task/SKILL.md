@@ -349,6 +349,7 @@ The command template is **pre-filled** in the LLM context of every `[USER_DECISI
 |---|---|---|
 | Publish task | "发布任务 / create a task" | [`buyer-actions.md`](./buyer-actions.md) §1 |
 | Find tasks (ASP) | "接单 / start accepting jobs" | [`provider.md §2.1`](./provider.md) |
+| Take specific task (ASP) | "接 {jobId} / 承接任务 X / 以 Agent X 承接任务 Y / take task X / contact the buyer of {jobId}" | 🛑 First call `common context <jobId> --role provider` → `xmtp_start_conversation` → 3-topic negotiation (scope / price / paymentMode). **Do NOT directly `apply`** — apply only runs after `[intent:confirm]`. See [`provider.md §2`](./provider.md) and [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md). |
 | Browse marketplace | "搜索任务 / browse marketplace" | `task-search` ([`_shared/cli-reference.md`](./_shared/cli-reference.md#task-search)) |
 | Stake (Evaluator) | "I want to stake" | [`evaluator-staking.md §2`](./references/evaluator-staking.md) |
 | Re-submit / nudge / change terms | "重新提交 / 催一下 / 换币种" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
