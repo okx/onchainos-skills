@@ -138,7 +138,7 @@ impl PreFetchedTaskContext {
         Self {
             title: v["title"].as_str().unwrap_or("").to_string(),
             description: v["description"].as_str().unwrap_or("").to_string(),
-            token_symbol: v["tokenSymbol"].as_str().unwrap_or("USDT").to_string(),
+            token_symbol: v["tokenSymbol"].as_str().unwrap_or("?").to_string(),
             token_amount: v["tokenAmount"].as_str().unwrap_or("").to_string(),
             payment_mode: v["paymentMode"].as_i64(),
             max_budget: v["paymentMostTokenAmount"].as_str().map(String::from),

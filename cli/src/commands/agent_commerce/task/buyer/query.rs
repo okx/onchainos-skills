@@ -14,7 +14,7 @@ pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str, agent_id: 
 
     let task = &resp;
     let amount = task["tokenAmount"].as_str().unwrap_or("?");
-    let token_symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT");
+    let token_symbol = task["tokenSymbol"].as_str().unwrap_or("?");
     let provider_addr = task["providerAgentAddress"].as_str().unwrap_or("?");
     let payment_mode_int = task["paymentMode"].as_i64().unwrap_or(0);
     let payment_mode = crate::commands::agent_commerce::task::common::PaymentMode::from_int(payment_mode_int as i32);

@@ -235,8 +235,8 @@ fn print_routing_guide(p: &negotiate::ProviderInfo, job_id: &str) {
         let endpoint = svc.map(|s| s.endpoint.as_str()).unwrap_or("<endpoint>");
         let fee = svc.map(|s| s.fee_amount).unwrap_or(0.0);
         let symbol = svc
-            .map(|s| if s.fee_token_symbol.is_empty() { "USDT" } else { s.fee_token_symbol.as_str() })
-            .unwrap_or("USDT");
+            .map(|s| if s.fee_token_symbol.is_empty() { "?" } else { s.fee_token_symbol.as_str() })
+            .unwrap_or("?");
         println!("  ⚡ Route: x402 (no negotiation; accept directly)");
         println!("  → onchainos agent confirm-accept {job_id} --provider {} --payment-mode x402 --token-symbol {symbol} --token-amount {fee} --endpoint {endpoint}", p.provider_agent_id);
     } else {

@@ -44,7 +44,7 @@ pub async fn handle_dispute_raise(
         .unwrap_or("0")
         .parse()
         .unwrap_or(0.0);
-    let token_symbol = task_resp["tokenSymbol"].as_str().unwrap_or("USDT");
+    let token_symbol = task_resp["tokenSymbol"].as_str().unwrap_or("?");
     if task_amount > 0.0 {
         let required = task_amount * 0.05;
         common::ensure_sufficient_balance(required, token_symbol)

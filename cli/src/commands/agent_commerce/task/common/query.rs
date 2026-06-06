@@ -30,7 +30,7 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
 
     let t = &resp;
-    let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
+    let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
     println!("Task status: {}", t["status"].as_i64().map(status_name).unwrap_or("?"));
     println!("  jobId:    {job_id}");
     println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
@@ -60,7 +60,7 @@ pub async fn handle_list(
     let total = resp["total"].as_u64().unwrap_or(0);
     println!("Task list ({total} total, page {page}):");
     for t in &tasks {
-        let sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
+        let sym = t["tokenSymbol"].as_str().unwrap_or("?");
         println!("  [{}] {} — {} {}",
             t["statusStr"].as_str().unwrap_or("?"),
             t["jobId"].as_str().unwrap_or("?"),
@@ -222,7 +222,7 @@ pub async fn handle_active_tasks(
                 "statusCode":           status_code,
                 "title":                t.get("title").and_then(|v| v.as_str()).unwrap_or(""),
                 "tokenAmount":          t.get("tokenAmount").and_then(|v| v.as_str()).unwrap_or(""),
-                "tokenSymbol":          t.get("paymentTokenSymbol").and_then(|v| v.as_str()).unwrap_or(""),
+                "tokenSymbol":          t.get("tokenSymbol").and_then(|v| v.as_str()).unwrap_or(""),
                 "myAgentId":            agent_id,
                 "myRole":               role_name(role),
                 "counterpartyAgentId":  if counterparty_id.is_empty() {
