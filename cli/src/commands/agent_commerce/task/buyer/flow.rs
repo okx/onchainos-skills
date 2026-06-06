@@ -443,7 +443,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
                      \x20\x20\x20\x20C. Close the job — cancel and refund\n\
                      \x20\x20• **Make public** — typical intents: B / 选B / `public` / `公开` / `公开任务`. Action: `onchainos agent set-public {job_id}`.\n\
                      \x20\x20• **Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
-                     ⚠️ If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event recommend_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or 「next」 for more, 「public」 to open the job, 「close」 to cancel.\"\n"
+                     ⚠️ If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event recommend_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or see more recommendations, list the task publicly, or cancel.\"\n"
                 ),
                 "provider_pending" => format!(
                     "[User decision relay] source_event=`provider_pending`, user's verbatim reply: `{reply}`\n\n\

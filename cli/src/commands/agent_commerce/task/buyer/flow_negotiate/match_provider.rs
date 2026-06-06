@@ -63,7 +63,7 @@ fn job_created_public(ctx: &FlowContext<'_>) -> String {
          Use `Read` on the path from Action 3. Translate the card body to the user's chat language; \
          preserve every data value (jobId hex, AgentID digits, fee amounts, symbols), every field label \
          layout, every line break. Do NOT paraphrase, do NOT add extra commentary. Keep the reply-hint \
-         footer (\"Please choose: reply with an index ... or ... pick an ASP; or reply 「next」/「public」/「close」\") \
+         footer (\"Please choose: reply with an index to pick an ASP; or see more / list publicly / cancel\") \
          localized to the user's language too. Save the translated string as `<LOCALIZED_CARD>`.\n\n\
          **Action 5 — Enqueue the pre-localized card as the user-pick decision** (pass the translated body directly; do NOT re-call `recommend` — it would re-hit /match and waste ~13s):\n\
          ```bash\n\
