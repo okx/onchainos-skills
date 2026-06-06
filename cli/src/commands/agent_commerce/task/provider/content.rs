@@ -197,13 +197,6 @@ pub fn rating_submitted_user_notify(job_id: &str) -> String {
     )
 }
 
-pub fn rating_failed_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[⚠️ Rating Skipped] Job <title> (`{job_id}`) — auto-rating could not be submitted: <error reason>.\n\
-         \x20\x20\x20\x20This does not affect the task completion or payment."
-    )
-}
-
 /// `Event::DisputeResolved` branch B (ASP loses) — B-Step 1 user notify.
 pub fn dispute_lost_user_notify(job_id: &str) -> String {
     format!(

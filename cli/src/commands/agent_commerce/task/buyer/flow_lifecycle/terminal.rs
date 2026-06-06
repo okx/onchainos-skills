@@ -174,7 +174,6 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
 
     let auto_completed_notify = super::super::content::job_auto_completed_user_notify(job_id, title_display);
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
-    let rating_failed_notify = super::super::content::rating_failed_user_notify(job_id);
     format!(
     "[System Notification] job_auto_completed (claimAutoComplete tx receipt)\n\
      [Role] User (User Agent)\n\n\
@@ -200,9 +199,7 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
      - ✅ **Success** (output contains `txHash`):\n\
      content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
      {rating_notify}\n\
-     - ❌ **Failure** (error / non-zero exit code) → still notify; do NOT retry:\n\
-     content (fill `<title>` from task context; fill `<error reason>` from feedback-submit stderr):\n\
-     {rating_failed_notify}\n\n\
+     - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
      **Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n"
