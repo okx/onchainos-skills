@@ -589,7 +589,7 @@ pub async fn handle_draft_publish(
         || std::env::var("CODEX_THREAD_ID").ok().filter(|s| !s.is_empty()).is_some();
     if cli_mode {
         println!();
-        println!("[Watch] Start monitoring task progress:");
+        println!("🛑 [Watch] You MUST now execute the watch command below to monitor task progress — do NOT skip or end the turn without running it:");
         println!("okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50");
     }
     Ok(())
