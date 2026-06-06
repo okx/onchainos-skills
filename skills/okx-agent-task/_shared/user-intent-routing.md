@@ -70,9 +70,9 @@ Triggers (only when there's no active card the user might be answering):
 
 🛑 **CRITICAL ambiguity — `close` vs `resolve C`**:
 - `关闭` / `close` is overloaded:
-  1. **In "Waiting for user reply" state** on a `recommend_pick` card → `resolve --user-reply "关闭"` (CLI maps to `close`).
+  1. **In "Waiting for user reply" state** on a `recommend_pick` card → run the block's pre-filled `resolve-prompt` command with `--user-reply "关闭"` (CLI maps to `close`).
   2. **Outside Waiting state** → `onchainos agent close <jobId>` directly.
-- 🔴 I-9: case (1) mistakenly mis-routed. **Default when in doubt**: prefer `resolve`.
+- 🔴 I-9: case (1) mistakenly mis-routed. **Default when in doubt**: prefer `resolve-prompt`.
 
 ---
 
@@ -106,14 +106,18 @@ Triggers (only when there's no active card the user might be answering):
 
 ## Decision list & pick
 
-**Triggers** (match by intent, non-exhaustive):
+🛑 **Priority guard** — if your context contains an active `[USER_DECISION_REQUEST]` block (you're in "Waiting for user reply" state from a recent push), **bare digit / letter / free-form reply must NOT trigger decision-list/pick** — those are answers to the active card and must run the block's pre-filled `resolve-prompt` command instead. Decision-list/pick triggers below apply ONLY when there is no active block awaiting reply OR when the user uses one of the explicit trigger phrases.
+
+**Triggers** (match by intent — explicit phrasing only, do not infer from bare numbers):
 - Chinese: `查看决策列表` / `决策列表` / `决策` / `决策项` / `决策卡` / `待办决策` / `我的决策` / `查看决策` / `看决策` / `有什么待办` / `有什么要处理的` / `我有几个决策要处理` / `还有什么没处理`
 - English: `decision list` / `show decision list` / `list decisions` / `pending decisions` / `show my decisions` / `what's pending` / `what decisions do I have` / `any pending tasks`
 
 **Action**: `onchainos agent pending-decisions-v2 list --format markdown` → follow CLI's 3-step playbook. Render only the translated source body to the user.
 
-**Follow-up — user picks an entry** (`1` / `第 1 个` / `选 2` / label substring):
+**Follow-up — user picks an entry** (`1` / `第 1 个` / `选 2` / label substring, **immediately after a decision-list render in the previous turn**):
 - `onchainos agent pending-decisions-v2 pick --index <N>` (1-based row number).
-- CLI: queued → promote + render; already-active → re-render only. Follow playbook verbatim.
-- ❌ Do NOT call `resolve` here. ❌ Do NOT treat the number as a decision answer.
+- CLI: **render-only** — re-displays the selected card's full content via `playbook_render` (no status mutation, no queue modification). Pick is purely a "show me this card again" operation under the queue-bypass model.
+- Inside the rendered card's llmContent block: when the user replies, run the embedded `resolve-prompt` command (NOT `resolve`).
+- ❌ Do NOT call `resolve` / `resolve-prompt` directly from this pick step — that's for the next turn, after the user actually replies to the rendered card.
+- ❌ Do NOT treat the number as a decision answer to the active card (different semantic — decision-list pick vs. active-card answer).
 - Stale snapshot → CLI returns `playbook_stale_relist`; re-render and re-ask.
