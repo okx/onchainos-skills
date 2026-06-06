@@ -4,7 +4,7 @@ description: "Public-address portfolio lookup across XLayer, Solana, Ethereum, B
 license: MIT
 metadata:
   author: okx
-  version: "3.4.0-beta"
+  version: "3.4.2-beta"
   homepage: "https://web3.okx.com"
 ---
 
