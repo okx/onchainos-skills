@@ -1,6 +1,6 @@
 ---
 name: okx-task-watch
-description: "Live user-session task-progress monitor for OKX A2A. Long-poll the user inbox via `okx-a2a user watch`; render notifications verbatim; claim items; relay `decision_request` per `llm_content`. Also drains backlog: any request to view past / missed / unread task messages is served by the same watch command (it drains SQLite-backed pending items first, then waits for new events). Claude Code / Codex only (gated by `CLAUDECODE=1` or `CODEX_THREAD_ID`); on Hermes / OpenClaw the client pushes notifications natively and no `okx-a2a` command exists — this skill stops with an unsupported-platform message. NOT a cron / scheduled / interval-polling task — `--timeout 300` IS the wait. Triggers: 监听任务进展 / 开始监听任务 / 关注任务进展 / 使用监听 skill 监听任务进展 / 帮我盯着任务 / 任务有进度就告诉我 / 任务有动静告诉我 / 开监听 / watch 任务 / 历史消息 / 历史记录 / 过去消息 / 之前的消息 / 帮我看看之前的历史消息 / 看下之前的消息 / 未读消息 / task watch / user watch / monitor task progress / keep me posted on tasks / watch tasks / start watching / show past messages / show message history / catch me up on tasks / unread task messages. Business actions (apply / deliver / dispute / quote / accept) belong to `okx-agent-task`; this skill only handles the watch loop."
+description: "Live user-session task-progress monitor for OKX A2A. Long-poll the user inbox via `okx-a2a user watch`; render `notification` items verbatim (auto-consumed by watch — no claim needed); for `decision_request` items, render verbatim, claim the user's reply, and relay per `llm_content`. Also drains backlog: any request to view past / missed / unread task messages is served by the same watch command (it drains SQLite-backed pending items first, then waits for new events). Claude Code / Codex only (gated by `CLAUDECODE=1` or `CODEX_THREAD_ID`); on Hermes / OpenClaw the client pushes notifications natively and no `okx-a2a` command exists — this skill stops with an unsupported-platform message. NOT a cron / scheduled / interval-polling task — `--timeout 300` IS the wait. Triggers: 监听任务进展 / 开始监听任务 / 关注任务进展 / 使用监听 skill 监听任务进展 / 帮我盯着任务 / 任务有进度就告诉我 / 任务有动静告诉我 / 开监听 / watch 任务 / 历史消息 / 历史记录 / 过去消息 / 之前的消息 / 帮我看看之前的历史消息 / 看下之前的消息 / 未读消息 / task watch / user watch / monitor task progress / keep me posted on tasks / watch tasks / start watching / show past messages / show message history / catch me up on tasks / unread task messages. Business actions (apply / deliver / dispute / quote / accept) belong to `okx-agent-task`; this skill only handles the watch loop."
 license: Apache-2.0
 metadata:
   author: okx
@@ -69,30 +69,20 @@ When the call returns items, process each per §Dispatch below. After processing
 
 A returned item is always one of two `kind`s, handled completely differently.
 
-### `kind == notification` — three MANDATORY steps in this exact order, every time
+### `kind == notification` — two MANDATORY steps in this exact order, every time
 
 1. **Render `user_content` verbatim** to the user. The assistant message MUST literally contain `<item.user_content>` (translation to the user's language follows LOCALIZATION_PREFIX rules only — every data value, label, address, amount, deadline, and line break must survive). ❌ Do NOT paraphrase, summarize, shorten, prepend `[notification:]` / "you have a new update:", or replace structured fields with handwaves like "your task". Do **not** parse `llm_content` for this kind. The mid-handling message is **not** a "work-progress update" — when you are handling a `notification`, your assistant message's job IS to display the notification body; it cannot only describe what you are about to do next.
-   - 🛑 **Forbidden substitution phrases** (any of these in place of the body = violation): `收到「…」的通知` / `收到通知` / `我看到通知了` / `通知说……` / `我会标记已读` / `received notification` / `I'll mark it read` / `noted the notification` / any wrapper-only sentence with no body verbatim. These describe the act of receiving instead of displaying — strictly forbidden.
-2. **Claim the item** to remove it from the pending queue:
-   ```bash
-   okx-a2a user check --todo-ids <todoId> --json
-   ```
-   🛑 **Hard self-check before claim**: the assistant message *immediately preceding* this `okx-a2a user check` call MUST contain the item's `user_content` verbatim. If it does not (because you summarized, skipped, or only described what you're about to do), **abort the claim**, render the body first in a new assistant message, then claim. Skipping step 1 = the user never sees the notification; skipping step 2 = the item stays `pending` and resurfaces on every subsequent watch wake-up, spamming duplicates.
-3. **Resume watching** — call `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` again. No relay, no `llm_content` thinking.
+   - 🛑 **Forbidden substitution phrases** (any of these in place of the body = violation): `收到「…」的通知` / `收到通知` / `我看到通知了` / `通知说……` / `received notification` / `noted the notification` / any wrapper-only sentence with no body verbatim. These describe the act of receiving instead of displaying — strictly forbidden.
+2. **Resume watching** — call `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` again. No relay, no `llm_content` thinking.
 
-**Multi-item ordering** — when `okx-a2a user watch` returns N `notification` items, process them as a per-item loop, NOT a batch:
+> 💡 `notification` items are **auto-consumed by `watch`** — they are removed from the pending queue the moment `watch` returns them. Do **NOT** call `okx-a2a user check --todo-ids …` for `notification` items; that command is only for `decision_request` items (where it commits the user's reply).
 
-```
-for each item:
-  render user_content verbatim  →  okx-a2a user check --todo-ids <thisId>  →  next item
-```
-
-❌ Do NOT batch-claim multiple `--todo-ids` in one call unless every one of those items already had its `user_content` rendered verbatim in a preceding assistant message. The render-before-claim invariant is per-item.
+**Multi-item ordering** — when `okx-a2a user watch` returns N `notification` items, render each `user_content` verbatim in order (no batching, no cross-item summarization). After all bodies are rendered, run a single resume `watch` call.
 
 **Counter-example** (real incident — do NOT repeat):
 
-- ❌ Wrong (substitution): assistant says `收到"正在连接服务商"的通知。我会标记已读。` → runs `okx-a2a user check --todo-ids …` — the body (`【北京未来一天天气查询】（0x49fa…b3f8） — 正在连接指定服务商（866）。`) was never shown; the user only sees a wrapper sentence about the act of receiving, then the item is gone.
-- ✅ Correct: assistant message contains `[正在连接服务商]【北京未来一天天气查询】（0x49fa…b3f8） — 正在连接指定服务商（866）。` (full verbatim body, including bracketed marker, job title, jobId fragment, and counterparty id), THEN runs `okx-a2a user check --todo-ids …`.
+- ❌ Wrong (substitution): assistant says `收到"正在连接服务商"的通知` — the body (`【北京未来一天天气查询】（0x49fa…b3f8） — 正在连接指定服务商（866）。`) was never shown; the user only sees a wrapper sentence about the act of receiving.
+- ✅ Correct: assistant message contains `[正在连接服务商]【北京未来一天天气查询】（0x49fa…b3f8） — 正在连接指定服务商（866）。` (full verbatim body, including bracketed marker, job title, jobId fragment, and counterparty id).
 
 ### `kind == decision_request`
 
@@ -164,7 +154,7 @@ If the scheduling tool is unavailable (unknown tool / returns an error) → **sk
 After processing all returned items, **always** call `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` again to resume watching. The only exceptions are the stop conditions listed above.
 
 🚫 **NOT stop conditions** — every one of these requires re-entering watch:
-- A `notification` was just rendered + claimed.
+- A `notification` was just rendered (auto-consumed by watch — no claim step exists for notifications).
 - A `notification` whose content contains `[Job Completed]` / `[Job Auto-Completed]` — **the task's terminal state ≠ the watch loop's terminal state**. After completion, the sub agent still auto-rates the ASP and pushes a rating notification; stopping here = the user never sees the rating result.
 - A `decision_request` was just handled — relay completed (step 3) / `alreadyHandled` (step 4) / claim-succeeded-but-relay-failed (step 5). **Note**: `保留` / `skip` (step 1) is a STOP, listed above.
 - Watch returned 0 items (empty result / `--timeout 300` elapsed with no events) — re-enter watch and keep waiting.
