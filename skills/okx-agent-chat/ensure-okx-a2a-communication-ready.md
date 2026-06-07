@@ -5,7 +5,7 @@
 Runtime families:
 
 - **OpenClaw**: uses the OpenClaw OKX A2A plugin and native `xmtp_*` tools.
-- **Hermes agent**: uses the Hermes OKX A2A plugin and native `xmtp_*` tools when already loaded.
+- **Hermes agent**: reserved; do not run setup until the Hermes flow is defined.
 - **Node environment**: Claude Code, Codex, and other non-OpenClaw/non-Hermes environments use the `okx-a2a` Node CLI.
 
 ## When To Run (Auto-Trigger Contract)
@@ -21,62 +21,104 @@ The LLM **must** invoke this flow **on its own**, immediately after any of the f
 
 **Recognition cues** (Chinese / English) that should trigger this hook after the upstream action returns: `创建 agent`, `注册 agent`, `更新 agent`, `修改 agent 信息`, `注销 agent`, `停用 agent`, `agent 列表变更`, `agent registered`, `agent created`, `agent updated`, `agent deactivated`, `agent list changed`.
 
-The flow is safe to invoke unconditionally. It self-routes by deterministic shell/runtime signals and then executes the matching runtime branch. The LLM does **not** need to confirm with the user before running Step 1.
+The flow is safe to invoke unconditionally. It first checks whether communication is already ready in the current toolset, then self-routes by deterministic shell/runtime signals only when setup is still required. The LLM does **not** need to confirm with the user before running Step 0.
 
 ## Runtime Decision Tree
 
 ```
-Step 1  Runtime detection by shell environment
-  ├─ OPENCLAW_SHELL is set, or existing OpenClaw compatibility signal OPENCLAW_CLI is set
-  │    └─ Step 2 OpenClaw flow
-  ├─ HERMES_SESSION_ID is set and HERMES_DESKTOP_CWD is not set
-  │    └─ Step 3 Hermes flow
-  └─ Otherwise
-       └─ Step 4 Node environment flow (Claude Code / Codex / other Node CLI runtimes)
+Step 0  Toolset self-check
+  ├─ xmtp_refresh_agents is present
+  │    └─ Call it directly and end
+  └─ Tool is absent
+       └─ Step 1 Runtime detection
+            ├─ HERMES_SESSION_ID is set and HERMES_DESKTOP_CWD is not set
+            │    └─ Step 3 Hermes flow (placeholder)
+            ├─ OPENCLAW_SHELL or OPENCLAW_CLI is set
+            │    └─ Step 2 OpenClaw flow
+            ├─ An OpenClaw process is found in the parent-process chain (up to 8 levels)
+            │    └─ Step 2 OpenClaw flow
+            └─ Otherwise
+                 └─ Step 4 Node environment flow
 ```
+
+## Step 0: Toolset Self-Check
+
+<MUST>
+Inspect the LLM's current toolset before running any shell command. This is the authoritative readiness check and is independent of runtime detection.
+</MUST>
+
+- **`xmtp_refresh_agents` is present** -> call it directly (no arguments unless its schema requires them). If it succeeds, surface only user-relevant output and end the flow.
+- **`xmtp_refresh_agents` returns an error** -> surface the error verbatim and stop.
+- **`xmtp_refresh_agents` is absent** -> continue to Step 1.
+
+Do not run runtime detection, installation checks, or gateway health checks when the tool is already present.
 
 ## Step 1: Runtime Detection
 
 <MUST>
-Before any communication setup, inspect shell environment variables. Do not ask the model or the user to self-report whether the runtime is OpenClaw, Hermes, Claude, or Codex.
+When Step 0 does not find `xmtp_refresh_agents`, run the shell function below. Do not ask the model or the user to self-report whether the runtime is OpenClaw, Hermes, Claude, or Codex.
 </MUST>
 
 Run:
 
 ```bash
-if [ -n "${OPENCLAW_SHELL:-}" ] || [ -n "${OPENCLAW_CLI:-}" ]; then
-  echo "runtime=openclaw"
-elif [ -n "${HERMES_SESSION_ID:-}" ] && [ -z "${HERMES_DESKTOP_CWD:-}" ]; then
-  echo "runtime=hermes"
-else
-  echo "runtime=node"
-fi
+detect_runtime() {
+  # Hermes first: this signal shape is the most specific.
+  if [ -n "${HERMES_SESSION_ID:-}" ] && [ -z "${HERMES_DESKTOP_CWD:-}" ]; then
+    echo "hermes"
+    return
+  fi
+
+  # Preserve legacy OpenClaw environment hints as the cheap path.
+  if [ -n "${OPENCLAW_SHELL:-}" ] || [ -n "${OPENCLAW_CLI:-}" ]; then
+    echo "openclaw"
+    return
+  fi
+
+  # Cover newer OpenClaw/Codex launch shapes by walking at most 8 parents.
+  pid=$PPID
+  for _ in 1 2 3 4 5 6 7 8; do
+    if [ -z "$pid" ] || [ "$pid" = "0" ] || [ "$pid" = "1" ]; then
+      break
+    fi
+    comm=$(ps -p "$pid" -o comm= 2>/dev/null | tr -d ' ')
+    case "$comm" in
+      *openclaw*|*OpenClaw*)
+        echo "openclaw"
+        return
+        ;;
+    esac
+    pid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+  done
+
+  echo "node"
+}
+
+runtime=$(detect_runtime)
+echo "runtime=$runtime"
 ```
 
 - `runtime=openclaw` -> continue to Step 2.
 - `runtime=hermes` -> continue to Step 3.
 - `runtime=node` -> continue to Step 4.
 
+The PPID walk inspects process names only. Do not check socket files, use `lsof`, ask the LLM/user to declare the runtime, or use gateway status as runtime detection.
+
 ## Step 2: OpenClaw Flow
 
 The OpenClaw branch is the established implementation. Preserve the existing behavior in this section over any conflicting summary.
 
-### Step 2.1: Fast Path — Refresh Via Plugin Tool
+Step 0 has already established that `xmtp_refresh_agents` is absent. Proceed with the full OpenClaw install flow.
 
-If the OKX A2A plugin is already installed and loaded, the agent's toolset will expose a tool named `xmtp_refresh_agents`.
-
-Inspect the **current toolset**:
-
-- **Tool present** -> call `xmtp_refresh_agents` (no arguments unless its schema requires them) and surface the result to the user. If the call returns an error, surface the error verbatim and stop. Flow ends here.
-- **Tool not present** -> the plugin is not yet installed or not loaded. Proceed to Step 2.2 for the full OpenClaw install flow.
-
-### Step 2.2: Install OpenClaw Plugin
-
-#### 2.2.1 Environment Version Check
+### Step 2.1: Environment Version Check
 
 Run:
 
 ```bash
+if ! command -v openclaw >/dev/null 2>&1; then
+  echo "openclaw_cli=missing"
+  exit 1
+fi
 openclaw --version 2>&1
 ```
 
@@ -84,12 +126,14 @@ Requirements:
 
 - OpenClaw **>= 2026.4.20**
 
+If the OpenClaw CLI is missing, tell the user to install the OpenClaw CLI and stop. This includes runtimes identified through the PPID fallback.
+
 If OpenClaw is below the minimum, inform the user it needs upgrading and stop. Do not proceed.
 
-#### 2.2.2 Update OpenClaw Config
+### Step 2.2: Update OpenClaw Config
 
 <MUST>
-Update config **before** running `openclaw plugins install`. After the install succeeds, you MUST run `openclaw gateway restart` so the new plugin and the updated config are loaded together.
+Update config **before** running `openclaw plugins install`. The install command triggers a single automatic gateway restart; that restart needs to load the new plugin and the updated config together.
 </MUST>
 
 Run as a single shell block so each check is independent:
@@ -117,11 +161,11 @@ fi
 
 If any `openclaw config set` call fails, surface the error and stop — do not proceed with a partially applied config.
 
-#### 2.2.3 Install Official OpenClaw Plugin
+### Step 2.3: Install Official OpenClaw Plugin
 
 Before running the install command, tell the user in English:
 
-> Installing the OKX A2A plugin from npm package `@okxweb3/a2a-openclaw`. After installation succeeds, I will run `openclaw gateway restart` as a required step so the gateway loads the plugin and updated config.
+> Installing the OKX A2A plugin from npm package `@okxweb3/a2a-openclaw`. The OpenClaw gateway will restart automatically after installation; this is expected, and no manual action is required.
 
 Run:
 
@@ -131,135 +175,13 @@ openclaw plugins install @okxweb3/a2a-openclaw
 
 If the install fails, surface the error verbatim and stop.
 
-After the install succeeds, run:
-
-```bash
-openclaw gateway restart
-```
-
-If the restart fails, surface the error verbatim and stop.
-
-On success, the gateway loads the new plugin and picks up the config changes from Step 2.2.2. Flow ends here — no follow-up `xmtp_refresh_agents` call is needed.
+On success, `openclaw plugins install` auto-restarts the gateway, loads the new plugin, and picks up the config changes from Step 2.2 in the same restart. Flow ends here — no manual gateway restart and no follow-up `xmtp_refresh_agents` call is needed.
 
 ## Step 3: Hermes Flow
 
-Use this branch when a Hermes user needs to install the `okx-a2a` plugin from the npm package and restart Hermes Gateway.
+Hermes communication initialization is reserved and not implemented yet.
 
-### Step 3.1: Fast Path — Refresh Via Plugin Tool
-
-If the OKX A2A Hermes plugin is already installed and loaded, the agent's toolset will expose a tool named `xmtp_refresh_agents`.
-
-Inspect the **current toolset**:
-
-- **Tool present** -> call `xmtp_refresh_agents` (no arguments unless its schema requires them) and surface the result to the user. If the call returns an error, surface the error verbatim and stop. Flow ends here.
-- **Tool not present** -> the plugin is not yet installed or not loaded. Proceed to Step 3.2 for the full Hermes install flow.
-
-### Step 3.2: Check Node.js Version
-
-Run:
-
-```bash
-node --version
-```
-
-Requirements:
-
-- Node.js **>= 22.14.0**
-
-If Node.js is below the minimum, inform the user it needs upgrading and stop. Do not proceed.
-
-### Step 3.3: Download The Hermes Plugin Package
-
-Create a temporary working directory and download the latest npm package:
-
-```bash
-mkdir -p /tmp/okx-a2a-hermes-install
-cd /tmp/okx-a2a-hermes-install
-npm pack @okxweb3/a2a-hermes@latest
-```
-
-If `npm pack` fails, surface the error verbatim and stop.
-
-Extract the npm package:
-
-```bash
-tar -xzf okxweb3-a2a-hermes-*.tgz
-```
-
-Extract the Hermes plugin package inside the npm package:
-
-```bash
-tar -xzf package/dist/okx-a2a-hermes-plugin-*.tar.gz
-cd okx-a2a-hermes-plugin
-```
-
-Verify the plugin package contents:
-
-```bash
-ls __init__.py plugin.yaml package.json scripts/install-or-upgrade.sh src dist/server.js
-```
-
-If any required file or directory is missing, surface the error and stop.
-
-On macOS, remove quarantine attributes from native files bundled in the plugin package before installing:
-
-```bash
-xattr -dr com.apple.quarantine .
-```
-
-### Step 3.4: Install Or Upgrade The Plugin
-
-Before running the install command, tell the user in English:
-
-> Installing or upgrading the OKX A2A Hermes plugin from npm package `@okxweb3/a2a-hermes`. Hermes Gateway will restart automatically after installation; this is expected, and no manual action is required.
-
-Install or upgrade the plugin and automatically restart Hermes Gateway:
-
-```bash
-bash scripts/install-or-upgrade.sh --restart
-```
-
-If the install fails, surface the error verbatim and stop.
-
-The install script copies the plugin to the Hermes plugin directory, usually one of:
-
-```text
-~/.hermes/hermes-agent/plugins/platforms/okx-a2a
-~/.hermes/plugins/platforms/okx-a2a
-```
-
-On success, Hermes communication initialization is complete. Flow ends here.
-
-### Step 3.5: Manual Gateway Restart Fallback
-
-If the install script should not restart Hermes Gateway automatically, install only:
-
-```bash
-bash scripts/install-or-upgrade.sh
-```
-
-Then restart Hermes Gateway manually:
-
-```bash
-hermes gateway restart
-```
-
-If the current Hermes CLI does not provide a `restart` command, run:
-
-```bash
-hermes gateway stop
-hermes gateway run --replace
-```
-
-If Gateway still reports that a `.node` native file cannot be opened after restart, remove quarantine attributes from the installed plugin directory and restart Gateway again:
-
-```bash
-cd ~/.hermes/hermes-agent/plugins/platforms/okx-a2a
-xattr -dr com.apple.quarantine .
-hermes gateway restart
-```
-
-If the Hermes plugin directory is `~/.hermes/plugins/platforms/okx-a2a`, use that path instead.
+Do not run OpenClaw plugin commands. Do not install or start the Node `okx-a2a` CLI for this runtime. End the flow.
 
 ## Step 4: Node Environment Flow
 
@@ -298,7 +220,7 @@ Interpret the status output by its explicit state. Do not infer state from unrel
 
   Then tell the user in English:
 
-  > OKX A2A server has started.
+  > OKX A2A server has started. Please wait a few seconds, then retry.
 
   Flow ends here.
 
@@ -389,14 +311,14 @@ On success, OKX A2A communication initialization is complete. Flow ends here.
 
 | Scenario | Behavior |
 |---|---|
-| Runtime signals conflict | OpenClaw wins first, then Hermes, then Node fallback, matching Step 1 order. |
-| `OPENCLAW_SHELL` / `OPENCLAW_CLI` is set but `openclaw` command is missing | Inform the user that the OpenClaw CLI is required and stop. |
-| Tool `xmtp_refresh_agents` is present | Take the OpenClaw fast path — call it and end. |
+| Tool `xmtp_refresh_agents` is present | Step 0 calls it immediately and ends without shell runtime detection. |
 | `xmtp_refresh_agents` call returns an error | Surface the error verbatim and stop. |
+| Runtime signals conflict | Hermes' specific signal shape wins first, then OpenClaw env hints, then the OpenClaw PPID fallback, then Node. |
+| OpenClaw is detected by env or PPID but the `openclaw` command is missing | Tell the user to install the OpenClaw CLI and stop. |
+| PPID walk reaches PID 0/1, an empty PID, or 8 levels without finding OpenClaw | Fall back to Node. |
 | OpenClaw < 2026.4.20 | Inform the user OpenClaw is too old and stop. |
 | `openclaw config set` fails | Surface the error and stop — do not run install with partial config. |
-| Hermes runtime and tool `xmtp_refresh_agents` is present | Take the Hermes fast path — call it and end. |
-| Hermes runtime and tool `xmtp_refresh_agents` is missing | Continue to the Hermes install flow. |
+| Hermes runtime detected | Stop with no side effects; Hermes setup is reserved. |
 | Node runtime and `okx-a2a status` reports `stopped` | Run `okx-a2a restart`, tell the user the server started, and end. |
 | Node runtime and `okx-a2a status` reports `running` | Run `okx-a2a agent refresh` and end. |
 | Node runtime and `okx-a2a status` is unclear | Surface the output/error verbatim and stop. |
