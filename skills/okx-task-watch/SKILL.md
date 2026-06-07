@@ -104,7 +104,44 @@ Each JSON item already carries a `choices` array auto-derived by the CLI from `u
 
 Choice semantics: `保留` / `稍后` / `暂不` / `skip` → keep pending; everything else → reply (treated as the user's verbatim answer to this item, which triggers `llm_content` thinking via the flow below).
 
+#### Schedule a 2-minute auto-timeout wake — before ending the turn
+
+After rendering `user_content` and listing choices, but **before ending the turn**, schedule a 2-minute wake so the watch loop self-resumes if the user goes idle. Pick the tool by platform (same env vars as §Platform compatibility):
+
+> **Terminology**: the handle returned by either tool is called the **wake id** in this skill (not "job id" — the task system already uses `jobId` for on-chain task identifiers; do not conflate the two).
+
+- **Claude Code** (`CLAUDECODE=1`):
+  ```
+  CronCreate(
+    recurring: false,
+    cron: "<minute> <hour> <DoM> <Mon> *"   // = now + 2 minutes, local time
+    prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50"
+  )
+  ```
+  Remember the returned **wake id** (it stays in the assistant transcript and is visible in the next turn).
+
+- **Codex** (`CODEX_THREAD_ID` non-empty):
+  ```
+  codex_app.automation_update(
+    mode: "create",
+    kind: "heartbeat",
+    destination: "thread",
+    schedule: <2 minutes from now>,
+    prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50"
+  )
+  ```
+  Remember the returned **wake id**.
+
+If the scheduling tool is unavailable (unknown tool / returns an error) → **skip silently** and end the turn. The user can re-trigger watch manually if they ignore the item.
+
+**When the wake fires (user idle 2 min)**: its prompt runs `okx-a2a user watch ...` in a fresh turn, which re-drains the SQLite pending queue. The original `decision_request` item is still un-claimed and will resurface — same state as a manual re-trigger. No extra logic needed.
+
 #### Handling the user reply — concurrency-safe relay
+
+0. **First step (always)** — cancel the auto-timeout wake scheduled in the previous turn (best-effort):
+   - Claude Code: `CronDelete(<wake id>)`
+   - Codex: `codex_app.automation_update(mode: "delete", id: <wake id>)`
+   - If the **wake id** is not visible in the assistant transcript (context compacted) or the cancel call errors → **skip and proceed**. Do NOT search for the wake by name/prompt match. A stale wake firing afterwards is harmless: it just re-enters watch, and watch is idempotent (re-draining a claimed item is a no-op; re-draining a still-pending item just re-renders it).
 
 1. User picks `保留` / `skip` → **do NOT** claim; leave the item pending. **STOP the watch loop immediately** — briefly tell the user "已保留该项为 pending，监听结束；需要时再说一声「监听任务进展」即可重新打开". Do NOT re-enter watch here — `watch` is required to first drain SQLite-backed pending items, so re-entering would immediately return the same kept item and infinite-loop the prompt.
 2. Otherwise claim first: `okx-a2a user check --todo-ids <id> --json`.
