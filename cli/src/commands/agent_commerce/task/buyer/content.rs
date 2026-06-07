@@ -27,6 +27,16 @@
 //! Field-value placeholders use `<...>`; the agent fills them from `common context` / session context.
 //! To add copy → add a new fn; to edit copy → edit the fn body; flow.rs always calls here and never inlines literals.
 
+// ── Platform detection ────────────────────────────────────────────
+
+pub fn is_cli_mode() -> bool {
+    std::env::var("CLAUDECODE").unwrap_or_default() == "1"
+        || std::env::var("CODEX_THREAD_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .is_some()
+}
+
 // ── Event::JobCreated ──────────────────────────────────────────────
 
 /// `Event::JobCreated` Step 0 — user notification (no designated provider).
