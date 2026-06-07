@@ -257,7 +257,9 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n")
     };
 
-    let step2b_x402 = if pm == Some(1) { String::new() } else { "\
+    let has_saved_deliverable = ctx.prefetched.and_then(|p| p.deliverable.as_ref()).is_some();
+
+    let step2b_x402 = if pm == Some(1) || has_saved_deliverable { String::new() } else { "\
      ━━━ paymentMode=x402 (3) ━━━\n\
      In x402, the deliverable was the `replayBody` returned by `task-402-pay` in the earlier `job_payment_mode_changed` turn.\n\
      ✅ The CLI auto-saved the deliverable to disk during `task-402-pay` (no manual `task-deliverable-save` needed).\n\
@@ -265,7 +267,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      Set deliverable display variables: deliverableType=text, deliverableText=<replayBodyDisplay content>, localPath=<path from Step 2a task-deliverable-list if available>.\n\
      Go to Step 3.\n\n".to_string() };
 
-    let step2b_escrow = if pm == Some(3) { String::new() } else { format!("\
+    let step2b_escrow = if pm == Some(3) || has_saved_deliverable { String::new() } else { format!("\
      ━━━ paymentMode=escrow (1) ━━━\n\
      Call `xmtp_get_conversation_history` (sessionKey = the value obtained above) and find the ASP message **carrying the `[intent:deliver]` suffix tag** (scan newest to oldest; first match is the deliverable), and branch on `deliverableType`:\n\n\
      --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret decryption fields) ---\n\n\
@@ -412,6 +414,18 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      - escrow: job_completed → task complete / job_rejected → wait for ASP to choose dispute or refund\n\
      - x402: flow ends here\n") };
 
+    let step2b_section = if has_saved_deliverable {
+        String::new()
+    } else {
+        format!("\
+     **Step 2b — Fallback: fetch from chat history and save** (only if Step 2a found no saved deliverable):\n\
+     First call `session_status` to get the current sub session's sessionKey (reused later; do not call it again this turn).\n\
+     From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards` (the review standard as of task creation); if empty, skip that line.\n\n\
+     {step2b_branch_header}\
+     {step2b_x402}\
+     {step2b_escrow}")
+    };
+
     format!(
     "[Current Status] job_submitted (ASP has submitted the deliverable)\n\
      [Role] User (User Agent)\n\n\
@@ -431,12 +445,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      **Step 2 — Obtain the deliverable content (check saved first, then fallback to chat history):**\n\n\
      ⚠️ The deliverable content MUST appear in Step 3's userContent — the user has not seen the body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\n\
      {step2a}\
-     **Step 2b — Fallback: fetch from chat history and save** (only if Step 2a found no saved deliverable):\n\
-     First call `session_status` to get the current sub session's sessionKey (reused later; do not call it again this turn).\n\
-     From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards` (the review standard as of task creation); if empty, skip that line.\n\n\
-     {step2b_branch_header}\
-     {step2b_x402}\
-     {step2b_escrow}\
+     {step2b_section}\
      {step3_branch_header}\
      {step3_escrow}\
      {step3_x402}"

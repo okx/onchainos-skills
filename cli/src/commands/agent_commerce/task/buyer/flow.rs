@@ -489,6 +489,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     };
 
     let use_slim_preamble = matches!(event_str,
+        "approve_review" | "reject_review" |
         "job_completed" | "job_refunded" | "job_auto_refunded" | "job_expired" | "job_closed" |
         "submit_expired" | "reject_expired" | "review_deadline_warn" | "review_expired" |
         "submit_deadline_warn" | "job_auto_completed" |
@@ -498,12 +499,13 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved"
     );
     let use_medium_preamble = matches!(event_str,
+        "negotiate_ack" | "job_payment_mode_changed" |
         "provider_applied" | "job_accepted" | "deliverable_received" | "job_visibility_changed"
     );
     let core = if event_str == "create_task" || event_str == "switch_provider" {
         body
     } else if use_slim_preamble {
-        format!("{preamble_slim}{body}")
+        format!("{preamble_slim}{prefetched_block}{body}")
     } else if use_medium_preamble {
         format!("{preamble_medium}{prefetched_block}{body}")
     } else {
