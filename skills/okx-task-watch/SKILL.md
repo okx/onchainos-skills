@@ -1,6 +1,6 @@
 ---
 name: okx-task-watch
-description: "ACTIVATE for OKX A2A user-session task-progress flows: live monitoring via `okx-a2a user watch` (long-poll + SQLite backlog drain) or outstanding-decision listing via `okx-a2a user outdated-list`. Claude Code / Codex only (`CLAUDECODE=1` or `CODEX_THREAD_ID`); other platforms stop with an unsupported-platform message. Triggers: 监听任务进展 / 开始监听任务 / 关注任务进展 / 使用监听 skill 监听任务进展 / 帮我盯着任务 / 任务有进度就告诉我 / 任务有动静告诉我 / 开监听 / watch 任务 / 历史消息 / 历史记录 / 过去消息 / 之前的消息 / 帮我看看之前的历史消息 / 看下之前的消息 / 未读消息 / 未决策 / 待决策 / 没有决策 / 未处理 / 待处理 / 没有处理 / task watch / user watch / monitor task progress / keep me posted on tasks / watch tasks / start watching / show past messages / show message history / catch me up on tasks / unread task messages / outstanding decisions / pending decisions / unhandled decisions / what am I missing. Business actions (apply / deliver / dispute / quote / accept) belong to `okx-agent-task`."
+description: "ACTIVATE for OKX A2A user-session task-progress flows: live monitoring via `okx-a2a user watch` (returns unread events backlog + long-polls for new ones; destructive read — returned items do not reappear) or outstanding-decision listing via `okx-a2a user outdated-list` (un-`check`ed `decision_request` items only). Claude Code / Codex only (`CLAUDECODE=1` or `CODEX_THREAD_ID`); other platforms stop with an unsupported-platform message. Triggers: 监听任务进展 / 开始监听任务 / 关注任务进展 / 使用监听 skill 监听任务进展 / 帮我盯着任务 / 任务有进度就告诉我 / 任务有动静告诉我 / 开监听 / watch 任务 / 历史消息 / 历史记录 / 过去消息 / 之前的消息 / 帮我看看之前的历史消息 / 看下之前的消息 / 未读消息 / 未决策 / 待决策 / 没有决策 / 未处理 / 待处理 / 没有处理 / task watch / user watch / monitor task progress / keep me posted on tasks / watch tasks / start watching / show past messages / show message history / catch me up on tasks / unread task messages / outstanding decisions / pending decisions / unhandled decisions / what am I missing. Business actions (apply / deliver / dispute / quote / accept) belong to `okx-agent-task`."
 license: Apache-2.0
 metadata:
   author: okx
@@ -24,7 +24,7 @@ When ANY trigger phrase below matches, execute §Action. The watch command is a 
 - English (live monitor): `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching`
 - English (history / backlog drain): `show past messages` / `show message history` / `catch me up on tasks` / `unread task messages`
 
-> 📥 **Why "view history" routes here**: watch first drains the SQLite-backed pending queue (all unclaimed prior items) before long-polling for new events. A user asking for past / missed / unread messages is asking for the same drain — same command, same Dispatch flow. Do NOT route to `agent active-tasks` / `agent status` (those are summaries, not the actual notification bodies).
+> 📥 **Why "view history" routes here**: watch is a **destructive read** of the event stream — each call returns the full backlog of unread events accumulated since the last call (e.g. while no one was watching), then long-polls for new ones. A user asking for past / missed / unread messages is asking to drain that backlog — same command, same Dispatch flow. Do NOT route to `agent active-tasks` / `agent status` (those are summaries, not the actual notification bodies). For un-replied `decision_request` items specifically (which `watch` already consumed but the user hasn't `check`ed), see §"Pull outstanding `decision_request` items".
 
 ## Platform compatibility — Claude Code / Codex only
 
@@ -62,8 +62,9 @@ When the call returns items, process each per §Dispatch below. After processing
 
 - Do NOT use `/loop`, Cron, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, or any self-rolled polling around `onchainos agent status` / `agent active-tasks`.
 - There is **NO** `task watch` / `onchainos task watch` / `agent task watch` subcommand — do not invent one.
-- Do NOT pass `--from-now`. Watch **must** first drain SQLite-backed pending items, **then** wait for new changes.
+- Do NOT pass `--from-now`. By default watch returns the full backlog of unread events first, then long-polls for new ones; `--from-now` skips the backlog and silently drops any event the user hasn't seen yet (watch is destructive read — those events are gone for good).
 - Do NOT pass `--job-id` — **never** watch a single task. `user watch` is a user-session-wide monitor; narrowing to one job defeats its purpose and misses cross-task events.
+- 🛑 **Run `okx-a2a user watch` / `okx-a2a user outdated-list` exactly as written. Do NOT append `| grep` / `| tail` / `| head` / `| awk` / `| sed` / `| jq` / shell redirects.** Both commands emit a single structured JSON document — any pipe/truncation breaks the JSON and silently drops items. If output looks noisy with `[DEBUG]` lines mixed in, those belong on stderr and never affect the JSON on stdout; do not "clean" stdout. Pipe = data loss.
 
 ## Dispatch by `kind`
 
@@ -75,7 +76,7 @@ A returned item is always one of two `kind`s, handled completely differently.
    - 🛑 **Forbidden substitution phrases** (any of these in place of the body = violation): `收到「…」的通知` / `收到通知` / `我看到通知了` / `通知说……` / `received notification` / `noted the notification` / any wrapper-only sentence with no body verbatim. These describe the act of receiving instead of displaying — strictly forbidden.
 2. **Resume watching** — call `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` again. No relay, no `llm_content` thinking.
 
-> 💡 `notification` items are **auto-consumed by `watch`** — they are removed from the pending queue the moment `watch` returns them. Do **NOT** call `okx-a2a user check --todo-ids …` for `notification` items; that command is only for `decision_request` items (where it commits the user's reply).
+> 💡 `notification` items are **auto-consumed by `watch`** — once returned, they will **NOT** appear in any subsequent `watch` call (watch is destructive read). Do **NOT** call `okx-a2a user check --todo-ids …` for `notification` items; that command exists only for `decision_request` items (where it commits the user's reply and removes the item from the outstanding-decisions queue).
 
 **Multi-item ordering** — when `okx-a2a user watch` returns N `notification` items, render each `user_content` verbatim in order (no batching, no cross-item summarization). After all bodies are rendered, run a single resume `watch` call.
 
@@ -96,18 +97,23 @@ Choice semantics: `保留` / `稍后` / `暂不` / `skip` → keep pending; ever
 
 #### Schedule a 2-minute auto-timeout wake — before ending the turn
 
-After rendering `user_content` and listing choices, but **before ending the turn**, schedule a 2-minute wake so the watch loop self-resumes if the user goes idle. Pick the tool by platform (same env vars as §Platform compatibility):
+After rendering `user_content` and listing choices, but **before ending the turn**, schedule a 2-minute **one-shot** wake so the watch loop self-resumes if the user goes idle. Pick the tool by platform (same env vars as §Platform compatibility).
 
 > **Terminology**: the handle returned by either tool is called the **wake id** in this skill (not "job id" — the task system already uses `jobId` for on-chain task identifiers; do not conflate the two).
+
+🛑 **Critical for both platforms**: the `prompt` field must be passed **verbatim** as the exact English string below. Do **NOT** localize it, paraphrase it, or rewrite it based on the current `decision_request`'s content (e.g. do not turn it into "请选择服务商" / "回复 1 或 1727"). The wake fires in a fresh turn; the agent reading the wake prompt must see a generic, content-free "re-enter watch" instruction so it routes back into this skill — a contextualized prompt confuses both the scheduler view and the next-turn agent.
 
 - **Claude Code** (`CLAUDECODE=1`):
   ```
   CronCreate(
     recurring: false,
-    cron: "<minute> <hour> <DoM> <Mon> *"   // = now + 2 minutes, local time
+    cron: "<minute> <hour> <DoM> <Mon> *",
     prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50"
   )
   ```
+  Field notes (do **not** inline these into the call):
+  - `cron`: standard 5-field expression set to **now + 2 minutes in local time**. Example: if now is 14:28 local, use `30 14 <today_DoM> <today_Mon> *`.
+
   Remember the returned **wake id** (it stays in the assistant transcript and is visible in the next turn).
 
 - **Codex** (`CODEX_THREAD_ID` non-empty):
@@ -116,24 +122,28 @@ After rendering `user_content` and listing choices, but **before ending the turn
     mode: "create",
     kind: "heartbeat",
     destination: "thread",
-    schedule: <2 minutes from now>,
-    prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50"
+    rrule: "DTSTART:<YYYYMMDDTHHMMSS>",
+    prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50",
+    status: "ACTIVE"
   )
   ```
+  Field notes (do **not** inline these into the call):
+  - `rrule`: iCalendar RRULE syntax. `DTSTART` uses UTC basic format `YYYYMMDDTHHMMSS` (e.g. `20260607T143000`) set to **now + 2 minutes in UTC**.
+
   Remember the returned **wake id**.
 
 If the scheduling tool is unavailable (unknown tool / returns an error) → **skip silently** and end the turn. The user can re-trigger watch manually if they ignore the item.
 
-**When the wake fires (user idle 2 min)**: its prompt runs `okx-a2a user watch ...` in a fresh turn, which re-drains the SQLite pending queue. The original `decision_request` item is still un-claimed and will resurface — same state as a manual re-trigger. No extra logic needed.
+**When the wake fires (user idle 2 min)**: its prompt runs `okx-a2a user watch ...` in a fresh turn, which resumes monitoring for **new** events. The original `decision_request` item is **not** re-surfaced by watch — it was already consumed when it first appeared (watch is destructive read). But because the user never `check`ed it, it remains in the outstanding-decisions queue and can be retrieved on demand via `okx-a2a user outdated-list` (see §"Pull outstanding `decision_request` items"). No extra logic needed here.
 
 #### Handling the user reply — concurrency-safe relay
 
 0. **First step (always)** — cancel the auto-timeout wake scheduled in the previous turn (best-effort):
    - Claude Code: `CronDelete(<wake id>)`
    - Codex: `codex_app.automation_update(mode: "delete", id: <wake id>)`
-   - If the **wake id** is not visible in the assistant transcript (context compacted) or the cancel call errors → **skip and proceed**. Do NOT search for the wake by name/prompt match. A stale wake firing afterwards is harmless: it just re-enters watch, and watch is idempotent (re-draining a claimed item is a no-op; re-draining a still-pending item just re-renders it).
+   - If the **wake id** is not visible in the assistant transcript (context compacted) or the cancel call errors → **skip and proceed**. Do NOT search for the wake by name/prompt match. A stale wake firing afterwards is harmless: it just re-enters watch to monitor new events; the already-handled `decision_request` item does **not** reappear in watch (it was consumed on the original return — watch is destructive read).
 
-1. User picks `保留` / `skip` → **do NOT** claim; leave the item pending. **STOP the watch loop immediately** — briefly tell the user "已保留该项为 pending，监听结束；需要时再说一声「监听任务进展」即可重新打开". Do NOT re-enter watch here — `watch` is required to first drain SQLite-backed pending items, so re-entering would immediately return the same kept item and infinite-loop the prompt.
+1. User picks `保留` / `skip` → **do NOT** claim; the item stays in the outstanding-decisions queue (un-`check`ed) and can be retrieved later via `okx-a2a user outdated-list` (triggers: `未决策` / `pending decisions`). **STOP the watch loop immediately** — briefly tell the user "已保留该项，监听结束；需要时说「未决策」即可看到所有未处理决策，或说「监听任务进展」继续监听新事件". The user explicitly chose to defer; honor that and stop background monitoring.
 2. Otherwise claim first: `okx-a2a user check --todo-ids <id> --json`.
 3. On `handled` → **execute the relay per `llm_content`'s instructions**. `llm_content` itself tells you which command to run, which target to relay to, and how to assemble the payload — just follow it. **Do NOT** semantically interpret the user's reply (no provider picking, no session creation, no XMTP solicitation), and do not bypass `llm_content` through any other path. Hand the relay off to the target session and do not wait for the target sub to finish.
 4. On `alreadyHandled` → tell the user "this item was processed in another window"; **then re-enter `okx-a2a user watch ...`** (the watch session continues — only the duplicate item is dropped). Do not execute the relay again.
@@ -157,7 +167,7 @@ User-initiated query, separate from the live watch loop. When the user explicitl
 okx-a2a user outdated-list --json
 ```
 
-Returns the set of `decision_request` items currently un-claimed in SQLite. (Notifications are not included — they are auto-consumed by watch and have no "pending" state.)
+Returns the set of `decision_request` items the user has **not yet `check`ed** (i.e. watch has already surfaced them but the user never committed a reply). These items stay in the outstanding-decisions queue until `okx-a2a user check --todo-ids …` commits a decision. (Notifications are not included — watch consumes them on return and they have no outstanding state.)
 
 ### Rendering — batch, not per-item
 
@@ -165,10 +175,8 @@ Unlike watch's per-item flow, render **all returned items in a single assistant 
 
 1. Number each item (`1`, `2`, `3`, ...) so the user can disambiguate.
 2. For each item, include its `user_content` **verbatim** (same anti-paraphrase rules as in §`kind == decision_request` above — no wrapper sentences, no summarization, no cross-item merging).
-3. After the last item, append this disambiguation hint **verbatim** in the user's language:
-   > 💡 回复某项决策时，请在回复前加上 `JobID + <jobid 前六位>`（例如 `JobID 0x49fa — 1`），便于识别是哪一项。
-   >
-   > English: When replying to a specific decision, prefix your answer with `JobID + <first 6 chars of the jobId>` (e.g. `JobID 0x49fa — 1`) so the agent can route it correctly.
+3. After the last item, append this disambiguation hint **exactly once** (translate to the user's language per LOCALIZATION_PREFIX rules — same as `user_content` translation; keep the literal token `JobID` and the example `0x49fa — 1` unchanged):
+   `💡 When replying to a specific decision, prefix your answer with "JobID + <first 6 chars of the jobId>" (e.g. "JobID 0x49fa — 1") so the agent can route it correctly.`
 4. End turn. Do **NOT** auto-re-enter `watch` or any other command — `outdated-list` is a one-shot query, not a loop.
 
 ### Handling the user's prefixed reply
@@ -191,7 +199,7 @@ If multiple items are outstanding AND the reply has no prefix → ask the user t
 ## Stop condition
 
 🛑 **The ONLY valid stop conditions:**
-- **User picks `保留` / `稍后` / `暂不` / `skip` on a `decision_request`** — item stays pending (un-claimed), but the watch loop ends here. Re-entering would re-drain the same pending item and infinite-loop the prompt; the user has to re-trigger watch when they're ready.
+- **User picks `保留` / `稍后` / `暂不` / `skip` on a `decision_request`** — item stays in the outstanding-decisions queue (un-`check`ed) and can be retrieved later via `outdated-list`. The watch loop ends here because the user explicitly chose to defer; honor that.
 - The user explicitly says stop — e.g. `停止监听` / `不用监听了` / `stop watching` / `unsubscribe`.
 
 ### Re-enter after processing
