@@ -586,8 +586,6 @@ pub async fn handle_draft_publish(
         println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
     }
     if super::content::is_cli_mode() {
-        println!("Due to client limitations, you need to proactively ask me to \"monitor task progress\" for me to continue pushing updates to you.");
-        println!();
         println!("[Watch] Per `okx-task-watch` SKILL.md, start the monitor now:");
         println!("okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50");
         println!();

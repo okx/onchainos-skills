@@ -2,10 +2,6 @@
 
 use super::super::flow::FlowContext;
 
-fn cli_mode_poll_hint() -> &'static str {
-    " Due to client limitations, you need to proactively ask me to \"monitor task progress\" for me to continue pushing updates to you."
-}
-
 // --- Event handler functions ------------------------------------------------
 
 pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
@@ -46,7 +42,6 @@ fn job_created_public(ctx: &FlowContext<'_>) -> String {
     let short_id = ctx.short_id;
     let title = ctx.title_display;
     let notify_tpl = super::super::content::job_created_public_user_notify();
-    let cli_hint = if super::super::content::is_cli_mode() { cli_mode_poll_hint() } else { "" };
     let list_label = format!("[Recommend {short_id}] {title} ASP-pick decision");
     format!(
         "[Trigger] job_created (on-chain, status: pending acceptance)\n\
@@ -57,7 +52,7 @@ fn job_created_public(ctx: &FlowContext<'_>) -> String {
          tool: `session_status` (no args). Save the returned `sessionKey` as `<SUB_KEY>`.\n\n\
          **Action 2 — Notify the user the job is on-chain** (translate template body to the user's language before sending):\n\
          tool: `xmtp_dispatch_user`\n\
-         content (canonical English template — translate before passing): {notify_tpl}{cli_hint}\n\
+         content (canonical English template — translate before passing): {notify_tpl}\n\
          Fill: `<title>` = {title} | `<short_jobId>` = {short_id}\n\n\
          **Action 3 — Fetch recommendations (writes the canonical English card file):**\n\
          ```bash\n\
@@ -96,15 +91,14 @@ fn job_created_legacy(ctx: &FlowContext<'_>) -> String {
     // which embeds the no_asp_found enqueue command + user-content template.
 
     let designated_provider = super::super::negotiate::get_designated_provider(job_id).ok().flatten();
-    let cli_hint = if super::super::content::is_cli_mode() { cli_mode_poll_hint() } else { "" };
 
     let (created_notify_tpl, created_fill) = match &designated_provider {
         Some(dp_id) => (
-            format!("{}{cli_hint}", super::super::content::job_created_designated_user_notify()),
+            super::super::content::job_created_designated_user_notify().to_string(),
             format!("Fill: `<title>` = {title} | `<short_jobId>` = {short_id} | `<provider_agentId>` = {dp_id}"),
         ),
         None => (
-            format!("{}{cli_hint}", super::super::content::job_created_public_user_notify()),
+            super::super::content::job_created_public_user_notify().to_string(),
             format!("Fill: `<title>` = {title} | `<short_jobId>` = {short_id}"),
         ),
     };
