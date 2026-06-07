@@ -50,13 +50,15 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20{route_hint}\n\n\
              - **`route == \"x402\"`** -> extract `endpoint`, `feeAmount`, `feeTokenSymbol` from the response.\n\
-             \x20\x20⚠️ **`feeAmount` is the value the ASP manually entered at registration time, and is not necessarily equal to the on-chain price**; it must be verified by DX-Step 1 `x402-check`. When showing it to the user, label it \"registered fee\".\n\
-             \x20\x20Execute the designated-provider x402 flow below (do NOT jump to A-Step 1):\n\n\
-             \x20\x20**DX-Step 1 - validate the endpoint:**\n\
+             \x20\x20Execute the x402 validation (endpoint + price + budget check combined):\n\n\
+             \x20\x20**DX-Step 1 - validate endpoint + price + budget (single CLI call):**\n\
              \x20\x20```bash\n\
-             \x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
+             \x20\x20onchainos agent x402-validate --endpoint <endpoint> --agent-id {agent_id} --job-id {job_id} --fee-amount <feeAmount> --fee-token <feeTokenSymbol>\n\
              \x20\x20```\n\
-             \x20\x20- `valid=false` -> enqueue the user decision via `pending-decisions-v2 request`:\n\
+             \x20\x20⚠️ Use `feeAmount` and `feeTokenSymbol` from the `designated-route` response above.\n\
+             \x20\x20This command validates the x402 endpoint, compares the on-chain price against the registered fee (>1% delta), and checks against the task's max budget — all in one call.\n\
+             \x20\x20Response field `result` determines the branch:\n\n\
+             \x20\x20- **`result == \"x402_invalid\"`** -> enqueue the user decision via `pending-decisions-v2 request`:\n\
              \x20\x20\x20\x20{session_hint}\n\
              \x20\x20\x20\x20```bash\n\
              \x20\x20\x20\x20{cmd_x402_invalid}\n\
@@ -70,49 +72,39 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20{follow_playbook}\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20\x20\x20{route_hint}\n\n\
-             \x20\x20**DX-Step 2 - amount sanity check:**\n\
-             \x20\x20Compare `amountHuman` from x402-check with `feeAmount` from `designated-route`:\n\
-             \x20\x20- Mismatch (delta > 1%) -> enqueue the user decision via `pending-decisions-v2 request`:\n\
+             \x20\x20- **`result == \"price_mismatch\"`** -> enqueue the user decision via `pending-decisions-v2 request`:\n\
              \x20\x20\x20\x20{session_hint}\n\
              \x20\x20\x20\x20```bash\n\
              \x20\x20\x20\x20{cmd_x402_price}\n\
              \x20\x20\x20\x20```\n\
              \x20\x20\x20\x20{l10n_prompt}\n\
              \x20\x20\x20\x20`--user-content` template (canonical English):\n\
-             \x20\x20\x20\x20Job `{job_id}` — the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
+             \x20\x20\x20\x20Job `{job_id}` — the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol> (from CLI response), which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
              \x20\x20\x20\x20A. Accept — continue with this price\n\
              \x20\x20\x20\x20B. Reject — switch to another ASP\n\
              \x20\x20\x20\x20{follow_playbook_short}\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20\x20\x20{route_hint}\n\
-             \x20\x20- Match -> continue to DX-Step 3.\n\n\
-             \x20\x20**DX-Step 3 - budget check:**\n\
-             \x20\x20First call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` and extract `paymentMostTokenAmount` (max budget) and the task's `tokenSymbol`.\n\
-             \x20\x20⚠️ **Currency check**: compare `tokenSymbol` from x402-check with the task's `tokenSymbol` -\n\
-             \x20\x20- Mismatch (e.g. job in USDG, x402 charges USDT) -> since USDT and USDG are both USD stablecoins (~1:1), still compare numerically against the budget.\n\
-             \x20\x20\x20\x20`set-payment-mode` will switch the on-chain payment token to **the x402 endpoint's token** (no longer the token used at job creation).\n\
-             \x20\x20- Match -> compare directly.\n\
-             \x20\x20Compare `amountHuman` with `paymentMostTokenAmount` (**NOT `tokenAmount`; `tokenAmount` is the base budget**):\n\
-             \x20\x20- Over -> enqueue the user decision via `pending-decisions-v2 request`:\n\
+             \x20\x20\x20\x20{route_hint}\n\n\
+             \x20\x20- **`result == \"over_budget\"`** -> enqueue the user decision via `pending-decisions-v2 request`:\n\
              \x20\x20\x20\x20{session_hint}\n\
              \x20\x20\x20\x20```bash\n\
              \x20\x20\x20\x20{cmd_over_budget}\n\
              \x20\x20\x20\x20```\n\
              \x20\x20\x20\x20{l10n_prompt}\n\
              \x20\x20\x20\x20`--user-content` template (canonical English):\n\
-             \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The x402 fee from the designated ASP (agentId={dp_id}) is <amountHuman> <tokenSymbol>, which exceeds your max budget and cannot be used. Choose next step:\n\
+             \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The x402 fee from the designated ASP (agentId={dp_id}) is <amountHuman> <tokenSymbol> (from CLI response), which exceeds your max budget and cannot be used. Choose next step:\n\
              \x20\x20\x20\x20A. Specify another ASP — provide the ASP's agentId\n\
              \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
              \x20\x20\x20\x20C. Close the job\n\
              \x20\x20\x20\x20{follow_playbook}\n\
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20\x20\x20{route_hint}\n\
-             \x20\x20- Within budget -> execute **A-Step 3** below.\n\n\
+             \x20\x20\x20\x20{route_hint}\n\n\
+             \x20\x20- **`result == \"pass\"`** -> all checks passed. Execute **A-Step 3** below.\n\n\
              \x20\x20**A-Step 3 - set-payment-mode (push x402 on-chain):**\n\
              \x20\x20```bash\n\
-             \x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol returned by x402-check> --token-amount <amountHuman returned by x402-check> --endpoint <endpoint>\n\
+             \x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from x402-validate> --token-amount <amountHuman from x402-validate> --endpoint <endpoint>\n\
              \x20\x20```\n\
-             \x20\x20⚠️ Use the **actual values returned by x402-check** for `tokenSymbol` and `tokenAmount` (NOT the original budget used at job creation).\n\n\
+             \x20\x20⚠️ Use the **actual values returned by x402-validate** for `tokenSymbol` and `tokenAmount` (NOT the original budget used at job creation).\n\n\
              \x20\x20**A-Step 3 result branch (🛑 MANDATORY - getting this wrong = the flow stalls):**\n\
              \x20\x20Inspect the CLI output (JSON) of set-payment-mode:\n\
              \x20\x20- Output contains `\"alreadySet\": true` (paymentMode is already on-chain so the on-chain call was skipped) -> **do NOT wait for `job_payment_mode_changed`**;\n\

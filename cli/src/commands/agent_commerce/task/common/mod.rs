@@ -757,6 +757,153 @@ pub async fn handle_designated_route(provider_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Spawn `onchainos agent x402-check --endpoint <url> --agent-id <id>` as
+/// subprocess and return the parsed JSON output (the full `{ok, data}` body).
+async fn spawn_x402_check(endpoint: &str, agent_id: &str) -> Result<serde_json::Value> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+
+    let output = tokio::process::Command::new(&exe)
+        .args(["agent", "x402-check", "--endpoint", endpoint, "--agent-id", agent_id])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn `agent x402-check` failed: {e}"))?;
+
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow::anyhow!(
+            "parse `agent x402-check` stdout failed: {e}; raw={}",
+            String::from_utf8_lossy(&output.stdout)
+        ))?;
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
+        bail!("`agent x402-check` returned failure: {err}");
+    }
+
+    Ok(body.get("data").cloned().unwrap_or(serde_json::Value::Null))
+}
+
+/// Fetch task detail and extract budget fields (max budget + token symbol).
+async fn fetch_task_budget(job_id: &str, agent_id: &str) -> Result<(Option<String>, Option<String>)> {
+    let mut client = network::task_api_client::TaskApiClient::new();
+    let resp_val = client
+        .get_with_identity(&client.task_path(job_id), agent_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to get task detail: {e}"))?;
+
+    let task: TaskDetail = serde_json::from_value(resp_val)
+        .map_err(|e| anyhow::anyhow!("failed to parse task detail: {e}"))?;
+
+    Ok((task.payment_most_token_amount, task.token_symbol))
+}
+
+/// `onchainos agent x402-validate` — validates an x402 endpoint, compares the
+/// on-chain price against the registered fee and the task's max budget, and
+/// returns a single JSON with the combined result.
+///
+/// Output shape:
+/// ```json
+/// { "result": "pass"|"x402_invalid"|"price_mismatch"|"over_budget",
+///   "amountHuman": "0.01", "tokenSymbol": "USDT",
+///   "acceptsJson": "...", "x402Version": 1,
+///   "endpoint": "https://...",
+///   "maxBudget": "0.1", "taskTokenSymbol": "USDT",
+///   "feeAmount": "0.005", "feeTokenSymbol": "USDT" }
+/// ```
+pub async fn handle_x402_validate(
+    endpoint: &str,
+    agent_id: &str,
+    job_id: &str,
+    fee_amount: &str,
+    fee_token: &str,
+) -> Result<()> {
+    let (x402_res, budget_res) = tokio::join!(
+        spawn_x402_check(endpoint, agent_id),
+        fetch_task_budget(job_id, agent_id),
+    );
+
+    // --- x402-check gate ---
+    let x402_data = match x402_res {
+        Ok(d) => d,
+        Err(e) => {
+            crate::output::success(serde_json::json!({
+                "result": "x402_invalid",
+                "reason": format!("x402-check failed: {e}"),
+            }));
+            return Ok(());
+        }
+    };
+
+    let valid = x402_data.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !valid {
+        let mut out = serde_json::json!({ "result": "x402_invalid" });
+        if let Some(reason) = x402_data.get("reason") {
+            out["reason"] = reason.clone();
+        }
+        crate::output::success(out);
+        return Ok(());
+    }
+
+    let amount_human = x402_data.get("amountHuman").and_then(|v| v.as_str()).unwrap_or("");
+    let token_symbol = x402_data.get("tokenSymbol").and_then(|v| v.as_str()).unwrap_or("");
+    let accepts_json = x402_data.get("acceptsJson").cloned().unwrap_or(serde_json::Value::Null);
+    let x402_version = x402_data.get("x402Version").cloned().unwrap_or(serde_json::Value::Null);
+
+    // --- DX-Step 2: price mismatch check (delta > 1%) ---
+    let fee_f: f64 = fee_amount.parse().unwrap_or(0.0);
+    let amount_f: f64 = amount_human.parse().unwrap_or(0.0);
+    if fee_f > 0.0 && amount_f > 0.0 {
+        let delta = ((amount_f - fee_f) / fee_f).abs();
+        if delta > 0.01 {
+            crate::output::success(serde_json::json!({
+                "result": "price_mismatch",
+                "amountHuman": amount_human,
+                "tokenSymbol": token_symbol,
+                "feeAmount": fee_amount,
+                "feeTokenSymbol": fee_token,
+                "acceptsJson": accepts_json,
+                "x402Version": x402_version,
+                "endpoint": endpoint,
+            }));
+            return Ok(());
+        }
+    }
+
+    // --- DX-Step 3: budget check ---
+    let (max_budget, task_token) = budget_res.unwrap_or((None, None));
+    let max_budget_str = max_budget.as_deref().unwrap_or("");
+    let task_token_str = task_token.as_deref().unwrap_or("");
+
+    let max_f: f64 = max_budget_str.parse().unwrap_or(0.0);
+    if max_f > 0.0 && amount_f > max_f {
+        crate::output::success(serde_json::json!({
+            "result": "over_budget",
+            "amountHuman": amount_human,
+            "tokenSymbol": token_symbol,
+            "maxBudget": max_budget_str,
+            "taskTokenSymbol": task_token_str,
+            "acceptsJson": accepts_json,
+            "x402Version": x402_version,
+            "endpoint": endpoint,
+        }));
+        return Ok(());
+    }
+
+    // --- all checks passed ---
+    crate::output::success(serde_json::json!({
+        "result": "pass",
+        "amountHuman": amount_human,
+        "tokenSymbol": token_symbol,
+        "maxBudget": max_budget_str,
+        "taskTokenSymbol": task_token_str,
+        "acceptsJson": accepts_json,
+        "x402Version": x402_version,
+        "endpoint": endpoint,
+    }));
+
+    Ok(())
+}
+
 /// `onchainos agent my-agents [--role <r>]` — flat list of the current active
 /// account's agents (XLayer ownerAddress filter applied automatically),
 /// optionally filtered by `role`. Hides the agent-list response shape

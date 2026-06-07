@@ -205,6 +205,21 @@ pub enum AgentCommand {
         #[arg(long)] provider: String,
     },
 
+    /// Validate x402 endpoint + price match + budget check in one call
+    #[command(name = "x402-validate")]
+    X402Validate {
+        /// x402 provider endpoint URL
+        #[arg(long)] endpoint: String,
+        /// Buyer agent ID
+        #[arg(long = "agent-id")] agent_id: String,
+        /// Job ID (for budget lookup)
+        #[arg(long = "job-id")] job_id: String,
+        /// Registered fee amount from designated-route
+        #[arg(long = "fee-amount")] fee_amount: String,
+        /// Registered fee token symbol from designated-route
+        #[arg(long = "fee-token")] fee_token: String,
+    },
+
     /// Client confirms task complete and releases payment
     Complete {
         job_id: String,
@@ -814,6 +829,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::DesignatedRoute { provider } =>
             task::common::handle_designated_route(&provider).await,
+
+        AgentCommand::X402Validate { endpoint, agent_id, job_id, fee_amount, fee_token } =>
+            task::common::handle_x402_validate(&endpoint, &agent_id, &job_id, &fee_amount, &fee_token).await,
 
         AgentCommand::Complete { job_id } =>
             task::buyer::run_task(T::Complete { job_id }, ctx).await,
