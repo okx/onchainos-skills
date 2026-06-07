@@ -1,6 +1,6 @@
 ---
 name: okx-task-watch
-description: "Live user-session task-progress monitor for OKX A2A. Long-poll the user inbox via `okx-a2a user watch`; render `notification` items verbatim (auto-consumed by watch — no claim needed); for `decision_request` items, render verbatim, claim the user's reply, and relay per `llm_content`. Also drains backlog: any request to view past / missed / unread task messages is served by the same watch command (it drains SQLite-backed pending items first, then waits for new events). Claude Code / Codex only (gated by `CLAUDECODE=1` or `CODEX_THREAD_ID`); on Hermes / OpenClaw the client pushes notifications natively and no `okx-a2a` command exists — this skill stops with an unsupported-platform message. NOT a cron / scheduled / interval-polling task — `--timeout 300` IS the wait. Triggers: 监听任务进展 / 开始监听任务 / 关注任务进展 / 使用监听 skill 监听任务进展 / 帮我盯着任务 / 任务有进度就告诉我 / 任务有动静告诉我 / 开监听 / watch 任务 / 历史消息 / 历史记录 / 过去消息 / 之前的消息 / 帮我看看之前的历史消息 / 看下之前的消息 / 未读消息 / task watch / user watch / monitor task progress / keep me posted on tasks / watch tasks / start watching / show past messages / show message history / catch me up on tasks / unread task messages. Business actions (apply / deliver / dispute / quote / accept) belong to `okx-agent-task`; this skill only handles the watch loop."
+description: "ACTIVATE for OKX A2A user-session task-progress flows: live monitoring via `okx-a2a user watch` (long-poll + SQLite backlog drain) or outstanding-decision listing via `okx-a2a user outdated-list`. Claude Code / Codex only (`CLAUDECODE=1` or `CODEX_THREAD_ID`); other platforms stop with an unsupported-platform message. Triggers: 监听任务进展 / 开始监听任务 / 关注任务进展 / 使用监听 skill 监听任务进展 / 帮我盯着任务 / 任务有进度就告诉我 / 任务有动静告诉我 / 开监听 / watch 任务 / 历史消息 / 历史记录 / 过去消息 / 之前的消息 / 帮我看看之前的历史消息 / 看下之前的消息 / 未读消息 / 未决策 / 待决策 / 没有决策 / 未处理 / 待处理 / 没有处理 / task watch / user watch / monitor task progress / keep me posted on tasks / watch tasks / start watching / show past messages / show message history / catch me up on tasks / unread task messages / outstanding decisions / pending decisions / unhandled decisions / what am I missing. Business actions (apply / deliver / dispute / quote / accept) belong to `okx-agent-task`."
 license: Apache-2.0
 metadata:
   author: okx
@@ -142,6 +142,51 @@ If the scheduling tool is unavailable (unknown tool / returns an error) → **sk
 🛑 **After `decision_request` outcomes 3, 4, 5 above, resume watching** — call `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` again. Outcome 1 (`保留` / `skip`) is a hard STOP — see §Stop condition. Do NOT stop in outcomes 3/4/5 just because the relay completed / the item turned out duplicate / the relay failed.
 
 🛑 **User-session authority boundary**: while handling a `decision_request` item, the user session is only a **relay endpoint**, not a business executor. The user's reply (`956`, `1`, `关闭`, `approve`, …) is the verbatim answer to that item — it must not be reinterpreted as a new "pick a provider / start negotiation / create a group / solicit a quote" intent. In the user session, **never** execute: `okx-a2a session create` / `okx-a2a xmtp-send` / `xmtp_start_conversation` / `xmtp_send` / `onchainos agent next-action` / `agent common context` / `agent recommend` / `agent service-list`. Those business steps belong to the target job/session after it has received the relay.
+
+## Pull outstanding `decision_request` items — `okx-a2a user outdated-list`
+
+User-initiated query, separate from the live watch loop. When the user explicitly asks to see decision_request items they have **not yet replied to** (rendered previously but no choice picked), surface all of them in one shot.
+
+### Triggers
+- Chinese: `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理`
+- English: `outstanding decisions` / `pending decisions` / `unhandled decisions` / `what am I missing`
+
+### Action
+
+```bash
+okx-a2a user outdated-list --json
+```
+
+Returns the set of `decision_request` items currently un-claimed in SQLite. (Notifications are not included — they are auto-consumed by watch and have no "pending" state.)
+
+### Rendering — batch, not per-item
+
+Unlike watch's per-item flow, render **all returned items in a single assistant message**:
+
+1. Number each item (`1`, `2`, `3`, ...) so the user can disambiguate.
+2. For each item, include its `user_content` **verbatim** (same anti-paraphrase rules as in §`kind == decision_request` above — no wrapper sentences, no summarization, no cross-item merging).
+3. After the last item, append this disambiguation hint **verbatim** in the user's language:
+   > 💡 回复某项决策时，请在回复前加上 `JobID + <jobid 前六位>`（例如 `JobID 0x49fa — 1`），便于识别是哪一项。
+   >
+   > English: When replying to a specific decision, prefix your answer with `JobID + <first 6 chars of the jobId>` (e.g. `JobID 0x49fa — 1`) so the agent can route it correctly.
+4. End turn. Do **NOT** auto-re-enter `watch` or any other command — `outdated-list` is a one-shot query, not a loop.
+
+### Handling the user's prefixed reply
+
+When the user replies with `JobID <prefix> — <answer>` (or any variant: `JobID <prefix> <answer>`, `<prefix>: <answer>`, etc.):
+- Match `<prefix>` against the listed items' jobIds (first 6 chars of jobId).
+- Route the matched item through §`kind == decision_request`'s "Handling the user reply" flow (cancel any wake from the original render → claim → relay per `llm_content`).
+- The reply text after the prefix is the verbatim choice for that item.
+
+If the user replies **without** the prefix and only **one** item is outstanding → no ambiguity, treat the reply as belonging to that item.
+
+If multiple items are outstanding AND the reply has no prefix → ask the user to re-send with the `JobID <prefix>` form.
+
+### Anti-patterns
+- Do NOT call `okx-a2a user watch` for this intent — `watch` long-polls; `outdated-list` is a snapshot.
+- Do NOT auto-re-enter any command after rendering. Wait for the user's prefixed reply.
+- Do NOT schedule a 2-minute wake here — the wake belongs to the live watch flow for fresh `decision_request` items, not to a static list.
+- Do NOT render items one by one across multiple assistant messages — batch them into a single message.
 
 ## Stop condition
 
