@@ -635,6 +635,128 @@ pub async fn handle_profile(agent_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Spawn `onchainos agent service-list --agent-id <id>` as subprocess and
+/// return the parsed `data` field (services array/object).
+async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Value> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+
+    let output = tokio::process::Command::new(&exe)
+        .args(["agent", "service-list", "--agent-id", agent_id])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn `agent service-list` failed: {e}"))?;
+
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow::anyhow!(
+            "parse `agent service-list` stdout failed: {e}; raw={}",
+            String::from_utf8_lossy(&output.stdout)
+        ))?;
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
+        bail!("`agent service-list` returned failure: {err}");
+    }
+
+    Ok(body.get("data").cloned().unwrap_or(serde_json::Value::Null))
+}
+
+/// `onchainos agent designated-route --provider <agentId>` — runs service-list
+/// + profile in parallel, applies role/online/endpoint routing logic, and
+/// returns a single JSON with the route decision.
+///
+/// Output shape:
+/// ```json
+/// { "route": "x402"|"a2a"|"error",
+///   "errorType": "not_provider"|"offline",   // only when route=error
+///   "providerName": "...",
+///   "onlineStatus": 1|2,
+///   "endpoint": "https://...",               // only when route=x402
+///   "feeAmount": "0.01",                     // only when route=x402
+///   "feeTokenSymbol": "USDT"                 // only when route=x402
+/// }
+/// ```
+pub async fn handle_designated_route(provider_id: &str) -> Result<()> {
+    let id = provider_id.trim();
+    if id.is_empty() {
+        bail!("--provider must not be empty");
+    }
+
+    let (profile_res, svc_res) = tokio::join!(
+        query_agent_by_id_direct(id),
+        spawn_service_list(id),
+    );
+
+    // --- profile gate ---
+    let profile = match profile_res {
+        Ok(p) => p,
+        Err(_) => {
+            crate::output::success(serde_json::json!({
+                "route": "error",
+                "errorType": "not_provider",
+            }));
+            return Ok(());
+        }
+    };
+
+    let role = profile.get("role").and_then(|v| v.as_i64()).unwrap_or(0);
+    if role != 2 {
+        crate::output::success(serde_json::json!({
+            "route": "error",
+            "errorType": "not_provider",
+            "providerName": profile.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+        }));
+        return Ok(());
+    }
+
+    let provider_name = profile.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let online_status = profile.get("onlineStatus").and_then(|v| v.as_i64()).unwrap_or(1);
+
+    // --- service-list ---
+    let services_data = svc_res.unwrap_or(serde_json::Value::Null);
+    let services = services_data.get("services")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .or_else(|| services_data.as_array().cloned())
+        .unwrap_or_default();
+
+    let first_with_endpoint = services.iter().find(|s| {
+        s.get("endpoint").and_then(|v| v.as_str()).map(|e| !e.is_empty()).unwrap_or(false)
+    });
+
+    if let Some(svc) = first_with_endpoint {
+        let endpoint = svc.get("endpoint").and_then(|v| v.as_str()).unwrap_or("");
+        let fee_amount = svc.get("feeAmount").and_then(|v| v.as_str()).unwrap_or("");
+        let fee_token = svc.get("feeTokenSymbol").and_then(|v| v.as_str()).unwrap_or("");
+        crate::output::success(serde_json::json!({
+            "route": "x402",
+            "providerName": provider_name,
+            "onlineStatus": online_status,
+            "endpoint": endpoint,
+            "feeAmount": fee_amount,
+            "feeTokenSymbol": fee_token,
+        }));
+    } else {
+        // No endpoint → A2A path; check online status
+        if online_status == 2 {
+            crate::output::success(serde_json::json!({
+                "route": "error",
+                "errorType": "offline",
+                "providerName": provider_name,
+                "onlineStatus": online_status,
+            }));
+        } else {
+            crate::output::success(serde_json::json!({
+                "route": "a2a",
+                "providerName": provider_name,
+                "onlineStatus": online_status,
+            }));
+        }
+    }
+
+    Ok(())
+}
+
 /// `onchainos agent my-agents [--role <r>]` — flat list of the current active
 /// account's agents (XLayer ownerAddress filter applied automatically),
 /// optionally filtered by `role`. Hides the agent-list response shape

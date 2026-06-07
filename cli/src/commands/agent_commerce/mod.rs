@@ -198,6 +198,13 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
+    /// Designated-provider routing: service-list + profile in one call
+    #[command(name = "designated-route")]
+    DesignatedRoute {
+        /// Target provider agentId
+        #[arg(long)] provider: String,
+    },
+
     /// Client confirms task complete and releases payment
     Complete {
         job_id: String,
@@ -804,6 +811,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::X402Check { endpoint, agent_id } =>
             task::buyer::run_task(T::X402Check { endpoint, agent_id }, ctx).await,
+
+        AgentCommand::DesignatedRoute { provider } =>
+            task::common::handle_designated_route(&provider).await,
 
         AgentCommand::Complete { job_id } =>
             task::buyer::run_task(T::Complete { job_id }, ctx).await,

@@ -18,23 +18,14 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
     format!("\
              🎯 **Designated ASP**: {dp_id}\n\
              ⚠️ The persisted designated-provider file has already been removed by the CLI when this prompt was generated (consume-on-read); no manual cleanup needed.\n\n\
-             **D-Step 1 - query the ASP's service-list:**\n\
+             **D-Step 1 - query ASP route (service-list + profile combined):**\n\
              ```bash\n\
-             onchainos agent service-list --agent-id {dp_id}\n\
+             onchainos agent designated-route --provider {dp_id}\n\
              ```\n\
-             ⚠️ `--agent-id` is a **required named flag** — do NOT pass the agent ID as a positional argument (e.g. `service-list {dp_id}` will error). Always use `--agent-id {dp_id}`.\n\
-             If the command returns an error (e.g. \"unexpected argument\", \"unrecognized\"), **retry once** using the exact command above with `--agent-id`. Do NOT skip D-Steps on error — the routing decision depends on this result.\n\
-             Check whether the response contains services (non-empty `services` array) and inspect the `endpoint`, `feeAmount`, `feeTokenSymbol` fields on each service.\n\n\
-             **D-Step 1.5 - profile check (role validation + online-status):**\n\
-             Query the ASP's profile:\n\
-             ```bash\n\
-             onchainos agent profile {dp_id}\n\
-             ```\n\
-             ⚠️ This is the **ASP's** profile — the `role` field in the response belongs to the ASP, **NOT to you**. Do NOT use it to determine your own role. You are the **buyer** (`--role buyer`).\n\n\
-             **D-Step 1.5a - role gate (🛑 hard gate):**\n\
-             Check `ok` and `role` from the response:\n\
-             - `ok == true` AND `role == 2` -> pass; continue to D-Step 1.5b.\n\
-             - `ok == false` or `role != 2` (or role missing/null) -> the designated agent does not exist or is not registered as an ASP (provider). It cannot fulfil the job.\n\
+             This single command queries the ASP's service-list and profile in parallel and returns a routing decision.\n\
+             Response fields: `route` (`x402` | `a2a` | `error`), `errorType` (if error), `providerName`, `onlineStatus`, `endpoint`, `feeAmount`, `feeTokenSymbol` (if x402).\n\n\
+             **D-Step 2 - branch by `route` value:**\n\n\
+             - **`route == \"error\"` AND `errorType == \"not_provider\"`** -> the designated agent does not exist or is not registered as an ASP.\n\
              \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
              \x20\x20{session_hint}\n\
              \x20\x20```bash\n\
@@ -46,10 +37,7 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20{follow_playbook}\n\
              \x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20{route_hint}\n\n\
-             **D-Step 1.5b - online-status check (only effective on the escrow path):**\n\
-             Read `onlineStatus` from the response (1=online / 2=offline). If the field is missing, null, or empty, treat the ASP as **online** (the backend may not yet return this field).\n\
-             - `onlineStatus == 1` **or field missing/null/empty** (online / unknown) -> continue to D-Step 2.\n\
-             - `onlineStatus == 2` AND **no endpoint** (so you are about to enter the escrow negotiation path) -> the ASP is offline and cannot negotiate.\n\
+             - **`route == \"error\"` AND `errorType == \"offline\"`** -> the ASP is offline and cannot negotiate (escrow path).\n\
              \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
              \x20\x20{session_hint}\n\
              \x20\x20```bash\n\
@@ -60,10 +48,8 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20{provider_offline}\n\
              \x20\x20{follow_playbook}\n\
              \x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20{route_hint}\n\
-             - `onlineStatus == 2` but **has an endpoint** (x402 path) -> x402 is automated payment and does not depend on the ASP being online in real time, so continue to D-Step 2.\n\n\
-             **D-Step 2 - route by service-list result:**\n\
-             - **Has services and contains an endpoint (x402-capable)** -> extract `feeAmount`, `feeTokenSymbol`, `endpoint` from `services[0]`.\n\
+             \x20\x20{route_hint}\n\n\
+             - **`route == \"x402\"`** -> extract `endpoint`, `feeAmount`, `feeTokenSymbol` from the response.\n\
              \x20\x20⚠️ **`feeAmount` is the value the ASP manually entered at registration time, and is not necessarily equal to the on-chain price**; it must be verified by DX-Step 1 `x402-check`. When showing it to the user, label it \"registered fee\".\n\
              \x20\x20Execute the designated-provider x402 flow below (do NOT jump to A-Step 1):\n\n\
              \x20\x20**DX-Step 1 - validate the endpoint:**\n\
@@ -85,7 +71,7 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
              \x20\x20\x20\x20{route_hint}\n\n\
              \x20\x20**DX-Step 2 - amount sanity check:**\n\
-             \x20\x20Compare `amountHuman` from x402-check with `feeAmount` from `services[0]`:\n\
+             \x20\x20Compare `amountHuman` from x402-check with `feeAmount` from `designated-route`:\n\
              \x20\x20- Mismatch (delta > 1%) -> enqueue the user decision via `pending-decisions-v2 request`:\n\
              \x20\x20\x20\x20{session_hint}\n\
              \x20\x20\x20\x20```bash\n\
@@ -133,7 +119,7 @@ pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id
              \x20\x20\x20\x20no event will fire on-chain. **Within this same turn, immediately execute the x402 flow for job_payment_mode_changed**:\n\
              \x20\x20\x20\x20call `onchainos agent next-action --jobid {job_id} --event job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (task-402-pay).\n\
              \x20\x20- Output contains `\"confirming\": true` (normal on-chain submission in flight) -> **end this turn** and wait for the `job_payment_mode_changed` system notification.\n\n\
-             - **No service or no endpoint (no x402 support)** -> enter **B-Step 1** to create a chat and negotiate.")
+             - **`route == \"a2a\"`** -> enter **B-Step 1** to create a chat and negotiate.")
 }
 
 /// Designated-provider B-Step negotiation protocol (three-step handshake + group creation + first inquiry + end turn)
