@@ -228,6 +228,20 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let step2b_branch_header = if pm.is_none() { "**Branch by paymentMode** (from Step 1):\n\n" } else { "" };
     let step3_branch_header = if pm.is_none() { "**Step 3 — Branch by payment mode:**\n\n" } else { "" };
 
+    let step1 = if ctx.prefetched.is_some() {
+        "**Step 1 — Task context (pre-fetched; no CLI call needed):**\n\
+         All task fields (paymentMode, tokenSymbol, providerAgentId, etc.) are in the `[Pre-fetched task context]` block above.\n\
+         qualityStandards: extract from the description field above (task creation time value is authoritative).\n\n"
+            .to_string()
+    } else {
+        format!("\
+         **Step 1 — Query task details; extract deliverable and payment mode:**\n\
+         ```bash\n\
+         onchainos agent status {job_id}\n\
+         ```\n\
+         {pm_extract}The status endpoint does not return deliverableUrl; extract that from the chat history in Step 2. Get qualityStandards from the `[Pre-fetched task context]` description above (the value at task creation time is authoritative).\n\n")
+    };
+
     let step2a = if let Some(d) = ctx.prefetched.and_then(|p| p.deliverable.as_ref()) {
         format!("\
      **Step 2a — Deliverable already saved** (detected by CLI pre-fetch; no need to call `task-deliverable-list`):\n\
@@ -437,11 +451,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      🛑 **In escrow mode auto-approval is strictly forbidden**: you must wait for the user's relayed decision; the agent must not decide on behalf of the user, regardless of deliverable quality or how close to deadline.\n\
      ⚠️ In x402 mode: funds are already paid; just notify the user of the deliverable content; the user cannot reject.\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 1 — Query task details; extract deliverable and payment mode:**\n\
-     ```bash\n\
-     onchainos agent status {job_id}\n\
-     ```\n\
-     {pm_extract}The status endpoint does not return deliverableUrl; extract that from the chat history in Step 2. Get qualityStandards from the `[Pre-fetched task context]` description above (the value at task creation time is authoritative).\n\n\
+     {step1}\
      **Step 2 — Obtain the deliverable content (check saved first, then fallback to chat history):**\n\n\
      ⚠️ The deliverable content MUST appear in Step 3's userContent — the user has not seen the body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\n\
      {step2a}\
