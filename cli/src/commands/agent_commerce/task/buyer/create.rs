@@ -294,8 +294,10 @@ pub async fn handle_create(
     if super::content::is_cli_mode() {
         println!("Due to client limitations, you need to proactively ask me to \"monitor task progress\" for me to continue pushing updates to you.");
         println!();
-        println!("🛑 [Watch] You MUST now execute the watch command below to monitor task progress — do NOT skip or end the turn without running it:");
+        println!("[Watch] Per `okx-task-watch` SKILL.md, start the monitor now:");
         println!("okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50");
+        println!();
+        println!("If you haven't read `okx-task-watch/SKILL.md` in this session, read it first.");
     }
     println!("🛑 Do NOT call set-payment-mode.");
     Ok(())
