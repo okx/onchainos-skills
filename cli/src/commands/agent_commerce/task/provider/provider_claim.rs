@@ -26,7 +26,7 @@ pub async fn handle_claim_auto_complete(
     if agent_id.is_empty() {
         bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
     }
-    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     let body = serde_json::json!({});
 
     let resp = client.post_with_identity(

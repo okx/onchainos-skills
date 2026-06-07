@@ -329,6 +329,70 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
     );
 }
 
+/// Like [`ensure_sufficient_balance`] but queries a specific on-chain address
+/// via `onchainos portfolio all-balances` (public API, independent of selected_account_id).
+/// Used by provider-side flows where the signing account may differ from the active account.
+pub async fn ensure_sufficient_balance_at(required: f64, currency: &str, address: &str) -> Result<()> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("unable to determine executable path: {e}"))?;
+
+    let output = tokio::process::Command::new(&exe)
+        .args(["portfolio", "all-balances", "--address", address, "--chains", XLAYER_CHAIN_INDEX])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("portfolio balance query failed: {e}"))?;
+
+    if !output.status.success() {
+        bail!("portfolio balance query failed (exit {}), address={address}", output.status);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| anyhow::anyhow!("failed to parse portfolio balance result: {e}"))?;
+
+    let currency_norm = normalize_token_symbol(currency);
+
+    let token_assets = parsed["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|chain| {
+            chain["tokenAssets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+        });
+
+    for asset in token_assets {
+        let symbol = asset["symbol"]
+            .as_str()
+            .or_else(|| asset["tokenSymbol"].as_str())
+            .unwrap_or("");
+        let sym_norm = normalize_token_symbol(symbol);
+        if sym_norm == currency_norm || sym_norm == format!("{currency_norm}0") {
+            let balance: f64 = asset["balance"]
+                .as_str()
+                .and_then(|s| s.parse().ok())
+                .or_else(|| asset["balance"].as_f64())
+                .unwrap_or(0.0);
+            if balance < required {
+                bail!(
+                    "Insufficient business token balance (USDT/USDG): current XLayer {symbol} balance is {balance} (address={address}), \
+                     need {required} {currency}. Please top up {currency} via okx-dex-swap. \
+                     Note: gas is paid by the platform paymaster, no OKB / native required"
+                );
+            }
+            return Ok(());
+        }
+    }
+
+    bail!(
+        "Business token {currency} balance not found on XLayer for address={address}. \
+         Please confirm the account holds this token and top up via okx-dex-swap before retrying. \
+         Note: gas is paid by the platform paymaster, no OKB / native required"
+    );
+}
+
 // ─── jobId formatting ───────────────────────────────────────────────────
 
 /// Short jobId: first 6 + … + last 4 characters. A 0x... hex value yields `0x1b76…1be1`;

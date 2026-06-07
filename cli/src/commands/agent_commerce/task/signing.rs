@@ -16,7 +16,7 @@ use crate::audit;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    fetch_my_agent_by_id, fetch_my_agents, AGENT_ROLE_BUYER, AGENT_ROLE_PROVIDER,
+    fetch_my_agent_by_id, fetch_my_agents, AGENT_ROLE_BUYER,
     XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
@@ -117,34 +117,6 @@ pub async fn resolve_wallet_and_agent_for_task(
 
     let (account_id, address) = resolve_wallet(None, Some(buyer_address))?;
     Ok((account_id, address, buyer_agent_id))
-}
-
-/// Query task detail to resolve the provider's wallet and agentId for signing.
-///
-/// Returns `(account_id, address, provider_agent_id)`.
-pub async fn resolve_wallet_and_agent_for_provider(
-    client: &mut TaskApiClient,
-    job_id: &str,
-) -> Result<(String, String, String)> {
-    // First fetch provider agentId from local identity list, used for GET request with agenticId header
-    let local_agent_id = resolve_agent_by_role(AGENT_ROLE_PROVIDER, "provider", None)
-        .await
-        .map(|(id, _)| id)
-        .unwrap_or_default();
-
-    let resp = client.get_with_identity(&client.task_path(job_id), &local_agent_id).await?;
-
-    let provider_agent_id = resp["providerAgentId"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-
-    let provider_address = resp["providerAgentAddress"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("task detail missing providerAgentAddress field"))?;
-
-    let (account_id, address) = resolve_wallet(None, Some(provider_address))?;
-    Ok((account_id, address, provider_agent_id))
 }
 
 /// Fetch the current active account's agent list — thin wrapper over

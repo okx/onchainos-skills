@@ -1006,7 +1006,7 @@ mod tests {
             super::super::DraftCommand::Create {
                 title, description, budget, max_budget,
                 currency, deadline_open, deadline_submit,
-                provider, attachments,
+                provider, attachments, ..
             } => {
                 assert_eq!(title, "full task");
                 assert_eq!(description.as_deref(), Some("a long description here"));

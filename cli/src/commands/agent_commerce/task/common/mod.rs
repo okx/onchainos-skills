@@ -47,7 +47,7 @@ pub const AGENT_ROLE_EVALUATOR: i64 = 3;
 
 pub use payment_mode::PaymentMode;
 
-pub use util::ensure_sufficient_balance;
+pub use util::{ensure_sufficient_balance, ensure_sufficient_balance_at};
 
 // ─── CLI definition ─────────────────────────────────────────────────────
 #[derive(Subcommand)]

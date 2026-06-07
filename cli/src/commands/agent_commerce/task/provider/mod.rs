@@ -8,8 +8,8 @@
 //! - `provider_claim.rs`    — claim after submit→complete timeout (claimAutoComplete)
 //!
 //! account-pull arbitration rewards (`claim-rewards` / `claimable`): called inline in
-//! the dispatch arm via `common::claim`; no thin wrapper for provider — the logic is just
-//! `signing::resolve_wallet(None, None)` + `common::claim::*`, with no role-specific resolution.
+//! the dispatch arm via `common::claim`; wallet resolution uses
+//! `signing::resolve_wallet_by_agent_id` to support multi-account scenarios.
 //!
 //! Offchain evidence upload (`dispute upload`) is shared by both sides;
 //! implementation lives in `common/dispute_upload.rs`.
@@ -221,7 +221,7 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             if agent_id.is_empty() {
                 bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
             }
-            let (account_id, address) = signing::resolve_wallet(None, None)?;
+            let (account_id, address) = signing::resolve_wallet_by_agent_id(&agent_id).await?;
             let tx_hash =
                 common_claim::submit_claim_and_broadcast(&mut client, &account_id, &address, &agent_id).await?;
             audit::log(

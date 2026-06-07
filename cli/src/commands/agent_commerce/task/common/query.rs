@@ -15,13 +15,22 @@ use super::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
 /// Resolves agentId from the local identity list by role when --agent-id is omitted.
+/// When falling back, picks the first agent matching the role — may be wrong when
+/// multiple agents of the same role exist (e.g. multiple providers).
 pub async fn resolve_agent_id(agent_id: &str, role: i64) -> String {
     if !agent_id.is_empty() {
         return agent_id.to_string();
     }
-    signing::resolve_agent_id_by_role(role)
+    let resolved = signing::resolve_agent_id_by_role(role)
         .await
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if !resolved.is_empty() {
+        eprintln!(
+            "⚠ --agent-id omitted; falling back to first local agent with role={role}: {resolved}. \
+             If you have multiple agents of this role, pass --agent-id explicitly."
+        );
+    }
+    resolved
 }
 
 /// Query task status.
