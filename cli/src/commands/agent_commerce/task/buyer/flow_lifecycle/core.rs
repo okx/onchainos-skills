@@ -235,7 +235,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20- deliverableType: {dtype}\n\
      \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\
      \x20\x20- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)\n\
-     \x20\x20- From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards`; if empty, skip that line\n\
+     \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
      \x20\x20- **Skip Step 2b entirely**\n\
      \x20\x20- Go to Step 3\n\n",
             path = d.path, dtype = d.deliverable_type,
@@ -252,7 +252,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20- For text deliverables, read the file content at `path` to get `deliverableText`\n\
      \x20\x20- **Skip Step 2b entirely** (no need to re-download or re-save)\n\
      \x20\x20- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)\n\
-     \x20\x20- From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards`; if empty, skip that line\n\
+     \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
      \x20\x20- Go to Step 3\n\n\
      If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n")
     };
@@ -420,7 +420,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
         format!("\
      **Step 2b — Fallback: fetch from chat history and save** (only if Step 2a found no saved deliverable):\n\
      First call `session_status` to get the current sub session's sessionKey (reused later; do not call it again this turn).\n\
-     From `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` extract `qualityStandards` (the review standard as of task creation); if empty, skip that line.\n\n\
+     Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line.\n\n\
      {step2b_branch_header}\
      {step2b_x402}\
      {step2b_escrow}")
@@ -441,7 +441,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent status {job_id}\n\
      ```\n\
-     {pm_extract}The status endpoint does not return deliverableUrl; extract that from the chat history in Step 2. Get qualityStandards from `onchainos agent common context` (the value at task creation time is authoritative).\n\n\
+     {pm_extract}The status endpoint does not return deliverableUrl; extract that from the chat history in Step 2. Get qualityStandards from the `[Pre-fetched task context]` description above (the value at task creation time is authoritative).\n\n\
      **Step 2 — Obtain the deliverable content (check saved first, then fallback to chat history):**\n\n\
      ⚠️ The deliverable content MUST appear in Step 3's userContent — the user has not seen the body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\n\
      {step2a}\
