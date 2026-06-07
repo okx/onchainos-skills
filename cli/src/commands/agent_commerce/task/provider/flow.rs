@@ -195,6 +195,14 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     );
 
     let event = parse_status_or_event(event_str);
+    // `Event::JobCreated` is now a thin cache-decision shim — preamble is
+    // skipped here too (LLM already has it from the prior `job_created_playbook`
+    // fetch, or will pick it up via the dispatch the shim suggests). When the
+    // synthetic `job_created_playbook` event is requested, the format!() at the
+    // end wraps the full output (preamble + body) with the cache-marker pair so
+    // subsequent turns can detect the cached emission and skip re-fetching.
+    let is_short_jobcreated = matches!(&event, Event::JobCreated);
+    let is_playbook_emit = matches!(&event, Event::Other(s) if s == "job_created_playbook");
     let body = match event {
         // ─── Scene 3: Apply has been recorded on-chain (escrow path; the User Agent issues the payment) ──
         Event::ProviderApplied => format!(
@@ -219,20 +227,16 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              - job_accepted → User Agent has confirm-accepted, escrow funding complete; **only then** can you deliver\n"
         ),
 
-        // ─── Scene 4: User Agent has confirmed the apply; execute and deliver (branch by paymentMode) ──
+        // ─── Scene 4: User Agent has confirmed the apply; execute and deliver ──
         Event::JobAccepted => {
             let user_notify = super::content::job_accepted_user_notify(job_id, agent_id);
-            let user_notify_x402 = super::content::job_accepted_x402_user_notify(job_id, agent_id);
             let deliver_text = super::content::deliver_text_to_buyer(job_id);
             let deliver_file = super::content::deliver_file_to_buyer(job_id);
             format!(
             "[Current state] job_accepted (User Agent has confirmed the apply)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
-             **Step 1 — Fetch paymentMode**: call `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` and read the `paymentMode` field (int: 1=escrow, 3=x402).\n\n\
-             **Step 2 — Branch by paymentMode**:\n\n\
-             ━━━━━ Branch A: paymentMode=escrow (escrow trade, 1) ━━━━━\n\n\
-             **A-Step 1 — Use `xmtp_dispatch_user` to push the apply-accepted notification to the user**:\n\n\
+             **Step 1 — Use `xmtp_dispatch_user` to push the apply-accepted notification to the user**:\n\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              arguments:\n\
@@ -240,12 +244,12 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              {user_notify}\n\n\
              Field values are read from the output of `onchainos agent common context {job_id} --role provider --agent-id {agent_id}`.\n\
              ⚠️ Do NOT send `xmtp_send` `received apply confirmation` filler to the User Agent — the User Agent just ran confirm-accept; they already know.\n\n\
-             **A-Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
+             **Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
              {execute_task}\n\n\
-             **A-Step 3 — Deliver** (first `xmtp_send` the deliverable to the User Agent, then deliver on-chain):\n\n\
+             **Step 3 — Deliver** (first `xmtp_send` the deliverable to the User Agent, then deliver on-chain):\n\n\
              ⚠️ **Order**: first `xmtp_send` the deliverable to the User Agent, then deliver on-chain. The on-chain deliver only advances the task state to submitted (giving the User Agent an acceptance entry point); the deliverable itself was already delivered via xmtp_send.\n\n\
-             **A-Step 3a — Prepare the deliverable (branch by type)**:\n\n\
-             ▸ **Plain text / URL deliverable**: assemble the text content directly, skip xmtp_file_upload, go to A-Step 3b.\n\n\
+             **Step 3a — Prepare the deliverable (branch by type)**:\n\n\
+             ▸ **Plain text / URL deliverable**: assemble the text content directly, skip xmtp_file_upload, go to Step 3b.\n\n\
              ▸ **File deliverable** (image / PDF / document): call `xmtp_file_upload` with these arguments (mechanism: see skills/okx-agent-task/_shared/xmtp-tools.md → Path 8 `xmtp_file_upload`):\n\
              \x20\x20tool: xmtp_file_upload\n\
              \x20\x20arguments:\n\
@@ -253,7 +257,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              \x20\x20\x20\x20agentId: \"{agent_id}\"\n\
              \x20\x20\x20\x20jobId: \"{job_id}\"\n\
              \x20\x20Record all five return fields (`fileKey` / `digest` / `salt` / `nonce` / `secret` — decryption metadata).\n\n\
-             **A-Step 3b — `xmtp_send` the deliverable to the User Agent** (in the same turn, immediately following A-Step 3a):\n\
+             **Step 3b — `xmtp_send` the deliverable to the User Agent** (in the same turn, immediately following Step 3a):\n\
              ⚠️ content **MUST end with the `[intent:deliver]` line as a trailing suffix** — the User Agent routes by this suffix to recognize the deliverable. Missing suffix = the User Agent cannot recognize it as a deliverable = the flow stalls.\n\n\
              Text-deliverable content:\n\
              {send_to_peer}\n\
@@ -261,33 +265,19 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              File-deliverable content (paste all 5 fields verbatim):\n\
              {send_to_peer}\n\
              {deliver_file}\n\n\
-             **A-Step 3c — Run `deliver` CLI to go on-chain** (advances task state to submitted so the User Agent gets the complete entry point):\n\
-             ▸ File deliverable — pass `--file` with the **local file path** used in A-Step 3a (the CLI auto-saves it to persistent deliverable storage after on-chain success):\n\
+             **Step 3c — Run `deliver` CLI to go on-chain** (advances task state to submitted so the User Agent gets the complete entry point):\n\
+             ▸ File deliverable — pass `--file` with the **local file path** used in Step 3a (the CLI auto-saves it to persistent deliverable storage after on-chain success):\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"<local file path from A-Step 3a>\" --agent-id {agent_id}\n\
+             onchainos agent deliver {job_id} --file \"<local file path from Step 3a>\" --agent-id {agent_id}\n\
              ```\n\
              ▸ Text deliverable — pass `--file \"\"` and `--deliverable-text \"<the full deliverable text content>\"` (the CLI auto-saves the text to persistent deliverable storage):\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"\" --deliverable-text \"<the full text deliverable content from A-Step 3b>\" --agent-id {agent_id}\n\
+             onchainos agent deliver {job_id} --file \"\" --deliverable-text \"<the full text deliverable content from Step 3b>\" --agent-id {agent_id}\n\
              ```\n\
              CLI internals: POST submit API → sign uopHash → broadcast on-chain → auto-save deliverable (file via --file, text via --deliverable-text).\n\n\
-             **A-Step 4 — After A-Step 3c ends this turn immediately** (the deliverable was already delivered to the User Agent in A-Step 3b; when the subsequent `job_submitted` notification arrives, **observe only** — do not xmtp_send / xmtp_dispatch_user / any filler message).\n\n\
+             **Step 4 — After Step 3c ends this turn immediately** (the deliverable was already delivered to the User Agent in Step 3b; when the subsequent `job_submitted` notification arrives, **observe only** — do not xmtp_send / xmtp_dispatch_user / any filler message).\n\n\
              [Follow-up events]\n\
-             - On-chain task state enters submitted (the job_submitted system event may arrive; observe only, do not act) → wait for buyer complete/reject\n\n\
-             ━━━━━ Branch B: paymentMode=x402 (on-demand micropayment, 3) ━━━━━\n\n\
-             ⚠️ **x402 mode: the provider does NOT deliver.** The deliverable is obtained by the buyer replaying the provider's HTTP endpoint (402 challenge → sign x402_pay → replay). The task transitions directly from accepted → completed (skipping submitted) via the buyer calling `/direct/complete`.\n\n\
-             **B-Step 1 — Use `xmtp_dispatch_user` to notify the user that the task has been accepted**:\n\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending.\n\
-             tool: xmtp_dispatch_user\n\
-             arguments:\n\
-             \x20\x20content:\n\
-             {user_notify_x402}\n\n\
-             **B-Step 2 — End this turn immediately.** Wait for the `job_completed` system notification.\n\n\
-             ❌ **Do NOT call `onchainos agent deliver`** — deliver is an escrow-only on-chain action; x402 tasks do not go through submit.\n\
-             ❌ **Do NOT execute the task** — the buyer obtains the deliverable by replaying your HTTP endpoint; there is nothing for the provider agent to produce or send.\n\
-             ❌ **Do NOT `xmtp_send` any deliverable to the User Agent** — the buyer already received it via the 402 replay flow.\n\n\
-             [Follow-up events]\n\
-             - job_completed → task complete; run `onchainos agent next-action --jobid {job_id} --event job_completed --role provider --agentId {agent_id}`\n"
+             - On-chain task state enters submitted (the job_submitted system event may arrive; observe only, do not act) → wait for buyer complete/reject\n"
             )
         }
 
@@ -555,26 +545,45 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              - dispute_resolved → lost, funds refunded to the User Agent\n"
         ),
 
-        // ─── Unknown type fallback ─────────────────────────────────────────────
+        // ─── Scene 1: task is on-chain — thin cache-decision shim. Full playbook lives
+        // in `generate_playbook` (fetched via `onchainos agent playbook ...`) and gets
+        // emitted once per task, then re-used from LLM context for subsequent turns.
         Event::JobCreated => format!(
+            "[Current state] job_created — jobId=`{job_id}`\n\n\
+             ⚡ **Playbook cache check**: scan your context for `[JOBCREATED_PLAYBOOK_CACHE@{job_id}]` and `[/JOBCREATED_PLAYBOOK_CACHE@{job_id}]` from an earlier turn.\n\
+             \x20\x20• Both markers present → use the cached playbook; do NOT fetch again.\n\
+             \x20\x20• Missing / only opening visible → fetch:\n\
+             ```bash\n\
+             onchainos agent next-action --jobid {job_id} --event job_created_playbook --role provider --agentId {agent_id}\n\
+             ```\n"
+        ),
+
+        // ─── Scene 1 full playbook: emitted only when `next-action --event
+        // job_created_playbook` is called explicitly (per the cache-decision shim in
+        // the `job_created` arm). The format!() at the end of this function detects
+        // this event and wraps the output with the `[JOBCREATED_PLAYBOOK_CACHE@<jobId>]`
+        // marker pair. ──────────────────────────────────────────────────────────────
+        Event::Other(ref s) if s == "job_created_playbook" => format!(
             "[Current state] job_created (task is on-chain)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             🛑🛑🛑 **ABSOLUTE PROHIBITION — at this stage you MUST NOT deliver**.\n\
-             You just saw a task / received an inquiry from the User Agent. **Status = `created`**; the User Agent has not yet picked you, escrow is not yet funded. The full prerequisite chain BEFORE delivering is:\n\
+             🛑🛑🛑 **HARD RULES — read before any action**\n\n\
+             **Where you are**: status=`created`. The User Agent has not picked you, escrow is not funded; you are at step ① of the prerequisite chain.\n\n\
+             **Prerequisite chain BEFORE `deliver` is allowed**:\n\
              \x20\x20① **Negotiate** (Step 3 / 3.5 / 3.7 below) — three-step handshake: `[intent:propose]` → `[intent:ack]` → `[intent:confirm]`\n\
-             \x20\x20② **Apply on-chain** (Step 4) — `onchainos agent apply` (ONLY after `[intent:confirm]` arrives literally)\n\
-             \x20\x20③ Wait for **`provider_applied`** system notification (chain confirms your apply)\n\
-             \x20\x20④ Wait for the User Agent to call **`confirm-accept`** → wait for **`job_accepted`** system notification (escrow funded)\n\
-             \x20\x20⑤ ONLY THEN — in the `job_accepted` script's A-Step 2 — `xmtp_send` the deliverable and run `onchainos agent deliver`\n\n\
-             ❌ **Specifically forbidden in this scene**:\n\
-             \x20\x20• Calling `onchainos agent deliver` — the CLI has a `status != accepted` guard and bails, but you should never even attempt it here\n\
-             \x20\x20• Producing work content / calling external tools (wttr.in / image generation / search / etc.) to fulfill the task — work execution belongs to step ⑤\n\
-             \x20\x20• `xmtp_send` with `delivered` / `here is the result` / `Status: ✅ Delivered` / `please confirm and pay` phrasing — even if you've already generated the work, do NOT send it; it pollutes negotiation and tricks the User Agent into skipping confirm-accept\n\
-             🔴 Real incident: provider received a `Check weather` inquiry → directly called wttr.in → xmtp_sent the weather table with `Status: delivered` → User Agent never went through confirm-accept → escrow never funded → provider produced work for free + task stuck.\n\n\
-             ⚠️ **Negotiation phase; do NOT call `onchainos agent apply` directly either**: apply is an on-chain action (requires gas, signing, broadcast),\n\
-             and a failed negotiation cannot be undone. You MUST complete all three confirmations of negotiation below before apply.\n\n\
-             🛑 **Hard constraint — three-step handshake + no `onchainos` CLI in the same turn after an `xmtp_send`**\n\n\
-             Negotiation MUST complete the three-step handshake in full (iron rule of the buyer protocol; enforced in the User Agent's code):\n\
+             \x20\x20② **Apply on-chain** (Step 4) — `onchainos agent apply` (ONLY after literal `[intent:confirm]` arrives)\n\
+             \x20\x20③ Wait for `provider_applied` system notification (chain confirms your apply)\n\
+             \x20\x20④ User Agent calls `confirm-accept` → wait for `job_accepted` system notification (escrow funded)\n\
+             \x20\x20⑤ ONLY THEN — in the `job_accepted` script's Step 2 — execute the task + `xmtp_send` deliverable + `onchainos agent deliver`\n\n\
+             ❌ **Forbidden in this scene** (each rule below has caused a live incident):\n\
+             \x20\x20• `onchainos agent deliver` — gated by `job_accepted` (≥ 2 events later). `[intent:confirm]` authorizes **only** Step 4 `apply`, NOT `deliver`. Skipping ②③ and going straight to `deliver` = apply never ran + escrow never funded + work given away for free.\n\
+             \x20\x20• `onchainos agent apply` before literal `[intent:confirm]` — apply is on-chain (gas + signing + broadcast); a failed negotiation cannot be undone. Natural-language `agree / accept / please apply` does NOT count.\n\
+             \x20\x20• Producing work content (wttr.in / image generation / search / external query / etc.) — execution belongs to step ⑤ only.\n\
+             \x20\x20• `xmtp_send` with `delivered` / `here is the result` / `Status: ✅ Delivered` / `please confirm and pay` / `data provided` phrasing — even if work was already generated, do NOT send it; it tricks the User Agent into skipping confirm-accept.\n\
+             \x20\x20• Self-confirming phrasing such as `I confirm the three items / three items confirmed / I will apply immediately` in your `xmtp_send` — the three are questions to ASK the User Agent, not for you to declare done unilaterally.\n\n\
+             🛑 **What counts as `received [intent:propose]`**: this turn's inbound must literally contain the `[intent:propose]` marker. Natural-language inquiry with embedded fields (budget / payment preference / etc.) is **NOT** propose — that's the buyer's wish list in prose, not the handshake. No literal marker → `[intent:ack]` forbidden; go to Step 3 text negotiation.\n\n\
+             🛑 **What counts as `received [intent:confirm]`**: ONLY an actual inbound `a2a-agent-chat` envelope in this turn's `tool_result` whose `content` literally contains `[intent:confirm]` AND whose `sender.role == 1`. Your own thinking / narration / pre-declaration does NOT count. After sending `[intent:ack]`, end the turn and wait for the next inbound; do NOT predict / pre-narrate that confirm has arrived, and do NOT `apply` based on that prediction. If no qualifying inbound exists in this turn, **apply is forbidden — full stop**.\n\n\
+             🔴 **Real incident**: provider received `Check weather; escrow payment` inquiry → called wttr.in → `xmtp_sent` weather table with `Status: delivered` → User Agent never went through confirm-accept → escrow never funded → provider produced work for free + task stuck. CLI bails `deliver`, but the work content already leaked via `xmtp_send`.\n\n\
+             **Three-step handshake protocol** (iron rule of the buyer protocol; enforced in User Agent's code):\n\
              \x20\x201) `[intent:propose]` (buyer → provider)\n\
              \x20\x202) `[intent:ack]` or `[intent:counter]` (provider → buyer) or `[intent:reject]` (either side rejects)\n\
              \x20\x203) `[intent:confirm]` (buyer → provider, echoing all fields verbatim)\n\
@@ -582,25 +591,11 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              \x20\x20\x20\x20- If the OTHER side comes back with a NEW `[intent:propose]` (materially different terms — e.g. higher price after you rejected a low one), treat it as **negotiation reopened**: call `next-action --event job_created` again, re-evaluate the new fields, and proceed with the normal Propose → Ack → Confirm flow (ACK if acceptable, COUNTER if still off, [intent:reject] again only if still unacceptable).\n\
              \x20\x20\x20\x20- If the other side just sends natural-language follow-up (e.g. \"can you reconsider 0.5 USDT?\") after your reject, you may reply naturally and continue Step 3 first-round negotiation; the prior [intent:reject] does NOT mean ignore them forever.\n\
              \x20\x20\x20\x20- The thread is only **truly dead** when BOTH sides have sent [intent:reject] AND no follow-up arrives, OR when the chain emits `job_closed` / `job_expired`.\n\n\
-             apply can only run **after `[intent:confirm]` has been received** (any other inbound does NOT count — including the three questions, the free-form invitation, the User Agent's `agree / accept` natural-language reply, and even the User Agent natural-language `please apply`).\n\n\
-             In other words, **the inbound you received in the same turn determines what you can do**:\n\
-             \x20\x20• Received a free-form invitation from the User Agent → you can only `xmtp_send` the three questions (Step 3 below); **do NOT apply**\n\
-             \x20\x20• Received the User Agent's `[intent:propose]` → you can only `xmtp_send` `[intent:ack]` (Step 3.5 below); **do NOT apply**\n\
-             \x20\x20• Received the User Agent's `[intent:confirm]` → verify the fields match, then go to Step 4 to run **`apply`** directly. ❌ **Do NOT `xmtp_send` anything in response** — no `[intent:ack]`, no `[intent:confirm_ack]`, no thanks / acknowledgement filler. The handshake ENDS at `[intent:confirm]` (asymmetric — only PROPOSE→ACK is paired; CONFIRM is consumed silently). ❌ Also NOT `deliver` — see HARDSTOP DELIVER GATE below.\n\
-             \x20\x20• You did NOT see the literal `[intent:confirm]` → **never apply**, no matter what the User Agent said in natural language\n\n\
-             🛑🛑🛑 **HARDSTOP — `[intent:confirm]` is the trigger for `apply` ONLY, NOT for `deliver`**: receiving `[intent:confirm]` authorizes Step 4 (`onchainos agent apply`) and nothing else. **`deliver` is gated by the `job_accepted` system notification** which arrives ≥ 2 events later. Full chain BEFORE `deliver` is allowed:\n\
-             \x20\x20① `[intent:confirm]` received (this turn) → run `apply` (Step 4) → end turn\n\
-             \x20\x20② chain confirms apply → `provider_applied` system notification arrives → ProviderApplied scene fires → `xmtp_send` `apply on-chain, please confirm-accept` → end turn\n\
-             \x20\x20③ User Agent runs `confirm-accept` → chain settles escrow → `job_accepted` system notification arrives → JobAccepted scene fires → ONLY THEN run task execution + `xmtp_send` deliverable + `onchainos agent deliver`\n\
-             **Skipping ② / ③ and calling `deliver` directly after `[intent:confirm]` = apply never ran + escrow never funded + work produced for free + task stuck.** The CLI also rejects `deliver` with `status != accepted`, but you should never even attempt it here. 🔴 Real incident: ASP saw `[intent:confirm]` and went straight to `deliver`, skipping apply / provider_applied / confirm-accept / job_accepted entirely — CLI rejected the on-chain call but the work content was already xmtp_sent to the User Agent → negotiation polluted + user mistakes it for an early delivery + flow stuck.\n\n\
-             🛑🛑🛑 **HARDSTOP — what counts as `received [intent:confirm]`**: the ONLY valid evidence is an **actual inbound a2a-agent-chat envelope in this turn's tool_result**, whose `content` field literally contains `[intent:confirm]` AND whose `sender.role == 1`. **Your own thinking / narration / assistant text saying things like `Buyer sent [intent:confirm]` or `received confirm` does NOT count as receiving anything** — that is text you wrote about something you anticipated; it is not an actual inbound. After sending `[intent:ack]`, you MUST end the turn and wait for the NEXT inbound; do NOT predict / pre-declare / pre-narrate that the User Agent's `[intent:confirm]` has arrived, and definitely do NOT call `apply` based on that prediction. If in this turn's tool_result there is no a2a-agent-chat inbound whose content literally contains `[intent:confirm]`, **apply is forbidden** — full stop, no exceptions. Violating this rule = on-chain `apply` based on a hallucinated handshake = polluted state machine + possible escrow loss (this has caused a live incident).\n\n\
-             ❌ **Specifically forbidden**: do NOT write self-confirming phrasing such as `I confirm the three items / three items confirmed / I will apply immediately` in the content of `xmtp_send` with the three questions — the three are questions to **ask** the User Agent, not for you to confirm and then immediately apply. Such self-confirmation tricks you into thinking negotiation is done, skipping the [intent:propose]/[intent:ack]/[intent:confirm] handshake and applying illegally (this has caused a live incident).\n\n\
-             🛑 **Negotiation-phase iron rule — strictly no producing work content** (between receiving the User Agent's inquiry and receiving [intent:confirm])\n\n\
-             ❌ **Do NOT call external tools to produce work content**: during negotiation, do NOT call wttr.in / image generation / any query API / web search / etc. that actually executes the task. Task execution is **ONLY** allowed after the `job_accepted` system notification arrives and you enter Step B of the JobAccepted script.\n\n\
-             ❌ **xmtp_send strictly forbids `delivered` phrasing**: in negotiation, `xmtp_send` may only contain one of the three:\n\
-             \x20\x20• Natural-language negotiation on the three items (capability / price / paymentMode stance; questions allowed)\n\
-             \x20\x20• Literal `[intent:ack]` / `[intent:counter]` / `[intent:reject]` format\n\
-             Strictly do NOT write phrases like `Status: ✅ Delivered / data provided / please confirm and pay / here is what you asked for` — these mislead the User Agent into skipping confirm-accept and completing directly.\n\n\
+             **The inbound you received in the same turn determines what you can do**:\n\
+             \x20\x20• Free-form inquiry (no `[intent:propose]` literal — even if it lists budget / payment) → Step 3 text negotiation only; **do NOT `[intent:ack]`**, **do NOT apply**.\n\
+             \x20\x20• `[intent:propose]` literal marker present → Step 3.5 — reply with `[intent:ack]` / `[intent:counter]` / `[intent:reject]`; **do NOT apply**.\n\
+             \x20\x20• User Agent's `[intent:confirm]` → verify fields match, then go to Step 4 to run `apply` directly. ❌ Do NOT `xmtp_send` anything in response — no `[intent:ack]`, no `[intent:confirm_ack]`, no thanks / acknowledgement filler. The handshake ENDS at `[intent:confirm]` (asymmetric — only PROPOSE→ACK is paired; CONFIRM is consumed silently).\n\
+             \x20\x20• No literal `[intent:confirm]` in this turn's inbound → **never apply**, no matter what the User Agent said in natural language.\n\n\
              ❌ **Do NOT be led on by the User Agent's natural language**:\n\
              \x20\x20• User Agent says `escrow / 担保` = **paymentMode on-chain config description** (state-machine semantics), **NOT a command to deliver immediately**\n\
              \x20\x20• User Agent says `please quote / estimated delivery time` = **inquiry**, NOT a request for the final work product\n\
@@ -785,7 +780,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              \x20\x20❌ **Never** pass empty / `0` for `--token-amount` (the CLI rejects zero/empty as `must be > 0`; even if it didn't, applying for 0 = on-chain commitment to do the work for free, irreversible). ❌ **Never** assume `USDT` by default — the task may be in `USDG`; always read from the negotiated fields.\n\n\
              apply is an on-chain signing action; the CLI internally does unsigned info → sign → broadcast; wait for the on-chain provider_applied notification.\n\n\
              ⚠️ **After apply, end the turn directly**:\n\
-             ❌ **Do NOT call `onchainos agent deliver`** in this scene — deliver is gated by the `job_accepted` system notification which arrives ≥ 2 events later (provider_applied → confirm-accept → job_accepted). CLI rejects with `status != accepted` but you should never even attempt it. See the HARDSTOP DELIVER GATE above.\n\
+             ❌ **Do NOT call `onchainos agent deliver`** in this scene — deliver is gated by the `job_accepted` system notification which arrives ≥ 2 events later (provider_applied → confirm-accept → job_accepted). CLI rejects with `status != accepted` but you should never even attempt it. See **Hard rules** at the top of this scene.\n\
              ❌ Do NOT push to the user with `xmtp_dispatch_user` — `apply submitted / txHash / awaiting provider_applied` is filler state\n\
              ❌ Do NOT send any ACK / thanks / `started processing` filler to the User Agent via `xmtp_send` — at this point the User Agent is already running confirm-accept; your ACK is noise and triggers the User Agent's `no repeated xmtp_send within one turn` iron rule (see SKILL.md `🔒 Communication Boundary and Security Gate`)\n\
              ✅ The next step happens only after the on-chain `provider_applied` notification arrives and next-action is called again.\n\n\
@@ -1061,5 +1056,21 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              3. Do NOT predict / assume other notifications\n"
         ),
     };
-    format!("{localization_prefix}{version_prefix}{context_preamble}{body}")
+    // Three mutually exclusive shapes:
+    //   • short shim (Event::JobCreated)         → body only; preamble lives in
+    //     the cached playbook block the LLM has in context (or will fetch).
+    //   • playbook emit (`job_created_playbook`) → preamble + body wrapped in
+    //     the cache-marker pair so future turns can detect & reuse.
+    //   • all other events                       → preamble + body, no wrap.
+    if is_short_jobcreated {
+        body
+    } else if is_playbook_emit {
+        format!(
+            "[JOBCREATED_PLAYBOOK_CACHE@{job_id}]\n\
+             {localization_prefix}{version_prefix}{context_preamble}{body}\n\
+             [/JOBCREATED_PLAYBOOK_CACHE@{job_id}]\n"
+        )
+    } else {
+        format!("{localization_prefix}{version_prefix}{context_preamble}{body}")
+    }
 }

@@ -36,23 +36,9 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
          \x20\x20\x20\x20- Title: <title>\n\
          \x20\x20\x20\x20- Description: <description>\n\
          \x20\x20\x20\x20- Negotiated price: <amount> <tokenSymbol>\n\
-         \x20\x20\x20\x20- Payment: <escrow / non-escrow / x402>\n\
+         \x20\x20\x20\x20- Payment: <escrow>\n\
          \x20\x20\x20\x20- ASP: {agent_id}\n\
          \x20\x20\x20\x20Funds are now escrowed; the ASP has started execution."
-    )
-}
-
-/// `Event::JobAccepted` x402 branch — notify user that accept + payment settled;
-/// deliverable is obtained by the buyer replaying the provider's endpoint.
-pub fn job_accepted_x402_user_notify(job_id: &str, agent_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[Job Accepted] Job {job_id} has been accepted (x402 payment settled).\n\
-         \x20\x20\x20\x20- Title: <title>\n\
-         \x20\x20\x20\x20- Description: <description>\n\
-         \x20\x20\x20\x20- Negotiated price: <amount> <tokenSymbol>\n\
-         \x20\x20\x20\x20- Payment: x402 (paid at accept)\n\
-         \x20\x20\x20\x20- ASP: {agent_id}\n\
-         \x20\x20\x20\x20Payment has been settled; the deliverable will be obtained automatically by the buyer. Waiting for task completion."
     )
 }
 
