@@ -714,20 +714,29 @@ pub async fn handle_designated_route(provider_id: &str) -> Result<()> {
     let online_status = profile.get("onlineStatus").and_then(|v| v.as_i64()).unwrap_or(1);
 
     // --- service-list ---
-    let services_data = svc_res.unwrap_or(serde_json::Value::Null);
-    let services = services_data.get("services")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .or_else(|| services_data.as_array().cloned())
+    let services_data = match svc_res {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[designated-route] service-list fetch failed for {id}: {e}");
+            serde_json::Value::Null
+        }
+    };
+    // API shape: data = [{agentInfo: {...}, list: [{endpoint, fee, ...}], ...}]
+    // Flatten data[*].list[*] to get individual service entries.
+    let service_entries: Vec<&serde_json::Value> = services_data
+        .as_array()
+        .map(|arr| arr.iter()
+            .flat_map(|item| item.get("list").and_then(|v| v.as_array()).into_iter().flatten())
+            .collect())
         .unwrap_or_default();
 
-    let first_with_endpoint = services.iter().find(|s| {
+    let first_with_endpoint = service_entries.iter().find(|s| {
         s.get("endpoint").and_then(|v| v.as_str()).map(|e| !e.is_empty()).unwrap_or(false)
     });
 
     if let Some(svc) = first_with_endpoint {
         let endpoint = svc.get("endpoint").and_then(|v| v.as_str()).unwrap_or("");
-        let fee_amount = svc.get("feeAmount").and_then(|v| v.as_str()).unwrap_or("");
+        let fee_amount = svc.get("fee").and_then(|v| v.as_str()).unwrap_or("");
         let fee_token = svc.get("feeTokenSymbol").and_then(|v| v.as_str()).unwrap_or("");
         crate::output::success(serde_json::json!({
             "route": "x402",

@@ -144,62 +144,53 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
     let short_id = ctx.short_id;
 
     format!(
-    "[Current action] deliverable_received — download and persist the ASP's deliverable\n\
+    "[Current action] deliverable_received — download, persist, and notify\n\
      [Role] User (User Agent)\n\n\
      🛑 This playbook fires when the ASP's a2a-agent-chat message contains `[intent:deliver]`.\n\
      Its sole purpose is: **download → save → brief notification**. The full review card is owned by `job_submitted`.\n\n\
-     [Your next actions (strict order)]\n\n\
-     **Step 0 — Load task context for save metadata**:\n\
-     Read from the `[Pre-fetched task context]` block above if available; otherwise fall back to:\n\
-     ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\
-     Fields needed for the save commands below:\n\
-     \x20\x20- `title` (task title)\n\
-     \x20\x20- `providerAgentId` (ASP agentId — the counterparty)\n\
-     \x20\x20- `providerName` (ASP display name, if available — may not be in pre-fetched data; use best-effort)\n\
-     \x20\x20- `tokenSymbol`, `tokenAmount`\n\
-     ⚠️ If all sources fail (e.g. network error), use best-effort values from session context; a missing title does not block the save.\n\n\
-     **Step 1 — Extract deliverable metadata from the inbound `[intent:deliver]` message** and branch by type:\n\n\
+     [Your next actions]\n\n\
+     **Step 0 — Task context** (pre-fetched; no CLI call needed):\n\
+     Read from the `[Pre-fetched task context]` block above:\n\
+     \x20\x20- `title`, `providerAgentId`, `providerName` (best-effort), `tokenSymbol`, `tokenAmount`\n\
+     If any field is missing, use best-effort values from session context; a missing field does not block the save.\n\n\
+     **Step 1 — Download/extract + save + notify** (complete all sub-steps before ending the turn):\n\n\
      --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret) ---\n\n\
-     Call the xmtp_file_download tool:\n\
-     \x20\x20Parameters:\n\
+     1a. Call xmtp_file_download:\n\
      \x20\x20- fileKey, digest, salt, nonce, secret: from the ASP's message\n\
      \x20\x20- agentId: {agent_id}\n\
      \x20\x20- filename: (optional) save filename\n\
      ⚠️ Before calling, print: `[buyer-xmtp] xmtp_file_download: fileKey=<fileKey>, agentId={agent_id}`\n\
-     ⚠️ After calling, print: `[buyer-xmtp] xmtp_file_download result: localPath=<returned local path>`\n\n\
-     On success, record localPath (must be a full absolute path).\n\
-     If download fails → note it; the `job_submitted` playbook will re-attempt.\n\n\
-     🛑 **IMMEDIATELY after download succeeds**, persist the deliverable (use values from Step 0):\n\
+     ⚠️ After calling, print: `[buyer-xmtp] xmtp_file_download result: localPath=<returned local path>`\n\
+     On success, record localPath (full absolute path). If download fails → note it; `job_submitted` will re-attempt.\n\n\
+     1b. Persist the deliverable:\n\
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
-       --file \"<localPath>\" --deliverable-type file --title \"<title from Step 0>\" \\\n\
+       --file \"<localPath>\" --deliverable-type file --title \"<title>\" \\\n\
        --short-id {short_id} --file-key \"<fileKey>\" \\\n\
-       --counterparty-agent-id \"<providerAgentId from Step 0>\" --counterparty-name \"<providerName from Step 0>\" \\\n\
-       --token-symbol \"<tokenSymbol from Step 0>\" --token-amount \"<tokenAmount from Step 0>\"\n\
+       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
      ```\n\
-     If save fails, log the error but do NOT block.\n\n\
+     Record the saved path from the command output. If save fails, log the error but continue.\n\n\
      --- Case B: deliverableType=text (body content between `- - -` separators) ---\n\n\
-     Extract the text between `- - -` separators; **keep the original wording in full**.\n\n\
-     🛑 **IMMEDIATELY after extraction**, write to a temp .txt file and persist (use values from Step 0):\n\
+     1a. Extract the text between `- - -` separators; **keep the original wording in full**. Write to a temp .txt file.\n\n\
+     1b. Persist:\n\
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
        --file \"<temp .txt path>\" --deliverable-type text \\\n\
-       --title \"<title from Step 0>\" --short-id {short_id} \\\n\
-       --counterparty-agent-id \"<providerAgentId from Step 0>\" --counterparty-name \"<providerName from Step 0>\" \\\n\
-       --token-symbol \"<tokenSymbol from Step 0>\" --token-amount \"<tokenAmount from Step 0>\"\n\
+       --title \"<title>\" --short-id {short_id} \\\n\
+       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
      ```\n\
-     If save fails, log the error but do NOT block.\n\n\
-     **Step 2 — Notify the user with a lightweight deliverable preview card**:\n\n\
-     Call `xmtp_dispatch_user`:\n\
+     Record the saved path from the command output. If save fails, log the error but continue.\n\n\
+     --- After save returns (both cases) — 🛑 SAME TURN, do NOT end the turn yet ---\n\n\
+     1c. Call `xmtp_dispatch_user` with a preview card:\n\
      {l10n_dispatch}\n\
-     \x20\x20content template (fill placeholders from Step 0 + Step 1; translate to user's language):\n\
+     \x20\x20content template (fill from Step 0 + 1a/1b results; translate to user's language):\n\
      \x20\x20```\n\
      \x20\x20[Deliverable Received] <title> (`{short_id}`)\n\
      \x20\x20Provider: <providerName> (<providerAgentId>)\n\
      \x20\x20Type: <file|text>\n\
-     \x20\x20Saved at: <localPath>\n\
+     \x20\x20Saved at: <savedPath from 1b output>\n\
      \x20\x20\n\
      \x20\x20▸ deliverableType=file: no inline preview; the user can open the file at the path above.\n\
      \x20\x20▸ deliverableType=text: show the first 200 characters of deliverableText below; if total length ≤ 200 show full text.\n\
@@ -210,7 +201,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\
      \x20\x20```\n\
      ⚠️ This is a preview card, NOT the formal review card. Do NOT include A/B acceptance choices.\n\n\
-     **Step 3 — End this turn**. Wait for the `job_submitted` system event.\n\
+     **Step 2 — End this turn**. Wait for the `job_submitted` system event.\n\
      When `job_submitted` arrives, call `onchainos agent next-action --jobid {job_id} --event job_submitted --role buyer --agentId {agent_id}`.\n\
      The `job_submitted` playbook will check for already-saved deliverables and skip re-download if found.\n"
     )
