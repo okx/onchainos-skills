@@ -336,7 +336,6 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      Deliverable file path: <localPath> (full absolute path, e.g. /Users/xxx/Downloads/task.png)\n\
      <if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
      Deliverable URL: <deliverableUrl>\n\
-     Quality standards: <qualityStandards>\n\
      Payment: escrow\n\
      \n\
      Choose:\n\
@@ -349,7 +348,6 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
      \x20\x20Deliverable saved at: <localPath> (full absolute path)\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20Quality standards: <qualityStandards>\n\
      \x20\x20Payment: escrow\n\
      \x20\x20\n\
      \x20\x20Choose:\n\
@@ -363,7 +361,6 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20<deliverableText — full content, no truncation, no summarization>\n\
      \x20\x20---End of deliverable---\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20Quality standards: <qualityStandards>\n\
      \x20\x20Payment: escrow\n\
      \x20\x20\n\
      \x20\x20Choose:\n\
@@ -383,27 +380,24 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
      \x20\x20Deliverable file path: <localPath> (full absolute path, e.g. /Users/xxx/Downloads/task.png)\n\
      \x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
-     \x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20Quality standards: <qualityStandards>\n\n\
+     \x20\x20Deliverable URL: <deliverableUrl>\n\n\
      \x20\x20▸ deliverableType=text — branch by localPath availability:\n\n\
      \x20\x20\x20\x20✅ localPath is available (save succeeded):\n\
      \x20\x20\x20\x20content:\n\
      \x20\x20\x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
-     \x20\x20\x20\x20---Deliverable (preview)---\n\
-     \x20\x20\x20\x20<first 500 characters of deliverableText; if total length ≤ 500, show full text and use ---Deliverable--- / ---End of deliverable--- headers instead>\n\
-     \x20\x20\x20\x20---End of preview---\n\
-     \x20\x20\x20\x20<if deliverableText was truncated, append: (… truncated; full content saved locally)>\n\
      \x20\x20\x20\x20Deliverable saved at: <localPath> (full absolute path)\n\
      \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20\x20\x20Quality standards: <qualityStandards>\n\n\
+     \x20\x20\x20\x20---Deliverable (preview)---\n\
+     \x20\x20\x20\x20<first 200 characters of deliverableText; if total length ≤ 200, show full text and use ---Deliverable--- / ---End of deliverable--- headers instead>\n\
+     \x20\x20\x20\x20---End of preview---\n\
+     \x20\x20\x20\x20<if deliverableText was truncated, append: (… truncated; full content saved locally)>\n\n\
      \x20\x20\x20\x20⚠️ localPath is unavailable (save failed — fallback to inline full text):\n\
      \x20\x20\x20\x20content:\n\
      \x20\x20\x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
      \x20\x20\x20\x20---Deliverable---\n\
      \x20\x20\x20\x20<deliverableText — full content, no truncation, no summarization>\n\
      \x20\x20\x20\x20---End of deliverable---\n\
-     \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20\x20\x20Quality standards: <qualityStandards>\n\n\
+     \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\n\
      🛑 Do NOT end this turn — B-Step 2 (auto-rate) and B-Step 2.5 (notify rating) below are MANDATORY.\n\n\
      **B-Step 2 — 🛑 Auto-rate the ASP (MANDATORY):**\n\
      Based on the deliverable content vs the task description and quality standards, generate:\n\
