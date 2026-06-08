@@ -193,6 +193,19 @@ pub async fn resolve_x402_params(
     })
 }
 
+/// Extract token symbol from a service entry's chainIndex + contractAddress via token basic-info API.
+pub(crate) async fn resolve_symbol_from_svc(svc: &serde_json::Value) -> Result<String> {
+    let chain = svc["chainIndex"].as_i64()
+        .or_else(|| svc["chainIndex"].as_str().and_then(|s| s.parse().ok()))
+        .map(|n| n.to_string())
+        .ok_or_else(|| anyhow::anyhow!("x402: service entry missing chainIndex, cannot resolve token symbol"))?;
+    let addr = svc["contractAddress"].as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("x402: service entry missing contractAddress, cannot resolve token symbol"))?;
+    eprintln!("ℹ x402: feeTokenSymbol missing, resolving from chain={chain} address={addr}");
+    resolve_token_symbol_by_address(&chain, addr).await
+}
+
 /// Query a provider's A2MCP service info via `onchainos agent service-list`.
 async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X402ServiceParams> {
     let exe = std::env::current_exe()
@@ -238,16 +251,43 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
     let (fee_amount, fee_token_symbol) = if let Some(amt) = svc["feeAmount"].as_f64() {
         let sym = svc["feeTokenSymbol"].as_str()
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("x402: feeAmount present but feeTokenSymbol missing in service-list, unable to determine payment token"))?
-            .to_string();
+            .map(|s| s.to_string());
+        let sym = match sym {
+            Some(s) => s,
+            None => resolve_symbol_from_svc(svc).await?,
+        };
         (amt, sym)
     } else {
         let fee_str = svc["fee"].as_str().unwrap_or("");
-        parse_composite_fee(fee_str)?
+        match parse_composite_fee(fee_str) {
+            Ok(pair) => pair,
+            Err(_) => {
+                let amt: f64 = fee_str.parse()
+                    .map_err(|_| anyhow::anyhow!("x402: fee field is not a number: {fee_str}"))?;
+                let sym = resolve_symbol_from_svc(svc).await?;
+                (amt, sym)
+            }
+        }
     };
 
     eprintln!("ℹ x402: retrieved from service-list API endpoint={endpoint}, token={fee_token_symbol}, amount={fee_amount}");
     Ok(X402ServiceParams { endpoint, fee_amount, fee_token_symbol })
+}
+
+// ─── Token symbol resolution by contract address ──────────────────────
+
+/// Look up a token's symbol via the DEX basic-info API given chainIndex + contractAddress.
+pub(crate) async fn resolve_token_symbol_by_address(chain_index: &str, contract_address: &str) -> Result<String> {
+    let mut client = crate::client::ApiClient::new(None)?;
+    let resp = crate::commands::token::fetch_info(&mut client, contract_address, chain_index).await?;
+    let sym = resp.as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|t| t["tokenSymbol"].as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!(
+            "token basic-info returned no symbol for chain={chain_index} address={contract_address}"
+        ))?;
+    Ok(sym.to_string())
 }
 
 // ─── Balance precheck ──────────────────────────────────────────────────

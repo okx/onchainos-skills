@@ -736,8 +736,18 @@ pub async fn handle_designated_route(provider_id: &str) -> Result<()> {
 
     if let Some(svc) = first_with_endpoint {
         let endpoint = svc.get("endpoint").and_then(|v| v.as_str()).unwrap_or("");
-        let fee_amount = svc.get("fee").and_then(|v| v.as_str()).unwrap_or("");
-        let fee_token = svc.get("feeTokenSymbol").and_then(|v| v.as_str()).unwrap_or("");
+        // service-list API returns `fee` (string) not `feeAmount`; `/match` API returns `feeAmount` (f64).
+        let fee_amount = svc.get("feeAmount").and_then(|v| v.as_str())
+            .or_else(|| svc.get("fee").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        // service-list API may omit `feeTokenSymbol`; fall back to chainIndex + contractAddress lookup.
+        let fee_token = match svc.get("feeTokenSymbol").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+            Some(s) => s.to_string(),
+            None => util::resolve_symbol_from_svc(svc).await.unwrap_or_else(|e| {
+                eprintln!("⚠ designated-route: failed to resolve feeTokenSymbol: {e}");
+                String::new()
+            }),
+        };
         crate::output::success(serde_json::json!({
             "route": "x402",
             "providerName": provider_name,
