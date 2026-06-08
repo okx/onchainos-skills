@@ -225,12 +225,15 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
     let body: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|e| anyhow::anyhow!("failed to parse service-list output: {e}"))?;
 
-    let services = body["data"].as_array()
-        .or_else(|| body["data"]["services"].as_array())
-        .or_else(|| body["data"]["list"].as_array())
+    // CLI output: {ok: true, data: [{agentInfo: {...}, list: [{endpoint, fee, ...}]}, ...]}
+    // Flatten data[*].list[*] to get individual service entries (same shape as handle_designated_route).
+    let data_arr = body["data"].as_array()
         .ok_or_else(|| anyhow::anyhow!(
-            "x402: services array not found in service-list response, provider={provider_agent_id}"
+            "x402: data array not found in service-list response, provider={provider_agent_id}"
         ))?;
+    let services: Vec<&serde_json::Value> = data_arr.iter()
+        .flat_map(|item| item["list"].as_array().into_iter().flatten())
+        .collect();
 
     let svc = services.iter()
         .find(|s| {
