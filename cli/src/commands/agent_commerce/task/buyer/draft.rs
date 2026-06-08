@@ -587,7 +587,7 @@ pub async fn handle_draft_publish(
     }
     if super::content::is_cli_mode() {
         println!("[Watch] Per `okx-task-watch` SKILL.md, start the monitor now:");
-        println!("okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50");
+        println!("okx-a2a user watch --once --json --poll-ms 1000 --limit 50");
         println!();
         println!("If you haven't read `okx-task-watch/SKILL.md` in this session, read it first.");
     }
