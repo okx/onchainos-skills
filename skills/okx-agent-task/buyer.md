@@ -248,7 +248,7 @@ onchainos agent next-action --jobid <jobId> --event job_created --role buyer --a
 >      - `[intent:ack]` → `next-action --event negotiate_ack`
 >      - `[intent:counter]` → `next-action --event negotiate_counter`
 >      - `[intent:reject]` → do not reply; `mark-failed <jobId> --provider <agentId>` → `recommend <jobId> --current` → user picks next
->      - `[intent:propose]` → anomaly; `xmtp_send` "PROPOSE is initiated by the user; reply ACK/COUNTER/REJECT"
+>      - `[intent:propose]` → buyer does not receive PROPOSE; skip this route and fall through to #6 (treat as natural language)
 > 4. **`[MAX_BUDGET_UPDATE]`** (source: user session): extract `paymentMostTokenAmount=<value>`, update max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, or notify the provider** — end turn immediately.
 > 5. **Attachment added** (source: user session): content starts with `[ATTACHMENT_ADDED]` → `next-action --event attachment_added` → follow playbook. 🔴 I-attach: model skipped next-action, sent raw file path, then called wrong event `job_submitted` → stuck. ❌ Always go through `next-action --event attachment_added`.
 > 6. **Fallback** (1–5 did not match, source: peer) → `agent status <jobId>`:
