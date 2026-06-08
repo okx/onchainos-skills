@@ -758,6 +758,18 @@ pub enum AgentCommand {
         #[arg(long = "page-size", default_value_t = 20)]
         page_size: u32,
     },
+
+    /// Terminal-state session cleanup: cancel pending decisions + output
+    /// xmtp_delete_conversation instructions. Replaces the multi-step
+    /// manual cleanup in terminal playbooks.
+    #[command(name = "session-cleanup")]
+    SessionCleanup {
+        #[arg(long = "job-id")]
+        job_id: String,
+        /// buyer | provider
+        #[arg(long)]
+        role: String,
+    },
 }
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
@@ -951,6 +963,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::PendingDecisionsV2(c) =>
             task::common::pending_v2::run(c).await,
+
+        AgentCommand::SessionCleanup { job_id, role } =>
+            task::common::session_cleanup::handle_session_cleanup(&job_id, &role),
 
         // ── Evaluator Agent flat dispatch ───────────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {

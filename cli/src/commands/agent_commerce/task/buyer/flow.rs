@@ -210,22 +210,12 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     // The old `xmtp_dispatch_session` shape (sessionKey omitted + `[STATUS_NOTIFY]` wrapping) has been replaced by
     // `xmtp_dispatch_user` / `xmtp_prompt_user` — this file no longer uses dispatch_session to push to the user.
     // ──────────────────────────────────────────────────────────────────────
-    let terminal_session_hint = if crate::commands::agent_commerce::task::common::config::keep_conversation_on_terminal() {
-        format!("\
-ℹ️ Task is at a terminal state. Clean up stale pending decision entries but keep the conversations:\n\
-  1. Call `session_status` to fetch the current sub `sessionKey`.\n\
-  2. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"<sessionKey from step 1>\"` to remove any leftover pending decision entry (otherwise it waits 7-day TTL and pollutes the queue).\n\
-  3. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"backup:{job_id}\"` to clean up the backup session's pending decision entries.\n\
-  ⚠️ **Do NOT call `xmtp_delete_conversation`** — keep the conversation history for later reference.")
-    } else {
-        format!("\
-ℹ️ Task is at a terminal state; to fully release session resources (no further events expected):\n\
-  1. Call `session_status` to fetch the current sub `sessionKey`.\n\
-  2. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"<sessionKey from step 1>\"` to clean up any pending decision entry for this sub (otherwise it waits 7-day TTL).\n\
-  3. Call `xmtp_delete_conversation` with `sessionKey=<sessionKey from step 1>` to close the sub session.\n\
-  4. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"backup:{job_id}\"` to clean up the backup session's pending decision entries.\n\
-  5. Call `xmtp_delete_conversation` with `sessionKey=backup:{job_id}` to close the backup session.")
-    };
+    let terminal_session_hint = format!("\
+ℹ️ Task is at a terminal state — run the cleanup command (handles pending-decision cancellation automatically):\n\
+  ```bash\n\
+  onchainos agent session-cleanup --job-id {job_id} --role buyer\n\
+  ```\n\
+  Then follow the command's output to close conversations (if applicable).");
 
     let escalation_protocol_misread = super::content::escalation_protocol_misread_notify(job_id);
     let escalation_cli_failed = super::content::escalation_cli_failed_notify(job_id);

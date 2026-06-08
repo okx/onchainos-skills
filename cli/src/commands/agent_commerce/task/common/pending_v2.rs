@@ -236,6 +236,27 @@ pub fn has_pending_for_job(job_id: &str, role: &str) -> bool {
         .any(|e| e.job_id == job_id && e.role == role)
 }
 
+/// Cancel all pending decision entries that match the given `job_id`.
+/// Returns the number of entries removed. Used by `session-cleanup` to
+/// batch-clear stale pending decisions on terminal state without requiring
+/// the LLM to know individual sub_keys.
+pub fn cancel_all_for_job(job_id: &str) -> Result<usize> {
+    let _lock = acquire_lock()?;
+    let mut q = read_queue()?;
+    ensure_invariant_and_evict(&mut q);
+
+    let before = q.entries.len();
+    q.entries.retain(|e| e.job_id != job_id);
+    let removed = before - q.entries.len();
+
+    if removed > 0 {
+        let snap = build_snapshot(&q);
+        write_snapshot_atomic(&snap)?;
+        write_queue_atomic(&q)?;
+    }
+    Ok(removed)
+}
+
 fn write_queue_atomic(queue: &Queue) -> Result<()> {
     let path = queue_path()?;
     let dir = path.parent().ok_or_else(|| anyhow::anyhow!("no parent dir"))?;
