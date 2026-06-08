@@ -1021,6 +1021,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::run(c, ctx).await,
 
         AgentCommand::NextAction { job_id, event, agent_id, role, code, job_title, provider, peer_task_min_version, data } => {
+            if let Err(msg) = task::common::util::validate_job_id(&job_id) {
+                anyhow::bail!(msg);
+            }
             eprintln!(
                 "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
                 title = job_title.as_deref().unwrap_or("(none)"),

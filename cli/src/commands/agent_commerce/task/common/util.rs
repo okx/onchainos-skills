@@ -395,6 +395,35 @@ pub async fn ensure_sufficient_balance_at(required: f64, currency: &str, address
 
 // ─── jobId formatting ───────────────────────────────────────────────────
 
+/// Validate that `job_id` is one of the legal forms before it's used in
+/// CLI commands / HTTP requests:
+///   - Real on-chain jobId: `0x` + 64 lowercase hex chars (66 chars total)
+///   - System placeholder: starts with `system_` (per SKILL.md §--jobid source path)
+///
+/// Catches LLM mistakes early (before they reach the backend as opaque
+/// `task not found`) — truncated shortJobId form, wrong length, non-hex
+/// characters, missing `0x` prefix, or accidental sessionKey paste.
+pub fn validate_job_id(job_id: &str) -> std::result::Result<(), String> {
+    // Placeholder for events fired BEFORE a task exists (e.g. `create_task`).
+    if job_id == "_" {
+        return Ok(());
+    }
+    // Per SKILL.md §--jobid source path exception: backend-emitted pseudo jobIds
+    // for account-level events (voter staking, no-ASP, etc.) — pass through as-is.
+    if job_id.starts_with("system_") {
+        return Ok(());
+    }
+    if !job_id.starts_with("0x") || job_id.len() != 66 {
+        return Err(format!(
+            "--jobid invalid (must be `0x` + 64 chars, got {} chars). Re-read jobId from envelope \
+             (system event / user_decision_* → `message.jobId`; a2a-agent-chat → top-level `jobId`), \
+             then retry.",
+            job_id.len()
+        ));
+    }
+    Ok(())
+}
+
 /// Short jobId: first 6 + … + last 4 characters. A 0x... hex value yields `0x1b76…1be1`;
 /// a long string ID yields `task-0…long`. Returned as-is if ≤ 12 characters.
 pub fn short_job_id(job_id: &str) -> String {

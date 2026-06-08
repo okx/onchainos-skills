@@ -24,7 +24,7 @@ pub mod state_machine;
 pub mod util;
 pub mod version_notice;
 
-use util::fmt_unix_secs;
+use util::{fmt_unix_secs, validate_job_id};
 
 use crate::commands::Context;
 
@@ -1078,6 +1078,9 @@ async fn run_context(
     role: &str,
     agent_id: &str,
 ) -> Result<()> {
+    if let Err(msg) = validate_job_id(job_id) {
+        bail!("{msg}");
+    }
     // Validate role.
     if !["buyer", "provider", "evaluator"].contains(&role) {
         bail!("--role must be buyer / provider / evaluator");

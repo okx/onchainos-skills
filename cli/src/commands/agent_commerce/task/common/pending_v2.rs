@@ -1319,7 +1319,10 @@ pub fn request_command_block(
     format!(
         "Execute these 5 sub-steps strictly in order. ALL FIVE are mandatory; skipping any breaks the flow.\n\n\
          **(1) Get sessionKey** — call `session_status` once this turn; pass the returned key as `--sub-key` in step (3). Do NOT invent prefixes (`review-`, `decision-`, the raw jobId, etc.) — those silently break dispatch routing.\n\n\
-         **(2) Translate `--user-content` AND `--list-label` to the user's language BEFORE step (3)** (signal = user's OWN typed messages this session; default English if unsure; see [Localization] above for token mapping). The bash in (3) shows English placeholders for shape reference only — the actual strings you pass MUST be localized. Keep `--list-label`'s bracket prefix structure (e.g. `[Decision <shortJobId>]`) intact: translate the keyword inside the bracket and the suffix phrase, but preserve the shortJobId hex.\n\n\
+         **(2) Translate `--user-content` AND `--list-label` to the user's language BEFORE step (3)**. The bash in (3) shows English placeholders — the actual strings you pass MUST be localized per the rules below.\n\
+         \x20\x20• **Language signal** = user's OWN typed messages in THIS session ONLY. Task title / description / peer's message / playbook examples are NOT signals (even if they contain non-English text). Unsure → default English.\n\
+         \x20\x20• **Translate EVERY user-visible word** — outer prose, text inside single-quotes, placeholder words inside `<...>`, AND task title. The only thing kept verbatim is the shortJobId hex (it's an identifier, not language).\n\
+         \x20\x20• **No mixed-language in any single string**.\n\n\
          **(3) Run `pending-decisions-v2 request`** using sessionKey from (1) and translated args from (2):\n\
          ```bash\n\
          onchainos agent pending-decisions-v2 request \\\n\
