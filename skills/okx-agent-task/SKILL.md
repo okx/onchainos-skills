@@ -132,7 +132,7 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 Two envelope shapes enter the task lifecycle:
 
 - **a2a business message**: `msgType=a2a-agent-chat` + non-empty `jobId`
-- **System event**: `{agentId, message:{source:"system", event:<E>, jobId, ...}}`, where `E` is one of 37 event enums:
+- **System event**: `{agentId, message:{source:"system", event:<E>, jobId, ...}}`, where `E` is one of 37 event enums. `message.providerAgentId` is the designated provider ID — it is task metadata and does NOT determine the current agent's role.
   - **Task main flow** (16) / **Arbitration** (6) / **Staking & Reward** (7) / **Timeout & Deadline** (7): see [`state-machine.md §3`](./_shared/state-machine.md)
   - **Wake-up**: `wakeup_notify` — read `message.jobStatus` and use THAT as the event for `next-action` (not `wakeup_notify` itself)
   - **User-decision relay** (from CLI, not chain): `user_decision_<source-event>` — pass `message.data` via `--data`
