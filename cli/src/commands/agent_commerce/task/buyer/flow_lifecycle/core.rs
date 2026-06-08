@@ -344,7 +344,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      Payment: escrow\n\
      \n\
      Choose:\n\
-     A. Approve the deliverable → reply 'A' or 'approve'\n\
+     A. Approve the deliverable → reply 'A'\n\
      B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
      ```\n\n\
      ▸ deliverableType=text — branch by localPath availability:\n\n\
@@ -356,7 +356,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20Payment: escrow\n\
      \x20\x20\n\
      \x20\x20Choose:\n\
-     \x20\x20A. Approve the deliverable → reply 'A' or 'approve'\n\
+     \x20\x20A. Approve the deliverable → reply 'A'\n\
      \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
      \x20\x20```\n\n\
      \x20\x20⚠️ localPath is unavailable (save failed — fallback to inline full text):\n\
@@ -369,7 +369,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20Payment: escrow\n\
      \x20\x20\n\
      \x20\x20Choose:\n\
-     \x20\x20A. Approve the deliverable → reply 'A' or 'approve'\n\
+     \x20\x20A. Approve the deliverable → reply 'A'\n\
      \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
      \x20\x20```\n\n\
      **Step 3b — Push to user via the 5-substep protocol** (use the localized `--user-content` from Step 3a; read ALL 5 sub-steps before running any command):\n\n\
