@@ -54,7 +54,7 @@ pub enum AgentCommand {
 
     /// Submit an Agent for marketplace listing review (called after activate returns approvalStatus=1)
     #[command(name = "submit-approval")]
-    SubmitApproval(identity::AgentStatusArgs),
+    SubmitApproval(identity::SubmitApprovalArgs),
 
     // ── Task system (Client) ────────────────────────────────────────────────
     /// Create a new task (Client)
