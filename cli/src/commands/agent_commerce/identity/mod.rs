@@ -27,7 +27,7 @@ mod utils;
 // CLI `Args` structs — kept at the module root for `identity::CreateArgs`.
 pub use args::{
     AgentStatusArgs, CreateArgs, FeedbackListArgs, FeedbackSubmitArgs, GetArgs, GetByAddressArgs,
-    SearchArgs, ServiceListArgs, UpdateArgs, UploadArgs, XmtpSignArgs,
+    SearchArgs, ServiceListArgs, SubmitApprovalArgs, UpdateArgs, UploadArgs, XmtpSignArgs,
 };
 
 // Read-side commands.

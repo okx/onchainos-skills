@@ -199,6 +199,8 @@ After rendering the result card, append exactly **one** declarative suggestion l
 
 **Language Matching:** all user-facing strings match user's detected language. Field labels, status words, role labels, Q&A prompts — all localized. CLI flag names, wire enum values, addresses, tx hashes, agent IDs stay verbatim. For `agent search` filter values: pass user's wording verbatim (no canonicalization).
 
+> **"verbatim" never means "keep English".** The `§Post-success` / `troubleshooting.md` template lines are written in English as the **canonical reference form**, not as a literal output string. When the user's language is not English, you **must translate the template's prose into that language** — this is required, applies to every language automatically (no per-language examples exist or are needed), and is **NOT** a paraphrase/`§MANDATORY post-execute gate` violation. What "verbatim" actually locks down inside those templates: the **structure** (which fields appear, no adding/dropping fields, no extra preamble or follow-up question), and the **non-prose tokens** — `#<id>`, agent IDs, the quoted CLI command words the user must type back (e.g. the `activate #<id>` inside the quotes), wire enums, addresses, hashes. Everything else (the surrounding sentence) is prose and gets localized. So a Chinese-environment success line keeps `#1747` and the typeable command tokens but renders the rest in Chinese.
+
 **Choice Prompts & One-Shot Capture:** see `core/choice-prompts.md`.
 
 **Amount Display:** see `core/data-display.md` — USDT format, reputation star conversion per endpoint.
