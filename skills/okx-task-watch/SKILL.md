@@ -50,13 +50,27 @@ detect_watch_support
 
 ## Action
 
-Run:
+### 🛑 Banner before first watch
+
+Before the **first** `okx-a2a user watch` of this turn, send the exact canonical banner as a standalone **user-visible assistant message** — not tool stdout, not a thinking note, not a paraphrase.
+
+| Chat language | Exact string (verbatim) |
+|---|---|
+| Chinese | `🔔 监听已启动，如果有历史消息，我们将先逐个处理，新任务进展会及时通知。` |
+| English | `🔔 Watch started — any backlog will be processed first, then you'll be notified of new task events as they arrive.` |
+| Other | Translate the English line; keep the leading 🔔 and the two-clause structure. |
+
+**Send only when** this turn's watch is reached via either: (1) a §Triggers phrase in the user message, or (2) a CLI `[Watch]` block whose literal first line is `` [Watch] Per `okx-task-watch` SKILL.md, start the monitor now: ``. On every other path — §Dispatch re-entries, wake fires, `pending-decisions-v2 resolve` relays — **skip the banner**.
+
+❌ Violation: `我现在开始监听` / `I'll start watching now` (or any paraphrase) **without** the canonical string in the same assistant message; or calling the watch tool before the banner has appeared as a user-visible assistant message.
+
+### Run watch
 
 ```bash
 okx-a2a user watch --once --json --poll-ms 1000 --limit 50
 ```
 
-When the call returns items, process each per §Dispatch below. After processing all items, re-enter the same command — the only exceptions are the §Stop condition triggers.
+When the call returns items, process each per §Dispatch below. After processing all items, re-enter the same command (no banner) — the only exceptions are the §Stop condition triggers.
 
 ## Anti-patterns
 
@@ -122,13 +136,15 @@ After rendering `user_content` and listing choices, but **before ending the turn
     mode: "create",
     kind: "heartbeat",
     destination: "thread",
-    rrule: "DTSTART:<YYYYMMDDTHHMMSS>",
+    rrule: "DTSTART:<YYYYMMDDTHHMMSS>\nRRULE:FREQ=MINUTELY;COUNT=1",
     prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --poll-ms 1000 --limit 50",
     status: "ACTIVE"
   )
   ```
   Field notes (do **not** inline these into the call):
-  - `rrule`: iCalendar RRULE syntax. `DTSTART` uses UTC basic format `YYYYMMDDTHHMMSS` (e.g. `20260607T143000`) set to **now + 2 minutes in UTC**.
+  - `rrule`: iCalendar RRULE syntax — exactly two lines joined by a literal `\n`:
+      1. `DTSTART:<YYYYMMDDTHHMMSS>` — UTC basic format (e.g. `20260607T143000`) set to **now + 2 minutes in UTC**.
+      2. `RRULE:FREQ=MINUTELY;COUNT=1` — fires exactly once (the `COUNT=1` guarantees one-shot semantics).
 
   Remember the returned **wake id**.
 
