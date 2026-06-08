@@ -293,15 +293,14 @@ The command template is **pre-filled** in the LLM context of every `[USER_DECISI
 
 ### 5. `pending-decisions-v2` queue
 
-**Unique key** = `sub_key`. Same key → overwrite (preserve `created_at`, refresh `updated_at`); different key → adds a new entry. Routing on user reply uses the pre-filled `resolve-prompt` command in each block's llmContent (the queue is a soft snapshot for `list` / `pick` / `cancel`).
+**Unique key** = `sub_key`. Same key → overwrite (preserve `created_at`, refresh `updated_at`); different key → adds a new entry. Routing on user reply uses the pre-filled `resolve-prompt` command in each block's llmContent (the queue is a soft snapshot accessed via `list` when the user explicitly asks; subsequent navigation is driven by the `list` stdout's own playbook).
 
-**The four commands**:
+**The user-facing commands**:
 
 | Command | Caller | When |
 |---|---|---|
 | `request --sub-key ... --job-id ... --role ... --agent-id ... --user-content "..." --list-label "..."` | Sub | Script says "push decision to user". Follow returned playbook. |
 | `resolve-prompt --user-reply "<verbatim>" --sub-key ... --job-id ... --role ... --agent-id ... --source-event ...` | User-session | After user replies to `[USER_DECISION_REQUEST]`. Copy the command template from the block's llmContent verbatim — only fill in `--user-reply`. Follow returned playbook. |
-| `pick --index <N>` | User-session | Render-only: re-display the selected card's content (no status mutation). Use when the user wants to revisit a queued card. |
 | `cancel --sub-key <key> \| --index <N>` | User-session | **ONLY** when user is NOT replying to active card AND explicitly says "ignore/delete the decision". 🛑 In "Waiting" state, always use `resolve-prompt` — even if user types `cancel/关闭/取消`. (🔴 I-9: `cancel` used instead of resolve → decision lost → task stuck.) |
 
 **Defer keyword**: `等会儿/等等/等一下/稍后/晚点/先放着/先不管/回头再看/skip/later/wait/hold on/not now/defer` → do NOT call `resolve-prompt`; end turn.
