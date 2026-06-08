@@ -9,8 +9,8 @@ This file defines the quality gate the AI runs for `provider`-role agents. It op
 Automatically trigger this checklist when **any** trigger matches:
 
 **Trigger C — Pre-create (advisory, folded into the two confirmation cards).** Run inside the `agent create` provider flow, **as part of rendering** each confirmation card, when the role being created is `provider`. The provider create is a **two-step flow with two cards** (`playbooks/provider.md §Confirmation cards — two steps`); Trigger C runs in two scopes, one per card:
-- **Identity card (Step 1):** agent `name` (N1–N7) and `description` (U1–U4 only — there is no agent-level D-rule). Avatar → L2/L3 advisory only.
-- **Service card (Step 2):** every collected service (T1–T3 / S1–S6 / P1–P5 / D1–D10 + U rules).
+- **Identity card (Step 1):** agent `name` (N1–N8) and `description` (U1–U5 only — there is no agent-level D-rule). Avatar → L2/L3 advisory only.
+- **Service card (Step 2):** every collected service (T1–T3 / S1–S6 / P1–P5 / D1–D11 + U rules).
 
 This trigger is **advisory** — it never blocks `create`. Unlike Trigger A/B, it does **not** render a separate §QA Report: findings are surfaced **inline on the offending field's row** of the card that owns it (a ⚠️ + fix suggestion), and each card's edit/confirm affordance is the "fix now / register anyway" choice. Confirming the service card with warnings still present = register anyway. Purpose: surface listing blockers before they are minted on-chain, not to gate registration. See `playbooks/provider.md §Confirmation cards — two steps`.
 
@@ -27,9 +27,9 @@ Scope = **all** display fields of the agent (every check in the tables below, ag
 - The user is changing at least one QA-governed field: agent `name`, `description`, `picture`, or any service field (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`), incl. adding/removing a service. (For `picture`, only the format advisories L2/L3 apply — presence is never AI-checked; see §Logo.)
 
 Scope = **only the fields the user is actually modifying**. Do NOT flag pre-existing issues in fields the user left untouched — those were already on-chain and re-surfacing them mid-edit is noise. Concretely:
-- Changed agent `name` → run N1–N7 (incl. N4b public-figure list) + U1–U3 on the new name only.
-- Changed `description` → run D1–D10 on the new description only.
-- Changed/added service → run T1–T3 / S1–S6 / P1–P5 / D-rules + U1–U4 on **that** service only; leave sibling services alone.
+- Changed agent `name` → run N1–N8 (incl. N4b public-figure list, N8 special-symbol) + U1–U3, U5 on the new name only.
+- Changed `description` → run D1–D11 on the new description only.
+- Changed/added service → run T1–T3 / S1–S6 / P1–P5 / D-rules + U1–U5 on **that** service only; leave sibling services alone. (Changing a service's `servicetype` also re-triggers U5 on that service's name + description, since the token-vs-type match may now break.)
 - Changed `picture` (new upload) → L2/L3 advisory only (ratio / size); never L1 (presence) — see §Logo.
 - A field the user did NOT touch → skip every check for it, even if it looks non-compliant.
 
@@ -41,7 +41,7 @@ If the role is `requester` or `evaluator`, skip this file under all three trigge
    - **Trigger A / B:** use the `agent get --agent-ids <N>` data already in context (do **NOT** make an extra CLI call just for QA).
    - **Trigger C:** the agent does **not** exist yet — use the **field values buffered during collection** (no `agent get`, no CLI call).
 2. Determine scope by trigger:
-   - **Trigger C (pre-create):** two scopes, one per card — **Identity card**: collected `name` (N1–N7) + `description` (U1–U4); **Service card**: all collected service entries (T/S/P/D + U). Avatar → L2/L3 advisory only.
+   - **Trigger C (pre-create):** two scopes, one per card — **Identity card**: collected `name` (N1–N8) + `description` (U1–U5); **Service card**: all collected service entries (T/S/P/D + U). Avatar → L2/L3 advisory only.
    - **Trigger A (pre-listing):** extract top-level `name`, `description`, and all `services[]` entries. Check everything. For the avatar, run **only L2/L3 (format, advisory)** — never L1 (presence); see §Logo.
    - **Trigger B (provider edit):** extract **only the user's new/changed values** (the deltas you collected in the `§Update` flow). Check only those — ignore untouched fields entirely.
 3. Run the relevant checks in the tables below against the in-scope values (per-service for any in-scope service).
@@ -62,6 +62,7 @@ If the role is `requester` or `evaluator`, skip this file under all three trigge
 | U2 | No internal addresses | Any `0x…` wallet / owner / tx hash in name, description, or service fields | Remove the address |
 | U3 | No negative capability statements | Contains `currently not supported` / `does not support` (or equivalent in any language) | Rewrite positively or remove |
 | U4 | Free service must be explicit | A2MCP `fee` is empty/blank when the service is free | Set to `0 USDT` |
+| U5 | Service-type token must match the actual type | Field text contains the literal token `A2A` or `A2MCP` that contradicts the service's `servicetype` — e.g. a service name / description says "A2A …" but the type is set to `A2MCP`, or the agent name advertises "A2MCP" while the relevant service is `A2A`. (Substring match is **token-aware**: only flag a standalone `A2A`/`A2MCP` token, not an unrelated word.) | Align the wording with the actual service type, or drop the token from the text |
 
 ---
 
@@ -77,10 +78,11 @@ If the role is `requester` or `evaluator`, skip this file under all three trigge
 | N5 | Brand name — not a sentence | Reads as a full verb + object sentence rather than a product brand | Rewrite as a short brand name |
 | N6 | Bilingual separator | Bilingual name must use `NativeName · EnglishName` format (middle dot `·` + spaces) | Fix the separator |
 | N7 | No test / environment markers in name | Name contains any U1 marker — e.g. `WeatherBot-test` / `MyAgent_dev` / `SentryX(beta)` / `AgentX staging`. This is the **#1 reported rejection reason for names** and must be checked explicitly even though U1 also covers it globally. Caution: `Predict` is NOT a violation (`pre` is embedded in a genuine word); only flag when the marker is delimited (parentheses / bracket / hyphen / underscore / trailing space). | Remove the marker; pick a clean brand name |
+| N8 | Letters / CJK only — no decorative special symbols | Name should be Chinese characters or English letters only; flag punctuation / special symbols such as `!` `?` `@` `#` `$` `%` `*` `~` `/` `\` `|` `+` `=`, or a stray leading / trailing / standalone `-`. **Allowed exceptions (do NOT flag):** the bilingual middle dot `·` (the N6 separator) and a single internal brand hyphen joining two word parts (e.g. `Predict-Raven`). Spaces inside an English brand are fine. | Keep only letters / CJK characters; drop the decorative symbols |
 
-**Good:** `Predict-Raven` / `Luminos · ChainMirror` / `SentryX` / `WakeMeUp` / `PMAlpha`
+**Good:** `Predict-Raven` / `灵镜 · ChainMirror` / `SentryX` / `WakeMeUp` / `PMAlpha`
 
-**Bad:** `FitnessBot(pre)` / `WeatherHelper_test` / `MyAgent-dev` / `SentryX(beta)` / `Account2buyer` / `Elon Musk Bot` / `CZ Alpha` / `Trump Predictor`
+**Bad:** `FitnessBot(pre)` / `WeatherHelper_test` / `MyAgent-dev` / `SentryX(beta)` / `Account2buyer` / `Elon Musk Bot` / `CZ Alpha` / `Trump Predictor` / `WakeMeUp!` (N8 — stray `!`) / `Price?Bot` (N8 — stray `?`)
 
 ---
 
@@ -110,6 +112,8 @@ If the role is `requester` or `evaluator`, skip this file under all three trigge
 **Good:** `Polymarket Daily Signal` / `On-chain Signature Analysis` / `Crypto Price Alert`
 
 **Bad:** Same as agent name (duplication) / too vague (e.g. `General Query`) / too long + tech exposure / `Market Push(test)`
+
+> **Also enforce U5 here:** if the service name contains the token `A2A` / `A2MCP`, it must match this service's actual type (e.g. `A2A Quote Bot` on a service whose type is `A2MCP` fails U5).
 
 ---
 
@@ -143,6 +147,7 @@ If the role is `requester` or `evaluator`, skip this file under all three trigge
 | D8 | No tech-stack exposure | Mentions internal framework names, model names, infra details | Abstract or remove |
 | D9 | No negative statements | Contains `currently not supported` or equivalent in any language | Remove or rephrase |
 | D10 | No legal disclaimers | Contains liability statements or legal caveats | Remove |
+| D11 | Service-type token must match (U5) | Description text contains a standalone `A2A` / `A2MCP` token that contradicts the service's actual `servicetype` | Align the wording with the actual type, or drop the token |
 
 **Good structure:**
 ```

@@ -61,7 +61,7 @@ The two-step flow has **two confirmation cards**: the Identity card closes Step 
 
 ### Identity card (closes Step 1 — does NOT create anything)
 
-**Run identity-scope QA silently first** (`modules/pre-listing-qa.md` Trigger C — name N1–N7, description U1–U4); inline ⚠️ on any offending row.
+**Run identity-scope QA silently first** (`modules/pre-listing-qa.md` Trigger C — name N1–N8, description U1–U5); inline ⚠️ on any offending row.
 
 | Field | Value |
 |---|---|
@@ -118,7 +118,7 @@ onchainos agent create \
 
 > ⛔ **After the visible line, this turn is NOT over.** → proceed to SKILL.md §Operation Flow Step 5 (which routes to `§Step 6` for the unconditional comm-init handoff). Full rules (anti-skip clauses, runtime self-gating, decline carve-out) live in Step 6 — not duplicated here.
 
-Render **one visible line** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, adding fields (txHash, agentList, activeClients, refresh-agents output), omitting fields, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
+Render **one visible line** using the template below — **verbatim except for the `#<id>` substitution rule and rendering the prose in the user's language** (translation is not a paraphrase; see `SKILL.md §Conventions` → Language Matching). Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, adding fields (txHash, agentList, activeClients, refresh-agents output), omitting fields, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
 
 ### Visible line (template)
 
@@ -141,6 +141,8 @@ Render **one line, declarative, no question mark, no pre-announcement of the cha
 Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes).
 
 ### ❌ Anti-pattern (real incident, jobId=961) → ✅ Correct
+
+> The ✅ examples below are the **English canonical form** — render the same line in the user's language (translation ≠ paraphrase). `#<id>` and CLI words stay verbatim.
 
 ❌ Agent paraphrased:
 > "✅ Second provider is on-chain / agentId 961 / 4 active clients / you now have 4 agents"

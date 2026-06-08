@@ -85,7 +85,7 @@ onchainos agent create \
 
 > ⛔ **After the visible line, this turn is NOT over.** → proceed to SKILL.md §Operation Flow Step 5 (which routes to `§Step 6` for the unconditional comm-init handoff). Full rules (anti-skip clauses, runtime self-gating, decline carve-out) live in Step 6 — not duplicated here.
 
-Render **one visible line** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, adding fields, omitting fields, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of the mandatory post-execute gate in SKILL.md.
+Render **one visible line** using the template below — **verbatim except for the `#<id>` substitution rule and rendering the prose in the user's language** (translation is not a paraphrase; see `SKILL.md §Conventions` → Language Matching). Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, adding fields, omitting fields, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of the mandatory post-execute gate in SKILL.md.
 
 ### Visible line (template)
 
@@ -106,6 +106,8 @@ Render **one line, declarative, no question mark, no pre-announcement of the cha
 Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes).
 
 ### ❌ Anti-pattern → ✅ Correct
+
+> The ✅ examples below are the **English canonical form** — render the same line in the user's language (translation ≠ paraphrase). `#<id>` and CLI words stay verbatim.
 
 ❌ Agent paraphrased:
 > "✅ User Agent identity successfully on-chain! agentId is #42, block hash 0xabc...def. You can now go to okx-agent-task to find providers. Want me to show you some recommended providers?"
