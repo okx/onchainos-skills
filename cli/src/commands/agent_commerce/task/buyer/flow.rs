@@ -273,7 +273,8 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
          \x20\x206b) Do NOT confuse the counterpart's `role` with your own — you are **always the buyer**.\n\
          \x20\x207) No technical jargon (tool names / event names / CLI flags / status enums) in user-visible content — use natural language.\n\
          \x20\x209) 🛑 Sub/backup session text output is **invisible to the user**. All user-facing content MUST go via `xmtp_dispatch_user` (notification) or `pending-decisions-v2 request` (decision needed).\n\
-         \x20\x2010) Do NOT call `sessions_spawn` / `sessions_yield` — you execute the playbook yourself.\n\n\
+         \x20\x2010) Do NOT call `sessions_spawn` / `sessions_yield` — you execute the playbook yourself.\n\
+         \x20\x2011) 🛑 `job_submitted` does NOT include `complete` / `reject` commands — they are split into `approve_review` / `reject_review`. Push the review card to the user via `pending-decisions-v2 request`; do NOT auto-approve or auto-reject.\n\n\
          🔧 **Tool routing**: `session_status`, `xmtp_send`, `xmtp_dispatch_user`, `xmtp_prompt_user` are XMTP bridge tools — call them directly, do NOT use ToolSearch.\n\n";
 
     let preamble_slim = "\
@@ -335,6 +336,18 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         Event::JobCreated => super::flow_negotiate::job_created(&ctx),
         Event::SwitchProvider => super::flow_negotiate::switch_provider(&ctx),
         Event::Other(ref s) if s == "provider_conversation" => super::flow_negotiate::provider_conversation(&ctx),
+        Event::Other(ref s) if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" => {
+            let dp_id = super::negotiate::get_designated_provider(job_id).ok().flatten().unwrap_or_default();
+            if dp_id.is_empty() {
+                format!("[Error] designated_* pseudo-event requires --provider. Call: onchainos agent next-action --jobid {job_id} --event {s} --role buyer --agentId {agent_id} --provider <ASP agentId>\n")
+            } else {
+                match s.as_str() {
+                    "designated_a2a" => super::flow_negotiate::designated::branch_a2a(job_id, agent_id, &short_id, &dp_id, title_display),
+                    "designated_x402" => super::flow_negotiate::designated::branch_x402(job_id, agent_id, &short_id, &dp_id),
+                    _ => super::flow_negotiate::designated::branch_error(job_id, agent_id, &short_id, &dp_id),
+                }
+            }
+        }
         Event::JobVisibilityChanged => super::flow_negotiate::job_visibility_changed(&ctx),
         Event::JobPaymentModeChanged => super::flow_negotiate::job_payment_mode_changed(&ctx),
         Event::NegotiateReply => super::flow_negotiate::negotiate_reply(&ctx),
@@ -490,7 +503,9 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     );
     let use_medium_preamble = matches!(event_str,
         "negotiate_ack" | "job_payment_mode_changed" |
-        "provider_applied" | "job_accepted" | "deliverable_received" | "job_visibility_changed"
+        "provider_applied" | "job_accepted" | "deliverable_received" | "job_visibility_changed" |
+        "job_submitted" |
+        "designated_a2a" | "designated_x402" | "designated_error"
     );
     let core = if event_str == "create_task" || event_str == "switch_provider" {
         body

@@ -1,6 +1,6 @@
 //! Prompt-generation functions for the negotiation / matching phase.
 
-mod designated;
+pub(super) mod designated;
 mod match_provider;
 mod events;
 

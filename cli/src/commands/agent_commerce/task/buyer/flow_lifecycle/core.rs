@@ -191,11 +191,25 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
        --token-symbol \"<tokenSymbol from Step 0>\" --token-amount \"<tokenAmount from Step 0>\"\n\
      ```\n\
      If save fails, log the error but do NOT block.\n\n\
-     **Step 2 — Notify the user (brief; NO deliverable content)**:\n\n\
+     **Step 2 — Notify the user with a lightweight deliverable preview card**:\n\n\
      Call `xmtp_dispatch_user`:\n\
      {l10n_dispatch}\n\
-     \x20\x20content: The provider has sent the deliverable; awaiting on-chain submission confirmation before entering acceptance review.\n\
-     ❌ Do NOT include the deliverable body / summary / file path in this notification — the full content is shown in the `job_submitted` review card.\n\n\
+     \x20\x20content template (fill placeholders from Step 0 + Step 1; translate to user's language):\n\
+     \x20\x20```\n\
+     \x20\x20[Deliverable Received] <title> (`{short_id}`)\n\
+     \x20\x20Provider: <providerName> (<providerAgentId>)\n\
+     \x20\x20Type: <file|text>\n\
+     \x20\x20Saved at: <localPath>\n\
+     \x20\x20\n\
+     \x20\x20▸ deliverableType=file: no inline preview; the user can open the file at the path above.\n\
+     \x20\x20▸ deliverableType=text: show the first 200 characters of deliverableText below; if total length ≤ 200 show full text.\n\
+     \x20\x20---Preview---\n\
+     \x20\x20<first 200 characters; if truncated append: (… full content saved at the path above)>\n\
+     \x20\x20---End of preview---\n\
+     \x20\x20\n\
+     \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\
+     \x20\x20```\n\
+     ⚠️ This is a preview card, NOT the formal review card. Do NOT include A/B acceptance choices.\n\n\
      **Step 3 — End this turn**. Wait for the `job_submitted` system event.\n\
      When `job_submitted` arrives, call `onchainos agent next-action --jobid {job_id} --event job_submitted --role buyer --agentId {agent_id}`.\n\
      The `job_submitted` playbook will check for already-saved deliverables and skip re-download if found.\n"

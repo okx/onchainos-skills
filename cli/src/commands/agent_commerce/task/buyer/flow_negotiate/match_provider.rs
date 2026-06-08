@@ -103,25 +103,29 @@ fn job_created_legacy(ctx: &FlowContext<'_>) -> String {
         ),
     };
 
-    let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
-    let attachment_section_created = if attachment_paths.is_empty() {
+    let attachment_section_created = if designated_provider.is_some() {
         String::new()
     } else {
-        let paths_list = attachment_paths.iter()
-            .map(|p| format!("  - `{p}`"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "**Step 0.5 — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
-             The following files are saved locally and MUST be uploaded to the provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
-             {paths_list}\n\
-             ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
-             ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
-        )
+        let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
+        if attachment_paths.is_empty() {
+            String::new()
+        } else {
+            let paths_list = attachment_paths.iter()
+                .map(|p| format!("  - `{p}`"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "**Step 0.5 — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
+                 The following files are saved locally and MUST be uploaded to the provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
+                 {paths_list}\n\
+                 ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
+                 ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
+            )
+        }
     };
 
     let routing_section = if let Some(dp_id) = &designated_provider {
-        super::designated::designated_provider_d_steps(job_id, agent_id, short_id, dp_id, ctx.title_display)
+        super::designated::route_only(job_id, agent_id, short_id, dp_id)
     } else {
         format!("\
              🛑 **Do NOT ask the user whether to fetch the recommendation list** -- proceed to Step 1 directly and automatically. The recommend query is mandatory, not optional.\n\n\
@@ -168,7 +172,7 @@ fn job_created_legacy(ctx: &FlowContext<'_>) -> String {
              ===============================================================\n")
     };
 
-    let mut output = format!(
+    let output = format!(
         "🛑🛑🛑 **IDENTITY CHECK - you are the executor; delegation is forbidden**\n\
          You are inside a sub session or backup session. **You yourself** are the agent responsible for executing this script.\n\
          ❌ **Absolutely forbidden**: `sessions_spawn` - do NOT spawn a child agent to \"help you\" handle this event.\n\
@@ -194,14 +198,6 @@ fn job_created_legacy(ctx: &FlowContext<'_>) -> String {
          {routing_section}\n\n"
     );
 
-    if let Some(ref dp_id) = designated_provider {
-        output.push_str("\n━━━━━━━━━ The B-Steps below run ONLY when D-Step concludes \"no service or no endpoint\" ━━━━━━━━━\n\
-                         🛑 If D-Step already routed to x402 (service-list has an endpoint), then the B-Steps below are **entirely skipped, absolutely forbidden to execute**.\n\
-                         Full x402 path: DX-Step 1->2->3 -> A-Step 3 (set-payment-mode) -> wait for job_payment_mode_changed -> task-402-pay.\n\
-                         The x402 path **never involves** xmtp_start_conversation / group creation / three-step handshake / xmtp_send negotiation messages.\n\n");
-        output.push_str(&super::designated::designated_provider_negotiate(job_id, agent_id, short_id, dp_id, ctx.title_display));
-    }
-
     output
 }
 
@@ -219,38 +215,14 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
         }
     };
 
-    let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
-    let attachment_section = if attachment_paths.is_empty() {
-        String::new()
-    } else {
-        let paths_list = attachment_paths.iter()
-            .map(|p| format!("  - `{p}`"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "**Pre-step — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
-             The following files are saved locally and MUST be uploaded to the new provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
-             {paths_list}\n\
-             ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
-             ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
-        )
-    };
-
-    let d_steps = super::designated::designated_provider_d_steps(job_id, agent_id, short_id, &dp_id, ctx.title_display);
-    let negotiate = super::designated::designated_provider_negotiate(job_id, agent_id, short_id, &dp_id, ctx.title_display);
+    let route = super::designated::route_only(job_id, agent_id, short_id, &dp_id);
     format!("\
          [Provider switch] set-provider has been submitted; start the new ASP flow immediately (do NOT wait for the task_provider_change on-chain confirmation).\n\
          [Role] User (User Agent) | [Execution environment] user session\n\n\
          🛑 **CLIs forbidden in this event**: save-agreed / set-payment-mode / confirm-accept / apply / complete / reject - negotiation with the new ASP has not started, all of these are illegal here.\n\n\
          ⚠️ The old ASP's sub session will automatically send [intent:reject] when it receives the `task_provider_change` on-chain event; no intervention from you required.\n\n\
-         {attachment_section}\
          [Your next actions (strict order)]\n\n\
-         {d_steps}\n\n\
-         ━━━━━━━━━ The B-Steps below run ONLY when D-Step concludes \"no service or no endpoint\" ━━━━━━━━━\n\
-         🛑 If D-Step already routed to x402 (service-list has an endpoint), then the B-Steps below are **entirely skipped, absolutely forbidden to execute**.\n\
-         Full x402 path: DX-Step 1->2->3 -> A-Step 3 (set-payment-mode) -> wait for job_payment_mode_changed -> task-402-pay.\n\
-         The x402 path **never involves** xmtp_start_conversation / group creation / three-step handshake / xmtp_send negotiation messages.\n\n\
-         {negotiate}\n")
+         {route}\n")
 }
 
 pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
