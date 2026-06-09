@@ -1439,7 +1439,7 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
          Step 1 — Card was just delivered via `xmtp_prompt_user`. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — When the user actually replies (next turn):\n\
          \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
-         \x20\x20\x20\x20· else → run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --sub-key \"{}\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\" --source-event \"{}\"` exactly once, then follow the relay playbook it returns.",
+         \x20\x20\x20\x20· else → follow `okx-task-watch` SKILL.md §kind == decision_request \"Handling the user reply\": **first claim the todo** per SKILL.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --sub-key \"{}\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\" --source-event \"{}\"` exactly once, then follow the relay playbook it returns. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
         entry.sub_key,
         entry.job_id,
         entry.role,

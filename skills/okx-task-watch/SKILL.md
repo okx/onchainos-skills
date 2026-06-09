@@ -21,8 +21,12 @@ When ANY trigger phrase below matches, execute §Action. The watch command is a 
 **Trigger phrases**:
 - Chinese (live monitor): `监听任务进展` / `开始监听任务` / `关注任务进展` / `使用监听 skill 监听任务进展` / `帮我盯着任务` / `任务有进度就告诉我` / `任务有动静告诉我` / `开监听` / `watch 任务`
 - Chinese (history / backlog drain): `历史消息` / `历史记录` / `过去消息` / `之前的消息` / `帮我看看之前的历史消息` / `看下之前的消息` / `未读消息`
+- Chinese (continuation — clarify first, see §Continuation triggers): `继续监听` / `继续盯着` / `继续 watch` / `接着监听` / `再监听一下` / `继续监听任务`
 - English (live monitor): `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching`
 - English (history / backlog drain): `show past messages` / `show message history` / `catch me up on tasks` / `unread task messages`
+- English (continuation — clarify first, see §Continuation triggers): `keep watching` / `continue watching` / `resume monitoring`
+
+> ⚠️ **Continuation triggers are a special case** — they do NOT immediately call watch. They imply the user wants to keep watching some specific task, but the intent is ambiguous (which task? or all of them?). See §Continuation triggers below for the clarification flow.
 
 > 📥 **Why "view history" routes here**: watch is a **destructive read** of the event stream — each call returns the full backlog of unread events accumulated since the last call (e.g. while no one was watching), then long-polls for new ones. A user asking for past / missed / unread messages is asking to drain that backlog — same command, same Dispatch flow. Do NOT route to `agent active-tasks` / `agent status` (those are summaries, not the actual notification bodies). For un-replied `decision_request` items specifically (which `watch` already consumed but the user hasn't `check`ed), see §"Pull outstanding `decision_request` items".
 
@@ -50,13 +54,28 @@ detect_watch_support
 
 ## Action
 
+### Continuation triggers — recall last jobId, then rearm
+
+If the user's message matched a **continuation-style** phrase (`继续监听` / `继续盯着` / `继续 watch` / `接着监听` / `再监听一下` / `继续监听任务` / `keep watching` / `continue watching` / `resume monitoring`), the user means "keep watching the task we were already tracking" — they expect scoped monitoring on the same jobId, not a fresh global watch.
+
+**Step 1 — Recall the jobId from this conversation's transcript.** Search in this order, take the FIRST hit:
+
+1. The most recent CLI `[Watch]` block emitted earlier in this conversation (the jobId is the `--job-id <X>` value in its `okx-a2a user watch ...` command).
+2. The most recent successful `agent create-task` / `agent publish-draft` stdout (jobId printed as `jobId: 0x...`).
+3. The most recent jobId referenced in any rendered `notification` / `decision_request` in this conversation.
+
+**Step 2 — Route by recall result**:
+
+- **jobId found** → enter scoped session. **Do NOT emit §Banner** (the user already knows what they're tracking — a banner here is redundant ceremony). Just run `okx-a2a user watch --once --json --poll-ms 1000 --limit 50 --job-id <X>`. The sticky `--job-id <X>` applies for the rest of this session per §Session-scoped sticky.
+- **No jobId found** → fall back to a global session. The behaviour diverges from the user's "keep watching" intent, so **DO emit §Banner** (it's the only signal the user has that the watch was rearmed as global rather than scoped). Then run `okx-a2a user watch --once --json --poll-ms 1000 --limit 50` (no `--job-id`). Do not ask the user — a continuation phrase plus no recoverable jobId is treated the same as a fresh `task watch` entry.
+
 ### 🛑 Banner before entering watch
 
 **Decide by entry, not by "is this the first watch in this turn".** Look at **what triggered** the `okx-a2a user watch` call — not whether it's the first watch invocation in the current turn.
 
 **Entries that REQUIRE the banner (only these two)**:
 
-1. **Trigger-phrase entry** — this turn's user message matched a phrase in §Triggers (e.g. `监听任务进展` / `历史消息` / `task watch`).
+1. **Trigger-phrase entry** — this turn's user message matched a §Triggers phrase (e.g. `监听任务进展` / `历史消息` / `task watch`). **Exception**: a continuation-style phrase (`继续监听` / `keep watching` / ...) only triggers the banner when the recall fails and the watch falls back to global — see §Continuation triggers for the full rule.
 2. **CLI `[Watch]` block entry** — a command earlier in this turn emitted a `[Watch]` block in stdout: a hint block that starts with `[Watch]` and instructs the current call to run `okx-a2a user watch ...` (typical sample: `` [Watch] Per `okx-task-watch` SKILL.md, start the monitor now: ``, output by `agent create-task` / `agent publish-draft`).
 
 Any watch call that does not match one of these two entries **must NOT** emit the banner (including dispatch resume, wake fire, post-`pending-decisions-v2 resolve` relay — all session-continuation paths).
@@ -195,7 +214,7 @@ If the scheduling tool is unavailable (unknown tool / returns an error) → **sk
    - Codex: `codex_app.automation_update(mode: "delete", id: <wake id>)`
    - If the **wake id** is not visible in the assistant transcript (context compacted) or the cancel call errors → **skip and proceed**. Do NOT search for the wake by name/prompt match. A stale wake firing afterwards is harmless: it just re-enters watch to monitor new events; the already-handled `decision_request` item does **not** reappear in watch (it was consumed on the original return — watch is destructive read).
 
-1. User picks `保留` / `skip` → **do NOT** claim; the item stays in the outstanding-decisions queue (un-`check`ed) and can be retrieved later via `okx-a2a user outdated-list` (triggers: `未决策` / `pending decisions`). **STOP the watch loop immediately** — briefly tell the user "已保留该项，监听结束；需要时说「未决策」即可看到所有未处理决策，或说「监听任务进展」继续监听新事件". The user explicitly chose to defer; honor that and stop background monitoring.
+1. User picks `保留` / `skip` → **do NOT** claim; the item stays in the outstanding-decisions queue (un-`check`ed) and can be retrieved later via `okx-a2a user outdated-list` (triggers: `未决策` / `pending decisions`). **STOP the watch loop immediately** — briefly tell the user (localize per LOCALIZATION_PREFIX rules; keep `未决策` / `pending decisions` / `监听任务进展` / `task watch` unchanged): "Item kept on hold; watch loop ended. Say `未决策` / `pending decisions` to see all unhandled decisions, or `监听任务进展` / `task watch` to resume monitoring new events." The user explicitly chose to defer; honor that and stop background monitoring.
 2. Otherwise claim first: `okx-a2a user check --todo-ids <id> --json`.
 3. On `handled` → **execute the relay per `llmContent`'s instructions**. `llmContent` itself tells you which command to run, which target to relay to, and how to assemble the payload — just follow it. **Do NOT** semantically interpret the user's reply (no provider picking, no session creation, no XMTP solicitation), and do not bypass `llmContent` through any other path. Hand the relay off to the target session and do not wait for the target sub to finish.
 4. On `alreadyHandled` → tell the user "this item was processed in another window"; **then re-enter `okx-a2a user watch --once --json --poll-ms 1000 --limit 50`** (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable) (the watch session continues — only the duplicate item is dropped). Do not execute the relay again.
