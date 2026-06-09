@@ -124,8 +124,9 @@ fn job_created_legacy(ctx: &FlowContext<'_>) -> String {
         }
     };
 
+    let designated_endpoint = super::super::negotiate::get_designated_endpoint(job_id).ok().flatten();
     let routing_section = if let Some(dp_id) = &designated_provider {
-        super::designated::route_only(job_id, agent_id, short_id, dp_id)
+        super::designated::route_only(job_id, agent_id, short_id, dp_id, designated_endpoint.as_deref())
     } else {
         format!("\
              🛑 **Do NOT ask the user whether to fetch the recommendation list** -- proceed to Step 1 directly and automatically. The recommend query is mandatory, not optional.\n\n\
@@ -214,7 +215,8 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
         }
     };
 
-    let route = super::designated::route_only(job_id, agent_id, short_id, &dp_id);
+    let designated_endpoint = super::super::negotiate::get_designated_endpoint(job_id).ok().flatten();
+    let route = super::designated::route_only(job_id, agent_id, short_id, &dp_id, designated_endpoint.as_deref());
     format!("\
          [Provider switch] set-provider has been submitted; start the new ASP flow immediately (do NOT wait for the task_provider_change on-chain confirmation).\n\
          [Role] User (User Agent) | [Execution environment] user session\n\n\

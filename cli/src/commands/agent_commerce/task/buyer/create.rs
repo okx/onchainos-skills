@@ -42,6 +42,7 @@ pub struct CreateTaskParams {
     pub title: Option<String>,
     pub provider: Option<String>,
     pub attachments: Option<Vec<String>>,
+    pub endpoint: Option<String>,
 }
 
 struct ValidatedParams {
@@ -249,7 +250,7 @@ pub async fn handle_create(
     // on-chain during broadcast and may be processed by the agent before
     // sign_uop_and_broadcast returns — the file must already exist.
     if let Some(ref provider_id) = params.provider {
-        super::negotiate::save_designated_provider(&job_id, provider_id)?;
+        super::negotiate::save_designated_provider_with_endpoint(&job_id, provider_id, params.endpoint.as_deref())?;
     }
 
     let tx_hash = signing::sign_uop_and_broadcast(
