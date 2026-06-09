@@ -580,10 +580,14 @@ pub async fn handle_draft_publish(
         println!("  Designated provider: {pid}");
     }
     println!();
-    if provider_id.is_some() {
-        println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
-    } else {
-        println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
+    // See create.rs: skip the "Next: wait ..." hint in CLI mode to avoid the
+    // passive phrasing suppressing the [Watch] block that follows.
+    if !super::content::is_cli_mode() {
+        if provider_id.is_some() {
+            println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
+        } else {
+            println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
+        }
     }
     if super::content::is_cli_mode() {
         println!("[Watch] Per `okx-task-watch` SKILL.md, start the monitor now:");

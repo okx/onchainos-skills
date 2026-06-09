@@ -286,10 +286,17 @@ pub async fn handle_create(
         println!();
         println!("{warning}");
     }
-    if params.provider.is_some() {
-        println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
-    } else {
-        println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
+    // In CLI mode (Claude Code / Codex), skip the "Next: wait for ..." hint —
+    // its passive "wait" + "automatically" phrasing reads as a conversation-ending
+    // cue to LLM-driven watch loops and was observed to suppress the immediately
+    // following [Watch] block. Native push clients (Hermes / OpenClaw) still get
+    // the hint since a human reads it directly.
+    if !super::content::is_cli_mode() {
+        if params.provider.is_some() {
+            println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
+        } else {
+            println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
+        }
     }
     if super::content::is_cli_mode() {
         println!("[Watch] Per `okx-task-watch` SKILL.md, start the monitor now:");
