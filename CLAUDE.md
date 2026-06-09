@@ -68,6 +68,7 @@ These envelope-based routes take absolute priority over the skill table below. D
 | Skill                | Purpose | When to Use |
 |----------------------|---------|-------------|
 | okx-agentic-wallet   | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
+| okx-ai-support       | Customer service guidance: returns Help Center link + operation steps | User wants to find customer service, talk to a human, file a complaint, give feedback, or find help docs / FAQ |
 | okx-wallet-portfolio | Public address balance: total value, all tokens, specific tokens | User asks about wallet holdings, token balances, portfolio value across chains |
 | okx-security         | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
 | okx-dex-market       | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, index/aggregate prices, wallet PnL analysis |
@@ -102,6 +103,7 @@ Routing:
 - Inbound `a2a-agent-chat` with `jobId` → read `skills/okx-agent-task/SKILL.md` first (see Inbound Message Routing above)
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first
 - User mentions wallet/balance/transfer/login → read `skills/okx-agentic-wallet/SKILL.md` first
+- User mentions customer service / talk to a human / complaint / feedback / help docs / FAQ / help center → read `skills/okx-ai-support/SKILL.md` first
 - User names a specific third-party DApp/protocol as the destination, OR asks "what dapps are available" → read `skills/okx-dapp-discovery/SKILL.md` first. That skill owns the supported-DApp set; do not enumerate DApps in this file.
 - User mentions **Gas Station / stablecoin gas / enable or disable gas station / revoke 7702**, or asks FAQ-style questions about any of those (what is / how does it work / which chains / upgrade cost / ...) → read `skills/okx-agentic-wallet/SKILL.md` AND `skills/okx-agentic-wallet/references/gas-station.md` first.
   - **Scope note:** "Gas Station" in this repo always means the OKX Agentic Wallet feature shipped by this CLI + skill — NOT a generic paymaster / meta-transaction / ERC-4337 category.

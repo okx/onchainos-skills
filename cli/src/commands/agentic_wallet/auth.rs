@@ -1467,8 +1467,8 @@ mod tests {
 
     #[test]
     fn hpke_decrypt_session_sk_too_short() {
-        let short_b64 = base64::engine::general_purpose::STANDARD.encode(&[0u8; 30]);
-        let key_b64 = base64::engine::general_purpose::STANDARD.encode(&[1u8; 32]);
+        let short_b64 = base64::engine::general_purpose::STANDARD.encode([0u8; 30]);
+        let key_b64 = base64::engine::general_purpose::STANDARD.encode([1u8; 32]);
         assert!(crate::crypto::hpke_decrypt_session_sk(&short_b64, &key_b64).is_err());
     }
 
