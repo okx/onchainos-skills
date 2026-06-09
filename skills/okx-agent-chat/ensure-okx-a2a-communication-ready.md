@@ -21,41 +21,88 @@ The LLM **must** invoke this flow **on its own**, immediately after any of the f
 
 **Recognition cues** (Chinese / English) that should trigger this hook after the upstream action returns: `创建 agent`, `注册 agent`, `更新 agent`, `修改 agent 信息`, `注销 agent`, `停用 agent`, `agent 列表变更`, `agent registered`, `agent created`, `agent updated`, `agent deactivated`, `agent list changed`.
 
-The flow is safe to invoke unconditionally. It self-routes by deterministic shell/runtime signals and then executes the matching runtime branch. The LLM does **not** need to confirm with the user before running Step 1.
+The flow is safe to invoke unconditionally. It first checks whether communication is already ready in the current toolset, then self-routes by deterministic shell/runtime signals only when setup is still required. The LLM does **not** need to confirm with the user before running Step 0.
 
 ## Runtime Decision Tree
 
 ```
-Step 1  Runtime detection by shell environment
-  ├─ OPENCLAW_SHELL is set, or existing OpenClaw compatibility signal OPENCLAW_CLI is set
-  │    └─ Step 2 OpenClaw flow
-  ├─ HERMES_SESSION_ID is set and HERMES_DESKTOP_CWD is not set
-  │    └─ Step 3 Hermes flow
-  └─ Otherwise
-       └─ Step 4 Node environment flow (Claude Code / Codex / other Node CLI runtimes)
+Step 0  Toolset self-check
+  ├─ xmtp_refresh_agents is present
+  │    └─ Call it directly and end
+  └─ Tool is absent
+       └─ Step 1 Runtime detection
+            ├─ HERMES_SESSION_ID is set and HERMES_DESKTOP_CWD is not set
+            │    └─ Step 3 Hermes flow
+            ├─ OPENCLAW_SHELL or OPENCLAW_CLI is set
+            │    └─ Step 2 OpenClaw flow
+            ├─ An OpenClaw process is found in the parent-process chain (up to 8 levels)
+            │    └─ Step 2 OpenClaw flow
+            └─ Otherwise
+                 └─ Step 4 Node environment flow
 ```
+
+## Step 0: Toolset Self-Check
+
+<MUST>
+Inspect the LLM's current toolset before running any shell command. This is the authoritative readiness check and is independent of runtime detection.
+</MUST>
+
+- **`xmtp_refresh_agents` is present** -> call it directly (no arguments unless its schema requires them). If it succeeds, surface only user-relevant output and end the flow.
+- **`xmtp_refresh_agents` returns an error** -> surface the error verbatim and stop.
+- **`xmtp_refresh_agents` is absent** -> continue to Step 1.
+
+Do not run runtime detection, installation checks, or gateway health checks when the tool is already present.
 
 ## Step 1: Runtime Detection
 
 <MUST>
-Before any communication setup, inspect shell environment variables. Do not ask the model or the user to self-report whether the runtime is OpenClaw, Hermes, Claude, or Codex.
+When Step 0 does not find `xmtp_refresh_agents`, run the shell function below. Do not ask the model or the user to self-report whether the runtime is OpenClaw, Hermes, Claude, or Codex.
 </MUST>
 
 Run:
 
 ```bash
-if [ -n "${OPENCLAW_SHELL:-}" ] || [ -n "${OPENCLAW_CLI:-}" ]; then
-  echo "runtime=openclaw"
-elif [ -n "${HERMES_SESSION_ID:-}" ] && [ -z "${HERMES_DESKTOP_CWD:-}" ]; then
-  echo "runtime=hermes"
-else
-  echo "runtime=node"
-fi
+detect_runtime() {
+  # Hermes first: this signal shape is the most specific.
+  if [ -n "${HERMES_SESSION_ID:-}" ] && [ -z "${HERMES_DESKTOP_CWD:-}" ]; then
+    echo "hermes"
+    return
+  fi
+
+  # Preserve legacy OpenClaw environment hints as the cheap path.
+  if [ -n "${OPENCLAW_SHELL:-}" ] || [ -n "${OPENCLAW_CLI:-}" ]; then
+    echo "openclaw"
+    return
+  fi
+
+  # Cover newer OpenClaw/Codex launch shapes by walking at most 8 parents.
+  pid=$PPID
+  for _ in 1 2 3 4 5 6 7 8; do
+    if [ -z "$pid" ] || [ "$pid" = "0" ] || [ "$pid" = "1" ]; then
+      break
+    fi
+    comm=$(ps -p "$pid" -o comm= 2>/dev/null | tr -d ' ')
+    case "$comm" in
+      *openclaw*|*OpenClaw*)
+        echo "openclaw"
+        return
+        ;;
+    esac
+    pid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+  done
+
+  echo "node"
+}
+
+runtime=$(detect_runtime)
+echo "runtime=$runtime"
 ```
 
 - `runtime=openclaw` -> continue to Step 2.
 - `runtime=hermes` -> continue to Step 3.
 - `runtime=node` -> continue to Step 4.
+
+The PPID walk inspects process names only. Do not check socket files, use `lsof`, ask the LLM/user to declare the runtime, or use gateway status as runtime detection.
 
 ## Step 2: OpenClaw Flow
 
@@ -77,12 +124,18 @@ Inspect the **current toolset**:
 Run:
 
 ```bash
+if ! command -v openclaw >/dev/null 2>&1; then
+  echo "openclaw_cli=missing"
+  exit 1
+fi
 openclaw --version 2>&1
 ```
 
 Requirements:
 
 - OpenClaw **>= 2026.4.20**
+
+If the OpenClaw CLI is missing, tell the user to install the OpenClaw CLI and stop. This includes runtimes identified through the PPID fallback.
 
 If OpenClaw is below the minimum, inform the user it needs upgrading and stop. Do not proceed.
 
@@ -389,13 +442,13 @@ On success, OKX A2A communication initialization is complete. Flow ends here.
 
 | Scenario | Behavior |
 |---|---|
-| Runtime signals conflict | OpenClaw wins first, then Hermes, then Node fallback, matching Step 1 order. |
-| `OPENCLAW_SHELL` / `OPENCLAW_CLI` is set but `openclaw` command is missing | Inform the user that the OpenClaw CLI is required and stop. |
-| Tool `xmtp_refresh_agents` is present | Take the OpenClaw fast path — call it and end. |
+| Tool `xmtp_refresh_agents` is present | Step 0 calls it immediately and ends without shell runtime detection. |
 | `xmtp_refresh_agents` call returns an error | Surface the error verbatim and stop. |
+| Runtime signals conflict | Hermes' specific signal shape wins first, then OpenClaw env hints, then the OpenClaw PPID fallback, then Node. |
+| OpenClaw is detected by env or PPID but the `openclaw` command is missing | Tell the user to install the OpenClaw CLI and stop. |
+| PPID walk reaches PID 0/1, an empty PID, or 8 levels without finding OpenClaw | Fall back to Node. |
 | OpenClaw < 2026.4.20 | Inform the user OpenClaw is too old and stop. |
 | `openclaw config set` fails | Surface the error and stop — do not run install with partial config. |
-| Hermes runtime and tool `xmtp_refresh_agents` is present | Take the Hermes fast path — call it and end. |
 | Hermes runtime and tool `xmtp_refresh_agents` is missing | Continue to the Hermes install flow. |
 | Node runtime and `okx-a2a status` reports `stopped` | Run `okx-a2a restart`, tell the user the server started, and end. |
 | Node runtime and `okx-a2a status` reports `running` | Run `okx-a2a agent refresh` and end. |

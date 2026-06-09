@@ -211,6 +211,78 @@ pub(super) fn normalize_role(role: &str) -> Result<String> {
     }
 }
 
+/// Normalize a user-supplied language tag into a canonically-cased BCP-47 tag,
+/// then apply product-level default-region completion.
+///
+/// Casing (per RFC 5646 conventions): language subtag lowercased, script subtag
+/// (4 alpha) title-cased, region subtag (2 alpha / 3 digit) uppercased,
+/// everything else lowercased. So `zh_CN` / `ZH-cn` → `zh-CN`, `en_us` →
+/// `en-US`, `zh-hant-tw` → `zh-Hant-TW`.
+///
+/// Default-region completion (product policy — see [`default_region_complete`]):
+/// a *bare* primary-language tag is mapped to the product's canonical region
+/// (`zh` → `zh-CN`, `en` → `en-US`, `ja` → `ja-JP`) so the backend localizes to
+/// a concrete locale rather than its own default. This is deliberately NOT part
+/// of BCP-47 canonicalization (`zh` and `zh-CN` are distinct tags); we add the
+/// region on purpose. Tags that already carry a script/region/variant
+/// (`zh-TW`, `zh-Hant`) are left untouched.
+///
+/// Returns `None` when the input is blank or the leading language subtag is not
+/// a well-formed 2–8 alpha code — callers omit `preferredLanguage` in that case
+/// so the backend falls back to its own default. Note this is a casing
+/// normalizer, not a full BCP-47 validator: subtags after the language are
+/// re-cased but not structurally validated, and grandfathered / deprecated tags
+/// are not specially handled.
+pub(super) fn normalize_bcp47(value: Option<&str>) -> Option<String> {
+    let raw = value?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let mut subtags = raw.split(['-', '_']).filter(|s| !s.is_empty());
+
+    let language = subtags.next()?;
+    if !(2..=8).contains(&language.len()) || !language.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let mut out = language.to_ascii_lowercase();
+
+    for subtag in subtags {
+        out.push('-');
+        let is_alpha = subtag.chars().all(|c| c.is_ascii_alphabetic());
+        let is_digit = subtag.chars().all(|c| c.is_ascii_digit());
+        if subtag.len() == 4 && is_alpha {
+            // script: title-case (e.g. `Hant`)
+            let mut chars = subtag.chars();
+            out.push(chars.next().unwrap().to_ascii_uppercase());
+            out.extend(chars.map(|c| c.to_ascii_lowercase()));
+        } else if (subtag.len() == 2 && is_alpha) || (subtag.len() == 3 && is_digit) {
+            // region: uppercase (e.g. `CN`, `001`)
+            out.push_str(&subtag.to_ascii_uppercase());
+        } else {
+            out.push_str(&subtag.to_ascii_lowercase());
+        }
+    }
+    Some(default_region_complete(out))
+}
+
+/// Product-level default-region completion for a *bare* primary-language tag.
+///
+/// When `tag` carries no further subtag (no `-`), map the supported languages
+/// to their canonical product region so the backend resolves a concrete locale;
+/// unmapped languages and any tag that already has a script/region/variant pass
+/// through unchanged. Not BCP-47 canonicalization — see [`normalize_bcp47`].
+fn default_region_complete(tag: String) -> String {
+    if tag.contains('-') {
+        return tag;
+    }
+    match tag.as_str() {
+        "zh" => "zh-CN".to_string(),
+        "en" => "en-US".to_string(),
+        "ja" => "ja-JP".to_string(),
+        _ => tag,
+    }
+}
+
 // ─── CLI arg helpers ──────────────────────────────────────────────────────
 
 pub(super) fn require_non_empty<'a>(value: Option<&'a str>, flag: &str) -> Result<&'a str> {
@@ -504,5 +576,44 @@ mod tests {
         let before = v.clone();
         convert_feedback_list_scores(&mut v);
         assert_eq!(v, before);
+    }
+
+    // ─── normalize_bcp47 ─────────────────────────────────────────────────
+
+    #[test]
+    fn normalize_bcp47_canonicalizes_casing_and_separator() {
+        assert_eq!(normalize_bcp47(Some("zh-CN")).as_deref(), Some("zh-CN"));
+        assert_eq!(normalize_bcp47(Some("zh_CN")).as_deref(), Some("zh-CN"));
+        assert_eq!(normalize_bcp47(Some("ZH-cn")).as_deref(), Some("zh-CN"));
+        assert_eq!(normalize_bcp47(Some("en_us")).as_deref(), Some("en-US"));
+        assert_eq!(
+            normalize_bcp47(Some("zh-hant-tw")).as_deref(),
+            Some("zh-Hant-TW")
+        );
+        assert_eq!(normalize_bcp47(Some("  en-US  ")).as_deref(), Some("en-US"));
+    }
+
+    #[test]
+    fn normalize_bcp47_default_region_completes_bare_language() {
+        // Bare supported languages get the product's canonical region.
+        assert_eq!(normalize_bcp47(Some("zh")).as_deref(), Some("zh-CN"));
+        assert_eq!(normalize_bcp47(Some("ZH")).as_deref(), Some("zh-CN"));
+        assert_eq!(normalize_bcp47(Some("en")).as_deref(), Some("en-US"));
+        assert_eq!(normalize_bcp47(Some("ja")).as_deref(), Some("ja-JP"));
+        // Unmapped bare languages pass through unchanged.
+        assert_eq!(normalize_bcp47(Some("fr")).as_deref(), Some("fr"));
+        // Tags that already carry a region / script are NOT overridden.
+        assert_eq!(normalize_bcp47(Some("zh-TW")).as_deref(), Some("zh-TW"));
+        assert_eq!(normalize_bcp47(Some("zh-Hant")).as_deref(), Some("zh-Hant"));
+        assert_eq!(normalize_bcp47(Some("en-GB")).as_deref(), Some("en-GB"));
+    }
+
+    #[test]
+    fn normalize_bcp47_rejects_blank_and_malformed_language() {
+        assert_eq!(normalize_bcp47(None), None);
+        assert_eq!(normalize_bcp47(Some("")), None);
+        assert_eq!(normalize_bcp47(Some("   ")), None);
+        assert_eq!(normalize_bcp47(Some("1-CN")), None); // language subtag not alpha
+        assert_eq!(normalize_bcp47(Some("z")), None); // too short
     }
 }

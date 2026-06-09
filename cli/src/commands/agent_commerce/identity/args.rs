@@ -56,6 +56,20 @@ pub struct AgentStatusArgs {
     pub agent_id: Option<String>,
 }
 
+/// `onchainos agent submit-approval`: same shape as `AgentStatusArgs` plus an
+/// optional language hint. Kept separate so the `--preferred-language` flag is
+/// scoped to submit-approval only (activate / deactivate are unaffected).
+#[derive(Args, Clone, Debug)]
+pub struct SubmitApprovalArgs {
+    #[arg(long = "agent-id")]
+    pub agent_id: Option<String>,
+    /// Preferred language for backend review messages (BCP-47, e.g. `zh-CN`,
+    /// `en-US`). Loosely-formatted input is normalized to canonical BCP-47;
+    /// blank / malformed input is omitted so the backend uses its default.
+    #[arg(long = "preferred-language")]
+    pub preferred_language: Option<String>,
+}
+
 #[derive(Args, Clone, Debug)]
 pub struct UploadArgs {
     #[arg(long)]
