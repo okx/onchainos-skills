@@ -714,6 +714,34 @@ pub enum AgentCommand {
         #[arg(long = "page-size", default_value_t = 20)]
         page_size: u32,
     },
+
+    /// Query a single Agent's (or up to 20 Agents') in-progress tasks & disputes
+    /// (POST /priapi/v1/aieco/task/inProgress). The backend validates the
+    /// caller→agent binding via JWT and classifies results by role
+    /// (buyerTasks / providerTasks / evaluatorDisputes).
+    ///
+    /// Powers okx-ai-guide node 5a (registered-user home → "view what an Agent
+    /// is working on").
+    ///
+    /// Examples:
+    ///   onchainos agent task-in-progress --agent-ids 1001
+    ///   onchainos agent task-in-progress --agent-ids 1001,2002,3003
+    #[command(name = "task-in-progress")]
+    TaskInProgress {
+        /// Agent IDs to query (comma-separated, or repeat --agent-ids). Max 20.
+        #[arg(long = "agent-ids", value_delimiter = ',')]
+        agent_ids: Vec<String>,
+    },
+
+    /// List the marketplace's top ASPs by sales (soldCount), highest first.
+    /// Pulls the full ASP list and returns the top `--limit` (default 3; fewer
+    /// if the marketplace has fewer).
+    #[command(name = "top-asps")]
+    TopAsps {
+        /// How many to return, highest sales first. Default 3.
+        #[arg(long, default_value_t = 3)]
+        limit: usize,
+    },
 }
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
@@ -1186,6 +1214,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             )
             .await
         }
+        AgentCommand::TaskInProgress { agent_ids } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::in_progress::handle_in_progress(&mut client, &agent_ids).await
+        }
+        AgentCommand::TopAsps { limit } => identity::top_asps(limit, ctx).await,
     }
 }
 

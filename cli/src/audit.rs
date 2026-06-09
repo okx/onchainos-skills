@@ -422,6 +422,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::TaskDeliverableSave { .. } => "task-deliverable-save".into(),
         AgentCommand::TaskDeliverableList { .. } => "task-deliverable-list".into(),
         AgentCommand::TaskSearch { .. } => "task-search".into(),
+        AgentCommand::TaskInProgress { .. } => "task-in-progress".into(),
+        AgentCommand::TopAsps { .. } => "top-asps".into(),
     }
 }
 
