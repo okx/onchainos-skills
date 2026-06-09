@@ -13,6 +13,7 @@ pub mod claim;
 pub mod config;
 pub mod deliverables;
 pub mod dispute_upload;
+pub mod in_progress;
 pub mod network;
 pub mod payment_mode;
 pub mod pending_v2;
