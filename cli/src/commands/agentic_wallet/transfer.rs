@@ -494,7 +494,7 @@ async fn sign_and_broadcast(
     //   master behavior which treats unsignedInfo.extraData as a passthrough
     //   (backend fills these semantic fields in its response).
     if unsigned.gas_station_used {
-        gs_apply_extra_data_fields(&mut extra_data_obj, &unsigned, unsigned.need_update7702);
+        gs_apply_extra_data_fields(&mut extra_data_obj, &unsigned);
     }
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -1134,7 +1134,6 @@ fn gs_build_msg_for_sign(
     unsigned: &crate::wallet_api::UnsignedInfoResponse,
     session: &crate::wallet_store::SessionJson,
     signing_seed: &[u8],
-    include_7702: bool,
 ) -> Result<Value> {
     let mut m = serde_json::Map::new();
 
@@ -1161,8 +1160,9 @@ fn gs_build_msg_for_sign(
         )?;
         m.insert("sessionSignature".into(), json!(session_sig));
     }
-    // Sign authHashFor7702 → authSignatureFor7702 (only for the 7702 upgrade flow).
-    if include_7702 && !unsigned.auth_hash_for7702.is_empty() {
+    // Sign authHashFor7702 → authSignatureFor7702 whenever the backend
+    // returned a non-empty 7702 auth hash (signal that the upgrade is needed).
+    if !unsigned.auth_hash_for7702.is_empty() {
         let sig = crate::crypto::ed25519_sign_hex(&unsigned.auth_hash_for7702, &signing_seed_b64)?;
         m.insert("authSignatureFor7702".into(), json!(sig));
     }
@@ -1188,7 +1188,6 @@ fn gs_build_msg_for_sign(
 fn gs_apply_extra_data_fields(
     ed: &mut Value,
     unsigned: &crate::wallet_api::UnsignedInfoResponse,
-    include_7702: bool,
 ) {
     ed["paymentType"] = json!("token");
 
@@ -1211,8 +1210,9 @@ fn gs_apply_extra_data_fields(
         ed["user712Data"] = unsigned.user712_data.clone();
     }
 
-    // ── 7702 upgrade only fields ──
-    if include_7702 {
+    // ── 7702 upgrade only fields — gated on the same signal that gates
+    //    signing (authHashFor7702 presence) to stay consistent. ──
+    if !unsigned.auth_hash_for7702.is_empty() {
         if !unsigned.eoa_nonce.is_empty() {
             ed["nonce"] = json!(unsigned.eoa_nonce);
         }
@@ -1262,7 +1262,6 @@ fn gs_build_extra_data(
     coin_amount: &str,
     token_address: Option<&str>,
     force: bool,
-    include_7702: bool,
 ) -> Value {
     // Start from unsignedInfo.extraData (backend passthrough)
     let mut ed = if unsigned.extra_data.is_object() {
@@ -1281,7 +1280,7 @@ fn gs_build_extra_data(
         ed["skipWarning"] = json!(true);
     }
 
-    gs_apply_extra_data_fields(&mut ed, unsigned, include_7702);
+    gs_apply_extra_data_fields(&mut ed, unsigned);
     // toAdr / tokenAddress / coinAmount intentionally NOT written — aligned
     // with master: unsignedInfo.extraData is passthrough, backend owns those
     // transfer-semantic fields.
@@ -1309,8 +1308,8 @@ async fn gs_broadcast_with_7702_upgrade(
         crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &crate::keyring_store::get("session_key")
             .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?)?;
 
-    let msg_for_sign = gs_build_msg_for_sign(unsigned, session, &signing_seed, true)?;
-    let extra_data_obj = gs_build_extra_data(unsigned, &msg_for_sign, to_addr, coin_amount, token_address, force, true);
+    let msg_for_sign = gs_build_msg_for_sign(unsigned, session, &signing_seed)?;
+    let extra_data_obj = gs_build_extra_data(unsigned, &msg_for_sign, to_addr, coin_amount, token_address, force);
 
     gs_do_broadcast(client, access_token, account_id, addr_info, &extra_data_obj, force).await
 }
@@ -1334,8 +1333,8 @@ async fn gs_broadcast_transaction(
         crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &crate::keyring_store::get("session_key")
             .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?)?;
 
-    let msg_for_sign = gs_build_msg_for_sign(unsigned, session, &signing_seed, false)?;
-    let extra_data_obj = gs_build_extra_data(unsigned, &msg_for_sign, to_addr, coin_amount, token_address, force, false);
+    let msg_for_sign = gs_build_msg_for_sign(unsigned, session, &signing_seed)?;
+    let extra_data_obj = gs_build_extra_data(unsigned, &msg_for_sign, to_addr, coin_amount, token_address, force);
 
     gs_do_broadcast(client, access_token, account_id, addr_info, &extra_data_obj, force).await
 }
