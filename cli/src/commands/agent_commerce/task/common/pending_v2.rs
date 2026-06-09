@@ -1639,7 +1639,7 @@ fn playbook_relay_only_cli(sub_key: &str, relay_content: &str) -> String {
          ```\n\n\
          ⚠️ Run this command **exactly once**. Repeat = recursion loop; skip = task stalls.\n\
          🛑 User reply consumed — do NOT reuse it (no `resolve-with-sessionkey` retry, no future-card reference); wait for a fresh user message.\n\
-         ▶️ After the relay succeeds, **resume watching** — call `okx-a2a user watch --once --json --poll-ms 1000 --limit 50` to continue monitoring task progress.\n",
+         ▶️ After the relay succeeds, **resume watching** — re-enter the watch loop per `okx-task-watch` SKILL.md (preserve the session's sticky `--job-id` if it was started post-publish).\n",
         key = sub_key_q,
         content = relay_content_q,
     )
