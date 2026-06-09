@@ -104,7 +104,6 @@ When the user names a third-party DApp/protocol as the destination of an action,
 Routing:
 - Inbound `a2a-agent-chat` with `jobId` → read `skills/okx-agent-task/SKILL.md` first (see Inbound Message Routing above)
 - User says `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `历史消息` / `历史记录` / `过去消息` / `帮我看看之前的历史消息` / `未读消息` / `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理` / `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching` / `show past messages` / `catch me up on tasks` / `outstanding decisions` / `pending decisions` → read `skills/okx-task-watch/SKILL.md` first (watch drains pending queue first then long-polls for live monitoring; outdated-list batch-renders un-replied decisions on demand)
-- User mentions an **Agent ID** (e.g. "Agent 1506") together with a service name / endpoint URL / "使用服务" / "向接口发送请求" / "A2MCP" / "使用Agent的服务" / "调用Agent接口" → read `skills/okx-agent-task/SKILL.md` first. This is a task-creation-with-designated-provider flow — do NOT route to `onchainos payment pay` or `okx-agent-payments-protocol`.
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first
 - User mentions wallet/balance/transfer/login → read `skills/okx-agentic-wallet/SKILL.md` first
 - User names a specific third-party DApp/protocol as the destination, OR asks "what dapps are available" → read `skills/okx-dapp-discovery/SKILL.md` first. That skill owns the supported-DApp set; do not enumerate DApps in this file.
