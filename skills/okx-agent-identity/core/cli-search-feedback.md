@@ -225,10 +225,11 @@ Underlying API: `POST /priapi/v5/wallet/agentic/agent/submit-approval`.
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
 | `--agent-id` | ✓ | integer | The agent to submit for review. |
+| `--preferred-language` | — | string | BCP-47 language tag (`zh-CN`, `en-US`, …) controlling the language of backend review messages (`rejectReason` / `msg`). Pass the current conversation language. Loosely-formatted input (`zh`, `zh_CN`, `ZH-cn`) is normalized to canonical BCP-47; blank / malformed input is dropped and the backend default applies. |
 
 **Example (skill-internal — never shown to user per Red line 2):**
 ```bash
-onchainos agent submit-approval --agent-id 42
+onchainos agent submit-approval --agent-id 42 --preferred-language zh-CN
 ```
 
 **Return — two possible outcomes:**

@@ -27,11 +27,11 @@ mod utils;
 // CLI `Args` structs — kept at the module root for `identity::CreateArgs`.
 pub use args::{
     AgentStatusArgs, CreateArgs, FeedbackListArgs, FeedbackSubmitArgs, GetArgs, GetByAddressArgs,
-    SearchArgs, ServiceListArgs, UpdateArgs, UploadArgs, XmtpSignArgs,
+    SearchArgs, ServiceListArgs, SubmitApprovalArgs, UpdateArgs, UploadArgs, XmtpSignArgs,
 };
 
 // Read-side commands.
-pub use queries::{feedback_list, get, get_by_address, search, service_list};
+pub use queries::{feedback_list, get, get_by_address, search, service_list, top_asps};
 
 // Write-side commands.
 pub use mutations::{

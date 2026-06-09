@@ -89,7 +89,7 @@ onchainos agent create \
 
 > ⛔ **After the visible lines, this turn is NOT over — and comm-init applies to evaluator too.** → proceed to SKILL.md §Operation Flow Step 5. The evaluator row routes **first** to `/skills/okx-agent-task/references/evaluator-staking.md §2`; the staking flow's terminal handoff feeds into `§Step 6` (comm-init). **Fallback**: if the staking flow ends without that handoff for any reason (user declines stake, staking error, etc.), the evaluator row in Step 5 requires invoking `§Step 6` from this skill before stopping the turn. Full rules live in Step 5 + Step 6 — not duplicated here.
 
-Render **two visible lines** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, hardcoding the stake amount, mentioning the downstream skill path, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
+Render **two visible lines** using the template below — **verbatim except for the `#<id>` substitution rule and rendering the prose in the user's language** (translation is not a paraphrase; see `SKILL.md §Conventions` → Language Matching). Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, hardcoding the stake amount, mentioning the downstream skill path, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
 
 ### Visible lines (template)
 
@@ -111,6 +111,8 @@ Render exactly **two lines** in this order; both are declarative, no question ma
 Do NOT mention the `okx-agent-task/references/evaluator-staking.md §2` path to the user in the visible lines, and do NOT state a stake amount — the same-turn handoff below will take the user directly into that skill's own prompt, which owns both the path and the amount (and reads it from `staking-config`, so any number hardcoded here will go stale).
 
 ### ❌ Anti-pattern → ✅ Correct
+
+> The ✅ examples below are the **English canonical form** — render the same lines in the user's language (translation ≠ paraphrase). `#<id>` stays verbatim.
 
 ❌ Agent paraphrased:
 > "✅ Evaluator Agent #88 registered! You'll need to stake 100 OKB (the current minimum) before you can start taking cases. I'll take you into the staking flow now."

@@ -24,7 +24,8 @@ use crate::output;
 use crate::wallet_api::WalletApiClient;
 
 use super::args::{
-    AgentStatusArgs, CreateArgs, FeedbackSubmitArgs, UpdateArgs, UploadArgs, XmtpSignArgs,
+    AgentStatusArgs, CreateArgs, FeedbackSubmitArgs, SubmitApprovalArgs, UpdateArgs, UploadArgs,
+    XmtpSignArgs,
 };
 use super::models::{AgentCard, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_INDEX_NUM};
 use super::signing::{
@@ -33,9 +34,10 @@ use super::signing::{
 };
 use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
-    ensure_provider_has_service, identity_ws_url, normalize_role, normalize_singleton_object,
-    parse_agent_unsigned, parse_services, parse_stars_arg, reconstruct_post_url_for_log,
-    redact_token_for_debug, require_non_empty, trim_or_empty, wallet_client,
+    ensure_provider_has_service, identity_ws_url, normalize_bcp47, normalize_role,
+    normalize_singleton_object, parse_agent_unsigned, parse_services, parse_stars_arg,
+    reconstruct_post_url_for_log, redact_token_for_debug, require_non_empty, trim_or_empty,
+    wallet_client,
 };
 
 const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -70,7 +72,7 @@ pub async fn deactivate(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
     Ok(())
 }
 
-pub async fn submit_approval(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
+pub async fn submit_approval(args: SubmitApprovalArgs, ctx: &Context) -> Result<()> {
     output::success(submit_approval_impl(&args, ctx).await?);
     Ok(())
 }
@@ -364,14 +366,17 @@ async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -
     result.map_err(format_api_error)
 }
 
-async fn submit_approval_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
+async fn submit_approval_impl(args: &SubmitApprovalArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
-    let body = json!({
+    let mut body = json!({
         "agentId": agent_id,
         "chainIndex": XLAYER_CHAIN_INDEX,
     });
+    if let Some(lang) = normalize_bcp47(args.preferred_language.as_deref()) {
+        body["preferredLanguage"] = Value::String(lang);
+    }
 
     eprintln!(
         "[agent-identity] submit-approval request: url={} access_token_len={} access_token_prefix={} body={}",
