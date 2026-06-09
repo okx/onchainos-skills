@@ -508,6 +508,7 @@ pub async fn handle_task_402_pay(
     token_symbol: &str,
     token_amount: &str,
     from: Option<&str>,
+    business_body: Option<&str>,
 ) -> Result<()> {
     use crate::commands::payment::payment_flow;
     use super::x402_flow;
@@ -599,106 +600,27 @@ pub async fn handle_task_402_pay(
         }
     };
 
-    // Step 3: GET endpoint → 402 → assemble header → replay.
-    eprintln!("[task-402-pay] Step 3: GET endpoint {endpoint} → fetch the full 402 payload");
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let initial_resp = match http.get(endpoint).send().await {
-        Ok(resp) => resp,
+    // Step 3: build payment header from the already-signed accepts[], then replay.
+    // No re-fetch — avoids the double-GET inconsistency and supports body-required endpoints.
+    eprintln!("[task-402-pay] Step 3: assemble payment header from signed accepts[] → replay endpoint");
+    let x402_payload = match x402_flow::payload_from_accepts(accepts) {
+        Ok(p) => p,
         Err(e) => {
-            eprintln!("[task-402-pay] GET endpoint failed (signing + on-chain accept already done): {e}");
+            eprintln!("[task-402-pay] failed to build x402 payload from accepts: {e}");
             crate::output::success(serde_json::json!({
                 "replaySuccess": false,
                 "replayStatus": 0,
-                "replayBody": { "error": format!("GET endpoint failed: {e}") },
+                "replayBody": { "error": format!("failed to build x402 payload from accepts: {e}") },
                 "signature": proof_signature,
                 "authorization": proof_authorization,
                 "sessionCert": proof_session_cert,
                 "txHash": tx_hash,
                 "endpoint": endpoint,
-                "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
+                "retryHint": "Signing and direct/accept are done; you may retry with corrected --accepts.",
             }));
             return Ok(());
         }
     };
-    let initial_status = initial_resp.status().as_u16();
-
-    if initial_status != 402 {
-        let raw_text = initial_resp.text().await.unwrap_or_default();
-        let body: serde_json::Value = serde_json::from_str(&raw_text)
-            .unwrap_or_else(|_| serde_json::json!({ "raw": raw_text }));
-        let success = (200..300).contains(&initial_status);
-        eprintln!("[task-402-pay] endpoint returned HTTP {initial_status} (not 402); using as the result directly");
-        let mut early_saved: Option<String> = None;
-        if success {
-            match auto_save_x402_deliverable(client, job_id, &agent_id, provider, token_symbol, token_amount, &body).await {
-                Ok(p) => {
-                    eprintln!("[task-402-pay] deliverable auto-saved: {p}");
-                    early_saved = Some(p);
-                }
-                Err(e) => eprintln!("[task-402-pay] deliverable auto-save failed (non-blocking): {e}"),
-            }
-        }
-        let mut result = serde_json::json!({
-            "replaySuccess": success,
-            "replayStatus": initial_status,
-            "replayBody": body,
-            "replayBodyDisplay": format_replay_body_display(&body),
-            "signature": proof_signature,
-            "authorization": proof_authorization,
-            "sessionCert": proof_session_cert,
-            "txHash": tx_hash,
-        });
-        if let Some(p) = early_saved {
-            result["deliverableSavedPath"] = serde_json::Value::String(p);
-        }
-        crate::output::success(result);
-        return Ok(());
-    }
-
-    let resp_headers = initial_resp.headers().clone();
-    let resp_body_text = match initial_resp.text().await {
-        Ok(text) => text,
-        Err(e) => {
-            eprintln!("[task-402-pay] failed to read 402 response body (signing + on-chain accept already done): {e}");
-            crate::output::success(serde_json::json!({
-                "replaySuccess": false,
-                "replayStatus": 402,
-                "replayBody": { "error": format!("failed to read 402 response body: {e}") },
-                "signature": proof_signature,
-                "authorization": proof_authorization,
-                "sessionCert": proof_session_cert,
-                "txHash": tx_hash,
-                "endpoint": endpoint,
-                "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
-            }));
-            return Ok(());
-        }
-    };
-    let x402_payload = match x402_flow::decode_402_response(&resp_headers, &resp_body_text) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("[task-402-pay] failed to decode 402 response (signing + on-chain accept already done): {e}");
-            crate::output::success(serde_json::json!({
-                "replaySuccess": false,
-                "replayStatus": 402,
-                "replayBody": { "error": format!("failed to decode 402 response: {e}"), "rawBody": resp_body_text },
-                "signature": proof_signature,
-                "authorization": proof_authorization,
-                "sessionCert": proof_session_cert,
-                "txHash": tx_hash,
-                "endpoint": endpoint,
-                "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
-            }));
-            return Ok(());
-        }
-    };
-    eprintln!("[task-402-pay] 402 payload: x402Version={}, accepts={} entries, resource={}",
-        x402_payload.x402_version, x402_payload.accepts.len(),
-        x402_payload.resource.is_some());
 
     let x402_proof = x402_flow::X402PaymentProof {
         signature: proof_signature.clone(),
@@ -709,28 +631,44 @@ pub async fn handle_task_402_pay(
     let (header_name, header_value) = match x402_flow::assemble_payment_header(&x402_proof, &x402_payload) {
         Ok(hv) => hv,
         Err(e) => {
-            eprintln!("[task-402-pay] failed to assemble payment header (signing + on-chain accept already done): {e}");
+            eprintln!("[task-402-pay] failed to assemble payment header: {e}");
             crate::output::success(serde_json::json!({
                 "replaySuccess": false,
-                "replayStatus": 402,
+                "replayStatus": 0,
                 "replayBody": { "error": format!("failed to assemble payment header: {e}") },
                 "signature": proof_signature,
                 "authorization": proof_authorization,
                 "sessionCert": proof_session_cert,
                 "txHash": tx_hash,
                 "endpoint": endpoint,
-                "retryHint": "Signing and direct/accept are done; you may retry GET endpoint → 402 → assemble header → replay.",
+                "retryHint": "Signing and direct/accept are done; you may retry with corrected --accepts.",
             }));
             return Ok(());
         }
     };
 
-    eprintln!("[task-402-pay] replaying endpoint ({header_name}: ...)");
-    let replay_resp = http
-        .get(endpoint)
-        .header(&header_name, &header_value)
-        .send()
-        .await;
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("failed to build HTTP client")?;
+
+    let has_body = business_body.filter(|s| !s.is_empty()).is_some();
+    eprintln!("[task-402-pay] replaying endpoint ({header_name}: ...) method={}",
+        if has_body { "POST" } else { "GET" });
+
+    let replay_resp = if let Some(biz) = business_body.filter(|s| !s.is_empty()) {
+        http.post(endpoint)
+            .header(&header_name, &header_value)
+            .header("content-type", "application/json")
+            .body(biz.to_string())
+            .send()
+            .await
+    } else {
+        http.get(endpoint)
+            .header(&header_name, &header_value)
+            .send()
+            .await
+    };
 
     let (replay_success, replay_status, replay_body) = match replay_resp {
         Ok(resp) => {
@@ -851,12 +789,23 @@ async fn auto_save_x402_deliverable(
 }
 
 /// x402-check — validate whether the endpoint is a legitimate x402 service and extract pricing info.
-pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str, agent_id: Option<&str>) -> Result<()> {
+pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str, agent_id: Option<&str>, body: Option<&str>) -> Result<()> {
     use super::x402_flow;
 
-    let check = x402_flow::check_x402_endpoint(endpoint).await?;
+    let check = x402_flow::check_x402_endpoint(endpoint, body).await?;
 
     if !check.valid {
+        if let Some(ref ir) = check.input_required {
+            crate::output::success(serde_json::json!({
+                "valid": false,
+                "inputRequired": true,
+                "statusCode": check.status_code,
+                "message": ir.message,
+                "requiredAnyOf": ir.required_any_of,
+                "fields": ir.fields,
+            }));
+            return Ok(());
+        }
         crate::output::success(serde_json::json!({
             "valid": false,
             "statusCode": check.status_code,

@@ -100,22 +100,34 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
 
 /// Phase 1: call `designated-route`, then dispatch to the matching branch pseudo-event.
 /// Outputs only the route command + a hard gate — no branch playbooks inlined.
-pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &str) -> String {
+pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &str, endpoint: Option<&str>) -> String {
+    let endpoint_flag = match endpoint.filter(|s| !s.is_empty()) {
+        Some(ep) => format!(" --endpoint {ep}"),
+        None => String::new(),
+    };
     format!("\
              🎯 **Designated ASP**: {dp_id}\n\
              ⚠️ The persisted designated-provider file has already been removed by the CLI when this prompt was generated (consume-on-read); no manual cleanup needed.\n\n\
              **D-Step 1 — query ASP route (service-list + profile combined):**\n\
              ```bash\n\
-             onchainos agent designated-route --provider {dp_id}\n\
+             onchainos agent designated-route --provider {dp_id}{endpoint_flag}\n\
              ```\n\
              Response fields: `route` (`x402` | `a2a` | `error`), `errorType` (if error), `providerName`, `onlineStatus`, `endpoint`, `feeAmount`, `feeTokenSymbol` (if x402).\n\n\
+             🛑 **Multi-service selection (when `services` array is present):**\n\
+             If the response contains a `services` array, this ASP offers **multiple** x402 services.\n\
+             The top-level `endpoint`/`feeAmount`/`feeTokenSymbol` default to the FIRST service — this may NOT be the one the user requested.\n\
+             You MUST check the task description / user's original request to identify the intended service:\n\
+             \x20\x20- Match by `serviceName`, `serviceDescription`, or endpoint path against keywords in the task description.\n\
+             \x20\x20- Once matched, use THAT service's `endpoint`, `feeAmount`, `feeTokenSymbol` for ALL subsequent steps (x402-validate, set-payment-mode).\n\
+             \x20\x20- If no clear match, present the service list to the user via `pending-decisions-v2 request` and let them pick.\n\n\
              **D-Step 2 — call `next-action` with the matching branch pseudo-event:**\n\n\
              | `route` value | `errorType` | next-action `--event` |\n\
              |---|---|---|\n\
              | `a2a` | — | `designated_a2a` |\n\
              | `x402` | — | `designated_x402` |\n\
              | `error` | `not_provider` | `designated_error` |\n\
-             | `error` | `offline` | `designated_error` |\n\n\
+             | `error` | `offline` | `designated_error` |\n\
+             | `error` | `endpoint_not_found` | `designated_error` |\n\n\
              Execute:\n\
              ```bash\n\
              onchainos agent next-action --jobid {job_id} --event <from table above> --role buyer --agentId {agent_id} --provider {dp_id}\n\
@@ -187,6 +199,25 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          \x20\x20{follow_playbook}\n\
          \x20\x20-> **end this turn** and wait for the user's reply.\n\
          \x20\x20{route_hint}\n\n\
+         - **`result == \"input_required\"`** -> the endpoint is a valid x402 service but requires business parameters to trigger the 402 payment challenge.\n\
+         \x20\x20The response includes `fields` / `requiredAnyOf` describing what the endpoint needs.\n\
+         \x20\x20**You MUST construct a JSON body from the task description:**\n\
+         \x20\x20\x20\x201. Read the `fields` array from the response — each entry has `name`, `type`, and optionally `required`/`label`.\n\
+         \x20\x20\x20\x202. Read `requiredAnyOf` — at least one of these fields must be present.\n\
+         \x20\x20\x20\x203. Extract matching values from the **task description** (the user's original request). Map task description content to the field names.\n\
+         \x20\x20\x20\x204. If you can fill the required fields, re-run x402-validate with `--body`:\n\
+         \x20\x20\x20\x20```bash\n\
+         \x20\x20\x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id} --body '<constructed JSON>'\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20If the re-check returns `valid: true`, use its `acceptsJson`, `amountHuman`, `tokenSymbol` and proceed to **A-Step 3** (set-payment-mode).\n\
+         \x20\x20\x20\x20⚠️ **Remember the constructed JSON body** — you must pass the same `--body` to `task-402-pay` later so the replay sends business parameters along with the payment header.\n\
+         \x20\x20\x20\x205. If you cannot extract the required fields from the task description, enqueue a user decision asking them to provide the missing business parameters:\n\
+         \x20\x20\x20\x20```bash\n\
+         \x20\x20\x20\x20{cmd_x402_invalid}\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20`--user-content` template: [Job {short_id}] The x402 service requires business parameters (<list field names from response>) but they could not be extracted from the task description. Please provide them or choose: A. Retry with parameters / B. Switch ASP / C. Close the job.\n\
+         \x20\x20{follow_playbook}\n\
+         \x20\x20{route_hint}\n\n\
          - **`result == \"price_mismatch\"`** -> enqueue the user decision:\n\
          \x20\x20{session_hint}\n\
          \x20\x20```bash\n\
@@ -234,13 +265,29 @@ pub(crate) fn branch_error(job_id: &str, agent_id: &str, short_id: &str, dp_id: 
     let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
     let cmd_not_provider = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Not ASP {short_id}] next-step decision"), "not_provider");
     let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Offline {short_id}] next-step decision"), "provider_offline");
+    let cmd_endpoint_not_found = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Endpoint gone {short_id}] next-step decision"), "endpoint_not_found");
     let not_provider = super::super::content::not_provider_user_prompt(job_id, short_id, dp_id);
     let provider_offline = super::super::content::provider_offline_user_prompt(job_id, short_id, dp_id);
 
     format!("\
-         [Designated ASP route: error] Provider {dp_id} is either not an ASP or offline.\n\
+         [Designated ASP route: error] Provider {dp_id} encountered a routing error.\n\
          [Role] User (Buyer)\n\n\
          **Branch by `errorType` from the `designated-route` response above (earlier in this turn):**\n\n\
+         - **`errorType == \"endpoint_not_found\"`** -> the persisted endpoint no longer exists in the ASP's service list (the ASP may have removed or changed the service).\n\
+         \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
+         \x20\x20{session_hint}\n\
+         \x20\x20```bash\n\
+         \x20\x20{cmd_endpoint_not_found}\n\
+         \x20\x20```\n\
+         \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules**.\n\
+         \x20\x20`--user-content` template (canonical English):\n\
+         \x20\x20[Job {short_id} — you are the User Agent] The previously selected service endpoint (`requestedEndpoint` from the response) of ASP (agentId={dp_id}) is no longer available. Choose next step:\n\
+         \x20\x20A. Specify another ASP — provide the agentId\n\
+         \x20\x20B. Make the job public — let more ASPs discover it\n\
+         \x20\x20C. Close the job\n\
+         \x20\x20{follow_playbook}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\
+         \x20\x20{route_hint}\n\n\
          - **`errorType == \"not_provider\"`** -> the designated agent does not exist or is not registered as an ASP.\n\
          \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
          \x20\x20{session_hint}\n\

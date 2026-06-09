@@ -70,6 +70,8 @@ pub enum AgentCommand {
         #[arg(long)] title: Option<String>,
         /// Specified provider agentId (skip recommend, negotiate directly with this provider or x402 accept)
         #[arg(long)] provider: Option<String>,
+        /// Designated service endpoint (persisted for multi-service providers)
+        #[arg(long)] endpoint: Option<String>,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")] attachments: Option<Vec<String>>,
     },
@@ -187,6 +189,8 @@ pub enum AgentCommand {
         #[arg(long = "token-amount")] token_amount: String,
         /// Payer address (optional)
         #[arg(long)] from: Option<String>,
+        /// JSON business body to POST during replay (for endpoints that require business parameters)
+        #[arg(long)] body: Option<String>,
     },
 
     /// Validate an x402 endpoint and extract pricing info
@@ -196,6 +200,8 @@ pub enum AgentCommand {
         #[arg(long)] endpoint: String,
         /// Buyer agent ID (used for auth on token detail queries)
         #[arg(long = "agent-id")] agent_id: Option<String>,
+        /// JSON business body to POST (for endpoints that require business parameters to return 402)
+        #[arg(long)] body: Option<String>,
     },
 
     /// Designated-provider routing: service-list + profile in one call
@@ -203,6 +209,8 @@ pub enum AgentCommand {
     DesignatedRoute {
         /// Target provider agentId
         #[arg(long)] provider: String,
+        /// Target service endpoint (for multi-service providers)
+        #[arg(long)] endpoint: Option<String>,
     },
 
     /// Validate x402 endpoint + price match + budget check in one call
@@ -794,11 +802,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, provider, attachments,
+            deadline_open, deadline_submit, title, provider, endpoint, attachments,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider, attachments,
+                deadline_open, deadline_submit, title, provider, endpoint, attachments,
             }, ctx,
         ).await,
 
@@ -833,14 +841,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             task::buyer::run_task(T::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
 
-        AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
-            task::buyer::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from }, ctx).await,
+        AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body } =>
+            task::buyer::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body }, ctx).await,
 
-        AgentCommand::X402Check { endpoint, agent_id } =>
-            task::buyer::run_task(T::X402Check { endpoint, agent_id }, ctx).await,
+        AgentCommand::X402Check { endpoint, agent_id, body } =>
+            task::buyer::run_task(T::X402Check { endpoint, agent_id, body }, ctx).await,
 
-        AgentCommand::DesignatedRoute { provider } =>
-            task::common::handle_designated_route(&provider).await,
+        AgentCommand::DesignatedRoute { provider, endpoint } =>
+            task::common::handle_designated_route(&provider, endpoint.as_deref()).await,
 
         AgentCommand::X402Validate { endpoint, agent_id, job_id, fee_amount, fee_token } =>
             task::common::handle_x402_validate(&endpoint, &agent_id, &job_id, &fee_amount, &fee_token).await,

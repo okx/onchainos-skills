@@ -67,6 +67,19 @@ pub struct X402EndpointCheck {
     pub accepts_json: Option<String>,
     /// x402 protocol version.
     pub x402_version: Option<i64>,
+    /// When true, the endpoint returned 400 `input_required` — it is a valid
+    /// x402 service but needs business parameters to trigger the 402 challenge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_required: Option<InputRequiredInfo>,
+}
+
+/// Describes the business parameters an x402 endpoint needs before it will
+/// return the 402 payment challenge.
+#[derive(Debug, Clone, Serialize)]
+pub struct InputRequiredInfo {
+    pub message: Option<String>,
+    pub required_any_of: Vec<String>,
+    pub fields: Vec<serde_json::Value>,
 }
 
 /// Full pricing with human-readable info (token already resolved).
@@ -121,6 +134,24 @@ pub fn decode_402_response(
     let accepts = parsed["accepts"].as_array().cloned().unwrap_or_default();
     Ok(X402Payload {
         x402_version: version,
+        accepts,
+        resource: None,
+        raw: parsed,
+    })
+}
+
+/// Build an [`X402Payload`] directly from an accepts JSON string that was
+/// previously obtained via `x402-check`.  This skips the HTTP 402 round-trip
+/// and avoids the accepts-freshness / double-fetch inconsistency.
+pub fn payload_from_accepts(accepts_json: &str) -> Result<X402Payload> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(accepts_json).context("accepts must be valid JSON")?;
+    let accepts = match parsed.as_array() {
+        Some(arr) => arr.clone(),
+        None => vec![parsed.clone()],
+    };
+    Ok(X402Payload {
+        x402_version: 2,
         accepts,
         resource: None,
         raw: parsed,
@@ -185,23 +216,76 @@ pub fn extract_x402_pricing(accepts: &[serde_json::Value]) -> Result<X402Pricing
 
 /// Decide whether a URL is a valid x402 endpoint.
 ///
-/// GET endpoint → 402? → decode `accepts` → extract pricing.
-pub async fn check_x402_endpoint(endpoint: &str) -> Result<X402EndpointCheck> {
+/// When `body` is `None`: sends a bare POST (empty JSON `{}`) to probe the endpoint.
+/// When `body` is `Some`: sends a POST with the given JSON body (business parameters).
+///
+/// Returns `input_required` info when the endpoint returns 400 with
+/// `status: "input_required"` and self-describes its required fields.
+pub async fn check_x402_endpoint(endpoint: &str, body: Option<&str>) -> Result<X402EndpointCheck> {
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .context("failed to build HTTP client")?;
-    let resp = http.get(endpoint).send().await
-        .map_err(|e| anyhow!("endpoint request failed: {e}"))?;
+
+    let resp = if let Some(json_body) = body.filter(|s| !s.is_empty()) {
+        let parsed: serde_json::Value = serde_json::from_str(json_body)
+            .context("--body is not valid JSON")?;
+        http.post(endpoint)
+            .header("Content-Type", "application/json")
+            .json(&parsed)
+            .send().await
+    } else {
+        http.post(endpoint)
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({}))
+            .send().await
+    }.map_err(|e| anyhow!("endpoint request failed: {e}"))?;
 
     let status = resp.status().as_u16();
     if status != 402 {
+        // Check for 400 input_required — endpoint is valid but needs business params.
+        if status == 400 {
+            let resp_body = resp.text().await.unwrap_or_default();
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&resp_body) {
+                let resp_status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if resp_status == "input_required" {
+                    let has_field_info = parsed.get("requiredAnyOf").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false)
+                        || parsed.get("requiredArgs").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false)
+                        || parsed.get("fields").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false);
+                    if has_field_info {
+                        let mut required_any_of: Vec<String> = Vec::new();
+                        if let Some(arr) = parsed.get("requiredAnyOf").and_then(|v| v.as_array()) {
+                            required_any_of = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                        }
+                        let fields = parsed.get("fields")
+                            .or_else(|| parsed.get("requiredArgs"))
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        let message = parsed.get("message").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        return Ok(X402EndpointCheck {
+                            valid: false,
+                            status_code: status,
+                            pricing: None,
+                            accepts_json: None,
+                            x402_version: None,
+                            input_required: Some(InputRequiredInfo {
+                                message,
+                                required_any_of,
+                                fields,
+                            }),
+                        });
+                    }
+                }
+            }
+        }
         return Ok(X402EndpointCheck {
             valid: false,
             status_code: status,
             pricing: None,
             accepts_json: None,
             x402_version: None,
+            input_required: None,
         });
     }
 
@@ -217,6 +301,7 @@ pub async fn check_x402_endpoint(endpoint: &str) -> Result<X402EndpointCheck> {
             pricing: None,
             accepts_json: None,
             x402_version: Some(payload.x402_version),
+            input_required: None,
         });
     }
 
@@ -229,6 +314,7 @@ pub async fn check_x402_endpoint(endpoint: &str) -> Result<X402EndpointCheck> {
         pricing: Some(pricing),
         accepts_json: Some(accepts_json),
         x402_version: Some(payload.x402_version),
+        input_required: None,
     })
 }
 
