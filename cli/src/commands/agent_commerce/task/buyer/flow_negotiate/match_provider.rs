@@ -187,7 +187,6 @@ fn job_created_legacy(ctx: &FlowContext<'_>) -> String {
          Ending the turn without executing = user never gets notified = task stalls permanently.\n\
          🔴 Real incident: a model called next-action, received this playbook, then said \"end turn, wait for User Agent\" without executing any step — the user was never notified and the task was permanently stuck.\n\n\
          [Your next actions (strict order)]\n\n\
-         🔧 `xmtp_dispatch_user`, `xmtp_send`, `session_status`, `xmtp_prompt_user`, `xmtp_start_conversation`, `xmtp_file_upload`, `xmtp_get_pending_list` are already in your tool list — call them **directly**. Do NOT use ToolSearch / select to look them up; do NOT read any legacy bridge SKILL file.\n\n\
          **Step 0 - notify the user session + continue execution in the current sub/backup session:**\n\
          Call xmtp_dispatch_user to tell the user the job is on-chain:\n\
          \x20\x20content: {created_notify_tpl}\n\
