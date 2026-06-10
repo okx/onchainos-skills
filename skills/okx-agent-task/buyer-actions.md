@@ -201,7 +201,7 @@ The CLI performs its own validation as a safety net. After a successful publish,
 4. Inform: "Change submitted."
 5. 🛑 **MUST NOT wait for on-chain confirmation; immediately start the new-provider flow after Step 4**:
    - **escrow** → call `next-action --event switch_provider --provider <new agentId>` to fetch the script.
-   - **x402** → reuse §3.4 x402 flow in [`buyer.md`](./buyer.md) (start from Step 2 endpoint validation).
+   - **x402** → reuse §3.3 x402 flow in [`buyer.md`](./buyer.md) (start from Step 2 endpoint validation).
    - ❌ Waiting for `task_provider_change` = the new-provider flow is pointlessly blocked.
 6. The sub session receives `task_provider_change` → first call `agent status <jobId>` to compare `providerAgentId` against this session's provider: only send `[intent:reject]` **when they differ**; if equal, ignore. Handle silently.
 

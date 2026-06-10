@@ -81,7 +81,7 @@ Triggers (only when there's no active card the user might be answering):
 | Intent | Action | Detail |
 |---|---|---|
 | Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --jobid _ --event create_task --role buyer --agentId <X>` → follow script | buyer publish flow |
-| Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → Scene 1.7 | [`buyer.md`](../buyer.md) §3.3 |
+| Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → Scene 1.7 | [`buyer.md`](../buyer.md) §3.2 |
 | Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs` | [`provider.md`](../provider.md) §2.1. Do NOT route to `task-search`. | provider.md §2.1 |
 | Take specific task (ASP) — `接 {jobId}` / `contact the buyer of {jobId}` | `common context <jobId> --role provider` → `xmtp_start_conversation` | provider.md §2 |
 | Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务` | `onchainos agent task-search` | [`cli-reference.md#task-search`](./cli-reference.md#task-search) |
@@ -104,20 +104,20 @@ Triggers (only when there's no active card the user might be answering):
 
 ---
 
-## Decision list & pick
+## Replying to pending decisions (when `[USER_DECISION_REQUEST]` is in context)
 
-🛑 **Priority guard** — if your context contains an active `[USER_DECISION_REQUEST]` block (you're in "Waiting for user reply" state from a recent push), **bare digit / letter / free-form reply must NOT trigger decision-list/pick** — those are answers to the active card and must run the block's pre-filled `resolve-prompt` command instead. Decision-list/pick triggers below apply ONLY when there is no active block awaiting reply OR when the user uses one of the explicit trigger phrases.
+If your context contains an active `[USER_DECISION_REQUEST]` block (you're in "Waiting for user reply" state from a recent push), the user's reply routes via the matching block's pre-filled `resolve-prompt` command:
 
-**Triggers** (match by intent — explicit phrasing only, do not infer from bare numbers):
-- Chinese: `查看决策列表` / `决策列表` / `决策` / `决策项` / `决策卡` / `待办决策` / `我的决策` / `查看决策` / `看决策` / `有什么待办` / `有什么要处理的` / `我有几个决策要处理` / `还有什么没处理`
-- English: `decision list` / `show decision list` / `list decisions` / `pending decisions` / `show my decisions` / `what's pending` / `what decisions do I have` / `any pending tasks`
+- **Single active card** (latest block below the stale-notice line): run its `resolve-prompt` with `--user-reply "<user's verbatim text>"`.
+- **Multiple blocks visible, user disambiguates with a jobId/label** (e.g. `Job 0x4652 选 1500`): scan context for the block whose `[job: <jobId>]` matches, then run THAT block's `resolve-prompt` with the user's verbatim text as `--user-reply`.
+- **Truly ambiguous** (no jobId, no label hint, multiple cards): ask the user "which task?" via plain text reply.
 
-**Action**: `onchainos agent pending-decisions-v2 list --format markdown` → follow CLI's 3-step playbook. Render only the translated source body to the user.
+---
 
-**Follow-up — user picks an entry** (`1` / `第 1 个` / `选 2` / label substring, **immediately after a decision-list render in the previous turn**):
-- `onchainos agent pending-decisions-v2 pick --index <N>` (1-based row number).
-- CLI: **render-only** — re-displays the selected card's full content via `playbook_render` (no status mutation, no queue modification). Pick is purely a "show me this card again" operation under the queue-bypass model.
-- Inside the rendered card's llmContent block: when the user replies, run the embedded `resolve-prompt` command (NOT `resolve`).
-- ❌ Do NOT call `resolve` / `resolve-prompt` directly from this pick step — that's for the next turn, after the user actually replies to the rendered card.
-- ❌ Do NOT treat the number as a decision answer to the active card (different semantic — decision-list pick vs. active-card answer).
-- Stale snapshot → CLI returns `playbook_stale_relist`; re-render and re-ask.
+## Decision list
+
+Triggers (only when there's no active `[USER_DECISION_REQUEST]` block the user might be answering):
+- Chinese: `查看决策列表` / `决策列表` / `决策` / `决策项` / `决策卡` / `待办决策` / `我的决策` / `查看决策` / `看决策` / `有什么待办` / `有什么要处理的`
+- English: `decision list` / `show decision list` / `list decisions` / `pending decisions` / `what's pending`
+
+**Action**: `onchainos agent pending-decisions-v2 list --format markdown` → **follow the CLI's returned playbook verbatim**. The playbook includes both the user-facing rendering instructions AND the routing rules for the user's subsequent reply. Do NOT improvise — only do what the playbook prints.

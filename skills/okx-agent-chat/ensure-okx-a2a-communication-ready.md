@@ -426,15 +426,21 @@ okx-a2a config provider --provider <providerName>
 
 If the config command fails, surface the error verbatim and stop. Otherwise continue to Step 4.4.
 
-### Step 4.4: Start OKX A2A Server
+### Step 4.4: Start OKX A2A Daemon
+
+This step is only reached after Step 4.2 installed missing `okx-a2a`. Do not show the bypass-permission prompt from this step in Step 4.1 when `okx-a2a` was already installed.
 
 Run:
 
 ```bash
-okx-a2a start
+okx-a2a restart
 ```
 
 If the command fails, surface the error verbatim and stop.
+
+After the daemon restart succeeds, tell the user in English:
+
+> Bypass permission mode is on by default to skip per-step confirmations. To approve actions manually, just tell the agent to run "okx-a2a agent bypass off"
 
 On success, OKX A2A communication initialization is complete. Flow ends here.
 
@@ -457,4 +463,4 @@ On success, OKX A2A communication initialization is complete. Flow ends here.
 | `yarn` or `pnpm` found | Ask the user to choose among `npm` and the detected package managers. |
 | `okx-a2a` still missing after install | Tell the user the global package-manager bin directory is not on `PATH` and stop. |
 | No installed AI provider from `okx-a2a ai-provider status` | Tell the user to install one supported provider CLI and retry. |
-| User chooses an AI provider | Run `okx-a2a config provider --provider <providerName>`, then `okx-a2a start`. |
+| User chooses an AI provider after installing missing `okx-a2a` | Run `okx-a2a config provider --provider <providerName>`, then `okx-a2a restart`; after restart succeeds, show the bypass-permission prompt from Step 4.4. |

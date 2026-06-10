@@ -148,17 +148,12 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     // Terminal-state (completed / refunded / close / dispute_resolved, etc.) session
     // retain-vs-release policy is governed by common::config::KEEP_CONVERSATION_ON_TERMINAL —
     // change the default by modifying that const.
-    let terminal_session_hint = if crate::commands::agent_commerce::task::common::config::keep_conversation_on_terminal() {
-        "ℹ️ Task is in terminal state. Clean up the stale pending decision entry but keep the conversation:\n\
-         \x20\x201. Call `session_status` to fetch the current sub `sessionKey`.\n\
-         \x20\x202. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"<sessionKey from step 1>\"` to remove any leftover pending decision entry (otherwise it waits 7-day TTL and pollutes the queue).\n\
-         ⚠️ **Do NOT call `xmtp_delete_conversation`** — keep the conversation history for later reference."
-    } else {
-        "ℹ️ Task is in terminal state; to fully release session resources (no follow-up events expected):\n\
-         \x20\x201. Call `session_status` to fetch the current sub `sessionKey`.\n\
-         \x20\x202. Run `onchainos agent pending-decisions-v2 cancel --sub-key \"<sessionKey from step 1>\"` to clean up any pending decision entry for this sub (otherwise it waits 7-day TTL).\n\
-         \x20\x203. Call `xmtp_delete_conversation` with `sessionKey=<sessionKey from step 1>` to close the conversation."
-    };
+    let terminal_session_hint = format!("\
+ℹ️ Task is in terminal state — run the cleanup command (handles pending-decision cancellation automatically):\n\
+         ```bash\n\
+         onchainos agent session-cleanup --job-id {job_id} --role provider\n\
+         ```\n\
+         Then follow the command's output to close conversations (if applicable).");
 
     // User-facing content templates for the preamble's exception-escalation hard rules
     // (single source of truth in content.rs).
@@ -699,6 +694,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              \x20\x203) **paymentMode stance**: the A2A negotiation path is fixed to escrow (escrowed)\n\n\
              Style sample (natural language; do NOT shoehorn into a template):\n\
              \x20\x20`I can do this; acceptance criteria are fine. 0.1 USDT is well below my registered price of 1 USDT; based on the workload I can do 0.7 USDT, escrowed payment works to avoid disputes. If that sounds good, let's lock in the terms and move forward.`\n\n\
+             🛑 **Do NOT include literal `[intent:propose]` in the natural-language message** (Step 3). `[intent:propose]` is a machine-readable protocol token sent BY the User Agent — it must NEVER appear in YOUR natural-language text (e.g. \"please send [intent:propose]\" or \"reply with [intent:propose] to lock the agreement\"). The User Agent's routing logic triggers on substring `[intent:` — if you embed the marker in a sentence, the User Agent's router will misclassify your natural-language reply as a structured handshake message and malfunction.\n\n\
              ⚠️ Counter-offer reference: within service-list unit price × (1 ± 30%) usually goes through; absurd quotes (× 5+) get you swapped out by the User Agent directly.\n\n\
              🛑🛑🛑 **Anti-pattern — do NOT abandon negotiation after one low offer**: 🔴 real incident — registered price 1 USDT, User Agent's first offer 0.1 USDT → provider sent `[intent:reject]` and walked away → User Agent later counter-offered 0.5 USDT and then 1 USDT but provider's agent thought \"I already rejected, conversation over\" and stayed silent → task stuck. **Correct behavior**: counter with YOUR floor price in natural language, end the turn, wait for the User Agent's next message. If the User Agent's next message has a new price (whether higher / same / lower) — even after you sent natural-language refusal earlier — you MUST call `next-action --event job_created` again and re-evaluate. \"I refused in natural language\" or \"my desired price wasn't met yet\" is NOT a reason to ignore the User Agent's follow-up — only literal `[intent:reject]` from EITHER side terminates negotiation.\n\n\
              {send_to_peer}\n\

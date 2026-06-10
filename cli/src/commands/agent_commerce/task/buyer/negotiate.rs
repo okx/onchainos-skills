@@ -264,10 +264,17 @@ pub fn load_agreed(job_id: &str, provider_agent_id: Option<&str>) -> Result<Opti
 
 /// Save the designated provider (specified via `create-task --provider`; on `job_created` we skip `recommend`).
 pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result<()> {
+    save_designated_provider_with_endpoint(job_id, provider_agent_id, None)
+}
+
+pub fn save_designated_provider_with_endpoint(job_id: &str, provider_agent_id: &str, endpoint: Option<&str>) -> Result<()> {
     let dir = state_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("designated-provider.json");
-    let json = serde_json::json!({ "agentId": provider_agent_id });
+    let mut json = serde_json::json!({ "agentId": provider_agent_id });
+    if let Some(ep) = endpoint.filter(|s| !s.is_empty()) {
+        json["endpoint"] = serde_json::Value::String(ep.to_string());
+    }
     std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
     Ok(())
 }
@@ -296,6 +303,17 @@ pub fn get_designated_provider(job_id: &str) -> Result<Option<String>> {
         eprintln!("[designated-provider] path={} agentId={:?}", path.display(), result);
     }
     Ok(result)
+}
+
+/// Read the persisted endpoint for the designated provider (if saved).
+pub fn get_designated_endpoint(job_id: &str) -> Result<Option<String>> {
+    let path = state_dir(job_id)?.join("designated-provider.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path)?;
+    let v: serde_json::Value = serde_json::from_str(&raw)?;
+    Ok(v["endpoint"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()))
 }
 
 /// Remove the designated-provider file (used when mark-failed matches the current designated provider).

@@ -834,10 +834,32 @@ impl WalletApiClient {
         access_token: &str,
         form: reqwest::multipart::Form,
     ) -> Result<Value> {
+        self.post_authed_multipart_with_headers(path, access_token, form, None)
+            .await
+    }
+
+    /// POST multipart/form-data with Bearer accessToken and optional extra headers.
+    pub async fn post_authed_multipart_with_headers(
+        &self,
+        path: &str,
+        access_token: &str,
+        form: reqwest::multipart::Form,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
 
         let mut headers = crate::client::ApiClient::jwt_headers(access_token);
         headers.remove(reqwest::header::CONTENT_TYPE);
+        if let Some(extra) = extra_headers {
+            for (k, v) in extra {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(name, val);
+                }
+            }
+        }
 
         let resp = self
             .http
@@ -1036,6 +1058,96 @@ impl WalletApiClient {
             };
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
+        })
+    }
+
+    /// GET + JWT + optional extra headers, returning raw bytes instead of JSON data.
+    pub fn get_authed_bytes_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        access_token: &'a str,
+        query: &'a [(&'a str, &'a str)],
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>>> + Send + 'a>> {
+        Box::pin(async move {
+            let query_string = build_query_string(query);
+            let effective = self.effective_base_url();
+            let url = format!(
+                "{}{}{}",
+                effective.trim_end_matches('/'),
+                path,
+                query_string
+            );
+
+            let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+            if let Some(extra) = extra_headers {
+                for (k, v) in extra {
+                    if let (Ok(name), Ok(val)) = (
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                        reqwest::header::HeaderValue::from_str(v),
+                    ) {
+                        headers.insert(name, val);
+                    }
+                }
+            }
+
+            let resp = match self.http.get(&url).headers(headers).send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self
+                            .get_authed_bytes_with_headers(path, access_token, query, extra_headers)
+                            .await;
+                    }
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+
+            let status = resp.status();
+            let content_type = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            let body_bytes = resp.bytes().await.context("failed to read response body")?;
+
+            if content_type.contains("application/json") {
+                let body: Value = serde_json::from_slice(&body_bytes)
+                    .context("failed to parse wallet API response as JSON")?;
+                let code_ok = match &body["code"] {
+                    Value::String(s) => s == "0",
+                    Value::Number(n) => n.as_i64() == Some(0),
+                    _ => false,
+                };
+                if !code_ok {
+                    let code_str = match &body["code"] {
+                        Value::String(s) => s.clone(),
+                        Value::Number(n) => n.to_string(),
+                        other => other.to_string(),
+                    };
+                    let msg = body["msg"]
+                        .as_str()
+                        .or_else(|| body["errorMessage"].as_str())
+                        .or_else(|| body["error_message"].as_str())
+                        .or_else(|| body["message"].as_str())
+                        .or_else(|| body["detailMsg"].as_str())
+                        .unwrap_or("unknown error");
+                    bail!("download failed (code={}): {}", code_str, msg);
+                }
+                return Ok(Vec::new());
+            }
+
+            if status.as_u16() >= 400 {
+                let text = String::from_utf8_lossy(&body_bytes);
+                let preview: String = text.trim().chars().take(500).collect();
+                bail!("download failed (HTTP {}): {}", status.as_u16(), preview);
+            }
+
+            Ok(body_bytes.to_vec())
         })
     }
 

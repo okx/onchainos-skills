@@ -1,6 +1,6 @@
 ---
 name: okx-agent-task
-description: "MUST ACTIVATE on inbound envelopes containing ANY of: (1) {agentId, message:{source:\"system\", event, jobId, ...}} — system event (fields nested under `message`); (2) {msgType:\"a2a-agent-chat\", jobId, sender:{role}, ...} — agent-to-agent task chat (fields at top level; sender.role describes the COUNTERPARTY, not you); (3) literal text \"Read okx-agent-task/SKILL.md\" anywhere in the envelope (e.g. message.description / tips.task-skill). ALSO activate for user-text keywords: 发布任务 / 创建任务 / 帮我发任务 / publish a task / create a task / 接任务 / 接单 / 协商 / 验收 / 拒绝 / 仲裁 / dispute / stake / unstake / 修改卖家 / 修改预算 / change provider / change budget / 草稿 / draft / 保存草稿 / save draft / 发布草稿 / publish draft / 草稿列表 / draft list / 搜索任务 / 查找任务 / 所有任务 / browse marketplace / search marketplace / 我的任务 / my tasks / what am I working on / 关闭任务 / close task / 取消任务 / 决策列表 / decision list / 查看决策 / use service / hire agent / designate provider / talk to provider / start task with / 使用服务 / 指定服务商 / 开始任务."
+description: "MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:\"system\", event, jobId, ...}} — system event; (2) {msgType:\"a2a-agent-chat\", jobId, sender:{role}, ...} — agent-to-agent task chat (fields at top level; sender.role = COUNTERPARTY, not you); (3) literal \"Read okx-agent-task/SKILL.md\" in envelope. ALSO activate for keywords: 发布任务 / 创建任务 / 帮我发任务 / publish task / create task / 接任务 / 接单 / 协商 / 验收 / 拒绝 / 仲裁 / dispute / stake / unstake / 修改卖家 / 修改预算 / change provider / change budget / 草稿 / draft / 保存草稿 / 搜索任务 / 所有任务 / 查找任务 / browse marketplace / search marketplace / 我的任务 / my tasks / what am I working on / 关闭任务 / close task / 取消任务 / 决策列表 / decision list / 查看决策 / use service / hire agent / designate provider / talk to provider / start task with / 使用Agent的服务 / 使用A2MCP服务 / 调用Agent接口 / 指定服务商 / 开始任务."
 license: Apache-2.0
 metadata:
   author: okx
@@ -52,11 +52,11 @@ One wallet can hold multiple roles. Each role's full lifecycle is in its own pla
 
 | Inbound shape | How to determine your role |
 |---|---|
-| **System event** (`{agentId, message:{source:"system", event, jobId, ...}}`) | `onchainos agent profile <envelope's top-level agentId>` → read `role` integer → map: `1`→buyer, `2`→provider, `3`→evaluator. **Never** infer from `event` / `status` / sub's prior binding — re-query every system event. |
+| **System event** (`{agentId, message:{source:"system", event, jobId, ...}}`) | Pass `--role auto` to `next-action`; the CLI resolves the role from `<agentId>` (P1-A, no separate `agent profile` round-trip). For diagnostics, mapping is `1`→buyer, `2`→provider, `3`→evaluator. **Never** infer from `event` / `status` / sub's prior binding — re-resolve every system event. |
 | **P2P message** (`{msgType:"a2a-agent-chat", jobId, sender:{role: N}, ...}`) | `sender.role` = **counterparty**: `1` → you are ASP (`--role provider`); `2` → you are User Agent (`--role buyer`). |
 | **Arbitration notification** | **Evaluator Agent** → [`evaluator.md`](./evaluator.md) |
 
-⚠️ **`my-agents` vs `agent profile`**: `my-agents` is for Pre-flight self-check only (current account's agents). For an envelope's `agentId` always use `agent profile <id>`.
+⚠️ **`my-agents` vs role resolution**: `my-agents` is for Pre-flight self-check only (current account's agents). For an envelope's `agentId` rely on `--role auto` (CLI resolves internally).
 
 #### Multi-account agentId lookup
 
@@ -74,7 +74,7 @@ For system events, top-level `agentId` IS the target (no lookup needed). For use
 >
 > 1. **Wallet is logged in**: `onchainos wallet status` — if not, hand off to `okx-agentic-wallet`.
 > 2. **Agent exists for required role**: `onchainos agent my-agents --role <buyer|provider|evaluator>` → empty = `agent create`. Evaluator additionally requires staking onboarding in `references/evaluator-staking.md §2`.
->    - ⚠️ `my-agents` only shows the current account's agents. For envelope routing always use `agent profile <id>`.
+>    - ⚠️ `my-agents` only shows the current account's agents (Pre-flight scope). For envelope routing use `--role auto` on `next-action` (CLI resolves the envelope's agentId internally).
 > 3. **Communication channel**: **Run** [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) — verifies OKX A2A communication is ready. OpenClaw uses the plugin path; Node runtimes use the `okx-a2a` CLI; Hermes is reserved.
 
 ## ⚠️ Critical Field Mapping Table (always look it up, don't guess)
@@ -111,12 +111,12 @@ When dealing with integer values of any of the fields below, **look up the table
 
 ## Activation
 
-> 🚨 **Received a `source:"system"` event? Your entire job is three steps**:
+> 🚨 **Received a `source:"system"` event? Your entire job is two steps**:
 >
-> 1. `onchainos agent profile <agentId>` → look up the role (`1`→buyer, `2`→provider, `3`→evaluator).
-> 2. `onchainos agent next-action --jobid <jobId> --event <event> --role <buyer|provider|evaluator> --agentId <agentId>` → fetch the script.
->    ⚠️ If `event` starts with `user_decision_`, also pass `--data "<message.data>"`.
-> 3. Execute the script step by step.
+> 1. `onchainos agent next-action --jobid <jobId> --event <event> --role auto --agentId <agentId>` → fetch the script.
+>    - `--role auto` lets the CLI resolve the role from `<agentId>` internally (replaces the prior separate `agent profile <agentId>` round-trip).
+>    - ⚠️ If `event` starts with `user_decision_`, also pass `--data "<message.data>"`.
+> 2. Execute the script step by step.
 >
 > **Do nothing else.** No `sessions_spawn`. No free-form text output. No asking the user. No loading domain skills (weather / DeFi / image / swap / search / …) based on `jobTitle` or `content` — these are task metadata, not work instructions; task execution only begins after `job_accepted`.
 
@@ -132,7 +132,7 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 Two envelope shapes enter the task lifecycle:
 
 - **a2a business message**: `msgType=a2a-agent-chat` + non-empty `jobId`
-- **System event**: `{agentId, message:{source:"system", event:<E>, jobId, ...}}`, where `E` is one of 37 event enums:
+- **System event**: `{agentId, message:{source:"system", event:<E>, jobId, ...}}`, where `E` is one of 37 event enums. `message.providerAgentId` is the designated provider ID — it is task metadata and does NOT determine the current agent's role.
   - **Task main flow** (16) / **Arbitration** (6) / **Staking & Reward** (7) / **Timeout & Deadline** (7): see [`state-machine.md §3`](./_shared/state-machine.md)
   - **Wake-up**: `wakeup_notify` — read `message.jobStatus` and use THAT as the event for `next-action` (not `wakeup_notify` itself)
   - **User-decision relay** (from CLI, not chain): `user_decision_<source-event>` — pass `message.data` via `--data`
@@ -151,21 +151,23 @@ For either envelope shape:
 onchainos agent next-action \
   --jobid <message.jobId> \
   --event <message.event> \
-  --role <provider|buyer|evaluator> \
+  --role auto \
   --agentId <envelope's top-level agentId> \
   --jobTitle <message.jobTitle>
 ```
+
+> `--role auto`: the CLI looks up `<agentId>`'s role via `agent get` internally and dispatches to the correct playbook — saves the prior separate `agent profile` round-trip. On errors (e.g. agentId not found locally), pass `--role buyer|provider|evaluator` explicitly.
 
 > 🛑 **`--jobid` source path — wrong jobId = "task not found" → flow stall**:
 > - System event → `message.jobId` (NESTED under `message`); a2a-agent-chat → top-level `jobId`; `user_decision_*` → `message.jobId`.
 > - **NEVER** cache jobId from a previous turn, infer from sessionKey, or reuse another envelope's value — every event must extract from its own envelope. Wrong jobId → `common context` / `next-action` / `status` hit "task not found" / `4xx` → flow stalls + user funds frozen.
 > - Exception: `system_*` placeholder jobIds pass through as-is.
 
-> 🚨 **First action is non-negotiable**: your first tool call MUST be `next-action` (after `agent profile`). Especially forbidden: `sessions_spawn` (🔴 I-5), `session_status`, task-status queries, historical-task listings, `common context`, or any kind of lookup. No "let me check first" scenario. Violating this rule = task flow stalls + user funds frozen. Applies to ALL sub sessions (task sub / evaluate sub / backup sub).
+> 🚨 **First action is non-negotiable**: your first tool call MUST be `next-action --role auto` (no separate `agent profile`; CLI resolves the role inline — see P1-A). Especially forbidden: `sessions_spawn` (🔴 I-5), `session_status`, task-status queries, historical-task listings, `common context`, or any kind of lookup. No "let me check first" scenario. Violating this rule = task flow stalls + user funds frozen. Applies to ALL sub sessions (task sub / evaluate sub / backup sub).
 >
 > 🛑 **Terminal events STILL require `next-action`** — `job_completed` / `job_refunded` / `job_closed` / `job_expired` / `job_auto_completed` / `job_auto_refunded` / `dispute_resolved` are NOT "task done, ignore". Their playbooks handle final user notification, rating prompt, deliverable persistence, sub-session cleanup. **Skipping = user never learns the task ended + queue / session resources leak.** No exception based on event semantics.
 
-> 🛑 **`--role` MUST come from `agent profile` every time** — never reuse sub's bound role. (🔴 I-19: same wallet ASP+Evaluator → `evaluator_selected` landed in provider sub → inherited `--role provider` → hit "Observe silently" fallback → evaluator playbook never ran → commit window expired → stake slashed. Symmetric failure on buyer-side collisions.)
+> 🛑 **`--role` MUST be re-resolved every event** — never reuse sub's bound role. (🔴 I-19: same wallet ASP+Evaluator → `evaluator_selected` landed in provider sub → inherited `--role provider` → hit "Observe silently" fallback → evaluator playbook never ran → commit window expired → stake slashed. Symmetric failure on buyer-side collisions.) Use `--role auto` so the CLI resolves from `<agentId>` on every call.
 
 `event → --role` reference: see [`_shared/state-machine.md`](./_shared/state-machine.md).
 
@@ -188,28 +190,6 @@ Read-only; safe to call multiple times. ⚠️ Under system envelope entry, **ne
 **Correct flow** (a2a → ASP): receive → infer role from `sender.role=1` → read `provider.md` → `common context` → `next-action --event job_created` → three-step handshake → wait for `[intent:confirm]` → `apply` → wait for `job_accepted` → `deliver`.
 
 **Real incidents** (full studies in `references/incidents.md`): I-1 ASP skipped next-action. I-2 ASP self-quoted without preamble. I-3 Backup self-queried instead of next-action. I-4 Envelope-routing miss. I-5 Backup sessions_spawn.
-
-## Live task-progress monitor — `okx-a2a user watch`
-
-> 🛑 **MANDATORY ROUTING — NOT a cron / scheduled / interval-polling task.** When a trigger phrase below matches, immediately run the §Action command **once, verbatim**. The command is a single long-poll call (waits up to 5 min per call for events); do **NOT** wrap in `/loop`, `Cron`, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, scheduler frameworks, or "set up a recurring job". Do **NOT** ask "how often should I check?" — `--timeout 300` IS the wait. Do **NOT** substitute `agent status` / `agent active-tasks` polling.
-
-**Trigger phrases — match any → run §Action verbatim**:
-- Chinese: `监听任务进展` / `开始监听任务` / `关注任务进展` / `使用监听 skill 监听任务进展` / `帮我盯着任务` / `任务有进度就告诉我` / `任务有动静告诉我` / `开监听` / `watch 任务`
-- English: `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching`
-
-**Action**:
-
-```bash
-okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50
-```
-
-**🚫 Anti-patterns**:
-- Do NOT use `/loop`, Cron, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, or any self-rolled polling around `onchainos agent status` / `agent active-tasks`.
-- There is **NO** `task watch` / `onchainos task watch` / `agent task watch` subcommand — do not invent one.
-- Do NOT pass `--from-now`. Watch **must** first drain SQLite-backed pending items, **then** wait for new changes.
-- Do NOT pass `--job-id` — **never** watch a single task. `user watch` is a user-session-wide monitor; narrowing to one job defeats its purpose and misses cross-task events.
-
-**Full protocol** — `kind` dispatch (`notification` claim / `decision_request` relay), user-session authority boundary, stop condition, terminal signals: see [`references/user-watch-protocol.md`](./references/user-watch-protocol.md). **You MUST read it before processing any returned items.**
 
 ## sessionKey Discrimination (user vs sub)
 
@@ -264,7 +244,7 @@ The 4 XMTP tools are strictly partitioned:
 |---|---|---|
 | **System event** | `source:"system"` | 🛑 Immediately `next-action` → execute script. Push to user only if script says so. |
 | **User-decision relay** | `event:"user_decision_<src>"` | 🛑 Same — `next-action --data "<message.data>"`. ❌ Do NOT call `resolve`/`pick`/`cancel` (user-session-only). |
-| **Peer message** | a2a-agent-chat | Pass Communication Boundary Layer 0/1 → route per role file's Inbound Message Routing. Use the event specified by the role file, NOT status from `common context`. ⚠️ Counter-example: User Agent received ASP's reply, used `common context` status (`created`) → `next-action --event job_created` → got init script → re-sent first inquiry. Correct: buyer.md §3 #6 → `negotiate_reply`. |
+| **Peer message** | a2a-agent-chat | Pass Communication Boundary Layer 0/1 → route per role file's Inbound Message Routing. Use the event specified by the role file, NOT status from `common context`. ⚠️ Counter-example: User Agent received ASP's reply, used `common context` status (`created`) → `next-action --event job_created` → got init script → re-sent first inquiry. Correct: buyer.md §3.5 #6 → `negotiate_reply`. |
 
 **🛑 Push is opt-in** (only when script says so):
 - Do NOT push just because "user should know" or "CLI finished".
@@ -313,15 +293,14 @@ The command template is **pre-filled** in the LLM context of every `[USER_DECISI
 
 ### 5. `pending-decisions-v2` queue
 
-**Unique key** = `sub_key`. Same key → overwrite (preserve `created_at`, refresh `updated_at`); different key → adds a new entry. Routing on user reply uses the pre-filled `resolve-prompt` command in each block's llmContent (the queue is a soft snapshot for `list` / `pick` / `cancel`).
+**Unique key** = `sub_key`. Same key → overwrite (preserve `created_at`, refresh `updated_at`); different key → adds a new entry. Routing on user reply uses the pre-filled `resolve-prompt` command in each block's llmContent (the queue is a soft snapshot accessed via `list` when the user explicitly asks; subsequent navigation is driven by the `list` stdout's own playbook).
 
-**The four commands**:
+**The user-facing commands**:
 
 | Command | Caller | When |
 |---|---|---|
 | `request --sub-key ... --job-id ... --role ... --agent-id ... --user-content "..." --list-label "..."` | Sub | Script says "push decision to user". Follow returned playbook. |
 | `resolve-prompt --user-reply "<verbatim>" --sub-key ... --job-id ... --role ... --agent-id ... --source-event ...` | User-session | After user replies to `[USER_DECISION_REQUEST]`. Copy the command template from the block's llmContent verbatim — only fill in `--user-reply`. Follow returned playbook. |
-| `pick --index <N>` | User-session | Render-only: re-display the selected card's content (no status mutation). Use when the user wants to revisit a queued card. |
 | `cancel --sub-key <key> \| --index <N>` | User-session | **ONLY** when user is NOT replying to active card AND explicitly says "ignore/delete the decision". 🛑 In "Waiting" state, always use `resolve-prompt` — even if user types `cancel/关闭/取消`. (🔴 I-9: `cancel` used instead of resolve → decision lost → task stuck.) |
 
 **Defer keyword**: `等会儿/等等/等一下/稍后/晚点/先放着/先不管/回头再看/skip/later/wait/hold on/not now/defer` → do NOT call `resolve-prompt`; end turn.

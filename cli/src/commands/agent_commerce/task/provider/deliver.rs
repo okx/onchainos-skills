@@ -85,7 +85,7 @@ pub async fn handle_deliver(
         );
     }
 
-    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     // Backend spec: submit endpoint accepts an `evidenceHash` field; for now pass an empty string placeholder (offchain
     // evidence is uploaded multipart via /evidence/upload — no hash is provided at submit stage).
     let body = serde_json::json!({

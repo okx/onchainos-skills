@@ -70,6 +70,8 @@ pub enum AgentCommand {
         #[arg(long)] title: Option<String>,
         /// Specified provider agentId (skip recommend, negotiate directly with this provider or x402 accept)
         #[arg(long)] provider: Option<String>,
+        /// Designated service endpoint (persisted for multi-service providers)
+        #[arg(long)] endpoint: Option<String>,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")] attachments: Option<Vec<String>>,
     },
@@ -82,6 +84,25 @@ pub enum AgentCommand {
         #[arg(long)] current: bool,
         #[arg(long)] page: Option<usize>,
         #[arg(long = "next-page")] next_page: bool,
+        /// Enqueue the recommendation card as a `pending-decisions-v2`
+        /// `recommend_pick` decision and emit the standard "push card via
+        /// xmtp_prompt_user" playbook. Requires `--sub-key`. By default the
+        /// CLI reuses the canonical English card written to
+        /// `~/.onchainos/task/<jobId>/recommend-cards.txt`; pass
+        /// `--user-content "<localized text>"` to enqueue a sub-prepared
+        /// (e.g. translated) version instead.
+        #[arg(long = "emit-decision")] emit_decision: bool,
+        /// Full XMTP sessionKey (from `session_status`). Required with
+        /// `--emit-decision`.
+        #[arg(long = "sub-key")] sub_key: Option<String>,
+        /// Task title for the decision label (optional). Defaults to
+        /// `<title>` placeholder.
+        #[arg(long = "job-title")] job_title: Option<String>,
+        /// Pre-localized card body to enqueue instead of the auto-written
+        /// canonical English card file. Use when the sub session needs to
+        /// translate fields the user-session runtime cannot localize at
+        /// render time.
+        #[arg(long = "user-content")] user_content: Option<String>,
     },
 
     /// Mark a provider as failed negotiation (excluded from future recommend lists)
@@ -168,6 +189,8 @@ pub enum AgentCommand {
         #[arg(long = "token-amount")] token_amount: String,
         /// Payer address (optional)
         #[arg(long)] from: Option<String>,
+        /// JSON business body to POST during replay (for endpoints that require business parameters)
+        #[arg(long)] body: Option<String>,
     },
 
     /// Validate an x402 endpoint and extract pricing info
@@ -177,6 +200,32 @@ pub enum AgentCommand {
         #[arg(long)] endpoint: String,
         /// Buyer agent ID (used for auth on token detail queries)
         #[arg(long = "agent-id")] agent_id: Option<String>,
+        /// JSON business body to POST (for endpoints that require business parameters to return 402)
+        #[arg(long)] body: Option<String>,
+    },
+
+    /// Designated-provider routing: service-list + profile in one call
+    #[command(name = "designated-route")]
+    DesignatedRoute {
+        /// Target provider agentId
+        #[arg(long)] provider: String,
+        /// Target service endpoint (for multi-service providers)
+        #[arg(long)] endpoint: Option<String>,
+    },
+
+    /// Validate x402 endpoint + price match + budget check in one call
+    #[command(name = "x402-validate")]
+    X402Validate {
+        /// x402 provider endpoint URL
+        #[arg(long)] endpoint: String,
+        /// Buyer agent ID
+        #[arg(long = "agent-id")] agent_id: String,
+        /// Job ID (for budget lookup)
+        #[arg(long = "job-id")] job_id: String,
+        /// Registered fee amount from designated-route
+        #[arg(long = "fee-amount")] fee_amount: String,
+        /// Registered fee token symbol from designated-route
+        #[arg(long = "fee-token")] fee_token: String,
     },
 
     /// Client confirms task complete and releases payment
@@ -569,6 +618,9 @@ pub enum AgentCommand {
         #[arg(long = "event")] event: String,
         /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab)
         #[arg(long = "agentId", alias = "agent-id")] agent_id: String,
+        /// Role: `buyer` / `provider` / `evaluator`, or `auto` to let the CLI
+        /// resolve the role from `--agentId` (saves a separate `agent profile`
+        /// round-trip).
         #[arg(long)] role: String,
         /// envelope message.code (tx receipt); non-zero = tx failed
         #[arg(long, default_value_t = 0)]
@@ -715,6 +767,18 @@ pub enum AgentCommand {
         page_size: u32,
     },
 
+    /// Terminal-state session cleanup: cancel pending decisions + output
+    /// xmtp_delete_conversation instructions. Replaces the multi-step
+    /// manual cleanup in terminal playbooks.
+    #[command(name = "session-cleanup")]
+    SessionCleanup {
+        #[arg(long = "job-id")]
+        job_id: String,
+        /// buyer | provider
+        #[arg(long)]
+        role: String,
+    },
+
     /// Query a single Agent's (or up to 20 Agents') in-progress tasks & disputes
     /// (POST /priapi/v1/aieco/task/inProgress). The backend validates the
     /// caller→agent binding via JWT and classifies results by role
@@ -766,16 +830,16 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, provider, attachments,
+            deadline_open, deadline_submit, title, provider, endpoint, attachments,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider, attachments,
+                deadline_open, deadline_submit, title, provider, endpoint, attachments,
             }, ctx,
         ).await,
 
-        AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page } =>
-            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page }, ctx).await,
+        AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } =>
+            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content }, ctx).await,
 
         AgentCommand::MarkFailed { job_id, provider_agent_id } =>
             task::buyer::run_task(T::MarkFailed { job_id, provider_agent_id }, ctx).await,
@@ -805,11 +869,17 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             task::buyer::run_task(T::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
 
-        AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
-            task::buyer::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from }, ctx).await,
+        AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body } =>
+            task::buyer::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body }, ctx).await,
 
-        AgentCommand::X402Check { endpoint, agent_id } =>
-            task::buyer::run_task(T::X402Check { endpoint, agent_id }, ctx).await,
+        AgentCommand::X402Check { endpoint, agent_id, body } =>
+            task::buyer::run_task(T::X402Check { endpoint, agent_id, body }, ctx).await,
+
+        AgentCommand::DesignatedRoute { provider, endpoint } =>
+            task::common::handle_designated_route(&provider, endpoint.as_deref()).await,
+
+        AgentCommand::X402Validate { endpoint, agent_id, job_id, fee_amount, fee_token } =>
+            task::common::handle_x402_validate(&endpoint, &agent_id, &job_id, &fee_amount, &fee_token).await,
 
         AgentCommand::Complete { job_id } =>
             task::buyer::run_task(T::Complete { job_id }, ctx).await,
@@ -930,6 +1000,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::PendingDecisionsV2(c) =>
             task::common::pending_v2::run(c).await,
 
+        AgentCommand::SessionCleanup { job_id, role } =>
+            task::common::session_cleanup::handle_session_cleanup(&job_id, &role),
+
         // ── Evaluator Agent flat dispatch ───────────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
@@ -984,6 +1057,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::run(c, ctx).await,
 
         AgentCommand::NextAction { job_id, event, agent_id, role, code, job_title, provider, peer_task_min_version, data } => {
+            if let Err(msg) = task::common::util::validate_job_id(&job_id) {
+                anyhow::bail!(msg);
+            }
             eprintln!(
                 "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
                 title = job_title.as_deref().unwrap_or("(none)"),
@@ -1042,13 +1118,35 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
 
+            // Resolve `--role auto` by direct-lookup against the agent registry, so
+            // the caller doesn't have to run `agent profile <id>` as a separate LLM
+            // turn. Uses `query_agent_by_id_direct` (backend-direct lookup, no
+            // pagination) — the same helper that powers `handle_profile`.
+            let resolved_role: String = if role == "auto" {
+                match task::common::query_agent_by_id_direct(&agent_id).await {
+                    Ok(agent) => match agent["role"].as_i64() {
+                        Some(1) => "buyer".to_string(),
+                        Some(2) => "provider".to_string(),
+                        Some(3) => "evaluator".to_string(),
+                        other => anyhow::bail!(
+                            "agentId={agent_id} has unsupported role={:?}; pass --role explicitly",
+                            other
+                        ),
+                    },
+                    Err(e) => anyhow::bail!(
+                        "could not resolve role for agentId={agent_id}: {e}; pass --role explicitly"
+                    ),
+                }
+            } else {
+                role.clone()
+            };
+            eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
+
             // ── job_created API fallback: when --provider is absent and no local file exists,
             // query the task detail API for providerAgentId and persist it.
-            // This covers the case where draft-publish wrote the file under a different jobId path.
-            // Safe at job_created time because no provider switch has occurred yet;
-            // subsequent switches overwrite the file via set-provider.
+            // Must run AFTER role resolution so --role auto is correctly resolved.
             if provider.is_none()
-                && matches!(role.as_str(), "buyer" | "client")
+                && matches!(resolved_role.as_str(), "buyer" | "client")
                 && event == "job_created"
                 && !task::buyer::negotiate::has_designated_provider(&job_id)
             {
@@ -1064,7 +1162,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
 
             // ── review gate: auto-mark buyer's review gate ──────────────────────
-            if matches!(role.as_str(), "buyer" | "client") {
+            // Must run AFTER role resolution so --role auto is correctly resolved.
+            if matches!(resolved_role.as_str(), "buyer" | "client") {
                 if event == "job_submitted" {
                     if let Err(e) = task::common::review_gate::mark_pending(&job_id) {
                         eprintln!("[next-action] review_gate mark_pending failed: {e}");
@@ -1076,15 +1175,41 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
             }
 
+            // Duplicate-event short-circuit: several chain events (job_created in
+            // particular) can fire into both the task sub and the backup sub for the
+            // same (jobId, role) pair. If a pending decision already exists for this
+            // pair, the user has already been notified — emit a no-op playbook so the
+            // current turn ends without re-notifying.
+            //
+            // Only dedup events that push a decision/notification to the user;
+            // negotiation / handshake / lifecycle-only events have no user-visible
+            // side effect and must always run their playbook.
+            let dedup_eligible = matches!(
+                event.as_str(),
+                "job_created" | "job_submitted" | "review_deadline_warn" | "job_disputed" | "job_rejected"
+            );
+            if dedup_eligible
+                && task::common::pending_v2::has_pending_for_job(&job_id, &resolved_role)
+            {
+                eprintln!(
+                    "[next-action] duplicate event short-circuit: jobId={job_id} role={resolved_role} event={event} (pending entry already exists)"
+                );
+                println!(
+                    "[Duplicate event] An entry for jobId={job_id} role={resolved_role} is already in the pending-decisions queue. The user has been notified already. **End the turn without re-notifying.** No tool calls required."
+                );
+                return Ok(());
+            }
+
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
-            let (freshness_warning, payment_mode) = check_status_freshness(&job_id, &event, &agent_id).await;
+            let (freshness_warning, prefetched) = check_status_freshness(&job_id, &event, &agent_id).await;
             if let Some(w) = freshness_warning {
                 println!("{w}");
                 return Ok(());
             }
+            let payment_mode = prefetched.as_ref().and_then(|p| p.payment_mode);
             let title_ref = job_title.as_deref();
-            let prompt = match role.as_str() {
+            let prompt = match resolved_role.as_str() {
                 "provider" | "seller" => {
                     crate::audit::log(
                         "cli",
@@ -1115,7 +1240,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode)
+                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode, prefetched.as_ref())
                 }
                 "evaluator" => {
                     crate::audit::log(
@@ -1230,57 +1355,80 @@ fn tx_failure_label(event: &str) -> &'static str {
 ///
 /// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
 /// returns None on network/parse failure (does not block script output, graceful fallback).
-async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_id: &str) -> (Option<String>, Option<i64>) {
+async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_id: &str) -> (Option<String>, Option<task::common::PreFetchedTaskContext>) {
     use task::common::network::task_api_client::TaskApiClient;
     use task::common::state_machine::{parse_status_or_event, status_when_event, Event, Status};
+    use task::common::PreFetchedTaskContext;
 
-    // user-instruction pseudo events are not chain events and do not directly correspond to a status —
-    // they are triggered under some status and only change the status on-chain afterward. Validating
-    // their "corresponding status" would produce false positives, so skip directly here.
-    // wakeup_notify is a network/restart recovery event; the real status is in envelope.message.jobStatus;
-    // the agent should re-invoke next-action with message.jobStatus, so skip validation here and let
-    // the WakeupNotify arm output the guidance script.
-    const PSEUDO_EVENTS: &[&str] = &[
-        "create_task", "switch_provider", "attachment_added", "deliverable_received",
-        "dispute_raise", "agree_refund", "approve_review", "reject_review",
-        "close", "set_public",
+    // Events that skip freshness validation but still benefit from pre-fetching task data
+    // (they have a valid jobId and their handlers currently run `common context` as Step 0/1).
+    const PREFETCH_ONLY_EVENTS: &[&str] = &[
+        "deliverable_received",
+    ];
+
+    // Events that skip both freshness validation AND pre-fetching (no jobId yet, or irrelevant).
+    const SKIP_ALL_EVENTS: &[&str] = &[
+        "create_task", "switch_provider",
+        "approve_review", "reject_review", "attachment_added", "close", "set_public",
+        "dispute_raise", "agree_refund",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
         "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",
         "reward_claimed",
         "wakeup_notify",
     ];
-    if PSEUDO_EVENTS.contains(&job_status_or_event) {
+
+    let is_prefetch_only = PREFETCH_ONLY_EVENTS.contains(&job_status_or_event);
+
+    if SKIP_ALL_EVENTS.contains(&job_status_or_event) {
         return (None, None);
     }
 
+    // For non-skip events, parse and check if the event is recognized.
     let event = parse_status_or_event(job_status_or_event);
     let expected = status_when_event(&event);
-
-    // If event parses to Status::Other("unknown") (i.e. an unrecognized Event::Other),
-    // also skip validation (to avoid false positives on unrecognized events)
-    if matches!(expected, Status::Other(ref s) if s == "unknown") {
+    if !is_prefetch_only && matches!(expected, Status::Other(ref s) if s == "unknown") {
         eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
         return (None, None);
     }
 
+    // Fetch task data — shared by both freshness-check and pre-fetch paths.
     let mut c = TaskApiClient::new();
-    // Must include the agenticId header — without it the beta backend returns code=3001 auth fail.
-    // The next-action command itself requires --agentId, so use it directly here without an empty fallback.
     let resp = match c.get_with_identity(&c.task_path(job_id), agent_id).await {
         Ok(r) => r,
         Err(_) => return (None, None),
     };
-    let payment_mode = resp.get("paymentMode").and_then(|v| v.as_i64());
-    // Backend spec: response is flat, status is an int
+    let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
+
+    // For job_submitted: check local deliverable manifest to avoid an extra CLI round-trip.
+    if job_status_or_event == "job_submitted" {
+        if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("buyer", job_id) {
+            if let Some(entry) = manifest.entries.first() {
+                let dir = task::common::deliverables::deliverables_dir("buyer", job_id)
+                    .map(|d| d.join(&entry.filename).display().to_string())
+                    .unwrap_or_default();
+                ctx.deliverable = Some(task::common::PreFetchedDeliverable {
+                    path: dir,
+                    deliverable_type: entry.deliverable_type.clone(),
+                    original_name: entry.original_name.clone(),
+                });
+            }
+        }
+    }
+
+    let prefetched = Some(ctx);
+
+    // Pre-fetch-only events: return data without freshness validation.
+    if is_prefetch_only {
+        return (None, prefetched);
+    }
+
+    // Freshness validation for chain events.
     let actual = match resp.get("status").and_then(|v| v.as_i64()).and_then(|v| i32::try_from(v).ok()) {
         Some(s) => Status::from_int(s),
-        None => return (None, payment_mode),
+        None => return (None, prefetched),
     };
     let actual_str = actual.as_str().to_string();
 
-    // DisputeResolved special case: when the arbitration verdict lands on-chain, the actual status
-    // may be Completed (provider wins) or Failed (buyer wins); the exact direction can't be inferred
-    // from the event alone — as long as `actual` is one of these two, treat it as valid.
     let dispute_resolved_ok = matches!(event, Event::DisputeResolved)
         && matches!(actual, Status::Completed | Status::Failed);
 
@@ -1291,7 +1439,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     );
 
     if actual == expected || dispute_resolved_ok {
-        return (None, payment_mode);
+        return (None, prefetched);
     }
     (Some(format!(
         "🛑 **状态脱节，剧本已 block**（next-action 入参与任务真实状态不一致，不输出步骤防止你按 stale event 上链）\n\n\
@@ -1302,5 +1450,5 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
          2. 如果当前 inbound 是 **system event** → 重调 next-action 并传 `--event {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
          **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 xmtp_dispatch_user 推用户。\n",
         expected_str = expected.as_str(),
-    )), payment_mode)
+    )), prefetched)
 }

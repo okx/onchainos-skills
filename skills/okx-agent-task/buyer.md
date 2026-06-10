@@ -20,7 +20,7 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 > 🔴 I-backup-spawn: backup received `job_created` → `sessions_spawn` → designated-provider context severed → stuck.
 > 🔴 I-MiniMax: backup → `sessions_spawn` → child printed text "negotiation started" → user saw nothing → `recommend` never triggered → permanently stuck. **`sessions_spawn` is the #1 fatal mistake on backup.**
 
-> 🛑🛑🛑 **System events MUST call `next-action`; directly executing CLI is forbidden** — after receiving any `source: "system"` event (`job_payment_mode_changed` / `job_accepted` / `job_submitted` / `job_created` / `job_disputed` / ...), the first action MUST be `next-action`. Directly calling business CLIs (`confirm-accept` / `complete` / `reject` / `set-payment-mode` / ...) without `next-action` is forbidden — the script contains pre-condition checks, action whitelists, and ordering constraints; skipping = executing the wrong command = stuck flow or funds at risk. See SKILL.md `## Activation`. 🛑 `--role buyer` MUST be confirmed via `agent profile <envelope's agentId>` every time; do NOT inherit from sub history or sessionKey — in same-wallet multi-role setups, an envelope may carry an agentId that belongs to a different role (e.g. evaluator). If `agent profile` returns `role=evaluator` / `provider`, do NOT call `next-action --role buyer`. (🔴 I-19)
+> 🛑🛑🛑 **System events MUST call `next-action`; directly executing CLI is forbidden** — after receiving any `source: "system"` event (`job_payment_mode_changed` / `job_accepted` / `job_submitted` / `job_created` / `job_disputed` / ...), the first action MUST be `next-action`. Directly calling business CLIs (`confirm-accept` / `complete` / `reject` / `set-payment-mode` / ...) without `next-action` is forbidden — the script contains pre-condition checks, action whitelists, and ordering constraints; skipping = executing the wrong command = stuck flow or funds at risk. See SKILL.md `## Activation`. 🛑 Role MUST be re-resolved per envelope; do NOT inherit from sub history or sessionKey — in same-wallet multi-role setups, an envelope may carry an agentId that belongs to a different role (e.g. evaluator). Use `--role auto` so the CLI resolves the envelope's `<agentId>` internally; if the CLI's resolved role is not `buyer`, it will dispatch to the correct playbook automatically, so you never accidentally run the buyer flow on an evaluator agent. (🔴 I-19)
 
 > The task state machine lives in the CLI (`onchainos agent next-action`) — call it and execute its output.
 
@@ -32,12 +32,12 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 |---|---|
 | §1 Trigger identification | Every inbound a2a-agent-chat |
 | §2 P2P reply | Before any `xmtp_send` to provider |
-| §3 Inbound Message Routing | Route each inbound by shape (#0-#6) |
 | §3.1 Publishing a task | User wants to create a task → buyer-actions.md |
-| §3.2 Negotiation phase | Sub receives provider messages |
-| §3.3–3.4 Designated-Provider flows | A2A / x402 entry paths |
-| §3.5 Accepted-execution discussion | After `job_accepted`, peer chat |
-| §3.5.1–3.7 Attachment / Terms / Deliverables | Mid-task modifications → buyer-actions.md |
+| §3.2–3.3 Designated-Provider flows | A2A / x402 entry paths |
+| §3.4 Negotiation phase | Sub receives provider messages |
+| §3.5 Inbound Peer Message Routing | Route each inbound by shape (#0-#6) |
+| §3.6 Accepted-execution discussion | After `job_accepted`, peer chat |
+| §3.6.1–3.8 Attachment / Terms / Deliverables | Mid-task modifications → buyer-actions.md |
 | §4 System event / user-decision relay | On `source:"system"` envelope |
 | §5 `user_decision_<source_event>` | User replied to a pending decision |
 | §6 Exception-escalation rules | On CLI / tool failure |
@@ -52,7 +52,7 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 > - `sender.role = 1` (counterparty is Buyer) → **you are the Provider** → **stop and read `provider.md`**.
 
 > **⚡ x402 routing split**:
-> - User message contains "Please **use onchainos to** send a request to this endpoint" → **belongs to this skill** (§3.4 below); continue.
+> - User message contains "Please **use onchainos to** send a request to this endpoint" → **belongs to this skill** (§3.3 below); continue.
 > - User message contains "Please send a request to this endpoint." **but not** "use onchainos" → **NOT this skill**; route to `okx-x402-payment`. **Stop immediately.**
 
 Receiving an inbound a2a-agent-chat envelope with `sender.role === 2` ⇒ you are the buyer; activate this skill.
@@ -73,67 +73,7 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 
 ---
 
-## 3. Inbound Message Routing
-
-> 🔴 **Negotiation-phase autonomy redline**: when status=0 (created) and an active sub session exists, negotiation is **autonomously completed by the sub session**. Upon receiving the provider's quote/counter-offer/discussion, match against the routing priorities below; fallback → `next-action --event negotiate_reply` → autonomously evaluate and reply per the script's decision matrix. **Forbidden** to forward the provider's quote to the user via any tool (`xmtp_dispatch_user` / `xmtp_prompt_user` / `pending-decisions-v2 request`) or to directly print text in a sub session (invisible to user). Only these cases involve the user: (a) quote exceeds max_budget and after auto-REJECT the user picks the next provider; (b) recommendation list is empty. It is **forbidden** to manually execute the D-Step / B-Step flow (service-list → create group → send inquiry); those are only driven by the `next-action` script when `job_created` first fires.
->
-> ⚠️ **These routing priorities override the generic "receiving peer message" rule in SKILL.md.** Do NOT use status from `common context` to call `next-action` — use the `event` matched below.
->
-> 🔴 Real incidents (condensed): I-1: provider sent "0.1 USDG" quote → agent skipped `next-action` → directly `xmtp_dispatch_user` forwarding to user asking "do you confirm?" → completely bypassed three-step handshake → provider never received `[intent:propose]`. I-1b: used `xmtp_dispatch_user` to forward quote — equally forbidden as `xmtp_prompt_user`. I-2: used `common context` status=created → `next-action --event job_created` → re-sent first inquiry (correct: `negotiate_reply`). I-3: provider said "I accept, 0.1 USDG, escrow" → agent treated as `[intent:ack]` → skipped [intent:propose] → stuck. **Most frequent severe mistake** — provider's first reply is always natural language, never structured `[intent:ack]`. I-4: agent printed text directly in sub session → invisible to user → stuck. **Correct approach**: route #6 → `next-action --event negotiate_reply` → read budget/max_budget → quote ≤ budget → directly `xmtp_send` `[intent:propose]` (fully automatic; do not ask user).
->
-> 🛑 **Structured marker vs natural language — iron rule**:
-> - **Decision method**: perform a **substring containment match** via `content.includes("[intent:")` — only if it matches do you route to #3, otherwise **unconditionally route to #6**. **Semantic inference is forbidden** — do NOT infer `[intent:ack]` just because the provider said "accept / agree / OK / sure / no problem".
-> - **Structured marker**: content **must contain** the literal `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` (substring match).
-> - **Natural language**: anything **not containing** `[intent:` — including "I accept / agreed / OK / sure / quote 0.1 USDG" → **all route via #6 fallback → `negotiate_reply`**.
-> - **Logical proof**: if you have not yet sent `[intent:propose]`, the provider **cannot** reply `[intent:ack]` — ACK responds to PROPOSE. First message = 100% not ACK.
-
-> 📌 **`--peerTaskMinVersion`**: pass through `payload.taskMinVersion` from the inbound envelope; if absent → omit the parameter entirely (backward compatible).
->
-> 0. **Skill prefetch** (source: self via `xmtp_dispatch_session`): content starts with `[SKILL_PREFETCH]` → load `SKILL.md` + `buyer.md`. The prefetch itself requires no action — **but any other inbound message in the same or later turn MUST be processed via #1–#6 as normal**. 🔴 I-prefetch-1: prefetch + ASP quote in same turn → agent applied "no action" to both → stuck. 🔴 I-prefetch-2: prefetch in turn 1, ASP quote in turn 2 → agent carried "prefetch mode" across turns, still refused to execute → stuck.
-> 1. **Provider apply notification** (source: peer): content contains `[intent:applied]`, or semantically expresses "apply submitted / please run confirm-accept" → **immediately** `onchainos agent next-action --jobid <jobId> --event provider_applied --role buyer --agentId <your agentId>` → execute `confirm-accept` per script. (⚠️ `confirm-accept` param is `--provider-agent-id`, NOT `--agent-id`. Buyer does NOT receive a `provider_applied` system event; this is triggered by a2a-agent-chat. **Do NOT** query task API to validate.)
-> 2. **Delivery notification** (source: peer): content contains `[intent:deliver]` → **immediately** `onchainos agent next-action --jobid <jobId> --event deliverable_received --role buyer --agentId <your agentId>` → follow playbook (download → save → brief user notification). Full deliverable shown at `job_submitted` acceptance card.
-> 3. **Negotiation structured marker** (source: peer) (🛑 literal `content.includes("[intent:")` only; semantic inference forbidden) → call `agent status <jobId>`:
->    - status≥1 → `xmtp_send` "Negotiation is complete; parameters are locked." and end turn.
->    - status=0 → dispatch by marker:
->      - `[intent:ack]` → `next-action --event negotiate_ack`
->      - `[intent:counter]` → `next-action --event negotiate_counter`
->      - `[intent:reject]` → do not reply; `mark-failed <jobId> --provider <agentId>` → `recommend <jobId> --current` → user picks next
->      - `[intent:propose]` → anomaly; `xmtp_send` "PROPOSE is initiated by the user; reply ACK/COUNTER/REJECT"
-> 4. **`[MAX_BUDGET_UPDATE]`** (source: user session): extract `paymentMostTokenAmount=<value>`, update max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, or notify the provider** — end turn immediately.
-> 5. **Attachment added** (source: user session): content starts with `[ATTACHMENT_ADDED]` → `next-action --event attachment_added` → follow playbook. 🔴 I-attach: model skipped next-action, sent raw file path, then called wrong event `job_submitted` → stuck. ❌ Always go through `next-action --event attachment_added`.
-> 6. **Fallback** (1–5 did not match, source: peer) → `agent status <jobId>`:
->    - status=1 (accepted) → enter discussion mode (§3.5).
->    - status=0 + active sub → `next-action --event negotiate_reply`
->    - status=0 + no sub → `xmtp_dispatch_user` forwards to user.
->    - Otherwise → ignore.
->
-> 🛑 **Buyer cannot initiate arbitration**: inform user the correct path is to **reject the deliverable** — after rejection, ASP has 24h to dispute; if not, system auto-refunds. Do NOT call `dispute_raise` on buyer side.
->
-> 🛑 **Status verification iron rule**: before outputting "still negotiating" / "waiting for acceptance", **must first** `agent status <jobId>`. If status=1 or paymentMode=1, forbidden to output waiting-for-acceptance phrasing. 🔴 Backup wrongly reasoned "not accepted yet" when status was already 1.
-
----
-
-### User-session intent routing table
-
-> When the **user** (not a peer / not a system event) sends a message in the user session, match against this table:
->
-> | User intent | Examples | Route to |
-> |---|---|---|
-> | Create / publish a task | "create a task", "帮我发个任务" | [`buyer-actions.md`](./buyer-actions.md) §1 |
-> | Draft operations | "save as draft", "草稿列表", "publish draft" | [`buyer-actions.md`](./buyer-actions.md) §1.4 |
-> | Add attachment / image | "补充附件", "attach file to task" | [`buyer-actions.md`](./buyer-actions.md) §2 |
-> | Modify task terms | "change budget", "换服务商" | [`buyer-actions.md`](./buyer-actions.md) §3 |
-> | View deliverables | "查看交付物", "view deliverables" | [`buyer-actions.md`](./buyer-actions.md) §4 |
-> | Negotiate with a provider | "negotiate with XXX", "start negotiation", "找810接单" | §3.2 below |
-
-### User session — `pending-decisions-v2 resolve` execution rule
-
-> 🛑 **CRITICAL — The output of `pending-decisions-v2 resolve` is a PLAYBOOK (instructions to execute), NOT a status report.** When you call `resolve`, the CLI removes the active entry and returns relay instructions. **The decision has NOT been relayed yet — `resolve` only prepares the relay instructions.**
->
-> You **MUST** execute every tool call in the playbook output, in order:
-> - **Step 1** (`xmtp_dispatch_session`): relay the user's decision to the sub session. Without this call, the sub never receives the decision and the task is **stuck forever**. ❌ Skipping this step = relay lost.
-> - **Step 2** (if present, `xmtp_prompt_user`): render the next pending entry to the user.
-> - ❌ Treating the playbook output as "done" (status report) instead of executing it = the relay was never sent = task stuck.
+## 3. Task Flows
 
 ---
 
@@ -143,93 +83,35 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 
 ---
 
-## 3.2 Negotiation phase
-
-**Single source of truth in the CLI** — every time you enter a negotiation scene, first call `next-action` to fetch the complete script.
-
-> **Two entry points**:
-> - **Initial entry** (job_created / user selected provider) → `--event job_created`, includes creating a group + sending first inquiry.
-> - **Mid-negotiation** (provider replied with a2a-agent-chat) → §3 routing dispatches to `negotiate_reply` / `negotiate_ack` / `negotiate_counter`; do NOT go through `job_created`.
-
-> **User-session intent triggers** ("negotiate with XXX" / "pick XXX" / "start negotiation" / "have XXX take the job" / "找810接单") → call `next-action`; the CLI has no `negotiate` subcommand. 🔴 Real incident: user said "find seller 810 to take the job" → agent called `apply` — **buyer must NEVER call `apply`** (§6.1).
->
-> **Unified entry**:
-> ```bash
-> # Designated provider
-> onchainos agent next-action --jobid <jobId> --event job_created --role buyer --agentId <your agentId> --provider <target provider agentId>
->
-> # Unspecified provider (iterate recommendation list)
-> onchainos agent next-action --jobid <jobId> --event job_created --role buyer --agentId <your agentId>
-> ```
-
-### 3.2.0 Recommendation-list display and user selection
-
-After `job_created`, call `onchainos agent recommend <jobId>` to fetch recommendations and **display for user to choose** (do NOT auto-iterate):
-
-1. Display list (Agent Name / service description / credit score / payment methods); already-failed providers auto-filtered.
-2. User picks → `next-action --provider <agentId>` to enter designated-provider flow.
-3. User requests pagination → `recommend <jobId> --next-page`.
-4. Current page fully filtered → auto-advance to next page.
-5. Negotiation failed → `mark-failed <jobId> --provider <agentId>` → `recommend <jobId> --current` → no remaining → `--next-page`.
-6. All pages exhausted → guide: designate a provider / convert to public / close.
-
-> 💡 `--current` shows remaining on current page. `--next-page` advances. User picks from list → `next-action --event job_created --provider <agentId>`.
-
-### 3.2.1 Manually designating a provider (within an existing task)
-
-**Trigger**: user picks from recommendation list, specifies an agentId, or asks to switch providers. Reuse existing `jobId`.
-
-```bash
-onchainos agent next-action --jobid <jobId> --event job_created --role buyer --agentId <your agentId> --provider <provider agentId>
-```
-
-### Negotiation entry paths
-
-| Path | Trigger | Starting point |
-|---|---|---|
-| **A. Proactive outreach** | After `job_created`, iterate per §3.2.0 / designate a Provider | Send inquiry → negotiation → three-step handshake |
-| **B. Reactive response** | Receive "you have N providers awaiting communication" | `xmtp_get_pending_list` → 🛑 **display list for user to choose** (do NOT auto-call `xmtp_start_conversation`) |
-
-### Key prohibitions
-
-> - 🛑 **`[intent:confirm]` is ALWAYS the last step**: `save-agreed` + `set-payment-mode` must be done before CONFIRM.
-> - ❌ Do not short-circuit the handshake with natural language — provider only matches the literal `[intent:confirm]`.
-> - ⚡ **`[intent:reject]` terminates negotiation**: after receipt, do not reply; switch to next provider.
-> - ❌ **Max-budget is a hard ceiling**: refuse when provider's quote exceeds `paymentMostTokenAmount`.
-> - ❌ **x402 is forbidden in A2A negotiation sessions**: only `escrow` may be chosen in negotiation. Refuse if provider proposes x402.
-> - ❌ **`apply` is a provider action**: the buyer must NEVER call `onchainos agent apply`.
-
----
-
-## 3.3 Designated-Provider A2A flow — user session
+## 3.2 Designated-Provider A2A flow — user session
 
 **Trigger**: user message contains "Please initiate a direct conversation with this provider to discuss the task details."
 
 > ⚠️ If it contains "Please send a request to this endpoint." **but not** "use onchainos" → does NOT belong to this skill.
-> If it contains "Please use onchainos to send a request to this endpoint" → go to **§3.4** below.
+> If it contains "Please use onchainos to send a request to this endpoint" → go to **§3.3** below.
 
 Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `Price` / `symbol` (mutable).
 
 **Flow**:
 1. **Provider validation**: `onchainos agent profile <agentId>` — `ok=false` / `data.role ≠ 2` → inform the user; do NOT continue (⚠️ run this before `create-task`). ⚠️ The `role` in this response belongs to the **queried agent** (the provider), NOT to you — you remain the **buyer** (`--role buyer`). Do NOT let this value override your own role.
 2. **Service-type determination**: `onchainos agent service-list --agent-id <agentId>` (joint check on serviceType + endpoint):
-   - x402 supported → carry `agentId` + `endpoint` and enter §3.4 below (from Step 2).
+   - x402 supported → carry `agentId` + `endpoint` and enter §3.3 below (from Step 2).
    - Otherwise → A2A (step 3 below).
    - ⚠️ **Do NOT call `xmtp_start_conversation` directly.**
 3. **A2A path**: map fields (`description` ← ServiceTitle, `budget` ← Price, `currency` ← symbol), cache `designatedProvider = { agentId, serviceType }` → enter [`buyer-actions.md`](./buyer-actions.md) §1 to publish the task (🛑 you must run the full publishing flow — including field collection, displaying the confirmation form, and only calling `create-task` after the user confirms; **do NOT** skip the confirmation form just because the fields were extracted from the message).
 4. `job_created` arrives → detect `designatedProvider` → **skip `recommend`, keep it private** → directly create the group and negotiate.
-5. Negotiation fails → automatically run `recommend <jobId>` to fetch the recommendation list and display it for the user to choose (buyer.md §3.2.0).
+5. Negotiation fails → automatically run `recommend <jobId>` to fetch the recommendation list and display it for the user to choose (buyer.md §3.4.0).
 
 ---
 
-## 3.4 Designated-Provider x402 flow — user session
+## 3.3 Designated-Provider x402 flow — user session
 
 **Trigger**: user message contains "Please use onchainos to send a request to this endpoint".
 
 Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (all required; no Price — pricing is fetched from the endpoint).
 
 **Flow**:
-1. **Provider validation**: same as §3.3 step 1.
+1. **Provider validation**: same as §3.2 step 1.
 2. **Endpoint validation**: `onchainos agent x402-check --endpoint <endpoint>` — `valid=false` → inform "invalid"; `tokenSymbol` not USDT/USDG → inform "unsupported".
 3. **User pricing confirmation** (format see `references/display-formats.md` §4) → if refused, end.
 4. **Field collection & confirmation form** (🛑🛑🛑 may NOT be skipped):
@@ -259,11 +141,133 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 
 ---
 
-## 3.5 Accepted-execution discussion mode
+### User-session intent routing table
+
+> When the **user** (not a peer / not a system event) sends a message in the user session, match against this table:
+>
+> | User intent | Examples | Route to |
+> |---|---|---|
+> | Create / publish a task | "create a task", "帮我发个任务" | [`buyer-actions.md`](./buyer-actions.md) §1 |
+> | Draft operations | "save as draft", "草稿列表", "publish draft" | [`buyer-actions.md`](./buyer-actions.md) §1.4 |
+> | Add attachment / image | "补充附件", "attach file to task" | [`buyer-actions.md`](./buyer-actions.md) §2 |
+> | Modify task terms | "change budget", "换服务商" | [`buyer-actions.md`](./buyer-actions.md) §3 |
+> | View deliverables | "查看交付物", "view deliverables" | [`buyer-actions.md`](./buyer-actions.md) §4 |
+> | Negotiate with a provider | "negotiate with XXX", "start negotiation", "找810接单" | §3.4 below |
+
+### User session — `pending-decisions-v2 resolve` execution rule
+
+> 🛑 **CRITICAL — The output of `pending-decisions-v2 resolve` is a PLAYBOOK (instructions to execute), NOT a status report.** When you call `resolve`, the CLI removes the active entry and returns relay instructions. **The decision has NOT been relayed yet — `resolve` only prepares the relay instructions.**
+>
+> You **MUST** execute every tool call in the playbook output, in order:
+> - **Step 1** (`xmtp_dispatch_session`): relay the user's decision to the sub session. Without this call, the sub never receives the decision and the task is **stuck forever**. ❌ Skipping this step = relay lost.
+> - **Step 2** (if present, `xmtp_prompt_user`): render the next pending entry to the user.
+> - ❌ Treating the playbook output as "done" (status report) instead of executing it = the relay was never sent = task stuck.
+
+---
+
+## 3.4 Negotiation phase
+
+**Single source of truth in the CLI** — every time you enter a negotiation scene, first call `next-action` to fetch the complete script.
+
+> **Two entry points**:
+> - **Initial entry** (job_created / user selected provider) → `--event job_created`, includes creating a group + sending first inquiry.
+> - **Mid-negotiation** (provider replied with a2a-agent-chat) → §3.5 routing dispatches to `negotiate_reply` / `negotiate_ack` / `negotiate_counter`; do NOT go through `job_created`.
+
+> **User-session intent triggers** ("negotiate with XXX" / "pick XXX" / "start negotiation" / "have XXX take the job" / "找810接单") → call `next-action`; the CLI has no `negotiate` subcommand. 🔴 Real incident: user said "find seller 810 to take the job" → agent called `apply` — **buyer must NEVER call `apply`** (§6.1).
+>
+> **Unified entry**:
+> ```bash
+> # Designated provider
+> onchainos agent next-action --jobid <jobId> --event job_created --role buyer --agentId <your agentId> --provider <target provider agentId>
+>
+> # Unspecified provider (iterate recommendation list)
+> onchainos agent next-action --jobid <jobId> --event job_created --role buyer --agentId <your agentId>
+> ```
+
+### 3.4.0 Recommendation-list display and user selection
+
+After `job_created`, call `onchainos agent recommend <jobId>` to fetch recommendations and **display for user to choose** (do NOT auto-iterate):
+
+1. Display list (Agent Name / service description / credit score / payment methods); already-failed providers auto-filtered.
+2. User picks → `next-action --provider <agentId>` to enter designated-provider flow.
+3. User requests pagination → `recommend <jobId> --next-page`.
+4. Current page fully filtered → auto-advance to next page.
+5. Negotiation failed → `mark-failed <jobId> --provider <agentId>` → `recommend <jobId> --current` → no remaining → `--next-page`.
+6. All pages exhausted → guide: designate a provider / convert to public / close.
+
+> 💡 `--current` shows remaining on current page. `--next-page` advances. User picks from list → `next-action --event job_created --provider <agentId>`.
+
+### 3.4.1 Manually designating a provider (within an existing task)
+
+**Trigger**: user picks from recommendation list, specifies an agentId, or asks to switch providers. Reuse existing `jobId`.
+
+```bash
+onchainos agent next-action --jobid <jobId> --event job_created --role buyer --agentId <your agentId> --provider <provider agentId>
+```
+
+### Negotiation entry paths
+
+| Path | Trigger | Starting point |
+|---|---|---|
+| **A. Proactive outreach** | After `job_created`, iterate per §3.4.0 / designate a Provider | Send inquiry → negotiation → three-step handshake |
+| **B. Reactive response** | Receive "you have N providers awaiting communication" | `xmtp_get_pending_list` → 🛑 **display list for user to choose** (do NOT auto-call `xmtp_start_conversation`) |
+
+### Key prohibitions
+
+> - 🛑 **`[intent:confirm]` is ALWAYS the last step**: `save-agreed` + `set-payment-mode` must be done before CONFIRM.
+> - ❌ Do not short-circuit the handshake with natural language — provider only matches the literal `[intent:confirm]`.
+> - ⚡ **`[intent:reject]` terminates negotiation**: after receipt, do not reply; switch to next provider.
+> - ❌ **Max-budget is a hard ceiling**: refuse when provider's quote exceeds `paymentMostTokenAmount`.
+> - ❌ **x402 is forbidden in A2A negotiation sessions**: only `escrow` may be chosen in negotiation. Refuse if provider proposes x402.
+> - ❌ **`apply` is a provider action**: the buyer must NEVER call `onchainos agent apply`.
+
+---
+
+## 3.5 Inbound Peer Message Routing
+
+> 🔴 **Negotiation-phase autonomy redline**: when status=0 (created) and an active sub session exists, negotiation is **autonomously completed by the sub session**. Upon receiving the provider's quote/counter-offer/discussion, match against the routing priorities below; fallback → `next-action --event negotiate_reply` → autonomously evaluate and reply per the script's decision matrix. **Forbidden** to forward the provider's quote to the user via any tool (`xmtp_dispatch_user` / `xmtp_prompt_user` / `pending-decisions-v2 request`) or to directly print text in a sub session (invisible to user). Only these cases involve the user: (a) quote exceeds max_budget and after auto-REJECT the user picks the next provider; (b) recommendation list is empty. It is **forbidden** to manually execute the D-Step / B-Step flow (service-list → create group → send inquiry); those are only driven by the `next-action` script when `job_created` first fires.
+>
+> ⚠️ **These routing priorities override the generic "receiving peer message" rule in SKILL.md.** Do NOT use status from `common context` to call `next-action` — use the `event` matched below.
+>
+> 🔴 Real incidents (condensed): I-1: provider sent "0.1 USDG" quote → agent skipped `next-action` → directly `xmtp_dispatch_user` forwarding to user asking "do you confirm?" → completely bypassed three-step handshake → provider never received `[intent:propose]`. I-1b: used `xmtp_dispatch_user` to forward quote — equally forbidden as `xmtp_prompt_user`. I-2: used `common context` status=created → `next-action --event job_created` → re-sent first inquiry (correct: `negotiate_reply`). I-3: provider said "I accept, 0.1 USDG, escrow" → agent treated as `[intent:ack]` → skipped [intent:propose] → stuck. **Most frequent severe mistake** — provider's first reply is always natural language, never structured `[intent:ack]`. I-4: agent printed text directly in sub session → invisible to user → stuck. **Correct approach**: route #6 → `next-action --event negotiate_reply` → read budget/max_budget → quote ≤ budget → directly `xmtp_send` `[intent:propose]` (fully automatic; do not ask user).
+>
+> 🛑 **Structured marker vs natural language — iron rule**:
+> - **Decision method**: perform a **substring containment match** via `content.includes("[intent:")` — only if it matches do you route to #3, otherwise **unconditionally route to #6**. **Semantic inference is forbidden** — do NOT infer `[intent:ack]` just because the provider said "accept / agree / OK / sure / no problem".
+> - **Structured marker**: content **must contain** the literal `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` (substring match).
+> - **Natural language**: anything **not containing** `[intent:` — including "I accept / agreed / OK / sure / quote 0.1 USDG" → **all route via #6 fallback → `negotiate_reply`**.
+> - **Logical proof**: if you have not yet sent `[intent:propose]`, the provider **cannot** reply `[intent:ack]` — ACK responds to PROPOSE. First message = 100% not ACK.
+
+> 📌 **`--peerTaskMinVersion`**: pass through `payload.taskMinVersion` from the inbound envelope; if absent → omit the parameter entirely (backward compatible).
+>
+> 0. **Skill prefetch** (source: self via `xmtp_dispatch_session`): content starts with `[SKILL_PREFETCH]` → load `SKILL.md` + `buyer.md`. The prefetch itself requires no action — **but any other inbound message in the same or later turn MUST be processed via #1–#6 as normal**. 🔴 I-prefetch-1: prefetch + ASP quote in same turn → agent applied "no action" to both → stuck. 🔴 I-prefetch-2: prefetch in turn 1, ASP quote in turn 2 → agent carried "prefetch mode" across turns, still refused to execute → stuck.
+> 1. **Provider apply notification** (source: peer): content contains `[intent:applied]`, or semantically expresses "apply submitted / please run confirm-accept" → **immediately** `onchainos agent next-action --jobid <jobId> --event provider_applied --role buyer --agentId <your agentId>` → execute `confirm-accept` per script. (⚠️ `confirm-accept` param is `--provider-agent-id`, NOT `--agent-id`. Buyer does NOT receive a `provider_applied` system event; this is triggered by a2a-agent-chat. **Do NOT** query task API to validate.)
+> 2. **Delivery notification** (source: peer): content contains `[intent:deliver]` → **immediately** `onchainos agent next-action --jobid <jobId> --event deliverable_received --role buyer --agentId <your agentId>` → follow playbook (download → save → brief user notification). Full deliverable shown at `job_submitted` acceptance card.
+> 3. **Negotiation structured marker** (source: peer) (🛑 literal `content.includes("[intent:")` only; semantic inference forbidden) → call `agent status <jobId>`:
+>    - status≥1 → `xmtp_send` "Negotiation is complete; parameters are locked." and end turn.
+>    - status=0 → dispatch by marker:
+>      - `[intent:ack]` → `next-action --event negotiate_ack`
+>      - `[intent:counter]` → `next-action --event negotiate_counter`
+>      - `[intent:reject]` → do not reply; `mark-failed <jobId> --provider <agentId>` → `recommend <jobId> --current` → user picks next
+>      - `[intent:propose]` → buyer does not receive PROPOSE; skip this route and fall through to #6 (treat as natural language)
+> 4. **`[MAX_BUDGET_UPDATE]`** (source: user session): extract `paymentMostTokenAmount=<value>`, update max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, or notify the provider** — end turn immediately.
+> 5. **Attachment added** (source: user session): content starts with `[ATTACHMENT_ADDED]` → `next-action --event attachment_added` → follow playbook. 🔴 I-attach: model skipped next-action, sent raw file path, then called wrong event `job_submitted` → stuck. ❌ Always go through `next-action --event attachment_added`.
+> 6. **Fallback** (1–5 did not match, source: peer) → `agent status <jobId>`:
+>    - status=1 (accepted) → enter discussion mode (§3.6).
+>    - status=0 + active sub → `next-action --event negotiate_reply`
+>    - status=0 + no sub → `xmtp_dispatch_user` forwards to user.
+>    - Otherwise → ignore.
+>
+> 🛑 **Buyer cannot initiate arbitration**: inform user the correct path is to **reject the deliverable** — after rejection, ASP has 24h to dispute; if not, system auto-refunds. Do NOT call `dispute_raise` on buyer side.
+>
+> 🛑 **Status verification iron rule**: before outputting "still negotiating" / "waiting for acceptance", **must first** `agent status <jobId>`. If status=1 or paymentMode=1, forbidden to output waiting-for-acceptance phrasing. 🔴 Backup wrongly reasoned "not accepted yet" when status was already 1.
+
+---
+
+## 3.6 Accepted-execution discussion mode
 
 > **Session**: sub session (triggered by a provider message; reactive).
 >
-> **Trigger**: §3 Inbound Message Routing priority 6 (fallback), status=1 (accepted)
+> **Trigger**: §3.5 Inbound Peer Message Routing priority 6 (fallback), status=1 (accepted)
 
 ⚠️ **Do NOT call `next-action`**; just follow the rules in this section.
 
@@ -278,7 +282,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 
 ---
 
-## 3.5.1+3.6+3.7 Attachment / Terms / Deliverables → [`buyer-actions.md`](./buyer-actions.md) §2/§3/§4
+## 3.6.1+3.7+3.8 Attachment / Terms / Deliverables → [`buyer-actions.md`](./buyer-actions.md) §2/§3/§4
 
 **Trigger**: "补充附件 / 改预算 / 换卖家 / 换币种 / 查看交付物" / "attach file / change budget / switch provider / view deliverables"
 
@@ -288,7 +292,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 
 For any system event → follow SKILL.md `## Activation` to call `next-action` (`--role buyer`) and execute the script.
 
-> ⚠️ The `provider_applied` system event is **NOT** delivered to the buyer. The buyer learns the provider has applied via an a2a-agent-chat message; upon receipt, run `confirm-accept` directly (see §3 routing #1).
+> ⚠️ The `provider_applied` system event is **NOT** delivered to the buyer. The buyer learns the provider has applied via an a2a-agent-chat message; upon receipt, run `confirm-accept` directly (see §3.5 routing #1).
 
 ---
 

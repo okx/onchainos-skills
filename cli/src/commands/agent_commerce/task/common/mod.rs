@@ -20,11 +20,12 @@ pub mod pending_v2;
 pub mod query;
 pub mod review_gate;
 pub mod search;
+pub mod session_cleanup;
 pub mod state_machine;
 pub mod util;
 pub mod version_notice;
 
-use util::fmt_unix_secs;
+use util::{fmt_unix_secs, validate_job_id};
 
 use crate::commands::Context;
 
@@ -48,7 +49,7 @@ pub const AGENT_ROLE_EVALUATOR: i64 = 3;
 
 pub use payment_mode::PaymentMode;
 
-pub use util::ensure_sufficient_balance;
+pub use util::{ensure_sufficient_balance, ensure_sufficient_balance_at};
 
 // ─── CLI definition ─────────────────────────────────────────────────────
 #[derive(Subcommand)]
@@ -111,6 +112,90 @@ struct TaskDetail {
     expire_time: Option<i64>,
     payment_most_token_amount: Option<String>,
     create_time: Option<i64>,
+}
+
+// ─── Pre-fetched task context (lightweight, for playbook inline) ────────
+
+/// Lightweight snapshot of the task detail, built from the same GET /task/{jobId}
+/// response that `check_status_freshness` already makes. Passed into
+/// `generate_next_action` so the playbook can inline key fields and skip the
+/// redundant "Step 1: run common context" CLI round-trip.
+#[derive(Debug, Clone)]
+pub struct PreFetchedDeliverable {
+    pub path: String,
+    pub deliverable_type: String,
+    pub original_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreFetchedTaskContext {
+    pub title: String,
+    pub description: String,
+    pub token_symbol: String,
+    pub token_amount: String,
+    pub payment_mode: Option<i64>,
+    pub max_budget: Option<String>,
+    pub provider_agent_id: Option<String>,
+    pub buyer_agent_id: Option<String>,
+    pub visibility: Option<i64>,
+    pub status: Option<i64>,
+    pub deliverable: Option<PreFetchedDeliverable>,
+}
+
+impl PreFetchedTaskContext {
+    /// Build from the raw `serde_json::Value` returned by GET /task/{jobId}.
+    pub fn from_api_response(v: &serde_json::Value) -> Self {
+        Self {
+            title: v["title"].as_str().unwrap_or("").to_string(),
+            description: v["description"].as_str().unwrap_or("").to_string(),
+            token_symbol: v["tokenSymbol"].as_str().unwrap_or("?").to_string(),
+            token_amount: v["tokenAmount"].as_str().unwrap_or("").to_string(),
+            payment_mode: v["paymentMode"].as_i64(),
+            max_budget: v["paymentMostTokenAmount"].as_str().map(String::from),
+            provider_agent_id: v["providerAgentId"].as_str().map(String::from),
+            buyer_agent_id: v["buyerAgentId"].as_str().map(String::from),
+            visibility: v["visibility"].as_i64(),
+            status: v["status"].as_i64(),
+            deliverable: None,
+        }
+    }
+
+    /// Format as the inline `[Pre-fetched task context]` block for playbook output.
+    pub fn format_inline(&self) -> String {
+        let pm_label = match self.payment_mode {
+            Some(1) => String::from("escrow (1)"),
+            Some(3) => String::from("x402 (3)"),
+            Some(v) => format!("{v} (unknown)"),
+            None => String::from("unknown"),
+        };
+        let max_b = self.max_budget.as_deref().unwrap_or("not set");
+        let prov = self.provider_agent_id.as_deref().unwrap_or("none");
+        let buyer = self.buyer_agent_id.as_deref().unwrap_or("none");
+        let desc_line = if self.description.is_empty() {
+            String::new()
+        } else {
+            format!("\x20\x20description: {}\n", self.description)
+        };
+        let deliv_line = match &self.deliverable {
+            Some(d) => format!(
+                "\x20\x20deliverable: saved | path: {} | type: {} | name: {}\n",
+                d.path, d.deliverable_type, d.original_name
+            ),
+            None => String::new(),
+        };
+        format!(
+            "[Pre-fetched task context] (from status-check API — no need to call `common context` again unless a field below is missing)\n\
+             \x20\x20title: {title}\n\
+             {desc_line}\
+             \x20\x20tokenSymbol: {sym} | tokenAmount: {amt} | paymentMode: {pm}\n\
+             \x20\x20maxBudget (paymentMostTokenAmount): {max_b} | providerAgentId: {prov} | buyerAgentId: {buyer}\n\
+             {deliv_line}",
+            title = self.title,
+            sym = self.token_symbol,
+            amt = self.token_amount,
+            pm = pm_label,
+        )
+    }
 }
 
 // ─── Agent profile response structure ───────────────────────────────────
@@ -499,15 +584,15 @@ fn parse_role_filter(raw: &str) -> Option<i64> {
     }
 }
 
-/// `onchainos agent profile <agent_id>` — look up a single agent by id and
-/// return its flat JSON profile. Works for **any** agent (current account or
-/// peer), used to verify peer / designated-provider identities.
+/// Internal helper: by-id direct lookup against the agent registry. Returns
+/// the matched agent JSON object without printing anything. Suitable for
+/// reuse by other handlers (e.g. `next-action --role auto`) that need an
+/// agent's metadata mid-flow without polluting stdout.
 ///
-/// Internally calls `agent get --agent-ids <id>` then walks the response via
-/// `flatten_agent_groups` to find the matching agent and prints it as the
-/// `data` payload. Errors when agentId is empty, the subprocess fails, the
-/// response shape is broken, or no agent matches the queried id.
-pub async fn handle_profile(agent_id: &str) -> Result<()> {
+/// Spawns `onchainos agent get --agent-ids <id>` (backend-direct lookup, no
+/// pagination), flattens the response groups, and filters by `agentId`. No
+/// ownerAddress restriction — works for any agent (current account or peer).
+pub async fn query_agent_by_id_direct(agent_id: &str) -> Result<serde_json::Value> {
     let id = agent_id.trim();
     if id.is_empty() {
         bail!("agent_id must not be empty");
@@ -535,17 +620,373 @@ pub async fn handle_profile(agent_id: &str) -> Result<()> {
 
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
     let all = flatten_agent_groups(&data);
-    let matched = all.into_iter().find(|a| {
-        a.get("agentId").and_then(|v| v.as_str()) == Some(id)
-    });
+    all.into_iter()
+        .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(id))
+        .ok_or_else(|| anyhow::anyhow!("agentId={id} not found in `agent get` response"))
+}
 
-    match matched {
-        Some(agent) => {
-            crate::output::success(agent);
-            Ok(())
-        }
-        None => bail!("agentId={id} not found in `agent get` response"),
+/// `onchainos agent profile <agent_id>` — look up a single agent by id and
+/// return its flat JSON profile. Works for **any** agent (current account or
+/// peer), used to verify peer / designated-provider identities.
+///
+/// Thin wrapper over `query_agent_by_id_direct` that adds CLI-style output
+/// (prints the agent JSON via `crate::output::success`).
+pub async fn handle_profile(agent_id: &str) -> Result<()> {
+    let agent = query_agent_by_id_direct(agent_id).await?;
+    crate::output::success(agent);
+    Ok(())
+}
+
+/// Spawn `onchainos agent service-list --agent-id <id>` as subprocess and
+/// return the parsed `data` field (services array/object).
+async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Value> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+
+    let output = tokio::process::Command::new(&exe)
+        .args(["agent", "service-list", "--agent-id", agent_id])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn `agent service-list` failed: {e}"))?;
+
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow::anyhow!(
+            "parse `agent service-list` stdout failed: {e}; raw={}",
+            String::from_utf8_lossy(&output.stdout)
+        ))?;
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
+        bail!("`agent service-list` returned failure: {err}");
     }
+
+    Ok(body.get("data").cloned().unwrap_or(serde_json::Value::Null))
+}
+
+/// `onchainos agent designated-route --provider <agentId>` — runs service-list
+/// + profile in parallel, applies role/online/endpoint routing logic, and
+/// returns a single JSON with the route decision.
+///
+/// Output shape:
+/// ```json
+/// { "route": "x402"|"a2a"|"error",
+///   "errorType": "not_provider"|"offline",   // only when route=error
+///   "providerName": "...",
+///   "onlineStatus": 1|2,
+///   "endpoint": "https://...",               // only when route=x402
+///   "feeAmount": "0.01",                     // only when route=x402
+///   "feeTokenSymbol": "USDT"                 // only when route=x402
+/// }
+/// ```
+pub async fn handle_designated_route(provider_id: &str, target_endpoint: Option<&str>) -> Result<()> {
+    let id = provider_id.trim();
+    if id.is_empty() {
+        bail!("--provider must not be empty");
+    }
+
+    let (profile_res, svc_res) = tokio::join!(
+        query_agent_by_id_direct(id),
+        spawn_service_list(id),
+    );
+
+    // --- profile gate ---
+    let profile = match profile_res {
+        Ok(p) => p,
+        Err(_) => {
+            crate::output::success(serde_json::json!({
+                "route": "error",
+                "errorType": "not_provider",
+            }));
+            return Ok(());
+        }
+    };
+
+    let role = profile.get("role").and_then(|v| v.as_i64()).unwrap_or(0);
+    if role != 2 {
+        crate::output::success(serde_json::json!({
+            "route": "error",
+            "errorType": "not_provider",
+            "providerName": profile.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+        }));
+        return Ok(());
+    }
+
+    let provider_name = profile.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let online_status = profile.get("onlineStatus").and_then(|v| v.as_i64()).unwrap_or(1);
+
+    // --- service-list ---
+    let services_data = match svc_res {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[designated-route] service-list fetch failed for {id}: {e}");
+            serde_json::Value::Null
+        }
+    };
+    // API shape: data = [{agentInfo: {...}, list: [{endpoint, fee, ...}], ...}]
+    // Flatten data[*].list[*] to get individual service entries.
+    let service_entries: Vec<&serde_json::Value> = services_data
+        .as_array()
+        .map(|arr| arr.iter()
+            .flat_map(|item| item.get("list").and_then(|v| v.as_array()).into_iter().flatten())
+            .collect())
+        .unwrap_or_default();
+
+    // Collect ALL services that have a non-empty endpoint.
+    let all_with_endpoint: Vec<&serde_json::Value> = service_entries.iter()
+        .filter(|s| s.get("endpoint").and_then(|v| v.as_str()).map(|e| !e.is_empty()).unwrap_or(false))
+        .copied()
+        .collect();
+
+    // When --endpoint is specified, require an exact match; do NOT fall back.
+    let selected = if let Some(target) = target_endpoint.filter(|s| !s.is_empty()) {
+        match all_with_endpoint.iter().find(|s| {
+            s.get("endpoint").and_then(|v| v.as_str()) == Some(target)
+        }).copied() {
+            Some(svc) => Some(svc),
+            None => {
+                crate::output::success(serde_json::json!({
+                    "route": "error",
+                    "errorType": "endpoint_not_found",
+                    "providerName": provider_name,
+                    "onlineStatus": online_status,
+                    "requestedEndpoint": target,
+                }));
+                return Ok(());
+            }
+        }
+    } else {
+        all_with_endpoint.first().copied()
+    };
+
+    if let Some(svc) = selected {
+        let endpoint = svc.get("endpoint").and_then(|v| v.as_str()).unwrap_or("");
+        // service-list API returns `fee` (string) not `feeAmount`; `/match` API returns `feeAmount` (f64).
+        let fee_amount = svc.get("feeAmount").and_then(|v| v.as_str())
+            .or_else(|| svc.get("fee").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        // service-list API may omit `feeTokenSymbol`; fall back to chainIndex + contractAddress lookup.
+        let fee_token = match svc.get("feeTokenSymbol").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+            Some(s) => s.to_string(),
+            None => util::resolve_symbol_from_svc(svc).await.unwrap_or_else(|e| {
+                eprintln!("⚠ designated-route: failed to resolve feeTokenSymbol: {e}");
+                String::new()
+            }),
+        };
+        let mut result = serde_json::json!({
+            "route": "x402",
+            "providerName": provider_name,
+            "onlineStatus": online_status,
+            "endpoint": endpoint,
+            "feeAmount": fee_amount,
+            "feeTokenSymbol": fee_token,
+        });
+        // When multiple services exist and no --endpoint was specified, expose
+        // all services so the LLM can pick the correct one by matching against
+        // the task description context.
+        if target_endpoint.filter(|s| !s.is_empty()).is_none() && all_with_endpoint.len() > 1 {
+            let svc_list: Vec<serde_json::Value> = all_with_endpoint.iter().map(|s| {
+                serde_json::json!({
+                    "serviceName": s.get("serviceName").and_then(|v| v.as_str()).unwrap_or(""),
+                    "serviceDescription": s.get("serviceDescription").and_then(|v| v.as_str()).unwrap_or(""),
+                    "endpoint": s.get("endpoint").and_then(|v| v.as_str()).unwrap_or(""),
+                    "feeAmount": s.get("feeAmount").and_then(|v| v.as_str())
+                        .or_else(|| s.get("fee").and_then(|v| v.as_str()))
+                        .unwrap_or(""),
+                    "feeTokenSymbol": s.get("feeTokenSymbol").and_then(|v| v.as_str()).unwrap_or(""),
+                })
+            }).collect();
+            result["services"] = serde_json::json!(svc_list);
+        }
+        crate::output::success(result);
+    } else {
+        // No endpoint → A2A path; check online status
+        if online_status == 2 {
+            crate::output::success(serde_json::json!({
+                "route": "error",
+                "errorType": "offline",
+                "providerName": provider_name,
+                "onlineStatus": online_status,
+            }));
+        } else {
+            crate::output::success(serde_json::json!({
+                "route": "a2a",
+                "providerName": provider_name,
+                "onlineStatus": online_status,
+            }));
+        }
+    }
+
+    Ok(())
+}
+
+/// Spawn `onchainos agent x402-check --endpoint <url> --agent-id <id>` as
+/// subprocess and return the parsed JSON output (the full `{ok, data}` body).
+async fn spawn_x402_check(endpoint: &str, agent_id: &str, body: Option<&str>) -> Result<serde_json::Value> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+
+    let mut args = vec!["agent", "x402-check", "--endpoint", endpoint, "--agent-id", agent_id];
+    let body_owned: String;
+    if let Some(b) = body.filter(|s| !s.is_empty()) {
+        body_owned = b.to_string();
+        args.push("--body");
+        args.push(&body_owned);
+    }
+    let output = tokio::process::Command::new(&exe)
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn `agent x402-check` failed: {e}"))?;
+
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow::anyhow!(
+            "parse `agent x402-check` stdout failed: {e}; raw={}",
+            String::from_utf8_lossy(&output.stdout)
+        ))?;
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
+        bail!("`agent x402-check` returned failure: {err}");
+    }
+
+    Ok(body.get("data").cloned().unwrap_or(serde_json::Value::Null))
+}
+
+/// Fetch task detail and extract budget fields (max budget + token symbol).
+async fn fetch_task_budget(job_id: &str, agent_id: &str) -> Result<(Option<String>, Option<String>)> {
+    let mut client = network::task_api_client::TaskApiClient::new();
+    let resp_val = client
+        .get_with_identity(&client.task_path(job_id), agent_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to get task detail: {e}"))?;
+
+    let task: TaskDetail = serde_json::from_value(resp_val)
+        .map_err(|e| anyhow::anyhow!("failed to parse task detail: {e}"))?;
+
+    Ok((task.payment_most_token_amount, task.token_symbol))
+}
+
+/// `onchainos agent x402-validate` — validates an x402 endpoint, compares the
+/// on-chain price against the registered fee and the task's max budget, and
+/// returns a single JSON with the combined result.
+///
+/// Output shape:
+/// ```json
+/// { "result": "pass"|"x402_invalid"|"price_mismatch"|"over_budget",
+///   "amountHuman": "0.01", "tokenSymbol": "USDT",
+///   "acceptsJson": "...", "x402Version": 1,
+///   "endpoint": "https://...",
+///   "maxBudget": "0.1", "taskTokenSymbol": "USDT",
+///   "feeAmount": "0.005", "feeTokenSymbol": "USDT" }
+/// ```
+pub async fn handle_x402_validate(
+    endpoint: &str,
+    agent_id: &str,
+    job_id: &str,
+    fee_amount: &str,
+    fee_token: &str,
+) -> Result<()> {
+    let (x402_res, budget_res) = tokio::join!(
+        spawn_x402_check(endpoint, agent_id, None),
+        fetch_task_budget(job_id, agent_id),
+    );
+
+    // --- x402-check gate ---
+    let x402_data = match x402_res {
+        Ok(d) => d,
+        Err(e) => {
+            crate::output::success(serde_json::json!({
+                "result": "x402_invalid",
+                "reason": format!("x402-check failed: {e}"),
+            }));
+            return Ok(());
+        }
+    };
+
+    let valid = x402_data.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !valid {
+        // Detect input_required: the endpoint is a valid x402 service but
+        // needs business parameters before it returns the 402 challenge.
+        if x402_data.get("inputRequired").and_then(|v| v.as_bool()) == Some(true) {
+            let mut out = serde_json::json!({
+                "result": "input_required",
+                "endpoint": endpoint,
+            });
+            if let Some(msg) = x402_data.get("message") { out["message"] = msg.clone(); }
+            if let Some(rao) = x402_data.get("requiredAnyOf") { out["requiredAnyOf"] = rao.clone(); }
+            if let Some(flds) = x402_data.get("fields") { out["fields"] = flds.clone(); }
+            // Pass through fee info from designated-route for reference
+            out["feeAmount"] = serde_json::json!(fee_amount);
+            out["feeTokenSymbol"] = serde_json::json!(fee_token);
+            crate::output::success(out);
+            return Ok(());
+        }
+        let mut out = serde_json::json!({ "result": "x402_invalid" });
+        if let Some(reason) = x402_data.get("reason") {
+            out["reason"] = reason.clone();
+        }
+        crate::output::success(out);
+        return Ok(());
+    }
+
+    let amount_human = x402_data.get("amountHuman").and_then(|v| v.as_str()).unwrap_or("");
+    let token_symbol = x402_data.get("tokenSymbol").and_then(|v| v.as_str()).unwrap_or("");
+    let accepts_json = x402_data.get("acceptsJson").cloned().unwrap_or(serde_json::Value::Null);
+    let x402_version = x402_data.get("x402Version").cloned().unwrap_or(serde_json::Value::Null);
+
+    // --- DX-Step 2: price mismatch check (delta > 1%) ---
+    let fee_f: f64 = fee_amount.parse().unwrap_or(0.0);
+    let amount_f: f64 = amount_human.parse().unwrap_or(0.0);
+    if fee_f > 0.0 && amount_f > 0.0 {
+        let delta = ((amount_f - fee_f) / fee_f).abs();
+        if delta > 0.01 {
+            crate::output::success(serde_json::json!({
+                "result": "price_mismatch",
+                "amountHuman": amount_human,
+                "tokenSymbol": token_symbol,
+                "feeAmount": fee_amount,
+                "feeTokenSymbol": fee_token,
+                "acceptsJson": accepts_json,
+                "x402Version": x402_version,
+                "endpoint": endpoint,
+            }));
+            return Ok(());
+        }
+    }
+
+    // --- DX-Step 3: budget check ---
+    let (max_budget, task_token) = budget_res.unwrap_or((None, None));
+    let max_budget_str = max_budget.as_deref().unwrap_or("");
+    let task_token_str = task_token.as_deref().unwrap_or("");
+
+    let max_f: f64 = max_budget_str.parse().unwrap_or(0.0);
+    if max_f > 0.0 && amount_f > max_f {
+        crate::output::success(serde_json::json!({
+            "result": "over_budget",
+            "amountHuman": amount_human,
+            "tokenSymbol": token_symbol,
+            "maxBudget": max_budget_str,
+            "taskTokenSymbol": task_token_str,
+            "acceptsJson": accepts_json,
+            "x402Version": x402_version,
+            "endpoint": endpoint,
+        }));
+        return Ok(());
+    }
+
+    // --- all checks passed ---
+    crate::output::success(serde_json::json!({
+        "result": "pass",
+        "amountHuman": amount_human,
+        "tokenSymbol": token_symbol,
+        "maxBudget": max_budget_str,
+        "taskTokenSymbol": task_token_str,
+        "acceptsJson": accepts_json,
+        "x402Version": x402_version,
+        "endpoint": endpoint,
+    }));
+
+    Ok(())
 }
 
 /// `onchainos agent my-agents [--role <r>]` — flat list of the current active
@@ -712,6 +1153,9 @@ async fn run_context(
     role: &str,
     agent_id: &str,
 ) -> Result<()> {
+    if let Err(msg) = validate_job_id(job_id) {
+        bail!("{msg}");
+    }
     // Validate role.
     if !["buyer", "provider", "evaluator"].contains(&role) {
         bail!("--role must be buyer / provider / evaluator");

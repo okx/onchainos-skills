@@ -20,6 +20,10 @@ pub async fn handle_apply(
     token_symbol: &str,
     agent_id: &str,
 ) -> Result<()> {
+    if agent_id.is_empty() {
+        anyhow::bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+    }
+
     // Guardrail: token_amount must be a positive number. Empty / "0" / non-parseable / non-positive
     // means the agent forgot to read the locked value from [intent:confirm] / [intent:propose] —
     // submitting it would commit on-chain to do the work for free (irreversible). Hard reject early.
@@ -40,7 +44,7 @@ pub async fn handle_apply(
         );
     }
 
-    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     let body = serde_json::json!({
         "tokenAmount": token_amount,
         "tokenSymbol": token_symbol,

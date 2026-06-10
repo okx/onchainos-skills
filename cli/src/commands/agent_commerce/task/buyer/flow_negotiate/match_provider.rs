@@ -5,6 +5,79 @@ use super::super::flow::FlowContext;
 // --- Event handler functions ------------------------------------------------
 
 pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
+    // Public (no designated provider) case uses the short 3-action playbook
+    // that delegates everything to `recommend --emit-decision`; the designated-
+    // provider case has its own D-Step shape and falls through to the legacy
+    // path below.
+    let has_designated = super::super::negotiate::get_designated_provider(ctx.job_id)
+        .ok()
+        .flatten()
+        .is_some();
+    if !has_designated {
+        return job_created_public(ctx);
+    }
+    job_created_legacy(ctx)
+}
+
+/// Public/no-designated-provider job_created flow.
+///
+/// Five linear actions, no branches. Action 4 (sub-side translation) is
+/// required because OpenClaw runtime does not auto-translate
+/// `xmtp_prompt_user.userContent` at render time, so the sub session must
+/// pre-localize the canonical English card before enqueueing it.
+///
+/// NOTE on the choice of Action 5: we deliberately call
+/// `pending-decisions-v2 request` directly instead of
+/// `recommend --emit-decision --user-content`. The `--emit-decision` path
+/// re-hits the `/match` API and rewrites the card file even when the sub
+/// already has a localized body to enqueue — wasted ~13s on the second turn.
+/// `pending-decisions-v2 request` does exactly the enqueue step we want
+/// without re-fetching anything. The `recommend --emit-decision` entry is
+/// kept (and remains useful once OpenClaw P0-D ships and Action 4 can go
+/// away — then a single `recommend --emit-decision` round-trip will cover
+/// fetch + enqueue without any pre-localization).
+fn job_created_public(ctx: &FlowContext<'_>) -> String {
+    let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
+    let title = ctx.title_display;
+    let notify_tpl = super::super::content::job_created_public_user_notify();
+    let list_label = format!("[Recommend {short_id}] {title} ASP-pick decision");
+    format!(
+        "[Trigger] job_created (on-chain, status: pending acceptance)\n\
+         [Role] User (Buyer)\n\n\
+         🛑 You are inside a sub/backup session. Execute the 5 actions below verbatim, in order. \
+         Do NOT add steps, do NOT branch. End the turn after Action 5.\n\n\
+         **Action 1 — Grab this session's sessionKey (once, reuse below):**\n\
+         tool: `session_status` (no args). Save the returned `sessionKey` as `<SUB_KEY>`.\n\n\
+         **Action 2 — Notify the user the job is on-chain** (translate template body to the user's language before sending):\n\
+         tool: `xmtp_dispatch_user`\n\
+         content (canonical English template — translate before passing): {notify_tpl}\n\
+         Fill: `<title>` = {title} | `<short_jobId>` = {short_id}\n\n\
+         **Action 3 — Fetch recommendations (writes the canonical English card file):**\n\
+         ```bash\n\
+         onchainos agent recommend {job_id} --agent-id {agent_id}\n\
+         ```\n\
+         Extract the path printed as `Card file: <path>` for Action 4.\n\n\
+         **Action 4 — Read the card file and translate ONCE to the user's language.**\n\
+         Use `Read` on the path from Action 3. Translate the card body to the user's chat language; \
+         preserve every data value (jobId hex, AgentID digits, fee amounts, symbols), every field label \
+         layout, every line break. Do NOT paraphrase, do NOT add extra commentary. Keep the reply-hint \
+         footer (\"Please choose: reply with an index to pick an ASP; or see more / list publicly / cancel\") \
+         localized to the user's language too. Save the translated string as `<LOCALIZED_CARD>`.\n\n\
+         **Action 5 — Enqueue the pre-localized card as the user-pick decision** (pass the translated body directly; do NOT re-call `recommend` — it would re-hit /match and waste ~13s):\n\
+         ```bash\n\
+         onchainos agent pending-decisions-v2 request --sub-key \"<SUB_KEY>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<LOCALIZED_CARD>\" --list-label \"{list_label}\" --source-event recommend_pick\n\
+         ```\n\
+         The CLI enqueues the card and emits the standard `xmtp_prompt_user` playbook. Execute that emitted playbook verbatim → end turn.\n\n\
+         🛑 Forbidden in this scene: `xmtp_start_conversation` (no peer chosen yet), \
+         `set-payment-mode` / `confirm-accept` / `apply` / `complete` / `reject` (no ASP picked yet), \
+         `recommend ... --emit-decision` (Action 5 already enqueues via the lightweight path — calling --emit-decision here would re-fetch /match and double-write the card file, wasting ~13s on this turn), \
+         `Write /tmp/...` (no need to save the translation to disk — pass it directly via `--user-content`).\n"
+    )
+}
+
+fn job_created_legacy(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let l10n_prompt = super::super::flow::L10N_PROMPT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
@@ -21,42 +94,41 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
 
     let (created_notify_tpl, created_fill) = match &designated_provider {
         Some(dp_id) => (
-            super::super::content::job_created_designated_user_notify(),
+            super::super::content::job_created_designated_user_notify().to_string(),
             format!("Fill: `<title>` = {title} | `<short_jobId>` = {short_id} | `<provider_agentId>` = {dp_id}"),
         ),
         None => (
-            super::super::content::job_created_public_user_notify(),
+            super::super::content::job_created_public_user_notify().to_string(),
             format!("Fill: `<title>` = {title} | `<short_jobId>` = {short_id}"),
         ),
     };
 
-    let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
-    let attachment_section_created = if attachment_paths.is_empty() {
+    let attachment_section_created = if designated_provider.is_some() {
         String::new()
     } else {
-        let paths_list = attachment_paths.iter()
-            .map(|p| format!("  - `{p}`"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "**Step 0.5 — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
-             The following files are saved locally and MUST be uploaded to the provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
-             {paths_list}\n\
-             ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
-             ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
-        )
+        let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
+        if attachment_paths.is_empty() {
+            String::new()
+        } else {
+            let paths_list = attachment_paths.iter()
+                .map(|p| format!("  - `{p}`"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "**Step 0.5 — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
+                 The following files are saved locally and MUST be uploaded to the provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
+                 {paths_list}\n\
+                 ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
+                 ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
+            )
+        }
     };
 
+    let designated_endpoint = super::super::negotiate::get_designated_endpoint(job_id).ok().flatten();
     let routing_section = if let Some(dp_id) = &designated_provider {
-        super::designated::designated_provider_d_steps(job_id, agent_id, short_id, dp_id, ctx.title_display)
+        super::designated::route_only(job_id, agent_id, short_id, dp_id, designated_endpoint.as_deref())
     } else {
         format!("\
-             **Step 0 - idempotency check: query whether a pending decision already exists for this job:**\n\
-             ```bash\n\
-             onchainos agent pending-decisions-v2 list --format json\n\
-             ```\n\
-             If the returned `entries` array already contains an entry with job_id={job_id} and role=buyer -> **the user has already been notified; this is a duplicate event - end the turn without notifying again.**\n\
-             If not present -> continue to Step 1.\n\n\
              🛑 **Do NOT ask the user whether to fetch the recommendation list** -- proceed to Step 1 directly and automatically. The recommend query is mandatory, not optional.\n\n\
              **Step 1 - query the recommended ASP list:**\n\
              ```bash\n\
@@ -101,7 +173,7 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
              ===============================================================\n")
     };
 
-    let mut output = format!(
+    let output = format!(
         "🛑🛑🛑 **IDENTITY CHECK - you are the executor; delegation is forbidden**\n\
          You are inside a sub session or backup session. **You yourself** are the agent responsible for executing this script.\n\
          ❌ **Absolutely forbidden**: `sessions_spawn` - do NOT spawn a child agent to \"help you\" handle this event.\n\
@@ -126,14 +198,6 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
          {routing_section}\n\n"
     );
 
-    if let Some(ref dp_id) = designated_provider {
-        output.push_str("\n━━━━━━━━━ The B-Steps below run ONLY when D-Step concludes \"no service or no endpoint\" ━━━━━━━━━\n\
-                         🛑 If D-Step already routed to x402 (service-list has an endpoint), then the B-Steps below are **entirely skipped, absolutely forbidden to execute**.\n\
-                         Full x402 path: DX-Step 1->2->3 -> A-Step 3 (set-payment-mode) -> wait for job_payment_mode_changed -> task-402-pay.\n\
-                         The x402 path **never involves** xmtp_start_conversation / group creation / three-step handshake / xmtp_send negotiation messages.\n\n");
-        output.push_str(&super::designated::designated_provider_negotiate(job_id, agent_id, short_id, dp_id, ctx.title_display));
-    }
-
     output
 }
 
@@ -151,38 +215,15 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
         }
     };
 
-    let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
-    let attachment_section = if attachment_paths.is_empty() {
-        String::new()
-    } else {
-        let paths_list = attachment_paths.iter()
-            .map(|p| format!("  - `{p}`"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "**Pre-step — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
-             The following files are saved locally and MUST be uploaded to the new provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
-             {paths_list}\n\
-             ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
-             ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
-        )
-    };
-
-    let d_steps = super::designated::designated_provider_d_steps(job_id, agent_id, short_id, &dp_id, ctx.title_display);
-    let negotiate = super::designated::designated_provider_negotiate(job_id, agent_id, short_id, &dp_id, ctx.title_display);
+    let designated_endpoint = super::super::negotiate::get_designated_endpoint(job_id).ok().flatten();
+    let route = super::designated::route_only(job_id, agent_id, short_id, &dp_id, designated_endpoint.as_deref());
     format!("\
          [Provider switch] set-provider has been submitted; start the new ASP flow immediately (do NOT wait for the task_provider_change on-chain confirmation).\n\
          [Role] User (User Agent) | [Execution environment] user session\n\n\
          🛑 **CLIs forbidden in this event**: save-agreed / set-payment-mode / confirm-accept / apply / complete / reject - negotiation with the new ASP has not started, all of these are illegal here.\n\n\
          ⚠️ The old ASP's sub session will automatically send [intent:reject] when it receives the `task_provider_change` on-chain event; no intervention from you required.\n\n\
-         {attachment_section}\
          [Your next actions (strict order)]\n\n\
-         {d_steps}\n\n\
-         ━━━━━━━━━ The B-Steps below run ONLY when D-Step concludes \"no service or no endpoint\" ━━━━━━━━━\n\
-         🛑 If D-Step already routed to x402 (service-list has an endpoint), then the B-Steps below are **entirely skipped, absolutely forbidden to execute**.\n\
-         Full x402 path: DX-Step 1->2->3 -> A-Step 3 (set-payment-mode) -> wait for job_payment_mode_changed -> task-402-pay.\n\
-         The x402 path **never involves** xmtp_start_conversation / group creation / three-step handshake / xmtp_send negotiation messages.\n\n\
-         {negotiate}\n")
+         {route}\n")
 }
 
 pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
@@ -230,14 +271,14 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      {cmd_pending_asp}\n\
      ```\n\
-     `--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
+     {l10n_prompt}\n\
+     `--user-content` template (canonical English):\n\
      [Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
      \n\
      [iterate pending list; format per ASP (use fields from xmtp_get_pending_list response):]\n\
      <N>. agentId: <agentId> | name: <name or serviceName, omit if absent> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
      \n\
-     Reply with the ASP's number to start, or reply \"skip all\".\n\n\
-     {l10n_prompt}\n\
+     Reply with the ASP's number to start, or reply 「skip all」.\n\n\
      {follow_playbook}\n\n\
      **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action --event user_decision_provider_pending --data \"<message.data>\"` — both paths point to the same Branch A/B/C below.)\n\n\
      ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\
@@ -272,12 +313,12 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \x20\x20```bash\n\
      \x20\x20{cmd_no_asp}\n\
      \x20\x20```\n\
-     \x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
+     \x20\x20{l10n_prompt}\n\
+     \x20\x20`--user-content` template (canonical English):\n\
      \x20\x20{no_sellers}\n\
      \x20\x20A. Specify an ASP — provide the ASP's agentId\n\
      \x20\x20B. Make the job public — let more ASPs discover it\n\
      \x20\x20C. Close the job — cancel and refund\n\
-     \x20\x20{l10n_prompt}\n\
      \x20\x20{follow_playbook_short}\n\
      \x20\x20{route_hint}\n\n\
      [Loop termination conditions] xmtp_get_pending_list returns an empty list, OR negotiation succeeds and enters Scene 6.\n")

@@ -580,18 +580,20 @@ pub async fn handle_draft_publish(
         println!("  Designated provider: {pid}");
     }
     println!();
-    if provider_id.is_some() {
-        println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
-    } else {
-        println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
+    // See create.rs: skip the "Next: wait ..." hint in CLI mode to avoid the
+    // passive phrasing suppressing the [Watch] block that follows.
+    if !super::content::is_cli_mode() {
+        if provider_id.is_some() {
+            println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
+        } else {
+            println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
+        }
     }
-    let cli_mode = std::env::var("CLAUDECODE").unwrap_or_default() == "1"
-        || std::env::var("CODEX_THREAD_ID").ok().filter(|s| !s.is_empty()).is_some();
-    if cli_mode {
-        println!("Due to client limitations, you need to proactively ask me to \"monitor task progress\" for me to continue pushing updates to you.");
+    if super::content::is_cli_mode() {
+        println!("[Watch] Per `okx-task-watch` SKILL.md, start the monitor now:");
+        println!("okx-a2a user watch --once --json --poll-ms 1000 --limit 50 --job-id {returned_job_id}");
         println!();
-        println!("🛑 [Watch] You MUST now execute the watch command below to monitor task progress — do NOT skip or end the turn without running it:");
-        println!("okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50");
+        println!("If you haven't read `okx-task-watch/SKILL.md` in this session, read it first.");
     }
     Ok(())
 }
@@ -1008,7 +1010,7 @@ mod tests {
             super::super::DraftCommand::Create {
                 title, description, budget, max_budget,
                 currency, deadline_open, deadline_submit,
-                provider, attachments,
+                provider, attachments, ..
             } => {
                 assert_eq!(title, "full task");
                 assert_eq!(description.as_deref(), Some("a long description here"));

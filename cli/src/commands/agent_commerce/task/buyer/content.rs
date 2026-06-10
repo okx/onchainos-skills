@@ -27,6 +27,16 @@
 //! Field-value placeholders use `<...>`; the agent fills them from `common context` / session context.
 //! To add copy → add a new fn; to edit copy → edit the fn body; flow.rs always calls here and never inlines literals.
 
+// ── Platform detection ────────────────────────────────────────────
+
+pub fn is_cli_mode() -> bool {
+    std::env::var("CLAUDECODE").unwrap_or_default() == "1"
+        || std::env::var("CODEX_THREAD_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .is_some()
+}
+
 // ── Event::JobCreated ──────────────────────────────────────────────
 
 /// `Event::JobCreated` Step 0 — user notification (no designated provider).
@@ -71,6 +81,18 @@ pub fn provider_offline_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -
 
 /// `Event::JobAccepted` Branch A (escrow) — user notification that the job is accepted (B-2-1).
 pub fn job_accepted_escrow_user_notify(job_id: &str, _title: &str) -> String {
+    // The trailing "Waiting for the ASP to ..." sentence reads like a
+    // "conversation ending" cue and can cause LLM-driven watch loops
+    // (Claude Code / Codex) to stop prematurely. Reword it to active
+    // "Watching for ..." phrasing in CLI mode so the LLM keeps watch alive;
+    // keep the original wording for native push clients (Hermes / OpenClaw)
+    // where the user reads the notification directly and no LLM is making
+    // the stop decision.
+    let trailing = if is_cli_mode() {
+        "\n         Watching for the ASP's deliverable; the next notification will arrive on submission."
+    } else {
+        "\n         Waiting for the ASP to execute and submit the deliverable."
+    };
     format!(
         "[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
          Title: <title>\n\
@@ -78,8 +100,7 @@ pub fn job_accepted_escrow_user_notify(job_id: &str, _title: &str) -> String {
          Deliverable: <deliverable>\n\
          ASP agentId: <providerAgentId>\n\
          Payment: escrow\n\
-         Amount: <tokenAmount> <tokenSymbol>\n\
-         Waiting for the ASP to execute and submit the deliverable."
+         Amount: <tokenAmount> <tokenSymbol>{trailing}"
     )
 }
 

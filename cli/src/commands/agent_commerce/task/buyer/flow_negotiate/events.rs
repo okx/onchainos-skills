@@ -134,11 +134,12 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      🛑 **Mandatory pre-evaluation**: Step 1 and Step 2 are mandatory - they must complete before you may send any xmtp_send (including a reject). Do NOT skip evaluation and reply or reject directly.\n\n\
      {title_query_hint}\
      [Your next actions (strict order)]\n\n\
-     **Step 1 - fetch task context (run once per turn if not already done):**\n\
+     **Step 1 - load task context (run once per turn if not already done):**\n\
+     Read budget (tokenAmount), paymentMostTokenAmount (max_budget), tokenSymbol, description from the `[Pre-fetched task context]` block above if available.\n\
+     If any field is missing or the block is absent, fall back to:\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\
-     Extract the key fields: budget, paymentMostTokenAmount (max_budget), tokenSymbol, description.\n\n\
+     ```\n\n\
      **Step 2 - evaluate the ASP's reply:**\n\n\
      🛑 **Iron rule: any message replying to the ASP must NEVER reveal the max_budget value** - leaking = the ASP quotes the cap immediately = the user loses all bargaining power.\n\
      🚫 **Negotiation-autonomy red line**: except for the \"quote > max_budget\" auto-REJECT path below, do NOT call **any** user-facing tool (`xmtp_dispatch_user` / `pending-decisions-v2 request`) to make the user decide on negotiation. Negotiation is autonomous in the sub session - evaluate via the decision matrix and reply directly to the ASP (natural-language discussion / [intent:propose]); do NOT forward the quote to the user asking \"do you accept?\" or \"please confirm\".\n\
@@ -162,9 +163,9 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20```bash\n\
      \x20\x20\x20\x20{cmd_over_budget}\n\
      \x20\x20\x20\x20```\n\
-     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-     {over_budget}\n\
      \x20\x20\x20\x20{l10n_prompt}\n\
+     \x20\x20\x20\x20`--user-content` template (canonical English):\n\
+     {over_budget}\n\
      \x20\x20\x20\x20{follow_playbook}\n\
      \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
      \x20\x20\x20\x20After the user-session relays the reply as a system envelope (`event:\"user_decision_negotiate_over_budget\"`, `message.data:<verbatim>`), call `next-action --event user_decision_negotiate_over_budget --data \"<message.data>\"` — CLI returns a routing playbook (A=view recommendations / B=specify ASP / C=close); follow it verbatim. Do NOT keyword-match yourself.\n\n\
@@ -253,7 +254,8 @@ pub(crate) fn negotiate_counter(ctx: &FlowContext<'_>) -> String {
      \x20\x20- COUNTER amount **equals** the number you last agreed in natural language -> **your PROPOSE had a typo**: resend [intent:propose] with the COUNTER value; do NOT haggle again.\n\
      \x20\x20- COUNTER amount **is higher than** the number you last agreed in natural language -> this is genuinely an ASP markup; continue to Step 3.\n\n\
      **Step 3 - evaluate the COUNTER terms:**\n\
-     Get max_budget:\n\
+     Read max_budget (paymentMostTokenAmount) from the `[Pre-fetched task context]` block above if available.\n\
+     If missing or absent, fall back to:\n\
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\

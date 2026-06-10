@@ -367,6 +367,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::DirectAccept { .. } => "direct-accept".into(),
         AgentCommand::Task402Pay { .. } => "task-402-pay".into(),
         AgentCommand::X402Check { .. } => "x402-check".into(),
+        AgentCommand::DesignatedRoute { .. } => "designated-route".into(),
+        AgentCommand::X402Validate { .. } => "x402-validate".into(),
         AgentCommand::Complete { .. } => "complete".into(),
         AgentCommand::Reject { .. } => "reject".into(),
         AgentCommand::Close { .. } => "close".into(),
@@ -422,6 +424,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::TaskDeliverableSave { .. } => "task-deliverable-save".into(),
         AgentCommand::TaskDeliverableList { .. } => "task-deliverable-list".into(),
         AgentCommand::TaskSearch { .. } => "task-search".into(),
+        AgentCommand::SessionCleanup { .. } => "session-cleanup".into(),
         AgentCommand::TaskInProgress { .. } => "task-in-progress".into(),
         AgentCommand::TopAsps { .. } => "top-asps".into(),
     }

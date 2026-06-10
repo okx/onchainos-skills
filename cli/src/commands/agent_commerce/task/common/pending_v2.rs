@@ -184,6 +184,79 @@ fn read_queue() -> Result<Queue> {
     Ok(serde_json::from_str::<Queue>(&raw).unwrap_or_default())
 }
 
+/// P0-A: in-process equivalent of `pending-decisions-v2 request
+/// --source-event recommend_pick ...` for the `recommend --emit-decision`
+/// flow. Reuses `handle_request` (same dedup-by-sub_key, same
+/// CLI-vs-MCP-prompt mode branch, same playbook emission), so callers get the
+/// identical behavior they would have gotten from spawning a separate CLI
+/// subprocess — without the round-trip.
+///
+/// Always emits the chosen playbook to stdout (same as the CLI subcommand).
+pub fn enqueue_recommend_decision(
+    sub_key: String,
+    job_id: String,
+    role: String,
+    agent_id: String,
+    user_content: String,
+    list_label: String,
+) -> Result<()> {
+    handle_request(
+        sub_key,
+        job_id,
+        role,
+        agent_id,
+        user_content,
+        list_label,
+        None,
+        Some("recommend_pick".to_string()),
+    )
+}
+
+/// P1-B idempotency helper for `next-action`: returns `true` when the queue
+/// already contains a pending decision entry for the given (job_id, role)
+/// pair. Used to short-circuit duplicate chain events (e.g. job_created
+/// firing into both task sub + backup sub) without forcing the LLM to run
+/// `pending-decisions-v2 list --format json` as a separate turn.
+///
+/// Best-effort: read-only, no lock; on read failure returns `false` so the
+/// caller falls back to the normal event flow.
+pub fn has_pending_for_job(job_id: &str, role: &str) -> bool {
+    let queue = match read_queue() {
+        Ok(q) => q,
+        Err(e) => {
+            trace_log(&format!(
+                "has_pending_for_job read_queue failed: {e}; returning false"
+            ));
+            return false;
+        }
+    };
+    queue
+        .entries
+        .iter()
+        .any(|e| e.job_id == job_id && e.role == role)
+}
+
+/// Cancel all pending decision entries that match the given `job_id`.
+/// Returns the number of entries removed. Used by `session-cleanup` to
+/// batch-clear stale pending decisions on terminal state without requiring
+/// the LLM to know individual sub_keys.
+pub fn cancel_all_for_job(job_id: &str) -> Result<usize> {
+    let _lock = acquire_lock()?;
+    let mut q = read_queue()?;
+    ensure_invariant_and_evict(&mut q);
+
+    let before = q.entries.len();
+    q.entries.retain(|e| e.job_id != job_id);
+    let removed = before - q.entries.len();
+
+    if removed > 0 {
+        let snap = build_snapshot(&q);
+        write_snapshot_atomic(&snap)?;
+        write_queue_atomic(&q)?;
+    }
+    Ok(removed)
+}
+
 fn write_queue_atomic(queue: &Queue) -> Result<()> {
     let path = queue_path()?;
     let dir = path.parent().ok_or_else(|| anyhow::anyhow!("no parent dir"))?;
@@ -1246,7 +1319,10 @@ pub fn request_command_block(
     format!(
         "Execute these 5 sub-steps strictly in order. ALL FIVE are mandatory; skipping any breaks the flow.\n\n\
          **(1) Get sessionKey** — call `session_status` once this turn; pass the returned key as `--sub-key` in step (3). Do NOT invent prefixes (`review-`, `decision-`, the raw jobId, etc.) — those silently break dispatch routing.\n\n\
-         **(2) Translate `--user-content` AND `--list-label` to the user's language BEFORE step (3)** (signal = user's OWN typed messages this session; default English if unsure; see [Localization] above for token mapping). The bash in (3) shows English placeholders for shape reference only — the actual strings you pass MUST be localized. Keep `--list-label`'s bracket prefix structure (e.g. `[Decision <shortJobId>]`) intact: translate the keyword inside the bracket and the suffix phrase, but preserve the shortJobId hex.\n\n\
+         **(2) Translate `--user-content` AND `--list-label` to the user's language BEFORE step (3)**. The bash in (3) shows English placeholders — the actual strings you pass MUST be localized per the rules below.\n\
+         \x20\x20• **Language signal** = user's OWN typed messages in THIS session ONLY. Task title / description / peer's message / playbook examples are NOT signals (even if they contain non-English text). Unsure → default English.\n\
+         \x20\x20• **Translate EVERY user-visible word** — outer prose, text inside single-quotes, placeholder words inside `<...>`, AND task title. The only thing kept verbatim is the shortJobId hex (it's an identifier, not language).\n\
+         \x20\x20• **No mixed-language in any single string**.\n\n\
          **(3) Run `pending-decisions-v2 request`** using sessionKey from (1) and translated args from (2):\n\
          ```bash\n\
          onchainos agent pending-decisions-v2 request \\\n\
@@ -1363,7 +1439,7 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
          Step 1 — Card was just delivered via `xmtp_prompt_user`. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — When the user actually replies (next turn):\n\
          \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
-         \x20\x20\x20\x20· else → run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --sub-key \"{}\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\" --source-event \"{}\"` exactly once, then follow the relay playbook it returns.",
+         \x20\x20\x20\x20· else → follow `okx-task-watch` SKILL.md §kind == decision_request \"Handling the user reply\": **first claim the todo** per SKILL.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --sub-key \"{}\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\" --source-event \"{}\"` exactly once, then follow the relay playbook it returns. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
         entry.sub_key,
         entry.job_id,
         entry.role,
@@ -1563,7 +1639,7 @@ fn playbook_relay_only_cli(sub_key: &str, relay_content: &str) -> String {
          ```\n\n\
          ⚠️ Run this command **exactly once**. Repeat = recursion loop; skip = task stalls.\n\
          🛑 User reply consumed — do NOT reuse it (no `resolve-with-sessionkey` retry, no future-card reference); wait for a fresh user message.\n\
-         ▶️ After the relay succeeds, **resume watching** — call `okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50` to continue monitoring task progress.\n",
+         ▶️ After the relay succeeds, **resume watching** — re-enter the watch loop per `okx-task-watch` SKILL.md (preserve the session's sticky `--job-id` if it was started post-publish).\n",
         key = sub_key_q,
         content = relay_content_q,
     )

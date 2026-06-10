@@ -88,7 +88,7 @@ Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/referenc
 | Max budget | <number> (negotiation price cap) |
 | Acceptance window | <Nh> (auto-closes after N hours if no ASP accepts) |
 | Delivery window | <Nh> (deliverable must be submitted within N hours of acceptance) |
-| Designated provider | <agentId> (🛑 only show this row if the user explicitly designated one; **otherwise omit the entire row** -- do not write \"none\" or \"none (public task)\" or any placeholder. Tasks default to private; \"no designated provider\" != \"public task\") |
+| Designated provider | <agentId> if the user explicitly designated one; otherwise write exactly **Not designated**. Do NOT append any explanation such as \"(public task)\" — \"no designated provider\" ≠ \"public task\"; visibility is a separate field. |
 
 🚫 **The form MUST contain ONLY the fields listed above.** Do NOT add a Visibility / 可见性 row — visibility is not set at creation time.
 
@@ -168,7 +168,7 @@ After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you 
 ===============================================================\n\
 🛑🛑🛑 STOP -- after create-task + task-attach (if any) + watch (if prompted), you **MUST end this turn**\n\
 ===============================================================\n\
-✅ **Exception: `[Watch]` hint** -- if the CLI output contains `[Watch] Start monitoring task progress:` followed by an `okx-a2a user watch ...` command, you **MUST** execute that exact command before ending the turn. This starts the event listener that drives the task forward on CLI-mode platforms.\n\
+✅ **Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, run the emitted `okx-a2a user watch ...` command before ending the turn. Read `okx-task-watch/SKILL.md` first if you haven't in this session.\n\
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.\n\
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.\n\
 ❌ **Do not call any other onchainos agent commands** (except `task-attach` in Step 6.5 and `okx-a2a user watch` above) -- all further actions are driven by on-chain events.\n\
@@ -298,7 +298,7 @@ After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you 
 ===============================================================
 🛑🛑🛑 STOP -- after draft publish + watch (if prompted), you **MUST end this turn**
 ===============================================================
-✅ **Exception: `[Watch]` hint** -- if the CLI output contains `[Watch] Start monitoring task progress:` followed by an `okx-a2a user watch ...` command, you **MUST** execute that exact command before ending the turn. This starts the event listener that drives the task forward on CLI-mode platforms.
+✅ **Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, run the emitted `okx-a2a user watch ...` command before ending the turn. Read `okx-task-watch/SKILL.md` first if you haven't in this session.
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- draft publish only submits the transaction; it is not yet confirmed on-chain.
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification.
 ❌ **Do not call any other onchainos agent commands** (except `okx-a2a user watch` above) -- all further actions are driven by on-chain events.

@@ -31,7 +31,7 @@ pub async fn handle_dispute_raise(
     if reason.chars().count() > MAX_REASON_CHARS {
         bail!("Dispute reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
     }
-    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
 
     // Dispute deposit precheck: wallet's matching token balance must be ≥ 5% of the job amount.
     // Insufficient balance bails immediately to avoid wasting gas on later approve / dispute on-chain txs.
@@ -44,10 +44,10 @@ pub async fn handle_dispute_raise(
         .unwrap_or("0")
         .parse()
         .unwrap_or(0.0);
-    let token_symbol = task_resp["tokenSymbol"].as_str().unwrap_or("USDT");
+    let token_symbol = task_resp["tokenSymbol"].as_str().unwrap_or("?");
     if task_amount > 0.0 {
         let required = task_amount * 0.05;
-        common::ensure_sufficient_balance(required, token_symbol)
+        common::ensure_sufficient_balance_at(required, token_symbol, &address)
             .await
             .context(format!(
                 "Raising a dispute requires a deposit >= 5% of the task amount ({required} {token_symbol}; task amount {task_amount} {token_symbol})"

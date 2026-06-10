@@ -6,7 +6,8 @@ use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_BUYER};
+use crate::commands::agent_commerce::task::common::query::{self as common_query, status_name};
+use crate::commands::agent_commerce::task::common::AGENT_ROLE_BUYER;
 
 fn attachments_dir(job_id: &str) -> Result<PathBuf> {
     let home = dirs::home_dir()
@@ -19,7 +20,7 @@ pub async fn handle_task_attach(client: &mut TaskApiClient, job_id: &str, file_p
     let resp = client.get_with_agent_id(&client.task_path(job_id), &agent_id).await?;
     let status = resp["status"].as_i64().unwrap_or(-1);
     if status >= 2 {
-        let status_str = resp["statusStr"].as_str().unwrap_or("unknown");
+        let status_str = status_name(status);
         bail!(
             "task status is \"{status_str}\" (status={status}); \
              attachments can only be added when the task is in created or accepted state"

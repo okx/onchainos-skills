@@ -42,6 +42,7 @@ pub struct CreateTaskParams {
     pub title: Option<String>,
     pub provider: Option<String>,
     pub attachments: Option<Vec<String>>,
+    pub endpoint: Option<String>,
 }
 
 struct ValidatedParams {
@@ -249,7 +250,7 @@ pub async fn handle_create(
     // on-chain during broadcast and may be processed by the agent before
     // sign_uop_and_broadcast returns — the file must already exist.
     if let Some(ref provider_id) = params.provider {
-        super::negotiate::save_designated_provider(&job_id, provider_id)?;
+        super::negotiate::save_designated_provider_with_endpoint(&job_id, provider_id, params.endpoint.as_deref())?;
     }
 
     let tx_hash = signing::sign_uop_and_broadcast(
@@ -286,18 +287,23 @@ pub async fn handle_create(
         println!();
         println!("{warning}");
     }
-    if params.provider.is_some() {
-        println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
-    } else {
-        println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
+    // In CLI mode (Claude Code / Codex), skip the "Next: wait for ..." hint —
+    // its passive "wait" + "automatically" phrasing reads as a conversation-ending
+    // cue to LLM-driven watch loops and was observed to suppress the immediately
+    // following [Watch] block. Native push clients (Hermes / OpenClaw) still get
+    // the hint since a human reads it directly.
+    if !super::content::is_cli_mode() {
+        if params.provider.is_some() {
+            println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
+        } else {
+            println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
+        }
     }
-    let cli_mode = std::env::var("CLAUDECODE").unwrap_or_default() == "1"
-        || std::env::var("CODEX_THREAD_ID").ok().filter(|s| !s.is_empty()).is_some();
-    if cli_mode {
-        println!("Due to client limitations, you need to proactively ask me to \"monitor task progress\" for me to continue pushing updates to you.");
+    if super::content::is_cli_mode() {
+        println!("[Watch] Per `okx-task-watch` SKILL.md, start the monitor now:");
+        println!("okx-a2a user watch --once --json --poll-ms 1000 --limit 50 --job-id {job_id}");
         println!();
-        println!("🛑 [Watch] You MUST now execute the watch command below to monitor task progress — do NOT skip or end the turn without running it:");
-        println!("okx-a2a user watch --once --json --timeout 300 --poll-ms 1000 --limit 50");
+        println!("If you haven't read `okx-task-watch/SKILL.md` in this session, read it first.");
     }
     println!("🛑 Do NOT call set-payment-mode.");
     Ok(())

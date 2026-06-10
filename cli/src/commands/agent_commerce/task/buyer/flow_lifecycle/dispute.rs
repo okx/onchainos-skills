@@ -39,7 +39,6 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
     let session_hint = super::super::flow::SESSION_STATUS_HINT;
-    let idem_check = super::super::flow::idempotency_check(job_id);
 
     format!(
     "[Current Status] job_disputed (arbitration opened; CLI auto-submits evidence on this event)\n\
@@ -52,7 +51,6 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      **Do NOT** call `xmtp_send` to the ASP — both sides see the arbitration via on-chain events.\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     {idem_check}\n\
      **Step 1 — Pull this sub session's negotiation / delivery chat history:**\n\n\
      {session_hint}\n\
      Then call `xmtp_get_conversation_history` with that sessionKey to fetch the full a2a-agent-chat history with the ASP.\n\n\
@@ -87,7 +85,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
     let title_in_extract = ctx.title_in_extract;
-    let terminal_session_hint = ctx.terminal_session_hint;
+    let terminal_session_hint = &ctx.terminal_session_hint;
 
     let dispute_won = super::super::content::dispute_won_user_notify(job_id, title_display);
     let dispute_lost = super::super::content::dispute_lost_user_notify(job_id, title_display);

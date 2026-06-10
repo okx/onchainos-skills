@@ -15,13 +15,22 @@ use super::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
 /// Resolves agentId from the local identity list by role when --agent-id is omitted.
+/// When falling back, picks the first agent matching the role — may be wrong when
+/// multiple agents of the same role exist (e.g. multiple providers).
 pub async fn resolve_agent_id(agent_id: &str, role: i64) -> String {
     if !agent_id.is_empty() {
         return agent_id.to_string();
     }
-    signing::resolve_agent_id_by_role(role)
+    let resolved = signing::resolve_agent_id_by_role(role)
         .await
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if !resolved.is_empty() {
+        eprintln!(
+            "⚠ --agent-id omitted; falling back to first local agent with role={role}: {resolved}. \
+             If you have multiple agents of this role, pass --agent-id explicitly."
+        );
+    }
+    resolved
 }
 
 /// Query task status.
@@ -30,8 +39,8 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
 
     let t = &resp;
-    let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
-    println!("Task status: {}", t["statusStr"].as_str().unwrap_or("?"));
+    let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
+    println!("Task status: {}", t["status"].as_i64().map(status_name).unwrap_or("?"));
     println!("  jobId:    {job_id}");
     println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
     println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
@@ -60,9 +69,9 @@ pub async fn handle_list(
     let total = resp["total"].as_u64().unwrap_or(0);
     println!("Task list ({total} total, page {page}):");
     for t in &tasks {
-        let sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
+        let sym = t["tokenSymbol"].as_str().unwrap_or("?");
         println!("  [{}] {} — {} {}",
-            t["statusStr"].as_str().unwrap_or("?"),
+            t["status"].as_i64().map(status_name).unwrap_or("?"),
             t["jobId"].as_str().unwrap_or("?"),
             t["tokenAmount"].as_str().unwrap_or("?"),
             sym,
@@ -74,7 +83,7 @@ pub async fn handle_list(
 
 // ─── active-tasks ───────────────────────────────────────────────────────
 
-fn status_name(code: i64) -> &'static str {
+pub fn status_name(code: i64) -> &'static str {
     match code {
         0 => "created",
         1 => "accepted",
@@ -222,7 +231,7 @@ pub async fn handle_active_tasks(
                 "statusCode":           status_code,
                 "title":                t.get("title").and_then(|v| v.as_str()).unwrap_or(""),
                 "tokenAmount":          t.get("tokenAmount").and_then(|v| v.as_str()).unwrap_or(""),
-                "tokenSymbol":          t.get("paymentTokenSymbol").and_then(|v| v.as_str()).unwrap_or(""),
+                "tokenSymbol":          t.get("tokenSymbol").and_then(|v| v.as_str()).unwrap_or(""),
                 "myAgentId":            agent_id,
                 "myRole":               role_name(role),
                 "counterpartyAgentId":  if counterparty_id.is_empty() {

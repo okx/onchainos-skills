@@ -1,140 +1,8 @@
 //! Designated-provider D-Step routing and B-Step negotiation protocol.
-
-/// Designated-provider D-Step routing (service-list query -> x402 or A2A branch entry)
-pub(crate) fn designated_provider_d_steps(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, title_display: &str) -> String {
-    let l10n_prompt = super::super::flow::L10N_PROMPT;
-    let session_hint = super::super::flow::SESSION_STATUS_HINT;
-    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
-    let follow_playbook_short = super::super::flow::FOLLOW_PLAYBOOK_SHORT;
-    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
-    let title = title_display;
-    let cmd_not_provider = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Not ASP {short_id}] {title} next-step decision"), "not_provider");
-    let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Offline {short_id}] {title} next-step decision"), "provider_offline");
-    let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 invalid {short_id}] {title} next-step decision"), "x402_invalid");
-    let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 price {short_id}] {title} price decision"), "x402_price_mismatch");
-    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] {title} budget decision"), "over_budget");
-    let not_provider = super::super::content::not_provider_user_prompt(job_id, short_id, dp_id);
-    let provider_offline = super::super::content::provider_offline_user_prompt(job_id, short_id, dp_id);
-    format!("\
-             🎯 **Designated ASP**: {dp_id}\n\
-             ⚠️ The persisted designated-provider file has already been removed by the CLI when this prompt was generated (consume-on-read); no manual cleanup needed.\n\n\
-             **D-Step 1 - query the ASP's service-list:**\n\
-             ```bash\n\
-             onchainos agent service-list --agent-id {dp_id}\n\
-             ```\n\
-             ⚠️ `--agent-id` is a **required named flag** — do NOT pass the agent ID as a positional argument (e.g. `service-list {dp_id}` will error). Always use `--agent-id {dp_id}`.\n\
-             If the command returns an error (e.g. \"unexpected argument\", \"unrecognized\"), **retry once** using the exact command above with `--agent-id`. Do NOT skip D-Steps on error — the routing decision depends on this result.\n\
-             Check whether the response contains services (non-empty `services` array) and inspect the `endpoint`, `feeAmount`, `feeTokenSymbol` fields on each service.\n\n\
-             **D-Step 1.5 - profile check (role validation + online-status):**\n\
-             Query the ASP's profile:\n\
-             ```bash\n\
-             onchainos agent profile {dp_id}\n\
-             ```\n\
-             ⚠️ This is the **ASP's** profile — the `role` field in the response belongs to the ASP, **NOT to you**. Do NOT use it to determine your own role. You are the **buyer** (`--role buyer`).\n\n\
-             **D-Step 1.5a - role gate (🛑 hard gate):**\n\
-             Check `ok` and `role` from the response:\n\
-             - `ok == true` AND `role == 2` -> pass; continue to D-Step 1.5b.\n\
-             - `ok == false` or `role != 2` (or role missing/null) -> the designated agent does not exist or is not registered as an ASP (provider). It cannot fulfil the job.\n\
-             \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
-             \x20\x20{session_hint}\n\
-             \x20\x20```bash\n\
-             \x20\x20{cmd_not_provider}\n\
-             \x20\x20```\n\
-             \x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-             \x20\x20{not_provider}\n\
-             \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
-             \x20\x20{follow_playbook}\n\
-             \x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20{route_hint}\n\n\
-             **D-Step 1.5b - online-status check (only effective on the escrow path):**\n\
-             Read `onlineStatus` from the response (1=online / 2=offline). If the field is missing, null, or empty, treat the ASP as **online** (the backend may not yet return this field).\n\
-             - `onlineStatus == 1` **or field missing/null/empty** (online / unknown) -> continue to D-Step 2.\n\
-             - `onlineStatus == 2` AND **no endpoint** (so you are about to enter the escrow negotiation path) -> the ASP is offline and cannot negotiate.\n\
-             \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
-             \x20\x20{session_hint}\n\
-             \x20\x20```bash\n\
-             \x20\x20{cmd_offline}\n\
-             \x20\x20```\n\
-             \x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-             \x20\x20{provider_offline}\n\
-             \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules** (rule 4: English → verbatim; rule 5: non-English → faithful translation).\n\
-             \x20\x20{follow_playbook}\n\
-             \x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20{route_hint}\n\
-             - `onlineStatus == 2` but **has an endpoint** (x402 path) -> x402 is automated payment and does not depend on the ASP being online in real time, so continue to D-Step 2.\n\n\
-             **D-Step 2 - route by service-list result:**\n\
-             - **Has services and contains an endpoint (x402-capable)** -> extract `feeAmount`, `feeTokenSymbol`, `endpoint` from `services[0]`.\n\
-             \x20\x20⚠️ **`feeAmount` is the value the ASP manually entered at registration time, and is not necessarily equal to the on-chain price**; it must be verified by DX-Step 1 `x402-check`. When showing it to the user, label it \"registered fee\".\n\
-             \x20\x20Execute the designated-provider x402 flow below (do NOT jump to A-Step 1):\n\n\
-             \x20\x20**DX-Step 1 - validate the endpoint:**\n\
-             \x20\x20```bash\n\
-             \x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
-             \x20\x20```\n\
-             \x20\x20- `valid=false` -> enqueue the user decision via `pending-decisions-v2 request`:\n\
-             \x20\x20\x20\x20{session_hint}\n\
-             \x20\x20\x20\x20```bash\n\
-             \x20\x20\x20\x20{cmd_x402_invalid}\n\
-             \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-             \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The x402 endpoint of the designated ASP (agentId={dp_id}) is invalid and cannot be used. Choose next step:\n\
-             \x20\x20\x20\x20A. Specify another ASP — provide the agentId\n\
-             \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
-             \x20\x20\x20\x20C. Close the job\n\
-             \x20\x20\x20\x20{l10n_prompt}\n\
-             \x20\x20\x20\x20{follow_playbook}\n\
-             \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20\x20\x20{route_hint}\n\n\
-             \x20\x20**DX-Step 2 - amount sanity check:**\n\
-             \x20\x20Compare `amountHuman` from x402-check with `feeAmount` from `services[0]`:\n\
-             \x20\x20- Mismatch (delta > 1%) -> enqueue the user decision via `pending-decisions-v2 request`:\n\
-             \x20\x20\x20\x20{session_hint}\n\
-             \x20\x20\x20\x20```bash\n\
-             \x20\x20\x20\x20{cmd_x402_price}\n\
-             \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-             \x20\x20\x20\x20Job `{job_id}` — the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
-             \x20\x20\x20\x20A. Accept — continue with this price\n\
-             \x20\x20\x20\x20B. Reject — switch to another ASP\n\
-             \x20\x20\x20\x20{l10n_prompt}\n\
-             \x20\x20\x20\x20{follow_playbook_short}\n\
-             \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20\x20\x20{route_hint}\n\
-             \x20\x20- Match -> continue to DX-Step 3.\n\n\
-             \x20\x20**DX-Step 3 - budget check:**\n\
-             \x20\x20First call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` and extract `paymentMostTokenAmount` (max budget) and the task's `tokenSymbol`.\n\
-             \x20\x20⚠️ **Currency check**: compare `tokenSymbol` from x402-check with the task's `tokenSymbol` -\n\
-             \x20\x20- Mismatch (e.g. job in USDG, x402 charges USDT) -> since USDT and USDG are both USD stablecoins (~1:1), still compare numerically against the budget.\n\
-             \x20\x20\x20\x20`set-payment-mode` will switch the on-chain payment token to **the x402 endpoint's token** (no longer the token used at job creation).\n\
-             \x20\x20- Match -> compare directly.\n\
-             \x20\x20Compare `amountHuman` with `paymentMostTokenAmount` (**NOT `tokenAmount`; `tokenAmount` is the base budget**):\n\
-             \x20\x20- Over -> enqueue the user decision via `pending-decisions-v2 request`:\n\
-             \x20\x20\x20\x20{session_hint}\n\
-             \x20\x20\x20\x20```bash\n\
-             \x20\x20\x20\x20{cmd_over_budget}\n\
-             \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per [Localization] rules):\n\
-             \x20\x20\x20\x20[Job {short_id} — you are the User Agent] The x402 fee from the designated ASP (agentId={dp_id}) is <amountHuman> <tokenSymbol>, which exceeds your max budget and cannot be used. Choose next step:\n\
-             \x20\x20\x20\x20A. Specify another ASP — provide the ASP's agentId\n\
-             \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
-             \x20\x20\x20\x20C. Close the job\n\
-             \x20\x20\x20\x20{l10n_prompt}\n\
-             \x20\x20\x20\x20{follow_playbook}\n\
-             \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-             \x20\x20\x20\x20{route_hint}\n\
-             \x20\x20- Within budget -> execute **A-Step 3** below.\n\n\
-             \x20\x20**A-Step 3 - set-payment-mode (push x402 on-chain):**\n\
-             \x20\x20```bash\n\
-             \x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol returned by x402-check> --token-amount <amountHuman returned by x402-check> --endpoint <endpoint>\n\
-             \x20\x20```\n\
-             \x20\x20⚠️ Use the **actual values returned by x402-check** for `tokenSymbol` and `tokenAmount` (NOT the original budget used at job creation).\n\n\
-             \x20\x20**A-Step 3 result branch (🛑 MANDATORY - getting this wrong = the flow stalls):**\n\
-             \x20\x20Inspect the CLI output (JSON) of set-payment-mode:\n\
-             \x20\x20- Output contains `\"alreadySet\": true` (paymentMode is already on-chain so the on-chain call was skipped) -> **do NOT wait for `job_payment_mode_changed`**;\n\
-             \x20\x20\x20\x20no event will fire on-chain. **Within this same turn, immediately execute the x402 flow for job_payment_mode_changed**:\n\
-             \x20\x20\x20\x20call `onchainos agent next-action --jobid {job_id} --event job_payment_mode_changed --role buyer --agentId {agent_id}` and follow the returned script (task-402-pay).\n\
-             \x20\x20- Output contains `\"confirming\": true` (normal on-chain submission in flight) -> **end this turn** and wait for the `job_payment_mode_changed` system notification.\n\n\
-             - **No service or no endpoint (no x402 support)** -> enter **B-Step 1** to create a chat and negotiate.")
-}
+//!
+//! The full flow is split into two phases to reduce playbook output size:
+//!   Phase 1 (`route_only`): call `designated-route` → determine route → call next-action with the matching pseudo-event
+//!   Phase 2 (`branch_a2a` / `branch_x402` / `branch_error`): only the hit branch's playbook
 
 /// Designated-provider B-Step negotiation protocol (three-step handshake + group creation + first inquiry + end turn)
 pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, title_display: &str) -> String {
@@ -226,4 +94,222 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              [Subsequent events]\n\
              - escrow -> set-payment-mode -> job_payment_mode_changed -> [intent:confirm] -> ASP apply -> confirm-accept -> job_accepted\n\
              - x402 -> set-payment-mode -> job_payment_mode_changed -> task-402-pay -> job_accepted -> complete\n")
+}
+
+// ── Phase-split functions (route_only + per-branch) ─────────────────
+
+/// Phase 1: call `designated-route`, then dispatch to the matching branch pseudo-event.
+/// Outputs only the route command + a hard gate — no branch playbooks inlined.
+pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &str, endpoint: Option<&str>) -> String {
+    let endpoint_flag = match endpoint.filter(|s| !s.is_empty()) {
+        Some(ep) => format!(" --endpoint {ep}"),
+        None => String::new(),
+    };
+    format!("\
+             🎯 **Designated ASP**: {dp_id}\n\
+             ⚠️ The persisted designated-provider file has already been removed by the CLI when this prompt was generated (consume-on-read); no manual cleanup needed.\n\n\
+             **D-Step 1 — query ASP route (service-list + profile combined):**\n\
+             ```bash\n\
+             onchainos agent designated-route --provider {dp_id}{endpoint_flag}\n\
+             ```\n\
+             Response fields: `route` (`x402` | `a2a` | `error`), `errorType` (if error), `providerName`, `onlineStatus`, `endpoint`, `feeAmount`, `feeTokenSymbol` (if x402).\n\n\
+             🛑 **Multi-service selection (when `services` array is present):**\n\
+             If the response contains a `services` array, this ASP offers **multiple** x402 services.\n\
+             The top-level `endpoint`/`feeAmount`/`feeTokenSymbol` default to the FIRST service — this may NOT be the one the user requested.\n\
+             You MUST check the task description / user's original request to identify the intended service:\n\
+             \x20\x20- Match by `serviceName`, `serviceDescription`, or endpoint path against keywords in the task description.\n\
+             \x20\x20- Once matched, use THAT service's `endpoint`, `feeAmount`, `feeTokenSymbol` for ALL subsequent steps (x402-validate, set-payment-mode).\n\
+             \x20\x20- If no clear match, present the service list to the user via `pending-decisions-v2 request` and let them pick.\n\n\
+             **D-Step 2 — call `next-action` with the matching branch pseudo-event:**\n\n\
+             | `route` value | `errorType` | next-action `--event` |\n\
+             |---|---|---|\n\
+             | `a2a` | — | `designated_a2a` |\n\
+             | `x402` | — | `designated_x402` |\n\
+             | `error` | `not_provider` | `designated_error` |\n\
+             | `error` | `offline` | `designated_error` |\n\
+             | `error` | `endpoint_not_found` | `designated_error` |\n\n\
+             Execute:\n\
+             ```bash\n\
+             onchainos agent next-action --jobid {job_id} --event <from table above> --role buyer --agentId {agent_id} --provider {dp_id}\n\
+             ```\n\
+             🛑 **Do NOT execute any D-Step / B-Step / DX-Step in this turn** — the next-action call above returns the matching branch playbook. Follow it verbatim.\n\
+             🛑 Do NOT create groups, send messages, or call set-payment-mode before getting the branch playbook.\n\n\
+             **End this turn after executing the branch playbook returned by next-action.**\n")
+}
+
+/// Phase 2a: A2A branch — group creation + negotiation protocol.
+pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, title_display: &str) -> String {
+    let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
+    let attachment_section = if attachment_paths.is_empty() {
+        String::new()
+    } else {
+        let paths_list = attachment_paths.iter()
+            .map(|p| format!("  - `{p}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "**Pre-step — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
+             The following files are saved locally and MUST be uploaded to the provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
+             {paths_list}\n\
+             ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
+             ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
+        )
+    };
+
+    format!("\
+         [Designated ASP route: A2A] Provider {dp_id} is online with escrow support.\n\
+         [Role] User (Buyer)\n\n\
+         {attachment_section}\
+         {negotiate}\n",
+        negotiate = designated_provider_negotiate(job_id, agent_id, short_id, dp_id, title_display),
+    )
+}
+
+/// Phase 2b: x402 branch — endpoint validation + set-payment-mode.
+pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
+    let l10n_prompt = super::super::flow::L10N_PROMPT;
+    let session_hint = super::super::flow::SESSION_STATUS_HINT;
+    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
+    let follow_playbook_short = super::super::flow::FOLLOW_PLAYBOOK_SHORT;
+    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
+    let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 invalid {short_id}] next-step decision"), "x402_invalid");
+    let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 price {short_id}] price decision"), "x402_price_mismatch");
+    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] budget decision"), "over_budget");
+
+    format!("\
+         [Designated ASP route: x402] Provider {dp_id} has an x402 endpoint.\n\
+         [Role] User (Buyer)\n\n\
+         **DX-Step 1 — validate endpoint + price + budget (single CLI call):**\n\
+         ```bash\n\
+         onchainos agent x402-validate --endpoint <endpoint from designated-route> --agent-id {agent_id} --job-id {job_id} --fee-amount <feeAmount> --fee-token <feeTokenSymbol>\n\
+         ```\n\
+         ⚠️ Use `feeAmount` and `feeTokenSymbol` from the `designated-route` response above (earlier in this turn).\n\
+         Response field `result` determines the branch:\n\n\
+         - **`result == \"x402_invalid\"`** -> enqueue the user decision via `pending-decisions-v2 request`:\n\
+         \x20\x20{session_hint}\n\
+         \x20\x20```bash\n\
+         \x20\x20{cmd_x402_invalid}\n\
+         \x20\x20```\n\
+         \x20\x20{l10n_prompt}\n\
+         \x20\x20`--user-content` template (canonical English):\n\
+         \x20\x20[Job {short_id} — you are the User Agent] The x402 endpoint of the designated ASP (agentId={dp_id}) is invalid and cannot be used. Choose next step:\n\
+         \x20\x20A. Specify another ASP — provide the agentId\n\
+         \x20\x20B. Make the job public — let more ASPs discover it\n\
+         \x20\x20C. Close the job\n\
+         \x20\x20{follow_playbook}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\
+         \x20\x20{route_hint}\n\n\
+         - **`result == \"input_required\"`** -> the endpoint is a valid x402 service but requires business parameters to trigger the 402 payment challenge.\n\
+         \x20\x20The response includes `fields` / `requiredAnyOf` describing what the endpoint needs.\n\
+         \x20\x20**You MUST construct a JSON body from the task description:**\n\
+         \x20\x20\x20\x201. Read the `fields` array from the response — each entry has `name`, `type`, and optionally `required`/`label`.\n\
+         \x20\x20\x20\x202. Read `requiredAnyOf` — at least one of these fields must be present.\n\
+         \x20\x20\x20\x203. Extract matching values from the **task description** (the user's original request). Map task description content to the field names.\n\
+         \x20\x20\x20\x204. If you can fill the required fields, re-run x402-validate with `--body`:\n\
+         \x20\x20\x20\x20```bash\n\
+         \x20\x20\x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id} --body '<constructed JSON>'\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20If the re-check returns `valid: true`, use its `acceptsJson`, `amountHuman`, `tokenSymbol` and proceed to **A-Step 3** (set-payment-mode).\n\
+         \x20\x20\x20\x20⚠️ **Remember the constructed JSON body** — you must pass the same `--body` to `task-402-pay` later so the replay sends business parameters along with the payment header.\n\
+         \x20\x20\x20\x205. If you cannot extract the required fields from the task description, enqueue a user decision asking them to provide the missing business parameters:\n\
+         \x20\x20\x20\x20```bash\n\
+         \x20\x20\x20\x20{cmd_x402_invalid}\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20`--user-content` template: [Job {short_id}] The x402 service requires business parameters (<list field names from response>) but they could not be extracted from the task description. Please provide them or choose: A. Retry with parameters / B. Switch ASP / C. Close the job.\n\
+         \x20\x20{follow_playbook}\n\
+         \x20\x20{route_hint}\n\n\
+         - **`result == \"price_mismatch\"`** -> enqueue the user decision:\n\
+         \x20\x20{session_hint}\n\
+         \x20\x20```bash\n\
+         \x20\x20{cmd_x402_price}\n\
+         \x20\x20```\n\
+         \x20\x20{l10n_prompt}\n\
+         \x20\x20`--user-content` template (canonical English):\n\
+         \x20\x20Job `{job_id}` — the specified ASP (agentId={dp_id}) actually charges <amountHuman> <tokenSymbol> (from CLI response), which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
+         \x20\x20A. Accept — continue with this price\n\
+         \x20\x20B. Reject — switch to another ASP\n\
+         \x20\x20{follow_playbook_short}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\
+         \x20\x20{route_hint}\n\n\
+         - **`result == \"over_budget\"`** -> enqueue the user decision:\n\
+         \x20\x20{session_hint}\n\
+         \x20\x20```bash\n\
+         \x20\x20{cmd_over_budget}\n\
+         \x20\x20```\n\
+         \x20\x20{l10n_prompt}\n\
+         \x20\x20`--user-content` template (canonical English):\n\
+         \x20\x20[Job {short_id} — you are the User Agent] The x402 fee from the designated ASP (agentId={dp_id}) is <amountHuman> <tokenSymbol> (from CLI response), which exceeds your max budget and cannot be used. Choose next step:\n\
+         \x20\x20A. Specify another ASP — provide the ASP's agentId\n\
+         \x20\x20B. Make the job public — let more ASPs discover it\n\
+         \x20\x20C. Close the job\n\
+         \x20\x20{follow_playbook}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\
+         \x20\x20{route_hint}\n\n\
+         - **`result == \"pass\"`** -> all checks passed. Execute **A-Step 3** below.\n\n\
+         **A-Step 3 — set-payment-mode (push x402 on-chain):**\n\
+         ```bash\n\
+         onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from x402-validate> --token-amount <amountHuman from x402-validate> --endpoint <endpoint>\n\
+         ```\n\
+         ⚠️ Use the **actual values returned by x402-validate** for `tokenSymbol` and `tokenAmount` (NOT the original budget used at job creation).\n\n\
+         **A-Step 3 result branch (🛑 MANDATORY — getting this wrong = the flow stalls):**\n\
+         Inspect the CLI output (JSON) of set-payment-mode:\n\
+         - Output contains `\"alreadySet\": true` -> **do NOT wait for `job_payment_mode_changed`**;\n\
+         \x20\x20call `onchainos agent next-action --jobid {job_id} --event job_payment_mode_changed --role buyer --agentId {agent_id}` immediately.\n\
+         - Output contains `\"confirming\": true` -> **end this turn** and wait for `job_payment_mode_changed`.\n")
+}
+
+/// Phase 2c: error branch — not_provider or offline decision card.
+pub(crate) fn branch_error(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
+    let session_hint = super::super::flow::SESSION_STATUS_HINT;
+    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
+    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
+    let cmd_not_provider = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Not ASP {short_id}] next-step decision"), "not_provider");
+    let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Offline {short_id}] next-step decision"), "provider_offline");
+    let cmd_endpoint_not_found = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Endpoint gone {short_id}] next-step decision"), "endpoint_not_found");
+    let not_provider = super::super::content::not_provider_user_prompt(job_id, short_id, dp_id);
+    let provider_offline = super::super::content::provider_offline_user_prompt(job_id, short_id, dp_id);
+
+    format!("\
+         [Designated ASP route: error] Provider {dp_id} encountered a routing error.\n\
+         [Role] User (Buyer)\n\n\
+         **Branch by `errorType` from the `designated-route` response above (earlier in this turn):**\n\n\
+         - **`errorType == \"endpoint_not_found\"`** -> the persisted endpoint no longer exists in the ASP's service list (the ASP may have removed or changed the service).\n\
+         \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
+         \x20\x20{session_hint}\n\
+         \x20\x20```bash\n\
+         \x20\x20{cmd_endpoint_not_found}\n\
+         \x20\x20```\n\
+         \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules**.\n\
+         \x20\x20`--user-content` template (canonical English):\n\
+         \x20\x20[Job {short_id} — you are the User Agent] The previously selected service endpoint (`requestedEndpoint` from the response) of ASP (agentId={dp_id}) is no longer available. Choose next step:\n\
+         \x20\x20A. Specify another ASP — provide the agentId\n\
+         \x20\x20B. Make the job public — let more ASPs discover it\n\
+         \x20\x20C. Close the job\n\
+         \x20\x20{follow_playbook}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\
+         \x20\x20{route_hint}\n\n\
+         - **`errorType == \"not_provider\"`** -> the designated agent does not exist or is not registered as an ASP.\n\
+         \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
+         \x20\x20{session_hint}\n\
+         \x20\x20```bash\n\
+         \x20\x20{cmd_not_provider}\n\
+         \x20\x20```\n\
+         \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules**.\n\
+         \x20\x20`--user-content` template (canonical English):\n\
+         \x20\x20{not_provider}\n\
+         \x20\x20{follow_playbook}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\
+         \x20\x20{route_hint}\n\n\
+         - **`errorType == \"offline\"`** -> the ASP is offline and cannot negotiate.\n\
+         \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
+         \x20\x20{session_hint}\n\
+         \x20\x20```bash\n\
+         \x20\x20{cmd_offline}\n\
+         \x20\x20```\n\
+         \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules**.\n\
+         \x20\x20`--user-content` template (canonical English):\n\
+         \x20\x20{provider_offline}\n\
+         \x20\x20{follow_playbook}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\
+         \x20\x20{route_hint}\n")
 }

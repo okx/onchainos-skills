@@ -66,6 +66,9 @@ pub enum TaskCommand {
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
+        /// Designated service endpoint (persisted for multi-service providers)
+        #[arg(long)]
+        endpoint: Option<String>,
     },
     /// Get recommended providers for a task
     Recommend {
@@ -85,6 +88,22 @@ pub enum TaskCommand {
         /// Advance to next page
         #[arg(long = "next-page")]
         next_page: bool,
+        /// Emit a pending-decisions-v2 recommend_pick decision after fetching
+        /// the list. Requires `--sub-key`. By default uses the auto-written
+        /// canonical English card; pass `--user-content` to override with a
+        /// sub-localized version.
+        #[arg(long = "emit-decision")]
+        emit_decision: bool,
+        /// Full XMTP sessionKey (from `session_status`). Required with `--emit-decision`.
+        #[arg(long = "sub-key")]
+        sub_key: Option<String>,
+        /// Task title used in the decision list label (defaults to `<title>`).
+        #[arg(long = "job-title")]
+        job_title: Option<String>,
+        /// Pre-localized card body to enqueue instead of the auto-written
+        /// canonical English card file.
+        #[arg(long = "user-content")]
+        user_content: Option<String>,
     },
     /// Mark a provider as failed negotiation (excluded from future recommend lists)
     MarkFailed {
@@ -183,6 +202,9 @@ pub enum TaskCommand {
         /// Payer address (optional, defaults to selected account)
         #[arg(long)]
         from: Option<String>,
+        /// JSON business body to POST during replay (for endpoints that require business parameters)
+        #[arg(long)]
+        body: Option<String>,
     },
     /// Validate an x402 endpoint and extract pricing info
     X402Check {
@@ -192,6 +214,9 @@ pub enum TaskCommand {
         /// Buyer agent ID (used to authenticate token-detail lookups).
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
+        /// JSON business body to POST (for endpoints that require business parameters)
+        #[arg(long)]
+        body: Option<String>,
     },
     /// Change payment token and amount (on-chain, wait for task_token_budget_change)
     SetTokenAndBudget {
@@ -251,12 +276,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments, endpoint } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider, attachments,
+                deadline_open, deadline_submit, title, provider, attachments, endpoint,
             }).await,
-        TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page } => {
+        TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } => {
             if next {
                 recommend::handle_recommend_next(&job_id)
             } else if current {
@@ -265,7 +290,19 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 recommend::handle_recommend_next_page(&mut client, &job_id).await
             } else {
                 let p = page.unwrap_or(0);
-                recommend::handle_recommend(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), p).await
+                recommend::handle_recommend(
+                    &mut client,
+                    &job_id,
+                    agent_id.as_deref().unwrap_or(""),
+                    p,
+                    recommend::EmitDecisionOpts {
+                        enabled: emit_decision,
+                        sub_key,
+                        job_title,
+                        user_content,
+                    },
+                )
+                .await
             }
         }
         TaskCommand::MarkFailed { job_id, provider_agent_id } => {
@@ -277,10 +314,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             accept::handle_confirm_accept(&mut client, &job_id, &provider_agent_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             accept::handle_direct_accept(&mut client, &job_id, &provider_agent_id, token_symbol.as_deref(), token_amount.as_deref()).await,
-        TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
-            accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref()).await,
-        TaskCommand::X402Check { endpoint, agent_id } =>
-            accept::handle_x402_check(&mut client, &endpoint, agent_id.as_deref()).await,
+        TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body } =>
+            accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref(), body.as_deref()).await,
+        TaskCommand::X402Check { endpoint, agent_id, body } =>
+            accept::handle_x402_check(&mut client, &endpoint, agent_id.as_deref(), body.as_deref()).await,
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>
