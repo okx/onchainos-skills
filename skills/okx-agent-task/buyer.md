@@ -93,8 +93,10 @@ After both layers pass, call `xmtp_send` to the provider (operational steps are 
 
 **Trigger**: user message contains "Please initiate a direct conversation with this provider to discuss the task details."
 
+> ⚠️ **A2MCP with known endpoint → NOT this skill.** If the user provides a concrete endpoint URL (`http(s)://…`) AND the serviceType is A2MCP (or the message explicitly says "A2MCP"), this is a direct x402 pay-per-call — hand off to `okx-agent-payments-protocol` (which handles Step A1: send request → 402 → payment). Do NOT enter §3.3 or create a task.
+>
 > ⚠️ If it contains "Please send a request to this endpoint." **but not** "use onchainos" → does NOT belong to this skill.
-> If it contains "Please use onchainos to send a request to this endpoint" → go to **§3.3** below.
+> If it contains "Please use onchainos to send a request to this endpoint" **and** serviceType is NOT A2MCP → go to **§3.3** below.
 
 Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `Price` / `symbol` (mutable).
 
