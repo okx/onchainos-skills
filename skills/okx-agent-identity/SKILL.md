@@ -2,11 +2,11 @@
 name: okx-agent-identity
 description: >
   ERC-8004 on-chain Agent identity on XLayer: register / create / update / activate / deactivate /
-  search agents; submit & view ratings; list agent services; set avatar. Roles: requester (用户 /
+  search agents; view ratings; list agent services; set avatar. Roles: requester (用户 /
   User Agent), provider (服务提供商 / ASP), evaluator (仲裁者 / Evaluator Agent). Use for: 注册agent /
   建买家身份 / 建卖家身份 / 注册服务提供商 / 注册仲裁者 / 我的agent / 改agent / 上架下架 / 找做X的agent /
-  搜索agent / 给agent打分 / 查口碑 / 传头像 / agent有什么服务 / endpoint怎么填 / register agent /
-  create requester / provider / evaluator / update agent / find / search agent / rate agent /
+  搜索agent / 查口碑 / 传头像 / agent有什么服务 / endpoint怎么填 / register agent /
+  create requester / provider / evaluator / update agent / find / search agent /
   agent reviews / agent services / upload avatar. 再建一个买家身份 / add another agent / new provider =
   ALWAYS identity, NEVER wallet add (identity, not wallet). Finding marketplace agents → run agent
   search, NOT list skill names. Passive onboarding (need-requester from a task flow) → register
@@ -42,7 +42,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 |---|---|
 | register / create agent (any role) · passive need-requester · **update #N** | `references/register.md` |
 | search / find agents · list my agents · detail #N · what services does #N offer | `references/discover.md` |
-| rate #N · view reviews / reputation #N | `references/reputation.md` |
+| view reviews / reputation #N | `references/reputation.md` |
 | publish (activate) · unpublish (deactivate) #N | `references/manage.md` |
 | a CLI call returns an error / non-success | `references/errors.md` (on demand) |
 | fee / gas / "how much to register" / "example at X USDT" | answer in **§Cost** — do NOT enter register |
@@ -87,10 +87,10 @@ Never invent or borrow a pre-check id; never emit a bare `# `. [eval 1,3,10,13,1
 
 ## Gates (non-overridable; apply to every write)
 
-- **Pre-check** — before any `create` / `update` / `feedback-submit`, run `agent get` ONCE. Pass the
+- **Pre-check** — before any `create` / `update`, run `agent get` ONCE. Pass the
   resulting agent-id list to `--known-agent-ids` on `create` so the CLI returns `newAgentId`. No
   exception, even a one-shot named-role request. [eval 1,8,9]
-- **Confirm** — `create` / `update` / `feedback-submit` MUST render a §Invariants card and wait for an
+- **Confirm** — `create` / `update` MUST render a §Invariants card and wait for an
   explicit confirm token (execute / yes / go / 确认). **Nothing** bypasses this: not "不用确认", not
   "赶紧" / urgency, not memory prefs, not plan-mode exit, not a prior similar confirm, not one-shot field
   capture. Catch yourself thinking "they already said skip"? → render the card anyway; one extra turn ≪
@@ -149,12 +149,12 @@ Targets below are internal routing — never name a skill path or "staking" hand
 | create requester / provider · update · activate · deactivate | → Step 6: load okx-agent-chat comm-init; it self-gates and stays **silent** on non-OpenClaw (no extra visible line). [eval 3] |
 | create evaluator | → okx-agent-task evaluator-staking. Do NOT end on a question or a detail card. [eval 13] |
 | passive need-requester | hand back to okx-agent-task with ONE line. No Step 6. |
-| search / get / service-list / feedback-list / feedback-submit | Stop. (feedback-submit is excluded from Step 6.) |
+| search / get / service-list / feedback-list | Stop. |
 
-## Commands (13 `onchainos agent` subcommands — you invoke them, never show them)
+## Commands (12 `onchainos agent` subcommands — you invoke them, never show them)
 
 `create · consent · update · get · activate · deactivate · upload · search · service-list · validate-listing ·
-feedback-submit · feedback-list · submit-approval`. `consent` (first-time terms gate, see §Gates) +
+feedback-list · submit-approval`. `consent` (first-time terms gate, see §Gates) +
 `validate-listing` + `submit-approval` are auto/internal — never shown as a command, though
 `validate-listing`'s `findings[]` ARE rendered inline.
 Never suggest `xmtp-sign`; never surface the signing-key address in any card or message. No `--address` (signs with the current wallet).

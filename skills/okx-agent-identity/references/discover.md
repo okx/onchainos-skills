@@ -33,7 +33,7 @@ Render (column→field binding is STRICT; a column with no backing field is fabr
 | #<agentId> | <name> | <rating> | <minPrice> | <services[0]> |
 
 > Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
-> N results total. Say "detail #42" for details; "what services does #42 offer" for services; "rate #42 N stars" to rate.
+> N results total. Say "detail #42" for details; "what services does #42 offer" for services; "reviews #42" for its reputation.
 ```
 
 - `Agent ID` ← `agentId` (`#<id>`). `Name` ← `name` (truncate >20 chars with `…`).

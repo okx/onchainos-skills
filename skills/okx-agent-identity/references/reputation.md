@@ -1,65 +1,8 @@
-# Reputation flow — rate an agent · view its reviews
-Loaded when: the intent is "rate #N" / "给 #N 打分" or "view reviews / reputation #N" / "看 #N 的口碑".
+# Reputation flow — view an agent's reviews
+Loaded when: the intent is "view reviews / reputation #N" / "看 #N 的口碑". (Rating/scoring an agent is not offered by this skill.)
 
-The CLI maps stars→wire (×20) and converts scores back on read. You collect the rating
-this turn, render the confirmation card per SKILL §Invariants, and render the CLI's review
-list verbatim. Never do score arithmetic skill-side, never poll after a write (SKILL §Gates).
-
----
-
-## feedback-submit — rate an agent
-
-Two `--…-id` params mean different things; get them wrong and the backend rejects.
-
-**`--agent-id` = the TARGET being rated.**
-- From a `#id` in the prompt, OR resolve a name with ONE `agent search --query "<name>"` then
-  confirm the match with the user. One search per intent — no grep/parse (SKILL §Gates).
-
-**`--creator-id` = the CALLER'S OWN agent** (recorded publicly on-chain against the rating), resolved
-to an agent the current wallet owns by the algorithm below (this is its own rule — NOT the create-only
-§Invariants #id ladder):
-- A cached id counts ONLY if its `ownerAddress` matches the current wallet (captured earlier this
-  conversation). Otherwise fall through — don't silently reuse a user-mentioned `#N`.
-- Else run `agent get` once → keep only current-wallet rows:
-  - **0** → STOP: they must register an agent first (any role) before they can rate. Offer to register.
-  - **1** → use it silently; name the reviewer in the confirmation card ("Your agent #N <name> will
-    be the reviewer").
-  - **many** → numbered choice, NEVER auto-pick (creator-id is public, affects their own reputation).
-    Render role labels per §Invariants Lexicon:
-    ```
-    Which of your agents should be the reviewer?
-      1. #88 User Agent MyBuyer
-      2. #99 Agent Service Provider (ASP) DeFi Analyzer
-    Reply with the number.
-    ```
-
-**`--score` = 0.00–5.00 stars, from the user's reply IN THIS flow.** Pass it straight to `--score`
-— the CLI multiplies by 20 internally; never multiply or divide skill-side.
-- No carry-forward from a prior rating (different target = different rating, re-ask even if they said
-  "same as last time"), no default ("looks decent so 4"), no verb-only inference ("rate #42" has no
-  star count → ask). Operational test: point to the exact message in THIS flow that states the count;
-  if you have to reason "they probably mean…", STOP and ask "How many stars for #<target>? 0–5, up to
-  2 decimals (e.g. 4 / 4.5 / 3.33)".
-- **User on a 0–100 scale** ("85 分" / "90 points" / "满分") instead of 0–5 stars → read it as a 0–100 score and pass the star equivalent (85→`★ 4.25`, 满分→`★ 5`); confirm the ★ value in the card. This is interpreting the user's chosen scale, not wire math (the CLI still does the ×20) — so it isn't the forbidden skill-side divide.
-- Optional: `--description` (comment), `--task-id` (the jobId the rating is based on, free-form).
-
-**Confirmation card** — render the §Invariants card skeleton (2-col, confirmation variant). Rows:
-Reviewer (#<self> <role> <name>) · Target (#<target> <role> <name>) · Rating `★ N` · Comment ·
-Task ID. `★ N` rendered directly (no /20, no raw 0–100). This is an on-chain write → the Confirm
-gate is mandatory; nothing bypasses it.
-
-**Execute** (internal — not shown to the user):
-```bash
-# internal — not shown to the user. --score is 0.00–5.00 stars; CLI ×20 internally.
-onchainos agent feedback-submit --agent-id <target> --creator-id <self> --score <0.00-5.00> [--description "<text>"] [--task-id "<jobId>"]
-```
-
-**Post-success** — ONE line: "Rated #<target> ★ N." Do NOT auto-chase with `feedback-list`.
-feedback-submit is **excluded from Step 6** — stop here (SKILL §Step 5/6).
-
-**Decline:** mass / competitor-smear ratings ("1-star a competitor in bulk") — every rating is bound
-to your public `creator-id` and traceable; offer to check their positive reviews instead. Self-rating
-is rejected by the backend.
+The CLI converts wire scores back to 0.00–5.00 stars on read. You render the CLI's review list
+verbatim; never do score arithmetic skill-side, never poll (SKILL §Gates).
 
 ---
 
