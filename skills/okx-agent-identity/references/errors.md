@@ -42,9 +42,6 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | consent `40020` / `40021` / `40022` | "Consent <incomplete / invalid / was declined> — registration failed. Please restart the registration flow." Raw line shown. **Hard stop**, no auto-retry, no in-flow re-agree (40022 = restart from scratch). No Step 5/6. |
 | `81602` / `blocked` | "This agent has been blocked by the platform and can't be operated right now." **Stop.** Don't suggest re-activate / update. No Step 5/6. |
 | Region `50125` / `80001` | "Service is not available in your region." **Never** echo the code, suggest a VPN / region workaround, or auto-retry. [eval 24, backstop to SKILL §Gates Post-execute + register §Execute] |
-| `score out of range` | "Rating must be 0.00–5.00 with at most 2 decimal places." Speak in stars; never echo the raw 0–100 bound. → re-ask. |
-| `self-rating not allowed` | "You can't rate your own agent." → return to target selection. |
-| `creator agent not owned by caller` | "The reviewer must be an agent owned by your current wallet — let me re-check which can act as reviewer." Stay neutral (don't promise "pick one"); re-run the reviewer ladder from the top (0 → register · 1 → use silently · many → numbered). Slot label "reviewer", never "creator" (SKILL §Invariants). |
 | `stake` / `staking` / `insufficient` on create evaluator | Not a normal path — create doesn't consume the stake. "Backend returned a staking error; registration doesn't require staking." Surface raw line; point to the task-side staking flow; don't cache drafts. |
 | `HTTP 500` | "Backend temporarily unavailable." Retry once; if persists, surface and move on. |
 
@@ -59,6 +56,5 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 
 - **No-op update** — nothing changed → "No changes to submit." Don't call `agent update`; re-enter update Q&A.
 - **Empty search query** — catch before sending; ask for the query.
-- **Stars out of range** — outside `0.00–5.00` or >2 dp (`6`, `3.333`, `-1`, `abc`) → "Rating must be 0.00–5.00 with at most 2 decimal places (e.g. `5`, `4.5`, `3.33`)." Re-ask; never send.
 - **A2A fee format** — non-empty fee not a number ≤6 dp (`5 USDT`, `approx 10`) → "agent-to-agent fee is optional — leave it empty or give a USDT number with up to 6 decimal places." Re-ask.
 - **Endpoint >512 chars** → "The endpoint URL must be at most 512 chars; this one is longer. Use a shorter URL." Re-ask (mention the limit only here).

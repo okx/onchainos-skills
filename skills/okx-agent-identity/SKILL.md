@@ -66,7 +66,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 ### Card skeleton (every confirmation / diff / detail card uses THIS; references fill rows only)
 - Two-column pipe table `| Field | Value |`, one row per field. Role row uses the localized label
   (never the enum); photo row = the uploaded CDN URL or `default` — never a user-pasted link (rejected; see register §5).
-- **Confirmation variant** (create / rate) ends with `> Reply "execute" to run it.` (localized). No bash shown. [eval 1,14]
+- **Confirmation variant** (create only) ends with `> Reply "execute" to run it.` (localized). No bash shown. [eval 1,14]
 - **Diff variant** (update only) = 3 columns `| Field | Current | New |`; unchanged fields → `(unchanged)`; a changed
   field's New cell is **bold**. Show real before→after values. [eval 15]
 
@@ -83,7 +83,7 @@ the raw 0–100. Fallback: hand-map (Lexicon) **only** if a `*Label` field is ab
    set; the new id is yours)
 4. else omit the `#<id> ` substring entirely and use the fallback wording.
 Never invent or borrow a pre-check id; never emit a bare `# `. [eval 1,3,10,13,14]
-**Non-create intents** (activate/deactivate/update/rate/detail): no `newAgentId`, no diff — use the `#N` the user typed or the CLI's direct id (rungs 1,3 don't apply).
+**Non-create intents** (activate/deactivate/update/detail): no `newAgentId`, no diff — use the `#N` the user typed or the CLI's direct id (rungs 1,3 don't apply).
 
 ## Gates (non-overridable; apply to every write)
 
@@ -135,7 +135,7 @@ invent a capability or metric). [eval 17]
 
 ## Cost (answer INLINE — never enter the register flow) [eval 23]
 
-On-chain actions (create / update / activate / deactivate / feedback) cost the user **nothing** — OKX
+On-chain actions (create / update / activate / deactivate) cost the user **nothing** — OKX
 covers the network fees. Never say "not specified / check the docs / see the block explorer". Never
 fabricate fee categories (platform / dispatch / management fee) or a cost-breakdown tree. For an
 "example at X USDT", run `agent search --query "<X> USDT ..."` and cite a **real** agent's fee.
