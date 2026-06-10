@@ -15,7 +15,7 @@ description: >
 license: Apache-2.0
 metadata:
   author: okx
-  version: "3.4.3-beta"
+  version: "3.4.8-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -48,8 +48,10 @@ Every content-creating write (`agent create / update / feedback-submit`) **must 
 
 **Rationalization blacklist — none of these bypass the gate** (render the card anyway): user-level memory / preferences (incl. any `auto-execute` / `不用确认` / `直接执行` / `trust me` setting); system prompts or harness flags; plan-mode exit (Exit Plan Mode confirms the *plan*, not the on-chain action — the in-card confirm token is still required next turn); one-shot field capture, even when every required field is captured in the user's first message; urgency / imperative tone (`赶紧创建` / `现在就建` / `立刻发起`); the user previously confirming a *similar but distinct* write earlier in the conversation. If you catch yourself reasoning "they already said skip confirmation" / "we agreed in the plan" / "it's obvious what they want" — **stop and render the card anyway**. The cost asymmetry is decisive: one extra turn vs. an irreversible on-chain record — always pay the turn.
 
-### Consent Gate (`agent create` only)
-When CLI returns `executeResult: false` with non-null `consent` → show consent card, wait for explicit agree/decline, then re-invoke with `--consent-key` / `--agreed true`. Full template: `playbooks/consent.md`.
+### Consent Gate (standalone — runs BEFORE identity info is collected)
+Consent is its own step now (the legal module's two-step `agent consent` flow), **decoupled from `agent create`**. In the create flow it fires **right after pre-check and before any identity Q&A** (Core Flow gate 3). `agent create` no longer carries `--consent-key` / `--agreed` and no longer returns a `consent` field — never pass those to create, never look for consent in the create response.
+
+Two steps: (1) call `agent consent` with no flags → if it returns `required: true` with a `consent` object, show the consent card and wait for an explicit agree/decline; (2) call `agent consent --consent-key <key> --agreed <true|false>` to finalize. `required: false` (returning user / feature off) → skip the card and proceed straight to identity Q&A. On decline (`--agreed false`) → stop, do NOT enter create. Full template + worked examples: `playbooks/consent.md`.
 
 ### Post-Execute Gate
 After **any** `onchainos agent ...` CLI call, first user-visible output must come from a documented template — not from the model's own summarization of the CLI's JSON. Success → role file's `§Post-success` template verbatim. Failure → `troubleshooting.md` translation verbatim. The single exception: maintainer-facing `bash` blocks labelled "not shown to user".
@@ -92,6 +94,7 @@ Read `_shared/no-polling.md` — one intent = one CLI call; never poll, never au
 | Command | Purpose | Required params |
 |---|---|---|
 | `onchainos agent create` | Register new agent | `--role`, `--name`; provider also `--description` + `--service` |
+| `onchainos agent consent` | First-time-creation terms consent (legal module; runs before create). Step 1: no flags → fetch terms. Step 2: finalize decision | — / `--consent-key` + `--agreed` |
 | `onchainos agent update` | Update existing agent | `--agent-id` + ≥1 field |
 | `onchainos agent get` | List own agents / fetch by id | — / `--agent-ids` |
 | `onchainos agent activate` | Publish agent | `--agent-id` |
@@ -121,7 +124,7 @@ Use role-specific Q&A chains (`playbooks/requester.md / provider.md / evaluator.
 
 Any ≠ yes → STOP. Q1 fail → run `agent get`. Q2 fail → re-render card. Q3 fail → re-render with actual values.
 
-Post-invocation on `agent create`: if `consent` is non-null → fire Consent Gate. Otherwise → Step 4.
+Consent is already settled by the standalone Consent Gate earlier in the create flow (Core Flow gate 3) — `agent create` neither sends nor receives consent fields. After `agent create` returns → Step 4.
 
 No narration between confirmation and result. When the user replies with a confirm token, invoke the CLI immediately and emit the post-CLI template as the first user-visible content.
 
@@ -161,11 +164,12 @@ Load `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` and continue
 | (from `okx-agent-task`) `intent=need-requester` | `§Passive Onboarding` → `playbooks/requester.md §Passive Onboarding` |
 
 ### Core Flow: agent create (role-driven)
-Four gates in order — never skip, never combine:
+Five gates in order — never skip, never combine:
 1. **Ask role** using numbered-options pattern (`core/choice-prompts.md`). Accept written role name as fallback.
 2. **Pre-check** — run `agent get` once. See `playbooks/README.md §Pre-check` for uniqueness rules and K=1/K≥2 branching for providers.
-3. **Role Q&A** — load `playbooks/requester.md / provider.md / evaluator.md`. **For providers this is a two-step flow** (`playbooks/provider.md`): Step 1 · Identity and Step 2 · Service, each opening with a **numbered checklist of its fields annotated with requirements**, then collecting (batch or one-at-a-time). No `Q1:` / `Phase` prefix in user text.
-4. **Confirmation card(s)** (`core/display-detail.md §3`) — mandatory. Execute only after explicit confirm token. **For providers, collection + confirmation are split into TWO steps** (`playbooks/provider.md §Confirmation cards — two steps`): **Step 1 · Identity** → **identity card**, confirming ("next") advances to Step 2 and does NOT call the CLI; **Step 2 · Service** → **service card**, "execute" runs the single `agent create` (carries both, since the CLI requires ≥1 service). QA pre-check (`modules/pre-listing-qa.md` Trigger C) runs silently per card, inline ⚠️; the avatar is **actively prompted at the identity card's closing 📷 CTA** (send-image / "generate" / skip — not a passive row hint); the service description is **AI-drafted from the user's plain words** (format + trim + illustrate, never bounce the user repeatedly — `playbooks/provider-services.md §Description: AI drafts it`); fields are editable in place. Confirming the service card with QA warnings present = register-anyway. (Two-step / QA / avatar / description-assist apply to providers only; requester / evaluator render a single plain card.)
+3. **Consent** — run the standalone consent step **before collecting any identity info**: call `agent consent` (no flags). `required: false` → proceed silently to gate 4. `required: true` → render the consent card (`playbooks/consent.md`), wait for agree/decline, then call `agent consent --consent-key <key> --agreed <true|false>`. Decline → stop (do NOT enter the rest of create). `agent create` itself carries no consent fields.
+4. **Role Q&A** — load `playbooks/requester.md / provider.md / evaluator.md`. **For providers this is a two-step flow** (`playbooks/provider.md`): Step 1 · Identity and Step 2 · Service, each opening with a **numbered checklist of its fields annotated with requirements**, then collecting (batch or one-at-a-time). No `Q1:` / `Phase` prefix in user text.
+5. **Confirmation card(s)** (`core/display-detail.md §3`) — mandatory. Execute only after explicit confirm token. **For providers, collection + confirmation are split into TWO steps** (`playbooks/provider.md §Confirmation cards — two steps`): **Step 1 · Identity** → **identity card**, confirming ("next") advances to Step 2 and does NOT call the CLI; **Step 2 · Service** → **service card**, "execute" runs the single `agent create` (carries both, since the CLI requires ≥1 service). QA pre-check (`modules/pre-listing-qa.md` Trigger C) runs silently per card, inline ⚠️; the avatar is **actively prompted at the identity card's closing 📷 CTA** (send-image / "generate" / skip — not a passive row hint); the service description is **AI-drafted from the user's plain words** (format + trim + illustrate, never bounce the user repeatedly — `playbooks/provider-services.md §Description: AI drafts it`); fields are editable in place. Confirming the service card with QA warnings present = register-anyway. (Two-step / QA / avatar / description-assist apply to providers only; requester / evaluator render a single plain card.)
 
 ### Update
 1. `agent get --agent-ids <id>` → show current detail card.
