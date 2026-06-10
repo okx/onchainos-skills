@@ -105,9 +105,12 @@ When dealing with integer values of any of the fields below, **look up the table
 
 ## Reading Order
 
-1. **This file**: `Activation` + `sessionKey Discrimination` + `Session Communication Contract` — required every turn.
-2. **Role file**: [`buyer.md`](./buyer.md) / [`provider.md`](./provider.md) / [`evaluator.md`](./evaluator.md).
-3. **On demand**: `_shared/` + `references/`.
+1. **This file**: `Activation` + `sessionKey Discrimination` + `Session Communication Contract` — required **once per session**; do NOT re-read if already in context.
+2. **Role file**: [`buyer.md`](./buyer.md) / [`provider.md`](./provider.md) / [`evaluator.md`](./evaluator.md) — read **once** when role is determined; do NOT re-read each turn.
+3. **`_shared/cli-reference.md`** (824 lines): do NOT read the full file. Read only the specific command section you need, or use `grep`.
+4. **`references/`**: on demand for specific scenarios only.
+
+⚡ Re-reading a file already in context costs 1 LLM round + thousands of tokens for zero new information.
 
 ## Activation
 

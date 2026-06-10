@@ -45,14 +45,11 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 
 ---
 
-> ⚡ **[Tool-call batching]** — when the next step requires multiple tool calls
-> with **no data dependency** between them, issue them **in a single response**
-> (parallel tool calls) instead of one-per-round. Common parallel pairs:
-> - `session_status` + `common context` (both are read-only lookups)
-> - `xmtp_send` + `xmtp_dispatch_user` (send-to-peer + notify-user have no ordering)
-> - `status <jobId>` + `common context <jobId>` (both read the same job)
+> 🛑 **[Tool-call batching — MANDATORY]** — splitting independent tool calls into separate rounds wastes 1 LLM round (~50K tokens context reload) per split. The following pairs MUST be called in a SINGLE response:
+> - `session_status` + `onchainos agent common context <jobId>` — both read-only, no ordering dependency
+> - `xmtp_send` + `xmtp_dispatch_user` — peer message + user notification are independent targets
 >
-> This saves 2-3 LLM rounds per turn. When in doubt, call sequentially — correctness > speed.
+> When the playbook's current step and next step have no data dependency, also batch them. When in doubt about dependency, call sequentially — correctness > speed.
 
 ## 1. Trigger identification
 
