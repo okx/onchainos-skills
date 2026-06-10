@@ -112,7 +112,7 @@ The `--force` flag MUST ONLY be added when ALL of the following conditions are m
 - `wallet send` response has `gasStationUsed=true`, or returns a Confirming response with a `gasStationTokenList`
 - User mentions: Gas Station / stablecoin gas / enable or disable Gas Station / revoke 7702 / change default gas token / what is Gas Station / how does it work / supported chains / upgrade cost
 
-Load `references/eip7702-upgrade.md` only when the response contains `needUpdate7702=true` or `authHashFor7702`. **Never expose 7702 terminology to the user** — see Global Notes vocabulary table.
+Load `references/eip7702-upgrade.md` only when the response contains a non-empty `authHashFor7702`. **Never expose 7702 terminology to the user** — see Global Notes vocabulary table.
 
 For user-facing wording of `gas-station enable / disable / update-default-token` (pre-confirmation prompts and success messages), use the sanctioned templates in `references/gas-station.md` → "User-Facing Reply Templates (Management Commands)". The enable/disable mechanism is an internal DB flag flip — never surface that mechanism to the user.
 </MUST>
