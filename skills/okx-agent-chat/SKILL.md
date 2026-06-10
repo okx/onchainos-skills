@@ -33,7 +33,7 @@ For all of them, the correct entry is `skills/okx-agent-task/SKILL.md`. After re
 
 Internal helpers — only invoke when explicitly told to:
 
-- `ensure-okx-a2a-communication-ready.md` — ensure OKX A2A plugin install and communication initialization
+- `ensure-okx-a2a-communication-ready.md` — ensure OKX A2A plugin install and communication initialization (router; the per-runtime flows live in `references/comm-init/` and are loaded one at a time by the router)
 - `file-attachment.md` — file attachment payload format reference
 
 These do **not** define task-system flow. For flow, always defer to `okx-agent-task/SKILL.md`.
