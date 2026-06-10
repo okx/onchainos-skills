@@ -24,6 +24,8 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 
 > The task state machine lives in the CLI (`onchainos agent next-action`) — call it and execute its output.
 
+> 🛑 **Status name ≠ event name**: `common context` / `agent status` return the task STATUS (`created` / `accepted` / `submitted` / …). These are NOT event names for `--event`. For peer messages, the correct event is always one of: `negotiate_reply` / `negotiate_ack` / `negotiate_counter` / `provider_applied` / `deliverable_received` — determined by §3.5 routing, NOT by the current task status. 🔴 Real incident: LLM saw `status: created` from `common context`, passed `--event job_created` to `next-action`, got the wrong playbook (task-creation init script), and re-sent the first inquiry to the provider instead of evaluating the provider's reply.
+
 ---
 
 ## Quick Navigation
@@ -256,7 +258,7 @@ onchainos agent next-action --jobid <jobId> --event job_created --role buyer --a
 >        - status=0 → `next-action --event negotiate_ack`
 >      - `[intent:counter]` → directly `next-action --event negotiate_counter` (skip `agent status`; CLI `check_status_freshness` covers status mismatch). ⚠️ If CLI returns "状态脱节" → task was accepted via another provider; `xmtp_send` "Negotiation is complete; parameters are locked." and end turn (do NOT re-match the event).
 >      - `[intent:reject]` → do not reply; `mark-failed <jobId> --provider <agentId>` → `recommend <jobId> --current` → user picks next (skip `agent status`; mark-failed is recoverable)
->      - `[intent:propose]` → buyer does not receive PROPOSE; skip this route and fall through to #6 (treat as natural language)
+>      - `[intent:propose]` → buyer is the PROPOSE sender, not receiver; directly `next-action --event negotiate_reply` (the playbook evaluates the provider's offer and decides whether to send `[intent:propose]`)
 > 4. **`[MAX_BUDGET_UPDATE]`** (source: user session): extract `paymentMostTokenAmount=<value>`, update max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, or notify the provider** — end turn immediately.
 > 5. **Attachment added** (source: user session): content starts with `[ATTACHMENT_ADDED]` → `next-action --event attachment_added` → follow playbook. 🔴 I-attach: model skipped next-action, sent raw file path, then called wrong event `job_submitted` → stuck. ❌ Always go through `next-action --event attachment_added`.
 > 6. **Fallback** (1–5 did not match, source: peer):
@@ -265,9 +267,12 @@ onchainos agent next-action --jobid <jobId> --event job_created --role buyer --a
 >      - status=0 + active sub → `next-action --event negotiate_reply`
 >      - status=0 + no sub → `xmtp_dispatch_user` forwards to user.
 >      - Otherwise → ignore.
+>      - ⚠️ If `agent status` **fails** (command error / timeout) → default to `next-action --event negotiate_reply` (CLI `check_status_freshness` validates status internally; if status≠0 it blocks with "状态脱节"). Do NOT fall back to `common context` status to guess the event name.
 >    - **Subsequent peer messages** (a prior turn in this sub session already confirmed status=0) → skip `agent status`, directly `next-action --event negotiate_reply` (safety: CLI `check_status_freshness` will block if status changed between turns). ⚠️ If CLI returns "状态脱节" → task was accepted via another provider; tell the provider negotiation is complete and end turn (do NOT re-match the event or loop).
 >
 > 🛑 **Buyer cannot initiate arbitration**: inform user the correct path is to **reject the deliverable** — after rejection, ASP has 24h to dispute; if not, system auto-refunds. Do NOT call `dispute_raise` on buyer side.
+>
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — never manually construct protocol messages**: `[intent:propose]` / `[intent:ack]` / `[intent:confirm]` / `[intent:counter]` / `[intent:reject]` MUST only be produced by `next-action` playbooks. NEVER compose these markers via `xmtp_send` yourself — the playbook contains pre-condition checks (`save-agreed` / `set-payment-mode` / round counting / budget validation) that are skipped when you craft the message manually. Even in recovery from a stuck state, always call `next-action` with the correct event. 🔴 Real incident: LLM got stuck due to wrong event, entered manual recovery mode, directly sent `[intent:propose]` + `[intent:confirm]` via `xmtp_send` — `save-agreed` and `set-payment-mode` were never executed, on-chain state did not advance.
 >
 > 🛑 **Status verification iron rule**: before outputting "still negotiating" / "waiting for acceptance", **must first** `agent status <jobId>`. If status=1 or paymentMode=1, forbidden to output waiting-for-acceptance phrasing. 🔴 Backup wrongly reasoned "not accepted yet" when status was already 1.
 
