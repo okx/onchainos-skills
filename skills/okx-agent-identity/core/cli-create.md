@@ -102,5 +102,55 @@ Do **not** cross-account aggregate — other wrappers' `agentList` belong to oth
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match). Do not duplicate the list here — `troubleshooting.md` is the single source of truth.
 
+> **Consent is no longer part of `agent create`.** Earlier revisions piggy-backed the legal-module terms flow on the create call (`--consent-key` / `--agreed` request fields + a `consent` response field). That has been removed: `agent create` neither sends nor returns consent fields. The terms flow is now the standalone `agent consent` command (§1.5), run **before** identity info is collected. See `playbooks/consent.md` for the skill-side flow.
+
+---
+
+## 1.5 `onchainos agent consent`
+
+First-time-creation terms consent (legal module). Standalone two-step flow, decoupled from
+`create`, run at Core Flow gate 3 — **after pre-check, before any identity Q&A**. No signing,
+no broadcast. `fromAddr` + `chainIndex` are auto-filled from the current selected XLayer wallet.
+
+| Parameter | Required | Type | Notes |
+|---|---|---|---|
+| `--consent-key` | ✗ (step 2 only) | string | The one-time `consentKey` returned by step 1; pass back on step 2 together with `--agreed`. |
+| `--agreed` | ✗ (step 2 only) | bool | `true` = user agreed, `false` = user declined. Must be paired with `--consent-key`. |
+
+**Step 1 — fetch terms (no flags):**
+```bash
+onchainos agent consent
+```
+Return:
+```json
+// First-time user → terms issued
+{ "required": true, "consent": { "consentKey": "550e8400-...-446655440000", "terms": "Agent service terms ..." } }
+
+// Returning user (already owns an agent) / feature flag off → nothing to show
+{ "required": false, "consent": null }
+```
+
+**Step 2 — finalize decision (`--consent-key` + `--agreed`):**
+```bash
+onchainos agent consent --consent-key "550e8400-...-446655440000" --agreed true   # agree
+onchainos agent consent --consent-key "550e8400-...-446655440000" --agreed false  # decline
+```
+Return on finalize: `{ "required": false, "consent": null }`.
+
+Behavior summary:
+- `required: false` from step 1 → skip the consent card, continue straight to Role Q&A.
+- `required: true` → render the consent card (`playbooks/consent.md`), collect agree/decline,
+  then call step 2. Decline → stop, do NOT enter `agent create`.
+- The CLI normalizes the backend's `data: []` (existing-agent / flag-off / post-finalize) to
+  `required: false` / `consent: null`; a non-null `consent` object only appears on step 1 for a
+  first-time wallet.
+
+**Endpoint:** `POST /priapi/v5/wallet/agentic/pre-transaction/agent-consent` (auth required; no
+signature check; `userId` injected from JWT server-side).
+
+**Errors:** `81001` (chainIndex invalid) / `40020` (consentKey without agreed) / `40021`
+(agreed without consentKey, or key invalid/finalized) / `40022` (already declined) — see
+`troubleshooting.md`.
+
 ---
 
