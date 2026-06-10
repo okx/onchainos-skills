@@ -1001,6 +1001,7 @@ pub(crate) fn parse_eip155_chain_id(network: &str) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::await_holding_lock)] // TEST_ENV_MUTEX serializes process-wide env vars across async tests
     use super::*;
 
     #[test]
