@@ -4,7 +4,7 @@ Loaded when: search/find agents · "我有哪些 agent" / list my agents · deta
 Render per SKILL §Invariants (Lexicon, Card skeleton, Verbatim-render contract). The CLI computes the
 labels/stars; you render its output and never re-divide a score or hand-map an enum. One intent = one
 CLI call (SKILL §Gates No-poll); never grep/jq/parse the JSON or read your own tool-result files —
-re-issue the CLI instead (SKILL §Gates No-shell-stitching). [eval 4]
+re-issue the CLI instead (SKILL §Gates No-shell-stitching).
 
 ## Routing nuances (decide before calling)
 - "my <descriptor> agents" / any ownership word → **list** = `agent get` (no ids) + client-side group/filter,
@@ -14,7 +14,6 @@ re-issue the CLI instead (SKILL §Gates No-shell-stitching). [eval 4]
 ---
 
 ## search — `agent search`
-[eval 4]
 
 `--query` = the user's FULL sentence, **verbatim** — no translate / paraphrase / split / canonicalize;
 strip only `#id` tokens. Filter intent → separate **verbatim** flags, value carries the user's own wording:
@@ -38,7 +37,7 @@ Render (column→field binding is STRICT; a column with no backing field is fabr
 
 - `Agent ID` ← `agentId` (`#<id>`). `Name` ← `name` (truncate >20 chars with `…`).
 - `Rating` ← `feedbackRate`, **rendered directly** (already 0–5; no `/20`): `null` → `—`; `0` → `No rating yet`
-  (0 = no feedback, never `★ 0`); `>0` → `★ <feedbackRate>`. [eval 4] (Search-only: a `null` rating shows `—`
+  (0 = no feedback, never `★ 0`); `>0` → `★ <feedbackRate>`. (Search-only: a `null` rating shows `—`
   here; the *list* table below never uses `—` — it shows `No rating yet`. Don't cross-apply.)
 - `Min price` ← `serviceMinPrice`, bare number; `null`/missing → `—`. Do NOT append "USDT" or borrow a unit.
 - `Top service` ← `services[0]`: `<serviceName> (<localized type>, <feeAmount> <feeToken>)`, type per
@@ -62,7 +61,6 @@ Render (column→field binding is STRICT; a column with no backing field is fabr
 ---
 
 ## list — `agent get` (no ids)
-[eval 19]
 
 Rows arrive at `list[*]`; each row carries `accountName`, `ownerAddress`, and a ready `cells[]` (with
 `roleLabel`/`statusLabel`/`ratingStars` already resolved). **Group by `accountName`** — one header + table
@@ -84,18 +82,17 @@ role/status integers, no raw 0–100 score).
 - **M ≥ 5 → append the reassurance footer** (SKILL §UX Red Lines 3): the agents are theirs, spread across the
   user's own wallet accounts; if unremembered they're from past test runs / batch scripts; **the wallet is
   not compromised**; offer to deactivate any. Non-alarmist. Single-account variant (one wallet, M ≥ 5) drops
-  the "across multiple wallets" clause. M < 5 → no footer. [eval 19]
+  the "across multiple wallets" clause. M < 5 → no footer.
 
 ---
 
 ## detail — `agent get --agent-ids N`
-[eval 12]
 
 The response carries a ready `card[]` of `{label,value}` with `roleLabel`/`statusLabel`/`approvalLabel`
 resolved — **identity rows only**. Render the `card` rows **verbatim** (SKILL §Invariants Verbatim-render
 contract). The agent-list card does **not** inline services or rating. **Provider (ASP) → chain exactly ONE
 `agent service-list --agent-id N`** and render the §service-list table beneath the card; requester / evaluator
-→ no chain. Reviews come via the prompt below — never auto-chain `feedback-list`, never invent a Rating row. [eval 12]
+→ no chain. Reviews come via the prompt below — never auto-chain `feedback-list`, never invent a Rating row.
 
 ```
 | Field | Value |
@@ -133,7 +130,7 @@ Single 6-column table; values verbatim. Service-type gloss once per table (wordi
 > Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
 ```
 
-- `#` numbered from 1. Type per Lexicon (API service / agent-to-agent), never raw A2MCP/A2A. [eval 12]
+- `#` numbered from 1. Type per Lexicon (API service / agent-to-agent), never raw A2MCP/A2A.
 - **Fee:** non-empty → `<N> USDT`; empty → `free`. **Endpoint:** A2A always `—` (CLI clears it); wrap URLs in
   backticks so the table doesn't break.
 - Values verbatim — don't normalize odd shapes; truncate long descriptions with `…`, keep first sentence.

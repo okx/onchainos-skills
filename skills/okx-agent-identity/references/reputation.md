@@ -6,7 +6,7 @@ verbatim; never do score arithmetic skill-side, never poll (SKILL §Gates).
 
 ---
 
-## feedback-list — view an agent's reviews  [eval 22]
+## feedback-list — view an agent's reviews
 
 Run `agent feedback-list --agent-id <N>`. The array is under **`items`** (NOT `list` — SKILL §Commands).
 Each item carries an already-converted 0.00–5.00 `score`, reviewer id, role, name, date, task hash,

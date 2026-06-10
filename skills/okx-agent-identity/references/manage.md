@@ -8,7 +8,7 @@ successful toggle with `agent get`. Both successful toggles continue per SKILL �
 `#<id>` per the SKILL §Invariants #id ladder; keep no skill name and no `onchainos` literal in any
 user-visible line (SKILL §UX Red Lines 1).
 
-## deactivate [eval 20]
+## deactivate
 
 Run directly with the user's `#N`. Read only `success`.
 

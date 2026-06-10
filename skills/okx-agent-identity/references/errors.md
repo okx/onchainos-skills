@@ -41,7 +41,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | `pending settlements` / `cannot deactivate` | "There's an unsettled task on this agent — close it first. Want me to take you there?" → on yes, hand to task flow internally (no skill name). |
 | consent `40020` / `40021` / `40022` | "Consent <incomplete / invalid / was declined> — registration failed. Please restart the registration flow." Raw line shown. **Hard stop**, no auto-retry, no in-flow re-agree (40022 = restart from scratch). No Step 5/6. |
 | `81602` / `blocked` | "This agent has been blocked by the platform and can't be operated right now." **Stop.** Don't suggest re-activate / update. No Step 5/6. |
-| Region `50125` / `80001` | "Service is not available in your region." **Never** echo the code, suggest a VPN / region workaround, or auto-retry. [eval 24, backstop to SKILL §Gates Post-execute + register §Execute] |
+| Region `50125` / `80001` | "Service is not available in your region." **Never** echo the code, suggest a VPN / region workaround, or auto-retry. |
 | `stake` / `staking` / `insufficient` on create evaluator | Not a normal path — create doesn't consume the stake. "Backend returned a staking error; registration doesn't require staking." Surface raw line; point to the task-side staking flow; don't cache drafts. |
 | `HTTP 500` | "Backend temporarily unavailable." Retry once; if persists, surface and move on. |
 
