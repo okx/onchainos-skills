@@ -45,6 +45,15 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 
 ---
 
+> ⚡ **[Tool-call batching]** — when the next step requires multiple tool calls
+> with **no data dependency** between them, issue them **in a single response**
+> (parallel tool calls) instead of one-per-round. Common parallel pairs:
+> - `session_status` + `common context` (both are read-only lookups)
+> - `xmtp_send` + `xmtp_dispatch_user` (send-to-peer + notify-user have no ordering)
+> - `status <jobId>` + `common context <jobId>` (both read the same job)
+>
+> This saves 2-3 LLM rounds per turn. When in doubt, call sequentially — correctness > speed.
+
 ## 1. Trigger identification
 
 > **CRITICAL — role inference**: `sender.role` is the **counterparty's** role, not yours.
@@ -333,9 +342,10 @@ The 4 generic rules are in [`_shared/exception-escalation.md`](./_shared/excepti
 
 The buyer must **NEVER** call `onchainos agent apply`. Wait for the provider to notify of apply, then run `confirm-accept`.
 
-### 6.2 ❌ No duplicate `session_status` in the same turn
+### 6.2 ❌ Minimize `session_status` calls
 
-Call once and cache. Calling ≥ 2 times = dead-loop symptom; stop immediately.
+- **Within a single turn**: call at most once and cache the result. If you find yourself calling it again in the same turn, check whether you are looping — repeated calls with the same input are a loop signal.
+- **Across turns (same sub-session)**: the sessionKey does NOT change during a sub-session's lifetime. After the first resume has confirmed the sessionKey via `session_status`, subsequent resumes SHOULD skip the call and reuse the known sessionKey from conversation history. Exception: if the conversation history has been truncated and sessionKey is unknown, call once to re-establish.
 
 ---
 
