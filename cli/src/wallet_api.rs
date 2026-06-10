@@ -12,6 +12,10 @@ use crate::doh::DohManager;
 pub struct ApiCodeError {
     pub code: String,
     pub msg: String,
+    /// HTTP status of the response that carried this business code. Lets
+    /// callers separate backend verdicts (2xx + non-zero code) from
+    /// transport/auth-layer failures (4xx) that happen to ship a JSON body.
+    pub http_status: u16,
 }
 
 impl std::fmt::Display for ApiCodeError {
@@ -595,13 +599,18 @@ impl WalletApiClient {
     }
 
     pub fn with_base_url(base_url_override: Option<&str>) -> Result<Self> {
-        let base_url = std::env::var("OKX_BASE_URL")
-            .ok()
+        // Same precedence and custom detection as ApiClient::new: an explicit
+        // CLI --base-url beats the OKX_BASE_URL env var, and either one counts
+        // as custom so DoH never swaps a user-chosen host for a proxy node.
+        let base_url = base_url_override
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("OKX_BASE_URL").ok())
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
-            .or_else(|| base_url_override.map(|s| s.to_string()))
             .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
-        let custom = std::env::var("OKX_BASE_URL").is_ok() || option_env!("OKX_BASE_URL").is_some();
+        let custom = base_url_override.is_some()
+            || std::env::var("OKX_BASE_URL").is_ok()
+            || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
         doh.prepare();
 
@@ -846,7 +855,8 @@ impl WalletApiClient {
         form: reqwest::multipart::Form,
         extra_headers: Option<&[(&str, &str)]>,
     ) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
+        let effective = self.effective_base_url();
+        let url = format!("{}{}", effective.trim_end_matches('/'), path);
 
         let mut headers = crate::client::ApiClient::jwt_headers(access_token);
         headers.remove(reqwest::header::CONTENT_TYPE);
@@ -886,7 +896,8 @@ impl WalletApiClient {
         content_type: &str,
         extra_headers: Option<&[(&str, &str)]>,
     ) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
+        let effective = self.effective_base_url();
+        let url = format!("{}{}", effective.trim_end_matches('/'), path);
 
         let mut headers = crate::client::ApiClient::jwt_headers(access_token);
         headers.remove(reqwest::header::CONTENT_TYPE);
@@ -962,6 +973,7 @@ impl WalletApiClient {
             return Err(ApiCodeError {
                 code: code_str,
                 msg,
+                http_status: status.as_u16(),
             }
             .into());
         }
