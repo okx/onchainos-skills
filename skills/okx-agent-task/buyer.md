@@ -251,20 +251,22 @@ onchainos agent next-action --jobid <jobId> --event job_created --role buyer --a
 > 0. **Skill prefetch** (source: self via `xmtp_dispatch_session`): content starts with `[SKILL_PREFETCH]` → load `SKILL.md` + `buyer.md`. The prefetch itself requires no action — **but any other inbound message in the same or later turn MUST be processed via #1–#6 as normal**. 🔴 I-prefetch-1: prefetch + ASP quote in same turn → agent applied "no action" to both → stuck. 🔴 I-prefetch-2: prefetch in turn 1, ASP quote in turn 2 → agent carried "prefetch mode" across turns, still refused to execute → stuck.
 > 1. **Provider apply notification** (source: peer): content contains `[intent:applied]`, or semantically expresses "apply submitted / please run confirm-accept" → **immediately** `onchainos agent next-action --jobid <jobId> --event provider_applied --role buyer --agentId <your agentId>` → execute `confirm-accept` per script. (⚠️ `confirm-accept` param is `--provider-agent-id`, NOT `--agent-id`. Buyer does NOT receive a `provider_applied` system event; this is triggered by a2a-agent-chat. **Do NOT** query task API to validate.)
 > 2. **Delivery notification** (source: peer): content contains `[intent:deliver]` → **immediately** `onchainos agent next-action --jobid <jobId> --event deliverable_received --role buyer --agentId <your agentId>` → follow playbook (download → save → brief user notification). Full deliverable shown at `job_submitted` acceptance card.
-> 3. **Negotiation structured marker** (source: peer) (🛑 literal `content.includes("[intent:")` only; semantic inference forbidden) → call `agent status <jobId>`:
->    - status≥1 → `xmtp_send` "Negotiation is complete; parameters are locked." and end turn.
->    - status=0 → dispatch by marker:
->      - `[intent:ack]` → `next-action --event negotiate_ack`
->      - `[intent:counter]` → `next-action --event negotiate_counter`
->      - `[intent:reject]` → do not reply; `mark-failed <jobId> --provider <agentId>` → `recommend <jobId> --current` → user picks next
+> 3. **Negotiation structured marker** (source: peer) (🛑 literal `content.includes("[intent:")` only; semantic inference forbidden) → dispatch by marker:
+>      - `[intent:ack]` → call `agent status <jobId>` first (**mandatory** — on-chain actions follow):
+>        - status≥1 → `xmtp_send` "Negotiation is complete; parameters are locked." and end turn.
+>        - status=0 → `next-action --event negotiate_ack`
+>      - `[intent:counter]` → directly `next-action --event negotiate_counter` (skip `agent status`; CLI `check_status_freshness` covers status mismatch). ⚠️ If CLI returns "状态脱节" → task was accepted via another provider; `xmtp_send` "Negotiation is complete; parameters are locked." and end turn (do NOT re-match the event).
+>      - `[intent:reject]` → do not reply; `mark-failed <jobId> --provider <agentId>` → `recommend <jobId> --current` → user picks next (skip `agent status`; mark-failed is recoverable)
 >      - `[intent:propose]` → buyer does not receive PROPOSE; skip this route and fall through to #6 (treat as natural language)
 > 4. **`[MAX_BUDGET_UPDATE]`** (source: user session): extract `paymentMostTokenAmount=<value>`, update max_budget cap. 🛑 **ABSOLUTE PROHIBITION: do NOT reply, forward, or notify the provider** — end turn immediately.
 > 5. **Attachment added** (source: user session): content starts with `[ATTACHMENT_ADDED]` → `next-action --event attachment_added` → follow playbook. 🔴 I-attach: model skipped next-action, sent raw file path, then called wrong event `job_submitted` → stuck. ❌ Always go through `next-action --event attachment_added`.
-> 6. **Fallback** (1–5 did not match, source: peer) → `agent status <jobId>`:
->    - status=1 (accepted) → enter discussion mode (§3.6).
->    - status=0 + active sub → `next-action --event negotiate_reply`
->    - status=0 + no sub → `xmtp_dispatch_user` forwards to user.
->    - Otherwise → ignore.
+> 6. **Fallback** (1–5 did not match, source: peer):
+>    - **First peer message in this sub session** (no prior `negotiate_reply` / `negotiate_counter` handled in context) → `agent status <jobId>`:
+>      - status=1 (accepted) → enter discussion mode (§3.6).
+>      - status=0 + active sub → `next-action --event negotiate_reply`
+>      - status=0 + no sub → `xmtp_dispatch_user` forwards to user.
+>      - Otherwise → ignore.
+>    - **Subsequent peer messages** (a prior turn in this sub session already confirmed status=0) → skip `agent status`, directly `next-action --event negotiate_reply` (safety: CLI `check_status_freshness` will block if status changed between turns). ⚠️ If CLI returns "状态脱节" → task was accepted via another provider; tell the provider negotiation is complete and end turn (do NOT re-match the event or loop).
 >
 > 🛑 **Buyer cannot initiate arbitration**: inform user the correct path is to **reject the deliverable** — after rejection, ASP has 24h to dispute; if not, system auto-refunds. Do NOT call `dispute_raise` on buyer side.
 >

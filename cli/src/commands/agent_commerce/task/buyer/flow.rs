@@ -285,7 +285,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
          \x20\x20\x20\x20**Exception**: JWT expired → re-login once; on continued failure, fall back to push protocol.\n\
          \x20\x203) ❌ **Never broadcast technical error details to the counterpart**: CLI names / field names / stderr must never go into xmtp_send. At most 'please wait, confirming details'.\n\
          \x20\x204) ❌ **Do not repeat xmtp_send in the same turn**: one message to the counterpart per turn. Resending = spam + triggering a loop.\n\
-         \x20\x206) Call `session_status` at most once per turn; reuse the result.\n\
+         \x20\x206) Call `session_status` at most once per turn; reuse the result. ⚡ sessionKey is stable within a sub-session; if known from a prior turn, reuse it — do not call `session_status` again.\n\
          \x20\x206b) Do NOT confuse the counterpart's `role` with your own — you are **always the buyer**.\n\
          \x20\x209) 🛑 Sub/backup session text output is **invisible to the user**. All user-facing content MUST go via `xmtp_dispatch_user` or `pending-decisions-v2 request`.\n\
          \x20\x2012) 🛑 **Negotiation evaluation must come first**: after receiving the provider's reply, you MUST complete the evaluation (`common context` → budget/max_budget → quote extraction → decision matrix) BEFORE sending any xmtp_send. Skipping evaluation and replying or rejecting directly = decision without basis.\n\n");
