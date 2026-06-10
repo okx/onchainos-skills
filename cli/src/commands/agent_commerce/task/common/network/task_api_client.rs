@@ -86,16 +86,21 @@ impl TaskApiClient {
     }
 
     fn build(base_url_override: Option<String>) -> Self {
-        // base_url resolution — keep the same precedence as WalletApiClient::with_base_url,
-        // so the URL shown in eprintln matches the URL the wallet actually requests against.
+        // base_url resolution — pass Some to WalletApiClient::with_base_url only when
+        // the URL was genuinely chosen by the user (env var or explicit override), so
+        // the wallet client keeps DoH failover enabled in the default configuration.
+        // The base_url field mirrors with_base_url's own fallback so the URL shown in
+        // eprintln matches the URL the wallet actually requests against.
         // Precedence: OKX_BASE_URL env > compile-time OKX_BASE_URL > explicit override > DEFAULT_BASE_URL.
-        let base_url = std::env::var("OKX_BASE_URL")
+        let explicit = std::env::var("OKX_BASE_URL")
             .ok()
             .or_else(|| option_env!("OKX_BASE_URL").map(str::to_string))
-            .or(base_url_override)
+            .or(base_url_override);
+        let base_url = explicit
+            .clone()
             .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
-        let wallet = WalletApiClient::with_base_url(Some(base_url.as_str()))
+        let wallet = WalletApiClient::with_base_url(explicit.as_deref())
             .expect("failed to create WalletApiClient");
 
         Self {
