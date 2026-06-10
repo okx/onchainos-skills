@@ -95,9 +95,11 @@ Never invent or borrow a pre-check id; never emit a bare `# `. [eval 1,3,10,13,1
   "赶紧" / urgency, not memory prefs, not plan-mode exit, not a prior similar confirm, not one-shot field
   capture. Catch yourself thinking "they already said skip"? → render the card anyway; one extra turn ≪
   an irreversible on-chain write. `activate` / `deactivate` are state toggles → no card, run directly. [eval 2,20]
-- **Consent (create only)** — if a `create` returns a non-null `consent{consentKey, terms}`, show the
-  terms (full, translated, never summarized; never the `consentKey` UUID), wait for agree / decline, then
-  re-run the SAME create + `--consent-key <uuid> --agreed true` WITHOUT re-rendering the field card. [eval 10]
+- **Consent (first-time wallet, BEFORE field Q&A)** — after pre-check, run the standalone `agent consent`
+  once; on `required:true` show the returned `terms` (full, translated, never summarized; never the
+  `consentKey` UUID), wait for agree / decline, then `agent consent --consent-key <uuid> --agreed true|false`.
+  Agree → proceed to field Q&A; decline → stop (no `create`); `required:false` → skip to Q&A. `create`
+  never carries consent flags and its response has no `consent` field. [eval 10]
 - **Post-execute** — the first user-visible line after any CLI call comes from the reference's template, not
   your own JSON summary. Before any "registered" line, confirm an `agent <sub>` ran (not `wallet add`)
   and the role matches the template. On non-success → load `references/errors.md`. **Region restriction
@@ -149,11 +151,12 @@ Targets below are internal routing — never name a skill path or "staking" hand
 | passive need-requester | hand back to okx-agent-task with ONE line. No Step 6. |
 | search / get / service-list / feedback-list / feedback-submit | Stop. (feedback-submit is excluded from Step 6.) |
 
-## Commands (12 `onchainos agent` subcommands — you invoke them, never show them)
+## Commands (13 `onchainos agent` subcommands — you invoke them, never show them)
 
-`create · update · get · activate · deactivate · upload · search · service-list · validate-listing ·
-feedback-submit · feedback-list · submit-approval`. `validate-listing` + `submit-approval` are
-auto/internal — never shown as a command, though `validate-listing`'s `findings[]` ARE rendered inline.
+`create · consent · update · get · activate · deactivate · upload · search · service-list · validate-listing ·
+feedback-submit · feedback-list · submit-approval`. `consent` (first-time terms gate, see §Gates) +
+`validate-listing` + `submit-approval` are auto/internal — never shown as a command, though
+`validate-listing`'s `findings[]` ARE rendered inline.
 Never suggest `xmtp-sign`; never surface the signing-key address in any card or message. No `--address` (signs with the current wallet).
 Array field names: create/update/get/search → `list`; feedback-list → `items`; service-list → nested `services`.
 

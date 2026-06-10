@@ -33,6 +33,7 @@ Uniqueness: **≤1 requester, ≤1 evaluator per wallet; provider UNLIMITED.** [
   - K = 1: numbered choice — *1. Register a new ASP (multiple per address allowed) / 2. Update #`<N1>` (`<name1>`)*.
   - K ≥ 2: same choice, but **list every existing ASP id** `#<N>` (`<name>`); on "update" with K ≥ 2, ask which one by number. Never auto-pick, never collapse to "one of them" without the list.
 - Capture the resulting agent-id snapshot (the current-wallet ids) → pass as `--known-agent-ids <csv>` on the create so the CLI can return `newAgentId`. [eval 1]
+- **After pre-check, run the §9 consent gate** (`agent consent`) before any field Q&A — it self-skips (`required:false`) for returning wallets.
 
 **Passive need-requester** (handed in from a task flow): skip role-ask, skip pre-check, skip photo. See §8.
 
@@ -90,13 +91,14 @@ Skip role-ask / pre-check / photo. Ask name → (description) → render the car
 
 (If a requester already exists: "You already have a User Agent identity #`<N>` (`<name>`) — using it to continue.") Hand back to the task flow with that single line; don't ask "want to publish a task?".
 
-## 9. Consent (Gate detail) [eval 10]
+## 9. Consent (Gate detail — standalone `agent consent`, AFTER pre-check, BEFORE field Q&A) [eval 10]
 
-If the first create returns a non-null `consent{consentKey, terms}`:
-1. Render the terms **complete and translated** to the conversation language (never summarized), then "Reply 'agree' to continue; reply 'decline' to cancel." **Never show the `consentKey` UUID. Do NOT re-render the field card** (it already ran).
-2. On agree → re-invoke the SAME create with the exact same params **plus** `--consent-key <uuid> --agreed true`. The post-success uses the **second** call's `newAgentId`.
-3. On decline → "Registration cancelled — creating an agent identity requires accepting the terms of use. Restart any time." Stop, no CLI.
-4. Ambiguous reply → re-display the card once; never auto-agree / auto-decline.
+Consent is its OWN command, decoupled from `create`: run once after pre-check, before collecting any field. `create` never carries `--consent-key` / `--agreed`, and its response has no `consent` field.
+1. **Step 1 (no flags):** `agent consent` → `{ "required": bool, "consent": { "consentKey", "terms" } | null }`. `required:false` (returning wallet / flag off) → skip the card, go straight to §1/§3 Q&A.
+2. **`required:true`** → render `consent.terms` **complete and translated** (never summarized), then "Reply 'agree' to continue; reply 'decline' to cancel." **Never show the `consentKey` UUID.**
+3. On agree → `agent consent --consent-key <uuid> --agreed true` → then proceed to field Q&A → card → create.
+4. On decline → `agent consent --consent-key <uuid> --agreed false` → "Registration cancelled — creating an agent identity requires accepting the terms of use. Restart any time." Stop, no `create`.
+5. Ambiguous reply → re-display once; never auto-agree / auto-decline.
 
 ## 10. Execute
 
