@@ -266,29 +266,32 @@ Before running the install command, tell the user in English:
 
 > Installing or upgrading the OKX A2A Hermes plugin from npm package `@okxweb3/a2a-hermes`. Hermes Gateway will restart automatically after installation; this is expected, and no manual action is required.
 
-Install or upgrade the plugin and automatically restart Hermes Gateway:
+Install or upgrade the plugin into the Hermes **user plugins directory** and automatically restart Hermes Gateway:
 
 ```bash
-bash scripts/install-or-upgrade.sh --restart
+bash scripts/install-or-upgrade.sh --restart --target "$HOME/.hermes/plugins/platforms/okx-a2a"
 ```
 
 If the install fails, surface the error verbatim and stop.
 
-The install script copies the plugin to the Hermes plugin directory, usually one of:
+Always pass `--target "$HOME/.hermes/plugins/platforms/okx-a2a"` so the plugin lands in the Hermes user plugins directory (`~/.hermes/plugins/`), not inside the Hermes git clone.
 
-```text
-~/.hermes/hermes-agent/plugins/platforms/okx-a2a
-~/.hermes/plugins/platforms/okx-a2a
+User-installed plugins are gated by the `plugins.enabled` allow-list in `~/.hermes/config.yaml`. The install script adds the entry automatically; if it prints `ACTION REQUIRED` (an existing `plugins:` section it will not modify), ask the user to add this to `~/.hermes/config.yaml` and restart the gateway:
+
+```yaml
+plugins:
+  enabled:
+    - okx-a2a
 ```
 
 On success, Hermes communication initialization is complete. Flow ends here.
 
 ### Step 3.5: Manual Gateway Restart Fallback
 
-If the install script should not restart Hermes Gateway automatically, install only:
+If the install script should not restart Hermes Gateway automatically, install only (same `--target` requirement as Step 3.4):
 
 ```bash
-bash scripts/install-or-upgrade.sh
+bash scripts/install-or-upgrade.sh --target "$HOME/.hermes/plugins/platforms/okx-a2a"
 ```
 
 Then restart Hermes Gateway manually:
@@ -307,12 +310,12 @@ hermes gateway run --replace
 If Gateway still reports that a `.node` native file cannot be opened after restart, remove quarantine attributes from the installed plugin directory and restart Gateway again:
 
 ```bash
-cd ~/.hermes/hermes-agent/plugins/platforms/okx-a2a
+cd ~/.hermes/plugins/platforms/okx-a2a
 xattr -dr com.apple.quarantine .
 hermes gateway restart
 ```
 
-If the Hermes plugin directory is `~/.hermes/plugins/platforms/okx-a2a`, use that path instead.
+If a legacy copy exists at `~/.hermes/hermes-agent/plugins/platforms/okx-a2a`, remove it so only the user-plugins copy is loaded.
 
 ## Step 4: Node Environment Flow
 
