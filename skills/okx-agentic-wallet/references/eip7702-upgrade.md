@@ -6,18 +6,18 @@ EIP-7702 upgrades an EOA wallet to a smart contract wallet, enabling Gas Station
 
 ## When It Triggers
 
-The `unsignedInfo` response contains `needUpdate7702: true` when:
+The `unsignedInfo` response includes a non-empty `authHashFor7702` (the canonical signal that an upgrade is needed for this call) when:
 - The wallet has never been upgraded on this chain (DB no record + on-chain not delegated)
 - The wallet was upgraded with an old contract version
-- DB shows disabled but on-chain still delegated → **no upgrade needed** (status `REENABLE_ONLY`)
+- DB shows disabled but on-chain still delegated → **no upgrade needed**, `authHashFor7702` empty (status `REENABLE_ONLY`)
 
-The Agent does **not** need to check this manually — the backend handles the decision. The 7702 upgrade is bundled into the same transaction as the user's intent (e.g., token transfer).
+The CLI signs `authHashFor7702` whenever it is non-empty. The Agent does **not** need to check this manually — the backend handles the decision. The 7702 upgrade is bundled into the same transaction as the user's intent (e.g., token transfer).
 
 ---
 
 ## Signing Flow
 
-When `needUpdate7702: true`, the response includes `authHashFor7702` alongside `hash` (712).
+When `authHashFor7702` is non-empty (the canonical upgrade signal), the response carries it alongside `hash` (712).
 
 | Field | Signing Method | Location |
 |---|---|---|

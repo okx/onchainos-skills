@@ -12,21 +12,6 @@ metadata:
 
 6 commands for multi-chain swap aggregation — quote, approve, one-shot execute, and calldata-only swap.
 
-## Step 0 — DApp Re-Route Check (run before every other step)
-
-Before running any `onchainos swap` command, scan the **original user prompt** for a named DApp/protocol. If any of the names below appear (English or Chinese), STOP this skill and invoke `okx-dapp-discovery` with the user's original prompt instead — the DApp's own plugin is the correct executor.
-
-Trigger names: **Polymarket · Aave · Hyperliquid · PancakeSwap · Pancake · PCS · Morpho · Raydium · Curve · Compound · Pendle · Lido · ether.fi · GMX · Kamino · Orca · Meteora · Clanker · Uniswap · pump.fun**.
-
-Trigger protocol-native tokens (route to `okx-dapp-discovery` even without DApp name): **HYPE, HLP, CAKE, veCAKE, CRV, crvUSD, 3pool, COMP, Comet, RAY, Whirlpool, ETHFI, eETH, weETH, LDO, stETH, wstETH, GLP, esGMX, GHO, kToken, PT-* / YT-* / `PT <token>`, vePENDLE, $CLANKER**.
-
-Examples that MUST re-route (do not run `swap quote` / `swap execute` here):
-- "swap on PancakeSwap", "swap SOL for USDC on Raydium", "swap on Uniswap", "在 Curve 上把 USDC 换成 USDT", "在 Orca 上把 SOL 换成 USDC", "swap on PancakeSwap V2 with classic LP".
-
-Stay in this skill ONLY when the venue is **unspecified or aggregated**: "swap 1 ETH for USDC", "best route from SOL to USDC", "trade USDC for OKB", "convert tokens", "buy 0.5 ETH with my USDC".
-
-If you have already started running commands and only then realise the user named a DApp, halt mid-flow and invoke `okx-dapp-discovery` — do not finish the aggregated swap.
-
 ## Pre-flight Checks
 
 > Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
