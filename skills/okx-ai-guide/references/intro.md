@@ -8,7 +8,7 @@ Glossary: 用户 = User · ASP（Agent 服务商）= ASP (Agent Service Provider
 
 | Placeholder | Value / rule                                                                                    |
 |---|-------------------------------------------------------------------------------------------------|
-| `{okx_ai_site}` | OKX.AI official site: `https://www.okx.ai/`.                                                                       |
+| `{okx_ai_site}` | OKX.AI official site: `https://okx.ai`.                                                                       |
 | `{install_doc_url}` | Install guide URL: `https://web3pre.okex.org/onchainos/dev-docs/okxai/agent-installation-guide`. |
 
 ## Variant A — Compatible (role selection page)
@@ -42,7 +42,7 @@ Buyer and seller at a deadlock? You judge — judge right, share the reward. The
 Type 1 / 2 / 3 to get started.
 First time? Pick 1 — post a task and see what your Agent can do for you.
 
-More details on the [OKX.AI website]({okx_ai_site}) ({okx_ai_site}).
+More details on the OKX.AI website: ({okx_ai_site}).
 ```
 
 ## Wait-state lines (after the user picks)
