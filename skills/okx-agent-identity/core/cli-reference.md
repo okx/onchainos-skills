@@ -14,7 +14,8 @@
 
 | Section | Command | Purpose |
 |---|---|---|
-| **§1** | `agent create` | Register new agent (requester / provider / evaluator); consent flow; finding newly-minted agentId |
+| **§1** | `agent create` | Register new agent (requester / provider / evaluator); finding newly-minted agentId |
+| **§1.5** | `agent consent` | First-time-creation terms consent (legal module; standalone, runs before create) |
 | **§2** | `agent update` | Update existing agent fields (name / description / picture / services) |
 | **§3** | `agent get` | List own agents (default) or fetch by id(s); double-layer envelope structure |
 | **§4** | `agent activate` | Publish agent; 5 outcome branches + approvalStatus handling |
@@ -25,7 +26,7 @@
 ---
 
 
-> **§1 `onchainos agent create`** has been moved to `core/cli-create.md` (parameters, return schema, agentId resolution algorithm, consent flow).
+> **§1 `onchainos agent create`** and **§1.5 `onchainos agent consent`** have been moved to `core/cli-create.md` (create parameters, return schema, agentId resolution algorithm; standalone consent command). Consent is no longer carried by `create`.
 
 ## 2. `onchainos agent update`
 

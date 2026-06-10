@@ -1,18 +1,26 @@
 # Consent Guide
 
-This file governs the display and handling of the first-time agent creation consent flow.
+This file governs the display and handling of the first-time agent-creation consent flow.
 Single source of truth for consent card wording, agree/decline templates, and worked examples.
-Referenced from `SKILL.md §⛔ MANDATORY consent gate`.
+Referenced from `SKILL.md §⛔ MANDATORY consent gate` and Core Flow gate 3.
+
+> **Architecture (2026-06):** consent is the legal module's **standalone two-step
+> flow**, decoupled from `agent create`. It runs as its own `agent consent` call
+> **before any identity info is collected** (Core Flow gate 3 — right after
+> pre-check, before Role Q&A). `agent create` no longer carries `--consent-key`
+> / `--agreed` and no longer returns a `consent` field. Never pass consent flags
+> to `create`; never look for consent in the create response.
 
 ---
 
 ## When consent is required
 
 Consent is required when a wallet address has **never registered any agent identity** (any role).
-The backend signals this by returning a non-null `consent` object in the first `agent create` response:
+The standalone `agent consent` step (no flags) signals this by returning:
 
 ```json
 {
+  "required": true,
   "consent": {
     "consentKey": "<uuid>",
     "terms": "<platform terms text>"
@@ -20,14 +28,29 @@ The backend signals this by returning a non-null `consent` object in the first `
 }
 ```
 
-Returning users (the wallet address already has at least one registered or pending agent) skip
-consent entirely — the backend returns `consent: null` directly.
+Returning users (the wallet address already owns an agent) or a disabled feature flag get:
+
+```json
+{ "required": false, "consent": null }
+```
+
+→ skip the consent card entirely and proceed straight to Role Q&A (identity info collection).
+
+---
+
+## §Step 1 — fetch terms
+
+At Core Flow gate 3, **before collecting any identity field**, call `agent consent` with no
+flags. Branch on the result:
+
+- `required: false` → no terms to show; continue to Role Q&A.
+- `required: true` → render the §Consent Card using `consent.terms`, then wait for the user.
 
 ---
 
 ## §Consent Card
 
-Render this card when the consent intercept fires.
+Render this card when `required: true`.
 Display `consent.terms` verbatim as the terms content.
 
 ```
@@ -45,8 +68,8 @@ Reply "agree" to continue; reply "decline" to cancel.
   readability, but the translated content MUST be complete — do NOT summarize, paraphrase,
   or omit any clause.
 - Do NOT show the raw `consentKey` UUID to the user — it is an internal token.
-- Do NOT show a confirmation card for agent fields again — that already ran in the
-  `§⛔ MANDATORY confirmation gate`. The consent card is solely about the terms.
+- This card is solely about the terms. No agent-field confirmation card runs here —
+  identity info has not been collected yet (it comes after consent).
 - Do NOT pre-fill the user's reply or add "I'll assume you agree if you don't reply".
 
 ---
@@ -55,11 +78,10 @@ Reply "agree" to continue; reply "decline" to cancel.
 
 After the user replies with an agree token (`agree` / `yes` / `accept` / `confirm`):
 
-1. Re-invoke the original `onchainos agent create` command with the **exact same parameters**.
-2. Append `--consent-key <value of consent.consentKey from the backend response>`.
-3. Append `--agreed true`.
-4. Do NOT re-render the confirmation card.
-5. Proceed to `§Step 4: Report Result` with the second call's response.
+1. Call `onchainos agent consent --consent-key <value of consent.consentKey> --agreed true`
+   to finalize the decision (returns `required: false` / `consent: null`).
+2. Then proceed to **Role Q&A** (Core Flow gate 4) — collect name / description / services.
+3. Continue normally through the confirmation card (gate 5) and `agent create`.
 
 ---
 
@@ -67,8 +89,9 @@ After the user replies with an agree token (`agree` / `yes` / `accept` / `confir
 
 If the user replies with a decline token (`decline` / `no` / `reject` / `cancel`):
 
-- Do NOT call the CLI.
-- Render the message below and stop.
+1. Call `onchainos agent consent --consent-key <value of consent.consentKey> --agreed false`
+   to record the rejection (finalizes the decision in the backend).
+2. Render the message below and stop. Do NOT enter Role Q&A or `agent create`.
 
 "Registration cancelled — creating an agent identity requires accepting the terms of use.
 You can restart the registration flow at any time."
@@ -82,7 +105,7 @@ terms, an off-topic message, or a partial phrase):
 
 1. Re-display the consent card **once** (including the full `consent.terms` text again).
 2. Wait for a clear agree or decline token.
-3. Do NOT auto-agree, do NOT auto-decline, do NOT timeout.
+3. Do NOT auto-agree, do NOT auto-decline, do NOT timeout, do NOT call the finalize step yet.
 
 ---
 
@@ -92,17 +115,18 @@ terms, an off-topic message, or a partial phrase):
 
 ```
 User:    Register a user identity named Alice.
-[pre-check + Q&A + confirmation card runs normally]
-User:    Execute
-[skill invokes agent create — backend returns consent object]
+[Core Flow: ask role → pre-check (agent get)]
+[gate 3: skill calls agent consent (no flags) — returns required:true + consent]
 Skill:   Before creating your agent identity, please review and accept the following terms:
 
          <consent.terms content, full text>
 
          Reply "agree" to continue; reply "decline" to cancel.
 User:    agree
-[skill re-invokes agent create --consent-key <uuid> --agreed true]
-[second call returns consent: null — normal success flow]
+[skill calls agent consent --consent-key <uuid> --agreed true — finalized]
+[gate 4: Role Q&A collects name/description; gate 5: confirmation card]
+User:    Execute
+[skill invokes agent create — no consent fields, normal success flow]
 ```
 
 ### Example B — first-time user, declines
@@ -110,9 +134,10 @@ User:    agree
 ```
 Skill:   [shows consent card with terms]
 User:    decline
+[skill calls agent consent --consent-key <uuid> --agreed false — rejection recorded]
 Skill:   Registration cancelled — creating an agent identity requires accepting the terms of use.
          You can restart the registration flow at any time.
-[flow stops — CLI is NOT re-invoked]
+[flow stops — Role Q&A and agent create are NOT entered]
 ```
 
 ### Example C — ambiguous reply
@@ -131,18 +156,20 @@ Skill:   [re-displays consent card once, including full terms text]
 ```
 User:    Register another service provider identity.
 [pre-check shows existing agents for this wallet address]
-[backend returns consent: null — normal flow, consent gate never fires]
+[gate 3: skill calls agent consent (no flags) — returns required:false / consent:null]
+[consent card never shown; flow continues straight to Role Q&A]
 ```
 
 ---
 
 ## Error codes (backend-only — not handled at skill layer)
 
-These codes may surface via `troubleshooting.md` if the second call is malformed.
+These codes may surface via `troubleshooting.md` if the finalize call is malformed.
 The skill does not need to map them explicitly.
 
 | Code | Name | When |
 |---|---|---|
+| 81001 | INCORRECT_PARAMETER | `chainIndex` empty / non-numeric |
 | 40020 | AGENT_CONSENT_AGREED_REQUIRED | `consentKey` passed but `agreed` omitted |
 | 40021 | AGENT_CONSENT_INVALID | Key invalid / user mismatch / already finalized, or `agreed` passed without `consentKey` |
 | 40022 | AGENT_CONSENT_REJECTED | User declined (status recorded as rejected in DB) |
