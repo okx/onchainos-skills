@@ -2135,6 +2135,7 @@ mod tests {
     #[test]
     fn broadcast_error_81362_no_force_returns_cli_confirming() {
         let api_err = crate::wallet_api::ApiCodeError {
+            http_status: 200,
             code: "81362".to_string(),
             msg: "please confirm".to_string(),
         };
@@ -2150,6 +2151,7 @@ mod tests {
     #[test]
     fn broadcast_error_81362_with_force_returns_plain_error() {
         let api_err = crate::wallet_api::ApiCodeError {
+            http_status: 200,
             code: "81362".to_string(),
             msg: "please confirm".to_string(),
         };
@@ -2175,6 +2177,7 @@ mod tests {
     #[test]
     fn broadcast_error_other_code_returns_plain_error() {
         let api_err = crate::wallet_api::ApiCodeError {
+            http_status: 200,
             code: "50000".to_string(),
             msg: "server error".to_string(),
         };
@@ -2201,6 +2204,7 @@ mod tests {
         // surfaced only "execution reverted", which made 81362 / 81363 / on-chain
         // revert indistinguishable. This test pins the new contract.
         let api_err = crate::wallet_api::ApiCodeError {
+            http_status: 200,
             code: "81363".to_string(),
             msg: "execution reverted".to_string(),
         };

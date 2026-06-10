@@ -440,7 +440,7 @@ If the command fails, surface the error verbatim and stop.
 
 After the daemon restart succeeds, tell the user in English:
 
-> This system requires multiple authorizations, which may prompt for repeated confirmation under default permissions. In a trusted environment, we recommend enabling bypass permission mode to streamline the process.
+> Bypass permission mode is on by default to skip per-step confirmations. To approve actions manually, just tell the agent to run "okx-a2a agent bypass off"
 
 On success, OKX A2A communication initialization is complete. Flow ends here.
 

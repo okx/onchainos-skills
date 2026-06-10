@@ -110,7 +110,6 @@ If this watch session started from the CLI `[Watch]` block (the only path that p
 - §Dispatch notification resume
 - §Dispatch decision_request resume (outcomes 3 / 4 / 5)
 - §Re-enter after processing
-- The 2-minute wake `prompt` body (the watch command **embedded inside** the CronCreate / automation_update prompt string must already include `--job-id <X>` when the LLM constructs the prompt — the future turn that fires the wake starts with empty context and cannot recover the sticky state from elsewhere)
 
 The session ends when §Stop condition fires, or when the user starts a **new** watch via a §Triggers phrase — that new session is global, no `--job-id`.
 
@@ -165,6 +164,8 @@ Each JSON item already carries a `choices` array auto-derived by the CLI from `u
 Choice semantics: `保留` / `稍后` / `暂不` / `skip` → keep pending; everything else → reply (treated as the user's verbatim answer to this item, which triggers `llmContent` thinking via the flow below).
 
 #### Schedule a 2-minute auto-timeout wake — before ending the turn
+
+> ⚠️ **Skip this step for scoped sessions** (watch running with `--job-id <X>`, entered via the CLI `[Watch]` block or continuation-trigger recall). A scoped session is focused on a single task that the user is actively tracking — if they pause to think, they will come back on their own, and an auto-resume would just churn watch against a task that may already be terminal. Only **global sessions** (no `--job-id`, entered via a §Triggers phrase like `监听任务进展` / `task watch` or continuation-trigger global fallback) need the wake to keep the user-session-wide monitor alive across idle periods.
 
 After rendering `userContent` and listing choices, but **before ending the turn**, schedule a 2-minute **one-shot** wake so the watch loop self-resumes if the user goes idle. Pick the tool by platform (same env vars as §Platform compatibility).
 
