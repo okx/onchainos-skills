@@ -24,6 +24,12 @@ pub struct CreateArgs {
     /// `--consent-key` on the second call.
     #[arg(long)]
     pub agreed: Option<bool>,
+    /// Optional pre-write snapshot: comma-separated agent ids that existed
+    /// BEFORE this create (the caller's pre-check `agent get` result). When
+    /// provided and the WS push is absent, the CLI diffs the post-broadcast
+    /// agent list against this snapshot to compute the top-level `newAgentId`.
+    #[arg(long = "known-agent-ids")]
+    pub known_agent_ids: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -38,6 +44,14 @@ pub struct UpdateArgs {
     pub picture: Option<String>,
     #[arg(long)]
     pub service: Option<String>,
+    /// Optional pre-write snapshot: comma-separated agent ids that existed
+    /// BEFORE this update (the caller's pre-check `agent get` result). When
+    /// provided and the WS push is absent, the CLI diffs the post-broadcast
+    /// agent list against this snapshot to compute the top-level `newAgentId`.
+    /// Rarely meaningful for `update` (no new id is minted) but accepted for
+    /// symmetry with `create`.
+    #[arg(long = "known-agent-ids")]
+    pub known_agent_ids: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -92,6 +106,26 @@ pub struct SearchArgs {
     pub page: Option<String>,
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
+}
+
+/// `onchainos agent validate-listing`: pure-local (no HTTP, no network)
+/// validator that checks an agent listing's fields against mechanical
+/// marketplace rules and prints a structured JSON result. Moves
+/// deterministic QA out of the markdown skill into the CLI.
+#[derive(Args, Clone, Debug)]
+pub struct ValidateListingArgs {
+    /// requester / provider / evaluator (aliases: 1/buyer/requestor →
+    /// requester, 2 → provider, 3 → evaluator). Defaults to provider.
+    #[arg(long)]
+    pub role: Option<String>,
+    #[arg(long)]
+    pub name: Option<String>,
+    #[arg(long)]
+    pub description: Option<String>,
+    /// JSON array string with the same element shape as create/update's
+    /// `--service`. Ignored for non-provider roles.
+    #[arg(long)]
+    pub service: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]

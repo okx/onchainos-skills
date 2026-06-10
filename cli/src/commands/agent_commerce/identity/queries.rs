@@ -14,9 +14,10 @@ use crate::output;
 use super::args::{FeedbackListArgs, GetArgs, GetByAddressArgs, SearchArgs, ServiceListArgs};
 use super::models::XLAYER_CHAIN_INDEX;
 use super::utils::{
-    convert_feedback_list_scores, normalize_singleton_object, parse_u32_arg, push_multi_query,
-    push_optional_query, reconstruct_get_url_for_log, redact_token_for_debug, require_non_empty,
-    wallet_client,
+    add_agent_list_cells, add_feedback_list_cells, add_search_cells, add_service_list_cells,
+    convert_feedback_list_scores, enrich_agent_get_rows, normalize_singleton_object, parse_u32_arg,
+    push_multi_query, push_optional_query, reconstruct_get_url_for_log, redact_token_for_debug,
+    require_non_empty, wallet_client,
 };
 
 // ─── Public command entry points ──────────────────────────────────────────
@@ -172,7 +173,21 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
         Err(e) => eprintln!("[agent-identity] get response err: {:#}", e),
     }
 
-    Ok(normalize_singleton_object(result?))
+    let mut out = normalize_singleton_object(result?);
+    // Additive: enrich each agent row with computed display fields (roleLabel
+    // / statusLabel / approvalLabel / ratingStars). Rows are read from either
+    // the single-layer shape (row = list[*]) or the legacy double-layer shape
+    // (row = list[*].agentList[*]); both are tolerated. Raw role / status /
+    // approvalDisplayStatus / reputation are left intact.
+    enrich_agent_get_rows(&mut out);
+    // Additive: in LIST mode (no --agent-ids) add a ready-to-render `cells`
+    // array per row (references/discover.md §list columns). Detail mode (with
+    // --agent-ids) already carries the `card`; the list-table `cells` are the
+    // row analog and only meaningful for the list view.
+    if args.agent_ids.is_none() {
+        add_agent_list_cells(&mut out);
+    }
+    Ok(out)
 }
 
 // ─── `agent search` ───────────────────────────────────────────────────────
@@ -234,7 +249,12 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
         Err(e) => eprintln!("[agent-identity] search response err: {:#}", e),
     }
 
-    Ok(normalize_singleton_object(result?))
+    // Additive: add a ready-to-render `cells` array per search row (the §6
+    // search columns — note the distinct search schema: feedbackRate is
+    // already 0–5, serviceMinPrice is the price, services may be absent).
+    let mut out = normalize_singleton_object(result?);
+    add_search_cells(&mut out);
+    Ok(out)
 }
 
 // ─── `agent service-list` ─────────────────────────────────────────────────
@@ -274,7 +294,10 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
         Err(e) => eprintln!("[agent-identity] service-list response err: {:#}", e),
     }
 
-    result
+    // Additive: add a ready-to-render `cells` array per service (§4 columns).
+    let mut out = result?;
+    add_service_list_cells(&mut out);
+    Ok(out)
 }
 
 // ─── `agent feedback-list` ────────────────────────────────────────────────
@@ -346,6 +369,9 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
     // `feedback-submit`. Mapping rule: `utils::convert_feedback_list_scores`.
     let mut out = normalize_singleton_object(result?);
     convert_feedback_list_scores(&mut out);
+    // Additive: add a ready-to-render `cells` array per feedback item (§5
+    // columns). Runs AFTER score conversion so `score` is a 0.00–5.00 float.
+    add_feedback_list_cells(&mut out);
     Ok(out)
 }
 

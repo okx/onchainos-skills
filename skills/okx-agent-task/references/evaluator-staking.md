@@ -32,7 +32,7 @@
 
 | Scenario | Inbound signal | Go to |
 |---|---|---|
-| First-time staking onboarding | **identity handoff** (previous turn / current turn earlier content contains: `Evaluator identity registered` / `Evaluator identity #<id> registered` / `to be assigned arbitration cases by the system`, the three corresponding to the actual Post-success output of `okx-agent-identity/references/role-evaluator.md`); **or user intent** (`I want to stake` / `stake to become an evaluator` / `help me stake` / `go stake` / `let's stake` / `stake now` / `proceed with staking`); **or short confirmation** (`ok` / `continue` / `yes` / `go` / `mm` / `yep` / `sure` / `confirm`, **only counts when the previous turn contained a handoff signal**) | §2 |
+| First-time staking onboarding | **identity handoff** (previous turn / current turn earlier content contains: `Evaluator Agent identity registered` / `Evaluator Agent identity #<id> registered` / `A separate stake is still required before you can be assigned disputes`, the three corresponding to the actual Post-success output of `okx-agent-identity/references/register.md` §11); **or user intent** (`I want to stake` / `stake to become an evaluator` / `help me stake` / `go stake` / `let's stake` / `stake now` / `proceed with staking`); **or short confirmation** (`ok` / `continue` / `yes` / `go` / `mm` / `yep` / `sure` / `confirm`, **only counts when the previous turn contained a handoff signal**) | §2 |
 | Increase stake | `increase / add / top up stake <N>` / "top up" after being slashed | §3 |
 | Request unstake | `I want to unstake <N>` / `withdraw stake` / `redeem stake` | §4 |
 | Claim unstake (cooldown elapsed) | `claim unstake` / `take out my OKB` | §5 |

@@ -107,7 +107,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     //   - provider（卖家）：被搜索 / 匹配的核心字段 → 必填。
     //   - requester（买家）/ evaluator（验证者）：选填；未填则上链
     //     `ProfileDescription: ""`（与 picture 一致），skill 端渲染为
-    //     `未填 / (not set)`，详见 role-requester.md / role-evaluator.md。
+    //     `未填 / (not set)`，详见 references/register.md（按 role 分支收集字段）。
     let profile_description = if normalized_role == "provider" {
         require_non_empty(args.description.as_deref(), "--description")?.to_string()
     } else {
@@ -211,7 +211,18 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
 
     let push = wait_for_identity_push(subscription, &tx_hash).await;
     let agent_list = fetch_agent_list(&mut client, &access_token).await;
-    Ok(assemble_identity_envelope(tx_hash, push, agent_list))
+    let new_agent_id = compute_new_agent_id(
+        push.as_ref(),
+        agent_list.as_ref(),
+        &from_addr,
+        args.known_agent_ids.as_deref(),
+    );
+    Ok(assemble_identity_envelope(
+        tx_hash,
+        push,
+        agent_list,
+        new_agent_id,
+    ))
 }
 
 // ─── `agent update` ───────────────────────────────────────────────────────
@@ -315,7 +326,18 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
 
     let push = wait_for_identity_push(subscription, &tx_hash).await;
     let agent_list = fetch_agent_list(&mut client, &access_token).await;
-    Ok(assemble_identity_envelope(tx_hash, push, agent_list))
+    let new_agent_id = compute_new_agent_id(
+        push.as_ref(),
+        agent_list.as_ref(),
+        &signing_session.addr_info.address,
+        args.known_agent_ids.as_deref(),
+    );
+    Ok(assemble_identity_envelope(
+        tx_hash,
+        push,
+        agent_list,
+        new_agent_id,
+    ))
 }
 
 // ─── `agent activate` / `agent deactivate` ────────────────────────────────
@@ -784,13 +806,16 @@ async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> O
     }))
 }
 
-/// Assemble the `{ txHash, agent?, agentList? }` envelope. `agent` and
-/// `agentList` are independent best-effort segments; either may be
-/// missing without affecting the other.
+/// Assemble the `{ txHash, agent?, agentList?, newAgentId }` envelope.
+/// `agent` and `agentList` are independent best-effort segments; either may
+/// be missing without affecting the other. `newAgentId` is always present as
+/// a top-level key (string id when resolvable, JSON `null` otherwise) so
+/// callers can rely on the key existing.
 fn assemble_identity_envelope(
     tx_hash: String,
     push: Option<Value>,
     agent_list: Option<Value>,
+    new_agent_id: Option<String>,
 ) -> Value {
     let mut out = json!({ "txHash": tx_hash });
     if let Some(p) = push {
@@ -799,5 +824,285 @@ fn assemble_identity_envelope(
     if let Some(list) = agent_list {
         out["agentList"] = list;
     }
+    out["newAgentId"] = match new_agent_id {
+        Some(id) => Value::String(id),
+        None => Value::Null,
+    };
     out
+}
+
+/// Compute the top-level `newAgentId` for a create / update response.
+///
+/// Resolution order (additive, never errors):
+///   1. WS push present with an `agentId` → use it (stringified). This is the
+///      authoritative signal and ignores `--known-agent-ids` entirely.
+///   2. WS push absent, `agentList` present, AND `known_agent_ids` provided →
+///      double-layer diff: find the wrapper whose `ownerAddress` matches the
+///      signing wallet, then within that wrapper's nested `agentList[*]` pick
+///      the single agentId NOT in the known set. Exactly one new id → use it;
+///      zero / more-than-one / no matching wrapper → `None`.
+///   3. Otherwise → `None`.
+fn compute_new_agent_id(
+    push: Option<&Value>,
+    agent_list: Option<&Value>,
+    signing_address: &str,
+    known_agent_ids: Option<&str>,
+) -> Option<String> {
+    // Rule 1: WS push wins.
+    if let Some(p) = push {
+        if let Some(id) = agent_id_to_string(p.get("agentId")) {
+            return Some(id);
+        }
+    }
+
+    // Rule 2: diff against the pre-write snapshot.
+    let known_csv = known_agent_ids?;
+    let agent_list = agent_list?;
+    let known: std::collections::HashSet<String> = parse_known_agent_ids(known_csv);
+
+    diff_new_agent_id(agent_list, signing_address, &known)
+}
+
+/// Parse the `--known-agent-ids` CSV into a set of normalized id strings.
+/// Whitespace-trimmed, empty entries dropped. Ids are compared as strings
+/// (after normalization) so `42` and `"42"` collide regardless of JSON type.
+fn parse_known_agent_ids(csv: &str) -> std::collections::HashSet<String> {
+    csv.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Normalize an agentId `Value` (string or integer) to its canonical string
+/// form for set comparison. `None` for null / missing / unsupported types.
+fn agent_id_to_string(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// Diff the post-broadcast agent list against the pre-write `known` snapshot
+/// to find the single newly-minted agent id for the signing wallet. Tolerates
+/// BOTH envelope shapes the `/agent-list` endpoint has used:
+///   • single-layer  `list[*]`              — the live backend today: each row
+///     IS an agent and carries its own `ownerAddress`.
+///   • double-layer   `list[*].agentList[*]` — older grouped schema: `list[*]`
+///     is an accountName wrapper carrying `ownerAddress` + nested `agentList`.
+/// Only rows whose owning wallet matches `signing_address` are considered (a
+/// row/wrapper with no `ownerAddress` is treated as the caller's own, since the
+/// list endpoint is JWT-scoped to the caller). Returns `Some(id)` only when
+/// EXACTLY ONE matching agent id is absent from `known`.
+fn diff_new_agent_id(
+    agent_list: &Value,
+    signing_address: &str,
+    known: &std::collections::HashSet<String>,
+) -> Option<String> {
+    let items = agent_list.get("list").and_then(Value::as_array)?;
+    let signing_lower = signing_address.trim().to_ascii_lowercase();
+
+    // A row/wrapper belongs to the signing wallet when its `ownerAddress`
+    // matches (case-insensitive). Missing `ownerAddress` → treat as owned
+    // (the endpoint is JWT-scoped), never as a disqualifier.
+    let owner_matches = |node: &Value| -> bool {
+        match node.get("ownerAddress").and_then(Value::as_str) {
+            Some(addr) => addr.trim().to_ascii_lowercase() == signing_lower,
+            None => true,
+        }
+    };
+
+    let mut candidates: Vec<String> = Vec::new();
+    for item in items {
+        match item.get("agentList").and_then(Value::as_array) {
+            // Double-layer: `item` is an accountName wrapper; diff its rows
+            // only when the wrapper belongs to the signing wallet.
+            Some(rows) if owner_matches(item) => {
+                candidates.extend(rows.iter().filter_map(|r| agent_id_to_string(r.get("agentId"))));
+            }
+            Some(_) => {}
+            // Single-layer: `item` IS the agent row, carrying its ownerAddress.
+            None => {
+                if owner_matches(item) {
+                    if let Some(id) = agent_id_to_string(item.get("agentId")) {
+                        candidates.push(id);
+                    }
+                }
+            }
+        }
+    }
+
+    candidates.retain(|id| !known.contains(id));
+    candidates.sort();
+    candidates.dedup();
+
+    if candidates.len() == 1 {
+        candidates.pop()
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn two_account_envelope() -> Value {
+        json!({
+            "total": 2,
+            "list": [
+                {
+                    "ownerAddress": "0xSIGNER",
+                    "accountName": "wallet-1",
+                    "agentList": [
+                        { "agentId": 10, "name": "old-a" },
+                        { "agentId": 11, "name": "old-b" },
+                        { "agentId": 99, "name": "new-one" },
+                    ],
+                },
+                {
+                    // Another derived wallet — must NOT be conflated.
+                    "ownerAddress": "0xOTHER",
+                    "accountName": "wallet-2",
+                    "agentList": [ { "agentId": 500, "name": "someone-else" } ],
+                },
+            ],
+        })
+    }
+
+    /// Live `/agent-list` shape: single-layer `list[*]`, each row IS an agent
+    /// carrying its own `ownerAddress` (no `agentList` wrapper). `total` =
+    /// agent count.
+    fn single_layer_envelope() -> Value {
+        json!({
+            "total": 3,
+            "list": [
+                { "agentId": 10, "name": "old-a", "ownerAddress": "0xSIGNER" },
+                { "agentId": 11, "name": "old-b", "ownerAddress": "0xSIGNER" },
+                { "agentId": 99, "name": "new-one", "ownerAddress": "0xSIGNER" },
+            ],
+        })
+    }
+
+    #[test]
+    fn new_agent_id_diff_single_layer_one_new_row() {
+        // The real backend shape: flat rows with per-row ownerAddress.
+        let list = single_layer_envelope();
+        let got = compute_new_agent_id(None, Some(&list), "0xSIGNER", Some("10,11"));
+        assert_eq!(got.as_deref(), Some("99"));
+    }
+
+    #[test]
+    fn new_agent_id_diff_single_layer_case_insensitive_and_no_owner_ok() {
+        // Case-insensitive owner match; a row without ownerAddress is treated
+        // as the caller's own (endpoint is JWT-scoped).
+        let list = json!({
+            "total": 2,
+            "list": [
+                { "agentId": 10, "name": "old", "ownerAddress": "0xSIGNER" },
+                { "agentId": 99, "name": "new" }, // no ownerAddress → owned
+            ],
+        });
+        let got = compute_new_agent_id(None, Some(&list), "0xsigner", Some("10"));
+        assert_eq!(got.as_deref(), Some("99"));
+    }
+
+    #[test]
+    fn new_agent_id_diff_single_layer_zero_and_two_candidates_are_null() {
+        let list = single_layer_envelope();
+        // all known → none new → null.
+        assert_eq!(
+            compute_new_agent_id(None, Some(&list), "0xSIGNER", Some("10,11,99")),
+            None
+        );
+        // only 10 known → 11 and 99 both new → ambiguous → null.
+        assert_eq!(
+            compute_new_agent_id(None, Some(&list), "0xSIGNER", Some("10")),
+            None
+        );
+    }
+
+    #[test]
+    fn new_agent_id_prefers_ws_push() {
+        let push = json!({ "agentId": "12345", "txHash": "0xabc" });
+        let list = two_account_envelope();
+        // Even with a known-ids snapshot present, the WS push wins.
+        let got = compute_new_agent_id(
+            Some(&push),
+            Some(&list),
+            "0xSIGNER",
+            Some("10,11,99"),
+        );
+        assert_eq!(got.as_deref(), Some("12345"));
+    }
+
+    #[test]
+    fn new_agent_id_ws_push_numeric_id_stringified() {
+        let push = json!({ "agentId": 777 });
+        let got = compute_new_agent_id(Some(&push), None, "0xSIGNER", None);
+        assert_eq!(got.as_deref(), Some("777"));
+    }
+
+    #[test]
+    fn new_agent_id_diff_one_new_row() {
+        let list = two_account_envelope();
+        let got = compute_new_agent_id(None, Some(&list), "0xSIGNER", Some("10,11"));
+        assert_eq!(got.as_deref(), Some("99"));
+    }
+
+    #[test]
+    fn new_agent_id_diff_case_insensitive_owner_match() {
+        let list = two_account_envelope();
+        // Signing address differs in case from the wrapper's ownerAddress.
+        let got = compute_new_agent_id(None, Some(&list), "0xsigner", Some("10,11"));
+        assert_eq!(got.as_deref(), Some("99"));
+    }
+
+    #[test]
+    fn new_agent_id_diff_zero_candidates_is_null() {
+        let list = two_account_envelope();
+        // All ids known → no new candidate.
+        let got = compute_new_agent_id(None, Some(&list), "0xSIGNER", Some("10,11,99"));
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn new_agent_id_diff_two_candidates_is_null() {
+        let list = two_account_envelope();
+        // Only 10 known → 11 and 99 are both "new" → ambiguous → null.
+        let got = compute_new_agent_id(None, Some(&list), "0xSIGNER", Some("10"));
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn new_agent_id_no_matching_wrapper_is_null() {
+        let list = two_account_envelope();
+        let got = compute_new_agent_id(None, Some(&list), "0xNOBODY", Some("10,11"));
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn new_agent_id_without_known_ids_and_no_push_is_null() {
+        let list = two_account_envelope();
+        // Rule 2 requires --known-agent-ids; absent → null (never errors).
+        let got = compute_new_agent_id(None, Some(&list), "0xSIGNER", None);
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn envelope_always_carries_new_agent_id_key() {
+        // Present case.
+        let env = assemble_identity_envelope(
+            "0xhash".to_string(),
+            None,
+            None,
+            Some("42".to_string()),
+        );
+        assert_eq!(env["newAgentId"], json!("42"));
+        // Null case — key still present.
+        let env = assemble_identity_envelope("0xhash".to_string(), None, None, None);
+        assert_eq!(env["newAgentId"], Value::Null);
+        assert!(env.as_object().unwrap().contains_key("newAgentId"));
+    }
 }

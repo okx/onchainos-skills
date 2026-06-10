@@ -23,11 +23,13 @@ mod queries;
 mod signing;
 mod socket;
 mod utils;
+mod validate;
 
 // CLI `Args` structs — kept at the module root for `identity::CreateArgs`.
 pub use args::{
     AgentStatusArgs, CreateArgs, FeedbackListArgs, FeedbackSubmitArgs, GetArgs, GetByAddressArgs,
-    SearchArgs, ServiceListArgs, SubmitApprovalArgs, UpdateArgs, UploadArgs, XmtpSignArgs,
+    SearchArgs, ServiceListArgs, SubmitApprovalArgs, UpdateArgs, UploadArgs, ValidateListingArgs,
+    XmtpSignArgs,
 };
 
 // Read-side commands.
@@ -37,3 +39,6 @@ pub use queries::{feedback_list, get, get_by_address, search, service_list, top_
 pub use mutations::{
     activate, create, deactivate, feedback_submit, submit_approval, update, upload, xmtp_sign,
 };
+
+// Pure-local validator (no network).
+pub use validate::validate_listing;

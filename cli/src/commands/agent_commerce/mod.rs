@@ -56,6 +56,10 @@ pub enum AgentCommand {
     #[command(name = "submit-approval")]
     SubmitApproval(identity::SubmitApprovalArgs),
 
+    /// Validate an Agent listing's fields against marketplace rules (pure-local, no network)
+    #[command(name = "validate-listing")]
+    ValidateListing(identity::ValidateListingArgs),
+
     // ── Task system (Client) ────────────────────────────────────────────────
     /// Create a new task (Client)
     #[command(name = "create-task")]
@@ -826,6 +830,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::FeedbackList(args) => identity::feedback_list(args, ctx).await,
         AgentCommand::XmtpSign(args) => identity::xmtp_sign(args, ctx).await,
         AgentCommand::SubmitApproval(args) => identity::submit_approval(args, ctx).await,
+        AgentCommand::ValidateListing(args) => identity::validate_listing(args, ctx).await,
 
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
