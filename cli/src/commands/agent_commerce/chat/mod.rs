@@ -15,8 +15,8 @@ const SYSTEM_CONFIG_PATH: &str = "/priapi/v1/aieco/im/xmtp/system-config";
 const WAKEUP_NOTIFY_PATH: &str = "/priapi/v1/aieco/task/wakeupNotify";
 
 /// Build the agenticId extra header slice from an agent ID string.
-fn agent_commerce_headers(agent_id: &str) -> [(&str, &str); 2] {
-    [("agenticId", agent_id), ("User-Agent", "onchainos-cli")]
+fn agent_commerce_headers(agent_id: &str) -> [(&str, &str); 1] {
+    [("agenticId", agent_id)]
 }
 
 fn wallet_client(ctx: &CliContext) -> Result<WalletApiClient> {
@@ -243,10 +243,7 @@ pub async fn fetch_sensitive_words(
     client: &mut WalletApiClient,
     access_token: &str,
 ) -> Result<Value> {
-    let headers = [("User-Agent", "onchainos-cli")];
-    client
-        .get_authed_with_headers(SENSITIVE_WORDS_PATH, access_token, &[], Some(&headers))
-        .await
+    client.get_authed(SENSITIVE_WORDS_PATH, access_token, &[]).await
 }
 
 // ── Message Eligible ─────────────────────────────────────────────────
@@ -332,10 +329,7 @@ pub async fn fetch_system_config(
     client: &mut WalletApiClient,
     access_token: &str,
 ) -> Result<Value> {
-    let headers = [("User-Agent", "onchainos-cli")];
-    client
-        .get_authed_with_headers(SYSTEM_CONFIG_PATH, access_token, &[], Some(&headers))
-        .await
+    client.get_authed(SYSTEM_CONFIG_PATH, access_token, &[]).await
 }
 
 // ── Heartbeat ────────────────────────────────────────────────────────
