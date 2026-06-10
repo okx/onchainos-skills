@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
 
 /// close — close the task.
@@ -44,7 +45,9 @@ pub async fn handle_close(client: &mut TaskApiClient, job_id: &str, explicit_age
     println!("  txHash: {tx_hash}");
 
     if let Err(e) = super::negotiate::cleanup(job_id) {
-        eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}");
+        if DEBUG_LOG {
+            eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}");
+        }
     }
     Ok(())
 }

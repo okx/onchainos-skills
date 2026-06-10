@@ -12,7 +12,7 @@ use std::time::Instant;
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
-const DEBUG_LOG: bool = false;
+use super::super::DEBUG_LOG;
 
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;

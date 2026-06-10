@@ -51,6 +51,11 @@ pub use payment_mode::PaymentMode;
 
 pub use util::{ensure_sufficient_balance, ensure_sufficient_balance_at};
 
+/// Master switch for diagnostic `eprintln!` output across the task system.
+/// Flip to `true` and recompile to enable verbose debug logging; `false` (default)
+/// lets the compiler eliminate all guarded branches (zero runtime cost).
+pub const DEBUG_LOG: bool = false;
+
 // ─── CLI definition ─────────────────────────────────────────────────────
 #[derive(Subcommand)]
 pub enum CommonCommand {
@@ -235,7 +240,7 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[fetch_agent_profile] current_exe failed: {e}; fallback");
+            if DEBUG_LOG { eprintln!("[fetch_agent_profile] current_exe failed: {e}; fallback"); }
             return fallback();
         }
     };
@@ -247,7 +252,7 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("[fetch_agent_profile] spawn `agent get` failed: {e}; fallback");
+            if DEBUG_LOG { eprintln!("[fetch_agent_profile] spawn `agent get` failed: {e}; fallback"); }
             return fallback();
         }
     };
@@ -255,10 +260,12 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!(
-                "[fetch_agent_profile] parse `agent get` stdout failed: {e}; raw={}; fallback",
-                String::from_utf8_lossy(&output.stdout)
-            );
+            if DEBUG_LOG {
+                eprintln!(
+                    "[fetch_agent_profile] parse `agent get` stdout failed: {e}; raw={}; fallback",
+                    String::from_utf8_lossy(&output.stdout)
+                );
+            }
             return fallback();
         }
     };
@@ -267,7 +274,7 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     // On failure it is { ok: false, error: "..." }.
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
-        eprintln!("[fetch_agent_profile] `agent get` returned failure: {err}; fallback");
+        if DEBUG_LOG { eprintln!("[fetch_agent_profile] `agent get` returned failure: {err}; fallback"); }
         return fallback();
     }
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
@@ -276,7 +283,7 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     // `list[]` flat agents). No ownerAddress filter — we're looking up any
     // agent by id, possibly belonging to another user (e.g. peer buyer profile).
     let all_agents = flatten_agent_groups(&data);
-    if all_agents.is_empty() {
+    if all_agents.is_empty() && DEBUG_LOG {
         eprintln!(
             "[fetch_agent_profile] `agent get` returned empty agent list (agentId={agent_id}); fallback"
         );
@@ -300,7 +307,7 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
                 .and_then(|v| v.as_str())
                 .map(String::from),
         });
-    if !all_agents.is_empty() && matched.is_none() {
+    if !all_agents.is_empty() && matched.is_none() && DEBUG_LOG {
         eprintln!(
             "[fetch_agent_profile] agentId={agent_id} not present in `agent get` response; fallback"
         );
@@ -329,52 +336,58 @@ async fn fetch_agent_services(agent_id: &str) -> Vec<AgentService> {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[fetch_agent_services] current_exe failed: {e}");
+            if DEBUG_LOG { eprintln!("[fetch_agent_services] current_exe failed: {e}"); }
             return vec![];
         }
     };
     let mut cmd = tokio::process::Command::new(&exe);
     cmd.args(["agent", "service-list", "--agent-id", agent_id]);
-    eprintln!(
-        "[fetch_agent_services] running: {} agent service-list --agent-id {agent_id}",
-        exe.display()
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[fetch_agent_services] running: {} agent service-list --agent-id {agent_id}",
+            exe.display()
+        );
+    }
     let output = match cmd.output().await {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("[fetch_agent_services] spawn `agent service-list` failed: {e}");
+            if DEBUG_LOG { eprintln!("[fetch_agent_services] spawn `agent service-list` failed: {e}"); }
             return vec![];
         }
     };
     let stdout_str = String::from_utf8_lossy(&output.stdout);
     let stderr_str = String::from_utf8_lossy(&output.stderr);
-    eprintln!(
-        "[fetch_agent_services] exit_code={:?} stdout_len={} stderr_len={}",
-        output.status.code(),
-        stdout_str.len(),
-        stderr_str.len()
-    );
-    eprintln!("[fetch_agent_services] stdout=\n{stdout_str}");
-    if !stderr_str.is_empty() {
-        eprintln!("[fetch_agent_services] stderr=\n{stderr_str}");
+    if DEBUG_LOG {
+        eprintln!(
+            "[fetch_agent_services] exit_code={:?} stdout_len={} stderr_len={}",
+            output.status.code(),
+            stdout_str.len(),
+            stderr_str.len()
+        );
+        eprintln!("[fetch_agent_services] stdout=\n{stdout_str}");
+        if !stderr_str.is_empty() {
+            eprintln!("[fetch_agent_services] stderr=\n{stderr_str}");
+        }
     }
     let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[fetch_agent_services] parse stdout failed: {e}");
+            if DEBUG_LOG { eprintln!("[fetch_agent_services] parse stdout failed: {e}"); }
             return vec![];
         }
     };
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
-        eprintln!("[fetch_agent_services] CLI returned failure: {err}");
+        if DEBUG_LOG { eprintln!("[fetch_agent_services] CLI returned failure: {err}"); }
         return vec![];
     }
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
-    eprintln!(
-        "[fetch_agent_services] body.data before parsing: {}",
-        serde_json::to_string_pretty(&data).unwrap_or_else(|_| "<unprintable>".to_string())
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[fetch_agent_services] body.data before parsing: {}",
+            serde_json::to_string_pretty(&data).unwrap_or_else(|_| "<unprintable>".to_string())
+        );
+    }
     let list = data
         .as_array()
         .and_then(|arr| arr.first())
@@ -382,9 +395,11 @@ async fn fetch_agent_services(agent_id: &str) -> Vec<AgentService> {
         .and_then(|v| v.as_array())
         .cloned();
     let Some(list) = list else {
-        eprintln!(
-            "[fetch_agent_services] data[0].list missing; shape anomaly (agentId={agent_id}) — full data content in the previous body.data log line"
-        );
+        if DEBUG_LOG {
+            eprintln!(
+                "[fetch_agent_services] data[0].list missing; shape anomaly (agentId={agent_id}) — full data content in the previous body.data log line"
+            );
+        }
         return vec![];
     };
     list.iter()
@@ -454,29 +469,31 @@ pub fn current_account_xlayer_address() -> Option<String> {
 /// `agentId` / `name` / `role` / `status` / `agentWalletAddress` / etc.).
 pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
     let Some(my_owner) = current_account_xlayer_address() else {
-        eprintln!("[fetch_my_agents] no current XLayer address; returning empty");
+        if DEBUG_LOG { eprintln!("[fetch_my_agents] no current XLayer address; returning empty"); }
         return Vec::new();
     };
 
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[fetch_my_agents] current_exe failed: {e}");
+            if DEBUG_LOG { eprintln!("[fetch_my_agents] current_exe failed: {e}"); }
             return Vec::new();
         }
     };
 
     let mut cmd = tokio::process::Command::new(&exe);
     cmd.args(["agent", "get"]);
-    eprintln!(
-        "[fetch_my_agents] running: {} agent get (filter ownerAddress={my_owner})",
-        exe.display()
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[fetch_my_agents] running: {} agent get (filter ownerAddress={my_owner})",
+            exe.display()
+        );
+    }
 
     let output = match cmd.output().await {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("[fetch_my_agents] spawn `agent get` failed: {e}");
+            if DEBUG_LOG { eprintln!("[fetch_my_agents] spawn `agent get` failed: {e}"); }
             return Vec::new();
         }
     };
@@ -484,26 +501,30 @@ pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
     let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!(
-                "[fetch_my_agents] parse stdout failed: {e}; raw={}",
-                String::from_utf8_lossy(&output.stdout)
-            );
+            if DEBUG_LOG {
+                eprintln!(
+                    "[fetch_my_agents] parse stdout failed: {e}; raw={}",
+                    String::from_utf8_lossy(&output.stdout)
+                );
+            }
             return Vec::new();
         }
     };
 
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
-        eprintln!("[fetch_my_agents] `agent get` returned failure: {err}");
+        if DEBUG_LOG { eprintln!("[fetch_my_agents] `agent get` returned failure: {err}"); }
         return Vec::new();
     }
 
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
     let agents = flatten_my_agents(&data, &my_owner);
-    eprintln!(
-        "[fetch_my_agents] matched {} agents under ownerAddress={my_owner}",
-        agents.len()
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[fetch_my_agents] matched {} agents under ownerAddress={my_owner}",
+            agents.len()
+        );
+    }
     agents
 }
 
@@ -517,29 +538,31 @@ pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
 pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
     let id = agent_id.trim();
     if id.is_empty() {
-        eprintln!("[fetch_my_agent_by_id] empty agent_id; returning None");
+        if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] empty agent_id; returning None"); }
         return None;
     }
 
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[fetch_my_agent_by_id] current_exe failed: {e}");
+            if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] current_exe failed: {e}"); }
             return None;
         }
     };
 
     let mut cmd = tokio::process::Command::new(&exe);
     cmd.args(["agent", "get"]);
-    eprintln!(
-        "[fetch_my_agent_by_id] running: {} agent get (filter agentId={id})",
-        exe.display()
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[fetch_my_agent_by_id] running: {} agent get (filter agentId={id})",
+            exe.display()
+        );
+    }
 
     let output = match cmd.output().await {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("[fetch_my_agent_by_id] spawn `agent get` failed: {e}");
+            if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] spawn `agent get` failed: {e}"); }
             return None;
         }
     };
@@ -547,17 +570,19 @@ pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
     let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!(
-                "[fetch_my_agent_by_id] parse stdout failed: {e}; raw={}",
-                String::from_utf8_lossy(&output.stdout)
-            );
+            if DEBUG_LOG {
+                eprintln!(
+                    "[fetch_my_agent_by_id] parse stdout failed: {e}; raw={}",
+                    String::from_utf8_lossy(&output.stdout)
+                );
+            }
             return None;
         }
     };
 
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
-        eprintln!("[fetch_my_agent_by_id] `agent get` returned failure: {err}");
+        if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] `agent get` returned failure: {err}"); }
         return None;
     }
 
@@ -565,10 +590,12 @@ pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
     let hit = flatten_agent_groups(&data)
         .into_iter()
         .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(id));
-    eprintln!(
-        "[fetch_my_agent_by_id] {} for agentId={id}",
-        if hit.is_some() { "matched" } else { "no match" }
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[fetch_my_agent_by_id] {} for agentId={id}",
+            if hit.is_some() { "matched" } else { "no match" }
+        );
+    }
     hit
 }
 
@@ -665,7 +692,7 @@ async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Value> {
 
 /// `onchainos agent designated-route --provider <agentId>` — runs service-list
 /// + profile in parallel, applies role/online/endpoint routing logic, and
-/// returns a single JSON with the route decision.
+///   returns a single JSON with the route decision.
 ///
 /// Output shape:
 /// ```json
@@ -718,7 +745,7 @@ pub async fn handle_designated_route(provider_id: &str, target_endpoint: Option<
     let services_data = match svc_res {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[designated-route] service-list fetch failed for {id}: {e}");
+            if DEBUG_LOG { eprintln!("[designated-route] service-list fetch failed for {id}: {e}"); }
             serde_json::Value::Null
         }
     };
@@ -768,7 +795,9 @@ pub async fn handle_designated_route(provider_id: &str, target_endpoint: Option<
         let fee_token = match svc.get("feeTokenSymbol").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
             Some(s) => s.to_string(),
             None => util::resolve_symbol_from_svc(svc).await.unwrap_or_else(|e| {
-                eprintln!("⚠ designated-route: failed to resolve feeTokenSymbol: {e}");
+                if DEBUG_LOG {
+                    eprintln!("⚠ designated-route: failed to resolve feeTokenSymbol: {e}");
+                }
                 String::new()
             }),
         };
@@ -1040,10 +1069,12 @@ pub fn flatten_agent_groups(data: &serde_json::Value) -> Vec<serde_json::Value> 
             .cloned()
     });
     let Some(list) = list_val.as_ref().and_then(|v| v.as_array()) else {
-        eprintln!(
-            "[flatten_agent_groups] response missing `list` field (tried both shapes); raw data: {}",
-            serde_json::to_string(data).unwrap_or_default()
-        );
+        if DEBUG_LOG {
+            eprintln!(
+                "[flatten_agent_groups] response missing `list` field (tried both shapes); raw data: {}",
+                serde_json::to_string(data).unwrap_or_default()
+            );
+        }
         return Vec::new();
     };
 

@@ -13,6 +13,8 @@
 use anyhow::{bail, Result};
 use std::path::PathBuf;
 
+use super::DEBUG_LOG;
+
 fn gate_path(job_id: &str) -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("unable to determine HOME directory"))?;
     let dir = home.join(".onchainos").join("task").join(job_id);
@@ -23,7 +25,9 @@ fn gate_path(job_id: &str) -> Result<PathBuf> {
 pub fn mark_pending(job_id: &str) -> Result<()> {
     let path = gate_path(job_id)?;
     std::fs::write(&path, "pending")?;
-    eprintln!("[review-gate] mark_pending: {}", path.display());
+    if DEBUG_LOG {
+        eprintln!("[review-gate] mark_pending: {}", path.display());
+    }
     Ok(())
 }
 
@@ -32,7 +36,9 @@ pub fn mark_approved(job_id: &str) -> Result<()> {
     match std::fs::read_to_string(&path) {
         Ok(content) if content.trim() == "pending" => {
             std::fs::write(&path, "approved")?;
-            eprintln!("[review-gate] mark_approved: {}", path.display());
+            if DEBUG_LOG {
+                eprintln!("[review-gate] mark_approved: {}", path.display());
+            }
             Ok(())
         }
         Ok(content) => {
@@ -56,7 +62,9 @@ pub fn check_and_consume(job_id: &str) -> Result<()> {
     match std::fs::read_to_string(&path) {
         Ok(content) if content.trim() == "approved" => {
             let _ = std::fs::remove_file(&path);
-            eprintln!("[review-gate] check_and_consume: approved, gate cleared");
+            if DEBUG_LOG {
+                eprintln!("[review-gate] check_and_consume: approved, gate cleared");
+            }
             Ok(())
         }
         Ok(content) if content.trim() == "pending" => {

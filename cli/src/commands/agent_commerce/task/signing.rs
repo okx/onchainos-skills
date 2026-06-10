@@ -16,7 +16,7 @@ use crate::audit;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    fetch_my_agent_by_id, fetch_my_agents, AGENT_ROLE_BUYER,
+    fetch_my_agent_by_id, fetch_my_agents, DEBUG_LOG, AGENT_ROLE_BUYER,
     XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
@@ -463,13 +463,17 @@ pub fn sign_digest_with_session_key(digest: &str) -> Result<String> {
 /// Sign EIP-712 typedData and return the final ECDSA signature hex.
 /// Delegates to `agentic_wallet::sign::eip712_sign_raw` (gen-msg-hash → ed25519 → sign-msg).
 pub async fn sign_typed_data(typed_data: &Value, from_address: &str) -> Result<String> {
-    eprintln!("[debug] sign_typed_data input: from={from_address}, typedData primaryType={}", typed_data["primaryType"]);
+    if DEBUG_LOG {
+        eprintln!("[debug] sign_typed_data input: from={from_address}, typedData primaryType={}", typed_data["primaryType"]);
+    }
     let sig = crate::commands::agentic_wallet::sign::eip712_sign_raw(
         typed_data,
         XLAYER_CHAIN_INDEX,
         from_address,
     ).await?;
-    eprintln!("[debug] sign_typed_data returned signature: {sig}");
+    if DEBUG_LOG {
+        eprintln!("[debug] sign_typed_data returned signature: {sig}");
+    }
     Ok(sig)
 }
 

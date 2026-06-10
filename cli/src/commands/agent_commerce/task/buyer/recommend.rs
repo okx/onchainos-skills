@@ -13,6 +13,7 @@ use super::negotiate;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::pending_v2;
 use crate::commands::agent_commerce::task::common::util::short_job_id;
+use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
 
 /// Bundle of args controlling the "auto-enqueue recommend card as a pending
@@ -131,10 +132,12 @@ pub async fn handle_recommend(
         let title = emit.job_title.as_deref().unwrap_or("<title>");
         let short_id = short_job_id(job_id);
         let list_label = format!("[Recommend {short_id}] {title} ASP-pick decision");
-        eprintln!(
-            "[recommend] emit-decision: jobId={job_id} sub_key={sub_key} list_label={list_label} body_len={}",
-            card_body.len()
-        );
+        if DEBUG_LOG {
+            eprintln!(
+                "[recommend] emit-decision: jobId={job_id} sub_key={sub_key} list_label={list_label} body_len={}",
+                card_body.len()
+            );
+        }
         return pending_v2::enqueue_recommend_decision(
             sub_key,
             job_id.to_string(),

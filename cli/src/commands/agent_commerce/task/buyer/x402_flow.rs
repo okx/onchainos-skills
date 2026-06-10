@@ -12,6 +12,8 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::commands::agent_commerce::task::common::DEBUG_LOG;
+
 // ─── Public types ───────────────────────────────────────────────────────
 
 /// Decoded 402 response.
@@ -332,16 +334,22 @@ pub async fn resolve_token_by_asset(
     let asset_lower = asset.to_lowercase();
 
     for symbol in &["USDT", "USDG"] {
-        eprintln!("[resolve_token_by_asset] fetch_token_detail({symbol})");
+        if DEBUG_LOG {
+            eprintln!("[resolve_token_by_asset] fetch_token_detail({symbol})");
+        }
         match fetch_token_detail(client, symbol, agent_id).await {
             Ok((addr, decimals)) => {
-                eprintln!("[resolve_token_by_asset] {symbol} → addr={addr}, decimals={decimals}");
+                if DEBUG_LOG {
+                    eprintln!("[resolve_token_by_asset] {symbol} → addr={addr}, decimals={decimals}");
+                }
                 if addr.to_lowercase() == asset_lower {
                     return Ok((symbol.to_string(), decimals as u8));
                 }
             }
             Err(e) => {
-                eprintln!("[resolve_token_by_asset] {symbol} lookup failed: {e}");
+                if DEBUG_LOG {
+                    eprintln!("[resolve_token_by_asset] {symbol} lookup failed: {e}");
+                }
                 continue;
             }
         }
@@ -379,14 +387,16 @@ pub async fn enrich_pricing(
     pricing: &X402Pricing,
     agent_id: &str,
 ) -> Result<X402PricingResolved> {
-    eprintln!(
-        "[enrich_pricing] asset={}, network={}, amount_minimal={}, extra_decimals={:?}",
-        pricing.asset, pricing.network, pricing.amount_minimal, pricing.extra_decimals
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[enrich_pricing] asset={}, network={}, amount_minimal={}, extra_decimals={:?}",
+            pricing.asset, pricing.network, pricing.amount_minimal, pricing.extra_decimals
+        );
+    }
     let token_result = resolve_token_by_asset(client, &pricing.asset, agent_id).await;
     let (symbol, decimals) = match (&token_result, pricing.extra_decimals) {
         (Ok((sym, dec)), Some(extra_dec)) => {
-            if *dec != extra_dec {
+            if *dec != extra_dec && DEBUG_LOG {
                 eprintln!(
                     "⚠ decimals mismatch: accepts entry={extra_dec}, token info={dec}; using the accepts-entry value"
                 );
@@ -395,18 +405,22 @@ pub async fn enrich_pricing(
         }
         (Ok((sym, dec)), None) => (sym.clone(), *dec),
         (Err(e), Some(extra_dec)) => {
-            eprintln!("⚠ token-info lookup failed: {e}; using accepts entry decimals={extra_dec}");
+            if DEBUG_LOG {
+                eprintln!("⚠ token-info lookup failed: {e}; using accepts entry decimals={extra_dec}");
+            }
             ("UNKNOWN".to_string(), extra_dec)
         }
         (Err(e), None) => {
             bail!("cannot determine token decimals: token-info lookup failed ({e}) and the accepts entry does not provide a `decimals` field");
         }
     };
-    eprintln!(
-        "[enrich_pricing] result: symbol={symbol}, decimals={decimals}, extra_decimals={:?}, token_info={:?}",
-        pricing.extra_decimals,
-        token_result.as_ref().map(|(_, d)| *d).ok()
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[enrich_pricing] result: symbol={symbol}, decimals={decimals}, extra_decimals={:?}, token_info={:?}",
+            pricing.extra_decimals,
+            token_result.as_ref().map(|(_, d)| *d).ok()
+        );
+    }
     let amount_human = minimal_to_human(&pricing.amount_minimal, decimals)?;
 
     Ok(X402PricingResolved {

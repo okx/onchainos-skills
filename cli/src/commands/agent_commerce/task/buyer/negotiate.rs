@@ -12,6 +12,7 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::audit;
+use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 
 /// Recommended provider info (a subset of the `/match` API response).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -367,7 +368,9 @@ pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
     if let Ok(Some(ref dp)) = get_designated_provider(job_id) {
         if dp == provider_agent_id {
             let _ = clear_designated_provider(job_id);
-            eprintln!("[mark-failed] cleared designated-provider (matched {provider_agent_id})");
+            if DEBUG_LOG {
+                eprintln!("[mark-failed] cleared designated-provider (matched {provider_agent_id})");
+            }
         }
     }
 

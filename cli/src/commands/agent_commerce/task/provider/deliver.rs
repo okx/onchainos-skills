@@ -9,6 +9,7 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::payment_mode::PaymentMode;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
+use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
 
 /// deliver — submit deliverable
@@ -145,8 +146,8 @@ pub async fn handle_deliver(
                 counterparty_name: None,
             };
             match super::super::common::deliverables::handle_save(&params) {
-                Ok(r) => eprintln!("[deliver] deliverable auto-saved: {}", r.path),
-                Err(e) => eprintln!("[deliver] deliverable auto-save failed (non-blocking): {e}"),
+                Ok(r) => { if DEBUG_LOG { eprintln!("[deliver] deliverable auto-saved: {}", r.path); } }
+                Err(e) => { if DEBUG_LOG { eprintln!("[deliver] deliverable auto-save failed (non-blocking): {e}"); } }
             }
         }
     } else if !deliverable_text.is_empty() {
@@ -169,8 +170,8 @@ pub async fn handle_deliver(
                 counterparty_name: None,
             };
             match super::super::common::deliverables::handle_save(&params) {
-                Ok(r) => eprintln!("[deliver] text deliverable auto-saved: {}", r.path),
-                Err(e) => eprintln!("[deliver] text deliverable auto-save failed (non-blocking): {e}"),
+                Ok(r) => { if DEBUG_LOG { eprintln!("[deliver] text deliverable auto-saved: {}", r.path); } }
+                Err(e) => { if DEBUG_LOG { eprintln!("[deliver] text deliverable auto-save failed (non-blocking): {e}"); } }
             }
         }
     }

@@ -24,6 +24,8 @@ use tokio::fs;
 use crate::commands::agent_commerce::task::common::deliverables;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
+use super::DEBUG_LOG;
+
 /// Max byte length of the text field (rough pre-escape upper bound to prevent oversized pastes from bloating the multipart body).
 const MAX_TEXT_BYTES: usize = 16 * 1024;
 
@@ -83,10 +85,12 @@ pub async fn handle_upload_evidence(
     let manifest = match deliverables::read_manifest(role, job_id) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!(
-                "[dispute_upload] WARN: manifest at ~/.onchainos/deliverables/{role}/{job_id}/manifest.json \
-                 unreadable ({e}); proceeding without auto-attached deliverables"
-            );
+            if DEBUG_LOG {
+                eprintln!(
+                    "[dispute_upload] WARN: manifest at ~/.onchainos/deliverables/{role}/{job_id}/manifest.json \
+                     unreadable ({e}); proceeding without auto-attached deliverables"
+                );
+            }
             None
         }
     };
@@ -99,14 +103,16 @@ pub async fn handle_upload_evidence(
         }
     }
 
-    eprintln!(
-        "[dispute_upload] input: role={role} text_raw_len={} text_clean_len={} \
-         explicit_files={} manifest_entries={}",
-        text.map_or(0, str::len),
-        text_clean.as_deref().map_or(0, str::len),
-        explicit_file_paths.len(),
-        manifest_filenames.len(),
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[dispute_upload] input: role={role} text_raw_len={} text_clean_len={} \
+             explicit_files={} manifest_entries={}",
+            text.map_or(0, str::len),
+            text_clean.as_deref().map_or(0, str::len),
+            explicit_file_paths.len(),
+            manifest_filenames.len(),
+        );
+    }
 
     if text_clean.is_none() && file_paths.is_empty() {
         bail!(
@@ -130,11 +136,13 @@ pub async fn handle_upload_evidence(
                 if *is_explicit {
                     bail!("evidence file not found / unreadable: {} ({e})", p.display());
                 }
-                eprintln!(
-                    "[dispute_upload] WARN: manifest entry missing or unreadable: {} ({e}); \
-                     skipping (remaining evidence will still upload)",
-                    p.display()
-                );
+                if DEBUG_LOG {
+                    eprintln!(
+                        "[dispute_upload] WARN: manifest entry missing or unreadable: {} ({e}); \
+                         skipping (remaining evidence will still upload)",
+                        p.display()
+                    );
+                }
                 skipped_manifest_missing += 1;
                 continue;
             }
@@ -148,10 +156,12 @@ pub async fn handle_upload_evidence(
                     p.display()
                 );
             }
-            eprintln!(
-                "[dispute_upload] WARN: skipping oversized manifest entry {} ({size_mb:.1} MB > 100 MB)",
-                p.display()
-            );
+            if DEBUG_LOG {
+                eprintln!(
+                    "[dispute_upload] WARN: skipping oversized manifest entry {} ({size_mb:.1} MB > 100 MB)",
+                    p.display()
+                );
+            }
             skipped_manifest_missing += 1;
             continue;
         }
@@ -161,11 +171,13 @@ pub async fn handle_upload_evidence(
                 if *is_explicit {
                     bail!("failed to read {}: {e}", p.display());
                 }
-                eprintln!(
-                    "[dispute_upload] WARN: failed to read manifest entry {} ({e}); \
-                     skipping (remaining evidence will still upload)",
-                    p.display()
-                );
+                if DEBUG_LOG {
+                    eprintln!(
+                        "[dispute_upload] WARN: failed to read manifest entry {} ({e}); \
+                         skipping (remaining evidence will still upload)",
+                        p.display()
+                    );
+                }
                 skipped_manifest_missing += 1;
                 continue;
             }
@@ -187,10 +199,12 @@ pub async fn handle_upload_evidence(
             format!("evidence_{idx}.{ext}")
         };
         let mime = mime_for_ext(&ext);
-        eprintln!(
-            "[dispute_upload] file part: name=files filename={filename} mime={mime} bytes={}",
-            bytes.len(),
-        );
+        if DEBUG_LOG {
+            eprintln!(
+                "[dispute_upload] file part: name=files filename={filename} mime={mime} bytes={}",
+                bytes.len(),
+            );
+        }
         parts.push(FilePart { filename, mime, bytes });
     }
 
@@ -216,13 +230,15 @@ pub async fn handle_upload_evidence(
         // Inner quotes must be escaped to avoid prematurely ending the part body.
         let escaped = t.replace('\\', "\\\\").replace('"', "\\\"");
         let wrapped = format!("\"{escaped}\"");
-        eprintln!(
-            "[dispute_upload] text part: raw_bytes={} wrapped_bytes={}\n\
-             [dispute_upload] text content (raw):\n{t}\n\
-             [dispute_upload] text content (wrapped, sent on wire):\n{wrapped}",
-            t.len(),
-            wrapped.len(),
-        );
+        if DEBUG_LOG {
+            eprintln!(
+                "[dispute_upload] text part: raw_bytes={} wrapped_bytes={}\n\
+                 [dispute_upload] text content (raw):\n{t}\n\
+                 [dispute_upload] text content (wrapped, sent on wire):\n{wrapped}",
+                t.len(),
+                wrapped.len(),
+            );
+        }
         // Align with curl `--form 'text=...'` behavior: the plain-text part has no Content-Type header,
         // otherwise Spring would treat it as a multipart-file and the @RequestParam String text binding would fail.
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
@@ -248,10 +264,12 @@ pub async fn handle_upload_evidence(
     // Closing boundary.
     body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
 
-    eprintln!(
-        "[dispute_upload] body: total_bytes={} boundary={boundary}",
-        body.len(),
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[dispute_upload] body: total_bytes={} boundary={boundary}",
+            body.len(),
+        );
+    }
 
     let path = client.endpoint(job_id, "evidence/upload");
     let content_type = format!("multipart/form-data; boundary={boundary}");

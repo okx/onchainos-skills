@@ -7,9 +7,10 @@ use anyhow::{bail, Result};
 use std::time::Duration;
 
 use crate::audit;
+
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::{
-    self, network::task_api_client::TaskApiClient,
+    self, network::task_api_client::TaskApiClient, DEBUG_LOG,
 };
 use crate::commands::agent_commerce::task::signing;
 
@@ -210,12 +211,16 @@ pub async fn handle_draft_create(
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
-    eprintln!("[draft-create] buyer identity check passed (agentId: {buyer_agent_id})");
+    if DEBUG_LOG {
+        eprintln!("[draft-create] buyer identity check passed (agentId: {buyer_agent_id})");
+    }
 
     let balance_warning = if let (Some(b), Some(ref c)) = (budget, &currency_norm) {
         match common::ensure_sufficient_balance(b, c).await {
             Err(e) => {
-                eprintln!("[draft-create] ⚠ balance warning: {e}");
+                if DEBUG_LOG {
+                    eprintln!("[draft-create] ⚠ balance warning: {e}");
+                }
                 Some(format!(
                     "⚠️ Insufficient {c} balance on XLayer (need {b} {c}). Draft saved, but payment may fail when publishing — please top up via swap."
                 ))
@@ -398,7 +403,9 @@ pub async fn handle_draft_update(
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
-    eprintln!("[draft-update] buyer identity check passed (agentId: {buyer_agent_id})");
+    if DEBUG_LOG {
+        eprintln!("[draft-update] buyer identity check passed (agentId: {buyer_agent_id})");
+    }
 
     let mut body = serde_json::Map::new();
 
@@ -501,7 +508,9 @@ pub async fn handle_draft_publish(
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
-    eprintln!("[draft-publish] buyer identity check passed (agentId: {buyer_agent_id})");
+    if DEBUG_LOG {
+        eprintln!("[draft-publish] buyer identity check passed (agentId: {buyer_agent_id})");
+    }
 
     // ── Fetch draft detail for pre-publish validation ────────────
     let detail = client

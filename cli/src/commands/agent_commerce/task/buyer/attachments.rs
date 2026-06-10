@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::query::{self as common_query, status_name};
-use crate::commands::agent_commerce::task::common::AGENT_ROLE_BUYER;
+use crate::commands::agent_commerce::task::common::{AGENT_ROLE_BUYER, DEBUG_LOG};
 
 fn attachments_dir(job_id: &str) -> Result<PathBuf> {
     let home = dirs::home_dir()
@@ -107,7 +107,9 @@ pub fn copy_attachments_to_job(job_id: &str, sources: &[String]) -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("invalid file path: {src_path}"))?;
         let dest = dir.join(file_name);
         std::fs::copy(src, &dest)?;
-        eprintln!("[task-create] attachment saved: {}", dest.display());
+        if DEBUG_LOG {
+            eprintln!("[task-create] attachment saved: {}", dest.display());
+        }
     }
     Ok(())
 }

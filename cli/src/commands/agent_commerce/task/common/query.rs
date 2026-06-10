@@ -12,6 +12,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 
 use super::network::task_api_client::TaskApiClient;
+use super::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
 
 /// Resolves agentId from the local identity list by role when --agent-id is omitted.
@@ -24,7 +25,7 @@ pub async fn resolve_agent_id(agent_id: &str, role: i64) -> String {
     let resolved = signing::resolve_agent_id_by_role(role)
         .await
         .unwrap_or_default();
-    if !resolved.is_empty() {
+    if !resolved.is_empty() && DEBUG_LOG {
         eprintln!(
             "⚠ --agent-id omitted; falling back to first local agent with role={role}: {resolved}. \
              If you have multiple agents of this role, pass --agent-id explicitly."
@@ -197,7 +198,7 @@ pub async fn handle_active_tasks(
         let resp = match client.get_with_identity(path, agent_id).await {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[active-tasks] agent {agent_id} query failed: {e}");
+                if DEBUG_LOG { eprintln!("[active-tasks] agent {agent_id} query failed: {e}"); }
                 continue;
             }
         };

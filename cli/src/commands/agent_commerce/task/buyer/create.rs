@@ -9,10 +9,11 @@ use anyhow::{bail, Result};
 use std::time::Duration;
 
 use crate::audit;
+
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::{
     self, fetch_my_agents, network::task_api_client::TaskApiClient,
-    AGENT_ROLE_BUYER, XLAYER_CHAIN_ID,
+    AGENT_ROLE_BUYER, XLAYER_CHAIN_ID, DEBUG_LOG,
 };
 use crate::commands::agent_commerce::task::signing;
 
@@ -201,11 +202,15 @@ pub async fn handle_create(
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
-    eprintln!("[task-create] buyer identity check passed (agentId: {buyer_agent_id})");
+    if DEBUG_LOG {
+        eprintln!("[task-create] buyer identity check passed (agentId: {buyer_agent_id})");
+    }
 
     let balance_warning = match common::ensure_sufficient_balance(params.budget, &validated.currency).await {
         Err(e) => {
-            eprintln!("[task-create] ⚠ balance warning: {e}");
+            if DEBUG_LOG {
+                eprintln!("[task-create] ⚠ balance warning: {e}");
+            }
             Some(format!(
                 "⚠️ Insufficient {} balance on XLayer (need {} {}). Task created, but payment may fail later — please top up via swap.",
                 validated.currency, params.budget, validated.currency,

@@ -7,6 +7,8 @@ use clap::Subcommand;
 
 use crate::commands::Context;
 
+use task::common::DEBUG_LOG;
+
 /// Shared `agent` namespace for identity + task-system commands.
 #[derive(Subcommand)]
 pub enum AgentCommand {
@@ -1060,12 +1062,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             if let Err(msg) = task::common::util::validate_job_id(&job_id) {
                 anyhow::bail!(msg);
             }
-            eprintln!(
-                "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
-                title = job_title.as_deref().unwrap_or("(none)"),
-                provider = provider.as_deref().unwrap_or("(none)"),
-                peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
-            );
+            if DEBUG_LOG {
+                eprintln!(
+                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
+                    title = job_title.as_deref().unwrap_or("(none)"),
+                    provider = provider.as_deref().unwrap_or("(none)"),
+                    peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
+                );
+            }
 
             // Version handshake: when peer's required minimum version is higher than the local TASK_MIN_VERSION,
             // only prepend a notice line at the top of the script (so the agent can push an upgrade suggestion to the user);
@@ -1075,17 +1079,21 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 let local = task::common::config::TASK_MIN_VERSION;
                 if local < peer_min {
                     if task::common::version_notice::should_show() {
-                        eprintln!(
-                            "[next-action] version notice (non-blocking): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                        );
+                        if DEBUG_LOG {
+                            eprintln!(
+                                "[next-action] version notice (non-blocking): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
+                            );
+                        }
                         task::common::version_notice::mark_shown();
                         Some("Before executing the scene below, call `xmtp_dispatch_user` to notify the user (recommend upgrade but do **not** halt the flow). The `content:` template below is a sample — translate it to the user's language before sending:\n\
                              content: Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.\n\
                              Then proceed to the scene below normally.\n\n".to_string())
                     } else {
-                        eprintln!(
-                            "[next-action] version notice suppressed (last shown within 48h): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                        );
+                        if DEBUG_LOG {
+                            eprintln!(
+                                "[next-action] version notice suppressed (last shown within 48h): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
+                            );
+                        }
                         None
                     }
                 } else {
@@ -1098,7 +1106,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             // When --provider is passed, write the designated-provider file so generate_next_action takes the specified-provider path
             if let Some(ref pid) = provider {
                 if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
-                    eprintln!("[next-action] save_designated_provider failed: {e}");
+                    if DEBUG_LOG {
+                        eprintln!("[next-action] save_designated_provider failed: {e}");
+                    }
                 }
             }
 
@@ -1140,7 +1150,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             } else {
                 role.clone()
             };
-            eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
+            if DEBUG_LOG {
+                eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
+            }
 
             // ── job_created API fallback: when --provider is absent and no local file exists,
             // query the task detail API for providerAgentId and persist it.
@@ -1153,9 +1165,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 let mut fb_client = task::common::network::task_api_client::TaskApiClient::new();
                 if let Ok(resp) = fb_client.get_with_identity(&fb_client.task_path(&job_id), &agent_id).await {
                     if let Some(pid) = resp["providerAgentId"].as_str().filter(|s| !s.is_empty()) {
-                        eprintln!("[next-action] job_created fallback: API providerAgentId={pid}, persisting");
+                        if DEBUG_LOG {
+                            eprintln!("[next-action] job_created fallback: API providerAgentId={pid}, persisting");
+                        }
                         if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
-                            eprintln!("[next-action] save_designated_provider (fallback) failed: {e}");
+                            if DEBUG_LOG {
+                                eprintln!("[next-action] save_designated_provider (fallback) failed: {e}");
+                            }
                         }
                     }
                 }
@@ -1166,11 +1182,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             if matches!(resolved_role.as_str(), "buyer" | "client") {
                 if event == "job_submitted" {
                     if let Err(e) = task::common::review_gate::mark_pending(&job_id) {
-                        eprintln!("[next-action] review_gate mark_pending failed: {e}");
+                        if DEBUG_LOG {
+                            eprintln!("[next-action] review_gate mark_pending failed: {e}");
+                        }
                     }
                 } else if event == "approve_review" {
                     if let Err(e) = task::common::review_gate::mark_approved(&job_id) {
-                        eprintln!("[next-action] review_gate mark_approved failed: {e}");
+                        if DEBUG_LOG {
+                            eprintln!("[next-action] review_gate mark_approved failed: {e}");
+                        }
                     }
                 }
             }
@@ -1191,9 +1211,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             if dedup_eligible
                 && task::common::pending_v2::has_pending_for_job(&job_id, &resolved_role)
             {
-                eprintln!(
-                    "[next-action] duplicate event short-circuit: jobId={job_id} role={resolved_role} event={event} (pending entry already exists)"
-                );
+                if DEBUG_LOG {
+                    eprintln!(
+                        "[next-action] duplicate event short-circuit: jobId={job_id} role={resolved_role} event={event} (pending entry already exists)"
+                    );
+                }
                 println!(
                     "[Duplicate event] An entry for jobId={job_id} role={resolved_role} is already in the pending-decisions queue. The user has been notified already. **End the turn without re-notifying.** No tool calls required."
                 );
@@ -1387,7 +1409,9 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     let event = parse_status_or_event(job_status_or_event);
     let expected = status_when_event(&event);
     if !is_prefetch_only && matches!(expected, Status::Other(ref s) if s == "unknown") {
-        eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
+        if DEBUG_LOG {
+            eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
+        }
         return (None, None);
     }
 
@@ -1432,11 +1456,13 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     let dispute_resolved_ok = matches!(event, Event::DisputeResolved)
         && matches!(actual, Status::Completed | Status::Failed);
 
-    eprintln!(
-        "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",
-        expected.as_str(),
-        actual == expected || dispute_resolved_ok,
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",
+            expected.as_str(),
+            actual == expected || dispute_resolved_ok,
+        );
+    }
 
     if actual == expected || dispute_resolved_ok {
         return (None, prefetched);

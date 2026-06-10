@@ -11,6 +11,7 @@
 use crate::commands::agent_commerce::task::common::config::TASK_MIN_VERSION;
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
+use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 
 // ── Localization constants (shared across flow_negotiate / flow_lifecycle) ────
 //
@@ -303,30 +304,32 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     };
 
     let event = parse_status_or_event(event_str);
-    eprintln!(
-        "[buyer-flow] generate_next_action called: job_id={job_id}, event={event_str}, agent_id={agent_id}"
-    );
-    eprintln!(
-        "[buyer-flow] parsed event: {:?} | xmtp tools involved: {}",
-        event,
-        match &event {
-            Event::JobCreated => "xmtp_start_conversation (create group) → xmtp_send (send negotiation message)",
-            Event::ProviderApplied => "(no action) wait for job_accepted",
-            Event::JobAccepted => "xmtp_dispatch_user (notify accept success)",
-            Event::JobSubmitted => "pending-decisions-v2 request (forward deliverable, request review decision)",
-            Event::JobRejected => "xmtp_dispatch_user (notify rejection on-chain) → wait for provider decision",
-            Event::JobDisputed => "xmtp_get_conversation_history → dispute upload (auto-submit chat history + manifest deliverables) → xmtp_dispatch_user (notify)",
-            Event::DisputeResolved => "xmtp_dispatch_user (notify arbitration result)",
-            Event::JobRefunded => "xmtp_dispatch_user (notify refund complete)",
-            Event::JobAutoRefunded => "xmtp_dispatch_user (claimAutoRefund tx receipt)",
-            Event::NegotiateReply => "xmtp_send (evaluate provider natural-language reply)",
-            Event::NegotiateAck => "save-agreed → set-payment-mode (ACK validation → persist)",
-            Event::NegotiateCounter => "xmtp_send (evaluate COUNTER → new PROPOSE or REJECT)",
-            Event::AttachmentAdded => "xmtp_file_upload → xmtp_send (upload + forward attachment to provider)",
-            Event::DeliverableReceived => "task-deliverable-save (download + save deliverable immediately)",
-            _ => "none",
-        }
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[buyer-flow] generate_next_action called: job_id={job_id}, event={event_str}, agent_id={agent_id}"
+        );
+        eprintln!(
+            "[buyer-flow] parsed event: {:?} | xmtp tools involved: {}",
+            event,
+            match &event {
+                Event::JobCreated => "xmtp_start_conversation (create group) → xmtp_send (send negotiation message)",
+                Event::ProviderApplied => "(no action) wait for job_accepted",
+                Event::JobAccepted => "xmtp_dispatch_user (notify accept success)",
+                Event::JobSubmitted => "pending-decisions-v2 request (forward deliverable, request review decision)",
+                Event::JobRejected => "xmtp_dispatch_user (notify rejection on-chain) → wait for provider decision",
+                Event::JobDisputed => "xmtp_get_conversation_history → dispute upload (auto-submit chat history + manifest deliverables) → xmtp_dispatch_user (notify)",
+                Event::DisputeResolved => "xmtp_dispatch_user (notify arbitration result)",
+                Event::JobRefunded => "xmtp_dispatch_user (notify refund complete)",
+                Event::JobAutoRefunded => "xmtp_dispatch_user (claimAutoRefund tx receipt)",
+                Event::NegotiateReply => "xmtp_send (evaluate provider natural-language reply)",
+                Event::NegotiateAck => "save-agreed → set-payment-mode (ACK validation → persist)",
+                Event::NegotiateCounter => "xmtp_send (evaluate COUNTER → new PROPOSE or REJECT)",
+                Event::AttachmentAdded => "xmtp_file_upload → xmtp_send (upload + forward attachment to provider)",
+                Event::DeliverableReceived => "task-deliverable-save (download + save deliverable immediately)",
+                _ => "none",
+            }
+        );
+    }
 
     let body = match event {
         // ─── Negotiation / matching phase → flow_negotiate ──────────────────────────
@@ -514,11 +517,13 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         format!("{context_preamble}{prefetched_block}{body}")
     };
     let result = format!("{localization_prefix}{version_prefix}{core}");
-    let preview: String = result.chars().take(200).collect();
-    eprintln!(
-        "[buyer-flow] output length: {} chars | first 200: {}",
-        result.len(),
-        preview
-    );
+    if DEBUG_LOG {
+        let preview: String = result.chars().take(200).collect();
+        eprintln!(
+            "[buyer-flow] output length: {} chars | first 200: {}",
+            result.len(),
+            preview
+        );
+    }
     result
 }
