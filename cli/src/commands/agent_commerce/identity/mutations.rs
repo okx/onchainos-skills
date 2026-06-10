@@ -24,8 +24,8 @@ use crate::output;
 use crate::wallet_api::WalletApiClient;
 
 use super::args::{
-    AgentStatusArgs, CreateArgs, FeedbackSubmitArgs, SubmitApprovalArgs, UpdateArgs, UploadArgs,
-    XmtpSignArgs,
+    AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackSubmitArgs, SubmitApprovalArgs, UpdateArgs,
+    UploadArgs, XmtpSignArgs,
 };
 use super::models::{AgentCard, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_INDEX_NUM};
 use super::signing::{
@@ -54,6 +54,11 @@ const AGENT_LIST_MAX_PAGES: usize = 20;
 
 pub async fn create(args: CreateArgs, ctx: &Context) -> Result<()> {
     output::success(create_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn consent(args: ConsentArgs, ctx: &Context) -> Result<()> {
+    output::success(consent_impl(&args, ctx).await?);
     Ok(())
 }
 
@@ -122,7 +127,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         services: parse_services(args.service.as_deref())?,
     };
     ensure_provider_has_service(&card)?;
-    let mut body = json!({
+    let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
         "fromAddr": from_addr,
         "keyUuid": key_uuid.clone(),
@@ -130,12 +135,6 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         "sessionCert": &signing_session.session_cert,
         "cardJson": serde_json::to_string(&card).context("failed to serialize cardJson")?,
     });
-    if let Some(consent_key) = &args.consent_key {
-        body["consentKey"] = json!(consent_key);
-    }
-    if args.agreed == Some(true) {
-        body["agreed"] = json!(true);
-    }
     eprintln!(
         "[agent-identity] create request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(
@@ -158,18 +157,6 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         serde_json::to_string(&response)
             .unwrap_or_else(|_| "<serialize failed>".to_string())
     );
-    // Consent intercept: first-time wallet address returns a non-null consent
-    // object. Return the item directly so the skill layer can display the
-    // terms, collect user agreement, and re-invoke with --consent-key + --agreed true.
-    if let Some(item) = response.as_array().and_then(|a| a.first()) {
-        let has_consent = item
-            .get("consent")
-            .map(|c| !c.is_null())
-            .unwrap_or(false);
-        if has_consent {
-            return Ok(item.clone());
-        }
-    }
     let unsigned = parse_agent_unsigned(response)?;
     // erc8004Msg 三个字段：communicationAddress 由后端 pre-transaction 返回；
     // role / keyUuid 是本次 create 客户端持有的值。sessionSignature 已不再
@@ -223,6 +210,83 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         agent_list,
         new_agent_id,
     ))
+}
+
+// ─── `agent consent` ──────────────────────────────────────────────────────
+
+/// Standalone first-time-creation terms consent (legal module). Decoupled
+/// from `create`: the skill calls this BEFORE collecting any identity info.
+///
+/// Two-step. Step 1 (no `consentKey` / `agreed`): backend issues a one-time
+/// `consentKey` + `terms` for the client to display. Step 2 (`consentKey` +
+/// `agreed`): backend finalizes the user's accept/decline decision.
+///
+/// Returning users (the address already owns an agent) or a disabled feature
+/// flag get an empty `data: []`, which we normalize to `consent: null` /
+/// `required: false` so the skill can skip straight to identity Q&A.
+/// No signing, no broadcast — see API doc `pre-transaction/agent-consent`.
+async fn consent_impl(args: &ConsentArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+    // No `--address` flag (same as create): consent is scoped to the current
+    // selected XLayer wallet. We only need its address for `fromAddr`.
+    let signing_session = load_agent_signing_session(None)?;
+    let from_addr = signing_session.addr_info.address.clone();
+
+    // chainIndex must be a numeric String per the agent-consent contract.
+    let mut body = json!({
+        "chainIndex": XLAYER_CHAIN_INDEX,
+        "fromAddr": from_addr,
+    });
+    if let Some(consent_key) = &args.consent_key {
+        body["consentKey"] = json!(consent_key);
+    }
+    if let Some(agreed) = args.agreed {
+        body["agreed"] = json!(agreed);
+    }
+
+    eprintln!(
+        "[agent-identity] consent request: url={} access_token_len={} access_token_prefix={} body={}",
+        reconstruct_post_url_for_log(
+            ctx,
+            "/priapi/v5/wallet/agentic/pre-transaction/agent-consent",
+        ),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+    );
+
+    let result = client
+        .post_authed(
+            "/priapi/v5/wallet/agentic/pre-transaction/agent-consent",
+            &access_token,
+            &body,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] consent response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] consent response err: {:#}", e),
+    }
+
+    let response = result.map_err(format_api_error)?;
+    // `data` is a list; only `consent` is meaningful here. Step 1 → first item
+    // carries a non-null `consent` { consentKey, terms }. Step 2 /
+    // existing-agent / flag-off → empty list.
+    let consent = response
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|item| item.get("consent"))
+        .filter(|c| !c.is_null())
+        .cloned();
+    Ok(json!({
+        "required": consent.is_some(),
+        "consent": consent.unwrap_or(Value::Null),
+    }))
 }
 
 // ─── `agent update` ───────────────────────────────────────────────────────

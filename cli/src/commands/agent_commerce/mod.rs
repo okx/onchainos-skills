@@ -14,6 +14,11 @@ pub enum AgentCommand {
     /// Register a new Agent identity
     Create(identity::CreateArgs),
 
+    /// First-time-creation terms consent (legal module). Two-step: step 1 (no
+    /// flags) fetches the terms; step 2 (`--consent-key` + `--agreed`)
+    /// finalizes the decision. Must run BEFORE `create` for new users.
+    Consent(identity::ConsentArgs),
+
     /// Update Agent identity and services
     Update(identity::UpdateArgs),
 
@@ -818,6 +823,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     match cmd {
         // ── Identity ────────────────────────────────────────────────
         AgentCommand::Create(args) => identity::create(args, ctx).await,
+        AgentCommand::Consent(args) => identity::consent(args, ctx).await,
         AgentCommand::Update(args) => identity::update(args, ctx).await,
         AgentCommand::Get(args) => identity::get(args, ctx).await,
         AgentCommand::GetByAddress(args) => identity::get_by_address(args, ctx).await,

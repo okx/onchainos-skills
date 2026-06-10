@@ -344,6 +344,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
     match cmd {
         // Identity
         AgentCommand::Create(_) => "create".into(),
+        AgentCommand::Consent(_) => "consent".into(),
         AgentCommand::Update(_) => "update".into(),
         AgentCommand::Get(_) => "get".into(),
         AgentCommand::GetByAddress(_) => "get-by-address".into(),
