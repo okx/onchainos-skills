@@ -15,13 +15,22 @@ pub struct CreateArgs {
     pub picture: Option<String>,
     #[arg(long)]
     pub service: Option<String>,
-    /// Two-step consent flow: consentKey returned by the backend on first call
-    /// when the wallet address has never registered an agent. Pass on the
-    /// second call together with `--agreed true`.
+}
+
+/// `onchainos agent consent`: standalone first-time-creation terms consent
+/// (the legal module's two-step flow, decoupled from `create`). Step 1 (no
+/// flags) issues a `consentKey` + `terms`; step 2 (`--consent-key` +
+/// `--agreed`) finalizes the user's accept/decline decision. fromAddr +
+/// chainIndex are auto-filled (current XLayer wallet). See API doc
+/// `pre-transaction/agent-consent`.
+#[derive(Args, Clone, Debug)]
+pub struct ConsentArgs {
+    /// Step 2: the one-time consentKey returned by step 1; pass back together
+    /// with `--agreed`.
     #[arg(long = "consent-key")]
     pub consent_key: Option<String>,
-    /// Two-step consent flow: `true` = user agreed, passed together with
-    /// `--consent-key` on the second call.
+    /// Step 2: `true` = user agreed, `false` = user declined. Pass together
+    /// with `--consent-key`.
     #[arg(long)]
     pub agreed: Option<bool>,
 }
