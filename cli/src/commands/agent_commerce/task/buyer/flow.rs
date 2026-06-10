@@ -276,6 +276,20 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
          \x20\x2010) Do NOT call `sessions_spawn` / `sessions_yield` — you execute the playbook yourself.\n\
          \x20\x2011) 🛑 `job_submitted` does NOT include `complete` / `reject` commands — they are split into `approve_review` / `reject_review`. Push the review card to the user via `pending-decisions-v2 request`; do NOT auto-approve or auto-reject.\n\n";
 
+    let preamble_negotiate = format!("\
+         🔒 If `skills/okx-agent-task/SKILL.md Session Communication Contract` has not been read this turn → read it first.\n\n\
+         🛑🛑🛑 **IRON RULE 0 — Follow the playbook steps literally; any deviation risks user funds.** Steps are ordered, parameterized, and event-gated; on-chain actions are irreversible. Do NOT skip / reorder / batch / anticipate steps; do NOT invent CLI invocations from intuition.\n\n\
+         ⚠️ **Negotiation rules** (condensed from full set; see SKILL.md for details):\n\
+         \x20\x201) Protocol misunderstanding (counterpart still repeats after ≥1 clarification) → **stop replying to counterpart**, call `xmtp_dispatch_user`, content=`{escalation_protocol_misread}` (🌐 localize), end turn.\n\
+         \x20\x202) Execution error → **do NOT retry**; push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n\
+         \x20\x20\x20\x20**Exception**: JWT expired → re-login once; on continued failure, fall back to push protocol.\n\
+         \x20\x203) ❌ **Never broadcast technical error details to the counterpart**: CLI names / field names / stderr must never go into xmtp_send. At most 'please wait, confirming details'.\n\
+         \x20\x204) ❌ **Do not repeat xmtp_send in the same turn**: one message to the counterpart per turn. Resending = spam + triggering a loop.\n\
+         \x20\x206) Call `session_status` at most once per turn; reuse the result.\n\
+         \x20\x206b) Do NOT confuse the counterpart's `role` with your own — you are **always the buyer**.\n\
+         \x20\x209) 🛑 Sub/backup session text output is **invisible to the user**. All user-facing content MUST go via `xmtp_dispatch_user` or `pending-decisions-v2 request`.\n\
+         \x20\x2012) 🛑 **Negotiation evaluation must come first**: after receiving the provider's reply, you MUST complete the evaluation (`common context` → budget/max_budget → quote extraction → decision matrix) BEFORE sending any xmtp_send. Skipping evaluation and replying or rejecting directly = decision without basis.\n\n");
+
     let preamble_slim = "\
          🔒 If `skills/okx-agent-task/SKILL.md Session Communication Contract` has not been read this turn → read it first.\n\n\
          🛑 **Core rules** (see SKILL.md for full set; the following are non-negotiable):\n\
@@ -492,6 +506,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     };
 
     let use_slim_preamble = matches!(event_str,
+        "negotiate_ack" |
         "approve_review" | "reject_review" |
         "job_completed" | "job_refunded" | "job_auto_refunded" | "job_expired" | "job_closed" |
         "submit_expired" | "reject_expired" | "review_deadline_warn" | "review_expired" |
@@ -501,8 +516,11 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         "reward_claimed" | "dispute_resolved" | "close" | "set_public" |
         "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved"
     );
+    let use_negotiate_preamble = matches!(event_str,
+        "negotiate_reply" | "negotiate_counter"
+    );
     let use_medium_preamble = matches!(event_str,
-        "negotiate_ack" | "job_payment_mode_changed" |
+        "job_payment_mode_changed" |
         "provider_applied" | "job_accepted" | "deliverable_received" | "job_visibility_changed" |
         "job_submitted" |
         "designated_a2a" | "designated_x402" | "designated_error"
@@ -511,6 +529,8 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         body
     } else if use_slim_preamble {
         format!("{preamble_slim}{prefetched_block}{body}")
+    } else if use_negotiate_preamble {
+        format!("{preamble_negotiate}{prefetched_block}{body}")
     } else if use_medium_preamble {
         format!("{preamble_medium}{prefetched_block}{body}")
     } else {
