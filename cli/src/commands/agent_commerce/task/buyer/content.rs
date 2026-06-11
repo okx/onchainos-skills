@@ -40,7 +40,7 @@ pub fn is_cli_mode() -> bool {
 // ── Event::JobCreated ──────────────────────────────────────────────
 
 /// `Event::JobCreated` Step 0 — user notification (no designated provider).
-pub fn job_created_public_user_notify() -> &'static str {
+pub fn job_created_non_designated_user_notify() -> &'static str {
     "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. Auto-querying recommended ASPs."
 }
 

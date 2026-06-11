@@ -5,21 +5,18 @@ use super::super::flow::FlowContext;
 // --- Event handler functions ------------------------------------------------
 
 pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
-    // Public (no designated provider) case uses the short 3-action playbook
-    // that delegates everything to `recommend --emit-decision`; the designated-
-    // provider case has its own D-Step shape and falls through to the legacy
-    // path below.
+    // No designated provider → recommend flow; designated → route_only flow.
     let has_designated = super::super::negotiate::get_designated_provider(ctx.job_id)
         .ok()
         .flatten()
         .is_some();
     if !has_designated {
-        return job_created_public(ctx);
+        return job_created_non_designated_provider(ctx);
     }
-    job_created_legacy(ctx)
+    job_created_with_designated_provider(ctx)
 }
 
-/// Public/no-designated-provider job_created flow.
+/// job_created flow when no provider is designated.
 ///
 /// Five linear actions, no branches. Action 4 (sub-side translation) is
 /// required because OpenClaw runtime does not auto-translate
@@ -36,12 +33,12 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
 /// kept (and remains useful once OpenClaw P0-D ships and Action 4 can go
 /// away — then a single `recommend --emit-decision` round-trip will cover
 /// fetch + enqueue without any pre-localization).
-fn job_created_public(ctx: &FlowContext<'_>) -> String {
+fn job_created_non_designated_provider(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let title = ctx.title_display;
-    let notify_tpl = super::super::content::job_created_public_user_notify();
+    let notify_tpl = super::super::content::job_created_non_designated_user_notify();
     let list_label = format!("[Recommend {short_id}] {title} ASP-pick decision");
     format!(
         "[Trigger] job_created (on-chain, status: pending acceptance)\n\
@@ -77,103 +74,29 @@ fn job_created_public(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-fn job_created_legacy(ctx: &FlowContext<'_>) -> String {
+/// job_created flow when a designated provider exists.
+///
+/// Failure fallback (x402_invalid / not_provider / offline / negotiation fail)
+/// is handled by `user_decision_*` events in flow.rs, not here.
+fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
-    let l10n_prompt = super::super::flow::L10N_PROMPT;
-    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let title = ctx.title_display;
-    let cmd_recommend = super::super::flow::pending_cmd_file(job_id, agent_id, &format!("[Recommend {short_id}] {title} ASP-pick decision"), "recommend_pick");
-    // Note: the "next-page returns empty -> push no_asp_found A/B/C" sub-branch
-    // is delegated to the `user_decision_recommend_pick` handler in flow.rs,
-    // which embeds the no_asp_found enqueue command + user-content template.
 
-    let designated_provider = super::super::negotiate::get_designated_provider(job_id).ok().flatten();
+    let dp_id = super::super::negotiate::get_designated_provider(job_id)
+        .ok()
+        .flatten()
+        .expect("job_created_with_designated_provider called only when designated provider exists");
 
-    let (created_notify_tpl, created_fill) = match &designated_provider {
-        Some(dp_id) => (
-            super::super::content::job_created_designated_user_notify().to_string(),
-            format!("Fill: `<title>` = {title} | `<short_jobId>` = {short_id} | `<provider_agentId>` = {dp_id}"),
-        ),
-        None => (
-            super::super::content::job_created_public_user_notify().to_string(),
-            format!("Fill: `<title>` = {title} | `<short_jobId>` = {short_id}"),
-        ),
-    };
-
-    let attachment_section_created = if designated_provider.is_some() {
-        String::new()
-    } else {
-        let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
-        if attachment_paths.is_empty() {
-            String::new()
-        } else {
-            let paths_list = attachment_paths.iter()
-                .map(|p| format!("  - `{p}`"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "**Step 0.5 — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
-                 The following files are saved locally and MUST be uploaded to the provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
-                 {paths_list}\n\
-                 ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
-                 ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
-            )
-        }
-    };
+    let notify_tpl = super::super::content::job_created_designated_user_notify();
+    let fill = format!("Fill: `<title>` = {title} | `<short_jobId>` = {short_id} | `<provider_agentId>` = {dp_id}");
 
     let designated_endpoint = super::super::negotiate::get_designated_endpoint(job_id).ok().flatten();
-    let routing_section = if let Some(dp_id) = &designated_provider {
-        super::designated::route_only(job_id, agent_id, short_id, dp_id, designated_endpoint.as_deref())
-    } else {
-        format!("\
-             🛑 **Do NOT ask the user whether to fetch the recommendation list** -- proceed to Step 1 directly and automatically. The recommend query is mandatory, not optional.\n\n\
-             **Step 1 - query the recommended ASP list:**\n\
-             ```bash\n\
-             onchainos agent recommend {job_id} --agent-id {agent_id}\n\
-             ```\n\
-             The CLI fetches from the API, caches the list locally, and writes a pre-formatted card file. The stdout is compact — it shows the ASP count and the **card file path** (e.g. `Card file: /path/to/recommend-cards.txt`). Extract that path for Step 2.\n\
-             If the output says \"empty\" or \"no matching providers\" → jump to the no_asp_found branch (Step 3 below).\n\n\
-             🛑🛑🛑 **ABSOLUTE PROHIBITION - iron rule: in the current session (sub/backup) you must NOT directly print the recommendation list or any text reply.**\n\
-             You are inside a sub session or backup session - **the user cannot see any output here**.\n\
-             You must push the list to the user session via `pending-decisions-v2 request`; that is the **only** way the user sees the list.\n\
-             🔴 Real incident: the Minimax model, after getting recommend results in a backup session, just printed the list as text; the user never saw it and the task stalled.\n\
-             ❌ Absolutely forbidden: replacing the `pending-decisions-v2 request` call with a text reply - text reply = invisible to user = task stalls.\n\
-             ❌ Absolutely forbidden: using xmtp_dispatch_user instead of `pending-decisions-v2 request` - dispatch_user is pure notification, the user's choice cannot be relayed back.\n\
-             ❌ Absolutely forbidden: printing text \"for the user to see\" first and then calling the tool - text output in a sub session never reaches the user.\n\n\
-             **Step 2 - push the card file to the user session via `pending-decisions-v2 request`:**\n\
-             🛑🛑🛑 **DO NOT call `xmtp_start_conversation` in this step** — there is no peer agent to talk to yet (the user hasn't picked an ASP). `xmtp_start_conversation` only happens AFTER the user picks (handled by the `next-action --provider <X>` playbook in a later turn). 🔴 Real incident: a model in backup, instead of calling `session_status` to fetch its own backup-key, called `xmtp_start_conversation` to create a brand-new (peer-less) conversation, which produced an unusable sessionKey and broke the relay chain.\n\
-             **Action**: call `session_status` (NOT `xmtp_start_conversation`) to get the **current sub/backup session's** sessionKey (call once per turn, reuse the result). The returned string is what you must pass verbatim to `--sub-key` below. For backup-session callers, the key looks like `agent:main:okx-a2a:group:okx-xmtp:backup:<jobId>`; for task-sub callers, it contains `&job=<jobId>&gid=<...>`.\n\
-             Then run (pass the card file path from Step 1 as `--user-content-file`):\n\
-             ```bash\n\
-             {cmd_recommend}\n\
-             ```\n\
-             ⚠️ The `--list-label` MUST be localized to the user's language before running the command (translate the keyword inside the bracket and the suffix phrase; preserve the shortJobId hex). See [Localization] rules above.\n\
-             ⚠️ The card file content is canonical English; the user-session will present it as-is for English users, or the sub agent should localize field labels (Description/Fee/Payment) and the footer reply-hint line if the user's language is not English — read the file, translate the localizable parts, then pass via `--user-content` instead of `--user-content-file`.\n\n\
-             {l10n_prompt}\n\
-             {follow_playbook}\n\n\
-             -> **end this turn** and wait for the user's reply to be relayed back.\n\n\
-             **Step 3 — End this turn. The user-session will relay the user's reply as a system envelope.**\n\n\
-             When the system envelope arrives (`event:\"user_decision_recommend_pick\"`, `message.data:<user verbatim>`, e.g. `1` / `864` / `next page` / `公开` / `关闭`), call:\n\
-             ```bash\n\
-             onchainos agent next-action --jobid {job_id} --event user_decision_recommend_pick --role buyer --agentId {agent_id} --data \"<message.data>\"\n\
-             ```\n\
-             CLI's routing playbook does the LLM semantic mapping (pick ASP → re-enter via `next-action --provider X` / next page → `recommend --next-page` (auto re-push if results / fall back to `--source-event no_asp_found` if empty) / public → `set-public` / close → `close`). Follow it verbatim.\n\n\
-             ===============================================================\n\
-             🔴🔴🔴 ABSOLUTE PROHIBITION — before the `user_decision_recommend_pick` next-action returns, you are FORBIDDEN from:\n\
-             ❌ Creating groups or conversations\n\
-             ❌ Sending ANY message to ANY agent\n\
-             ❌ Calling ANY onchainos CLI command other than the next-action above\n\
-             ❌ Deciding routing (x402 / A2A / escrow) yourself\n\
-             ❌ Composing negotiation content of any kind\n\
-             ❌ Keyword-matching the verbatim yourself (CLI's user_decision_recommend_pick handler does the semantic mapping; your job is only to pass `--data \"<message.data>\"` through)\n\
-             🔴 Real incident: a model skipped next-action and sent [intent:propose] directly — this broke routing, skipped service-list check, and sent an invalid first message. The ONLY correct path is next-action first.\n\
-             ===============================================================\n")
-    };
+    let routing_section = super::designated::route_only(job_id, agent_id, short_id, &dp_id, designated_endpoint.as_deref());
 
-    let output = format!(
+    format!(
         "🛑🛑🛑 **IDENTITY CHECK - you are the executor; delegation is forbidden**\n\
          You are inside a sub session or backup session. **You yourself** are the agent responsible for executing this script.\n\
          ❌ **Absolutely forbidden**: `sessions_spawn` - do NOT spawn a child agent to \"help you\" handle this event.\n\
@@ -184,21 +107,18 @@ fn job_created_legacy(ctx: &FlowContext<'_>) -> String {
          [Role] User (User Agent)\n\n\
          ⚠️ **Open != public**: Open is a job lifecycle state (pending acceptance), not a visibility (public/private). Job visibility is governed by the `visibility` field (0=public, 1=private), unrelated to the Open state. Do NOT translate Open as \"public\" in notifications.\n\n\
          🛑 **CLIs forbidden in this event**: save-agreed / set-payment-mode / confirm-accept / apply / complete / reject - no ASP has been picked yet, negotiation has not started, all of these are illegal here.\n\n\
-         🛑🛑🛑 You MUST execute ALL steps below immediately in this turn. Do NOT end the turn before completing Step 0 (notify user) and Step 1 (recommend query).\n\
+         🛑🛑🛑 You MUST execute ALL steps below immediately in this turn. Do NOT end the turn before completing Step 0 (notify user) and D-Step 1 (designated-route query).\n\
          Ending the turn without executing = user never gets notified = task stalls permanently.\n\
          🔴 Real incident: a model called next-action, received this playbook, then said \"end turn, wait for User Agent\" without executing any step — the user was never notified and the task was permanently stuck.\n\n\
          [Your next actions (strict order)]\n\n\
          **Step 0 - notify the user session + continue execution in the current sub/backup session:**\n\
          Call xmtp_dispatch_user to tell the user the job is on-chain:\n\
-         \x20\x20content: {created_notify_tpl}\n\
-         {created_fill}\n\
+         \x20\x20content: {notify_tpl}\n\
+         {fill}\n\
          {l10n_short}\n\n\
          ⚠️ Subsequent routing -> negotiation / acceptance all run in the **current session**; do NOT switch to the user session, do NOT sessions_spawn.\n\n\
-         {attachment_section_created}\
          {routing_section}\n\n"
-    );
-
-    output
+    )
 }
 
 pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
