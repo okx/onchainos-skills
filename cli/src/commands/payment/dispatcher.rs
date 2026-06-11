@@ -947,6 +947,7 @@ impl Eip3009AuthType {
 ///
 /// The TEE looks up `domainHash` by token name/version internally, so the
 /// client doesn't need an RPC URL to fetch `DOMAIN_SEPARATOR()`.
+#[allow(clippy::too_many_arguments)]
 async fn tee_sign_eip3009(
     auth_type: Eip3009AuthType,
     chain_index: &str,

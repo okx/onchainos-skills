@@ -75,3 +75,4 @@ run.sh
 test-cases.json
 
 evals/
+.gs-recovery/

@@ -17,7 +17,7 @@ onchainos wallet login [email] [--locale <locale>]
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `email` | positional | No | Email address to receive OTP. Omit for silent AK login. |
-| `--locale` | option | No | Language for the OTP email. AI should always infer from conversation context and include it: `zh-CN` (Chinese), `ja-JP` (Japanese), `en-US` (English/default). If unsure, default to `en-US`. |
+| `--locale` | option | No | Language for the OTP email, in underscore form (e.g. `zh_CN`, `en_US`, `ja_JP`); other languages pass through. The CLI normalizes the value and drops anything unrecognizable. Omit if the conversation language is unclear — do not force `en_US`. |
 
 **Return fields (email OTP — returns empty on success):**
 
@@ -328,9 +328,9 @@ onchainos wallet send \
 | `--from` | string | No | Sender address — defaults to selected account's address on the given chain |
 | `--contract-token` | string | No | Token contract address for ERC-20 / SPL transfers. Omit for native token transfers. |
 | `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
-| `--gas-token-address` | string | No | Gas Station: token contract address to pay gas (from confirming response tokenList). Second-phase call only. |
-| `--relayer-id` | string | No | Gas Station: relayer ID (from confirming response tokenList). Second-phase call only. |
-| `--enable-gas-station` | bool | No | Gas Station: first-time activation flag. When `--gas-token-address` is also given, sets it as default (Scene A option 1). When passed alone, enables without a default (Scene A option 2, backend auto-picks highest-balance token). |
+| `--gas-token-address` | string | No | Gas Station: SPL token mint address to pay gas (from Confirming response `gasStationTokenList`). Second-phase call only. |
+| `--relayer-id` | string | No | Gas Station: Relayer ID (from Confirming response `gasStationTokenList`). Second-phase call only. |
+| `--enable-gas-station` | bool | No | Gas Station: first-time enablement flag (Solana). When `--gas-token-address` is also given, pins it as default. When passed alone, the backend auto-selects the highest-balance sufficient token (tie-breaker USDT > USDC > USDG) and pins it as default. |
 
 **Return fields (normal):**
 
@@ -338,171 +338,143 @@ onchainos wallet send \
 |---|---|---|
 | `txHash` | String | Broadcast transaction hash |
 
-**Return fields (Gas Station auto-path — gasStationStatus ∈ {READY_TO_USE / PENDING_UPGRADE / REENABLE_ONLY} with hash non-empty):**
+**Return fields (Gas Station auto-path on Solana — silent Scene B / Scene D):**
 
 | Field | Type | Description |
 |---|---|---|
-| `txHash` | String | Broadcast transaction hash (may be empty; relayer returns async) |
-| `orderId` | String | Order ID for async status query via `wallet history --chain <chain> --order-id <id>` (routes to `/order/detail`) |
+| `txHash` | String | Broadcast transaction hash (may be empty; Relayer returns async) |
+| `orderId` | String | Order ID for async status query via `wallet history --chain solana --order-id <id>` (routes to `/order/detail`) |
 | `gasStationUsed` | Boolean | `true` |
-| `gasStationStatus` | String | Enum: READY_TO_USE / PENDING_UPGRADE / REENABLE_ONLY |
 | `autoSelectedToken` | Boolean | Backend auto-selected the gas token |
 | `serviceCharge` | String | Gas fee amount (integer, multiplied by token decimal) |
-| `serviceChargeSymbol` | String | Gas fee token symbol (e.g. "USDT") |
+| `serviceChargeSymbol` | String | Gas fee token symbol (e.g. `"USDT"`) |
+| `serviceChargeFeeTokenAddress` | String | Mint address of the fee token |
+| `signType` | String | `"multiSignerTx"` — Solana multi-signer (Relayer fee payer + user authority) shape |
+| `encoding` | String | `"base64"` — `unsignedTx` and signing material encoding |
+| `extraData` | Object | Solana-specific signing context: `mintPubkey`, `srcPubkey`, `authPubKey`, `toAccountPubkey`, `recentBlockHash`, `computeUnitLimit`, `computeUnitPrice`, `decimal`, `token2022`. CLI-internal. |
 
-**Confirming response (Gas Station FIRST_TIME_PROMPT or READY_TO_USE with default-insufficient — exit code 2):**
+**Confirming response (Gas Station Scene A or Scene C — exit code 2):**
 
-When Gas Station needs user input, the CLI returns a confirming response with the available token list in the `next` field. The `message` body distinguishes the two subcases:
-- FIRST_TIME_PROMPT (Scene A) — first-time enable, 3-option decision tree
-- READY_TO_USE with empty hash (Scene C) — default insufficient, 2-question decision tree
+When Gas Station needs user input, the CLI returns a Confirming response with the available token list in the `next` field. The `message` distinguishes the two subcases:
+- **Scene A** — `gasStationFirstTimePrompt=true` (first-time enable, render the Scene A verbatim copy with token-list)
+- **Scene C** — `hash` empty + `gasStationFirstTimePrompt=false` (default token insufficient, render the Scene C verbatim copy)
 
-See `references/gas-station.md` Step 2 for Agent handling instructions.
+See `references/gas-station.md` for the verbatim user-facing copy and dispatch logic.
 
-**Return fields (Gas Station INSUFFICIENT_ALL):**
+**Return fields (Gas Station all-insufficient — Scene E):**
 
 | Field | Type | Description |
 |---|---|---|
 | `gasStationUsed` | Boolean | `true` |
-| `gasStationStatus` | String | `"INSUFFICIENT_ALL"` |
-| `insufficientAll` | Boolean | `true` — all gas tokens insufficient |
+| `insufficientAll` | Boolean | `true` |
 | `gasStationTokenList` | Array | All items with `sufficient: false` |
-| `fromAddr` | String | User address for deposit guidance |
+| `fromAddr` | String | User's Solana address for top-up guidance |
 
-**Return fields (Gas Station HAS_PENDING_TX):**
+**Return fields (Gas Station pending-blocking):**
 
 | Field | Type | Description |
 |---|---|---|
 | `gasStationUsed` | Boolean | `true` |
-| `gasStationStatus` | String | `"HAS_PENDING_TX"` |
 | `hasPendingTx` | Boolean | `true` — a previous Gas Station tx is still pending |
 
-**Return fields (not routed through Gas Station — gasStationStatus=NOT_APPLICABLE):**
+**Return fields (not routed through Gas Station):**
 
-Same as regular `wallet send` output (`txHash` / `orderId`). `gasStationUsed=false`.
+Same as regular `wallet send` output (`txHash` / `orderId`). `gasStationUsed=false`. Covers: native SOL transfer, Jito Bundle transaction, single-tx > 100,000 U, chain ≠ Solana, GS disabled + SOL sufficient.
 
 ---
 
-## D-GS. Gas Station Management Commands
+## D-GS. Gas Station Management Commands (Solana)
+
+> Solana Gas Station does NOT require any on-chain account setup. Enable / disable / change-default operate purely on the backend DB flag. The first transaction the user signs after consenting in Scene A is just a regular Gas Station send — there is no separate "setup" or "upgrade" step.
 
 ### D-GS1. `onchainos wallet gas-station update-default-token`
 
-Update the default gas payment token for Gas Station on a specific chain.
+Update the default gas payment token for Gas Station on Solana.
 
 ```bash
 onchainos wallet gas-station update-default-token \
-  --chain <chain> \
-  --gas-token-address <address>
+  --chain solana \
+  --gas-token-address <spl_mint>
 ```
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
-| `--gas-token-address` | string | Yes | Token contract address to set as default gas payment token |
+| `--chain` | string | Yes | Must be `solana` (Solana is the only supported chain). |
+| `--gas-token-address` | string | Yes | SPL token mint address (USDT / USDC / USDG) to set as the default gas payment token |
 
 ### D-GS2. `onchainos wallet gas-station enable`
 
-Turn Gas Station back on for a chain that was previously enabled. (Internal: DB flag flip only, no on-chain action. Requires prior on-chain setup — first-time activation happens via `wallet send` which bundles the setup with the first Gas Station broadcast. If the chain has never been activated, backend returns a msg in the response body — relay the backend msg verbatim, do NOT paraphrase with "7702" / "delegation" / "DB".) See `gas-station.md` User-Facing Reply Templates for user-facing wording.
+Turn Gas Station back on for Solana. Internal: DB flag flip only. There is no on-chain action on Solana — re-enabling is instant. See `gas-station.md` User-Facing Reply Templates for the user-facing wording.
 
 ```bash
 onchainos wallet gas-station enable \
-  --chain <chain>
+  --chain solana
 ```
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
+| `--chain` | string | Yes | Must be `solana` |
 
 ### D-GS3. `onchainos wallet gas-station disable`
 
-Turn Gas Station off for a chain; the chain reverts to paying gas with native token. (Internal: DB flag flip only, no on-chain action. On-chain state and `default_gas_token_address` are preserved so re-enabling later is instant.) See `gas-station.md` User-Facing Reply Templates for user-facing wording — **never paraphrase "DB flag" / "7702" / "delegation" into the reply**.
+Turn Gas Station off for Solana; the chain reverts to paying gas with SOL. Internal: DB flag flip only, no on-chain action. The `default_gas_token_address` is preserved so re-enabling later restores the previous default. See `gas-station.md` User-Facing Reply Templates for the user-facing wording.
 
 ```bash
 onchainos wallet gas-station disable \
-  --chain <chain>
+  --chain solana
 ```
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
+| `--chain` | string | Yes | Must be `solana` |
 
-### D-GS4. `onchainos wallet gas-station status`
+### D-GS4. `onchainos wallet gas-station status` (read-only probe)
 
-**Read-only Gas Station readiness probe.** Used by **third-party plugin pre-flight** — the agent runs this before invoking a plugin's on-chain command (e.g. `aave-v3-plugin --confirm supply ...`) to decide whether the chain needs first-time GS activation, re-enable, or is already ready. Never broadcasts. Safe to call repeatedly.
-
-Internally probes Phase 1 diagnostic via a 0-amount native self-transfer (the same call the regular `wallet send` would make on its first phase, but here we deliberately don't proceed past it).
+**Read-only Gas Station readiness probe** on Solana. Used by third-party plugin pre-flight — the agent runs this before invoking a plugin's on-chain command (e.g. `kamino-plugin supply --confirm ...`) to decide whether GS is ready or needs first-time consent. Never broadcasts. Safe to call repeatedly.
 
 ```bash
 onchainos wallet gas-station status \
-  --chain <chain> \
-  [--from <address>]
+  --chain solana \
+  [--from <solana_address>]
 ```
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `--chain` | string | Yes | Chain name or ID |
-| `--from` | string | No | Sender address; defaults to selectedAccountId |
+| `--chain` | string | Yes | Must be `solana` |
+| `--from` | string | No | Solana address; defaults to selected account |
 
-Response:
+Response (example):
 
 ```json
 {
   "ok": true,
   "data": {
-    "chainId": "42161",
-    "chainName": "arb_eth",
-    "fromAddress": "0xd13c...a136",
-    "gasStationActivated": false,
+    "chainId": "501",
+    "chainName": "solana",
+    "fromAddress": "CYXWm...",
+    "gasStationEnabled": false,
     "gasStationDefaultToken": null,
-    "gasStationStatus": "FIRST_TIME_PROMPT",
     "recommendation": "ENABLE_GAS_STATION",
     "hasPendingTx": false,
     "insufficientAll": false,
     "tokenList": [
-      { "symbol": "USDC", "feeTokenAddress": "0xaf88...5831", "relayerId": "fcfc...3c87",
-        "balance": "1.49", "serviceCharge": "0.026", "sufficient": true }
+      { "symbol": "USDT", "feeTokenAddress": "<mint>", "relayerId": "1",
+        "balance": "120.0", "serviceCharge": "0.8", "sufficient": true },
+      { "symbol": "USDC", "feeTokenAddress": "<mint>", "relayerId": "1",
+        "balance": "5.0",   "serviceCharge": "0.8", "sufficient": true }
     ]
   }
 }
 ```
 
-`recommendation` enum:
+`recommendation` enum (Solana-specific — no `PENDING_UPGRADE`, no `REENABLE_GAS_STATION` separation; re-enable is just a normal `enable`):
 
 | Value | Agent action |
 |---|---|
-| `READY` | Chain has sufficient native gas, or GS already active. Proceed directly to plugin invocation. |
-| `ENABLE_GAS_STATION` | First-time. Render Scene A → user picks → run `wallet gas-station setup` → re-invoke plugin. |
-| `REENABLE_GAS_STATION` | User previously disabled GS. Render Scene B' → user picks → `setup` → re-invoke. |
-| `PENDING_UPGRADE` | Chain not yet 7702-delegated. Render Scene A' → user picks → `setup` (carries 7702 material) → re-invoke. |
-| `INSUFFICIENT_ALL` | No stablecoin has enough balance. Tell user to top up. Do NOT invoke plugin. |
+| `READY` | GS enabled and default token sufficient. Proceed directly to plugin invocation. |
+| `ENABLE_GAS_STATION` | First-time / disabled. Render Scene A from `gas-station.md`; on user consent, call `wallet gas-station enable --chain solana` (or pass `--enable-gas-station [--gas-token-address ... --relayer-id ...]` to the first plugin call). Then proceed. |
+| `INSUFFICIENT_ALL` | No stablecoin has enough balance. Render Scene E. Do NOT invoke plugin. |
 | `HAS_PENDING_TX` | A pending GS tx blocks new ones. Tell user to wait. Do NOT invoke plugin. |
-
-### D-GS5. `onchainos wallet gas-station setup`
-
-**Standalone first-time activation.** Decoupled from `wallet send` so the agent can activate Gas Station *before* invoking a third-party plugin. The plugin (which always passes `--force` internally) will then succeed transparently because GS is already active on the chain.
-
-Internally drives a 1-minimal-unit self-transfer of the picked gas token with `--enable-gas-station --force`. Backend Phase 2 returns 712 hash (and `authHashFor7702` if the chain still needs 7702 upgrade); CLI signs and broadcasts. The carrier transfer is from-self to from-self, so net value movement = 0; only the GS service charge is consumed.
-
-**Pre-condition**: the agent has already obtained user consent via Scene A / B' / A' (see `gas-station.md`). This command does NOT prompt — it executes the activation that the user has already approved.
-
-```bash
-onchainos wallet gas-station setup \
-  --chain <chain> \
-  --gas-token-address <addr> \
-  --relayer-id <relayer_id> \
-  [--from <address>]
-```
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `--chain` | string | Yes | Chain name or ID |
-| `--gas-token-address` | string | Yes | Token address picked by the user from `tokenList` |
-| `--relayer-id` | string | Yes | Relayer ID paired with `--gas-token-address` |
-| `--from` | string | No | Sender address; defaults to selectedAccountId |
-
-Idempotency:
-- Already activated, same default → returns `{gasStationActivated: true, alreadyActivated: true}` without broadcasting.
-- Already activated, different default → switches via `update-default-token` and returns `{alreadyActivated: true, defaultTokenSwitched: true}`.
-- Not yet activated → drives the carrier transfer; on success returns the wallet send response (`{txHash, orderId, gasStationUsed: true, serviceCharge, ...}`).
 
 ---
 
