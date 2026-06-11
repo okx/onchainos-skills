@@ -99,9 +99,10 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
   an irreversible on-chain write. `activate` / `deactivate` are state toggles → no card, run directly.
 - **Consent (first-time wallet)** — folded into `agent pre-check`, surfaced as a `consent` field on a
   `canCreate:false` result: show `consent.terms` (full, translated, never summarized; never the
-  `consentKey` UUID), wait for agree / decline. Agree → re-invoke `agent pre-check --role <role>
+  `consentKey` UUID), then present two numbered choices (localized) — `1. Agree & continue` / `2. Decline &
+  cancel` — and wait. `1`/agree → re-invoke `agent pre-check --role <role>
   --consent-key <uuid>` (the consent-key's presence submits the agreement and continues to the verdict).
-  Decline → just stop (no further call — there is no CLI decline path).
+  `2`/decline → just stop (no further call — there is no CLI decline path).
   Never invoke `agent consent` yourself for registration. `create` never carries consent flags and its
   response has no `consent` field.
 - **Post-execute** — the first user-visible line after any CLI call comes from the reference's template, not

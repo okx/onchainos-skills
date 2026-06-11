@@ -23,10 +23,10 @@ Then run §2 with `--role <role>`.
 
 Run `agent pre-check --role <role>` (internal — never shown). It fetches the wallet's agents; **if the wallet has agents it's already consented** (→ straight to the uniqueness verdict); **if it has none it runs the consent gate first**. It always returns `{ canCreate, role, reason?, consent?, existingSameRole, providerCount, knownAgentIds }` — **never call `agent get` / `agent consent` yourself for registration**. Branch on the result:
 
-- **`consent` present** (always `canCreate:false`) → first-time wallet, terms not yet accepted. This is a **blocking** legal-confirmation step: render `consent.consent.terms` **complete and translated** (never summarized; **never show the `consentKey`**), then "Reply 'agree' to continue; reply 'decline' to cancel."
-  - **agree** → re-run `agent pre-check --role <role> --consent-key <uuid>` (passing the consent-key IS the agreement — it submits `agreed=true` and continues).
-  - **decline** → do NOT call again; say "Registration cancelled — creating an agent identity requires accepting the terms of use. Restart any time." and stop, no `create`.
-  - Ambiguous reply → re-display once; never auto-agree / auto-decline.
+- **`consent` present** (always `canCreate:false`) → first-time wallet, terms not yet accepted. This is a **blocking** legal-confirmation step: render `consent.consent.terms` **complete and translated** (never summarized; **never show the `consentKey`**), then present two numbered choices (localized): **`1. Agree & continue`** / **`2. Decline & cancel`**.
+  - **`1` / agree** → re-run `agent pre-check --role <role> --consent-key <uuid>` (passing the consent-key IS the agreement — it submits `agreed=true` and continues).
+  - **`2` / decline** → do NOT call again; say "Registration cancelled — creating an agent identity requires accepting the terms of use. Restart any time." and stop, no `create`.
+  - Ambiguous reply → re-display the two options once; never auto-agree / auto-decline.
 - **`canCreate:false`** (no `consent` field — a single-role identity already exists; `reason` explains) → do NOT create, do NOT offer "create new". Redirect to update with the mandatory per-wallet line, filling `<roleLabel>` / `<N>` / `<name>` from `existingSameRole[0]`:
   > "Under this wallet (当前钱包) you already have a `<roleLabel>` identity #`<N>` (`<name>`). Each address can register only one `<roleLabel>` — say "update #`<N>`" to edit it, or keep using it. To register a separate one under a different address, switch / add a wallet first."
 - **`canCreate:true`** → may register. For a **provider** with existing ASPs (`providerCount` K ≥ 1) offer new-vs-update first (K=1 → *1. Register a new ASP / 2. Update #`<N1>` (`<name1>`)*; K ≥ 2 → list every existing ASP `#<id>` (`<name>`) from `existingSameRole`, ask which by number; never auto-pick). Otherwise (requester/evaluator with none yet, provider with K=0) → proceed to the §3 field Q&A.
