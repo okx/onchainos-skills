@@ -223,7 +223,7 @@ pub fn job_expired_user_notify(job_id: &str) -> String {
 
 /// `Event::JobClosed` — job closed (B-7-2).
 pub fn job_closed_user_notify(job_id: &str, title: &str) -> String {
-    format!("{title} (`{job_id}`) has been closed; funds have been returned.")
+    format!("[Job Closed] {title} (`{job_id}`) has been closed; funds have been returned.")
 }
 
 // ── Event::JobVisibilityChanged ────────────────────────────────────
@@ -269,7 +269,7 @@ pub fn over_budget_user_prompt(short_id: &str) -> String {
 
 /// User notification after closing a job (B-7-11).
 pub fn close_user_notify(job_id: &str) -> String {
-    format!("Job `{job_id}` has been closed.")
+    format!("[Job Closed] Job `{job_id}` has been closed.")
 }
 
 /// User notification after switching a job to public (B-7-12).

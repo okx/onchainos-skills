@@ -282,6 +282,8 @@ Route in the following order:
 🛑 **The ONLY valid stop conditions:**
 - **User picks `保留` / `稍后` / `暂不` / `skip` on a `decision_request`** — item stays in the outstanding-decisions queue (un-`check`ed) and can be retrieved later via `outdated-list`. The watch loop ends here because the user explicitly chose to defer; honor that.
 - The user explicitly says stop — e.g. `停止监听` / `不用监听了` / `stop watching` / `unsubscribe`.
+- **Scoped session + this task reached a terminal state.** When the watch is running with `--job-id <X>` (scoped session per §Session-scoped sticky) AND the latest `notification`'s `userContent` contains any of: `[Job Completed]` / `[Job Auto-Completed]` / `[x402 Job Completed]` / `[Job Expired]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]`, render the notification verbatim per §kind == notification, then **stop the watch loop** — do not re-enter. This jobId is terminal; continuing to long-poll on a dead jobId is pure churn (no new events will ever arrive for this `--job-id`).
+  - **Global session** (no `--job-id`) does NOT apply this stop — other tasks may still produce new events. See §"NOT stop conditions" below.
 
 ### Re-enter after processing
 
@@ -290,6 +292,6 @@ After processing all returned items, **always** call `okx-a2a user watch --once 
 🚫 **NOT stop conditions** — every one of these requires re-entering watch:
 
 - A `notification` was just rendered (auto-consumed by watch — no claim step exists for notifications).
-- A `notification` whose content contains `[Job Completed]` / `[Job Auto-Completed]` — **the task's terminal state ≠ the watch loop's terminal state**.
+- A `notification` whose content contains any terminal-state marker (`[Job Completed]` / `[Job Auto-Completed]` / `[x402 Job Completed]` / `[Job Expired]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]`) **in a global session** — the global watch monitors the user-session-wide inbox; one task's terminal state ≠ the loop's terminal state (other tasks may still produce events). **In a scoped session (with `--job-id <X>`) these markers ARE stop signals** — see §Stop condition above for the scoped terminal-state rule.
 - A `decision_request` was just handled — relay completed (step 3) / `alreadyHandled` (step 4) / claim-succeeded-but-relay-failed (step 5). **Note**: `保留` / `skip` (step 1) is a STOP, listed above.
 - Watch returned 0 items (empty result / long-poll elapsed with no new events) — re-enter watch and keep waiting.
