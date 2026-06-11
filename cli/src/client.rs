@@ -108,6 +108,7 @@ fn first_charge_confirming() -> CliConfirming {
     CliConfirming {
         message: String::new(),
         next: String::new(),
+        scene: None,
     }
 }
 

@@ -260,7 +260,7 @@ async fn run() {
     if let Err(e) = result {
         match e.downcast::<output::CliConfirming>() {
             Ok(c) => {
-                output::confirming(&c.message, &c.next);
+                output::confirming_scene(&c.message, &c.next, c.scene.as_deref());
                 std::process::exit(2);
             }
             Err(e) => match e.downcast::<output::CliSetupRequired>() {

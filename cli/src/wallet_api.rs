@@ -1095,6 +1095,9 @@ impl WalletApiClient {
         })
     }
 
+    /// Retries once after DoH failover, and additionally force-refreshes the
+    /// access token + retries once on a server-side `Invalid access token`
+    /// (10008) — see `post_authed_with_headers`.
     pub fn get_authed<'a>(
         &'a mut self,
         path: &'a str,
@@ -1179,6 +1182,8 @@ impl WalletApiClient {
     }
 
     /// GET + JWT + optional extra headers, returning raw bytes instead of JSON data.
+    /// Used for binary downloads (e.g. file attachments). No 10008 retry —
+    /// binary download endpoints are not typical token-revocation sites.
     pub fn get_authed_bytes_with_headers<'a>(
         &'a mut self,
         path: &'a str,
@@ -1222,6 +1227,7 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            self.doh.cache_direct_if_needed();
 
             let status = resp.status();
             let content_type = resp
@@ -1271,10 +1277,19 @@ impl WalletApiClient {
     // ── Public API methods ──────────────────────────────────────────
 
     /// POST /priapi/v5/wallet/agentic/auth/init
-    pub async fn auth_init(&mut self, email: &str, locale: Option<&str>) -> Result<InitResponse> {
+    pub async fn auth_init(
+        &mut self,
+        email: &str,
+        locale: Option<&str>,
+        sys_locale: Option<&str>,
+    ) -> Result<InitResponse> {
         let mut body = json!({ "email": email });
         if let Some(loc) = locale {
             body["locale"] = serde_json::Value::String(loc.to_string());
+        }
+        // camelCase wire key — lowercase `syslocale` is ignored by the backend.
+        if let Some(sl) = sys_locale {
+            body["sysLocale"] = serde_json::Value::String(sl.to_string());
         }
         let data = self
             .post_public("/priapi/v5/wallet/agentic/auth/init", &body)
@@ -1331,6 +1346,7 @@ impl WalletApiClient {
     }
 
     /// POST /priapi/v5/wallet/agentic/auth/ak/verify
+    #[allow(clippy::too_many_arguments)]
     pub async fn ak_auth_verify(
         &mut self,
         temp_pub_key: &str,
@@ -1339,8 +1355,9 @@ impl WalletApiClient {
         timestamp: &str,
         sign: &str,
         locale: &str,
+        sys_locale: Option<&str>,
     ) -> Result<VerifyResponse> {
-        let body = json!({
+        let mut body = json!({
             "tempPubKey": temp_pub_key,
             "apiKey": api_key,
             "passphrase": passphrase,
@@ -1348,6 +1365,10 @@ impl WalletApiClient {
             "sign": sign,
             "locale": locale,
         });
+        // camelCase wire key; sysLocale is NOT part of the AK signed string (Q3).
+        if let Some(sl) = sys_locale {
+            body["sysLocale"] = serde_json::Value::String(sl.to_string());
+        }
         let data = self
             .post_public("/priapi/v5/wallet/agentic/auth/ak/verify", &body)
             .await?;
