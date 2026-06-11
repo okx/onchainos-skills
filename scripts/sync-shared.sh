@@ -51,6 +51,7 @@ fi
 # Writes results into global array MULTI_SELECT_RESULT.
 
 MULTI_SELECT_RESULT=()
+MULTI_SELECT_ALL=0
 
 multi_select() {
   local label=$1
@@ -71,9 +72,11 @@ multi_select() {
   read -r raw
 
   MULTI_SELECT_RESULT=()
+  MULTI_SELECT_ALL=0
 
   if [[ "$raw" == "a" || "$raw" == "A" ]]; then
     MULTI_SELECT_RESULT=("${items[@]}")
+    MULTI_SELECT_ALL=1
     return
   fi
 
@@ -102,6 +105,7 @@ chosen_files=("${MULTI_SELECT_RESULT[@]}")
 
 multi_select "Which skills do you want to copy to?" "${ALL_SKILLS[@]}"
 chosen_skills=("${MULTI_SELECT_RESULT[@]}")
+skills_all=$MULTI_SELECT_ALL
 
 # ── confirm ───────────────────────────────────────────────────────────────────
 
@@ -109,7 +113,11 @@ echo
 bold "Summary"
 echo
 echo "  Files : ${chosen_files[*]}"
-echo "  Skills: ${chosen_skills[*]}"
+if [[ "$skills_all" == "1" ]]; then
+  echo "  Skills: all (update-only — skip skills that don't already have the file)"
+else
+  echo "  Skills: ${chosen_skills[*]}"
+fi
 echo
 printf '%s' "$(dim 'Proceed? [y/N] ')"
 read -r confirm
@@ -123,9 +131,15 @@ fi
 echo
 for skill in "${chosen_skills[@]}"; do
   target_dir="$SKILLS_DIR/$skill/_shared"
-  mkdir -p "$target_dir"
   for file in "${chosen_files[@]}"; do
-    cp "$SOURCE_DIR/$file" "$target_dir/$file"
+    target_file="$target_dir/$file"
+    # "all" mode = update-only: never create the file in a skill that doesn't already carry it.
+    if [[ "$skills_all" == "1" && ! -f "$target_file" ]]; then
+      printf '  %s  %s/_shared/%s %s\n' "$(dim '–')" "$skill" "$file" "$(dim '(no existing file — skipped)')"
+      continue
+    fi
+    mkdir -p "$target_dir"
+    cp "$SOURCE_DIR/$file" "$target_file"
     printf '  %s  %s/_shared/%s\n' "$(green '✓')" "$skill" "$file"
   done
 done
