@@ -87,19 +87,23 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
 
 ## Gates (non-overridable; apply to every write)
 
-- **Pre-check** — before any `create` / `update`, run `agent get` ONCE. Pass the
-  resulting agent-id list to `--known-agent-ids` on `create` so the CLI returns `newAgentId`. No
-  exception, even a one-shot named-role request.
+- **Pre-check** — resolve the role first (§1; `--role` is required), then before any `create` run
+  `agent pre-check --role <role>` ONCE (it folds first-time consent + per-wallet uniqueness and returns
+  `{ canCreate, role, reason?, consent?, existingSameRole, providerCount, knownAgentIds }` — render per register §2), then pass its
+  `knownAgentIds` to `--known-agent-ids` on `create` so the CLI returns `newAgentId`. Before any `update`,
+  fetch the target with `agent get --agent-ids` first (register §12). No exception, even a one-shot named-role request.
 - **Confirm** — `create` / `update` MUST render a §Invariants card and wait for an
   explicit confirm token (execute / yes / go / 确认). **Nothing** bypasses this: not "不用确认", not
   "赶紧" / urgency, not memory prefs, not plan-mode exit, not a prior similar confirm, not one-shot field
   capture. Catch yourself thinking "they already said skip"? → render the card anyway; one extra turn ≪
   an irreversible on-chain write. `activate` / `deactivate` are state toggles → no card, run directly.
-- **Consent (first-time wallet, BEFORE field Q&A)** — after pre-check, run the standalone `agent consent`
-  once; on `required:true` show the returned `terms` (full, translated, never summarized; never the
-  `consentKey` UUID), wait for agree / decline, then `agent consent --consent-key <uuid> --agreed true|false`.
-  Agree → proceed to field Q&A; decline → stop (no `create`); `required:false` → skip to Q&A. `create`
-  never carries consent flags and its response has no `consent` field.
+- **Consent (first-time wallet)** — folded into `agent pre-check`, surfaced as a `consent` field on a
+  `canCreate:false` result: show `consent.terms` (full, translated, never summarized; never the
+  `consentKey` UUID), wait for agree / decline. Agree → re-invoke `agent pre-check --role <role>
+  --consent-key <uuid>` (the consent-key's presence submits the agreement and continues to the verdict).
+  Decline → just stop (no further call — there is no CLI decline path).
+  Never invoke `agent consent` yourself for registration. `create` never carries consent flags and its
+  response has no `consent` field.
 - **Post-execute** — the first user-visible line after any CLI call comes from the reference's template, not
   your own JSON summary. Before any "registered" line, confirm an `agent <sub>` ran (not `wallet add`)
   and the role matches the template. On non-success → load `references/errors.md` — the single source for
@@ -151,12 +155,14 @@ Targets below are internal routing — never name a skill path or "staking" hand
 | passive need-requester | hand back to okx-agent-task with ONE line. No Step 6. |
 | search / get / service-list / feedback-list | Stop. |
 
-## Commands (12 `onchainos agent` subcommands — you invoke them, never show them)
+## Commands (13 `onchainos agent` subcommands — you invoke them, never show them)
 
-`create · consent · update · get · activate · deactivate · upload · search · service-list · validate-listing ·
-feedback-list · submit-approval`. `consent` (first-time terms gate, see §Gates) +
-`validate-listing` + `submit-approval` are auto/internal — never shown as a command, though
-`validate-listing`'s `findings[]` ARE rendered inline.
+`create · pre-check · update · get · activate · deactivate · upload · search · service-list ·
+validate-listing · feedback-list · submit-approval · consent`. `pre-check` (registration entry,
+`--role` required / `--consent-key` optional: first-time consent + uniqueness, see §Gates / register §2) + `validate-listing` + `submit-approval` are
+auto/internal — never shown as a command, though `pre-check`'s `{canCreate, reason, consent, …}` and
+`validate-listing`'s `findings[]` ARE rendered inline. `consent` is a low-level primitive that `pre-check`
+drives internally — never call it yourself for registration.
 Never suggest `xmtp-sign`; never surface the signing-key address in any card or message. No `--address` (signs with the current wallet).
 Array field names: create/update/get/search → `list`; feedback-list → `items`; service-list → nested `services`.
 

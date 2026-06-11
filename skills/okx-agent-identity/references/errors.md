@@ -26,7 +26,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | `invalid servicetype` | "Type must be API service or agent-to-agent." → re-render numbered type prompt. Never echo `A2MCP`/`A2A`. |
 | `invalid value for --role` | "Role must be User Agent / ASP / Evaluator Agent." → re-render numbered role prompt. Never echo the enum. |
 | `provider agents require at least one service` | "An ASP needs at least one service." → return to service Q&A. No raw `provider`. |
-| `failed to read file` | "Can't read that file." → recheck path; terminal → offer generate / skip. |
+| `failed to read file` | "Can't read that file." → recheck path; offer send-image / keep-default. |
 | `upload response missing url` | "Upload succeeded but no URL came back." → retry once; if persists, surface and ask. |
 
 (`xmtp-sign ... missing signature` is not user-facing — `xmtp-sign` is never exposed.)

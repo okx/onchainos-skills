@@ -73,6 +73,28 @@ pub struct GetArgs {
     pub page_size: Option<String>,
 }
 
+/// `onchainos agent precheck`: unified registration entry (see the registration
+/// flow diagram). `--role` is REQUIRED; `--consent-key` optional. Always returns
+/// `{ canCreate, role, agentList?, reason?, consent? }`:
+///   • canCreate:true                          → may register this role
+///   • canCreate:false + reason + agentList    → blocked (single role already exists)
+///   • canCreate:false + reason + consent{...}  → first-time wallet, terms not yet
+///     accepted; the skill shows `consent.terms`, then re-invokes with `--consent-key`.
+#[derive(Args, Clone, Debug)]
+pub struct PrecheckArgs {
+    /// Required (same shape as `agent create`: clap-optional, runtime-enforced).
+    /// requester / provider / evaluator (aliases: 1/buyer/requestor → requester,
+    /// 2 → provider, 3 → evaluator). Missing → `missing required parameter`;
+    /// an unrecognized value → `invalid value for --role`.
+    #[arg(long)]
+    pub role: Option<String>,
+    /// The one-time consentKey from a prior `consent` block. PRESENCE means "the
+    /// user agreed" — the CLI submits the consent with `agreed=true`. Omit it and
+    /// (for a first-time wallet) the CLI checks consent status / returns terms.
+    #[arg(long = "consent-key")]
+    pub consent_key: Option<String>,
+}
+
 #[derive(Args, Clone, Debug)]
 pub struct AgentStatusArgs {
     #[arg(long = "agent-id")]

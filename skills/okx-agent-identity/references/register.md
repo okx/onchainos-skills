@@ -6,9 +6,9 @@ The CLI does the work — `validate-listing` returns the QA `findings[]`, `creat
 
 ---
 
-## 1. Role ask
+## 1. Role ask (do FIRST — `--role` is required by pre-check)
 
-If the role isn't already clear from the request, ask once:
+`agent pre-check` **requires** `--role`. If the role is clear from the request, use it; otherwise ask once (accept a number or the written role name; never default or guess from the agent's name):
 
 ```
 What kind of agent identity do you want?
@@ -17,25 +17,22 @@ What kind of agent identity do you want?
   3. Evaluator Agent — to arbitrate task disputes
 ```
 
-Accept the number or the written role name. Never default or guess the role from the agent's name.
+Then run §2 with `--role <role>`.
 
-## 2. Pre-check (Gate — run `agent get` ONCE first)
+## 2. Pre-check (Gate — `agent pre-check --role <role> [--consent-key <uuid>]`: consent + uniqueness in ONE command)
 
-Run `agent get` once, then **filter to the current wallet**: keep only rows whose `ownerAddress` matches the currently-selected XLayer wallet (each row carries `accountName` / `ownerAddress`). Same-role agents under other wallets do not count — uniqueness is per address.
+Run `agent pre-check --role <role>` (internal — never shown). It fetches the wallet's agents; **if the wallet has agents it's already consented** (→ straight to the uniqueness verdict); **if it has none it runs the consent gate first**. It always returns `{ canCreate, role, reason?, consent?, existingSameRole, providerCount, knownAgentIds }` — **never call `agent get` / `agent consent` yourself for registration**. Branch on the result:
 
-Uniqueness: **≤1 requester, ≤1 evaluator per wallet; provider UNLIMITED.**
+- **`consent` present** (always `canCreate:false`) → first-time wallet, terms not yet accepted. This is a **blocking** legal-confirmation step: render `consent.consent.terms` **complete and translated** (never summarized; **never show the `consentKey`**), then "Reply 'agree' to continue; reply 'decline' to cancel."
+  - **agree** → re-run `agent pre-check --role <role> --consent-key <uuid>` (passing the consent-key IS the agreement — it submits `agreed=true` and continues).
+  - **decline** → do NOT call again; say "Registration cancelled — creating an agent identity requires accepting the terms of use. Restart any time." and stop, no `create`.
+  - Ambiguous reply → re-display once; never auto-agree / auto-decline.
+- **`canCreate:false`** (no `consent` field — a single-role identity already exists; `reason` explains) → do NOT create, do NOT offer "create new". Redirect to update with the mandatory per-wallet line, filling `<roleLabel>` / `<N>` / `<name>` from `existingSameRole[0]`:
+  > "Under this wallet (当前钱包) you already have a `<roleLabel>` identity #`<N>` (`<name>`). Each address can register only one `<roleLabel>` — say "update #`<N>`" to edit it, or keep using it. To register a separate one under a different address, switch / add a wallet first."
+- **`canCreate:true`** → may register. For a **provider** with existing ASPs (`providerCount` K ≥ 1) offer new-vs-update first (K=1 → *1. Register a new ASP / 2. Update #`<N1>` (`<name1>`)*; K ≥ 2 → list every existing ASP `#<id>` (`<name>`) from `existingSameRole`, ask which by number; never auto-pick). Otherwise (requester/evaluator with none yet, provider with K=0) → proceed to the §3 field Q&A.
+- Pass `knownAgentIds` through verbatim as `--known-agent-ids <csv>` on the eventual `create` so the CLI returns `newAgentId`.
 
-- **requester / evaluator — already exists** → do NOT create, do NOT offer "create new". Redirect to update, including the per-wallet line (the `当前钱包` / "Under this wallet" qualifier is mandatory):
-  > "Under this wallet (当前钱包) you already have a `<role>` identity #`<N>` (`<name>`). Each address can register only one `<role>` — say "update #`<N>`" to edit it, or keep using it. To register a separate one under a different address, switch / add a wallet first."
-
-  `<role>` = the localized label (User Agent / Evaluator Agent), never the enum.
-- **provider** → never blocked by an existing requester/evaluator. Branch on K = provider count under this wallet:
-  - K = 1: numbered choice — *1. Register a new ASP (multiple per address allowed) / 2. Update #`<N1>` (`<name1>`)*.
-  - K ≥ 2: same choice, but **list every existing ASP id** `#<N>` (`<name>`); on "update" with K ≥ 2, ask which one by number. Never auto-pick, never collapse to "one of them" without the list.
-- Capture the resulting agent-id snapshot (the current-wallet ids) → pass as `--known-agent-ids <csv>` on the create so the CLI can return `newAgentId`.
-- **After pre-check, run the §9 consent gate** (`agent consent`) before any field Q&A — it self-skips (`required:false`) for returning wallets.
-
-**Passive need-requester** (handed in from a task flow): skip role-ask, skip pre-check, skip photo. See §8.
+**Passive need-requester** (handed in from a task flow): skip the pre-check loop / photo entirely. See §8.
 
 ## 3. Field checklists (one line per field — limits are enforced by `validate-listing`, not by you)
 
@@ -60,10 +57,10 @@ The CLI is the QA engine; you render its `findings[]` and add ONE check it can't
 ## 5. Avatar (inline — image links are rejected)
 
 - **Image links are not accepted.** If the user supplies a URL, reject it — do NOT pass it to `--picture`, do NOT download-and-reupload, do NOT claim it was set:
-  > "Avatar links aren't supported — send an image file directly, or say 'generate' to create one."
+  > "Avatar links aren't supported — send an image file directly, or keep the default."
 - **Actively offer at the provider identity card's close** (a CTA, not a passive row):
-  > 📷 Profile photo is the default — **send an image or say "generate" to set one** (a plain square, no rounded corners or borders, renders best). Reply "next" when ready.
-- **On opt-in:** Claude Code → save the inbound image attachment to a temp path → run the `upload` subcommand (`agent upload --file <temp>`) → use the returned URL as `--picture` (this temp write is the one allowed by SKILL §Gates No-shell-stitching); >1 MB → stop and ask for a smaller one; render the URL verbatim in the Profile photo row. Plain terminal → offer generate / skip (no attachments). 1:1 square is the tip.
+  > 📷 Profile photo is the default — **send an image to set one** (a plain square, no rounded corners or borders, renders best). Reply "next" when ready.
+- **On opt-in:** Claude Code → save the inbound image attachment to a temp path → run the `upload` subcommand (`agent upload --file <temp>`) → use the returned URL as `--picture` (this temp write is the one allowed by SKILL §Gates No-shell-stitching); >1 MB → stop and ask for a smaller one; render the URL verbatim in the Profile photo row. No image supplied → keep the default. 1:1 square is the tip.
 - **Never alter the user's image.** Don't auto-compress / resize / crop / strip a border to make it fit — the user owns the image. On >1 MB, stop and ask for a smaller one (don't shrink it yourself); on a non-1:1 image, accept and upload as-is (don't reject or re-crop) — the square tip is advisory only.
 - **Bad file type:** the backend accepts PNG / JPEG / WebP; other types are rejected (the exact wording isn't fixed — don't hard-code it). On a type rejection, ask the user to convert to PNG / JPEG / WebP and resend, then retry.
 
@@ -91,14 +88,9 @@ Skip role-ask / pre-check / photo. Ask name → (description) → render the car
 
 (If a requester already exists: "You already have a User Agent identity #`<N>` (`<name>`) — using it to continue.") Hand back to the task flow with that single line; don't ask "want to publish a task?".
 
-## 9. Consent (Gate detail — standalone `agent consent`, AFTER pre-check, BEFORE field Q&A)
+## 9. Consent (folded into the §2 `agent pre-check` loop)
 
-Consent is its OWN command, decoupled from `create`: run once after pre-check, before collecting any field. `create` never carries `--consent-key` / `--agreed`, and its response has no `consent` field.
-1. **Step 1 (no flags):** `agent consent` → `{ "required": bool, "consent": { "consentKey", "terms" } | null }`. `required:false` (returning wallet / flag off) → skip the card, go straight to §1/§3 Q&A.
-2. **`required:true`** → render `consent.terms` **complete and translated** (never summarized), then "Reply 'agree' to continue; reply 'decline' to cancel." **Never show the `consentKey` UUID.**
-3. On agree → `agent consent --consent-key <uuid> --agreed true` → then proceed to field Q&A → card → create.
-4. On decline → `agent consent --consent-key <uuid> --agreed false` → "Registration cancelled — creating an agent identity requires accepting the terms of use. Restart any time." Stop, no `create`.
-5. Ambiguous reply → re-display once; never auto-agree / auto-decline.
+Consent is **no longer a step you invoke** — `agent pre-check` runs it internally and surfaces it as a **`consent` field on a `canCreate:false` result** (`consent: { consentKey, terms }` + a `reason`). Accept by re-invoking `agent pre-check --role <role> --consent-key <uuid>` (the consent-key's **presence** = agreement; the CLI submits `agreed=true`). Decline = simply don't re-invoke and stop (see §2). The `agent consent` command still exists as a low-level primitive but the registration flow never calls it directly. `create` never carries consent flags and its response has no `consent` field. **Never show the `consentKey` UUID**; render `terms` complete and translated, never summarized.
 
 ## 10. Execute
 

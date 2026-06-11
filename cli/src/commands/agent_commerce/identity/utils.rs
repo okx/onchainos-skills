@@ -478,6 +478,27 @@ fn role_label_from_value(role: &Value) -> Option<&'static str> {
     }
 }
 
+/// Canonical role key (`requester` / `provider` / `evaluator`) from a row's raw
+/// `role` value, accepting both the string enum and the backend integer
+/// (`1`/`2`/`3`). Unknown → `None`.
+fn role_key_from_value(role: &Value) -> Option<&'static str> {
+    match role {
+        Value::String(s) => match s.trim() {
+            "requester" => Some("requester"),
+            "provider" => Some("provider"),
+            "evaluator" => Some("evaluator"),
+            _ => None,
+        },
+        Value::Number(n) => match n.as_u64()? {
+            1 => Some("requester"),
+            2 => Some("provider"),
+            3 => Some("evaluator"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// True when the row's `role` is the provider role, accepting both the string
 /// enum (`"provider"`) and the backend integer (`2`). Gates the provider-only
 /// service rows in `build_agent_card`.
@@ -946,6 +967,112 @@ pub(super) fn add_agent_list_cells(v: &mut Value) {
             map.insert("cells".to_string(), Value::Array(cells));
         }
     });
+}
+
+// ─── registration pre-check (powers `agent precheck`) ─────────────────────
+//
+// Sinks references/register.md §2's per-wallet uniqueness logic into the CLI:
+// scope an `/agent-list` envelope to the signing wallet, count by role, and
+// decide whether the requested role can be created (≤1 requester, ≤1 evaluator
+// per address; provider unlimited). The skill renders the verdict instead of
+// filtering / counting agent rows by hand.
+
+/// Collect the signing wallet's `(agentId, roleKey, name)` from an
+/// `/agent-list` envelope. Tolerates both shapes (single-layer `list[*]`,
+/// double-layer `list[*].agentList[*]`); a row/wrapper with no `ownerAddress`
+/// is treated as owned (the list endpoint is JWT-scoped to the caller).
+pub(super) fn collect_owned_agents(
+    agent_list: &Value,
+    signing_address: &str,
+) -> Vec<(String, Option<&'static str>, String)> {
+    let signing_lower = signing_address.trim().to_ascii_lowercase();
+    let owner_matches = |node: &Value| -> bool {
+        match node.get("ownerAddress").and_then(Value::as_str) {
+            Some(addr) => addr.trim().to_ascii_lowercase() == signing_lower,
+            None => true,
+        }
+    };
+    let push = |row: &Value, out: &mut Vec<(String, Option<&'static str>, String)>| {
+        let id = match row.get("agentId") {
+            Some(Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+            Some(Value::Number(n)) => n.to_string(),
+            _ => return,
+        };
+        let role_key = row.get("role").and_then(role_key_from_value);
+        let name = row
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        out.push((id, role_key, name));
+    };
+
+    let mut owned = Vec::new();
+    if let Some(items) = agent_list.get("list").and_then(Value::as_array) {
+        for item in items {
+            match item.get("agentList").and_then(Value::as_array) {
+                Some(rows) if owner_matches(item) => {
+                    for r in rows {
+                        push(r, &mut owned);
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    if owner_matches(item) {
+                        push(item, &mut owned);
+                    }
+                }
+            }
+        }
+    }
+    owned
+}
+
+/// Pure pre-check verdict for the requested role (register.md §2 uniqueness):
+///   { role, roleLabel, ownerAddress, uniqueness, canCreate,
+///     existingSameRole: [{agentId,name,roleLabel}], providerCount,
+///     knownAgentIds }  // CSV of ALL owned ids → create's --known-agent-ids
+pub(super) fn build_precheck(agent_list: &Value, signing_address: &str, role_key: &str) -> Value {
+    let owned = collect_owned_agents(agent_list, signing_address);
+
+    let known_ids: Vec<String> = owned.iter().map(|(id, _, _)| id.clone()).collect();
+    let provider_count = owned.iter().filter(|(_, rk, _)| *rk == Some("provider")).count();
+
+    let existing_same_role: Vec<Value> = owned
+        .iter()
+        .filter(|(_, rk, _)| *rk == Some(role_key))
+        .map(|(id, rk, name)| {
+            serde_json::json!({
+                "agentId": id,
+                "name": name,
+                "roleLabel": rk.and_then(role_label).unwrap_or(""),
+            })
+        })
+        .collect();
+
+    let unique = matches!(role_key, "requester" | "evaluator");
+    let can_create = if unique { existing_same_role.is_empty() } else { true };
+    let label = role_label(role_key).unwrap_or(role_key);
+
+    let mut out = serde_json::json!({
+        "role": role_key,
+        "roleLabel": label,
+        "ownerAddress": signing_address.trim(),
+        "uniqueness": if unique { "single" } else { "multiple" },
+        "canCreate": can_create,
+        "existingSameRole": existing_same_role,
+        "providerCount": provider_count,
+        "knownAgentIds": known_ids.join(","),
+    });
+    // `reason` accompanies every canCreate:false (a single-role identity already
+    // exists for this wallet). English canonical; the skill localizes.
+    if !can_create {
+        out["reason"] = serde_json::json!(format!(
+            "A {label} is already registered under this wallet; each address can register only one {label}."
+        ));
+    }
+    out
 }
 
 // ─── §6 search-result row cells ───────────────────────────────────────────
@@ -2158,5 +2285,79 @@ mod tests {
         assert_eq!(cells[0], json!({ "label": "Score", "value": "★ 5" }));
         assert_eq!(cells[1], json!({ "label": "Reviewer", "value": "#88" }));
         assert_eq!(cells[4], json!({ "label": "Comment", "value": "Great" }));
+    }
+
+    // ─── build_precheck (registration §2 uniqueness) ─────────────────────
+
+    #[test]
+    fn precheck_requester_exists_blocks_create() {
+        let data = json!({
+            "list": [
+                { "agentId": 10, "name": "My Buyer", "role": 1, "ownerAddress": "0xSIGNER" },
+                { "agentId": 11, "name": "My ASP",   "role": 2, "ownerAddress": "0xSIGNER" },
+            ],
+        });
+        let r = build_precheck(&data, "0xsigner", "requester");
+        assert_eq!(r["canCreate"], json!(false));
+        assert_eq!(r["uniqueness"], json!("single"));
+        assert_eq!(r["existingSameRole"][0]["agentId"], json!("10"));
+        assert_eq!(r["existingSameRole"][0]["roleLabel"], json!("User Agent"));
+        assert_eq!(r["knownAgentIds"], json!("10,11"));
+    }
+
+    #[test]
+    fn precheck_requester_absent_allows_create() {
+        let data = json!({ "list": [
+            { "agentId": 11, "name": "My ASP", "role": 2, "ownerAddress": "0xSIGNER" },
+        ]});
+        let r = build_precheck(&data, "0xSIGNER", "requester");
+        assert_eq!(r["canCreate"], json!(true));
+        assert_eq!(r["existingSameRole"].as_array().unwrap().len(), 0);
+        assert_eq!(r["knownAgentIds"], json!("11"));
+    }
+
+    #[test]
+    fn precheck_provider_always_creatable_and_counts() {
+        let data = json!({ "list": [
+            { "agentId": 11, "name": "ASP One", "role": 2, "ownerAddress": "0xSIGNER" },
+            { "agentId": 12, "name": "ASP Two", "role": 2, "ownerAddress": "0xSIGNER" },
+            { "agentId": 10, "name": "Buyer",   "role": 1, "ownerAddress": "0xSIGNER" },
+        ]});
+        let r = build_precheck(&data, "0xSIGNER", "provider");
+        assert_eq!(r["canCreate"], json!(true));
+        assert_eq!(r["uniqueness"], json!("multiple"));
+        assert_eq!(r["providerCount"], json!(2));
+        assert_eq!(r["existingSameRole"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn precheck_scopes_to_signing_wallet_only() {
+        let data = json!({ "list": [
+            { "agentId": 50, "name": "Other Eval", "role": 3, "ownerAddress": "0xOTHER" },
+        ]});
+        let r = build_precheck(&data, "0xSIGNER", "evaluator");
+        assert_eq!(r["canCreate"], json!(true));
+        assert_eq!(r["knownAgentIds"], json!(""));
+    }
+
+    #[test]
+    fn precheck_double_layer_and_missing_owner() {
+        let data = json!({ "list": [
+            { "ownerAddress": "0xSIGNER", "accountName": "main", "agentList": [
+                { "agentId": 7, "name": "Eval", "role": 3 },
+            ] },
+        ]});
+        let r = build_precheck(&data, "0xSIGNER", "evaluator");
+        assert_eq!(r["canCreate"], json!(false));
+        assert_eq!(r["existingSameRole"][0]["agentId"], json!("7"));
+    }
+
+    #[test]
+    fn collect_owned_counts_for_has_agents_gate() {
+        let data = json!({ "list": [
+            { "agentId": 1, "name": "A", "role": 1, "ownerAddress": "0xSIGNER" },
+        ]});
+        assert_eq!(collect_owned_agents(&data, "0xSIGNER").len(), 1);
+        assert_eq!(collect_owned_agents(&data, "0xOTHER").len(), 0);
     }
 }
