@@ -102,9 +102,9 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
   never carries consent flags and its response has no `consent` field.
 - **Post-execute** — the first user-visible line after any CLI call comes from the reference's template, not
   your own JSON summary. Before any "registered" line, confirm an `agent <sub>` ran (not `wallet add`)
-  and the role matches the template. On non-success → load `references/errors.md`. **Region restriction
-  (code 50125 / 80001):** render "Service is not available in your region." — never echo the raw code,
-  never suggest a VPN / region workaround, never auto-retry.
+  and the role matches the template. On non-success → load `references/errors.md` — the single source for
+  every code→message (region 50125 / 80001, consent 40020–22, whitelist 10016, 81602 blocked); never
+  interpret a code inline.
 - **No-poll** — one intent = one CLI call. Never chase a successful write with `agent get`; never poll
   or sleep; never auto-retry a business error (retry once only on a 5xx / network failure). Treat the
   CLI response as authoritative.

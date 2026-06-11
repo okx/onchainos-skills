@@ -113,7 +113,7 @@ onchainos agent create \
   --known-agent-ids <csv from pre-check>
 ```
 
-**Region restriction inline (backstop, also in SKILL §Gates Post-execute):** if the response carries code `50125` / `80001`, render an error card whose message is "Service is not available in your region." — never echo the raw code, never suggest a VPN / region workaround, never auto-retry. Any other non-success → load `references/errors.md`.
+**On any non-success** (region `50125`/`80001`, consent `40020`–`40022`, whitelist `10016`, or anything else) → load `references/errors.md` and match the row; never interpret a code inline. errors.md is the single source for every code→message.
 
 ## 11. Post-success templates (verbatim except `#<id>`; localized; `#<id>` per SKILL §Invariants #id ladder — `newAgentId` primary)
 

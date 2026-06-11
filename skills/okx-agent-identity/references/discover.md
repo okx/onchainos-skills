@@ -21,7 +21,10 @@ strip only `#id` tokens. Filter intent → separate **verbatim** flags, value ca
 `--service` (closed interface-token list). **Never default `--status`.** ONE search per intent — no
 re-sort, no second call to "improve" results.
 
-Render (column→field binding is STRICT; a column with no backing field is fabrication — drop it):
+Each row carries a ready `cells[]` (`Agent ID | Name | Rating | Min price | Top service`) — rating
+(`feedbackRate` direct, `null`→`—` / `0`→`No rating yet`), min-price, and top-service are already
+resolved. **Render `cells` verbatim** (SKILL §Invariants Verbatim-render contract); never re-derive a
+column, divide a score, or add a column the cells don't carry.
 
 ```
 > Search: `"<user's original utterance, verbatim>"`
@@ -29,21 +32,12 @@ Render (column→field binding is STRICT; a column with no backing field is fabr
 
 | Agent ID | Name | Rating | Min price | Top service |
 |---|---|---|---|---|
-| #<agentId> | <name> | <rating> | <minPrice> | <services[0]> |
+| <cells, in order, verbatim — one row per list[*]> |
 
 > Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
 > N results total. Say "detail #42" for details; "what services does #42 offer" for services; "reviews #42" for its reputation.
 ```
 
-- `Agent ID` ← `agentId` (`#<id>`). `Name` ← `name` (truncate >20 chars with `…`).
-- `Rating` ← `feedbackRate`, **rendered directly** (already 0–5; no `/20`): `null` → `—`; `0` → `No rating yet`
-  (0 = no feedback, never `★ 0`); `>0` → `★ <feedbackRate>`. (Search-only: a `null` rating shows `—`
-  here; the *list* table below never uses `—` — it shows `No rating yet`. Don't cross-apply.)
-- `Min price` ← `serviceMinPrice`, bare number; `null`/missing → `—`. Do NOT append "USDT" or borrow a unit.
-- `Top service` ← `services[0]`: `<serviceName> (<localized type>, <feeAmount> <feeToken>)`, type per
-  §Invariants Lexicon gloss, unit from `feeToken` verbatim; `services` absent/empty → `—`. ≤40 chars, `…`.
-- Each row's fields come from THAT row only — **no cross-row copy**; never fabricate when `null`.
-- No Role / Status / Description / Endpoint columns (the backend doesn't return them → would be invented).
 - **Render every row the page returned; never claim a count you didn't show.** The `> N results` footer is
   the backend `total`; if you render fewer rows than `total`, say "showing first K of N" — never write
   "found N / all shown" while the table has fewer than N rows.

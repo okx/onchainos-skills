@@ -56,5 +56,4 @@ Branch on the response:
   ```
 - **`success: false` + `approvalStatus` `2`** → `Under review — your listing is being checked;
   you'll be discoverable once it's approved.` Stop. No Step 6, no poll.
-- **top-level `code: "81602"`** → load `references/errors.md` and stop (use its softened "blocked by the platform" wording — don't echo internal labels).
-- **any other `success: false`** (whitelist `10016`, region `50125`/`80001`, or an unrecognized code) → load `references/errors.md` and match the row there; don't interpret it generically.
+- **any other `success: false`** (incl. `81602` blocked, whitelist `10016`, region `50125`/`80001`, consent, or an unrecognized code) → load `references/errors.md`, match the row, and follow its stop/next instruction; never interpret a code inline. errors.md is the single source for code→message.
