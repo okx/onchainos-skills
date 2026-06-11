@@ -593,6 +593,53 @@ pub struct BroadcastResponse {
     pub tx_hash: String,
 }
 
+/// Detect the backend's "access token revoked / invalid" signal (code 10008 /
+/// "Invalid access token"). Both `ApiClient` (`API error (code=10008): ...`)
+/// and `WalletApiClient` (`Wallet API error (code=10008): ...`) format the
+/// code into the error string, so a substring match works for either client.
+///
+/// Used by the transport-layer retry: local JWT `exp` may still be in the
+/// future yet the backend has invalidated the token (re-login on another
+/// device, password change, server-side risk control).
+pub(crate) fn is_invalid_token_error(e: &anyhow::Error) -> bool {
+    let s = e.to_string();
+    s.contains("code=10008") || s.contains("Invalid access token")
+}
+
+/// Force-refresh the access token via the refresh-token endpoint, bypassing the
+/// local JWT `exp` check. Reads `refresh_token` from the keyring, calls
+/// `/auth/refresh` (DoH-capable, via `auth_refresh`), persists the rotated
+/// tokens, and returns the new access token.
+///
+/// This is the single shared force-refresh primitive used by both clients'
+/// transport-layer 10008 retry (`ApiClient` + `WalletApiClient`) and by the
+/// competition module. It does NOT apply `chainUpdated` from the refresh
+/// response — that stays the responsibility of `ensure_tokens_refreshed`'s
+/// normal TTL path; this primitive's only job is to obtain a valid token.
+pub(crate) async fn force_refresh_access_token() -> Result<String> {
+    let blob = crate::keyring_store::read_blob()?;
+    let refresh_token = blob
+        .get("refresh_token")
+        .filter(|t| !t.is_empty())
+        .cloned()
+        .ok_or_else(|| {
+            anyhow::anyhow!("refresh_token missing — please run: onchainos wallet login")
+        })?;
+
+    let mut client = WalletApiClient::new()?;
+    let resp = client
+        .auth_refresh(&refresh_token)
+        .await
+        .map_err(|e| anyhow::anyhow!("force-refresh failed: {}", e))?;
+
+    crate::keyring_store::store(&[
+        ("access_token", &resp.access_token),
+        ("refresh_token", &resp.refresh_token),
+    ])?;
+
+    Ok(resp.access_token)
+}
+
 impl WalletApiClient {
     pub fn new() -> Result<Self> {
         Self::with_base_url(None)
@@ -734,8 +781,37 @@ impl WalletApiClient {
             .await
     }
 
-    /// Retries once after DoH failover.
+    /// Retries once after DoH failover, and additionally force-refreshes the
+    /// access token + retries once on a server-side `Invalid access token`
+    /// (10008) — covers the case where the local JWT `exp` is still in the
+    /// future but the backend has revoked the token.
     pub fn post_authed_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        access_token: &'a str,
+        body: &'a Value,
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            match self
+                .post_authed_with_headers_once(path, access_token, body, extra_headers)
+                .await
+            {
+                Err(e) if is_invalid_token_error(&e) => {
+                    if cfg!(feature = "debug-log") {
+                        eprintln!("[DEBUG][post_authed] 10008 invalid token → force-refresh + retry once");
+                    }
+                    let fresh = force_refresh_access_token().await?;
+                    self.post_authed_with_headers_once(path, &fresh, body, extra_headers)
+                        .await
+                }
+                other => other,
+            }
+        })
+    }
+
+    /// Single POST attempt (with DoH failover retry, no token retry).
+    fn post_authed_with_headers_once<'a>(
         &'a mut self,
         path: &'a str,
         access_token: &'a str,
@@ -775,7 +851,7 @@ impl WalletApiClient {
                     if self.doh.handle_failure().await {
                         self.rebuild_http_client()?;
                         return self
-                            .post_authed_with_headers(path, access_token, body, extra_headers)
+                            .post_authed_with_headers_once(path, access_token, body, extra_headers)
                             .await;
                     }
                     return Err(e)
@@ -1029,8 +1105,37 @@ impl WalletApiClient {
     }
 
     /// GET + JWT + optional extra headers (e.g. X-Agent-Id / X-Wallet-Address).
-    /// Retries once after DoH failover.
+    /// Retries once after DoH failover, and additionally force-refreshes the
+    /// access token + retries once on a server-side `Invalid access token`
+    /// (10008) — see `post_authed_with_headers`. `get_authed` delegates here,
+    /// so plain GET-authed callers (agent get, system config, …) inherit it.
     pub fn get_authed_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        access_token: &'a str,
+        query: &'a [(&'a str, &'a str)],
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            match self
+                .get_authed_with_headers_once(path, access_token, query, extra_headers)
+                .await
+            {
+                Err(e) if is_invalid_token_error(&e) => {
+                    if cfg!(feature = "debug-log") {
+                        eprintln!("[DEBUG][get_authed] 10008 invalid token → force-refresh + retry once");
+                    }
+                    let fresh = force_refresh_access_token().await?;
+                    self.get_authed_with_headers_once(path, &fresh, query, extra_headers)
+                        .await
+                }
+                other => other,
+            }
+        })
+    }
+
+    /// Single GET attempt (with DoH failover retry, no token retry).
+    fn get_authed_with_headers_once<'a>(
         &'a mut self,
         path: &'a str,
         access_token: &'a str,
@@ -1060,7 +1165,7 @@ impl WalletApiClient {
                     if self.doh.handle_failure().await {
                         self.rebuild_http_client()?;
                         return self
-                            .get_authed_with_headers(path, access_token, query, extra_headers)
+                            .get_authed_with_headers_once(path, access_token, query, extra_headers)
                             .await;
                     }
                     return Err(e)
@@ -1689,6 +1794,29 @@ mod tests {
         let json = r#"{"flowId": "abc-123"}"#;
         let resp: InitResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.flow_id, "abc-123");
+    }
+
+    #[test]
+    fn is_invalid_token_error_matches_both_client_formats() {
+        // ApiClient surfaces non-zero codes as `API error (code=N): msg`.
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "API error (code=10008): Invalid access token"
+        )));
+        // WalletApiClient surfaces them as `Wallet API error (code=N): msg`.
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "Wallet API error (code=10008): token revoked"
+        )));
+        // Bare message match (no code in the string).
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "auth failed: Invalid access token"
+        )));
+        // Unrelated errors must NOT trigger a force-refresh retry.
+        assert!(!is_invalid_token_error(&anyhow::anyhow!(
+            "API error (code=51000): insufficient balance"
+        )));
+        assert!(!is_invalid_token_error(&anyhow::anyhow!(
+            "Network unavailable — check your connection and try again"
+        )));
     }
 
     #[test]

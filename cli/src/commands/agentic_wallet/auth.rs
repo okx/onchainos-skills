@@ -725,7 +725,7 @@ pub(super) async fn cmd_login(
                 cmd_login_ak(&api_key, &secret_key, &passphrase, locale).await
             }
             _ => {
-                bail!("please set OKX_API_KEY, OKX_SECRET_KEY, OKX_PASSPHRASE env vars for API Key login");
+                bail!("to log in with email, run `onchainos wallet login <email>`; or set OKX_API_KEY, OKX_SECRET_KEY, OKX_PASSPHRASE env vars for API Key login");
             }
         }
     }
