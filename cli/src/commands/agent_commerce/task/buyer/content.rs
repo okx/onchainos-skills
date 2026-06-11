@@ -83,13 +83,17 @@ pub fn provider_offline_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -
 pub fn job_accepted_escrow_user_notify(job_id: &str, _title: &str) -> String {
     // The trailing "Waiting for the ASP to ..." sentence reads like a
     // "conversation ending" cue and can cause LLM-driven watch loops
-    // (Claude Code / Codex) to stop prematurely. Reword it to active
-    // "Watching for ..." phrasing in CLI mode so the LLM keeps watch alive;
-    // keep the original wording for native push clients (Hermes / OpenClaw)
+    // (Claude Code / Codex) to stop prematurely. An earlier attempt to
+    // reword it to active "Watching for ..." phrasing failed in practice —
+    // when the sub agent localized the notification to Chinese, "Watching"
+    // was translated back to "等待", reintroducing the passive cue. Drop
+    // the sentence entirely in CLI mode (the metadata above is sufficient,
+    // and the watch loop continues without any natural-language nudge).
+    // Keep the original wording for native push clients (Hermes / OpenClaw)
     // where the user reads the notification directly and no LLM is making
     // the stop decision.
     let trailing = if is_cli_mode() {
-        "\n         Watching for the ASP's deliverable; the next notification will arrive on submission."
+        ""
     } else {
         "\n         Waiting for the ASP to execute and submit the deliverable."
     };
