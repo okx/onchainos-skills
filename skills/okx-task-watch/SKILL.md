@@ -4,7 +4,7 @@ description: "ACTIVATE for OKX A2A user-session task-progress flows: live monito
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.0"
+  version: "3.4.9-beta"
   homepage: "https://web3.okx.com"
 ---
 
