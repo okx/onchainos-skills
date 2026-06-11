@@ -128,21 +128,12 @@ pub enum PaymentProof {
     },
     /// `upto` scheme using the Permit2 + x402UptoPermit2Proxy flow.
     Upto {
-        /// **Base64** Ed25519 session-key signature over the upto Permit2
-        /// EIP-712 digest. The facilitator backend verifies this with the
-        /// `sessionCert` it gets back through `extra.sessionCert`, then
-        /// produces the on-chain secp256k1 signature itself via TEE
-        /// `eip712Hash` — the buyer never holds the EOA secp256k1 key.
+        /// Hex-encoded 65-byte secp256k1 signature with `0x` prefix.
         signature: String,
         /// Full `UptoPermit2Authorization` object — same shape as the exact
         /// variant but with `witness.facilitator` populated and a different
         /// EIP-712 typehash baked in.
         permit2_authorization: Value,
-        /// Session cert — required (backend rejects with
-        /// `param_mismatch: upto requires sessionCert in accepted.extra`
-        /// otherwise). Embedded into `accepted.extra.sessionCert` by
-        /// [`build_payment_header`].
-        session_cert: String,
     },
 }
 
@@ -176,11 +167,9 @@ impl PaymentProof {
             PaymentProof::Upto {
                 signature,
                 permit2_authorization,
-                session_cert,
             } => json!({
                 "signature": signature,
                 "permit2Authorization": permit2_authorization,
-                "sessionCert": session_cert,
             }),
         }
     }
@@ -526,15 +515,13 @@ pub async fn sign_payment_with_preference(
             witness_valid_after: &valid_after,
             chain_id,
         };
-        let (payload, session_cert) =
-            crate::permit2_sign::sign_upto_permit2_session(&chain_index, payer_addr, &input)
-                .await?;
+        let payload =
+            crate::permit2_sign::sign_upto_permit2(&chain_index, payer_addr, &input).await?;
         return Ok((
             PaymentProof::Upto {
                 signature: payload.signature,
                 permit2_authorization: serde_json::to_value(&payload.permit2_authorization)
                     .context("serialize UptoPermit2Authorization")?,
-                session_cert,
             },
             entry,
         ));
@@ -720,10 +707,28 @@ pub async fn sign_payment_local_with_preference(
 
     if is_deferred(&params.scheme) {
         bail!(
-            "local private-key signing requires an 'exact' scheme accepts entry, \
-             but the server only offered 'aggr_deferred' (session key required). \
+            "aggr_deferred requires a TEE session key — not supported in local-key mode. \
              Run `onchainos wallet login` to enable TEE signing."
         );
+    }
+
+    // Permit2 / upto → dedicated local signer (same wire shape as TEE path).
+    let scheme_lower = params
+        .scheme
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let asset_transfer_method = entry
+        .get("extra")
+        .and_then(|e| e.get("assetTransferMethod"))
+        .and_then(|v| v.as_str())
+        .map(str::to_ascii_lowercase);
+    let is_upto = scheme_lower == "upto";
+    let is_exact_permit2 =
+        scheme_lower == "exact" && asset_transfer_method.as_deref() == Some("permit2");
+
+    if is_upto || is_exact_permit2 {
+        return sign_permit2_local_inner(&entry, &params, is_upto).await;
     }
 
     // EIP-712 domain is on the selected entry's `extra`, not in ResolvedEntry.
@@ -812,6 +817,146 @@ pub async fn sign_payment_local_with_preference(
             session_cert: None,
         },
         entry,
+    ))
+}
+
+/// Local-key signing for `exact + Permit2` / `upto`. Wire shape matches
+/// TEE path; runs the same Permit2 allowance preflight upfront.
+async fn sign_permit2_local_inner(
+    entry: &Value,
+    params: &ResolvedEntry,
+    is_upto: bool,
+) -> Result<(PaymentProof, Value)> {
+    use alloy_signer_local::PrivateKeySigner;
+
+    let pk_hex = Zeroizing::new(read_private_key()?);
+    let pk_trimmed = pk_hex.trim();
+    let pk_clean = pk_trimmed.strip_prefix("0x").unwrap_or(pk_trimmed);
+    let pk_bytes =
+        Zeroizing::new(hex::decode(pk_clean).context("EVM_PRIVATE_KEY is not valid hex")?);
+    if pk_bytes.len() != 32 {
+        bail!(
+            "EVM_PRIVATE_KEY must be 32 bytes (64 hex chars), got {}",
+            pk_bytes.len()
+        );
+    }
+    // sign_*_permit2_local takes raw pk_bytes; we only need the signer to derive `from`.
+    let signer = PrivateKeySigner::from_slice(&pk_bytes)
+        .map_err(|e| anyhow!("invalid secp256k1 private key: {e}"))?;
+    let payer_addr = format!("{:#x}", signer.address());
+    drop(signer);
+
+    let real_chain_id = parse_eip155_chain_id(&params.network)?;
+    let chain_entry = crate::commands::agentic_wallet::chain::get_chain_by_real_chain_index(
+        &real_chain_id.to_string(),
+    )
+    .await?
+    .ok_or_else(|| anyhow!("chain not found for realChainIndex {}", real_chain_id))?;
+    let chain_index = chain_entry["chainIndex"]
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| chain_entry["chainIndex"].as_u64().map(|n| n.to_string()))
+        .ok_or_else(|| anyhow!("missing chainIndex in chain entry"))?;
+
+    let required: alloy_primitives::U256 = params.amount.parse().with_context(|| {
+        format!("invalid required amount (decimal uint256): {}", params.amount)
+    })?;
+    match crate::permit2_rpc::fetch_permit2_allowance(
+        &chain_index,
+        &params.asset,
+        &payer_addr,
+    )
+    .await
+    {
+        Ok(allowance) if allowance < required => bail!(
+            "Permit2 allowance insufficient on token {} for chain {}. \
+             Current allowance is {}, but this payment needs {}. \
+             The buyer must first call \
+             IERC20.approve({}, MAX) once \
+             before any x402 Permit2 payment can be settled.",
+            params.asset,
+            chain_index,
+            allowance,
+            required,
+            crate::chains::PERMIT2_ADDRESS
+        ),
+        Ok(_) => {}
+        Err(e) => eprintln!(
+            "Warning: Permit2 allowance pre-check unavailable on chain {chain_index} ({e:#}); falling back to on-chain settle revert"
+        ),
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let valid_after = now
+        .saturating_sub(crate::permit2_types::CLOCK_SKEW_BACKDATE_SECS)
+        .to_string();
+    let deadline = now
+        .checked_add(params.max_timeout_seconds)
+        .ok_or_else(|| anyhow!("Permit2 deadline overflow"))?
+        .to_string();
+    let nonce = {
+        use rand::RngCore;
+        let mut bytes = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        alloy_primitives::U256::from_be_slice(&bytes).to_string()
+    };
+
+    if is_upto {
+        // upto requires extra.facilitatorAddress (enforced on-chain).
+        let facilitator_addr = entry
+            .get("extra")
+            .and_then(|e| e.get("facilitatorAddress"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                anyhow!(
+                    "upto scheme requires extra.facilitatorAddress in the accepts entry, \
+                     but it is missing or not a string"
+                )
+            })?
+            .to_string();
+
+        let input = crate::permit2_eip712::UptoPermit2Input {
+            token: &params.asset,
+            amount: &params.amount, // cap, not exact charge
+            spender: crate::chains::X402_UPTO_PERMIT2_PROXY,
+            nonce: &nonce,
+            deadline: &deadline,
+            witness_to: &params.pay_to,
+            witness_facilitator: &facilitator_addr,
+            witness_valid_after: &valid_after,
+            chain_id: real_chain_id,
+        };
+        let payload = crate::permit2_sign::sign_upto_permit2_local(&pk_bytes, &payer_addr, &input)?;
+        return Ok((
+            PaymentProof::Upto {
+                signature: payload.signature,
+                permit2_authorization: serde_json::to_value(&payload.permit2_authorization)
+                    .context("serialize UptoPermit2Authorization")?,
+            },
+            entry.clone(),
+        ));
+    }
+
+    let input = crate::permit2_eip712::ExactPermit2Input {
+        token: &params.asset,
+        amount: &params.amount,
+        spender: crate::chains::X402_EXACT_PERMIT2_PROXY,
+        nonce: &nonce,
+        deadline: &deadline,
+        witness_to: &params.pay_to,
+        witness_valid_after: &valid_after,
+        chain_id: real_chain_id,
+    };
+    let payload = crate::permit2_sign::sign_exact_permit2_local(&pk_bytes, &payer_addr, &input)?;
+    Ok((
+        PaymentProof::Permit2 {
+            signature: payload.signature,
+            permit2_authorization: serde_json::to_value(&payload.permit2_authorization)
+                .context("serialize Permit2Authorization")?,
+        },
+        entry.clone(),
     ))
 }
 
@@ -927,22 +1072,10 @@ pub fn build_payment_header(
         PaymentProof::Upto {
             signature,
             permit2_authorization,
-            session_cert,
-        } => {
-            // upto verify is Ed25519 against the session key — the
-            // backend pulls the public key out of sessionCert, so the
-            // cert has to ride along inside `accepted.extra`.
-            if let Some(obj) = accepted.as_object_mut() {
-                let extra = obj.entry("extra".to_string()).or_insert_with(|| json!({}));
-                if let Some(extra_obj) = extra.as_object_mut() {
-                    extra_obj.insert("sessionCert".into(), json!(session_cert));
-                }
-            }
-            json!({
-                "signature": signature,
-                "permit2Authorization": permit2_authorization,
-            })
-        }
+        } => json!({
+            "signature": signature,
+            "permit2Authorization": permit2_authorization,
+        }),
     };
 
     let body = json!({
@@ -1231,23 +1364,20 @@ mod tests {
     }
 
     #[test]
-    fn to_pay_json_upto_emits_permit2authorization_and_sessioncert() {
+    fn to_pay_json_upto_emits_permit2authorization_no_session_cert() {
         let proof = PaymentProof::Upto {
-            signature: "base64sig".into(),
+            signature: "0xdeadbeef".into(),
             permit2_authorization: json!({"witness": {"facilitator": "0xF"}}),
-            session_cert: "cert-upto".into(),
         };
         let v = proof.to_pay_json();
-        assert_eq!(v["signature"], "base64sig");
+        assert_eq!(v["signature"], "0xdeadbeef");
         assert_eq!(v["permit2Authorization"]["witness"]["facilitator"], "0xF");
-        assert_eq!(v["sessionCert"], "cert-upto");
+        assert!(v.get("sessionCert").is_none(), "upto no longer emits sessionCert");
         let obj = v.as_object().expect("top-level must be an object");
         let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
         keys.sort();
-        // Skill dispatcher routes upto via `permit2Authorization` (checked
-        // before `sessionCert`); both must be present at the top level so
-        // either qualifier resolves correctly.
-        assert_eq!(keys, ["permit2Authorization", "sessionCert", "signature"]);
+        // upto wire shape == exact+Permit2 (no sessionCert).
+        assert_eq!(keys, ["permit2Authorization", "signature"]);
     }
 
     #[test]

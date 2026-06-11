@@ -4,8 +4,9 @@
 > `accepts`-based 402 (`PAYMENT-REQUIRED` header v2 or `x402Version` body
 > v1), decoded the payload, walked the user through confirmation, and run
 > the signing CLI. **Use this reference when the response from
-> `onchainos payment pay` carries a `permit2Authorization` field** —
-> meaning the CLI selected one of the two Permit2-based paths:
+> `onchainos payment pay` (TEE) or `onchainos payment pay-local`
+> (local-key) carries a `permit2Authorization` field** — meaning the CLI
+> selected one of the two Permit2-based paths:
 >
 > - `scheme: "upto"` (cap-style metered billing, Witness binds a facilitator)
 > - `scheme: "exact"` + `extra.assetTransferMethod: "permit2"` (universal
@@ -16,8 +17,10 @@
 > (`permit2Authorization` instead of `authorization`). Distinguish them
 > only by the inner `accepted.scheme` and the witness contents.
 
-The local-key fallback (`onchainos payment pay-local`) does NOT support
-either Permit2 path — only `exact` + EIP-3009.
+Both **TEE path** (`onchainos payment pay`) and **local-key path**
+(`onchainos payment pay-local`) support both `exact + Permit2` and
+`upto`. The wire shape is identical regardless of where the signing key
+lives.
 
 ## Buyer prerequisite — one-time PERMIT2 approve
 
@@ -63,12 +66,15 @@ Agent validation:
 
 `feedback_x402_no_confirm` 不覆盖 approve 类持续授权，此处仍需询问。
 
-## Sign output (TEE — `onchainos payment pay`)
+## Sign output
+
+Both TEE (`onchainos payment pay`) and local-key (`onchainos payment
+pay-local`) paths emit identical shape: standard secp256k1 EIP-712 typed
+data signature. No `sessionCert`, no Ed25519, no TEE re-signing.
 
 | Field | Type | Description |
 |---|---|---|
-| `signature` | String | **For `upto`:** base64 Ed25519 session-key signature over the Permit2 EIP-712 digest (facilitator backend then handles the secp256k1 conversion via TEE `eip712Hash`). **For `exact + Permit2`:** hex-encoded secp256k1 65-byte signature (`r ‖ s ‖ v`, `0x` prefix). |
-| `sessionCert` | String | **`upto` only.** Base64-encoded session cert. The facilitator backend pulls the Ed25519 public key out of this to verify `signature`. Must be embedded into `accepted.extra.sessionCert` before replay (see "Assemble payment header"). Absent for `exact + Permit2`. |
+| `signature` | String | EIP-712 secp256k1 65-byte signature (`r ‖ s ‖ v`, hex with `0x` prefix). Same encoding for `upto` and `exact + Permit2`, same encoding for TEE and local-key paths. |
 | `permit2Authorization` | Object | Full Permit2 authorization the buyer signed (see fields below) |
 | `permit2Authorization.from` | String | Payer wallet address |
 | `permit2Authorization.permitted.token` | String | ERC-20 token contract |
@@ -103,12 +109,6 @@ the whole array.
 // permit2:    a.scheme === "exact" && a.extra?.assetTransferMethod === "permit2"
 accepted = decoded.accepts.find(a => /* match by scheme + transfer method */)
 
-// ★ upto only — facilitator backend requires sessionCert in accepted.extra
-//   to verify the Ed25519 signature. Skip this step for exact + Permit2.
-if (a.scheme === "upto") {
-  accepted.extra = { ...(accepted.extra ?? {}), sessionCert: sessionCert }
-}
-
 paymentPayload = {
   x402Version: decoded.x402Version,
   resource:    decoded.resource,
@@ -121,16 +121,11 @@ headerValue = btoa(JSON.stringify(paymentPayload))
 ### v1 (`x402Version < 2` or absent) — header `X-PAYMENT`
 
 ```
-// ★ upto only — bundle sessionCert into payload (no `accepted` envelope in v1).
-const payload = a.scheme === "upto"
-  ? { signature, permit2Authorization, sessionCert }
-  : { signature, permit2Authorization }
-
 paymentPayload = {
   x402Version: 1,
   scheme:      "upto" | "exact",                          // pick the one you signed
   network:     option.network,
-  payload,
+  payload:     { signature, permit2Authorization }
 }
 headerValue = btoa(JSON.stringify(paymentPayload))
 ```
@@ -158,15 +153,23 @@ Return the body to the user.
 
 ## CLI Reference
 
-Same shape as `exact`:
+Same `accepts`-based interface as `exact`. Both TEE and local-key paths
+auto-select based on the same field-detection rules — caller doesn't
+need to specify the sub-mode.
 
 ```bash
+# TEE signing path (Agentic Wallet)
 onchainos payment pay \
   --accepts '<accepts array JSON>' \
   [--from <address>]
+
+# Local-key fallback (EOA private key from EVM_PRIVATE_KEY env var or ~/.onchainos/.env)
+onchainos payment pay-local \
+  --accepts '<accepts array JSON>'
 ```
 
-The CLI auto-selects based on `accepts[].scheme` + `accepts[].extra.assetTransferMethod`:
+The CLI auto-selects based on `accepts[].scheme` +
+`accepts[].extra.assetTransferMethod`:
 
 | `accepts[].scheme` | `accepts[].extra.assetTransferMethod` | CLI picks |
 |---|---|---|
@@ -175,9 +178,9 @@ The CLI auto-selects based on `accepts[].scheme` + `accepts[].extra.assetTransfe
 | `"upto"` | (forced to `"permit2"` by the seller SDK) | upto + Permit2 (→ load this reference) |
 | `"aggr_deferred"` | n/a | aggr_deferred (→ load `aggr_deferred.md`) |
 
-`onchainos payment pay-local` does NOT support either Permit2 path. If
-the user picked the local-key fallback, the dispatcher will only sign
-`exact + EIP-3009` — return them to `exact.md` flow.
+**All four CLI selections are supported by both `payment pay` and
+`payment pay-local`.** Local-key only requires `EVM_PRIVATE_KEY` env or
+`~/.onchainos/.env`.
 
 ## What's different vs `exact + EIP-3009`
 
@@ -185,19 +188,27 @@ the user picked the local-key fallback, the dispatcher will only sign
 |---|---|---|---|
 | Buyer prerequisites | None | One-time approve PERMIT2 | One-time approve PERMIT2 |
 | Wire field name | `authorization` | `permit2Authorization` | `permit2Authorization` |
-| `signature` encoding | base64 EIP-3009 / base64 Ed25519 (deferred) | hex secp256k1 (`0x...`) | **base64 Ed25519** (session key over EIP-712 digest) |
-| `sessionCert` required | aggr_deferred only | No | **Yes — in `accepted.extra.sessionCert`** |
+| `signature` encoding | base64 EIP-3009 | hex secp256k1 (`0x...`) | hex secp256k1 (`0x...`) |
 | Signed `amount` semantics | = exact charge | = exact charge | = cap, actual ≤ cap |
 | Witness field | n/a | `(to, validAfter)` | `(to, facilitator, validAfter)` |
 | Facilitator binding | None | None | `msg.sender == witness.facilitator` (on-chain) |
 | Required in `accepts.extra` | `name` (sometimes `version`) | `assetTransferMethod: "permit2"` | `assetTransferMethod: "permit2"` + `facilitatorAddress` |
-| Local-key fallback | Supported | NOT supported | NOT supported |
+| Local-key fallback | Supported | Supported | Supported |
 
 ## Edge cases
 
 - **`Permit2 allowance insufficient`** — the buyer hasn't approved
   Permit2 for this token yet. Stop, tell the user to run the one-time
   approve (see "Buyer prerequisite" above), then retry.
+- **`insufficient_allowance`** (new facilitator error code) — same
+  semantics as above; surface the prompt to approve Permit2 and retry.
+- **`upto_signature_route_conflict`** (new facilitator error code) —
+  CLI submitted both `sessionCert` and `signatureScheme="secp256k1"`,
+  an invalid combination. This indicates a CLI / SDK bug; surface the
+  message and stop.
+- **`invalid_eoa_signature`** (new facilitator error code) — the
+  `signature` field is not 0x-prefixed or has wrong length (not 65
+  bytes). CLI / SDK bug; surface and stop.
 - **`upto scheme requires extra.facilitatorAddress`** — the seller's 402
   response is missing the required `facilitatorAddress` in
   `accepts[].extra`. This is a seller-side misconfiguration; don't retry
@@ -223,8 +234,12 @@ the user picked the local-key fallback, the dispatcher will only sign
 - For **upto specifically**, the signature is *also* bound to
   `witness.facilitator` — a leaked signature can only be used by the
   exact facilitator the buyer named, not relayed by anyone else.
-- The TEE secp256k1 private key never leaves the secure enclave; only
-  the 65-byte signature crosses out.
+- **TEE path**: the secp256k1 private key never leaves the secure
+  enclave; only the 65-byte signature crosses out.
+- **Local-key path**: the secp256k1 private key stays on the user's
+  machine (`~/.onchainos/.env` with `chmod 600` recommended). The signed
+  authorization only authorizes the exact `(token, amount, spender,
+  nonce, deadline, witness)` tuple — it cannot be modified or reused.
 - This reference only signs — it does NOT broadcast or move funds
   directly. Settlement happens when the facilitator calls
   `proxy.settle(...)` on chain (within `deadline`).

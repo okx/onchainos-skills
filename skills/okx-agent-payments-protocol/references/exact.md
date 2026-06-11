@@ -124,7 +124,13 @@ The CLI parses the accepts array (same shape as `payment pay`), extracts `extra.
 
 ### Step 3: Header assembly + replay
 
-Identical to the TEE path's exact scheme — see "Assemble payment header" above. Local-key signing only supports `exact` (NOT `aggr_deferred`), so always pick the `exact` entry from `decoded.accepts` for v2.
+Identical to the TEE path's exact scheme — see "Assemble payment header" above.
+
+**Local-key supports** `exact + EIP-3009` (this reference), `exact + Permit2`, and `upto` (the Permit2-based ones return a `permit2Authorization` field instead of `authorization` — load `references/upto.md` for header assembly when you see that field).
+
+**Local-key does NOT support** `aggr_deferred` (requires TEE-resident Ed25519 session key, which local-key path doesn't have).
+
+If `decoded.accepts` has multiple entries, follow the same field-detection rules the dispatcher uses (`permit2Authorization` → `upto.md`, otherwise → this `exact.md`).
 
 ### Prerequisites checklist
 

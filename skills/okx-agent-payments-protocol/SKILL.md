@@ -183,7 +183,7 @@ Convert `amount` from base units to human-readable using the token's decimals (t
 
 ### A3.5.1: Build the candidate pool
 
-- Each entry in `accepts[]` → one candidate. Scheme = `accepts[i].scheme` (`exact` or `aggr_deferred`).
+- Each entry in `accepts[]` → one candidate. Scheme = `accepts[i].scheme` (`exact`, `exact+Permit2` via `extra.assetTransferMethod="permit2"`, `aggr_deferred`, or `upto`).
 - A `WWW-Authenticate: Payment` 402 with `intent="charge"` → one candidate. Scheme = `charge`.
 - `WWW-Authenticate: Payment` with `intent="session"` is **never** part of this pool — it's handled by the session-vs-one-shot branch in Step A2.
 
@@ -285,14 +285,14 @@ onchainos wallet status
 ```
 
 - **Logged in** → Step A6.
-- **Not logged in (`accepts`-based path)** → ask the user to choose between (1) wallet login (TEE signing) or (2) local private key (`onchainos payment pay-local`, `exact` scheme only). Don't read files or check env vars until the user picks.
+- **Not logged in (`accepts`-based path)** → ask the user to choose between (1) wallet login (TEE signing) or (2) local private key (`onchainos payment pay-local`, supports `exact + EIP-3009`, `exact + Permit2`, and `upto` — `aggr_deferred` not supported, requires TEE session key). Don't read files or check env vars until the user picks.
 - **Not logged in (`WWW-Authenticate: Payment` path)** → ask the user to log in via email OTP or AK. **TEE-only — no local-key fallback for this path** (only the `accepts`-based path has one).
 
 ## Step A6: Hand off to the scheme/intent reference
 
 | Path | Action |
 |---|---|
-| **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1) | Run `onchainos payment pay --accepts '<JSON.stringify(accepts_to_pass)>'`. Build `accepts_to_pass` from Step A3.5's outcome: if A3.5 ran and the user selected an accepts-based candidate, pass a **single-entry array** containing just that accept (`'[selected_accept]'`); otherwise pass the full `decoded.accepts` array. When the response comes back, branch by which field is present in the CLI output (check in this order — `upto` carries both `permit2Authorization` and `sessionCert`):<br>• `permit2Authorization` present → load **`references/upto.md`** for header assembly + replay (covers both `exact + Permit2` and `upto` scheme)<br>• `sessionCert` present (and no `permit2Authorization`) → load **`references/aggr_deferred.md`** for header assembly + replay (Ed25519 session-key path)<br>• otherwise (`authorization` present) → load **`references/exact.md`** for header assembly + replay (EIP-3009 path)<br>If the user picked the local-key fallback, run `onchainos payment pay-local` instead and load **`references/exact.md`** (only scheme this fallback supports). |
+| **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1) | Run `onchainos payment pay --accepts '<JSON.stringify(accepts_to_pass)>'`. Build `accepts_to_pass` from Step A3.5's outcome: if A3.5 ran and the user selected an accepts-based candidate, pass a **single-entry array** containing just that accept (`'[selected_accept]'`); otherwise pass the full `decoded.accepts` array. When the response comes back, branch by which field is present in the CLI output (check in this order):<br>• `permit2Authorization` present → load **`references/upto.md`** for header assembly + replay (covers both `exact + Permit2` and `upto` schemes; new clients use secp256k1 EOA signature with no `sessionCert`)<br>• `sessionCert` present (and no `permit2Authorization`) → load **`references/aggr_deferred.md`** for header assembly + replay (Ed25519 session-key path)<br>• otherwise (`authorization` present) → load **`references/exact.md`** for header assembly + replay (EIP-3009 path)<br>If the user picked the local-key fallback, run `onchainos payment pay-local` instead — it supports `exact + EIP-3009`, `exact + Permit2`, and `upto` (not `aggr_deferred`). Load the matching reference by the same field-detection rules above. |
 | **`WWW-Authenticate: Payment`, `intent="charge"`** | Load **`references/charge.md`** at "Decide mode". |
 | **`WWW-Authenticate: Payment`, `intent="session"`** | Load **`references/session.md`** at "Phase S1: Open Channel" (or jump to S2 / S2b / S3 if the user is mid-session with an active `channel_id`). |
 

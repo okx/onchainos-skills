@@ -236,7 +236,7 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             let accepts_val: Value =
                 serde_json::from_str(&accepts).context("--accepts must be a valid JSON array")?;
             let (proof, _entry) = payment_flow::sign_payment_local(&accepts_val, None).await?;
-            // Local-key path only supports EIP-3009 (no TEE session).
+            // Local-key supports EIP-3009 / Permit2 / upto (no aggr_deferred).
             match proof {
                 payment_flow::PaymentProof::Eip3009 {
                     signature,
@@ -249,11 +249,19 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
                     }));
                     Ok(())
                 }
-                payment_flow::PaymentProof::Permit2 { .. } | payment_flow::PaymentProof::Upto { .. } => {
-                    Err(anyhow!(
-                        "eip3009-sign produced a Permit2/upto proof, which it should never do — \
-                         this debug command only supports EIP-3009 local signing"
-                    ))
+                payment_flow::PaymentProof::Permit2 {
+                    signature,
+                    permit2_authorization,
+                }
+                | payment_flow::PaymentProof::Upto {
+                    signature,
+                    permit2_authorization,
+                } => {
+                    output::success(json!({
+                        "signature": signature,
+                        "permit2Authorization": permit2_authorization,
+                    }));
+                    Ok(())
                 }
             }
         }
