@@ -1268,6 +1268,12 @@ impl ApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    continue;
+                }
+            }
             self.doh.cache_direct_if_needed();
             return self.handle_response(path, resp).await;
         }
@@ -1320,6 +1326,12 @@ impl ApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    continue;
+                }
+            }
             self.doh.cache_direct_if_needed();
             return self.handle_response(path, resp).await;
         }
@@ -1367,6 +1379,12 @@ impl ApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    continue;
+                }
+            }
             self.doh.cache_direct_if_needed();
             return self.handle_response_raw(path, resp).await;
         }
@@ -1414,6 +1432,12 @@ impl ApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    continue;
+                }
+            }
             self.doh.cache_direct_if_needed();
             return self.handle_response_raw(path, resp).await;
         }

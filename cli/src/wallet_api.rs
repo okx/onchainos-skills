@@ -730,6 +730,12 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return self.post_public(path, body).await;
+                }
+            }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
         })
@@ -765,6 +771,12 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return self.get_no_okheaders(path).await;
+                }
+            }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
         })
@@ -859,6 +871,14 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return self
+                        .post_authed_with_headers_once(path, access_token, body, extra_headers)
+                        .await;
+                }
+            }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
         })
@@ -1090,6 +1110,12 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return self.get_public(path, query).await;
+                }
+            }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
         })
@@ -1176,6 +1202,14 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return self
+                        .get_authed_with_headers_once(path, access_token, query, extra_headers)
+                        .await;
+                }
+            }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
         })
