@@ -211,7 +211,7 @@ pub fn job_auto_refunded_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobExpired` — job expired (B-7-1).
 pub fn job_expired_user_notify(job_id: &str) -> String {
     format!(
-        "Job `{job_id}` has expired (no ASP accepted before the acceptance window expired, or no deliverable submitted before the delivery window expired). The job is now closed."
+        "[Job Expired] Job `{job_id}` has expired (no ASP accepted before the acceptance window expired, or no deliverable submitted before the delivery window expired). The job is now closed."
     )
 }
 
@@ -238,7 +238,7 @@ pub fn visibility_private_user_notify(job_id: &str, title: &str) -> String {
 
 /// `Event::JobPaymentModeChanged` escrow branch — user notification (B-2-5).
 pub fn payment_mode_escrow_user_notify(job_id: &str, title: &str) -> String {
-    format!("{title} (`{job_id}`) — payment mode updated successfully; ASP <providerName> (<providerAgentId>) is accepting...")
+    format!("[Payment Mode Set] {title} (`{job_id}`) — payment mode updated successfully; ASP <providerName> (<providerAgentId>) is accepting...")
 }
 
 /// x402 set-payment-mode confirmed on-chain; transition notification before task-402-pay.
@@ -335,7 +335,7 @@ pub fn reward_claimed_user_notify(job_id: &str, title: &str) -> String {
 
 /// `Event::WakeupNotify` — resume notification (B-7-15).
 pub fn wakeup_resume_user_notify(job_id: &str) -> String {
-    format!("Job `{job_id}` is back online. Please continue your decision in the user session.")
+    format!("[Resumed] Job `{job_id}` is back online. Please continue when ready.")
 }
 
 // ── provider_conversation — no more ASPs ───────────────────────────
@@ -499,7 +499,7 @@ pub fn escalation_cli_failed_notify(job_id: &str) -> String {
         "[⚠️ Operation Failed] Job `{job_id}`\n\
          - Action: <e.g. recommend providers / submit review / pay via x402>\n\
          - Error: <one-sentence summary of stderr / error field>\n\
-         - Current status: <status>\n\
+         - Current status: <describe in plain language, e.g. waiting for provider / under review / payment pending>\n\
          \n\
          Choose how to proceed:\n\
          A. Retry → reply 'A' or 'retry'\n\
