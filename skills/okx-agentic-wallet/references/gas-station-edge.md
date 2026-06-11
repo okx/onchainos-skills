@@ -89,7 +89,7 @@ Agent runs `wallet history --chain solana --order-id {orderId}` internally (NOT 
 - {networkFeeLabel}: {network_fee_line}
 ```
 
-`{networkFeeLabel}` is **already provided by the CLI** in the order detail response — render it verbatim. The CLI computes the label as either `Network fee` or `Network fee & Rent` based on whether the Solana Relayer also covered the recipient's SPL token-account rent (~0.002 SOL, folded into {network_fee_line}). Translate the label to the user's language per the global locale rule; never hard-code translations.
+`{networkFeeLabel}` is **already provided by the CLI** in the order detail response — render it verbatim. The CLI computes the label as either `Network fee` or `Network fee and Rent fee` based on whether the Solana Relayer also covered the recipient's SPL token-account rent (~0.002 SOL, folded into {network_fee_line}). Translate the label to the user's language per the global locale rule; never hard-code translations.
 
 Do NOT add a separate line for the rent — it's signalled by the label string only. Do NOT render the raw `feeContainCreateAccount` field (it is not in the CLI output any more; the label supersedes it).
 

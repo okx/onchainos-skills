@@ -12,20 +12,7 @@ Gas Station enables paying gas fees with stablecoins (USDT / USDC / USDG) when t
 
 ---
 
-## Contents
-
-- **Critical Rules** — dispatch model, phase-call prohibitions, output discipline (read first).
-- **Flow** — dispatch model.
-- **Scene A** — first-time enable (Confirming + post-success two-step).
-- **Scene B / D** — silent auto-path.
-- **Scene C** — default token insufficient (token switch).
-- **Scene E** — all stablecoins insufficient (top-up bail).
-- **Universal Gas Station Success Reply** — the 4 required elements + order-status check.
-- **Edge Cases** — index + triggers; full copy in `gas-station-edge.md` (load on trigger).
-- **Management Commands** — enable / disable / update-default-token + reply templates.
-- **User Intent Recognition** — output vocabulary + intent→action routing.
-- **Plugin Bail Recovery** — recovering a third-party plugin from a GS Confirming.
-- **FAQ** — pointer; verbatim answers in `gas-station-faq.md` (load when asked).
+> Read **Critical Rules** first, then dispatch via the **Outcome → render map** under **Flow**. Scene A/B/D/C/E copy, Universal Success Reply, Edge Cases, Management Commands, User Intent Recognition, Plugin Bail Recovery, and FAQ follow in order.
 
 ---
 
@@ -68,7 +55,7 @@ Gas Station enables paying gas fees with stablecoins (USDT / USDC / USDG) when t
 
 Gas Station is **not** a separate command — the **backend** decides per-request whether to dispatch it inside the `wallet send` / `wallet contract-call` response. When dispatched, the flow uses the standard **Confirming Response** pattern (exit code 2) for first-time activation / token-switch cases (Scene A / C), and the silent auto-path when a default token is already pinned (Scene B / D).
 
-The CLI runs the dispatch. The Agent does **not** decide the Scene from raw fields: it reads `gasStationUsed` + `gasStationFirstTimePrompt` / `hasPendingTx` / `insufficientAll` + `hash`, and when the CLI returns a Confirming it renders the matching Scene (below) and asks the user to pick a token.
+The CLI tags each response with a machine-readable `scene` discriminator; dispatch via the **Outcome → render map** below. On a Confirming, render the matching Scene and ask the user to pick a token.
 
 **Token priority** (for ordering the token list shown to the user, and for backend auto-selection): by **balance descending**; on ties, **USDT > USDC > USDG**.
 
@@ -313,11 +300,7 @@ When the user replies with any wording meaning "check order {orderId}" or "what'
 
 ## Management Commands
 
-| Command | Usage |
-|---|---|
-| Change default gas token | `onchainos wallet gas-station update-default-token --chain solana --gas-token-address <addr>` |
-| Enable Gas Station | `onchainos wallet gas-station enable --chain solana` |
-| Disable Gas Station | `onchainos wallet gas-station disable --chain solana` |
+For command syntax and parameters (`gas-station enable` / `disable` / `update-default-token`, all `--chain solana`), see `references/cli-reference.md` → "D-GS. Gas Station Management Commands". This section only owns the user-facing reply wording below.
 
 ### User-Facing Reply Templates (Management Commands)
 

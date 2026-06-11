@@ -1,8 +1,6 @@
 # Shared Pre-flight Checks
 
-> This file is shared across all onchainos skills. Follow these steps before the first `onchainos` command each session.
-
-Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
+> This file is shared across all onchainos skills. Follow these steps, in order, before the first `onchainos` command each session. Do not echo routine command output to the user; give a brief status update only when installing, updating, or handling a failure.
 
 1. **Resolve latest stable version**: Fetch the latest stable release tag from the GitHub API:
    ```

@@ -1,50 +1,43 @@
-# Third-Party Plugin Pre-flight
+# Third-Party Plugin Pre-flight (Solana)
 
-> Load before dispatching ANY third-party DeFi plugin command that performs an on-chain write.
+> Load before dispatching a third-party Solana DeFi plugin command that performs an on-chain write.
 
-When the user invokes a **third-party DeFi plugin** (e.g. `aave-v3-plugin`, `uniswap-plugin`) that internally calls `onchainos wallet contract-call --force`, the plugin is a **black box** — its error messages may not surface Gas Station issues. The agent MUST proactively pre-flight Gas Station status on the target chain.
+Third-party Solana DeFi plugins (e.g. `kamino-plugin`, `raydium-plugin`) call `onchainos wallet contract-call --force` internally. Pre-flight Gas Station status on Solana before invoking the plugin's write command.
+
+Gas Station is Solana-only: the Relayer is the native fee payer, and gas is debited via an SPL stablecoin transfer inside the same multi-signer transaction.
 
 ## Pre-flight checklist
 
-Before dispatching ANY third-party plugin command that performs an on-chain write (`--confirm` / `execute` / `--broadcast` / etc.), the agent MUST:
+Before a plugin command that performs an on-chain write (`--confirm` / `execute` / `--broadcast`):
 
-1. Resolve `<chain>` and `<from>` from the plugin invocation.
+1. Resolve `<from>` from the plugin invocation.
 2. Run:
    ```bash
-   onchainos wallet gas-station status --chain <chain> [--from <addr>]
+   onchainos wallet gas-station status --chain solana [--from <solana_address>]
    ```
 3. Branch on `data.recommendation`:
 
 | Recommendation | Action |
 |---|---|
-| `READY` | Proceed directly to plugin invocation. |
-| `ENABLE_GAS_STATION` | Render `references/gas-station.md` Scene A using `data.tokenList`. After user confirms a token pick, run `wallet gas-station setup --chain <C> --gas-token-address <picked> --relayer-id <picked>`. Then proceed to the original plugin command. |
-| `REENABLE_GAS_STATION` | Render Scene B'. After user confirms, `wallet gas-station setup ...`. Then proceed. |
-| `PENDING_UPGRADE` | Render Scene A'. After user confirms, `wallet gas-station setup ...` (carries 7702 material). Then proceed. |
-| `INSUFFICIENT_ALL` | Tell user to top up native or stablecoin. Do NOT invoke plugin. |
-| `HAS_PENDING_TX` | Tell user to wait for the pending tx (or run `wallet gas-station disable --chain <C>` to bypass). Do NOT invoke plugin. |
+| `READY` | Proceed to plugin invocation. |
+| `ENABLE_GAS_STATION` | Render `references/gas-station.md` Scene A using `data.tokenList`. On consent, run `onchainos wallet gas-station enable --chain solana`. To pin the picked token, also run `onchainos wallet gas-station update-default-token --chain solana --gas-token-address <picked>`. Then proceed to the plugin command. |
+| `INSUFFICIENT_ALL` | Render `references/gas-station.md` Scene E. |
+| `HAS_PENDING_TX` | Tell the user to wait for the pending GS tx to clear. |
 
-## Pre-flight skip conditions
+## Skip pre-flight when
 
-- Plugin invocation is dry-run / simulation (no on-chain write)
-- Plugin is a read-only command (e.g. `aave-v3-plugin positions`, `health-factor`, `reserves`, `quickstart`)
-- The agent has already pre-flighted this `(chain, from)` tuple in the current conversation and confirmed `gasStationActivated = true`
+- The plugin invocation is dry-run / simulation.
+- The plugin command is read-only (e.g. `kamino-plugin positions`, `health-factor`, `reserves`, `quickstart`).
+- `status` already returned `READY` for this `(solana, from)` tuple in the current conversation.
 
-## Reactive diagnosis (post-failure fallback)
+## Reactive recovery (plugin already failed)
 
-If a third-party plugin returned a vague error (e.g. `"Pool.supply() failed"`, `"swap failed"`) and the message does NOT clearly explain the cause, follow the canonical recovery flow in `references/gas-station.md` → "Plugin Bail Recovery".
+When a plugin returns a vague error, follow `references/gas-station.md` → "Plugin Bail Recovery" (the authoritative procedure). If the plugin swallowed stdout so no Confirming JSON is visible, fall back to running `onchainos wallet gas-station status --chain solana [--from <addr>]` and branch per the Pre-flight checklist above. The exit-code quick-reference:
 
-In short, in priority order:
-
-1. **Fast path** — parse the plugin's bubbled-up stderr/stdout for an onchainos response with `"errorCode": "GAS_STATION_SETUP_REQUIRED"` (exit code 3). Extract `data.tokenList` directly and proceed to Scene A → `wallet gas-station setup` → re-invoke plugin. No extra CLI call.
-2. **Slow path** — if the plugin ate stdout, run `onchainos wallet gas-station status --chain <chain> [--from <addr>]` and branch on `recommendation` per the Pre-flight checklist above.
-3. Otherwise — surface the plugin's raw error to the user.
-
-## Exit codes from `wallet contract-call --force` / `wallet send --force`
+## Exit codes (seen through a plugin)
 
 | Exit | Meaning | Agent action |
 |---|---|---|
-| `0` | Success | Continue |
-| `1` | Real error (logic / chain / etc.) | Surface error to user |
-| `2` | Confirming required (non-`--force` path; should NOT happen with `--force`) | Treat as bug; show message |
-| `3` | `errorCode: GAS_STATION_SETUP_REQUIRED` — `--force` cannot silently auto-enable GS | Render Scene A from `data.tokenList`, run `wallet gas-station setup`, re-invoke same command |
+| `0` | Success | Continue. |
+| `1` | Real error | Surface to user. |
+| `2` | Gas Station Confirming — stdout carries `"confirming": true` + `"scene"` (Scene A / Scene C). Recoverable. | Parse `scene`, dispatch via "Plugin Bail Recovery", re-invoke the same plugin command verbatim. |

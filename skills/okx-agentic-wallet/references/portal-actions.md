@@ -17,7 +17,7 @@ Policy configuration and wallet export **must be completed by the user on the We
 | `loginType` | `{export_url}` | `{export_hint}` |
 |---|---|---|
 | `email` | `https://web3.okx.com` | Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Export Wallet" from the dropdown menu. |
-| `ak` | `https://web3.okx.com/zh-hans/onchainos/dev-portal` | Log in the Developer Portal using a plugin wallet or the OKX Wallet App that manages your API Key, and click Agentic Wallet → Wallet Export. |
+| `ak` | `https://web3.okx.com/onchainos/dev-portal` | Log in the Developer Portal using a plugin wallet or the OKX Wallet App that manages your API Key, and click Agentic Wallet → Wallet Export. |
 
 ### Template: Policy Settings
 
@@ -28,7 +28,7 @@ Policy configuration and wallet export **must be completed by the user on the We
 | `loginType` | `{policy_url}` | `{policy_hint}` |
 |---|---|---|
 | `email` | `https://web3.okx.com/portfolio/agentic-wallet-policy` | Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Policy Setting" from the dropdown menu. |
-| `ak` | `https://web3.okx.com/zh-hans/onchainos/dev-portal` | Log in with the EOA wallet that created the Agentic Wallet and open the OKX Web3 Dev platform, and click on the Agentic Wallet - Policy Setting in the upper right corner to set security rules. |
+| `ak` | `https://web3.okx.com/onchainos/dev-portal` | Log in with the EOA wallet that created the Agentic Wallet and open the OKX Web3 Dev platform, and click on the Agentic Wallet - Policy Setting in the upper right corner to set security rules. |
 
 ## Available Policy Rules
 
