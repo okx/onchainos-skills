@@ -209,7 +209,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      🛑 **A-Step 1.5 - SKILL_PREFETCH (mandatory for new sub sessions):**\n\
      Immediately after xmtp_start_conversation returns, call `xmtp_dispatch_session` to pre-load the skill into the newly created sub session:\n\
      \x20\x20sessionKey = <the sessionKey just returned by xmtp_start_conversation>\n\
-     \x20\x20content = `[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via buyer.md §3 routing (#1–#6). Do NOT carry over \"no action\" to business messages.`\n\
+     \x20\x20content = `[SKILL_PREFETCH] Read okx-agent-task/SKILL.md then okx-agent-task/buyer.md. No action needed for this message — but process all subsequent messages normally via buyer.md §3.5 routing (#1–#6). Do NOT carry over \"no action\" to business messages.`\n\
      ❌ Do NOT skip this step — the sub session has no context yet; without SKILL_PREFETCH, the first inbound message will be processed without the buyer playbook loaded.\n\
      ⚠️ Use `xmtp_dispatch_session` (internal), NOT `xmtp_send` (which the ASP would see).\n\n\
      🛑 **Within the same turn after creating the group you MUST call `xmtp_send` to send the first message** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
