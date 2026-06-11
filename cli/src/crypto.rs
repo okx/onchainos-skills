@@ -551,6 +551,7 @@ mod tests {
     // ── EIP-3009 test vectors (verified with foundry cast & viem) ─────────
 
     /// Helper: build auth + domain, sign, assert hex matches expected.
+    #[allow(clippy::too_many_arguments)]
     fn assert_eip3009_sig(
         pk_hex: &str,
         from: &str,

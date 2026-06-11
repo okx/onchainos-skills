@@ -798,31 +798,51 @@ fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
     Ok((tx_hash, order_id))
 }
 
-/// Build ready-to-paste `onchainos wallet history --tx-hash <h> --chain <c>`
-/// commands so callers can poll on-chain status without string surgery.
+/// Build ready-to-paste `onchainos wallet history` commands so callers can poll
+/// on-chain status without string surgery. Prefer `--tx-hash`; when the hash is
+/// empty (Gas Station broadcasts return an orderId before the relayer fills in
+/// the on-chain hash) fall back to `--order-id`, which routes to `/order/detail`
+/// and locates the order deterministically. A `--tx-hash <empty>` command would
+/// instead fall through to `/order/list` and cannot identify the order.
 fn next_steps_for_swap(
     chain_index: &str,
     swap_tx_hash: &str,
+    swap_order_id: &str,
     approve_tx_hash: Option<&str>,
+    approve_order_id: Option<&str>,
 ) -> Value {
     let mut steps = serde_json::Map::new();
-    steps.insert(
-        "checkSwapStatus".to_string(),
-        json!(format!(
-            "onchainos wallet history --tx-hash {} --chain {}",
-            swap_tx_hash, chain_index
-        )),
-    );
-    if let Some(approve) = approve_tx_hash {
-        steps.insert(
-            "checkApproveStatus".to_string(),
-            json!(format!(
-                "onchainos wallet history --tx-hash {} --chain {}",
-                approve, chain_index
-            )),
-        );
+    if let Some(cmd) = history_status_cmd(chain_index, swap_tx_hash, swap_order_id) {
+        steps.insert("checkSwapStatus".to_string(), json!(cmd));
+    }
+    if let Some(cmd) = history_status_cmd(
+        chain_index,
+        approve_tx_hash.unwrap_or(""),
+        approve_order_id.unwrap_or(""),
+    ) {
+        steps.insert("checkApproveStatus".to_string(), json!(cmd));
     }
     Value::Object(steps)
+}
+
+/// Build a `wallet history` status-query command, preferring txHash (routes to
+/// `/order/detail` by hash) and falling back to orderId (`/order/detail` by
+/// orderId, used for Gas Station broadcasts whose hash is not yet available).
+/// Returns `None` when neither identifier is present.
+fn history_status_cmd(chain_index: &str, tx_hash: &str, order_id: &str) -> Option<String> {
+    if !tx_hash.is_empty() {
+        Some(format!(
+            "onchainos wallet history --tx-hash {} --chain {}",
+            tx_hash, chain_index
+        ))
+    } else if !order_id.is_empty() {
+        Some(format!(
+            "onchainos wallet history --order-id {} --chain {}",
+            order_id, chain_index
+        ))
+    } else {
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1127,7 +1147,13 @@ async fn cmd_execute(
         );
     }
     let router_result = &swap_result["routerResult"];
-    let next_steps = next_steps_for_swap(&chain_index, &swap_tx_hash, approve_tx_hash.as_deref());
+    let next_steps = next_steps_for_swap(
+        &chain_index,
+        &swap_tx_hash,
+        &swap_order_id,
+        approve_tx_hash.as_deref(),
+        approve_order_id.as_deref(),
+    );
     let mut out = json!({
         "approveTxHash": approve_tx_hash,
         "swapTxHash": swap_tx_hash,
@@ -1289,7 +1315,8 @@ async fn cmd_execute_batch(
         )
         .await?;
         let swap_tx_hash = extract_tx_hash(&result)?;
-        let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, None);
+        // Batch path never uses Gas Station → no orderId; txHash is always present.
+        let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, "", None, None);
         let router_result = &swap_result["routerResult"];
         let out = json!({
             "approveTxHash": Value::Null,
@@ -1380,7 +1407,8 @@ async fn cmd_execute_batch(
     }
 
     let router_result = &swap_result["routerResult"];
-    let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, approve_tx_hash.as_deref());
+    // Batch path never uses Gas Station → no orderId; txHash is always present.
+    let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, "", approve_tx_hash.as_deref(), None);
     let out = json!({
         "approveTxHash": approve_tx_hash,
         "swapTxHash": swap_tx_hash,
@@ -1579,6 +1607,90 @@ mod tests {
         let uint256_max =
             "115792089237316195423570985008687907853269984665640564039457584007913129639935";
         assert!(!is_allowance_insufficient(uint256_max, "1000000"));
+    }
+
+    // ── next-step status-query command builders ────────────────────
+
+    #[test]
+    fn history_status_cmd_prefers_tx_hash() {
+        // txHash present → use --tx-hash (orderId ignored even if present)
+        assert_eq!(
+            history_status_cmd("solana", "0xabc", "999").as_deref(),
+            Some("onchainos wallet history --tx-hash 0xabc --chain solana")
+        );
+    }
+
+    #[test]
+    fn history_status_cmd_falls_back_to_order_id() {
+        // txHash empty + orderId present (Gas Station) → use --order-id
+        assert_eq!(
+            history_status_cmd("solana", "", "1659439748798636032").as_deref(),
+            Some("onchainos wallet history --order-id 1659439748798636032 --chain solana")
+        );
+    }
+
+    #[test]
+    fn history_status_cmd_none_when_both_empty() {
+        assert_eq!(history_status_cmd("solana", "", ""), None);
+    }
+
+    #[test]
+    fn next_steps_for_swap_normal_uses_tx_hash() {
+        // Normal swap: swap txHash present, no orderId, no approve.
+        let steps = next_steps_for_swap("1", "0xswap", "", None, None);
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --tx-hash 0xswap --chain 1")
+        );
+        // No approve identifiers → key must be absent.
+        assert!(steps.get("checkApproveStatus").is_none());
+    }
+
+    #[test]
+    fn next_steps_for_swap_gas_station_uses_order_id() {
+        // Gas Station swap: txHash empty, orderId present → --order-id.
+        let steps = next_steps_for_swap("solana", "", "1659439748798636032", None, None);
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --order-id 1659439748798636032 --chain solana")
+        );
+        assert!(steps.get("checkApproveStatus").is_none());
+    }
+
+    #[test]
+    fn next_steps_for_swap_includes_approve_tx_hash() {
+        // EVM swap with a preceding approve tx → both keys, both via --tx-hash.
+        let steps = next_steps_for_swap("1", "0xswap", "", Some("0xapprove"), None);
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --tx-hash 0xswap --chain 1")
+        );
+        assert_eq!(
+            steps["checkApproveStatus"].as_str(),
+            Some("onchainos wallet history --tx-hash 0xapprove --chain 1")
+        );
+    }
+
+    #[test]
+    fn next_steps_for_swap_approve_falls_back_to_order_id() {
+        // Gas Station with approve: both txHashes empty, both orderIds present.
+        let steps = next_steps_for_swap("solana", "", "swap-oid", None, Some("approve-oid"));
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --order-id swap-oid --chain solana")
+        );
+        assert_eq!(
+            steps["checkApproveStatus"].as_str(),
+            Some("onchainos wallet history --order-id approve-oid --chain solana")
+        );
+    }
+
+    #[test]
+    fn next_steps_for_swap_omits_swap_when_no_identifier() {
+        // Defensive: neither swap txHash nor orderId → checkSwapStatus absent.
+        let steps = next_steps_for_swap("1", "", "", None, None);
+        assert!(steps.get("checkSwapStatus").is_none());
+        assert!(steps.get("checkApproveStatus").is_none());
     }
 
     #[test]

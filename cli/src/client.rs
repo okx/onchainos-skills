@@ -108,6 +108,7 @@ fn first_charge_confirming() -> CliConfirming {
     CliConfirming {
         message: String::new(),
         next: String::new(),
+        scene: None,
     }
 }
 
@@ -327,7 +328,10 @@ impl ApiClient {
         }
 
         // ── Step 5: refresh token valid → refresh JWT ────────────────
-        match Self::refresh_jwt_inline(&rt).await {
+        // Delegates to the shared force-refresh primitive (DoH-capable) so the
+        // refresh logic lives in exactly one place; on failure we fall back to
+        // AK / anonymous just as before.
+        match crate::wallet_api::force_refresh_access_token().await {
             Ok(new_token) => Ok(AuthMode::Jwt(new_token)),
             Err(e) => {
                 eprintln!(
@@ -378,61 +382,6 @@ impl ApiClient {
                 })
             }
         }
-    }
-
-    /// Inline JWT refresh — avoids circular dependency with WalletApiClient.
-    /// Calls /priapi/v5/wallet/agentic/auth/refresh and stores the new tokens.
-    async fn refresh_jwt_inline(refresh_token: &str) -> Result<String> {
-        let base_url = std::env::var("OKX_BASE_URL")
-            .ok()
-            .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
-            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
-        let url = format!("{}/priapi/v5/wallet/agentic/auth/refresh", base_url);
-        let body = serde_json::json!({ "refreshToken": refresh_token });
-
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?;
-        let resp = http
-            .post(&url)
-            .headers(Self::anonymous_headers())
-            .json(&body)
-            .send()
-            .await
-            .context("JWT refresh request failed")?;
-
-        let json: Value = resp
-            .json()
-            .await
-            .context("failed to parse JWT refresh response")?;
-
-        let code_ok = match &json["code"] {
-            Value::String(s) => s == "0",
-            Value::Number(n) => n.as_i64() == Some(0),
-            _ => false,
-        };
-        if !code_ok {
-            let msg = json["msg"].as_str().unwrap_or("unknown error");
-            bail!("JWT refresh failed: {}", msg);
-        }
-
-        let arr = json["data"]
-            .as_array()
-            .context("refresh: expected data array")?;
-        let item = arr.first().context("refresh: empty data array")?;
-        let new_access = item["accessToken"]
-            .as_str()
-            .context("refresh: missing accessToken")?;
-        let new_refresh = item["refreshToken"]
-            .as_str()
-            .context("refresh: missing refreshToken")?;
-
-        crate::keyring_store::store(&[
-            ("access_token", new_access),
-            ("refresh_token", new_refresh),
-        ])?;
-
-        Ok(new_access.to_string())
     }
 
     /// Decode JWT payload and extract `exp` claim without signature verification.
@@ -633,24 +582,42 @@ impl ApiClient {
             .await;
         match result {
             Ok(data) => Ok(data),
-            Err(e) => match e.downcast::<PaymentRequired>() {
-                Ok(pr) => {
-                    if self.consume_pending_confirmation(path) {
-                        return Err(first_charge_confirming().into());
+            Err(e) => {
+                // Server-side token revocation (10008) while the local JWT exp
+                // is still in the future: force-refresh, swap our cached auth,
+                // and retry once. Only meaningful when we are actually sending a
+                // JWT (AK / anonymous never get a 10008 from token revocation).
+                if matches!(self.auth, AuthMode::Jwt(_))
+                    && crate::wallet_api::is_invalid_token_error(&e)
+                {
+                    if cfg!(feature = "debug-log") {
+                        eprintln!("[DEBUG][get_with_headers] 10008 invalid token → force-refresh + retry once");
                     }
-                    let accepts = self.resolve_retry_accepts(&pr)?;
-                    // Fall back to Basic if we have no tier mapping — cheapest
-                    // safe default; if the server wanted Premium it will 402
-                    // again and the user sees the error.
-                    let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
-                    let hdr = self
-                        .sign_header_from_accepts(&accepts, &resource, tier)
-                        .await?;
-                    self.do_get_request(path, query, extra_headers, Some(&hdr))
-                        .await
+                    let new_token = crate::wallet_api::force_refresh_access_token().await?;
+                    self.auth = AuthMode::Jwt(new_token);
+                    return self
+                        .do_get_request(path, query, extra_headers, payment_hdr.as_ref())
+                        .await;
                 }
-                Err(e) => Err(e),
-            },
+                match e.downcast::<PaymentRequired>() {
+                    Ok(pr) => {
+                        if self.consume_pending_confirmation(path) {
+                            return Err(first_charge_confirming().into());
+                        }
+                        let accepts = self.resolve_retry_accepts(&pr)?;
+                        // Fall back to Basic if we have no tier mapping — cheapest
+                        // safe default; if the server wanted Premium it will 402
+                        // again and the user sees the error.
+                        let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
+                        let hdr = self
+                            .sign_header_from_accepts(&accepts, &resource, tier)
+                            .await?;
+                        self.do_get_request(path, query, extra_headers, Some(&hdr))
+                            .await
+                    }
+                    Err(e) => Err(e),
+                }
+            }
         }
     }
 
@@ -677,21 +644,37 @@ impl ApiClient {
             .await;
         match result {
             Ok(data) => Ok(data),
-            Err(e) => match e.downcast::<PaymentRequired>() {
-                Ok(pr) => {
-                    if self.consume_pending_confirmation(path) {
-                        return Err(first_charge_confirming().into());
+            Err(e) => {
+                // Server-side token revocation (10008): force-refresh, swap our
+                // cached auth, and retry once. See `get_with_headers`.
+                if matches!(self.auth, AuthMode::Jwt(_))
+                    && crate::wallet_api::is_invalid_token_error(&e)
+                {
+                    if cfg!(feature = "debug-log") {
+                        eprintln!("[DEBUG][post_with_headers] 10008 invalid token → force-refresh + retry once");
                     }
-                    let accepts = self.resolve_retry_accepts(&pr)?;
-                    let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
-                    let hdr = self
-                        .sign_header_from_accepts(&accepts, &resource, tier)
-                        .await?;
-                    self.do_post_request(path, body, extra_headers, Some(&hdr))
-                        .await
+                    let new_token = crate::wallet_api::force_refresh_access_token().await?;
+                    self.auth = AuthMode::Jwt(new_token);
+                    return self
+                        .do_post_request(path, body, extra_headers, payment_hdr.as_ref())
+                        .await;
                 }
-                Err(e) => Err(e),
-            },
+                match e.downcast::<PaymentRequired>() {
+                    Ok(pr) => {
+                        if self.consume_pending_confirmation(path) {
+                            return Err(first_charge_confirming().into());
+                        }
+                        let accepts = self.resolve_retry_accepts(&pr)?;
+                        let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
+                        let hdr = self
+                            .sign_header_from_accepts(&accepts, &resource, tier)
+                            .await?;
+                        self.do_post_request(path, body, extra_headers, Some(&hdr))
+                            .await
+                    }
+                    Err(e) => Err(e),
+                }
+            }
         }
     }
 

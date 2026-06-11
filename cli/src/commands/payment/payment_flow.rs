@@ -977,6 +977,7 @@ pub(crate) fn parse_eip155_chain_id(network: &str) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::await_holding_lock)] // TEST_ENV_MUTEX serializes process-wide env vars across async tests
     use super::*;
 
     #[test]
@@ -1423,6 +1424,9 @@ mod tests {
 
     #[tokio::test]
     async fn sign_payment_local_rejects_aggr_deferred_only() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let accepts = json!([{
             "scheme": "aggr_deferred",
             "network": "eip155:196",

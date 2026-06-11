@@ -490,6 +490,115 @@ async fn tx_scan(
     Ok(())
 }
 
+// --- approvals ---
+async fn approvals(
+    ctx: &Context,
+    address: &str,
+    chain: Option<&str>,
+    limit: u32,
+    cursor: Option<u64>,
+) -> Result<()> {
+    let mut body = json!({
+        "nested": false,
+        "limit": limit,
+    });
+
+    let address_list: Vec<Value> = match chain {
+        Some(chains_str) => chains_str
+            .split(',')
+            .map(|c| c.trim())
+            .filter(|c| !c.is_empty())
+            .map(|c| {
+                let ci = chains::resolve_chain(c);
+                json!({
+                    "chainIndex": ci,
+                    "address": address,
+                })
+            })
+            .collect(),
+        None => {
+            let all_chains = super::agentic_wallet::chain::get_all_chains()
+                .await
+                .context("Failed to load supported chain list")?;
+            all_chains
+                .iter()
+                .filter_map(|c| {
+                    let ci = c["chainIndex"]
+                        .as_i64()
+                        .or_else(|| c["chainIndex"].as_str().and_then(|s| s.parse().ok()))?;
+                    let ci_str = ci.to_string();
+                    if chains::chain_family(&ci_str) == "evm" {
+                        Some(ci)
+                    } else {
+                        None
+                    }
+                })
+                .map(|ci| json!({ "chainIndex": ci, "address": address }))
+                .collect()
+        }
+    };
+    if address_list.is_empty() {
+        bail!("No supported chains found");
+    }
+    body["addressList"] = json!(address_list);
+
+    if let Some(c) = cursor {
+        body["cursor"] = json!(c);
+    }
+
+    let mut client = ctx.client_async().await?;
+    let data = client
+        .post("/api/v6/security/approval-mng", &body)
+        .await
+        .context("Failed to fetch approvals")?;
+
+    output::success(data);
+    Ok(())
+}
+
+async fn sig_scan(
+    ctx: &Context,
+    from: &str,
+    chain: &str,
+    sig_method: &str,
+    message: &str,
+) -> Result<()> {
+    let chain_index = chains::resolve_chain(chain);
+
+    let real_chain_id = super::agentic_wallet::chain::get_real_chain_index(&chain_index).await?;
+
+    let valid_methods = [
+        "personal_sign",
+        "eth_sign",
+        "eth_signTypedData",
+        "eth_signTypedData_v3",
+        "eth_signTypedData_v4",
+    ];
+    if !valid_methods.contains(&sig_method) {
+        bail!(
+            "Invalid --sig-method '{}'. Must be one of: personal_sign, eth_sign, eth_signTypedData, eth_signTypedData_v3, eth_signTypedData_v4",
+            sig_method
+        );
+    }
+
+    let message_value: Value = serde_json::from_str(message).unwrap_or_else(|_| json!(message));
+
+    let body = json!({
+        "source": "onchain_os_cli",
+        "from": from,
+        "chainId": real_chain_id,
+        "signType": sig_method,
+        "message": message_value,
+    });
+
+    let mut client = ctx.client_async().await?;
+    let result = client
+        .post("/api/v6/security/sign-message-check", &body)
+        .await?;
+    output::success(result);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -662,113 +771,4 @@ mod tests {
         assert_eq!(ci, "56");
         assert_eq!(addr, "0xdef");
     }
-}
-
-// --- approvals ---
-async fn approvals(
-    ctx: &Context,
-    address: &str,
-    chain: Option<&str>,
-    limit: u32,
-    cursor: Option<u64>,
-) -> Result<()> {
-    let mut body = json!({
-        "nested": false,
-        "limit": limit,
-    });
-
-    let address_list: Vec<Value> = match chain {
-        Some(chains_str) => chains_str
-            .split(',')
-            .map(|c| c.trim())
-            .filter(|c| !c.is_empty())
-            .map(|c| {
-                let ci = chains::resolve_chain(c);
-                json!({
-                    "chainIndex": ci,
-                    "address": address,
-                })
-            })
-            .collect(),
-        None => {
-            let all_chains = super::agentic_wallet::chain::get_all_chains()
-                .await
-                .context("Failed to load supported chain list")?;
-            all_chains
-                .iter()
-                .filter_map(|c| {
-                    let ci = c["chainIndex"]
-                        .as_i64()
-                        .or_else(|| c["chainIndex"].as_str().and_then(|s| s.parse().ok()))?;
-                    let ci_str = ci.to_string();
-                    if chains::chain_family(&ci_str) == "evm" {
-                        Some(ci)
-                    } else {
-                        None
-                    }
-                })
-                .map(|ci| json!({ "chainIndex": ci, "address": address }))
-                .collect()
-        }
-    };
-    if address_list.is_empty() {
-        bail!("No supported chains found");
-    }
-    body["addressList"] = json!(address_list);
-
-    if let Some(c) = cursor {
-        body["cursor"] = json!(c);
-    }
-
-    let mut client = ctx.client_async().await?;
-    let data = client
-        .post("/api/v6/security/approval-mng", &body)
-        .await
-        .context("Failed to fetch approvals")?;
-
-    output::success(data);
-    Ok(())
-}
-
-async fn sig_scan(
-    ctx: &Context,
-    from: &str,
-    chain: &str,
-    sig_method: &str,
-    message: &str,
-) -> Result<()> {
-    let chain_index = chains::resolve_chain(chain);
-
-    let real_chain_id = super::agentic_wallet::chain::get_real_chain_index(&chain_index).await?;
-
-    let valid_methods = [
-        "personal_sign",
-        "eth_sign",
-        "eth_signTypedData",
-        "eth_signTypedData_v3",
-        "eth_signTypedData_v4",
-    ];
-    if !valid_methods.contains(&sig_method) {
-        bail!(
-            "Invalid --sig-method '{}'. Must be one of: personal_sign, eth_sign, eth_signTypedData, eth_signTypedData_v3, eth_signTypedData_v4",
-            sig_method
-        );
-    }
-
-    let message_value: Value = serde_json::from_str(message).unwrap_or_else(|_| json!(message));
-
-    let body = json!({
-        "source": "onchain_os_cli",
-        "from": from,
-        "chainId": real_chain_id,
-        "signType": sig_method,
-        "message": message_value,
-    });
-
-    let mut client = ctx.client_async().await?;
-    let result = client
-        .post("/api/v6/security/sign-message-check", &body)
-        .await?;
-    output::success(result);
-    Ok(())
 }

@@ -54,6 +54,11 @@ pub fn error(msg: &str) {
 #[derive(Serialize)]
 struct ConfirmingOutput {
     confirming: bool,
+    /// Machine-readable outcome discriminator (e.g. Gas Station scene). When
+    /// present, the agent maps it directly to the matching fixed copy / flow
+    /// instead of parsing `message`/`next` prose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scene: Option<String>,
     #[serde(skip_serializing_if = "String::is_empty")]
     message: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -69,8 +74,15 @@ struct ConfirmingOutput {
 /// confirmation before proceeding. The agent reads this, prompts the user,
 /// and follows the `next` instructions if the user confirms.
 pub fn confirming(message: &str, next: &str) {
+    confirming_scene(message, next, None);
+}
+
+/// Like [`confirming`], but also emits a machine-readable `scene` discriminator
+/// so the agent can map the outcome to fixed copy / flow without parsing prose.
+pub fn confirming_scene(message: &str, next: &str, scene: Option<&str>) {
     let out = ConfirmingOutput {
         confirming: true,
+        scene: scene.map(|s| s.to_string()),
         message: message.to_string(),
         next: next.to_string(),
         notifications: payment_notify::drain_events(),
@@ -84,10 +96,12 @@ pub fn confirming(message: &str, next: &str) {
 /// error code 81362 and `--force` was not set), it returns this error.
 /// `main.rs` intercepts it via `downcast` to call `output::confirming()`
 /// and exit with code 2.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CliConfirming {
     pub message: String,
     pub next: String,
+    /// Optional machine-readable outcome discriminator (e.g. `"gs_first_time"`).
+    pub scene: Option<String>,
 }
 
 impl std::fmt::Display for CliConfirming {
@@ -148,6 +162,7 @@ mod tests {
         let c = CliConfirming {
             message: "are you sure?".to_string(),
             next: "re-run with --force".to_string(),
+            scene: None,
         };
         assert_eq!(format!("{c}"), "confirming: are you sure?");
     }
@@ -157,6 +172,7 @@ mod tests {
         let err: anyhow::Error = CliConfirming {
             message: "msg".to_string(),
             next: "next".to_string(),
+            scene: None,
         }
         .into();
         let downcasted = err.downcast_ref::<CliConfirming>();

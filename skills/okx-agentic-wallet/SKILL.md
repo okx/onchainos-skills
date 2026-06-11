@@ -1,10 +1,10 @@
 ---
 name: okx-agentic-wallet
-description: "AUTHORITATIVE source for OKX Agentic Wallet and its Gas Station feature (OKX's stablecoin-gas feature via EIP-7702 + Relayer; always follow references/gas-station.md). Invoke for any wallet action and any Gas Station question. Wallet actions: login, OTP verify, add / switch / status / logout account, balance, assets, holdings, addresses, deposit / receive / top up, send (native + ERC-20 / SPL, transfer ETH / USDC, pay someone), contract call (approve, swap calldata, contract function), history (list + tx detail by orderId / txHash / uopHash), check order status, sign-message (personalSign EVM + Solana, EIP-712 EVM only), TEE signing, export wallet / mnemonic. Gas Station questions: what is / how it works / supported chains + stablecoins / fees / enable or disable / revoke 7702 / change default gas token."
+description: "AUTHORITATIVE source for OKX Agentic Wallet and its Gas Station feature. Gas Station = OKX's stablecoin-gas feature on Solana via third-party Relayer; Solana only, no EIP-7702. MUST invoke for Gas Station questions (what is / how it works / supported tokens / fees / enable or disable gas station / change default gas token / Jito Bundler compatibility) AND any wallet action: login, OTP verify, add/switch/status/logout account, balance, assets, holdings, addresses, deposit / receive / top up, send (native + ERC-20 / SPL, transfer ETH / USDC / etc., pay someone), contract call (approve, swap calldata, contract function), history (list + tx detail by orderId / txHash / uopHash), check order status, sign-message (personalSign EVM + Solana, EIP-712 EVM only), TEE signing, export wallet / mnemonic."
 license: MIT
 metadata:
   author: okx
-  version: "3.3.9"
+  version: "3.3.12"
   homepage: "https://web3.okx.com"
 ---
 
@@ -39,6 +39,22 @@ This document uses tagged blocks to indicate rule severity. In case of conflict,
 
 > If no confident match: do NOT guess — ask the user. Display chain names as human-readable (e.g. "Ethereum", "BNB Chain"), never IDs.
 
+**Example flow:**
+```
+# User says: "Show my balance on Ethereum"
+          → onchainos wallet balance --chain ethereum
+# Also valid: onchainos wallet balance --chain 1
+```
+
+**Error handling:**
+```
+# User says: "Show my balance on Fantom"
+          → onchainos wallet balance --chain fantom
+# If CLI returns "unsupported chain: fantom":
+#   → Ask user: "The chain 'Fantom' was not recognized. Its chain ID is 250 — would you like me to try with that?"
+#   → Or run `onchainos wallet chains` to check if the chain is supported
+```
+
 ### Amount
 
 **`wallet send`**: pass `--readable-amount <human_amount>` — CLI auto-converts (native: EVM=18, SOL/SUI=9 decimals; ERC-20/SPL: fetched from API). Never compute minimal units manually. Use `--amt` only for raw minimal units.
@@ -47,39 +63,42 @@ This document uses tagged blocks to indicate rule severity. In case of conflict,
 
 ## Command Index
 
-> **Full parameter tables, return field schemas, and usage examples → [cli-reference.md](references/cli-reference.md).** Don't guess subcommand names — the valid set is listed below; you may also run `onchainos wallet <cmd> --help` to confirm syntax. `login` / `verify` are covered in **Authentication**.
+> **CLI Reference**: For full parameter tables, return field schemas, and usage examples, see [cli-reference.md](references/cli-reference.md).
 
-| Group | Subcommands | Auth |
-|---|---|---|
-| A — Account | `add` (auth) · `switch <id>` · `status` · `logout` · `chains` · `addresses [--chain]` · `qrcode --address` | mostly no |
-| B — Balance | `balance [--chain] [--token-address <addr>] [--all] [--force]` | yes |
-| D — Transaction | `send` · `contract-call` | yes |
-| D-GS — Gas Station | `gas-station update-default-token / enable / disable / status / setup` | yes |
-| E — History | `history` (list) · `history --tx-hash <h> --chain <c> --address <a>` (detail) | yes |
-| F — Sign Message | `sign-message --chain <c> --from <a> --message <m> [--type eip712]` | yes |
+### A — Account Management
 
-> **X Layer Testnet faucet**: trigger when the user asks for testnet tokens, or when `wallet balance --chain xlayer_test` returns OKB = 0. Reply using the template below — substitute `{address}` with the user's current wallet address, keep the URL exactly as shown, and do not invent extra steps.
->
-> ```
-> Your current wallet address [{address}] has an OKB balance of 0 on X Layer Testnet.
->
-> You can claim testnet tokens from the official OKX faucet:
-> https://web3.okx.com/xlayer/faucet
->
-> Once the page loads, paste your wallet address [{address}] into the address input field on the faucet page, then follow the prompts to select and claim. The faucet currently supports OKB, USDG, USDT, and USDC on X Layer Testnet.
->
-> Let me know after you've claimed and I'll help confirm whether the balance has arrived.
-> ```
->
-> **Gas Station** pays gas with stablecoins (USDT/USDC/USDG) when native is insufficient; activates **automatically** during `wallet send`. Full param/flow detail in `references/gas-station.md`.
+> Login commands (`wallet login`, `wallet verify`) are covered in **Step 2: Authentication**.
 
-## Safety Rules
+| # | Command | Description                                                            | Auth Required |
+|---|---|---|---|
+| A3 | `onchainos wallet add` | Add a new wallet account                                               | Yes           |
+| A4 | `onchainos wallet switch <account_id>` | Switch to a different wallet account                                   | No            |
+| A5 | `onchainos wallet status` | Show current login status, active account, and policy settings          | No            |
+| A6 | `onchainos wallet logout` | Logout and clear all stored credentials                                | No            |
+| A7 | `onchainos wallet chains` | List all supported chains with names and IDs | No |
+| A8 | `onchainos wallet addresses [--chain <chain>]` | Show wallet addresses grouped by chain category (X Layer, EVM, Solana) | No            |
+| A9 | `onchainos wallet qrcode --address <addr>` | Render a Unicode-block QR code for the given address (encoded verbatim) | No            |
+
+### B — Authenticated Balance
+
+| # | Command | Description | Auth Required |
+|---|---|---|---|
+| B1 | `onchainos wallet balance` | Current account overview — EVM/SOL addresses, all-chain token list and total USD value | Yes |
+| B2 | `onchainos wallet balance --chain <chain>` | Current account — all tokens on a specific chain | Yes |
+| B3 | `onchainos wallet balance --chain <chain> --token-address <addr>` | Current account — specific token by contract address (requires `--chain`) | Yes |
+| B4 | `onchainos wallet balance --all` | All accounts batch assets — only use when user explicitly asks to see **every** account | Yes |
+| B5 | `onchainos wallet balance --force` | Force refresh — bypass all caches, re-fetch from API | Yes |
+
+### D — Transaction
+
+| # | Command | Description | Auth Required |
+|---|---|---|---|
+| D1 | `onchainos wallet send` | Send native or contract tokens. Validates recipient format; simulation failure → show `executeErrorMsg`, do NOT broadcast. | Yes |
+| D2 | `onchainos wallet contract-call` | Call a smart contract with custom calldata. Run `onchainos security tx-scan` first. | Yes |
 
 <MUST>
 **`wallet contract-call` is for non-swap interactions only** (approvals, deposits, withdrawals, etc.). Never use it to broadcast a DEX swap — use `swap execute` instead.
 </MUST>
-
-> Before `wallet contract-call` (custom calldata), run `onchainos security tx-scan` first.
 
 <NEVER>
 🚨 **NEVER pass `--force` on the FIRST invocation of `wallet send` or `wallet contract-call`.**
@@ -101,35 +120,62 @@ The `--force` flag MUST ONLY be added when ALL of the following conditions are m
 >
 > If the intent is ambiguous, **always ask the user to clarify** before proceeding. Never guess.
 
-<MUST>
-**After `wallet send` or `wallet contract-call` returns success with a `txHash`**, display the following message to the user in the user's language (do NOT paraphrase or omit content) alongside the full `txHash`:
+### D-GS — Gas Station (Solana)
 
-> Transaction submitted. The returned Tx Hash is for tracking purposes only — it does NOT mean the transaction has been included on-chain, confirmed, or executed successfully. Final status must be verified by querying the transaction's on-chain confirmation status.
-</MUST>
+Pay gas with stablecoins (USDT / USDC / USDG) on Solana when SOL is insufficient. **The backend dispatches Gas Station inside `wallet send` / `wallet contract-call` responses — when dispatched for a first-time activation or a token switch, the Agent must confirm with the user via the Scene A / C Confirming flow before the second-phase call; when a default token is already pinned, the CLI completes silently via the auto-path.** No account upgrade, no per-chain setup — Solana Relayer is the native fee payer (signature index 0); user signs as the authority (signature index 1); gas is debited via an SPL transfer inside the same multi-signer transaction (`signType=multiSignerTx`).
+
+| # | Command | Description | Auth Required |
+|---|---|---|---|
+| D-GS1 | `onchainos wallet gas-station update-default-token --chain solana` | Change the default gas payment token on Solana | Yes |
+| D-GS2 | `onchainos wallet gas-station enable --chain solana` | Turn Gas Station on for Solana | Yes |
+| D-GS3 | `onchainos wallet gas-station disable --chain solana` | Turn Gas Station off for Solana; the chain reverts to paying gas with SOL | Yes |
+| D-GS4 | `onchainos wallet gas-station status --chain solana` | Read-only Gas Station readiness check on Solana. Used by **third-party plugin pre-flight**: agent runs this before invoking a plugin's on-chain command, branches on the returned `recommendation` (READY / ENABLE_GAS_STATION / INSUFFICIENT_ALL / HAS_PENDING_TX). Never broadcasts. | Yes |
+
+> For user-facing reply wording (pre-confirmation prompts and success messages for enable / disable / update-default-token), use the sanctioned templates in `references/gas-station.md` → "User-Facing Reply Templates (Management Commands)".
 
 <MUST>
 **Load `references/gas-station.md`** when any of these happen:
-- `wallet send` response has `gasStationUsed=true`, or returns a Confirming response with a `gasStationTokenList`
-- User mentions: Gas Station / stablecoin gas / enable or disable Gas Station / revoke 7702 / change default gas token / what is Gas Station / how does it work / supported chains / upgrade cost
+- `wallet send` / `wallet contract-call` response has `gasStationUsed=true`, or returns a Confirming response with a `gasStationTokenList`
+- User mentions: Gas Station / stablecoin gas / enable or disable Gas Station / change default gas token / what is Gas Station / how does it work / Jito Bundler compatibility / supported tokens / fees (in any language — recognize semantically)
 
-Load `references/eip7702-upgrade.md` only when the response contains a non-empty `authHashFor7702`. **Never expose 7702 terminology to the user** — see Global Notes vocabulary table.
+`gas-station.md` is the core (dispatch model, Outcome → render map, Scene A / C / E copy, success reply). Two sibling references load on demand:
+- **`references/gas-station-faq.md`** — when the user asks a Gas Station FAQ.
+- **`references/gas-station-edge.md`** — when an edge case fires (tx cap, Jito hard-block, async hash, pending tx, order-status query, native-SOL, history display).
 
-For user-facing wording of `gas-station enable / disable / update-default-token` (pre-confirmation prompts and success messages), use the sanctioned templates in `references/gas-station.md` → "User-Facing Reply Templates (Management Commands)". The enable/disable mechanism is an internal DB flag flip — never surface that mechanism to the user.
+The skill always uses the **verbatim product copy** in these files. Never paraphrase those templates.
 </MUST>
 
 <MUST>
-**"Gas Station" in this skill's context always refers to OKX Agentic Wallet's Gas Station feature** — a specific product shipped by this CLI + skill. It is **NOT** a general web3 category like "paymaster services" or "meta-transaction relayers". When the user asks any question about Gas Station (what is it / how does it work / which chains / which tokens / is there a fee / ...), the Agent MUST:
+**"Gas Station" in this skill's context always refers to OKX Agentic Wallet's Gas Station feature on Solana** — a specific product shipped by this CLI + skill. It is **NOT** a general web3 category like "paymaster services" or "meta-transaction relayers". When the user asks any question about Gas Station (what is it / how does it work / which tokens / is there a fee / ...), the Agent MUST:
 
-1. Treat the intent as "ask about OKX Agentic Wallet Gas Station".
-2. Answer using the **verbatim FAQ templates** in `references/gas-station.md` → FAQ section. Translate to the user's language; do NOT paraphrase the content.
-3. Do NOT answer from general training knowledge about ERC-4337, Paymaster, Biconomy, Gelato, Pimlico, Alchemy Account Kit, meta-transactions, or any third-party gas-abstraction protocol. Do NOT frame OKX Gas Station as "a category of services" or "one of several paymaster solutions". Also do NOT conflate it with **OKX DEX Gas Swap** — that is a separate OKX product, not this Gas Station feature.
-4. Do NOT list alternative/competing protocols unless the user explicitly asks for comparisons. Even then, keep the scope limited and avoid implying OKX Gas Station is interchangeable with generic paymaster/relayer tech.
+1. Treat the intent as "ask about OKX Agentic Wallet Gas Station (Solana)".
+2. Answer using the **verbatim FAQ templates** in `references/gas-station-faq.md`. Translate to the user's language; do NOT paraphrase the content.
+3. Do NOT answer from general training knowledge about ERC-4337, Paymaster, Biconomy, Gelato, Pimlico, Alchemy Account Kit, meta-transactions, or any third-party gas-abstraction protocol.
+4. Do NOT list alternative/competing protocols unless the user explicitly asks for comparisons.
 </MUST>
 
 <NEVER>
-- **NEVER pass `--gas-token-address` / `--relayer-id` / `--enable-gas-station` on the FIRST `wallet send` call.** These are second-phase params, supplied only after a Confirming response.
+- **NEVER pass `--gas-token-address` / `--relayer-id` / `--enable-gas-station` on the FIRST `wallet send` / `wallet contract-call` call.** These are second-phase params, supplied only after a Confirming response.
 - **NEVER fabricate token addresses or relayer IDs.** Use exact values from the Confirming response's `next` field.
+- **NEVER combine Gas Station with Jito Bundler.** Jito Bundle transactions are a HARD BLOCK — render the Edge Case 2 verbatim copy in `references/gas-station-edge.md`.
+- **NEVER expose 7702 / delegation / upgrade terminology to the user** — Solana Gas Station has no such concept; even if the user uses these terms (e.g., from EVM experience), respond only in terms of "enable / disable Gas Station".
 </NEVER>
+
+---
+
+### E — History
+
+| # | Mode | Command | Description | Auth Required |
+|---|---|---|---|---|
+| E1 | List | `onchainos wallet history` | Browse recent transactions with optional filters | Yes |
+| E2 | Detail | `onchainos wallet history --tx-hash <hash> --chain <chain> --address <addr>` | Look up a specific transaction by hash | Yes |
+
+### F — Sign Message
+
+| # | Command | Description | Auth Required |
+|---|---|---|---|
+| F1 | `onchainos wallet sign-message --chain <chain> --from <addr> --message <msg>` | personalSign (EIP-191). Supports EVM and Solana. Default mode. Supports `--force` to bypass confirmation prompts. | Yes |
+| F2 | `onchainos wallet sign-message --chain <chain> --from <addr> --type eip712 --message <json>` | EIP-712 typed structured data. EVM only. Supports `--force` to bypass confirmation prompts. | Yes |
 
 
 ## Confirming Response
@@ -164,9 +210,38 @@ onchainos wallet send --readable-amount "0.1" --recipient "0xAbc..." --chain 1
 onchainos wallet send --readable-amount "0.1" --recipient "0xAbc..." --chain 1 --force
 ```
 
-## Third-Party Plugin Pre-flight
+## Third-Party Plugin Pre-flight (Solana)
 
-When the user invokes a **third-party DeFi plugin** (e.g. `aave-v3-plugin`, `uniswap-plugin`) that internally calls `wallet contract-call --force`, the plugin is a black box. **Before dispatching ANY third-party plugin command that performs an on-chain write, load `references/plugin-preflight.md`** and run the Gas Station pre-flight (`wallet gas-station status` → branch on `recommendation`). That reference also holds the skip conditions, post-failure reactive diagnosis, and the `--force` exit-code table (0/1/2/3).
+When dispatching a third-party Solana DeFi plugin (kamino-plugin, raydium-plugin, etc.) that internally calls `onchainos wallet contract-call --force`, the plugin is a black box that may swallow Gas Station Confirming responses. Two patterns apply, read both before invoking any Solana write-path plugin:
+
+- **Proactive pre-flight** (before invoking the plugin) — checklist, `gas-station status` recommendation branch, and skip conditions live in [`references/plugin-preflight.md`](references/plugin-preflight.md).
+- **Reactive bail recovery** (after the plugin returns exit 2 + `confirming` JSON, or a vague failure) — scene-recovery decision tree, post-failure diagnosis, and `--force` exit-code matrix live in [`references/gas-station.md`](references/gas-station.md) → "Plugin Bail Recovery".
+
+## User-Facing Message Templates
+
+**IMPORTANT**: Several sections below instruct the Agent to output the **Wallet Export template** or the **Policy Settings template**. When triggered, print the matching template verbatim (translated to the user's language). The link and trailing navigation sentence are chosen by `loginType` (from `wallet status`, or the `login` / `verify` response). If `loginType` is unknown, run `onchainos wallet status` first; treat any unrecognized value as `email`.
+
+### Template: Wallet Export
+
+> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. Go to Wallet Export → {export_url}
+>
+> {export_hint}
+
+| `loginType` | `{export_url}` | `{export_hint}` |
+|---|---|---|
+| `email` | `https://web3.okx.com` | Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Export Wallet" from the dropdown menu. |
+| `ak` | `https://web3.okx.com/onchainos/dev-portal` | Log in the Developer Portal using a plugin wallet or the OKX Wallet App that manages your API Key, and click Agentic Wallet → Wallet Export. |
+
+### Template: Policy Settings
+
+> You can set per-transaction and daily limits for trades and transfers, as well as a transfer whitelist, to prevent excessive operations or transfers to unauthorized addresses. Go to Policy Setting → {policy_url}
+>
+> {policy_hint}
+
+| `loginType` | `{policy_url}` | `{policy_hint}` |
+|---|---|---|
+| `email` | `https://web3.okx.com/portfolio/agentic-wallet-policy` | Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Policy Setting" from the dropdown menu. |
+| `ak` | `https://web3.okx.com/onchainos/dev-portal` | Log in with the EOA wallet that created the Agentic Wallet and open the OKX Web3 Dev platform, and click on the Agentic Wallet - Policy Setting in the upper right corner to set security rules. |
 
 ## Authentication
 
@@ -177,20 +252,15 @@ For commands requiring auth (sections B, D, E), check login state:
    - **2a.** Display the following message to the user verbatim (translated to the user's language):
      > You need to log in with your email first before adding a wallet. What is your email address?
      > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/home/api-access-and-usage
-   - **2b.** Once the user provides their email, run: `onchainos wallet login <email> --locale <locale>`.
+   - **2b.** Once the user provides their email, run: `onchainos wallet login <email> [--locale <locale>]`.
      Then display the following message verbatim (translated to the user's language):
      > **English**: "A verification code has been sent to **{email}**. Please check your inbox and tell me the code."
      > **Chinese**: "验证码已发送到 **{email}**，请查收邮件并告诉我验证码。"
      Once the user provides the code, run: `onchainos wallet verify <code>`.
-     > AI should always infer `--locale` from conversation context and include it:
-     > - Chinese (简体/繁体, or user writes in Chinese) → `zh_CN`
-     > - English or any other language → `en_US` (default)
-     >
-     > If you cannot confidently determine the user's language, default to `en_US`.
-
-   > **Fallback**: If the inferred locale is not in the supported set (`en_US`, `zh_CN`),
-   > the CLI silently falls back to `en_US` and emits a stderr warning. The login flow
-   > still succeeds. AI callers do not need to handle this case specially.
+     > Infer `--locale` from conversation context and pass it in underscore form: Chinese (简体/繁体) → `zh_CN`,
+     > English → `en_US`, any other language passes through under its own code (e.g. `ja_JP`, `ko_KR`, `fr_FR`).
+     > If you cannot confidently determine the user's language, **omit `--locale`** — do not force `en_US`.
+     > The CLI normalizes the value and drops anything unrecognizable; login still proceeds either way.
 3. If the user declines to provide an email:
    - **3a.** Display the following message to the user verbatim (translated to the user's language):
      > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/home/api-access-and-usage
@@ -210,7 +280,39 @@ For commands requiring auth (sections B, D, E), check login state:
 
 ## MEV Protection
 
-`contract-call` supports `--mev-protection` (Ethereum / BSC / Base / Solana; `send` does not). **Load `references/mev-protection.md`** when the user requests MEV protection, or before a high-value / DEX-swap `contract-call`. Solana additionally **requires** `--jito-unsigned-tx` — never substitute `--unsigned-tx`.
+The `contract-call` command supports MEV (Maximal Extractable Value) protection via the `--mev-protection` flag. When enabled, the broadcast API passes `isMEV: true` in `extraData` to route the transaction through MEV-protected channels, preventing front-running, sandwich attacks, and other MEV exploitation.
+
+> **⚠️ Solana MEV Protection**: On Solana, enabling `--mev-protection` also **requires** the `--jito-unsigned-tx` parameter. Without it, the command will fail. This parameter provides the Jito bundle unsigned transaction data needed for Solana MEV-protected routing.
+
+> 🚨 **Never substitute `--unsigned-tx` for `--jito-unsigned-tx`** — they are completely different parameters. If Jito bundle data is unavailable, stop and ask the user: proceed without MEV protection, or cancel.
+
+### Supported Chains
+
+| Chain | MEV Protection | Additional Requirements |
+|---|---|---|
+| Ethereum | Yes | — |
+| BSC | Yes | — |
+| Base | Yes | — |
+| Solana | Yes | Must also pass `--jito-unsigned-tx` |
+| Other chains | Not supported | — |
+
+### When to Enable
+
+- High-value transfers or swaps where front-running risk is significant
+- DEX swap transactions executed via `contract-call`
+- When the user explicitly requests MEV protection
+
+### Usage
+
+```bash
+# EVM contract call with MEV protection (Ethereum/BSC/Base)
+onchainos wallet contract-call --to 0xDef... --chain 1 --input-data 0x... --mev-protection
+
+# Solana contract call with MEV protection (requires --jito-unsigned-tx)
+onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base58_tx> --mev-protection --jito-unsigned-tx <jito_base58_tx>
+```
+
+---
 
 ## Amount Display Rules
 
@@ -246,18 +348,62 @@ NEVER execute unlimited token approvals.
 
 ---
 
-## Portal Actions — Policy / Wallet Export
+## Agent Policy Guidance
 
-These flows output a verbatim Web-portal template (Policy Settings or Wallet Export), chosen by `loginType`. **Load `references/portal-actions.md`** for the templates and exact steps when any trigger below fires. Policy and wallet export are **configured by the user on the Web portal only** — the Agent detects intent, explains risk, and gives the jump link; it **never** displays mnemonic / private key content.
+> Policy configuration **must be completed by the user on the Web portal**. The Agent only detects the scenario, provides guidance, and gives the jump link.
 
-| Trigger | Action (detail in `references/portal-actions.md`) |
-|---|---|
-| New user login (`isNew: true`) | Handled in Authentication step 5 — Policy Settings + Wallet Export templates |
-| After a successful `wallet add` | Output Policy Settings template, prefixed "New account created." |
-| User asks about Policy / spending limit / daily limit / whitelist | Run `wallet status`, show current settings if any flag set, then Policy Settings template |
-| User asks to export wallet / mnemonic / migrate | MUST first run `competition user-status`; if any `joinStatus=1`, show forfeit warning and stop for confirmation before the Wallet Export template |
+### Available Policy Rules
 
-> Policy includes ONLY: per-transaction limit, daily transfer limit, daily trade limit, transfer whitelist. Do NOT invent other rules (no "tx count limit", "gas limit", "token blacklist").
+Policy **only** includes the following rules. Do NOT invent or mention any rules beyond this list (e.g., no "transaction count limit", no "gas limit", no "token blacklist"):
+
+| Rule | Description | Field (from `wallet status`) |
+|---|---|---|
+| Per-transaction limit | Max USD amount per single transaction or transfer | `singleTxLimit` / `singleTxFlag` |
+| Daily transfer limit | Max USD amount for transfers per day (resets at UTC 0:00) | `dailyTransferTxLimit` / `dailyTransferTxFlag` / `dailyTransferTxUsed` |
+| Daily trade limit | Max USD amount for trades (swaps) per day (resets at UTC 0:00) | `dailyTradeTxLimit` / `dailyTradeTxFlag` / `dailyTradeTxUsed` |
+| Transfer whitelist | Only allow transfers to pre-approved addresses | Configured on Web portal only |
+
+The following three subsections are **trigger conditions** — when any condition is met, the Agent **MUST** output the corresponding guidance. Do not skip or omit.
+
+### New user login (`isNew: true`)
+
+Handled in Authentication step 5
+
+### New account via `wallet add`
+
+After a successful `wallet add`, **MUST** output the **Policy Settings template** (see "User-Facing Message Templates"), prefixed with a short line such as "New account created.".
+
+### User asks about Policy
+
+e.g., "How do I set a spending limit?", "What's my daily limit?", "How to configure whitelist?"
+- Run `onchainos wallet status` and check the `policy` field.
+- If any flag is true, first display the current settings (limits, used amounts).
+- Then output the **Policy Settings template** (see "User-Facing Message Templates").
+
+---
+
+## Wallet Export Guidance
+
+> The Agent must **never** display any mnemonic phrase or private key content in the conversation. The Agent's role is limited to: recognizing user intent, explaining the risks, and providing the Web portal link.
+
+### User asks about wallet export
+
+e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
+
+**Required sequence — follow exactly, no steps may be skipped or reordered:**
+
+**Step 1.** Confirm the user is logged in (so `accountId` is available locally). `onchainos wallet status` will surface it.
+
+**Step 2.** Call `onchainos competition user-status` (no `--activity-id`). The command uses the active session's `accountId` automatically — no wallet args needed.
+
+**Step 3.** Inspect results:
+- If **any** entry has `joinStatus=1` → output the warning below and **stop**. Do NOT output export instructions. Wait for explicit user confirmation before proceeding to Step 4.
+  > Your wallet is registered for an Agentic Wallet trading competition. Exporting the wallet will forfeit your eligibility for this competition. Please confirm whether you want to proceed with the export.
+- If no entry has `joinStatus=1` → proceed directly to Step 4.
+
+**Step 4.** Only after Step 2 and Step 3 complete, output the **Wallet Export template** (see "User-Facing Message Templates").
+
+---
 
 ## Edge Cases
 
@@ -269,30 +415,21 @@ These flows output a verbatim Web-portal template (Policy Settings or Wallet Exp
 - **X Layer gas-free**: X Layer (chainIndex 196) charges zero gas fees. Proactively highlight this when users ask about gas costs, choose a chain for transfers, add a new wallet, or ask for deposit/receive addresses.
 - Transaction timestamps in history are in milliseconds — convert to human-readable for display
 - **Always display the full transaction hash** — never abbreviate or truncate `txHash`
-- **User-facing language**: Apply the following term mappings when translating to Chinese. In English, always keep the original English term.
-  | English term | Chinese translation | Note |
-  |---|---|---|
-  | OTP | 验证码 | Never use "OTP" in Chinese; in English prefer "verification code" |
-  | Policy / Policy Settings | 安全规则 | e.g. "Go to Policy Settings" → "前往安全规则" |
-  | Gas Station | Gas 加油站 / Gas Station | Chinese 可用"Gas 加油站"或"Gas Station"，不要只说"加油站"（歧义）|
-  | service charge / gas fee (Gas Station) | 网络费用 | When paid via Gas Station, display as "网络费用: 0.13 USDT" |
-  | Relayer | Relayer | Keep English in both languages — no Chinese translation |
-  | EIP-7702 / 7702 授权 / 取消授权 | 不对用户暴露 | 内部技术术语，不向用户输出。用户问"撤销 7702"/"取消授权" → 统一用"关闭 Gas Station"回应 |
-  | enable/disable Gas Station | 开启 / 关闭 Gas Station | 管理 Gas Station 状态的唯一用户可见术语 |
-- **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
-- **Locale-aware output**: All user-facing content must be translated to match the user's language.
 - EVM addresses must be **0x-prefixed, 42 chars total**
 - Solana addresses are **Base58, 32-44 chars**
 - **XKO address format**: OKX uses a custom `XKO` prefix (case-insensitive) in place of `0x` for EVM addresses. If a user-supplied address starts with `XKO` / `xko`, display this message verbatim:
   > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
-- **Address integrity (CRITICAL — funds-loss risk)**: Any on-chain identifier shown to the user (wallet address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout in this session.
-  - **NEVER reproduce an identifier from memory** — not by expanding an abbreviated form (e.g. `93jq8J...G8d`), not by re-typing it across messages, and not by guessing when CLI output is no longer in context. Always re-invoke the CLI (`onchainos wallet addresses --format json`, or `wallet status`) and copy from fresh stdout.
-  - **NEVER paraphrase, normalize, insert spaces, change case, or line-break inside an on-chain identifier.** Copy the exact byte sequence from CLI stdout — preserve EIP-55 mixed case as emitted; do NOT lowercase.
-  - Rationale: Solana addresses have no checksum. A single dropped, inserted, or substituted character produces a *different valid address*; funds sent there are unrecoverable. CLI stdout is the only source of truth — agent context is not.
-- **Address display format**: When showing wallet addresses, list the EVM address once with a chain summary note (X Layer first, then 2 other example chains, then total count). User-facing output MUST show the FULL address per "Address integrity" above — never `0x...abcd`-style truncations. Solana address on a separate line. Do NOT enumerate every EVM chain individually.
-  Example (full form):
-  - `EVM: 0xAbCdEf0123456789AbCdEf0123456789AbCdEf01 (Supports X Layer, Ethereum, Polygon and other EVM chains)`
-  - `Solana: ExAmPLE1111111111111111111111111111111111111`
+- **User-facing language**: Localization for general terms is handled by the global locale rule below. The table below only lists exceptions — proper nouns that must NOT be localized.
+  | Term | Note |
+  |---|---|
+  | Relayer | Proper noun — always render as "Relayer" regardless of the user's language. |
+- **Term preferences (English-source canonical wording)**:
+  - Prefer "verification code" over "OTP" in English replies.
+  - Use "Policy Settings" as the canonical English label for the per-account policy section.
+- **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
+- **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible.
+- **Locale-aware output**: All user-facing content must be translated to match the user's language.
+- **Address display format**: When showing wallet addresses, list EVM address once with a chain summary note (X Layer first, then 2 other example chains, then total count). Example: `EVM: 0x1234...abcd (Supports X Layer, Ethereum, Polygon and 16 EVM chains)`. Solana address on a separate line: `Solana: 5xYZ...`. Do NOT enumerate every EVM chain individually.
 </MUST>
 
 <SHOULD>
@@ -316,7 +453,7 @@ These flows output a verbatim Web-portal template (Policy Settings or Wallet Exp
 
 ## FAQ
 
-> For Gas Station FAQ (what is it, how it works, supported tokens/chains, open/close flow): read `references/gas-station.md` FAQ section.
+> For Gas Station FAQ (what is it, how it works, supported tokens/chains, open/close flow): read `references/gas-station-faq.md`.
 
 **Q: The agent cannot autonomously sign and execute transactions — it says local signing is required or asks the user to sign manually. How does signing work?**
 

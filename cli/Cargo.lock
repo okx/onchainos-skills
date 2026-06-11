@@ -2535,7 +2535,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onchainos-cli"
-version = "3.3.11"
+version = "3.3.12"
 dependencies = [
  "aes-gcm",
  "alloy-consensus",
@@ -2577,6 +2577,7 @@ dependencies = [
  "serde_jcs",
  "serde_json",
  "sha2",
+ "sys-locale",
  "tempfile",
  "tiny-keccak",
  "tokio",
@@ -3899,6 +3900,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
