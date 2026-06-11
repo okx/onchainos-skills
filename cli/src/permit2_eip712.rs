@@ -380,6 +380,32 @@ mod tests {
         assert!(!digest.is_zero());
     }
 
+    // Golden vectors pin the full EIP-712 digest (domain + typehash +
+    // struct) so any silent drift in `permit2_domain`, the sol! schema,
+    // or the JSON `types` table is caught — drift_match tests only
+    // verify the two sides agree, not that the typehash itself is right.
+    // To regenerate after a deliberate schema change: run the test, copy
+    // the actual digest from the failure message, paste it here.
+    #[test]
+    fn exact_digest_matches_golden_vector() {
+        let s = build_exact_permit2_struct(&sample_input()).unwrap();
+        let digest = s.eip712_signing_hash(&permit2_domain(196));
+        assert_eq!(
+            format!("{digest:#x}"),
+            "0x3ffe06bf5e4edd78f53b87e84d297128e164e5ce5a74aeaa5fd3a82498619155"
+        );
+    }
+
+    #[test]
+    fn upto_digest_matches_golden_vector() {
+        let s = build_upto_permit2_struct(&sample_upto_input()).unwrap();
+        let digest = s.eip712_signing_hash(&permit2_domain(196));
+        assert_eq!(
+            format!("{digest:#x}"),
+            "0x796938f26e4b4fc3292117cd3f61578144a0c794bc03394cd1bb315a365b66c9"
+        );
+    }
+
     // Schema drift detection: parse the sol! `eip712_root_type()` string
     // and assert it matches what `build_*_typed_data` hand-writes in the
     // JSON `types` table. If sol! and JSON ever diverge (one updated and

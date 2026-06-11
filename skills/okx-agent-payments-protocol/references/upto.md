@@ -178,8 +178,9 @@ The CLI auto-selects based on `accepts[].scheme` +
 | `"upto"` | (forced to `"permit2"` by the seller SDK) | upto + Permit2 (→ load this reference) |
 | `"aggr_deferred"` | n/a | aggr_deferred (→ load `aggr_deferred.md`) |
 
-**All four CLI selections are supported by both `payment pay` and
-`payment pay-local`.** Local-key only requires `EVM_PRIVATE_KEY` env or
+**Except `aggr_deferred` (TEE-only — requires a session key), the other
+three selections are supported by both `payment pay` and `payment
+pay-local`.** Local-key only requires `EVM_PRIVATE_KEY` env or
 `~/.onchainos/.env`.
 
 ## What's different vs `exact + EIP-3009`

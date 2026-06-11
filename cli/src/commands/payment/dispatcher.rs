@@ -27,9 +27,10 @@ pub enum PaymentCommand {
         #[arg(long)]
         from: Option<String>,
     },
-    /// Sign an EIP-3009 TransferWithAuthorization locally with a hex private key
-    /// (reads EVM_PRIVATE_KEY env var). Accepts the same JSON accepts array as `payment pay`;
-    /// domain name/version are read from accepts[].extra.name / extra.version.
+    /// Sign an x402 payment locally with a hex private key (reads EVM_PRIVATE_KEY env var).
+    /// Supports exact+EIP-3009, exact+Permit2, and upto; aggr_deferred is TEE-only.
+    /// Accepts the same JSON accepts array as `payment pay`; domain name/version are
+    /// read from accepts[].extra.name / extra.version for the EIP-3009 path.
     #[command(name = "pay-local")]
     Eip3009Sign {
         /// JSON accepts array from the 402 response (same format as `payment pay`).
