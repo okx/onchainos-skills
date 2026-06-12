@@ -106,6 +106,7 @@ When the user names a third-party DApp/protocol as the destination of an action,
 **Before running ANY `onchainos` CLI command, you MUST first read the corresponding skill's SKILL.md to get the exact command syntax.** Do NOT guess subcommand names — each skill defines its own Command Index with the exact subcommands available. Guessing leads to `unrecognized subcommand` errors.
 
 Routing:
+- **User session** free-form task intent (publish / designated-provider / attachment / terms / deliverables) → read `skills/okx-agent-task/SKILL-user.md` + `skills/okx-agent-task/buyer-user.md` ONLY. ❌ Do NOT additionally read `SKILL.md` or `buyer.md` — those are for sub sessions and will bloat the context
 - Inbound `a2a-agent-chat` with `jobId` → read `skills/okx-agent-task/SKILL.md` first (see Inbound Message Routing above)
 - User says `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `历史消息` / `历史记录` / `过去消息` / `帮我看看之前的历史消息` / `未读消息` / `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理` / `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching` / `show past messages` / `catch me up on tasks` / `outstanding decisions` / `pending decisions` → read `skills/okx-task-watch/SKILL.md` first (watch drains pending queue first then long-polls for live monitoring; outdated-list batch-renders un-replied decisions on demand)
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first

@@ -1,6 +1,6 @@
 # Buyer — User-Session Actions
 
-> 🛑 **Pre-requisite**: you must have already read `buyer.md` and `SKILL.md`. If you found this file by guessing / memory rather than by routing here via buyer.md, **stop immediately** and first read `skills/okx-agent-task/SKILL.md`.
+> 🛑 **Pre-requisite**: you must have already read `buyer-user.md` (User session) or `buyer.md` (sub session). If you arrived here by guessing, **stop** and read the appropriate entry file first.
 
 > 🌐 **Localization**: all `xmtp_dispatch_user` / `pending-decisions-v2 request` calls in this file must match the user's language. See `buyer.md` localization preamble.
 
