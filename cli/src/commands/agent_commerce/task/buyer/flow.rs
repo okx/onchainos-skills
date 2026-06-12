@@ -28,6 +28,9 @@ pub(super) const LOCALIZATION_PREFIX: &str = "\
 (6) Field labels in tables/confirmation forms MUST also match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/任务过期时间/预期工作时长; English → Title/Summary/Description/Currency/Budget/Max Budget/Acceptance Window/Delivery Window).\n\
 🔴 Real incident: a model treated the template as a loose \"sample\", translated English to Chinese in an English environment, and fabricated \"预计1-2小时内交付\" (estimated 1-2h delivery) — information that did not exist in the template. The user received inaccurate information.\n\n";
 
+pub(super) const LOCALIZATION_PREFIX_SHORT: &str = "\
+[Localization] Fill `<...>` placeholders verbatim; do NOT add/rephrase/embellish; non-English users → faithful translation keeping field labels, values, and structure.\n\n";
+
 pub(super) const L10N_DISPATCH_SHORT: &str = "\
 🌐🛑 **MUST translate** the content below to the user's language before passing to `xmtp_dispatch_user` (rule 5: non-English → faithful translation; rule 4: English → verbatim). Sending English content to a Chinese user is a violation.";
 
@@ -165,6 +168,19 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     }
 }
 
+// Per-job marker: has the full LOCALIZATION_PREFIX been emitted for this job?
+fn l10n_emitted(job_id: &str) -> bool {
+    let Some(home) = dirs::home_dir() else { return false };
+    home.join(".onchainos").join("task").join(job_id).join(".l10n_emitted").exists()
+}
+
+fn mark_l10n_emitted(job_id: &str) {
+    let Some(home) = dirs::home_dir() else { return };
+    let dir = home.join(".onchainos").join("task").join(job_id);
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join(".l10n_emitted"), b"1");
+}
+
 /// Generate the structured next-action prompt for the client/buyer based on event.
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
@@ -174,7 +190,14 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol version handshake.
     // version_prefix uses format! to inject the current TASK_MIN_VERSION value, so playbooks auto-update when the constant is bumped.
-    let localization_prefix = LOCALIZATION_PREFIX;
+    let localization_prefix = if !job_id.is_empty() && l10n_emitted(job_id) {
+        LOCALIZATION_PREFIX_SHORT
+    } else {
+        if !job_id.is_empty() {
+            mark_l10n_emitted(job_id);
+        }
+        LOCALIZATION_PREFIX
+    };
     let version_prefix = format!(
         "[Protocol version] When calling `xmtp_send`, the `payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
     );
