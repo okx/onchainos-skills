@@ -129,12 +129,14 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
    - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
    - `currency` = `tokenSymbol`.
    - `deadline-open` / `deadline-submit`: **must be asked of the user**; do NOT auto-fill with a "reasonable default". Prompt the user: "How long should the acceptance window (how long after publishing before auto-closing if no one accepts) and the delivery window (how long after acceptance to complete) be?"
-   - ⚠️ **Language matching**: field labels MUST match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/任务过期时间/预期工作时长; English → Title/Summary/...). The playbook is in English; output must match the **user's** language.
+   - ⚠️ **Language matching**: field labels MUST match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/支付方式/任务过期时间/预期工作时长; English → Title/Summary/.../Payment Method/...). The playbook is in English; output must match the **user's** language.
    - Display the full confirmation form (format see `references/display-formats.md` §3, including title / summary / description / token / budget / max-budget / acceptance window / delivery window / designated seller) → **end this turn** and wait for the user's explicit confirmation of **this form**.
    - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn** — the form is a question, not an answer; the user has not confirmed.
-5. **Create the task after user confirmation** (🛑 must NOT be in the same turn as step 4): `create-task` (parameters from the confirmation form) → **end this turn**, wait for `job_created`, cache `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`.
-6. **set-payment-mode** (triggered by `job_created`): `set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>` → **end this turn**, wait for `job_payment_mode_changed`.
-7. **task-402-pay** (triggered by `job_payment_mode_changed`): `task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt>`
+5. **Create the task after user confirmation** (🛑 must NOT be in the same turn as step 4): `create-task` (parameters from the confirmation form, **including `--payment-mode x402`**) → **end this turn**, wait for `job_created`, cache `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`.
+6. **set-payment-mode — conditional** (triggered by `job_created`):
+   - If `--payment-mode x402` was passed in step 5 → **paymentMode is already on-chain (set at creation)**. Skip `set-payment-mode` and proceed directly to step 7.
+   - Otherwise → `set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>` → **end this turn**, wait for `job_payment_mode_changed`, then proceed to step 7.
+7. **task-402-pay**: `task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt>`
    - `replaySuccess=true` → `xmtp_dispatch_user` notifies of the deliverable + "awaiting on-chain confirmation".
    - `replaySuccess=false` → notify of replay failure.
 8. Wait for `job_accepted` → call `next-action` per buyer.md §4 (`--event job_accepted`); follow the script to complete.

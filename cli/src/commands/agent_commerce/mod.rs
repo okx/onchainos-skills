@@ -81,6 +81,8 @@ pub enum AgentCommand {
         #[arg(long)] endpoint: Option<String>,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")] attachments: Option<Vec<String>>,
+        /// Payment mode to set at creation time (escrow / x402).
+        #[arg(long = "payment-mode")] payment_mode: Option<String>,
     },
 
     /// Get recommended providers for a task
@@ -838,11 +840,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, provider, endpoint, attachments,
+            deadline_open, deadline_submit, title, provider, endpoint, attachments, payment_mode,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider, endpoint, attachments,
+                deadline_open, deadline_submit, title, provider, endpoint, attachments, payment_mode,
             }, ctx,
         ).await,
 

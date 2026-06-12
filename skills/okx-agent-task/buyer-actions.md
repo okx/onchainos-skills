@@ -43,7 +43,11 @@ After collecting fields per the next-action script, **additionally** perform the
 
 1. **Token validation**: not USDT / USDG → **"Only USDT and USDG are currently supported; please choose one."**, do NOT silently substitute.
 2. **Description length validation**: `description` < 10 chars → **"The more detailed the description, the more accurate the Provider matching. Could you add more specifics?"**
-3. **Payment-method intercept**: the user mentions a payment-method preference (escrow / guarantee / x402) → **do NOT set it**; inform the user: "The payment method will be determined during negotiation with the provider, based on what the provider supports and your preferences."
+3. **Payment-method detection**: detect the user's payment-method preference and include it in the confirmation form:
+   - User text contains "服务类型：A2A" / "serviceType: A2A" / "服务类型：担保" / "担保支付" / "escrow" / "guarantee" → set `paymentMode = escrow` (display: `escrow / 担保支付`). ⚠️ Do NOT match standalone "A2A" without a service-type context — it may refer to the A2A protocol, not payment mode.
+   - User text comes from a §3.3 x402 designated flow (serviceType is x402 / endpoint present) → set `paymentMode = x402` (display: `x402`).
+   - No signal / user did not specify → set `paymentMode = unset` (display: `未设置 / Not set` — will be determined during negotiation).
+   - The confirmation form (§1.2) always shows the payment method row regardless of value. The user may change it in the form review.
 4. **Attachment reminder**: if the task description mentions reference materials, images, documents, or any phrasing that implies supplementary files (e.g. "see attached", "refer to the file", "according to the document", "as shown in the image", "参考附件", "见附件", "根据文档", "参照图片", "如图", "详见文件", "附上了", "这是文件") → proactively ask the user whether they want to attach those files now (provide local file paths) or add them later after the task is created. Match the user's language.
 
 ### 1.2 Confirmation Form + Create Task
@@ -54,13 +58,15 @@ All fields ready → **identity & balance check**:
 3. Insufficient balance → warn but **do not block**.
 4. **Execute** [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) to check OKX A2A messaging-service availability.
 
-⚠️ **Language matching**: the confirmation form field labels **MUST** match the user's conversation language. Chinese conversation → Chinese labels (标题 / 摘要 / 描述 / 支付代币 / 预算 / 最高预算 / 任务过期时间 / 预期工作时长); English conversation → English labels (Title / Summary / Description / Currency / Budget / Max Budget / Acceptance Window / Delivery Window). The playbook is written in English; this does NOT mean the output should be English — always match the **user's** language.
+⚠️ **Language matching**: the confirmation form field labels **MUST** match the user's conversation language. Chinese conversation → Chinese labels (标题 / 摘要 / 描述 / 支付代币 / 预算 / 最高预算 / 支付方式 / 任务过期时间 / 预期工作时长); English conversation → English labels (Title / Summary / Description / Currency / Budget / Max Budget / Payment Method / Acceptance Window / Delivery Window). The playbook is written in English; this does NOT mean the output should be English — always match the **user's** language.
 
 Display the confirmation form (format see `references/display-formats.md` §3) → **end this turn** and wait for the user's explicit confirmation of **this form**. Prior confirmations of sub-questions do NOT count.
 
 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` or any `onchainos agent` command in the same turn** — the form is a **question**, not an **answer**; the user has not confirmed; you do not have the authority to decide for the user. It must be a **new turn after the user sees the form** before you may execute the CLI. Violation = an unauthorized on-chain operation = funds at risk.
 
 If the user provided attachment file paths, include them in the `create-task` call via `--file <path>` (repeatable for multiple files). The CLI copies files to `~/.onchainos/task/<jobId>/attachments/` after the jobId is obtained.
+
+If the confirmation form's payment method is `escrow` or `x402`, append `--payment-mode escrow` or `--payment-mode x402` to the `create-task` call. This sets `paymentMode` on-chain at creation time, eliminating the separate `set-payment-mode` round-trip after negotiation. If payment method is `unset`, do NOT pass `--payment-mode` (paymentMode defaults to 0).
 
 After success, inform the user of the `jobId`. ⚠️ Do NOT say "published successfully" (not yet confirmed on-chain). ⚠️ Do NOT call `recommend` (wait for `job_created` to trigger it automatically).
 

@@ -119,6 +119,7 @@ Chinese variant:
 | 支付代币 | USDT |
 | 预算 | 0.1 |
 | 最高预算 | 0.15 |
+| 支付方式 | 担保支付 (escrow) |
 | 任务过期时间 | 24h |
 | 预期工作时长 | 24h |
 
@@ -134,6 +135,7 @@ English variant:
 | Currency | USDT |
 | Budget | 0.1 |
 | Max Budget | 0.15 |
+| Payment Method | escrow |
 | Acceptance Window | 24h |
 | Delivery Window | 24h |
 
@@ -146,6 +148,7 @@ Rules:
 - Do not display the acceptance criteria field.
 - Do NOT add a Visibility / 可见性 row — visibility is not set at creation time and does not belong in the creation form.
 - Chinese/English field labels match user language.
+- **Payment Method / 支付方式**: always present. Display values: `担保支付 (escrow)` / `escrow` when escrow; `x402` when x402; `未设置` / `Not set` when unset. If the user's text contained a service-type signal (e.g. "服务类型：A2A"), the agent pre-fills escrow; the user may change it.
 - If attachments are present, add a row: `附件` / `Attachments` with the file count and names (e.g. `2 files: spec.pdf, mockup.png`).
 - Footer must be a blockquote asking for confirmation.
 

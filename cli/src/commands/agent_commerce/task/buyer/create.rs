@@ -13,6 +13,7 @@ use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::{
     self, fetch_my_agents, network::task_api_client::TaskApiClient,
+    payment_mode::PaymentMode,
     AGENT_ROLE_BUYER, XLAYER_CHAIN_ID, DEBUG_LOG,
 };
 use crate::commands::agent_commerce::task::signing;
@@ -44,6 +45,7 @@ pub struct CreateTaskParams {
     pub provider: Option<String>,
     pub attachments: Option<Vec<String>>,
     pub endpoint: Option<String>,
+    pub payment_mode: Option<String>,
 }
 
 struct ValidatedParams {
@@ -233,7 +235,12 @@ pub async fn handle_create(
             "acceptDeadline":    validated.open_secs,
             "submittedDeadline": validated.submit_secs
         },
-        "paymentMode":        0,
+        "paymentMode":        match params.payment_mode.as_deref() {
+            None => 0,
+            Some("escrow") => PaymentMode::Escrow.as_int(),
+            Some("x402") => PaymentMode::X402.as_int(),
+            Some(other) => bail!("unsupported --payment-mode \"{other}\"; valid values: escrow, x402"),
+        },
         "visibility":         1
     });
     if let Some(ref provider_id) = params.provider {
@@ -276,6 +283,7 @@ pub async fn handle_create(
             format!("budget={}", params.budget),
             format!("maxBudget={}", params.max_budget),
             format!("designatedProvider={}", params.provider.as_deref().unwrap_or("")),
+            format!("paymentMode={}", params.payment_mode.as_deref().unwrap_or("unset")),
             format!("txHash={tx_hash}"),
         ]),
         None,

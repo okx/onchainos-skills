@@ -188,9 +188,46 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(crate) fn negotiate_ack(ctx: &FlowContext<'_>) -> String {
+    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
+    let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
+
+    let payment_escrow_notify = super::super::content::payment_mode_escrow_user_notify(job_id, title_display);
+
+    let already_escrow = ctx.payment_mode == Some(1);
+
+    let step3_branch = if already_escrow {
+        format!("\
+     **Step 3 - paymentMode is already escrow (set at task creation); skip set-payment-mode.**\n\
+     ✅ On-chain paymentMode is already 1 (escrow). No on-chain call needed.\n\n\
+     **Step 4 - send [intent:confirm] directly (the ONLY legitimate trigger for ASP apply):**\n\
+     Take **all fields verbatim** (paymentMode / tokenSymbol / tokenAmount) from the [intent:propose] you sent / the [intent:ack] you received - just replay the sub session history and copy:\n\n\
+     Call xmtp_send:\n\
+     \x20\x20content=\n\
+     \x20\x20jobId: {job_id}\n\
+     \x20\x20paymentMode: escrow\n\
+     \x20\x20tokenSymbol: <identical to [intent:ack]>\n\
+     \x20\x20tokenAmount: <identical to [intent:ack]>\n\
+     \x20\x20[intent:confirm]\n\n\
+     ⚠️ **Do NOT** bypass with natural language like \"please apply / please accept\" - the ASP's flow.rs treats the `[intent:confirm]` literal as the only apply trigger; natural-language instructions **will not be recognized**.\n\
+     ⚠️ apply is an ASP action; the user does not execute apply.\n\n\
+     **Step 5 - notify the user via xmtp_dispatch_user** ({l10n_dispatch}):\n\
+     \x20\x20content: {payment_escrow_notify}\n\n\
+     -> **end this turn** and wait for the ASP's XMTP message announcing the apply (handled by buyer.md routing priority #2).\n")
+    } else {
+        format!("\
+     **Step 3 - set-payment-mode (A2A negotiation is fixed to escrow):**\n\
+     ```bash\n\
+     onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <tokenSymbol from ACK> --token-amount <tokenAmount from ACK>\n\
+     ```\n\
+     This command returns exit code 2 (confirming).\n\n\
+     🛑 **Iron rule: in THIS turn xmtp_send [intent:confirm] is absolutely forbidden** - this is the most common deadlock trigger.\n\
+     On-chain paymentMode is still in the mempool; the ASP would apply on seeing CONFIRM, but paymentMode is unconfirmed, so apply would fail.\n\
+     [intent:confirm] may **only** be sent after the `job_payment_mode_changed` system event arrives - no exceptions.\n\n\
+     -> **end this turn** and wait for the `job_payment_mode_changed` system notification.\n")
+    };
 
     format!(
     "[Negotiation relay] negotiate_ack (ASP accepts the PROPOSE and replies [intent:ack])\n\
@@ -202,7 +239,7 @@ pub(crate) fn negotiate_ack(ctx: &FlowContext<'_>) -> String {
      Replay sub session history and compare the ASP's ACK paymentMode / tokenSymbol / tokenAmount with your most recent PROPOSE.\n\
      - **Any field mismatch** -> treat as tampering; xmtp_send to tell the ASP the fields don't match and resend [intent:propose]; end the turn.\n\
      - **All match** -> continue to Step 2.\n\n\
-     🛑 **Allowed-CLI whitelist for this event**: save-agreed -> set-payment-mode; **only these two, in this fixed order**.\n\
+     🛑 **Allowed-CLI whitelist for this event**: save-agreed, and conditionally set-payment-mode.\n\
      ❌ Do NOT call confirm-accept (the ASP has not applied yet).\n\
      ❌ Do NOT call complete / reject (the job has not entered execution).\n\
      ❌ Do NOT call apply (apply is an ASP action; the user never executes it).\n\n\
@@ -210,17 +247,8 @@ pub(crate) fn negotiate_ack(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent save-agreed {job_id} --provider <providerAgentId of the current negotiation> --token-symbol <tokenSymbol from ACK> --token-amount <tokenAmount from ACK> --agent-id {agent_id}\n\
      ```\n\
-     🛑 save-agreed **must run before set-payment-mode** - it persists the negotiation outcome, and later confirm-accept depends on this data. Skipping save-agreed and going straight to set-payment-mode -> confirm-accept will use wrong parameters.\n\n\
-     **Step 3 - set-payment-mode (A2A negotiation is fixed to escrow):**\n\
-     ⚠️ **Whatever the on-chain paymentType currently is, you MUST execute this**; do NOT call common context to compare.\n\
-     ```bash\n\
-     onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <tokenSymbol from ACK> --token-amount <tokenAmount from ACK>\n\
-     ```\n\
-     This command returns exit code 2 (confirming).\n\n\
-     🛑 **Iron rule: in THIS turn xmtp_send [intent:confirm] is absolutely forbidden** - this is the most common deadlock trigger.\n\
-     On-chain paymentMode is still in the mempool; the ASP would apply on seeing CONFIRM, but paymentMode is unconfirmed, so apply would fail.\n\
-     [intent:confirm] may **only** be sent after the `job_payment_mode_changed` system event arrives - no exceptions.\n\n\
-     -> **end this turn** and wait for the `job_payment_mode_changed` system notification.\n"
+     🛑 save-agreed **must run before any further step** - it persists the negotiation outcome, and later confirm-accept depends on this data.\n\n\
+     {step3_branch}"
     )
 }
 

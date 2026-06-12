@@ -69,6 +69,9 @@ pub enum TaskCommand {
         /// Designated service endpoint (persisted for multi-service providers)
         #[arg(long)]
         endpoint: Option<String>,
+        /// Payment mode to set at creation time (escrow / x402). When omitted the task is created with paymentMode=0 (unset).
+        #[arg(long = "payment-mode")]
+        payment_mode: Option<String>,
     },
     /// Get recommended providers for a task
     Recommend {
@@ -276,10 +279,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments, endpoint } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments, endpoint, payment_mode } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider, attachments, endpoint,
+                deadline_open, deadline_submit, title, provider, attachments, endpoint, payment_mode,
             }).await,
         TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } => {
             if next {
