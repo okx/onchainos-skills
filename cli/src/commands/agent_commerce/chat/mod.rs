@@ -15,8 +15,8 @@ const SYSTEM_CONFIG_PATH: &str = "/priapi/v1/aieco/im/xmtp/system-config";
 const WAKEUP_NOTIFY_PATH: &str = "/priapi/v1/aieco/task/wakeupNotify";
 
 /// Build the agenticId extra header slice from an agent ID string.
-fn agent_commerce_headers(agent_id: &str) -> [(&str, &str); 2] {
-    [("agenticId", agent_id), ("User-Agent", "onchainos-cli")]
+fn agent_commerce_headers(agent_id: &str) -> [(&str, &str); 1] {
+    [("agenticId", agent_id)]
 }
 
 fn wallet_client(ctx: &CliContext) -> Result<WalletApiClient> {
@@ -43,7 +43,7 @@ pub enum ChatCommand {
         job_id: String,
         group_id: String,
         direction: String,
-        provider_security_rate: String,
+        provider_security_rate: Option<String>,
         client_communication_address: String,
         provider_communication_address: String,
     },
@@ -97,7 +97,7 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
                     &job_id,
                     &group_id,
                     &direction,
-                    &provider_security_rate,
+                    provider_security_rate.as_deref(),
                     &client_communication_address,
                     &provider_communication_address,
                 )
@@ -243,10 +243,7 @@ pub async fn fetch_sensitive_words(
     client: &mut WalletApiClient,
     access_token: &str,
 ) -> Result<Value> {
-    let headers = [("User-Agent", "onchainos-cli")];
-    client
-        .get_authed_with_headers(SENSITIVE_WORDS_PATH, access_token, &[], Some(&headers))
-        .await
+    client.get_authed(SENSITIVE_WORDS_PATH, access_token, &[]).await
 }
 
 // ── Message Eligible ─────────────────────────────────────────────────
@@ -256,12 +253,12 @@ pub async fn fetch_sensitive_words(
 /// Checks whether a message is eligible to be sent between agents.
 /// agenticId sent as header.
 ///
-/// Uses a command-local response handler (not the generic agent-commerce
-/// handler): when the backend returns HTTP 2xx with a non-zero business
-/// code, the response is reshaped into `{ eligible: false, reason: <msg> }`
-/// so the caller sees a successful CLI invocation (`ok: true`) carrying an
-/// explicit business rejection, rather than a generic CLI failure
-/// indistinguishable from infra issues.
+/// Only a genuine backend verdict — HTTP 2xx with a non-zero business
+/// code — is reshaped into `{ eligible: false, reason: <msg> }` (`ok: true`).
+/// Technical failures (auth code 50114, non-2xx statuses, rate limits,
+/// transport errors) propagate as CLI errors (`ok: false`) so the caller
+/// treats the check as unavailable and lets communication proceed, instead
+/// of mistaking an expired token for a messaging ban.
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_message_eligible(
     client: &mut WalletApiClient,
@@ -272,44 +269,52 @@ pub async fn fetch_message_eligible(
     job_id: &str,
     group_id: &str,
     direction: &str,
-    provider_security_rate: &str,
+    provider_security_rate: Option<&str>,
     client_communication_address: &str,
     provider_communication_address: &str,
 ) -> Result<Value> {
     let headers = agent_commerce_headers(agent_id);
+    let mut query: Vec<(&str, &str)> = vec![
+        ("clientAgentId", client_agent_id),
+        ("providerAgentId", provider_agent_id),
+        ("jobId", job_id),
+        ("groupId", group_id),
+        ("direction", direction),
+        ("clientCommunicationAddress", client_communication_address),
+        (
+            "providerCommunicationAddress",
+            provider_communication_address,
+        ),
+    ];
+    if let Some(rate) = provider_security_rate {
+        query.push(("providerSecurityRate", rate));
+    }
     let result = client
-        .get_authed_with_headers(
-            MESSAGE_ELIGIBLE_PATH,
-            access_token,
-            &[
-                ("clientAgentId", client_agent_id),
-                ("providerAgentId", provider_agent_id),
-                ("jobId", job_id),
-                ("groupId", group_id),
-                ("direction", direction),
-                ("providerSecurityRate", provider_security_rate),
-                ("clientCommunicationAddress", client_communication_address),
-                (
-                    "providerCommunicationAddress",
-                    provider_communication_address,
-                ),
-            ],
-            Some(&headers),
-        )
+        .get_authed_with_headers(MESSAGE_ELIGIBLE_PATH, access_token, &query, Some(&headers))
         .await;
 
     match result {
         Ok(data) => Ok(data),
         Err(err) => {
             if let Some(api_err) = err.downcast_ref::<ApiCodeError>() {
-                return Ok(serde_json::json!({
-                    "eligible": false,
-                    "reason": api_err.msg,
-                }));
+                if is_business_rejection(api_err) {
+                    return Ok(serde_json::json!({
+                        "eligible": false,
+                        "reason": api_err.msg,
+                    }));
+                }
             }
             Err(err)
         }
     }
+}
+
+/// True only when the backend actually evaluated the eligibility question
+/// and rejected it: HTTP 2xx carrying a non-zero business code. Auth
+/// failures (code 50114 — not logged in / token expired) and non-2xx
+/// responses are infrastructure problems, not verdicts.
+fn is_business_rejection(api_err: &ApiCodeError) -> bool {
+    (200..300).contains(&api_err.http_status) && api_err.code != "50114"
 }
 
 // ── System Config ────────────────────────────────────────────────────
@@ -322,17 +327,10 @@ pub async fn fetch_system_config(
     client: &mut WalletApiClient,
     access_token: &str,
 ) -> Result<Value> {
-    let headers = [("User-Agent", "onchainos-cli")];
-    client
-        .get_authed_with_headers(SYSTEM_CONFIG_PATH, access_token, &[], Some(&headers))
-        .await
+    client.get_authed(SYSTEM_CONFIG_PATH, access_token, &[]).await
 }
 
 // ── Heartbeat ────────────────────────────────────────────────────────
-// TODO: Confirm if endpoint is ready on beta for testing.
-// Note: This endpoint is under /priapi/v5/wallet/agentic/ (wallet namespace),
-//       unlike other chat commands which use /priapi/v1/aieco/im/.
-//       No agenticId header needed — userId is extracted from JWT server-side.
 
 /// POST /priapi/v5/wallet/agentic/agent-heartbeat
 ///

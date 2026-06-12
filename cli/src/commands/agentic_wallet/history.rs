@@ -181,11 +181,28 @@ fn filter_detail_response(data: &Value) -> Value {
             if let Some(v) = item["serviceChargeUsd"].as_str().filter(|s| !s.is_empty()) {
                 out["serviceChargeUsd"] = json!(v);
             }
+            // Stablecoin symbol the Gas Station charged in (USDT / USDC / USDG).
+            // Backend stores it under feeName; emit as serviceChargeSymbol so the
+            // Agent renders "0.004565 USDC (≈ $0.0046, paid via Gas Station)"
+            // rather than dropping the symbol.
+            if let Some(v) = item["feeName"].as_str().filter(|s| !s.is_empty()) {
+                out["serviceChargeSymbol"] = json!(v);
+            }
+            if let Some(v) = item["feeDecimalNum"].as_str().filter(|s| !s.is_empty()) {
+                out["serviceChargeDecimal"] = json!(v);
+            }
             if let Some(v) = item["feeRebate"].as_str().filter(|s| !s.is_empty()) {
                 out["feeRebate"] = json!(v);
             }
             if let Some(v) = item["feeRebateUsd"].as_str().filter(|s| !s.is_empty()) {
                 out["feeRebateUsd"] = json!(v);
+            }
+            if let Some(v) = item["feeContainCreateAccount"].as_bool() {
+                out["networkFeeLabel"] = json!(if v {
+                    "Network fee and Rent fee"
+                } else {
+                    "Network fee"
+                });
             }
             if let Some(name) = item["contractInfo"]["name"]
                 .as_str()

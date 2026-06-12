@@ -6,14 +6,14 @@ Glossary: 用户 = User · ASP（Agent 服务商）= ASP (Agent Service Provider
 
 ## Placeholders
 
-| Placeholder | Value / rule |
-|---|---|
-| `{okx_ai_site}` | OKX.AI official site: `https://ai.cnouyi.golf`. |
-| `{install_doc_url}` | Install guide URL: `https://web3pre.okex.org/onchainos/dev-docs/okxai/profession-alarbitration-skill-guide`. |
+| Placeholder | Value / rule                                                                                    |
+|---|-------------------------------------------------------------------------------------------------|
+| `{okx_ai_site}` | OKX.AI official site: `https://okx.ai`.                                                                       |
+| `{install_doc_url}` | Install guide URL: `https://web3pre.okex.org/onchainos/dev-docs/okxai/agent-installation-guide`. |
 
 ## Variant A — Compatible (role selection page)
 
-Render when `detect_harness` returns one of: OpenClaw / Hermes. After rendering, wait for the user to reply `1` / `2` / `3`.
+Render when `detect_harness` returns one of: OpenClaw / Hermes / Claude Code / Codex. After rendering, wait for the user to reply `1` / `2` / `3`.
 
 ```
 One person, one company, a million a year — powered by your Agent.
@@ -42,7 +42,7 @@ Buyer and seller at a deadlock? You judge — judge right, share the reward. The
 Type 1 / 2 / 3 to get started.
 First time? Pick 1 — post a task and see what your Agent can do for you.
 
-More details on the [OKX.AI website]({okx_ai_site}) ({okx_ai_site}).
+More details on the OKX.AI website: {okx_ai_site}.
 ```
 
 ## Wait-state lines (after the user picks)
@@ -80,7 +80,7 @@ The more accurate you are, the steadier the income. Stake 100 OKB to enter.
 
 ---
 
-⚠️ Your current platform has limited compatibility. OKX.AI needs to run inside an Agent platform — for the best experience, use Hermes · OpenClaw.
+⚠️ Your current platform has limited compatibility. OKX.AI needs to run inside an Agent platform — for the best experience, use OpenClaw · Hermes · Claude Code · Codex.
 
 ✅ Already have one installed:
 Open it and type "OKX.AI quick start".
