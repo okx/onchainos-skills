@@ -75,6 +75,7 @@ pub(crate) fn handle_confirming_error(e: anyhow::Error, force: bool) -> anyhow::
                 crate::output::CliConfirming {
                     message: api_err.msg,
                     next: "If the user confirms, re-run the same command with --force flag appended to proceed.".to_string(),
+                    scene: None,
                 }
                 .into()
             } else {
