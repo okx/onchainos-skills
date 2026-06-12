@@ -928,12 +928,15 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         "value": score.to_string(),
         "comment": feedback_desc,
     });
-    let body = json!({
+    let mut body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
         "sessionCert": &signing_session.session_cert,
         "feedBackAgentId": creator_id,
         "comment": serde_json::to_string(&comment).context("failed to serialize comment")?,
     });
+    if !task_id.is_empty() {
+        body["taskId"] = json!(task_id);
+    }
 
     eprintln!(
         "[agent-identity] feedback-submit request: url={} access_token_len={} access_token_prefix={} body={}",
