@@ -143,62 +143,42 @@ pub struct SearchArgs {
 }
 
 
-/// `onchainos agent validate-listing`: pure-local (no HTTP, no network)
-/// validator that checks an agent listing's fields against mechanical
-/// marketplace rules. Used during registration / update QA flows (before
-/// `create` / `update`), separately from `activate`.
-#[derive(Args, Clone, Debug)]
-pub struct ValidateListingArgs {
-    /// requester / provider / evaluator (aliases: 1/buyer/requestor →
-    /// requester, 2 → provider, 3 → evaluator). Defaults to provider.
-    #[arg(long)]
-    pub role: Option<String>,
-    #[arg(long)]
-    pub name: Option<String>,
-    #[arg(long)]
-    pub description: Option<String>,
-    /// JSON array string with the same element shape as create/update's
-    /// `--service`. Ignored for non-provider roles.
-    #[arg(long)]
-    pub service: Option<String>,
-}
-
 #[derive(Args, Clone, Debug)]
 pub struct ServiceListArgs {
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
 }
 
-/// `onchainos agent get-by-address`: 按通信地址 + 链反查 agent。
-/// 隐藏指令（hide=true），仅服务于 sub agent / xmtp 场景，不进 `agent -h`。
+/// `onchainos agent get-by-address`: reverse-lookup an agent by communication
+/// address + chain. Hidden (hide=true); only used by sub-agent / xmtp flows.
 #[derive(Args, Clone, Debug)]
 pub struct GetByAddressArgs {
-    /// 通信地址（agent 上链注册时绑定的 communicationAddress）— 必填
+    /// Communication address bound to the agent on-chain — required.
     #[arg(long = "communication-address", required = true)]
     pub communication_address: String,
-    /// 链 chainIndex，缺省走 XLayer (196)
+    /// Chain index; defaults to XLayer (196).
     #[arg(long = "chain-index")]
     pub chain_index: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct FeedbackSubmitArgs {
-    /// 必填：被评价的 agent id，进 create-comment 请求体 `comment.agentid`。
+    /// Required: agent id being reviewed; maps to `comment.agentid` in the create-comment body.
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
-    /// 必填：评价发起方的 agent id，进广播 `extraData.erc8004Msg.feedBackAgentId`。
+    /// Required: agent id of the reviewer; maps to `extraData.erc8004Msg.feedBackAgentId`.
     #[arg(long = "creator-id")]
     pub creator_id: Option<String>,
-    /// 必填：0.00-5.00 的星数，最多 2 位小数（步长 0.01）。CLI 内部 *20 后
-    /// round-half-up 转成 0-100 u32 写入 create-comment 请求体
-    /// `comment.value`（后端 wire 格式仍是 0-100 整数）。格式校验 + 映射
-    /// 规则统一在 `utils::parse_stars_arg`。
+    /// Required: star rating 0.00–5.00 (up to 2 decimal places, step 0.01).
+    /// The CLI multiplies by 20 with round-half-up to produce the 0–100 u32
+    /// wire value for `comment.value`. Validation and mapping live in
+    /// `utils::parse_stars_arg`.
     #[arg(long)]
     pub score: Option<String>,
-    /// 选填：文字评价，进 create-comment 请求体 `comment.comment`。
+    /// Optional: free-text review; maps to `comment.comment` in the create-comment body.
     #[arg(long)]
     pub description: Option<String>,
-    /// 选填：taskId，进广播 `extraData.erc8004Msg.taskId`；为空则不写入。
+    /// Optional: taskId; maps to `extraData.erc8004Msg.taskId`. Omitted when empty.
     #[arg(long = "task-id")]
     pub task_id: Option<String>,
 }
@@ -215,14 +195,15 @@ pub struct FeedbackListArgs {
     pub sort_by: Option<String>,
 }
 
-/// `onchainos agent xmtp-sign` 用户使用本地 signing_seed 对任意 message 做代签。
-/// 不走广播，直接 POST 到 pre-transaction/sign-msg 拿后端返回的 signature。
+/// `onchainos agent xmtp-sign`: sign an arbitrary message with the local
+/// signing_seed. No broadcast — POSTs directly to pre-transaction/sign-msg
+/// and returns the backend's signature.
 #[derive(Args, Clone, Debug)]
 pub struct XmtpSignArgs {
-    /// keyUuid：之前 create 时生成过的那个 UUID，用户可通过 agent get 查出来
+    /// The keyUuid generated at create time; retrievable via `agent get`.
     #[arg(long = "key-uuid")]
     pub key_uuid: Option<String>,
-    /// 要签名的消息，原样传给后端
+    /// Message to sign; forwarded verbatim to the backend.
     #[arg(long)]
     pub message: Option<String>,
 }

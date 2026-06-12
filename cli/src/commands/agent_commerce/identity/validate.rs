@@ -1,27 +1,13 @@
-//! `onchainos agent validate-listing` — a PURE-LOCAL (no HTTP, no network)
-//! validator that checks an agent listing's fields against mechanical
-//! marketplace rules and prints a structured JSON result. This moves the
-//! deterministic QA that used to live in the markdown skill into the CLI so
-//! the checks are reproducible and testable.
+//! Pure-local (no HTTP, no network) validator that checks an agent listing's
+//! fields against mechanical marketplace rules. Called internally by `activate`
+//! and `create`/`update` QA flows — not exposed as a CLI command.
 //!
-//! Scope (deliberately narrow): only MECHANICAL rules are implemented here —
-//! length / format / forbidden-marker / structural checks that can be decided
-//! without semantic judgment. Anything requiring meaning (is the description
-//! actually accurate? is the capability claim plausible?) stays in the skill.
-//!
-//! Output is the exact `{ "pass": bool, "findings": [...] }` shape; `pass` is
-//! true iff there are zero `block`-severity findings. This command never emits
-//! `advisory` findings (the only advisory rule was logo/format, which is
-//! image-only and we have no image bytes here).
+//! Scope (deliberately narrow): only MECHANICAL rules — length / format /
+//! forbidden-marker / structural checks decidable without semantic judgment.
 
-use anyhow::Result;
 use serde::Serialize;
 
-use crate::commands::Context;
-
-use super::args::ValidateListingArgs;
 use super::models::AgentService;
-use super::utils::normalize_role;
 
 // ─── Output model ───────────────────────────────────────────────────────────
 
@@ -50,25 +36,6 @@ impl Finding {
             fix: fix.to_string(),
         }
     }
-}
-
-// ─── Command entry point ────────────────────────────────────────────────────
-
-pub async fn validate_listing(args: ValidateListingArgs, _ctx: &Context) -> Result<()> {
-    let role = args
-        .role
-        .as_deref()
-        .and_then(|r| normalize_role(r).ok())
-        .unwrap_or_else(|| "provider".to_string());
-
-    let result = run_validation(
-        &role,
-        args.name.as_deref(),
-        args.description.as_deref(),
-        args.service.as_deref(),
-    );
-    println!("{}", serde_json::to_string_pretty(&result)?);
-    Ok(())
 }
 
 // ─── Service parsing (no hard-error; rules report findings instead) ─────────
@@ -185,7 +152,7 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
     }
 
     // N1 length: pure-CJK → 2..=12 chars; mixed (CJK + Latin, e.g. the
-    // N6-encouraged "中文 · English" form) and Latin → 3..=25 chars. Only a
+    // N6-encouraged "CJK · English" form) and Latin → 3..=25 chars. Only a
     // purely-CJK name uses the dense 12-char bound, so a bilingual name is not
     // wrongly rejected for length by the CJK cap.
     let char_count = name.chars().count();
@@ -806,7 +773,7 @@ fn contains_url(s: &str) -> bool {
 }
 
 /// S4: price info — a number immediately/space-followed by USDT/USDG
-/// (case-insensitive) OR the standalone word `free` / `免费`.
+/// (case-insensitive) OR the standalone word `free` (and the CJK equivalent `免费`).
 fn contains_price_info(s: &str) -> bool {
     let lower = s.to_ascii_lowercase();
     if standalone_word(&lower, "free") || s.contains("免费") {

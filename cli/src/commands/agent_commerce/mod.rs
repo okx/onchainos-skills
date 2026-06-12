@@ -14,11 +14,6 @@ pub enum AgentCommand {
     /// Register a new Agent identity
     Create(identity::CreateArgs),
 
-    /// First-time-creation terms consent (legal module). Two-step: step 1 (no
-    /// flags) fetches the terms; step 2 (`--consent-key` + `--agreed`)
-    /// finalizes the decision. Must run BEFORE `create` for new users.
-    Consent(identity::ConsentArgs),
-
     /// Update Agent identity and services
     Update(identity::UpdateArgs),
 
@@ -60,10 +55,6 @@ pub enum AgentCommand {
     /// Sign an arbitrary message with keyUuid + signing_seed (xmtp etc.); does not broadcast
     #[command(name = "xmtp-sign")]
     XmtpSign(identity::XmtpSignArgs),
-
-    /// Validate an Agent listing's fields against marketplace rules (pure-local, no network)
-    #[command(name = "validate-listing")]
-    ValidateListing(identity::ValidateListingArgs),
 
     // ── Task system (Client) ────────────────────────────────────────────────
     /// Create a new task (Client)
@@ -823,7 +814,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     match cmd {
         // ── Identity ────────────────────────────────────────────────
         AgentCommand::Create(args) => identity::create(args, ctx).await,
-        AgentCommand::Consent(args) => identity::consent(args, ctx).await,
         AgentCommand::Update(args) => identity::update(args, ctx).await,
         AgentCommand::Get(args) => identity::get(args, ctx).await,
         AgentCommand::Precheck(args) => identity::precheck(args, ctx).await,
@@ -836,7 +826,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::FeedbackSubmit(args) => identity::feedback_submit(args, ctx).await,
         AgentCommand::FeedbackList(args) => identity::feedback_list(args, ctx).await,
         AgentCommand::XmtpSign(args) => identity::xmtp_sign(args, ctx).await,
-        AgentCommand::ValidateListing(args) => identity::validate_listing(args, ctx).await,
 
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {

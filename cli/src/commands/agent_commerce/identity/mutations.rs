@@ -58,11 +58,6 @@ pub async fn create(args: CreateArgs, ctx: &Context) -> Result<()> {
     Ok(())
 }
 
-pub async fn consent(args: ConsentArgs, ctx: &Context) -> Result<()> {
-    output::success(consent_impl(&args, ctx).await?);
-    Ok(())
-}
-
 pub async fn precheck(args: PrecheckArgs, ctx: &Context) -> Result<()> {
     output::success(precheck_impl(&args, ctx).await?);
     Ok(())
@@ -103,17 +98,16 @@ pub async fn xmtp_sign(args: XmtpSignArgs, ctx: &Context) -> Result<()> {
 async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    // --address 已从 CLI 去掉；广播走默认 XLayer 地址（当前选中账号）。
+    // --address removed from CLI; broadcast uses the default XLayer address (current account).
     let signing_session = load_agent_signing_session(None)?;
     let from_addr = signing_session.addr_info.address.clone();
     let key_uuid = Uuid::new_v4().to_string();
     let session_signature = sign_key_uuid(&key_uuid, &signing_session.signing_seed)?;
     let normalized_role = normalize_role(require_non_empty(args.role.as_deref(), "--role")?)?;
-    // Description 必填规则按 role 分支：
-    //   - provider（卖家）：被搜索 / 匹配的核心字段 → 必填。
-    //   - requester（买家）/ evaluator（验证者）：选填；未填则上链
-    //     `ProfileDescription: ""`（与 picture 一致），skill 端渲染为
-    //     `未填 / (not set)`，详见 references/register.md（按 role 分支收集字段）。
+    // Description requirements differ by role:
+    //   - provider: core searchable field → required.
+    //   - requester / evaluator: optional; omitted = on-chain ProfileDescription:"",
+    //     rendered by the skill as "(not set)". See references/register.md.
     let profile_description = if normalized_role == "provider" {
         require_non_empty(args.description.as_deref(), "--description")?.to_string()
     } else {
@@ -159,9 +153,9 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
             .unwrap_or_else(|_| "<serialize failed>".to_string())
     );
     let unsigned = parse_agent_unsigned(response)?;
-    // erc8004Msg 三个字段：communicationAddress 由后端 pre-transaction 返回；
-    // role / keyUuid 是本次 create 客户端持有的值。sessionSignature 已不再
-    // 进 erc8004Msg（保留在请求体里）。
+    // erc8004Msg fields: communicationAddress comes from the pre-transaction response;
+    // role / keyUuid are held by the client for this create. sessionSignature is no
+    // longer included in erc8004Msg (it stays in the request body).
     let communication_address = unsigned
         .extra_data
         .get("communicationAddress")
@@ -174,10 +168,10 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         ("keyUuid", &key_uuid),
     ]);
 
-    // 广播前先建立 wallet-agentic-identity 订阅；任何环节失败都降级，不阻断后续广播。
-    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com:8443/ws/v5/private），
-    // OKX_AGENTIC_WS_URL 环境变量可整 URL 覆盖（dev / pre / debug 用）。
-    // push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
+    // Open the wallet-agentic-identity subscription before broadcast; any failure
+    // degrades gracefully and does not block the broadcast.
+    // identity_ws_url() defaults to WS_URL_PROD; override with OKX_AGENTIC_WS_URL.
+    // push-platform login uses the wallet address as the "token" value (not a JWT).
     let subscription =
         match open_identity_subscription(&from_addr, &identity_ws_url()).await {
         Ok(s) => Some(s),
@@ -330,7 +324,7 @@ async fn precheck_impl(args: &PrecheckArgs, ctx: &Context) -> Result<Value> {
     // Current signing wallet → scopes uniqueness to this XLayer address.
     let from_addr = load_agent_signing_session(None)?.addr_info.address;
 
-    // 获取Agent列表 → 是否有 Agent.
+    // Fetch the wallet's agent list to determine whether any agents exist.
     let agents = fetch_wallet_agents(ctx).await?;
     let has_agents = !collect_owned_agents(&agents, &from_addr).is_empty();
 
@@ -344,11 +338,11 @@ async fn precheck_impl(args: &PrecheckArgs, ctx: &Context) -> Result<Value> {
                 &ConsentArgs { consent_key: args.consent_key.clone(), agreed: Some(true) },
                 ctx,
             )
-            .await?; // 调用 agent-consent (提交同意)
+            .await?; // submit consent (agreed=true)
         } else {
-            let c = consent_impl(&ConsentArgs { consent_key: None, agreed: None }, ctx).await?; // 调用 agent-consent (查询)
+            let c = consent_impl(&ConsentArgs { consent_key: None, agreed: None }, ctx).await?; // query consent status
             if c.get("required").and_then(Value::as_bool).unwrap_or(false) {
-                // 是否同意过法务条款 = 否 → block with the terms; skill confirms with the
+                // Legal terms not yet accepted → block with terms; skill confirms with the
                 // user, then re-invokes carrying `--consent-key`.
                 return Ok(json!({
                     "canCreate": false,
@@ -360,7 +354,7 @@ async fn precheck_impl(args: &PrecheckArgs, ctx: &Context) -> Result<Value> {
         }
     }
 
-    // 是否有对应 role 的 Agent → canCreate (build_precheck handles the empty list
+    // Check whether an agent with the same role already exists → canCreate (build_precheck handles the empty list
     // too: a brand-new wallet yields canCreate:true; reason is added when false).
     // The verdict carries `existingSameRole` (the same-role agents the skill lists
     // for the provider update-vs-new choice) — no separate full agentList needed.
@@ -375,15 +369,16 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
     let signing_session = load_agent_signing_session(None)?;
 
-    // 产品规范：update 不允许修改 role / CommunicationAddress，所以都不写进
-    // cardJson。其它字段只写用户本次传进来的——没传就不带；是否保留旧值由
-    // 服务端决定。CLI 不再预先 GET /agent/agent-list 回填，那一步由上层 skill
-    // 按需指引用户完成。
+    // Per spec: update may not change role or CommunicationAddress — they are
+    // excluded from cardJson. Only fields provided by the user this call are
+    // written; the server decides whether to retain previous values for omitted
+    // fields. The CLI does not pre-fetch /agent/agent-list for back-fill; the
+    // skill guides the user to supply any needed current values.
     //
-    // agentId 放进 cardJson（后端按 cardJson.AgentId 识别目标），请求体顶层
-    // 不带。AgentId 保持 PascalCase 不在本次 spec 改名范围；name / image /
-    // services 走新 lowercase schema；ProfileDescription 亦未在 spec 中点名，
-    // 故保留原 PascalCase。
+    // agentId goes inside cardJson (the backend identifies the target via
+    // cardJson.AgentId), not at the request body top level. AgentId stays
+    // PascalCase; name / image / services use the new lowercase schema;
+    // ProfileDescription is also kept PascalCase as it was not renamed in spec.
     let mut card = serde_json::Map::new();
     card.insert("AgentId".into(), json!(agent_id));
     let name = trim_or_empty(args.name.as_deref());
@@ -439,14 +434,14 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     }
     let response = update_result?;
     let unsigned = parse_agent_unsigned(response)?;
-    // 产品规范：update 客户端没有 erc8004Msg 子字段（communicationAddress 不可
-    // 修改，role / keyUuid / sessionSignature 也不在 update 请求体里），所以
-    // 整个 erc8004Msg 不写入广播 extraData。
+    // Per spec: update has no erc8004Msg sub-fields (communicationAddress is
+    // immutable; role / keyUuid / sessionSignature are absent from the update
+    // body), so erc8004Msg is omitted from the broadcast extraData entirely.
 
-    // 广播前先建立 wallet-agentic-identity 订阅；任何环节失败都降级，不阻断后续广播。
-    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com:8443/ws/v5/private），
-    // OKX_AGENTIC_WS_URL 环境变量可整 URL 覆盖（dev / pre / debug 用）。
-    // push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
+    // Open the wallet-agentic-identity subscription before broadcast; any failure
+    // degrades gracefully and does not block the broadcast.
+    // identity_ws_url() defaults to WS_URL_PROD; override with OKX_AGENTIC_WS_URL.
+    // push-platform login uses the wallet address as the "token" value (not a JWT).
     let subscription = match open_identity_subscription(
         &signing_session.addr_info.address,
         &identity_ws_url(),
@@ -902,7 +897,7 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
 async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    // --agent-id / --creator-id / --score 必填；--description / --task-id 选填。
+    // --agent-id / --creator-id / --score required; --description / --task-id optional.
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string();
     let creator_id = require_non_empty(args.creator_id.as_deref(), "--creator-id")?.to_string();
     // --score is 0.00–5.00 stars (up to 2 decimal places, step 0.01); the
@@ -921,13 +916,13 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     let task_id = trim_or_empty(args.task_id.as_deref());
     let signing_session = load_agent_signing_session(None)?;
 
-    // 请求体：create-comment 需要 chainIndex + sessionCert + feedBackAgentId +
-    // comment（fromAddr 已不再带）。feedBackAgentId 是评价发起方的 agent id，与
-    // 广播 extraData.erc8004Msg.feedBackAgentId 同源（均来自 --creator-id），
-    // 但在请求体里放在顶层（和 chainIndex 同级），不进 comment 子对象。
-    // 本地 XLayer 地址解析仍然要做，结果只给下一步广播用。
-    // 注意：comment 子对象里的 "comment" 字段就是原来的 feedbackDesc，
-    // 与外层 body.comment（序列化后的 JSON 字符串）同名但是不同层级，别混淆。
+    // Request body: create-comment requires chainIndex + sessionCert +
+    // feedBackAgentId + comment (fromAddr no longer included). feedBackAgentId
+    // is the reviewer's agent id — same source as extraData.erc8004Msg.feedBackAgentId
+    // (both from --creator-id) but placed at the top level of the body, not inside
+    // the comment sub-object. Note: the "comment" field inside the comment sub-object
+    // is the feedback text (feedbackDesc), sharing its name with the outer body.comment
+    // (a serialized JSON string) but at a different nesting level.
     let comment = json!({
         "agentid": agent_id,
         "value": score.to_string(),
@@ -970,13 +965,13 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
 
     let response = result?;
     let unsigned = parse_agent_unsigned(response)?;
-    // erc8004Msg：feedBackAgentId 必填（来自 --creator-id），taskId 选填。空值
-    // 由 build_erc8004_overlay 过滤，所以 taskId 空串不会写进 erc8004Msg。
+    // erc8004Msg: feedBackAgentId is required (from --creator-id); taskId is optional.
+    // Empty values are filtered by build_erc8004_overlay, so an empty taskId is omitted.
     let overlay = build_erc8004_overlay(&[
         ("taskId", &task_id),
         ("feedBackAgentId", &creator_id),
     ]);
-    // --address 已从 CLI 去掉；广播走默认 XLayer 地址（当前选中账号）。
+    // --address removed from CLI; broadcast uses the default XLayer address (current account).
     let tx_hash = sign_and_broadcast_agent_transaction(
         &access_token,
         &unsigned,
@@ -989,9 +984,9 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
 
 // ─── `agent xmtp-sign` ────────────────────────────────────────────────────
 
-/// `onchainos agent xmtp-sign`：用本地 signing_seed 对 keyUuid 现场签一次，
-/// 连同 CLI 传入的 message + 本地 sessionCert 一起 POST 到后端的 sign-msg 接口，
-/// 后端返回 signature 后透传给用户。不走广播。
+/// `onchainos agent xmtp-sign`: sign keyUuid on the fly with the local signing_seed,
+/// then POST message + sessionCert to the backend sign-msg endpoint and return the
+/// resulting signature. No broadcast.
 async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;

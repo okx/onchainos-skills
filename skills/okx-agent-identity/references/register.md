@@ -49,8 +49,8 @@ Run `agent pre-check --role <role>` (internal — never shown). It fetches the w
 
 The CLI is the QA engine; you render its `findings[]` and add ONE check it can't make. Numbered steps:
 
-1. **Run it at each card.** Identity scope at the Step-1 card (`--role provider --name … --description …`); service scope at the Step-2 card (add `--service '[…]'`). Returns `{ "pass": bool, "findings": [{ "field", "code", "severity", "issue", "fix" }] }` — e.g. `field`=`name` / `description` / `service[0].name` / `service[0].fee` / `service[0].servicedescription` / `service[0].endpoint`; `severity`=`block` (the only level emitted); `code`=N1/S1/S3/U4/P1/D1/…
-2. **Render each finding inline on its field row** as ` ⚠️ <issue> → <fix>`, mapping by the dotted `finding.field` to its card row (`service[0].fee` → the Fee row, `name` → the Name row). Surface a `(test)` marker on the Step-1 identity card if the name carries one.
+1. **Run at the Step-2 service card only** (not at Step-1). Pass the full set: `--role provider --name … --description … --service '[…]'`. Returns `{ "pass": bool, "findings": [{ "field", "code", "severity", "issue", "fix" }] }` — e.g. `field`=`name` / `description` / `service[0].name` / `service[0].fee` / `service[0].servicedescription` / `service[0].endpoint`; `severity`=`block` (the only level emitted); `code`=N1/S1/S3/U4/P1/D1/…
+2. **Render each finding inline on its field row** as ` ⚠️ <issue> → <fix>`, mapping by the dotted `finding.field` to its card row (`service[0].fee` → the Fee row, `name` → the Name row). Surface a `(test)` marker on the identity name row if the name carries one.
 3. **Findings are warnings, not blocks. Do NOT hand-apply rule tables. Do NOT silently auto-correct.** When `findings[]` is non-empty (regardless of `pass`), after rendering the card present exactly TWO numbered choices (localized):
    > 1. Fix — re-collect only the flagged field(s), then re-run `validate-listing` once.
    > 2. Skip — advance to the confirmation card immediately; do NOT re-run `validate-listing` (saves one API call).

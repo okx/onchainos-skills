@@ -60,7 +60,7 @@ const TOP_ASPS_PAGE_SIZE: u32 = 100;
 const TOP_ASPS_MAX_PAGES: u32 = 50;
 /// agent-search requires a non-empty `query` (omitting it → code 902) but has no
 /// "list all" mode. A single common character matches the whole ASP population
-/// (verified: "a" / "e" / "的" / … all return the same total), so we use it to
+/// (verified: "a" / "e" / any common character / … all return the same total), so we use it to
 /// approximate a full listing. Swap for a real list-all/top-N endpoint once one exists.
 const TOP_ASPS_BROAD_QUERY: &str = "a";
 
@@ -124,24 +124,14 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
     let mut client = wallet_client(ctx)?;
 
     // Product spec: agent-list identifies the user via JWT; `from` is never needed.
-    // page / pageSize 是选填——用户没传就不塞 query，让后端使用自身默认。
     let mut query = vec![("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string())];
     push_optional_query(&mut query, "agentIdList", args.agent_ids.as_deref());
     if let Some(page_raw) = args.page.as_deref() {
         let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
         query.push(("page".to_string(), page.to_string()));
     }
-    if let Some(page_size_raw) = args.page_size.as_deref() {
-        let page_size = parse_u32_arg(
-            Some(page_size_raw),
-            "--page-size",
-            20,
-            Some(1),
-            None,
-            false,
-        )?;
-        query.push(("pageSize".to_string(), page_size.to_string()));
-    }
+    let page_size = parse_u32_arg(args.page_size.as_deref(), "--page-size", 5, Some(1), None, false)?;
+    query.push(("pageSize".to_string(), page_size.to_string()));
 
     let query_refs: Vec<(&str, &str)> = query
         .iter()
@@ -197,23 +187,14 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
     let mut client = wallet_client(ctx)?;
     let query_text = require_non_empty(args.query.as_deref(), "--query")?;
 
-    // query 必填；page / pageSize / 多值过滤字段按文档都是选填，用户没传就不塞
+    // query is required; page / pageSize / multi-value filter fields are optional — omit when not provided
     let mut query = vec![("query".to_string(), query_text.to_string())];
     if let Some(page_raw) = args.page.as_deref() {
         let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
         query.push(("page".to_string(), page.to_string()));
     }
-    if let Some(page_size_raw) = args.page_size.as_deref() {
-        let page_size = parse_u32_arg(
-            Some(page_size_raw),
-            "--page-size",
-            20,
-            Some(1),
-            Some(100),
-            true,
-        )?;
-        query.push(("pageSize".to_string(), page_size.to_string()));
-    }
+    let page_size = parse_u32_arg(args.page_size.as_deref(), "--page-size", 5, Some(1), Some(100), true)?;
+    query.push(("pageSize".to_string(), page_size.to_string()));
     push_multi_query(&mut query, "feedback", &args.feedback);
     push_multi_query(&mut query, "agentInfo", &args.agent_info);
     push_multi_query(&mut query, "status", &args.status);
@@ -306,7 +287,7 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
 
-    // agentId 必填；page / pageSize / sortBy 按文档都是选填，用户没传就不塞，让后端用自身默认
+    // agentId is required; page / pageSize / sortBy are optional — omit when not provided, let the backend use its defaults
     let mut query = vec![(
         "agentId".to_string(),
         require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string(),
@@ -383,7 +364,7 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
 async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    // clap 已强制 required = true；这里再防御性 trim 防止 `--communication-address ""`。
+    // clap already enforces required=true; this defensively trims against `--communication-address ""`.
     let communication_address =
         require_non_empty(Some(args.communication_address.as_str()), "--communication-address")?;
     let chain_index = args

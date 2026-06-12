@@ -344,7 +344,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
     match cmd {
         // Identity
         AgentCommand::Create(_) => "create".into(),
-        AgentCommand::Consent(_) => "consent".into(),
         AgentCommand::Update(_) => "update".into(),
         AgentCommand::Get(_) => "get".into(),
         AgentCommand::Precheck(_) => "pre-check".into(),
@@ -357,7 +356,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::FeedbackSubmit(_) => "feedback-submit".into(),
         AgentCommand::FeedbackList(_) => "feedback-list".into(),
         AgentCommand::XmtpSign(_) => "xmtp-sign".into(),
-        AgentCommand::ValidateListing(_) => "validate-listing".into(),
 
         // Task (buyer)
         AgentCommand::CreateTask { .. } => "create-task".into(),

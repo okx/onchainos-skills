@@ -105,14 +105,15 @@ pub(super) fn load_agent_signing_session(
     })
 }
 
-/// 用 signing_seed 对 keyUuid 做 Ed25519 签名，作为 sessionSignature。
+/// Sign keyUuid with signing_seed using Ed25519, producing the sessionSignature.
 ///
-/// 按产品规范：不套 EIP-191 前缀，不做 Keccak-256 预哈希——直接把 keyUuid 的
-/// UTF-8 字节喂给 Ed25519 签名算法。后端验签等价于：
+/// Per spec: no EIP-191 prefix, no Keccak-256 pre-hash — the raw UTF-8 bytes of
+/// keyUuid are fed directly into Ed25519. Backend verification is equivalent to:
 ///   VerifyKey(pubkey).verify(keyUuid.encode("utf-8"), base64_decode(sig))
 ///
-/// 注意：`crypto::ed25519_sign_eip191` 是 agentic wallet（transfer.rs）签
-/// EVM tx hash 用的协议路径，这里不复用，避免和 identity 的签名语义混淆。
+/// Note: `crypto::ed25519_sign_eip191` is the protocol path used by agentic
+/// wallet (transfer.rs) for EVM tx-hash signing; it is intentionally not reused
+/// here to avoid conflating identity signing semantics.
 pub(super) fn sign_key_uuid(key_uuid: &str, signing_seed: &[u8; 32]) -> Result<String> {
     let sig_bytes = crate::crypto::ed25519_sign(signing_seed, key_uuid.as_bytes())?;
     let signature = base64::engine::general_purpose::STANDARD.encode(&sig_bytes);
@@ -134,13 +135,14 @@ fn ed25519_pubkey_hex(signing_seed: &[u8; 32]) -> String {
 
 // ─── erc8004Msg overlay ───────────────────────────────────────────────────
 
-/// 按产品规范 build 出 `erc8004Msg` overlay。空字段不写入；整体若空则返回
-/// None（让上层把 `erc8004Msg` 整个从 extraData 里省略）。
+/// Build the `erc8004Msg` overlay per spec. Empty fields are omitted; if the
+/// result is entirely empty, returns None so the caller omits `erc8004Msg` from
+/// extraData altogether.
 ///
-/// 各命令当前的子字段集合（都遵循"空则不写"）：
-/// - `agent create`         → communicationAddress / role / keyUuid
-/// - `agent update`         → 无（一律传 `&[]`）
-/// - `agent feedback-submit`→ taskId / feedBackAgentId
+/// Fields used by each command (empty = not written):
+/// - `agent create`          → communicationAddress / role / keyUuid
+/// - `agent update`          → none (always pass `&[]`)
+/// - `agent feedback-submit` → taskId / feedBackAgentId
 pub(super) fn build_erc8004_overlay(fields: &[(&str, &str)]) -> Option<Map<String, Value>> {
     let mut inner = Map::new();
     for (key, value) in fields {
