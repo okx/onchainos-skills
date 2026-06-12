@@ -98,6 +98,8 @@ If the user picks 2 and K ≥ 2, ask a follow-up numbered question: "Which one? 
 
 Do not auto-choose for provider. Don't silently default. **Do not collapse the K ≥ 2 case to "one of them" without listing the ids** — the user must see the full list to make an informed pick (and to notice if they have stale providers they forgot about).
 
+**Rejected-ASP steer (rejection must not silently turn into a new create).** The pre-check `agent get` rows carry `approvalDisplayStatus`. When listing the existing ASP identities in the K ≥ 1 prompt, annotate any with `approvalDisplayStatus == 5` using its user-facing label ("Review failed", per `core/ux-lexicon.md §ApprovalDisplayStatus` — never the raw integer). If the user's create intent is actually about fixing / re-listing that rejected ASP (they mention the rejection, the same service, "重新注册" / "re-register", or arrived here right after a failed listing), recommend option 2 — update the rejected agent — and apply the `SKILL.md §Update` rejected-listing rule: remediation is `agent update` on the existing agent-id, never a fresh `agent create`. Only proceed with option 1 if the user explicitly insists after the steer.
+
 **The "Under this wallet" qualifier is mandatory and must not be dropped.** Reason: the `agent get` list display shows **all** wrappers (cross-wallet, by accountName), while K is counted **only** on the wrapper matching the currently selected XLayer wallet address. If the user already saw N agents in the display but the prompt says K < N, the qualifier reconciles the apparent contradiction. Same logic applies to the requester / evaluator uniqueness messages above.
 
 ### Language
