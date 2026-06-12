@@ -15,17 +15,13 @@ Every time before running any `onchainos` command, always follow these steps in 
    tell the user to check their network connection or install manually from
    https://github.com/okx/onchainos-skills.
 
-2. **Install or update**: If `onchainos` is not found, or if the cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows) is older than 12 hours:
-   - **Already installed** → run `onchainos upgrade` instead of the installer below, appending
-     `--beta` when the skill frontmatter `version` has `-beta` but `onchainos --version` is
-     stable (the command itself handles beta-line updates, beta→stable graduation, and checkout
-     branch switching). Refresh the cache
-     (`mkdir -p ~/.onchainos && date +%s > ~/.onchainos/last_check`; Windows:
-     `[DateTimeOffset]::UtcNow.ToUnixTimeSeconds() | Set-Content "$env:USERPROFILE\.onchainos\last_check"`)
-     and skip the remaining bullets. If the output has `"graduated": true` and skills were
-     installed via `npx`, re-run `npx skills add okx/onchainos-skills --yes`, then re-read
-     SKILL.md. On failure, continue with the current binary.
-   - Download the installer and its checksum file from the latest release tag:
+2. **Install or update**:
+   - **Already installed** → run
+     `onchainos upgrade --throttle --skill-version "<this skill's frontmatter version>"`
+     (handles the 12h throttle, channel selection, beta→stable graduation, checkout switching, and
+     its own cache refresh). If the JSON output has an `action` field, perform it and re-read
+     SKILL.md. On failure, keep the current binary. Skip the installer bullets below.
+   - **Not installed** → download the installer and its checksum file from the latest release tag:
      - **macOS/Linux**:
        `curl -sSL "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.sh" -o /tmp/onchainos-install.sh`
        `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -o /tmp/installer-checksums.txt`

@@ -49,6 +49,17 @@ pub struct UpgradeArgs {
     /// Skip skill checkout updates (only refresh the CLI binary)
     #[arg(long)]
     pub skip_skills: bool,
+
+    /// Exit immediately if the last check ran within 12 hours (stamp at
+    /// `<ONCHAINOS_HOME>/last_check`); refresh the stamp after a real check
+    #[arg(long)]
+    pub throttle: bool,
+
+    /// Version from the active skill's frontmatter. A `-beta` value routes a
+    /// stable CLI onto the beta channel; a stable value or beta CLI is ignored,
+    /// so it is always safe to pass the skill's version verbatim.
+    #[arg(long, value_name = "VERSION")]
+    pub skill_version: Option<String>,
 }
 
 // ── Version comparison ──────────────────────────────────────────────────
@@ -102,6 +113,56 @@ fn semver_gt(a: &str, b: &str) -> bool {
 
 fn is_prerelease(version: &str) -> bool {
     version.contains('-')
+}
+
+// ── Channel routing from the active skill ───────────────────────────────
+
+/// True when the active skill is on the beta line but the CLI is stable —
+/// the upgrade must then consult the beta channel (same as `--beta`). A beta
+/// CLI already consults the beta line via the prerelease fallback.
+fn skill_requests_beta(current: &str, skill_version: Option<&str>) -> bool {
+    !is_prerelease(current) && skill_version.is_some_and(is_prerelease)
+}
+
+// ── Upgrade throttle ────────────────────────────────────────────────────
+
+/// Seconds a previous check stays fresh for `--throttle` (12 hours).
+const THROTTLE_WINDOW_SECS: u64 = 12 * 60 * 60;
+
+fn last_check_path(home: &Path) -> PathBuf {
+    home.join("last_check")
+}
+
+/// True when `<home>/last_check` holds a unix timestamp within the throttle
+/// window. Missing, unreadable, garbage, or future stamps all count as stale.
+fn is_throttled(home: &Path, now_secs: u64) -> bool {
+    let Ok(raw) = std::fs::read_to_string(last_check_path(home)) else {
+        return false;
+    };
+    let Ok(last) = raw.trim().parse::<u64>() else {
+        return false;
+    };
+    last <= now_secs && now_secs - last < THROTTLE_WINDOW_SECS
+}
+
+/// Record `now_secs` into `<home>/last_check`.
+fn record_check(home: &Path, now_secs: u64) -> std::io::Result<()> {
+    std::fs::write(last_check_path(home), now_secs.to_string())
+}
+
+// ── Graduation action hint ──────────────────────────────────────────────
+
+/// On beta→stable graduation, mark the payload and attach a machine-readable
+/// `action` telling the agent how to refresh npx-installed skills.
+fn decorate_graduation(payload: &mut Value, graduated: bool) {
+    if !graduated {
+        return;
+    }
+    payload["graduated"] = json!(true);
+    payload["action"] = json!(
+        "Beta CLI graduated to stable. If skills were installed via npx, re-run \
+         `npx skills add okx/onchainos-skills --yes`, then re-read SKILL.md before continuing."
+    );
 }
 
 /// Outcome of upgrade channel resolution.
@@ -526,15 +587,36 @@ fn update_skill_checkouts(graduated: bool) -> Vec<Value> {
 // ── Command entry point ─────────────────────────────────────────────────
 
 pub async fn execute(args: UpgradeArgs) -> Result<()> {
-    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
-
     let current = CURRENT_VERSION;
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // With --throttle, a check within the last 12 hours short-circuits the
+    // whole command — no network, no skill pulls. --force and --check always
+    // get a real answer.
+    if args.throttle && !args.force && !args.check {
+        if let Ok(home) = crate::home::onchainos_home() {
+            if is_throttled(&home, now_secs) {
+                output::success(json!({
+                    "status": "fresh",
+                    "currentVersion": current,
+                }));
+                return Ok(());
+            }
+        }
+    }
+
+    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
 
     // Resolve the upgrade target. Stable installs only ever see the stable
     // channel; beta installs graduate to stable the moment it passes them,
     // otherwise they advance within the beta line. `--beta` explicitly opts
-    // into the beta channel.
-    let resolution: Result<UpgradeTarget> = if args.beta {
+    // into the beta channel, as does a beta skill driving a stable CLI.
+    let use_beta = args.beta || skill_requests_beta(current, args.skill_version.as_deref());
+    let resolution: Result<UpgradeTarget> = if use_beta {
         get_latest_with_beta(&client)
             .await
             .map(|latest| decide_target(current, &latest, None))
@@ -622,10 +704,17 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
     if binary_status == "upgraded" {
         payload["previousVersion"] = json!(current);
         payload["installedVersion"] = json!(installed_version);
-        if graduated {
-            payload["graduated"] = json!(true);
+        decorate_graduation(&mut payload, graduated);
+    }
+
+    // A completed check (even "already_latest") restarts the throttle window;
+    // a failed one must not, so the next run retries immediately.
+    if args.throttle && binary_status != "binary_check_failed" {
+        if let Ok(home) = crate::home::ensure_onchainos_home() {
+            let _ = record_check(&home, now_secs);
         }
     }
+
     output::success(payload);
 
     Ok(())
@@ -636,9 +725,10 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        current_branch, decide_target, discover_skill_paths_in, remote_is_trusted_okx, semver_gt,
-        update_one_checkout,
+        current_branch, decide_target, decorate_graduation, discover_skill_paths_in, is_throttled,
+        record_check, remote_is_trusted_okx, semver_gt, skill_requests_beta, update_one_checkout,
     };
+    use serde_json::json;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use tempfile::TempDir;
@@ -917,5 +1007,94 @@ mod tests {
         let t = decide_target("3.3.11", "3.3.11", None);
         assert_eq!(t.version, "3.3.11");
         assert!(!t.graduated);
+    }
+
+    // ── skill_requests_beta: channel routing from skill frontmatter ────
+
+    #[test]
+    fn beta_skill_routes_stable_cli_to_beta() {
+        assert!(skill_requests_beta("3.4.9", Some("3.4.9-beta")));
+    }
+
+    #[test]
+    fn stable_skill_keeps_stable_cli_on_stable() {
+        assert!(!skill_requests_beta("3.4.9", Some("3.4.9")));
+    }
+
+    #[test]
+    fn beta_cli_ignores_skill_channel_hint() {
+        assert!(!skill_requests_beta("3.4.9-beta", Some("3.4.9-beta")));
+    }
+
+    #[test]
+    fn missing_skill_version_defaults_to_stable() {
+        assert!(!skill_requests_beta("3.4.9", None));
+    }
+
+    // ── throttle: last_check freshness ──────────────────────────────────
+
+    #[test]
+    fn throttled_within_window() {
+        let tmp = TempDir::new().unwrap();
+        record_check(tmp.path(), 1_000).unwrap();
+        assert!(is_throttled(tmp.path(), 1_000 + 11 * 3600));
+    }
+
+    #[test]
+    fn stale_at_window_boundary() {
+        let tmp = TempDir::new().unwrap();
+        record_check(tmp.path(), 1_000).unwrap();
+        assert!(!is_throttled(tmp.path(), 1_000 + 12 * 3600));
+    }
+
+    #[test]
+    fn missing_stamp_is_stale() {
+        let tmp = TempDir::new().unwrap();
+        assert!(!is_throttled(tmp.path(), 5_000));
+    }
+
+    #[test]
+    fn garbage_stamp_is_stale() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("last_check"), "not-a-number").unwrap();
+        assert!(!is_throttled(tmp.path(), 5_000));
+    }
+
+    #[test]
+    fn future_stamp_is_stale() {
+        // A stamp ahead of the clock (corrupt write or clock skew) must not
+        // pin the throttle shut until the clock catches up.
+        let tmp = TempDir::new().unwrap();
+        record_check(tmp.path(), 1_000_000).unwrap();
+        assert!(!is_throttled(tmp.path(), 1_000));
+    }
+
+    #[test]
+    fn record_check_overwrites_previous_stamp() {
+        let tmp = TempDir::new().unwrap();
+        record_check(tmp.path(), 1_000).unwrap();
+        record_check(tmp.path(), 200_000).unwrap();
+        assert!(is_throttled(tmp.path(), 200_000 + 100));
+        assert!(!is_throttled(tmp.path(), 200_000 + 13 * 3600));
+    }
+
+    // ── decorate_graduation: machine-readable action hint ───────────────
+
+    #[test]
+    fn graduation_adds_action_hint() {
+        let mut payload = json!({"status": "upgraded"});
+        decorate_graduation(&mut payload, true);
+        assert_eq!(payload["graduated"], json!(true));
+        let action = payload["action"].as_str().expect("action must be a string");
+        assert!(action.contains("npx skills add okx/onchainos-skills --yes"));
+        assert!(action.contains("SKILL.md"));
+    }
+
+    #[test]
+    fn no_graduation_leaves_payload_untouched() {
+        let mut payload = json!({"status": "upgraded"});
+        decorate_graduation(&mut payload, false);
+        assert!(payload.get("graduated").is_none());
+        assert!(payload.get("action").is_none());
     }
 }
