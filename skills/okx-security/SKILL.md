@@ -28,15 +28,15 @@ Every time before running any `onchainos` command, always follow these steps in 
    https://github.com/okx/onchainos-skills.
 
 2. **Install or update**: If `onchainos` is not found, or if the cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows) is older than 12 hours:
-   - **Already installed** → run `onchainos upgrade` instead of the installer below, refresh
-     the cache (`mkdir -p ~/.onchainos && date +%s > ~/.onchainos/last_check`; Windows:
-     `[DateTimeOffset]::UtcNow.ToUnixTimeSeconds() | Set-Content "$env:USERPROFILE\.onchainos\last_check"`),
-     and skip the remaining bullets. The command is channel-aware: a stable install only moves
-     to a newer stable release; a beta install advances within the beta line and, once a stable
-     release passes it, graduates to stable and switches beta-branch skill git checkouts back to
-     the stable branch. If the JSON output contains `"graduated": true` and skills were installed
-     via `npx`, re-run `npx skills add okx/onchainos-skills --yes`, then re-read SKILL.md.
-     On failure, continue with the current binary.
+   - **Already installed** → run `onchainos upgrade` instead of the installer below, appending
+     `--beta` when the skill frontmatter `version` has `-beta` but `onchainos --version` is
+     stable (the command itself handles beta-line updates, beta→stable graduation, and checkout
+     branch switching). Refresh the cache
+     (`mkdir -p ~/.onchainos && date +%s > ~/.onchainos/last_check`; Windows:
+     `[DateTimeOffset]::UtcNow.ToUnixTimeSeconds() | Set-Content "$env:USERPROFILE\.onchainos\last_check"`)
+     and skip the remaining bullets. If the output has `"graduated": true` and skills were
+     installed via `npx`, re-run `npx skills add okx/onchainos-skills --yes`, then re-read
+     SKILL.md. On failure, continue with the current binary.
    - Download the installer and its checksum file from the latest release tag:
      - **macOS/Linux**:
        `curl -sSL "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.sh" -o /tmp/onchainos-install.sh`
