@@ -614,30 +614,17 @@ pub async fn join(
         "accountId": account_id,
     });
 
-    // Authenticated endpoint — handles backend-side token revocation:
-    // if the call comes back with `Invalid access token` (code=10008), force
-    // a refresh (bypassing local exp check) and retry once with a fresh
-    // client. Covers the case where local JWT exp is still in the future
-    // but the token has been revoked server-side (re-login on another
-    // device, password change, etc.).
+    // Authenticated endpoint. Server-side token revocation (code=10008 while
+    // the local JWT exp is still in the future — re-login on another device,
+    // password change, etc.) is handled transparently by
+    // `ApiClient::post_with_headers` (force-refresh + retry once).
     let path = "/priapi/v5/wallet/agentic/competition/join";
     let headers = [("OK-ACCESS-PROJECT", PROJECT_HEADER)];
 
     let (_, mut auth_client) = ensure_logged_in_client().await?;
-    let first = auth_client
+    auth_client
         .post_with_headers(path, &body, Some(&headers))
-        .await;
-    match first {
-        Ok(_) => {}
-        Err(e) if is_invalid_token_error(&e) => {
-            force_refresh_access_token_for_competition().await?;
-            let (_, mut auth_client_retry) = ensure_logged_in_client().await?;
-            auth_client_retry
-                .post_with_headers(path, &body, Some(&headers))
-                .await?;
-        }
-        Err(e) => return Err(e),
-    }
+        .await?;
     // API returns data: null on success — construct a useful confirmation object.
     // `activityId` is included so downstream tools (e.g. competition_detail) can
     // chain off it to fetch totalPrizePool / participateChainIds when rendering
@@ -672,26 +659,15 @@ pub async fn claim(
         "accountId": account_id,
     });
 
-    // Same invalid-token retry pattern as `join` — handles server-side
-    // token revocation while local JWT exp is still in the future.
+    // Server-side token revocation (10008) is handled transparently by
+    // `ApiClient::post_with_headers` (force-refresh + retry once).
     let path = "/priapi/v5/wallet/agentic/competition/claim";
     let headers = [("OK-ACCESS-PROJECT", PROJECT_HEADER)];
 
     let (_, mut auth_client) = ensure_logged_in_client().await?;
-    let first = auth_client
+    auth_client
         .post_with_headers(path, &body, Some(&headers))
-        .await;
-    match first {
-        Ok(v) => Ok(v),
-        Err(e) if is_invalid_token_error(&e) => {
-            force_refresh_access_token_for_competition().await?;
-            let (_, mut auth_client_retry) = ensure_logged_in_client().await?;
-            auth_client_retry
-                .post_with_headers(path, &body, Some(&headers))
-                .await
-        }
-        Err(e) => Err(e),
-    }
+        .await
 }
 
 /// POST /priapi/v5/wallet/agentic/competition/submitContact — requires
@@ -765,25 +741,15 @@ pub async fn submit_contact(
         "contactValue": contact_value,
     });
 
-    // Same invalid-token retry pattern as `join` / `claim`.
+    // Server-side token revocation (10008) is handled transparently by
+    // `ApiClient::post_with_headers` (force-refresh + retry once).
     let path = "/priapi/v5/wallet/agentic/competition/submitContact";
     let headers = [("OK-ACCESS-PROJECT", PROJECT_HEADER)];
 
     let (_, mut auth_client) = ensure_logged_in_client().await?;
-    let first = auth_client
+    auth_client
         .post_with_headers(path, &body, Some(&headers))
-        .await;
-    match first {
-        Ok(_) => {}
-        Err(e) if is_invalid_token_error(&e) => {
-            force_refresh_access_token_for_competition().await?;
-            let (_, mut auth_client_retry) = ensure_logged_in_client().await?;
-            auth_client_retry
-                .post_with_headers(path, &body, Some(&headers))
-                .await?;
-        }
-        Err(e) => return Err(e),
-    }
+        .await?;
 
     Ok(json!({
         "submitted": true,
@@ -818,19 +784,9 @@ pub async fn claim_and_submit(
     sol_wallet: &str,
 ) -> Result<Value> {
     // ── Step 1: fetch unsigned calldata ─────────────────────────────────
-    // Authenticated endpoint — handles backend-side token revocation:
-    // if the call comes back with `Invalid access token` (code=10008), force a
-    // refresh (bypassing local exp check) and retry once. This covers the
-    // edge where local JWT exp is still in the future but the token has been
-    // revoked server-side (e.g. re-login on another device).
-    let calldata = match claim(client, activity_id, evm_wallet, sol_wallet).await {
-        Ok(v) => v,
-        Err(e) if is_invalid_token_error(&e) => {
-            force_refresh_access_token_for_competition().await?;
-            claim(client, activity_id, evm_wallet, sol_wallet).await?
-        }
-        Err(e) => return Err(e),
-    };
+    // `claim` posts through `ApiClient::post_with_headers`, which already
+    // force-refreshes + retries once on server-side token revocation (10008).
+    let calldata = claim(client, activity_id, evm_wallet, sol_wallet).await?;
     let entries = calldata.as_array().cloned().unwrap_or_default();
     if entries.is_empty() {
         bail!("claim API returned no calldata to submit");
@@ -1057,52 +1013,6 @@ fn entry_chain_string(entry: &Value) -> String {
     }
 }
 
-/// Detect whether an error is the backend's "access token revoked / invalid"
-/// signal. Used to trigger a force-refresh + retry — local JWT exp may still
-/// be in the future yet backend has invalidated the token (re-login on
-/// another device, password change, server-side risk control).
-fn is_invalid_token_error(e: &anyhow::Error) -> bool {
-    let s = e.to_string();
-    s.contains("code=10008") || s.contains("Invalid access token")
-}
-
-/// Force-refresh `access_token` via the refresh-token API, regardless of the
-/// local JWT `exp` field.
-///
-/// This is the competition module's local recovery path for backend-side
-/// token revocation. The shared `auth::ensure_tokens_refreshed()` only
-/// refreshes when local `exp` is past — but backend may revoke a token
-/// (re-login on another device, password change, risk control) before its
-/// local `exp` ticks over, leading to `Invalid access token` (10008) on a
-/// token we still consider valid. This helper bypasses the exp check and
-/// just calls `auth_refresh` directly, persisting the new tokens to the
-/// keyring so the next `ApiClient::new_async()` picks them up.
-///
-/// Kept private to this module — auth/keyring infrastructure stays untouched
-/// in `agentic_wallet/auth.rs`; we only consume its public primitives here.
-async fn force_refresh_access_token_for_competition() -> Result<()> {
-    let blob = crate::keyring_store::read_blob()?;
-    let refresh_token = blob
-        .get("refresh_token")
-        .filter(|t| !t.is_empty())
-        .cloned()
-        .ok_or_else(|| {
-            anyhow::anyhow!("refresh_token missing — please run: onchainos wallet login")
-        })?;
-
-    let mut wallet_client = crate::wallet_api::WalletApiClient::new()?;
-    let resp = wallet_client
-        .auth_refresh(&refresh_token)
-        .await
-        .map_err(|e| anyhow::anyhow!("force-refresh failed: {}", e))?;
-
-    crate::keyring_store::store(&[
-        ("access_token", &resp.access_token),
-        ("refresh_token", &resp.refresh_token),
-    ])?;
-
-    Ok(())
-}
 
 // ── helpers ───────────────────────────────────────────────────────────
 

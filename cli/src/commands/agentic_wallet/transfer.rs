@@ -734,6 +734,53 @@ pub struct BatchTxParams {
     pub aa_dex_token_amount: Option<String>,
 }
 
+/// Build the per-element `msgForSign` JSON for one batch element. Mirrors the
+/// branch set used by single-tx `sign_and_broadcast`; `authSignatureFor7702`
+/// is signed whenever the backend returned a non-empty `authHashFor7702`
+/// (the gate is hash-presence, not flow type — same rule as single-tx and GS).
+fn build_batch_element_msg_for_sign(
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+    signing_seed: &[u8],
+    session_cert: &str,
+) -> Result<Value> {
+    let signing_seed_b64 = base64::engine::general_purpose::STANDARD.encode(signing_seed);
+    let mut msg_for_sign_map = serde_json::Map::new();
+
+    if !unsigned.hash.is_empty() {
+        let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, signing_seed, "hex")?;
+        msg_for_sign_map.insert("signature".into(), json!(sig));
+    }
+    if !unsigned.auth_hash_for7702.is_empty() {
+        let sig = crate::crypto::ed25519_sign_hex(&unsigned.auth_hash_for7702, &signing_seed_b64)?;
+        msg_for_sign_map.insert("authSignatureFor7702".into(), json!(sig));
+    }
+    if !unsigned.unsigned_tx_hash.is_empty() {
+        let sig = crate::crypto::ed25519_sign_encoded(
+            &unsigned.unsigned_tx_hash,
+            &signing_seed_b64,
+            &unsigned.encoding,
+        )?;
+        msg_for_sign_map.insert("unsignedTxHash".into(), json!(&unsigned.unsigned_tx_hash));
+        msg_for_sign_map.insert("sessionSignature".into(), json!(sig));
+    }
+    if !unsigned.eip712_message_hash.is_empty() {
+        let sig = crate::crypto::ed25519_sign_encoded(
+            &unsigned.eip712_message_hash,
+            &signing_seed_b64,
+            &unsigned.encoding,
+        )?;
+        msg_for_sign_map.insert("sessionSignature".into(), json!(sig));
+    }
+    if !unsigned.unsigned_tx.is_empty() {
+        msg_for_sign_map.insert("unsignedTx".into(), json!(&unsigned.unsigned_tx));
+    }
+    if !session_cert.is_empty() {
+        msg_for_sign_map.insert("sessionCert".into(), json!(session_cert));
+    }
+
+    Ok(Value::Object(msg_for_sign_map))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn batch_sign_and_broadcast(
     chain: &str,
@@ -854,42 +901,11 @@ pub async fn batch_sign_and_broadcast(
     validate_batch_unsigned_responses(&unsigned_responses)?;
 
     let signing_seed = crate::crypto::hpke_decrypt_session_sk(&encrypted_session_sk, &session_key)?;
-    let signing_seed_b64 = base64::engine::general_purpose::STANDARD.encode(signing_seed);
 
     let mut broadcast_elements: Vec<crate::wallet_api::BatchBroadcastElement> =
         Vec::with_capacity(unsigned_responses.len());
     for unsigned in &unsigned_responses {
-        let mut msg_for_sign_map = serde_json::Map::new();
-
-        if !unsigned.hash.is_empty() {
-            let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, &signing_seed, "hex")?;
-            msg_for_sign_map.insert("signature".into(), json!(sig));
-        }
-        if !unsigned.unsigned_tx_hash.is_empty() {
-            let sig = crate::crypto::ed25519_sign_encoded(
-                &unsigned.unsigned_tx_hash,
-                &signing_seed_b64,
-                &unsigned.encoding,
-            )?;
-            msg_for_sign_map.insert("unsignedTxHash".into(), json!(&unsigned.unsigned_tx_hash));
-            msg_for_sign_map.insert("sessionSignature".into(), json!(sig));
-        }
-        if !unsigned.eip712_message_hash.is_empty() {
-            let sig = crate::crypto::ed25519_sign_encoded(
-                &unsigned.eip712_message_hash,
-                &signing_seed_b64,
-                &unsigned.encoding,
-            )?;
-            msg_for_sign_map.insert("sessionSignature".into(), json!(sig));
-        }
-        if !unsigned.unsigned_tx.is_empty() {
-            msg_for_sign_map.insert("unsignedTx".into(), json!(&unsigned.unsigned_tx));
-        }
-        if !session_cert.is_empty() {
-            msg_for_sign_map.insert("sessionCert".into(), json!(session_cert));
-        }
-
-        let msg_for_sign = Value::Object(msg_for_sign_map);
+        let msg_for_sign = build_batch_element_msg_for_sign(unsigned, &signing_seed, &session_cert)?;
 
         let mut extra_data_obj = if unsigned.extra_data.is_object() {
             unsigned.extra_data.clone()
@@ -1201,6 +1217,14 @@ async fn gas_station_send(
         bail!("Gas Station not activated by backend for this transaction");
     }
 
+    // Terminal diagnostic states — never broadcast.
+    if unsigned.has_pending_tx {
+        return emit_gs_pending_tx_state();
+    }
+    if unsigned.insufficient_all {
+        return emit_gs_insufficient_all_state(&unsigned, &addr_info.address);
+    }
+
     let execute_ok = match &unsigned.execute_result {
         Value::Bool(b) => *b,
         Value::Null => true,
@@ -1213,6 +1237,56 @@ async fn gas_station_send(
             unsigned.execute_error_msg.clone()
         };
         bail!("transaction simulation failed: {}", err_msg);
+    }
+
+    // Guard: only sign + broadcast when the backend actually returned signing
+    // material (READY_TO_USE). A FIRST_TIME_PROMPT / no-material response means
+    // Gas Station is not yet activated for this (account, chain); broadcasting an
+    // empty msgForSign makes the backend TEE reject with code 81358 ("empty
+    // signedTx"). Keep this set in sync with the branches in `gs_build_msg_for_sign`
+    // — the guard must pass iff the signer can produce a `sessionSignature`.
+    let has_sign_material = !unsigned.unsigned_tx_hash.is_empty()
+        || !unsigned.hash.is_empty()
+        || !unsigned.eip712_message_hash.is_empty();
+
+    if !has_sign_material {
+        if gas_token_address.is_some() {
+            // A specific token was pinned but the backend still withheld signing
+            // material — activation did not complete. Surface clearly; never broadcast.
+            bail!(
+                "Gas Station returned no signing material despite a pinned token \
+                 (status: {}). Activation did not complete; retry or pick another token.",
+                unsigned.gas_station_status
+            );
+        }
+        // Auto-select (`--enable-gas-station` with no token): the backend cannot
+        // activate first-time Gas Station without an explicit token. Route back
+        // through the confirm / nextStep flow instead of broadcasting empty.
+        return match classify_gs_phase1(&unsigned) {
+            GsPhase1Decision::FirstTime => Err(build_gs_first_time_prompt(&addr_info, &unsigned)),
+            GsPhase1Decision::Reenable => Err(build_gs_reenable_prompt(&addr_info, &unsigned)),
+            GsPhase1Decision::AutoPick {
+                fee_token_address,
+                relayer_id,
+                needs_enable,
+            } => {
+                // CLI picks a sufficient token and re-runs; the next unsignedInfo
+                // call activates Gas Station and returns the signing material.
+                Box::pin(gas_station_send(
+                    amt,
+                    recipient,
+                    chain,
+                    from,
+                    contract_token,
+                    force,
+                    Some(&fee_token_address),
+                    Some(&relayer_id),
+                    needs_enable,
+                ))
+                .await
+            }
+            GsPhase1Decision::NeedsUserPick => Err(build_gs_token_selection_prompt(&unsigned)),
+        };
     }
 
     let resp = gas_station_sign_and_broadcast(
@@ -1284,6 +1358,25 @@ fn gs_build_msg_for_sign(
             &unsigned.encoding,
         )?;
         m.insert("sessionSignature".into(), json!(session_sig));
+    }
+    // Solana GS Phase 2: backend puts the message bytes to sign in
+    // `unsignedTxHash` and the same base64 in `unsignedTx` for the broadcast
+    // to relay on-chain. Sign `unsignedTxHash` via ed25519_sign_encoded →
+    // write `sessionSignature`; mirror the standard `sign_and_broadcast`
+    // Solana path.
+    if !unsigned.unsigned_tx_hash.is_empty() {
+        let sig = crate::crypto::ed25519_sign_encoded(
+            &unsigned.unsigned_tx_hash,
+            &signing_seed_b64,
+            &unsigned.encoding,
+        )?;
+        m.insert("unsignedTxHash".into(), json!(&unsigned.unsigned_tx_hash));
+        m.insert("sessionSignature".into(), json!(sig));
+    }
+    // Solana: pass the base64 message bytes through to broadcast so the
+    // Relayer can submit it together with the user signature above.
+    if !unsigned.unsigned_tx.is_empty() {
+        m.insert("unsignedTx".into(), json!(&unsigned.unsigned_tx));
     }
     // Sign authHashFor7702 → authSignatureFor7702 whenever the backend
     // returned a non-empty 7702 auth hash (signal that the upgrade is needed).
@@ -1528,6 +1621,7 @@ async fn gas_station_sign_and_broadcast(
 /// HAS_PENDING_TX: a prior Gas Station tx is still processing; caller cannot proceed.
 fn emit_gs_pending_tx_state() -> Result<()> {
     output::success(json!({
+        "scene": "gs_pending_tx",
         "gasStationUsed": true,
         "hasPendingTx": true,
     }));
@@ -1542,6 +1636,7 @@ fn emit_gs_insufficient_all_state(
     from_addr: &str,
 ) -> Result<()> {
     output::success(json!({
+        "scene": "gs_insufficient_all",
         "gasStationUsed": true,
         "insufficientAll": true,
         "gasStationTokenList": unsigned.gas_station_token_list,
@@ -1588,7 +1683,7 @@ fn build_gs_first_time_prompt(
          Token list: {}",
         token_list_json(unsigned)
     );
-    crate::output::CliConfirming { message, next }.into()
+    crate::output::CliConfirming { message, next, scene: Some("gs_first_time".into()) }.into()
 }
 
 /// REENABLE_ONLY: Gas Station was explicitly disabled by the user earlier. Backend overwrites
@@ -1614,7 +1709,7 @@ fn build_gs_reenable_prompt(
          Token list: {}",
         token_list_json(unsigned)
     );
-    crate::output::CliConfirming { message, next }.into()
+    crate::output::CliConfirming { message, next, scene: Some("gs_reenable".into()) }.into()
 }
 
 /// Call-site adapter for the `sign_and_broadcast` (contract-call / send via TxParams)
@@ -1760,7 +1855,7 @@ fn build_gs_token_selection_prompt(
          Token list: {}",
         token_list_json(unsigned)
     );
-    crate::output::CliConfirming { message, next }.into()
+    crate::output::CliConfirming { message, next, scene: Some("gs_token_switch".into()) }.into()
 }
 
 // ── Gas Station Phase 1 dispatch ───────────────────────────────────────────
@@ -2641,6 +2736,55 @@ mod tests {
         assert!(
             msg.contains("batch element 0") && msg.contains("empty signing materials"),
             "expected error to point at element 0 missing-materials, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn build_batch_element_signs_auth_hash_for7702_when_present() {
+        // Backend returned a non-empty authHashFor7702 for one batch element:
+        // the per-element builder MUST sign it into authSignatureFor7702,
+        // regardless of `needUpdate7702` (the gate is hash-presence, not the
+        // boolean flag — same rule as single-tx sign_and_broadcast).
+        let unsigned = unsigned_info_from_json(serde_json::json!({
+            "executeResult": true,
+            "unsignedTxHash": "0xaa",
+            "encoding": "hex",
+            "authHashFor7702": "deadbeefdeadbeefdeadbeefdeadbeef",
+        }));
+        let seed = [7u8; 32];
+        let msg = build_batch_element_msg_for_sign(&unsigned, &seed, "cert-xxx").unwrap();
+        let obj = msg.as_object().expect("msgForSign is object");
+        assert!(
+            obj.get("authSignatureFor7702")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false),
+            "authSignatureFor7702 must be present + non-empty when authHashFor7702 returned, got: {msg}"
+        );
+        // sessionCert + unsignedTxHash branches still populated as before.
+        assert_eq!(obj.get("sessionCert").and_then(|v| v.as_str()), Some("cert-xxx"));
+        assert_eq!(obj.get("unsignedTxHash").and_then(|v| v.as_str()), Some("0xaa"));
+    }
+
+    #[test]
+    fn build_batch_element_omits_auth_hash_for7702_when_empty() {
+        // When the backend does NOT return authHashFor7702, the builder must
+        // not emit a stray authSignatureFor7702 key.
+        let unsigned = unsigned_info_from_json(serde_json::json!({
+            "executeResult": true,
+            "unsignedTxHash": "0xbb",
+            "encoding": "hex",
+        }));
+        let seed = [7u8; 32];
+        let msg = build_batch_element_msg_for_sign(&unsigned, &seed, "").unwrap();
+        let obj = msg.as_object().expect("msgForSign is object");
+        assert!(
+            obj.get("authSignatureFor7702").is_none(),
+            "authSignatureFor7702 must be absent when authHashFor7702 is empty, got: {msg}"
+        );
+        assert!(
+            obj.get("sessionCert").is_none(),
+            "sessionCert must be absent when session_cert is empty, got: {msg}"
         );
     }
 }

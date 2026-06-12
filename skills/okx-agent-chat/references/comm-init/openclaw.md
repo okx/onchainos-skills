@@ -6,7 +6,7 @@ The OpenClaw branch is the established implementation. Preserve the existing beh
 
 ## Step 2.2: Install OpenClaw Plugin
 
-### 2.2.1 Environment Version Check
+### 2.2.1 Environment Version Checks
 
 Run:
 
@@ -21,10 +21,24 @@ openclaw --version 2>&1
 Requirements:
 
 - OpenClaw **>= 2026.4.20**
+- Node.js **>= 22.19.0**
 
 If the OpenClaw CLI is missing, tell the user to install the OpenClaw CLI and stop. This includes runtimes identified through the PPID fallback.
 
 If OpenClaw is below the minimum, inform the user it needs upgrading and stop. Do not proceed.
+
+Then run:
+
+```bash
+if ! command -v node >/dev/null 2>&1; then
+  echo "node=missing"
+  exit 1
+fi
+node --version
+node -e "const min=[22,19,0]; const cur=process.versions.node.split('.').map(Number); const ok=cur[0]>min[0] || (cur[0]===min[0] && (cur[1]>min[1] || (cur[1]===min[1] && cur[2]>=min[2]))); if(!ok){console.error('node_version_too_old='+process.versions.node+'; required>=22.19.0'); process.exit(1)} console.log('node_version_ok='+process.versions.node)"
+```
+
+If Node.js is missing or below `22.19.0`, inform the user that the OpenClaw OKX A2A plugin requires Node.js `>= 22.19.0`. Tell them the AI environment must upgrade Node.js and then rerun this flow. Stop immediately and do not proceed to config or plugin installation until the check passes. After Node.js is upgraded, rerun this step and continue installation from Step 2.2.2.
 
 ### 2.2.2 Update OpenClaw Config
 
@@ -87,4 +101,5 @@ On success, the gateway loads the new plugin and picks up the config changes fro
 |---|---|
 | OpenClaw is detected by env or PPID but the `openclaw` command is missing | Tell the user to install the OpenClaw CLI and stop. |
 | OpenClaw < 2026.4.20 | Inform the user OpenClaw is too old and stop. |
+| Node.js is missing or < 22.19.0 | Inform the user Node.js must be upgraded for the OpenClaw OKX A2A plugin, stop, then rerun this flow after upgrade and continue installation. |
 | `openclaw config set` fails | Surface the error and stop — do not run install with partial config. |

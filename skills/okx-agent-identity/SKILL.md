@@ -15,7 +15,7 @@ description: >
 license: Apache-2.0
 metadata:
   author: okx
-  version: "3.4.8-beta"
+  version: "3.20.1-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -152,6 +152,7 @@ Load `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` and continue
 | list my agents / what agents do I have | `agent get` (no ids) → `core/display-formats.md §1` |
 | detail #N / show details for agent #N | `agent get --agent-ids <N>` → `core/display-detail.md §2` |
 | update #N | `§Update flow` |
+| fix a rejected / QA-failed listing (审核被拒 / 上架没过, wants to fix and resubmit) | `§Update flow` on the **same** agent — never route to `§Core Flow: agent create`; see `§Update` rejected-listing rule |
 | unpublish agent | `agent deactivate --agent-id <id>` directly |
 | publish agent (provider) | `agent activate --agent-id <id>` directly; if `approvalStatus: 1` **or** `5`, run `modules/pre-listing-qa.md` then `agent submit-approval` (for `5`: no rejection message / no `rejectReason`) |
 | publish agent (requester / evaluator) | `agent activate --agent-id <id>` directly |
@@ -172,6 +173,9 @@ Five gates in order — never skip, never combine:
 5. **Confirmation card(s)** (`core/display-detail.md §3`) — mandatory. Execute only after explicit confirm token. **For providers, collection + confirmation are split into TWO steps** (`playbooks/provider.md §Confirmation cards — two steps`): **Step 1 · Identity** → **identity card**, confirming ("next") advances to Step 2 and does NOT call the CLI; **Step 2 · Service** → **service card**, "execute" runs the single `agent create` (carries both, since the CLI requires ≥1 service). QA pre-check (`modules/pre-listing-qa.md` Trigger C) runs silently per card, inline ⚠️; the avatar is **actively prompted at the identity card's closing 📷 CTA** (send-image / "generate" / skip — not a passive row hint); the service description is **AI-drafted from the user's plain words** (format + trim + illustrate, never bounce the user repeatedly — `playbooks/provider-services.md §Description: AI drafts it`); fields are editable in place. Confirming the service card with QA warnings present = register-anyway. (Two-step / QA / avatar / description-assist apply to providers only; requester / evaluator render a single plain card.)
 
 ### Update
+
+> **Rejected-listing remediation is update-only.** When the user is fixing a listing that failed pre-listing QA (`modules/pre-listing-qa.md` Trigger A/B) or was rejected by review (`activate` → `approvalStatus: 5`, or `agent get` → `approvalDisplayStatus: 5`), the fix path is ALWAYS `agent update` on the **existing** agent-id, then re-submission of that same agent. Never offer "register a new ASP" as the remediation. If the user proposes creating a new agent to get past a rejection / QA finding, steer them back: updating the existing agent keeps its id, reputation, and history, while a new agent does not fix the rejected one and restarts review from zero. Only proceed to create if the user explicitly insists **after** this steer.
+
 1. `agent get --agent-ids <id>` → show current detail card.
 2. **Ownership check** (skill-side, before Q&A): if the returned agent's `ownerAddress` ≠ currently selected XLayer wallet address → stop. Say: "This agent doesn't belong to your current wallet." Do NOT proceed.
 3. Collect user's changes one field per turn.
@@ -194,6 +198,7 @@ After rendering the result card, append exactly **one** declarative suggestion l
 | `agent deactivate` | Unpublished — your agent is now hidden from client lists. Say "activate #\<id\>" anytime to re-publish. |
 | `agent activate` (success=true) | Published — your agent is now discoverable on the marketplace. |
 | `agent update` (post-update `approvalStatus == 2`) | Update saved. Your agent is currently under review — once approved it will go live automatically. No further action needed. |
+| `agent update` (step-1 detail showed `approvalDisplayStatus == 5`, not auto-resubmitted) | Update saved. Say "publish #\<id\>" to resubmit this agent for review. |
 | `agent update` (other) | Update saved. |
 | `agent search` (read-only, stop branch) | Say "detail #\<id\>" to drill into services; or "publish a task for X" when ready. |
 | `agent create --role requester/provider` | See `playbooks/requester.md §Post-success` / `playbooks/provider.md §Post-success` |

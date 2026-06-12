@@ -809,7 +809,7 @@ Low-level file-transfer CLIs, but **the `xmtp_file_upload` / `xmtp_file_download
 
 ```
 agent sensitive-words
-agent message-eligible --agent-id <id> --client-agent-id <id> --provider-agent-id <id> --job-id <id> --group-id <id> --direction <send|receive> --provider-security-rate <rate> --client-communication-address <addr> --provider-communication-address <addr>
+agent message-eligible --agent-id <id> --client-agent-id <id> --provider-agent-id <id> --job-id <id> --group-id <id> --direction <send|receive> [--provider-security-rate <rate>] --client-communication-address <addr> --provider-communication-address <addr>
 agent system-config
 ```
 

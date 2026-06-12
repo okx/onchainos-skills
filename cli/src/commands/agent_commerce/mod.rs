@@ -699,7 +699,7 @@ pub enum AgentCommand {
         #[arg(long)]
         direction: String,
         #[arg(long)]
-        provider_security_rate: String,
+        provider_security_rate: Option<String>,
         #[arg(long)]
         client_communication_address: String,
         #[arg(long)]

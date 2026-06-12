@@ -1448,6 +1448,9 @@ mod tests {
 
     #[tokio::test]
     async fn sign_payment_local_rejects_aggr_deferred_only() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let accepts = json!([{
             "scheme": "aggr_deferred",
             "network": "eip155:196",
