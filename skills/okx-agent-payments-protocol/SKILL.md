@@ -4,7 +4,7 @@ description: "Unified payment dispatcher for agent-to-service payments. Covers x
 license: MIT
 metadata:
   author: okx
-  version: "3.20.0-beta"
+  version: "3.20.1-beta"
   homepage: "https://web3.okx.com"
 ---
 
