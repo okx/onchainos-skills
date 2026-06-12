@@ -4,33 +4,30 @@
 
 ## Step 4.2: Install Node CLI
 
-### 4.2.1 Choose Package Manager
+### 4.2.1 Check Node.js Version
 
-Detect locally available package managers:
+Run:
 
 ```bash
-command -v yarn >/dev/null 2>&1 && echo "pm=yarn"
-command -v pnpm >/dev/null 2>&1 && echo "pm=pnpm"
+if ! command -v node >/dev/null 2>&1; then
+  echo "node=missing"
+  exit 1
+fi
+node --version
+node -e "const min=[22,0,0]; const cur=process.versions.node.split('.').map(Number); const ok=cur[0]>min[0] || (cur[0]===min[0] && (cur[1]>min[1] || (cur[1]===min[1] && cur[2]>=min[2]))); if(!ok){console.error('node_version_too_old='+process.versions.node+'; required>=22.0.0'); process.exit(1)} console.log('node_version_ok='+process.versions.node)"
 ```
 
-- If neither `yarn` nor `pnpm` is present, use `npm` and continue to Step 4.2.2.
-- If one or both are present, ask the user which package manager they prefer among `npm` plus the detected options. Do not infer. Continue only after the user chooses one of the offered package managers.
+If Node.js is missing or below `22.0.0`, inform the user that the OKX A2A Node CLI requires Node.js `>= 22.0.0`. Tell them the AI environment must upgrade Node.js and then rerun this flow. Stop immediately and do not run `npm install` until the check passes. After Node.js is upgraded, rerun this step and continue installation from Step 4.2.2.
 
 ### 4.2.2 Install `okx-a2a`
 
-Run exactly one command based on the selected package manager:
+Run:
 
 ```bash
 npm install -g @okxweb3/a2a-node@latest
 ```
 
-```bash
-yarn global add @okxweb3/a2a-node@latest
-```
-
-```bash
-pnpm add -g @okxweb3/a2a-node@latest
-```
+Use npm for this install, even if yarn or pnpm is available.
 
 If installation fails, surface the error verbatim and stop.
 
@@ -52,8 +49,35 @@ okx-a2a ai-provider status 2>&1
 
 Use the command output as the source of truth for provider names and installation state.
 
-- If no supported AI provider CLI is installed, tell the user to install one supported provider CLI and retry. Flow ends here.
-- If one or more supported provider CLIs are installed, ask the user to choose which provider CLI should be used as the task-communication agent. Continue only after the user chooses a provider name from the command output.
+Then detect the current host AI provider:
+
+```bash
+detect_current_ai_provider() {
+  codex_signal=false
+  claude_signal=false
+
+  if [ -n "${CODEX_THREAD_ID:-}" ] || [ "${CODEX_SHELL:-}" = "1" ] || [ "${CODEX_CI:-}" = "1" ]; then
+    codex_signal=true
+  fi
+
+  if [ "${CLAUDECODE:-}" = "1" ]; then
+    claude_signal=true
+  fi
+
+  if [ "$codex_signal" = "true" ] && [ "$claude_signal" != "true" ]; then
+    echo "codex"
+  elif [ "$claude_signal" = "true" ] && [ "$codex_signal" != "true" ]; then
+    echo "claude"
+  fi
+}
+
+current_provider=$(detect_current_ai_provider)
+echo "current_provider=${current_provider:-unknown}"
+```
+
+- If no supported AI provider is available, tell the user to install or open a supported provider app/CLI and retry. Flow ends here.
+- If `current_provider` is `codex` or `claude`, and the `okx-a2a ai-provider status` output reports that same provider as installed/available (for example `codex=true` or `claude=true`), use that provider automatically. Do not ask the user to choose.
+- If the current provider is unknown, ambiguous, or not installed/available according to `okx-a2a ai-provider status`, ask the user to choose which available provider should be used as the task-communication agent. Continue only after the user chooses a provider name from the command output.
 
 Then run:
 
@@ -85,8 +109,11 @@ On success, OKX A2A communication initialization is complete. Flow ends here.
 
 | Scenario | Behavior |
 |---|---|
-| No `yarn` / `pnpm` found | Use `npm` without asking package-manager preference. |
-| `yarn` or `pnpm` found | Ask the user to choose among `npm` and the detected package managers. |
+| Node.js is missing or < 22.0.0 | Inform the user Node.js must be upgraded for the OKX A2A Node CLI, stop, then rerun this flow after upgrade and continue installation. |
+| `yarn` or `pnpm` is installed locally | Still use `npm install -g @okxweb3/a2a-node@latest`. |
 | `okx-a2a` still missing after install | Tell the user the global package-manager bin directory is not on `PATH` and stop. |
-| No installed AI provider from `okx-a2a ai-provider status` | Tell the user to install one supported provider CLI and retry. |
-| User chooses an AI provider after installing missing `okx-a2a` | Run `okx-a2a config provider --provider <providerName>`, then `okx-a2a restart`; after restart succeeds, show the bypass-permission prompt from Step 4.4. |
+| No available AI provider from `okx-a2a ai-provider status` | Tell the user to install or open a supported provider app/CLI and retry. |
+| Current runtime is clearly Codex and `codex=true` | Run `okx-a2a config provider --provider codex` without asking the user. |
+| Current runtime is clearly Claude Code and `claude=true` | Run `okx-a2a config provider --provider claude` without asking the user. |
+| Current runtime is unknown, ambiguous, or unavailable in provider status | Ask the user to choose among installed providers. |
+| User chooses or the runtime detector selects an AI provider after installing missing `okx-a2a` | Run `okx-a2a config provider --provider <providerName>`, then `okx-a2a restart`; after restart succeeds, show the bypass-permission prompt from Step 4.4. |
