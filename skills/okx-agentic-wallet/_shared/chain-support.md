@@ -31,9 +31,3 @@ Authoritative matrix for Gas Station. Use this when the Agent needs chain displa
 
 > **Always derive the per-tx token set from the response's `gasStationTokenList`** — it's backend-authoritative. The table above is for reference only (FAQ answers, unsupported-chain detection).
 
-**Related rules** (see `references/gas-station.md`):
-- Gas Station only triggers on Solana; for any other chain the backend returns `gasStationUsed=false` and the default native-gas flow runs.
-- No account upgrade and no per-chain setup is required — first-time activation is just a DB flag flip after the user consents.
-- Token selection priority: balance descending; on ties, USDT > USDC > USDG.
-- Gas Station does NOT support: native SOL transfers, Jito Bundle transactions, single-tx value > 100,000 U.
-- Every Gas Station state (enable flag, default gas token) is scoped to `(account, Solana)`.

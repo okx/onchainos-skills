@@ -17,7 +17,7 @@ onchainos wallet login [email] [--locale <locale>]
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `email` | positional | No | Email address to receive OTP. Omit for silent AK login. |
-| `--locale` | option | No | Language for the OTP email, in underscore form (e.g. `zh_CN`, `en_US`, `ja_JP`); other languages pass through. The CLI normalizes the value and drops anything unrecognizable. Omit if the conversation language is unclear — do not force `en_US`. |
+| `--locale` | option | No | Language for the OTP email, in underscore form (e.g. `zh_CN`, `en_US`, `ja_JP`); other languages pass through. The CLI normalizes the value and drops anything unrecognizable; login still proceeds either way. Omit if the conversation language is unclear — do not force `en_US`. |
 
 **Return fields (email OTP — returns empty on success):**
 
@@ -459,9 +459,7 @@ Response (example):
     "insufficientAll": false,
     "tokenList": [
       { "symbol": "USDT", "feeTokenAddress": "<mint>", "relayerId": "1",
-        "balance": "120.0", "serviceCharge": "0.8", "sufficient": true },
-      { "symbol": "USDC", "feeTokenAddress": "<mint>", "relayerId": "1",
-        "balance": "5.0",   "serviceCharge": "0.8", "sufficient": true }
+        "balance": "120.0", "serviceCharge": "0.8", "sufficient": true }
     ]
   }
 }
