@@ -161,17 +161,11 @@ pub enum AgentCommand {
         #[arg(long)] endpoint: Option<String>,
     },
 
-    /// Client confirms provider and executes payment (setPaymentMode must be done first)
+    /// Client confirms provider and executes payment (setPaymentMode must be done first).
+    /// All parameters are auto-resolved from the local negotiate-state written by save-agreed.
     #[command(name = "confirm-accept")]
     ConfirmAccept {
         job_id: String,
-        #[arg(long = "provider-agent-id")] provider_agent_id: String,
-        /// If unspecified, auto-fetched from the task detail's paymentType
-        #[arg(long = "payment-mode")] payment_mode: Option<String>,
-        /// Negotiated payment token symbol (e.g. USDT); required for escrow
-        #[arg(long = "token-symbol")] token_symbol: Option<String>,
-        /// Negotiated payment amount (human-readable, e.g. "50"); required for escrow
-        #[arg(long = "token-amount")] token_amount: Option<String>,
     },
 
     /// x402 Phase 2b: direct/accept after job_payment_mode_changed + x402 endpoint interaction
@@ -871,8 +865,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             task::buyer::run_task(T::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
 
-        AgentCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount } =>
-            task::buyer::run_task(T::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount }, ctx).await,
+        AgentCommand::ConfirmAccept { job_id } =>
+            task::buyer::run_task(T::ConfirmAccept { job_id }, ctx).await,
 
         AgentCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             task::buyer::run_task(T::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,

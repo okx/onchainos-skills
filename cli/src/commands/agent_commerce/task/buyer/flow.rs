@@ -105,7 +105,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             ref_header,
             format!("  onchainos agent recommend {job_id} --agent-id <agentId>  # View recommended providers"),
             format!("  onchainos agent set-payment-mode {job_id} --payment-mode <escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # Set payment mode"),
-            format!("  onchainos agent confirm-accept {job_id} --provider-agent-id <agentId> --payment-mode escrow --token-symbol <sym> --token-amount <amt>  # Confirm accept (run after setPaymentMode, escrow only)"),
+            format!("  onchainos agent confirm-accept {job_id}  # Confirm accept (reads provider/token from negotiate-state; escrow only)"),
             format!("  onchainos agent direct-accept {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt>  # x402 phase 2b: call after endpoint interaction"),
             format!("  onchainos agent close {job_id}          # Close task"),
             format!("  onchainos agent set-public {job_id}     # Convert to public task"),

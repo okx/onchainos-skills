@@ -16,8 +16,8 @@
 
 | Mode | Preconditions | Buyer CLI | On-chain side effects |
 |---|---|---|---|
-| escrow | Provider apply on chain (provider_applied) | `onchainos agent confirm-accept <jobId> --provider <p> --payment-mode escrow` | Funds escrowed into the contract; pre-accept two-sided signing flow |
-| x402 | None (auto-matched) | `... --payment-mode x402` | Direct/accept single-signed + auto-triggered x402 payment flow (request → 402 → sign → replay) |
+| escrow | Provider apply on chain (provider_applied) | `onchainos agent confirm-accept <jobId>` | Funds escrowed into the contract; pre-accept two-sided signing flow (provider/token from negotiate-state) |
+| x402 | None (auto-matched) | `onchainos agent task-402-pay ...` | Direct/accept single-signed + auto-triggered x402 payment flow (request → 402 → sign → replay) |
 
 ### `deliver`
 

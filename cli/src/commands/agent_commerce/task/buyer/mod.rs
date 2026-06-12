@@ -126,20 +126,10 @@ pub enum TaskCommand {
         #[arg(long)]
         endpoint: Option<String>,
     },
-    /// Client confirms provider and executes payment (setPaymentMode must be done first)
+    /// Client confirms provider and executes payment (setPaymentMode must be done first).
+    /// Provider, token symbol, and amount are read from the local negotiate-state.
     ConfirmAccept {
         job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        /// When omitted, auto-fetched from the task detail's paymentType.
-        #[arg(long = "payment-mode")]
-        payment_mode: Option<String>,
-        /// Payment token symbol agreed during negotiation (e.g. USDT); required for escrow.
-        #[arg(long = "token-symbol")]
-        token_symbol: Option<String>,
-        /// Payment amount agreed during negotiation (human-readable, e.g. "50"); required for escrow.
-        #[arg(long = "token-amount")]
-        token_amount: Option<String>,
     },
     /// Client confirms task complete and releases payment
     Complete {
@@ -310,8 +300,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
         TaskCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
-        TaskCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount } =>
-            accept::handle_confirm_accept(&mut client, &job_id, &provider_agent_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
+        TaskCommand::ConfirmAccept { job_id } =>
+            accept::handle_confirm_accept(&mut client, &job_id).await,
         TaskCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             accept::handle_direct_accept(&mut client, &job_id, &provider_agent_id, token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body } =>

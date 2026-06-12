@@ -6,39 +6,17 @@ use super::super::flow::FlowContext;
 
 pub(crate) fn provider_applied(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-
-    let step1 = if ctx.prefetched.is_some() {
-        format!("\
-         **Step 1 -- Use pre-fetched task context above:**\n\
-         Read providerAgentId, paymentMode, tokenSymbol, tokenAmount from the `[Pre-fetched task context]` block.\n\
-         ⚠️ If any field is missing, fall back to:\n\
-         ```bash\n\
-         onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-         ```\n\
-         ⚠️ paymentMode should be escrow (1) at this point.\n\n")
-    } else {
-        format!("\
-         **Step 1 -- Fetch task info:**\n\
-         ```bash\n\
-         onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-         ```\n\
-         Extract: providerAgentId, paymentMode, tokenSymbol, tokenAmount.\n\
-         ⚠️ paymentMode should be escrow (1) at this point.\n\n")
-    };
 
     format!(
     "[Current Status] provider_applied (ASP has submitted an on-chain apply)\n\
      [Role] User (User Agent)\n\n\
-     [Your next actions (strict order)]\n\n\
-     {step1}\
-     **Step 2 -- Run confirm-accept (settle the accept on-chain):**\n\
+     [Your next action]\n\n\
+     **Run confirm-accept (settle the accept on-chain):**\n\
      ```bash\n\
-     onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
+     onchainos agent confirm-accept {job_id}\n\
      ```\n\
-     ⚠️ The flag is `--provider-agent-id`, not `--agent-id`.\n\
-     🛑 **provider-agent-id MUST match the sender.agentId of the ASP's a2a-agent-chat message** -- take it from the ASP message received in this turn first, then fall back to the [intent:ack] entry in sub-session history. Do not use the value from common context (it can cross-pollute under multi-task scenarios).\n\
-     ⚠️ **Do not query the task API to verify whether the ASP has applied** -- on-chain indexing has a delay; `confirm-accept` performs the chain-side check internally.\n\
+     Provider, token symbol, and amount are read automatically from the local negotiate-state.\n\
+     ⚠️ **Do not query the task API to verify whether the ASP has applied** — on-chain indexing has a delay; `confirm-accept` performs the chain-side check internally.\n\
      ❌ Do not call apply (apply is a provider action; the user never runs it).\n\
      ❌ Do not call set-payment-mode (already done in the negotiate_ack event).\n\n\
      → After running, **end this turn** and wait for the `job_accepted` system notification.\n"

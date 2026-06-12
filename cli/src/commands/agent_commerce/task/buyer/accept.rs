@@ -241,19 +241,22 @@ pub async fn handle_set_payment_mode(
 }
 
 /// confirm-accept — confirm acceptance of the provider (setPaymentMode must already have run via set-payment-mode).
-#[allow(clippy::too_many_arguments)]
+///
+/// All parameters (provider, token symbol, amount) are read from the local negotiate-state;
+/// the CLI caller only passes `job_id`.
 pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
     job_id: &str,
-    provider: &str,
-    _payment_mode: Option<&str>,
-    token_symbol: Option<&str>,
-    token_amount: Option<&str>,
 ) -> Result<()> {
+    let (provider, token_symbol, token_amount) = negotiate::current_agreed_provider(job_id)?
+        .ok_or_else(|| anyhow::anyhow!(
+            "no agreed provider found in negotiate-state for job {job_id}; \
+             the negotiation flow (save-agreed) must complete before confirm-accept"
+        ))?;
+
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
-    // Pre-check: has setPaymentMode been confirmed on-chain?
     let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
     let payment_mode = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
     if payment_mode == PaymentMode::None {
@@ -268,21 +271,18 @@ pub async fn handle_confirm_accept(
         bail!("for the x402 flow, use `onchainos agent set-payment-mode` to set the payment mode, then `onchainos agent task-402-pay` for phase 2");
     }
 
-    // escrow is the only legal path for confirm-accept.
     if payment_mode != PaymentMode::Escrow {
         bail!("confirm-accept only supports the escrow payment mode; current paymentMode={}. For x402, use task-402-pay.", payment_mode.as_str());
     }
 
-    // Balance pre-check.
-    let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), payment_mode.as_str())?;
-    let amt: f64 = amt_str.parse().unwrap_or(0.0);
+    let amt: f64 = token_amount.parse().unwrap_or(0.0);
     if amt > 0.0 {
-        common::ensure_sufficient_balance(amt, &sym).await?;
+        common::ensure_sufficient_balance(amt, &token_symbol).await?;
     }
 
     if DEBUG_LOG { eprintln!("[debug] final payment_mode: '{}'", payment_mode.as_str()); }
     confirm_accept_escrow(
-        client, job_id, provider, token_symbol, token_amount,
+        client, job_id, &provider, Some(&token_symbol), Some(&token_amount),
         &account_id, &address, &agent_id,
     ).await?;
 

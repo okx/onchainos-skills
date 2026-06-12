@@ -263,6 +263,31 @@ pub fn load_agreed(job_id: &str, provider_agent_id: Option<&str>) -> Result<Opti
     Ok(state.agreed.get(&key).map(|t| (t.token_symbol.clone(), t.token_amount.clone())))
 }
 
+/// Return the single agreed provider and its terms from the negotiate-state.
+///
+/// Expects exactly one entry in `agreed` (the normal case after negotiate_ack).
+/// Multiple entries: disambiguate via `current_index`.
+pub fn current_agreed_provider(job_id: &str) -> Result<Option<(String, String, String)>> {
+    let state = match load(job_id) {
+        Ok(s) => s,
+        Err(_) => return Ok(None),
+    };
+    let (key, terms) = if state.agreed.len() == 1 {
+        state.agreed.iter().next().map(|(k, v)| (k.clone(), v.clone())).unwrap()
+    } else if state.agreed.is_empty() {
+        return Ok(None);
+    } else {
+        match state.providers.get(state.current_index) {
+            Some(p) => match state.agreed.get(&p.provider_agent_id) {
+                Some(v) => (p.provider_agent_id.clone(), v.clone()),
+                None => return Ok(None),
+            },
+            None => return Ok(None),
+        }
+    };
+    Ok(Some((key, terms.token_symbol, terms.token_amount)))
+}
+
 /// Save the designated provider (specified via `create-task --provider`; on `job_created` we skip `recommend`).
 pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result<()> {
     save_designated_provider_with_endpoint(job_id, provider_agent_id, None)

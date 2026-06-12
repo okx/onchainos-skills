@@ -300,19 +300,17 @@ Buyer sets the task's payment mode on-chain. Stand-alone step that must run **be
 ### confirm-accept
 
 ```
-agent confirm-accept <jobId> --provider-agent-id <providerAgentId> [--payment-mode <mode>] [--token-symbol USDT] [--token-amount 50]
+agent confirm-accept <jobId>
 ```
 
 Buyer confirms the provider's acceptance + escrow payment (for escrow, funds are deposited into the contract).
+Provider, token symbol, and amount are read automatically from the local negotiate-state (written by `save-agreed`).
 
 | Parameter | When to fill |
 |---|---|
 | `<jobId>` | Required |
-| `--provider-agent-id` | Required; pulled from the inbound a2a-agent-chat's `sender.agentId` |
-| `--payment-mode` | Defaults to auto-parsed from task detail's paymentType; passing explicitly is more robust |
-| `--token-symbol` / `--token-amount` | Required for escrow (from the `save-agreed` cache or the script's pass-through) |
 
-Before the CLI call, balance pre-checks are auto-performed by paymentMode (USDT/USDG or x402 fee token).
+Before the CLI call, balance pre-checks are auto-performed internally (USDT/USDG).
 
 ### task-402-pay
 
