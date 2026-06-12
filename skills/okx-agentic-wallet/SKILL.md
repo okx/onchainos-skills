@@ -69,7 +69,9 @@ The `--force` flag MUST ONLY be added when ALL of the following conditions are m
 >
 > If the intent is ambiguous, **always ask the user to clarify** before proceeding. Never guess.
 
-### D-GS — Gas Station (Solana)
+---
+
+## Gas Station (Solana)
 
 Gas Station lets the user pay gas with stablecoins (USDT / USDC / USDG) on Solana when SOL is insufficient. The backend dispatches it inside `wallet send` / `wallet contract-call` responses — you never enable it manually per call.
 
@@ -85,6 +87,13 @@ It pulls in `gas-station-faq.md` (FAQ answers) and `gas-station-edge.md` (edge c
 On a FIRST `wallet send` / `wallet contract-call` call (before `gas-station.md` is loaded): NEVER pass `--gas-token-address` / `--relayer-id` / `--enable-gas-station`, and NEVER fabricate token addresses or relayer IDs — these are second-phase values that come only from a Confirming response.
 </NEVER>
 
+### Third-Party Plugin Pre-flight (Solana)
+
+When dispatching a third-party Solana DeFi plugin (kamino-plugin, raydium-plugin, etc.) that internally calls `onchainos wallet contract-call --force`, the plugin is a black box that may swallow Gas Station Confirming responses. Two patterns apply, read both before invoking any Solana write-path plugin:
+
+- **Proactive pre-flight** (before invoking the plugin) — checklist, `gas-station status` recommendation branch, and skip conditions live in [`references/plugin-preflight.md`](references/plugin-preflight.md).
+- **Reactive bail recovery** (after the plugin returns exit 2 + `confirming` JSON, or a vague failure) — scene-recovery decision tree, post-failure diagnosis, and `--force` exit-code matrix live in [`references/gas-station.md`](references/gas-station.md) → "Plugin Bail Recovery".
+
 ---
 
 ## Confirming Response
@@ -94,13 +103,6 @@ Some commands return **confirming** (exit code **2**) when the backend needs use
 1. **Display** `message` and ask for confirmation.
 2. **Confirms** → follow `next` (usually: re-run the same command with `--force` appended).
 3. **Declines** → do NOT proceed; tell the user it was cancelled.
-
-## Third-Party Plugin Pre-flight (Solana)
-
-When dispatching a third-party Solana DeFi plugin (kamino-plugin, raydium-plugin, etc.) that internally calls `onchainos wallet contract-call --force`, the plugin is a black box that may swallow Gas Station Confirming responses. Two patterns apply, read both before invoking any Solana write-path plugin:
-
-- **Proactive pre-flight** (before invoking the plugin) — checklist, `gas-station status` recommendation branch, and skip conditions live in [`references/plugin-preflight.md`](references/plugin-preflight.md).
-- **Reactive bail recovery** (after the plugin returns exit 2 + `confirming` JSON, or a vague failure) — scene-recovery decision tree, post-failure diagnosis, and `--force` exit-code matrix live in [`references/gas-station.md`](references/gas-station.md) → "Plugin Bail Recovery".
 
 ## User-Facing Message Templates
 
