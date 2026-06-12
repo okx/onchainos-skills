@@ -138,7 +138,8 @@ pub struct FeedbackSubmitArgs {
     /// 选填：文字评价，进 create-comment 请求体 `comment.comment`。
     #[arg(long)]
     pub description: Option<String>,
-    /// 选填：taskId，进广播 `extraData.erc8004Msg.taskId`；为空则不写入。
+    /// 选填：taskId，有值时进 create-comment 请求体 `taskId` 顶层字段与广播
+    /// `extraData.erc8004Msg.taskId`；为空则两处都不写入。
     #[arg(long = "task-id")]
     pub task_id: Option<String>,
 }

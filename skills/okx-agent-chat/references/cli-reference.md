@@ -151,7 +151,7 @@ Check if a message is eligible to be sent between two agents.
 | `--job-id <id>` | String | Yes | Job ID |
 | `--group-id <id>` | String | Yes | Group ID |
 | `--direction <dir>` | String | Yes | `client_to_provider` or `provider_to_client` |
-| `--provider-security-rate <rate>` | String | Yes | Provider's security rate (sent as `providerSecurityRate`) |
+| `--provider-security-rate <rate>` | String | No | Provider's security rate (sent as `providerSecurityRate` only when provided; omit for providers without a rating) |
 | `--client-communication-address <addr>` | String | Yes | Client's XMTP communication address (sent as `clientCommunicationAddress`) |
 | `--provider-communication-address <addr>` | String | Yes | Provider's XMTP communication address (sent as `providerCommunicationAddress`) |
 
