@@ -10,13 +10,18 @@ Every time before running any `onchainos` command, always follow these steps in 
    ```
    Extract the `tag_name` field (e.g., `v1.0.5`) into `LATEST_TAG`.
    If the API call fails and `onchainos` is already installed locally, skip steps 2-3
-   and proceed to run the command (the user may be offline or rate-limited; a stale
+   and continue with step 4 (the user may be offline or rate-limited; a stale
    binary is better than blocking). If `onchainos` is **not** installed, **stop** and
    tell the user to check their network connection or install manually from
    https://github.com/okx/onchainos-skills.
 
-2. **Install or update**: If `onchainos` is not found, or if the cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows) is older than 12 hours:
-   - Download the installer and its checksum file from the latest release tag:
+2. **Install or update**:
+   - **Already installed** → run
+     `onchainos upgrade --throttle --skill-version "<this skill's frontmatter version>"`
+     (handles the 12h throttle, channel selection, beta→stable graduation, checkout switching, and
+     its own cache refresh). If the JSON output has an `action` field, perform it and re-read
+     SKILL.md. On failure, keep the current binary. Skip the installer bullets below.
+   - **Not installed** → download the installer and its checksum file from the latest release tag:
      - **macOS/Linux**:
        `curl -sSL "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.sh" -o /tmp/onchainos-install.sh`
        `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -o /tmp/installer-checksums.txt`
@@ -25,6 +30,8 @@ Every time before running any `onchainos` command, always follow these steps in 
        `Invoke-WebRequest -Uri "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -OutFile "$env:TEMP\installer-checksums.txt"`
    - Verify the installer's SHA256 against `installer-checksums.txt`. On mismatch, **stop** and warn — the installer may have been tampered with.
    - Execute: `sh /tmp/onchainos-install.sh` (or `& "$env:TEMP\onchainos-install.ps1"` on Windows).
+     If the active skill's frontmatter `version` contains `-beta`, append `--beta` so beta skills
+     install the matching beta CLI.
      The installer handles version comparison internally and only downloads the binary if needed.
    - On other failures, point to https://github.com/okx/onchainos-skills.
 
@@ -37,13 +44,16 @@ Every time before running any `onchainos` command, always follow these steps in 
    - Platform targets — macOS: `arm64`->`aarch64-apple-darwin`, `x86_64`->`x86_64-apple-darwin`; Linux: `x86_64`->`x86_64-unknown-linux-gnu`, `aarch64`->`aarch64-unknown-linux-gnu`, `i686`->`i686-unknown-linux-gnu`, `armv7l`->`armv7-unknown-linux-gnueabihf`; Windows: `AMD64`->`x86_64-pc-windows-msvc`, `x86`->`i686-pc-windows-msvc`, `ARM64`->`aarch64-pc-windows-msvc`
    - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
 
-4. **Check for skill version drift** (once per session): If `onchainos --version` is newer
-   than the `version` field under `metadata:` in the active skill's YAML frontmatter (e.g., `version: "2.0.0"` between the `---` markers at the top of SKILL.md), display a one-time notice that the skill may be
-   outdated and suggest the user re-install skills via their platform's method. Do not block.
+4. **Version drift check** — REQUIRED, run even if steps 1-3 were skipped.
+   - Run `onchainos --version` → CLI version (e.g., `2.2.9`)
+   - Read `version` field from the active skill's YAML frontmatter (e.g., `version: "2.0.0"` at the top of SKILL.md)
+   - If CLI version > skill version → warn the user and offer to refresh skills:
+     **"⚠️ Skill outdated (skill vX.Y.Z < CLI vA.B.C). Run `onchainos upgrade` to refresh both the CLI and any locally cloned skill checkouts (`~/.codex/onchainos-skills`, `~/.openclaw/onchainos-skills`, `~/.cursor/onchainos-skills`, `~/.opencode/onchainos-skills`). For skills installed via a plugin manager (Claude Code `/plugin`, npm, Cursor marketplace), update through that manager instead — `onchainos upgrade` will skip those paths and print guidance."**
+   - After the user re-runs the skill (or confirms they've updated), re-read SKILL.md so subsequent steps use the fresh content.
+   - Continue to the user's command.
 5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
    `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
 6. **Rate limit errors.** If a command hits rate limits, the shared API key may
    be throttled. Suggest creating a personal key at the
    [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
    user creates a `.env` file, remind them to add `.env` to `.gitignore`.
-7. **Remind the user to complete OpenClaw BootStrap (OpenClaw runtime only, non-blocking).** When the user **is** running inside an OpenClaw runtime (either `OPENCLAW_CLI` or `OPENCLAW_SHELL` is set): if BootStrap has not finished, send the user a one-line strong reminder to finish OpenClaw BootStrap so it stops interrupting the chat. **Continue with the downstream skill-specific pre-flight gates regardless** — do not block the task flow. When the user is **not** running inside an OpenClaw runtime, this is a silent no-op.

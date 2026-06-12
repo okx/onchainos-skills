@@ -4,7 +4,7 @@ description: "OKX.AI (the Agent economic system) intro & onboarding entry. Trigg
 license: Apache-2.0
 metadata:
   author: okx
-  version: "3.4.3-beta"
+  version: "3.20.1-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -40,11 +40,15 @@ Run the detection function below and read its single-line output. `compatible` =
 
 ```bash
 detect_harness() {
-  if [ -n "${HERMES_INTERACTIVE:-}" ] || [ -n "${HERMES_SESSION_SOURCE:-}" ] \
+  if [ "${CLAUDECODE:-}" = "1" ]; then
+    echo "Claude Code"
+  elif [ -n "${HERMES_INTERACTIVE:-}" ] || [ -n "${HERMES_SESSION_SOURCE:-}" ] \
     || [ -n "${HERMES_YOLO_MODE:-}" ] || [ -n "${HERMES_QUIET:-}" ]; then
     echo "Hermes"
   elif [ -n "${OPENCLAW_CLI:-}" ] || [ -n "${OPENCLAW_SHELL:-}" ]; then
     echo "OpenClaw"
+  elif [ -n "${CODEX_THREAD_ID:-}" ] || [ -n "${CODEX_CI:-}" ]; then
+    echo "Codex"
   else
     echo "unknown"
   fi
@@ -52,7 +56,7 @@ detect_harness() {
 detect_harness
 ```
 
-- Output ∈ {`OpenClaw`, `Hermes`} → **compatible** → Step 1.
+- Output ∈ {`Claude Code`, `Hermes`, `OpenClaw`, `Codex`} → **compatible** → Step 1.
 - Output = `unknown` → **incompatible** → Step 3.
 
 ## Step 1 — Compatible: login + identity detection (routing gate)

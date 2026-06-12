@@ -4,7 +4,7 @@ description: "MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:
 license: Apache-2.0
 metadata:
   author: okx
-  version: "3.4.3-beta"
+  version: "3.20.1-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -75,7 +75,7 @@ For system events, top-level `agentId` IS the target (no lookup needed). For use
 > 1. **Wallet is logged in**: `onchainos wallet status` — if not, hand off to `okx-agentic-wallet`.
 > 2. **Agent exists for required role**: `onchainos agent my-agents --role <buyer|provider|evaluator>` → empty = `agent create`. Evaluator additionally requires staking onboarding in `references/evaluator-staking.md §2`.
 >    - ⚠️ `my-agents` only shows the current account's agents (Pre-flight scope). For envelope routing use `--role auto` on `next-action` (CLI resolves the envelope's agentId internally).
-> 3. **Communication channel**: **Run** [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) — verifies OKX A2A communication is ready. OpenClaw uses the plugin path; Node runtimes use the `okx-a2a` CLI; Hermes is reserved.
+> 3. **Communication channel**: **Run** [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) — verifies OKX A2A communication is ready. OpenClaw and Hermes use the plugin path; Node runtimes use the `okx-a2a` CLI.
 
 ## ⚠️ Critical Field Mapping Table (always look it up, don't guess)
 
