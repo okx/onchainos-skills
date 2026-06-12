@@ -4,7 +4,7 @@ description: "Route users to OKX.AI customer support / Help Center. Use when the
 license: MIT
 metadata:
   author: okx
-  version: "3.4.9-beta"
+  version: "3.20.0-beta"
   homepage: "https://web3.okx.com"
 ---
 
