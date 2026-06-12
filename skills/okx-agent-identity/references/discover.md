@@ -9,7 +9,7 @@ re-issue the CLI instead (SKILL §Gates No-shell-stitching).
 ## Routing nuances (decide before calling)
 - "my <descriptor> agents" / any ownership word → **list** = `agent get` (no ids) + client-side group/filter,
   NOT `search`. Explicit `#ids` ("detail #42", "#42 #58") → **detail** = `agent get --agent-ids`, NOT search.
-- Free-text "find agents doing X / 评分高的 provider" → **search**.
+- Free-text "find agents doing X" → **search**.
 
 ---
 
