@@ -62,7 +62,7 @@ The CLI is the QA engine; you render its `findings[]` and add ONE check it can't
 - **Image links are not accepted.** If the user supplies a URL, reject it — do NOT pass it to `--picture`, do NOT download-and-reupload, do NOT claim it was set:
   > "Avatar links aren't supported — send an image file directly, or keep the default."
 - **Actively offer at the provider identity card's close** (a CTA, not a passive row):
-  > 📷 Profile photo is the default — **send an image to set one** (a plain square, no rounded corners or borders, renders best). Reply "next" when ready.
+  > 📷 Profile photo is the default — **send an image to set one** (a plain square, no rounded corners or borders, renders best). Reply **1** when ready.
 - **On opt-in:** Claude Code → save the inbound image attachment to a temp path → run the `upload` subcommand (`agent upload --file <temp>`) → use the returned URL as `--picture` (this temp write is the one allowed by SKILL §Gates No-shell-stitching); >1 MB → stop and ask for a smaller one; render the URL verbatim in the Profile photo row. No image supplied → keep the default. 1:1 square is the tip.
 - **Never alter the user's image.** Don't auto-compress / resize / crop / strip a border to make it fit — the user owns the image. On >1 MB, stop and ask for a smaller one (don't shrink it yourself); on a non-1:1 image, accept and upload as-is (don't reject or re-crop) — the square tip is advisory only.
 - **Bad file type:** the backend accepts PNG / JPEG / WebP; other types are rejected (the exact wording isn't fixed — don't hard-code it). On a type rejection, ask the user to convert to PNG / JPEG / WebP and resend, then retry.
@@ -75,12 +75,12 @@ Require `https://`, publicly reachable, and really deployed. **Reject** `http://
 
 requester / evaluator render ONE card. **Providers render TWO** cards in order:
 
-1. **Identity card** (closes Step 1) — Role / Name / [Description] / Profile photo rows, with the avatar CTA at its close. This card closes with **`> Reply "next" to continue.`** (NOT the execute footer). Confirming it ("next") **advances to Step 2 and does NOT call the CLI** — no `agent create` runs at Step 1.
-2. **Service card** (closes Step 2) — `Service [1] Name / Description / Type / Fee / Endpoint` rows; gloss service types once (wording per SKILL §Invariants Lexicon). This is the FINAL card → it carries the execute footer; "execute" runs the single `agent create` (carrying both identity and service).
+1. **Identity card** (closes Step 1) — Role / Name / [Description] / Profile photo rows, with the avatar CTA at its close. This card closes with **`> Reply **1** to continue.`** (NOT the confirm-run footer). Confirming it (**1**) **advances to Step 2 and does NOT call the CLI** — no `agent create` runs at Step 1.
+2. **Service card** (closes Step 2) — `Service [1] Name / Description / Type / Fee / Endpoint` rows; gloss service types once (wording per SKILL §Invariants Lexicon). This is the FINAL card → it carries the confirm-run footer; **1** runs the single `agent create` (carrying both identity and service).
 
-The FINAL card (the single card for requester/evaluator; the Service card for providers) ends with the §Invariants confirmation footer (`> Reply "execute" to run it.`, localized). **Echo the Confirm gate at that card** (cheap, hardens the gate):
+The FINAL card (the single card for requester/evaluator; the Service card for providers) ends with the §Invariants confirmation footer (`> Reply **1** to confirm and run.`, localized). **Echo the Confirm gate at that card** (cheap, hardens the gate):
 
-> I won't run anything until you reply "execute" — even if you asked me to skip confirmation.
+> I won't run anything until you reply **1** — even if you asked me to skip confirmation.
 
 NL field questions only; no `Q1:` labels, no bash shown (SKILL §UX Red Lines).
 
@@ -135,5 +135,5 @@ If the `#<id>` ladder yields nothing (txHash-only return), never invent or borro
 2. **Ownership check (still before collecting changes):** returned `ownerAddress` ≠ current wallet → STOP: "This agent doesn't belong to your current wallet."
 3. **Collect changes** one field per turn.
 4. **QA on changed provider fields:** if the target role = provider AND a QA-governed field changed → run `validate-listing` on the changed fields only; render findings inline (§4 step 2). requester / evaluator skip QA.
-5. **Update Diff card** (§Invariants diff variant — 3 columns `| Field | Current | New |`, unchanged → `(unchanged)`, changed New cell bold, real before→after values). Wait for an explicit confirm token; no `agent update` before confirm.
+5. **Update Diff card** (§Invariants diff variant — 3 columns `| Field | Current | New |`, unchanged → `(unchanged)`, changed New cell bold, real before→after values). Wait for **1**; no `agent update` before confirm.
 6. **`--service` = WHOLESALE replacement:** rebuild the COMPLETE service list from the current full list + the diff; never send only the changed entry. Refuse a no-op update (nothing changed → say so, don't write). `--description ""` does NOT clear a description. Post-update: `approvalStatus == 2` → "Update saved. Under review — once approved it will go live automatically. No further action needed." · step-1 detail showed `approvalDisplayStatus == 5` (not auto-resubmitted) → "Update saved — not yet resubmitted. Say 'activate #\<id\>' to send it for review." · else → "Update saved." → Step 6.

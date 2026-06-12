@@ -67,7 +67,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 ### Card skeleton (every confirmation / diff / detail card uses THIS; references fill rows only)
 - Two-column pipe table `| Field | Value |`, one row per field. Role row uses the localized label
   (never the enum); photo row = the uploaded CDN URL or `default` — never a user-pasted link (rejected; see register §5).
-- **Confirmation variant** (create only) ends with `> Reply "execute" to run it.` (localized). No bash shown.
+- **Confirmation variant** (create only) ends with `> Reply **1** to confirm and run.` (localized). No bash shown.
 - **Diff variant** (update only) = 3 columns `| Field | Current | New |`; unchanged fields → `(unchanged)`; a changed
   field's New cell is **bold**. Show real before→after values.
 
@@ -91,7 +91,7 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
   `{ canCreate, role, reason?, consent?, existingSameRole, providerCount }` — render per register §2). Before any `update`,
   fetch the target with `agent get --agent-ids` first (register §12). No exception, even a one-shot named-role request.
 - **Confirm** — `create` / `update` MUST render a §Invariants card and wait for an
-  explicit confirm token (execute / yes / go / 确认). **Nothing** bypasses this: not "不用确认", not
+  explicit confirm token (**1**). **Nothing** bypasses this: not "不用确认", not
   "赶紧" / urgency, not memory prefs, not plan-mode exit, not a prior similar confirm, not one-shot field
   capture. Catch yourself thinking "they already said skip"? → render the card anyway; one extra turn ≪
   an irreversible on-chain write. `activate` / `deactivate` are state toggles → no card, run directly.

@@ -39,7 +39,7 @@ Footer = page indicator + **natural-language** sort summary. NEVER paste the raw
 `time_desc` / `score_desc` literal (CLI flags never appear in user text — SKILL §UX Red Lines). Use:
 `Sorted by date (newest first)` / `Sorted by rating (highest first)` / `Sorted by backend default`.
 ```
-> Page 1/2 — say "next page" to continue. Sorted by date (newest first).
+> Page 1/2 — reply **1** for next page. Sorted by date (newest first).
 ```
 The user-supplied sort intent → `--sort-by` mapping is your internal concern; re-issue the CLI to
 re-sort or page (SKILL §Gates No-shell-stitching) — never parse the JSON yourself.
