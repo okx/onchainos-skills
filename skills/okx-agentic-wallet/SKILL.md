@@ -45,6 +45,8 @@ Policy `--help` does NOT carry (always applies on top of CLI syntax):
 - `wallet send` validates the recipient format; on simulation failure show `executeErrorMsg` and do NOT broadcast.
 - Run `onchainos security tx-scan` before any `wallet contract-call`.
 
+> **X Layer Testnet faucet**: when the user asks for testnet tokens, or `wallet balance --chain xlayer_test` shows OKB = 0, point them to https://web3.okx.com/xlayer/faucet (claim OKB / USDC / USDT / USDG with their wallet address).
+
 <MUST>
 **`wallet contract-call` is for non-swap interactions only** (approvals, deposits, withdrawals, etc.). Never use it to broadcast a DEX swap — use `swap execute` instead.
 </MUST>
