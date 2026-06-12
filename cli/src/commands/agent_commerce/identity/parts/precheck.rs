@@ -90,12 +90,10 @@ pub(crate) fn collect_owned_agents(
 
 /// Pure pre-check verdict for the requested role (register.md §2 uniqueness):
 ///   { role, roleLabel, ownerAddress, uniqueness, canCreate,
-///     existingSameRole: [{agentId,name,roleLabel}], providerCount,
-///     knownAgentIds }  // CSV of ALL owned ids → create's --known-agent-ids
+///     existingSameRole: [{agentId,name,roleLabel}], providerCount }
 pub(crate) fn build_precheck(agent_list: &Value, signing_address: &str, role_key: &str) -> Value {
     let owned = collect_owned_agents(agent_list, signing_address);
 
-    let known_ids: Vec<String> = owned.iter().map(|(id, _, _)| id.clone()).collect();
     let provider_count = owned.iter().filter(|(_, rk, _)| *rk == Some("provider")).count();
 
     let existing_same_role: Vec<Value> = owned
@@ -122,7 +120,6 @@ pub(crate) fn build_precheck(agent_list: &Value, signing_address: &str, role_key
         "canCreate": can_create,
         "existingSameRole": existing_same_role,
         "providerCount": provider_count,
-        "knownAgentIds": known_ids.join(","),
     });
     // `reason` accompanies every canCreate:false (a single-role identity already
     // exists for this wallet). English canonical; the skill localizes.

@@ -43,13 +43,6 @@ use super::utils::{
 
 const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Per-page size for the post-broadcast agent-list pagination loop. 100 is
-/// well above any real wallet's agent count and minimizes round trips; the
-/// loop relies on the response's `total` to know when to stop.
-const AGENT_LIST_PAGE_SIZE: usize = 100;
-/// Safety cap so a buggy `total` cannot trap us in an infinite paging loop
-/// — 100 × 20 = 2 000 agents, ample headroom over real-world counts.
-const AGENT_LIST_MAX_PAGES: usize = 20;
 
 // ─── Public command entry points ──────────────────────────────────────────
 
@@ -192,19 +185,8 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     .await?;
 
     let push = wait_for_identity_push(subscription, &tx_hash).await;
-    let agent_list = fetch_agent_list(&mut client, &access_token).await;
-    let new_agent_id = compute_new_agent_id(
-        push.as_ref(),
-        agent_list.as_ref(),
-        &from_addr,
-        args.known_agent_ids.as_deref(),
-    );
-    Ok(assemble_identity_envelope(
-        tx_hash,
-        push,
-        agent_list,
-        new_agent_id,
-    ))
+    let new_agent_id = extract_agent_id_from_push(push.as_ref());
+    Ok(assemble_identity_envelope(tx_hash, push, new_agent_id))
 }
 
 // ─── `agent consent` ──────────────────────────────────────────────────────
@@ -291,7 +273,7 @@ async fn consent_impl(args: &ConsentArgs, ctx: &Context) -> Result<Value> {
 // Flow: fetch agent list → if the wallet HAS agents (⇒ already consented),
 // return the uniqueness verdict; if it has NO agents, run the consent gate
 // first. Always returns `{ canCreate, role, reason?, consent?, existingSameRole,
-// providerCount, knownAgentIds }`:
+// providerCount }`:
 //   • has agents          → build_precheck verdict (reason when false)
 //   • no agents + key      → submit agreement → canCreate:true verdict
 //   • no agents + agreed   → canCreate:true verdict
@@ -300,9 +282,8 @@ async fn consent_impl(args: &ConsentArgs, ctx: &Context) -> Result<Value> {
 // skill-side (show terms, user declines → terminate; user agrees → re-invoke
 // with `--consent-key`).
 
-/// Fetch the JWT-scoped agent list for the current wallet (chainIndex only).
-/// (Distinct from the paginated post-broadcast `fetch_agent_list` below — this
-/// one is a single page for the precheck uniqueness scan.)
+/// Fetch the JWT-scoped agent list for the current wallet (chainIndex only),
+/// single page — used by precheck for uniqueness scanning.
 async fn fetch_wallet_agents(ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
@@ -462,19 +443,8 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
             .await?;
 
     let push = wait_for_identity_push(subscription, &tx_hash).await;
-    let agent_list = fetch_agent_list(&mut client, &access_token).await;
-    let new_agent_id = compute_new_agent_id(
-        push.as_ref(),
-        agent_list.as_ref(),
-        &signing_session.addr_info.address,
-        args.known_agent_ids.as_deref(),
-    );
-    Ok(assemble_identity_envelope(
-        tx_hash,
-        push,
-        agent_list,
-        new_agent_id,
-    ))
+    let new_agent_id = extract_agent_id_from_push(push.as_ref());
+    Ok(assemble_identity_envelope(tx_hash, push, new_agent_id))
 }
 
 // ─── `agent activate` / `agent deactivate` ────────────────────────────────
@@ -1076,150 +1046,18 @@ async fn wait_for_identity_push(
     }
 }
 
-/// Best-effort fetch of the caller's full XLayer agent list (struct C).
-/// Pages through `/agent/agent-list?chainIndex=196` with `pageSize=100`
-/// until `total` is satisfied or `AGENT_LIST_MAX_PAGES` is hit. Returns
-/// `{ total, list: [...] }`. Note the backend's actual response shape
-/// uses the field name `list` (not `items` — earlier docs claimed
-/// `items`; that was a pre-existing doc bug confirmed empirically on
-/// 2026-05-10).
-///
-/// Failure modes that short-circuit to `None` so the envelope omits the
-/// field rather than emit a misleading partial:
-///   - any HTTP error from the client during pagination
-///   - page 1 missing or non-numeric `total` field (response shape
-///     anomaly — cannot trust the dataset)
-///   - any page missing or non-array `list` field (same)
-///
-/// An empty `list` on any page stops pagination gracefully and returns
-/// the aggregated results so far (does not abort to `None`). The
-/// legitimate empty case (`total == 0` and page 1 returned `list: []`)
-/// returns `Some({total: 0, list: []})`.
-async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> Option<Value> {
-    let mut all_items: Vec<Value> = Vec::new();
-    let mut total: u64 = 0;
-    let mut all_agent_count: u64 = 0;
-    let mut page: usize = 1;
 
-    while page <= AGENT_LIST_MAX_PAGES {
-        let page_str = page.to_string();
-        let page_size_str = AGENT_LIST_PAGE_SIZE.to_string();
-        let raw = match client
-            .get_authed(
-                "/priapi/v5/wallet/agentic/agent/agent-list",
-                access_token,
-                &[
-                    ("chainIndex", XLAYER_CHAIN_INDEX),
-                    ("page", &page_str),
-                    ("pageSize", &page_size_str),
-                ],
-            )
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("[agent-identity] agent-list page {page} fetch failed: {e:#}");
-                return None;
-            }
-        };
-
-        // Keep the raw response for debug logging on shape-mismatch aborts.
-        // Without this, the abort logs only say "shape wrong" with no clue
-        // what the backend actually returned — see the post-mortem on the
-        // 2026-05-10 test where the abort fired but the actual response shape
-        // was unknown.
-        let raw_repr = raw.to_string();
-        let normalized = normalize_singleton_object(raw);
-
-        // Page 1: total must be present and numeric. Missing/wrong-shape => abort.
-        if page == 1 {
-            total = match normalized.get("total").and_then(Value::as_u64) {
-                Some(t) => t,
-                None => {
-                    eprintln!(
-                        "[agent-identity] agent-list page 1 missing or non-numeric `total` field — abort. raw={raw_repr} normalized={normalized}"
-                    );
-                    return None;
-                }
-            };
-        }
-
-        // `list` must be an array on every page. Missing/wrong-shape => abort.
-        // Backend uses the field name `list` (not `items`); see the doc
-        // comment above this function.
-        let page_items: Vec<Value> = match normalized.get("list").and_then(Value::as_array) {
-            Some(arr) => arr.clone(),
-            None => {
-                eprintln!(
-                    "[agent-identity] agent-list page {page} missing or non-array `list` field — abort. raw={raw_repr} normalized={normalized}"
-                );
-                return None;
-            }
-        };
-        let page_count = page_items.len();
-
-        // Count agents in this page: each group carries agentList[].
-        let page_agent_count: u64 = page_items
-            .iter()
-            .filter_map(|item| item.get("agentList").and_then(Value::as_array))
-            .map(|a| a.len() as u64)
-            .sum();
-        all_agent_count += page_agent_count;
-        all_items.extend(page_items);
-
-        // Done: accumulated agent count satisfies backend's reported total.
-        // Also covers the empty case: total == 0, page 1 list == [], 0 >= 0.
-        if all_agent_count >= total {
-            break;
-        }
-
-        // list == [] means the backend has no more data; stop paging.
-        // total may be stale — treat an empty page as end-of-data rather
-        // than an error so we don't keep incrementing page indefinitely.
-        if page_count == 0 {
-            eprintln!(
-                "[agent-identity] agent-list page {page} returned empty list (total={} agents_accumulated={}) — stopping",
-                total,
-                all_agent_count,
-            );
-            break;
-        }
-
-        page += 1;
-        if page > AGENT_LIST_MAX_PAGES {
-            eprintln!(
-                "[agent-identity] agent-list paging hit safety cap of {} pages × {} ({} agents accumulated, backend total={})",
-                AGENT_LIST_MAX_PAGES,
-                AGENT_LIST_PAGE_SIZE,
-                all_agent_count,
-                total,
-            );
-        }
-    }
-
-    Some(json!({
-        "total": total,
-        "list": all_items,
-    }))
-}
-
-/// Assemble the `{ txHash, agent?, agentList?, newAgentId }` envelope.
-/// `agent` and `agentList` are independent best-effort segments; either may
-/// be missing without affecting the other. `newAgentId` is always present as
-/// a top-level key (string id when resolvable, JSON `null` otherwise) so
-/// callers can rely on the key existing.
+/// Assemble the `{ txHash, agent?, newAgentId }` envelope.
+/// `agent` is present only when the WS push arrived in time.
+/// `newAgentId` is always present (string id or JSON `null`).
 fn assemble_identity_envelope(
     tx_hash: String,
     push: Option<Value>,
-    agent_list: Option<Value>,
     new_agent_id: Option<String>,
 ) -> Value {
     let mut out = json!({ "txHash": tx_hash });
     if let Some(p) = push {
         out["agent"] = p;
-    }
-    if let Some(list) = agent_list {
-        out["agentList"] = list;
     }
     out["newAgentId"] = match new_agent_id {
         Some(id) => Value::String(id),
@@ -1228,116 +1066,14 @@ fn assemble_identity_envelope(
     out
 }
 
-/// Compute the top-level `newAgentId` for a create / update response.
-///
-/// Resolution order (additive, never errors):
-///   1. WS push present with an `agentId` → use it (stringified). This is the
-///      authoritative signal and ignores `--known-agent-ids` entirely.
-///   2. WS push absent, `agentList` present, AND `known_agent_ids` provided →
-///      double-layer diff: find the wrapper whose `ownerAddress` matches the
-///      signing wallet, then within that wrapper's nested `agentList[*]` pick
-///      the single agentId NOT in the known set. Exactly one new id → use it;
-///      zero / more-than-one / no matching wrapper → `None`.
-///   3. Otherwise → `None`.
-fn compute_new_agent_id(
-    push: Option<&Value>,
-    agent_list: Option<&Value>,
-    signing_address: &str,
-    known_agent_ids: Option<&str>,
-) -> Option<String> {
-    // Rule 1: WS push wins.
-    if let Some(p) = push {
-        if let Some(id) = agent_id_to_string(p.get("agentId")) {
-            return Some(id);
-        }
-    }
-
-    // Rule 2: diff against the pre-write snapshot.
-    let known_csv = known_agent_ids?;
-    let agent_list = agent_list?;
-    let known: std::collections::HashSet<String> = parse_known_agent_ids(known_csv);
-
-    diff_new_agent_id(agent_list, signing_address, &known)
-}
-
-/// Parse the `--known-agent-ids` CSV into a set of normalized id strings.
-/// Whitespace-trimmed, empty entries dropped. Ids are compared as strings
-/// (after normalization) so `42` and `"42"` collide regardless of JSON type.
-fn parse_known_agent_ids(csv: &str) -> std::collections::HashSet<String> {
-    csv.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-/// Normalize an agentId `Value` (string or integer) to its canonical string
-/// form for set comparison. `None` for null / missing / unsupported types.
-fn agent_id_to_string(value: Option<&Value>) -> Option<String> {
-    match value? {
+/// Extract `agentId` from a WS push payload. Returns `None` when the push
+/// is absent or does not carry a usable id.
+fn extract_agent_id_from_push(push: Option<&Value>) -> Option<String> {
+    let p = push?;
+    match p.get("agentId")? {
         Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
         Value::Number(n) => Some(n.to_string()),
         _ => None,
-    }
-}
-
-/// Diff the post-broadcast agent list against the pre-write `known` snapshot
-/// to find the single newly-minted agent id for the signing wallet. Tolerates
-/// BOTH envelope shapes the `/agent-list` endpoint has used:
-///   • single-layer  `list[*]`              — the live backend today: each row
-///     IS an agent and carries its own `ownerAddress`.
-///   • double-layer   `list[*].agentList[*]` — older grouped schema: `list[*]`
-///     is an accountName wrapper carrying `ownerAddress` + nested `agentList`.
-/// Only rows whose owning wallet matches `signing_address` are considered (a
-/// row/wrapper with no `ownerAddress` is treated as the caller's own, since the
-/// list endpoint is JWT-scoped to the caller). Returns `Some(id)` only when
-/// EXACTLY ONE matching agent id is absent from `known`.
-fn diff_new_agent_id(
-    agent_list: &Value,
-    signing_address: &str,
-    known: &std::collections::HashSet<String>,
-) -> Option<String> {
-    let items = agent_list.get("list").and_then(Value::as_array)?;
-    let signing_lower = signing_address.trim().to_ascii_lowercase();
-
-    // A row/wrapper belongs to the signing wallet when its `ownerAddress`
-    // matches (case-insensitive). Missing `ownerAddress` → treat as owned
-    // (the endpoint is JWT-scoped), never as a disqualifier.
-    let owner_matches = |node: &Value| -> bool {
-        match node.get("ownerAddress").and_then(Value::as_str) {
-            Some(addr) => addr.trim().to_ascii_lowercase() == signing_lower,
-            None => true,
-        }
-    };
-
-    let mut candidates: Vec<String> = Vec::new();
-    for item in items {
-        match item.get("agentList").and_then(Value::as_array) {
-            // Double-layer: `item` is an accountName wrapper; diff its rows
-            // only when the wrapper belongs to the signing wallet.
-            Some(rows) if owner_matches(item) => {
-                candidates.extend(rows.iter().filter_map(|r| agent_id_to_string(r.get("agentId"))));
-            }
-            Some(_) => {}
-            // Single-layer: `item` IS the agent row, carrying its ownerAddress.
-            None => {
-                if owner_matches(item) {
-                    if let Some(id) = agent_id_to_string(item.get("agentId")) {
-                        candidates.push(id);
-                    }
-                }
-            }
-        }
-    }
-
-    candidates.retain(|id| !known.contains(id));
-    candidates.sort();
-    candidates.dedup();
-
-    if candidates.len() == 1 {
-        candidates.pop()
-    } else {
-        None
     }
 }
 

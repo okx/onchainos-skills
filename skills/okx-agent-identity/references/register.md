@@ -2,7 +2,7 @@
 
 Loaded when: the user registers / creates an agent (any role), arrives via passive need-requester, or updates an existing agent (`update #N`). Pairs with SKILL.md.
 
-The CLI does the work — `validate-listing` returns the QA `findings[]`, `create --known-agent-ids` returns `newAgentId`. You collect fields → render the §Invariants card → confirm → invoke once → render the post-success template. Never re-implement a rule table or reconstruct an id.
+The CLI does the work — `validate-listing` returns the QA `findings[]`, `create` returns `newAgentId` (from WS push). You collect fields → render the §Invariants card → confirm → invoke once → render the post-success template. Never re-implement a rule table or reconstruct an id.
 
 ---
 
@@ -21,7 +21,7 @@ Then run §2 with `--role <role>`.
 
 ## 2. Pre-check (Gate — `agent pre-check --role <role> [--consent-key <uuid>]`: consent + uniqueness in ONE command)
 
-Run `agent pre-check --role <role>` (internal — never shown). It fetches the wallet's agents; **if the wallet has agents it's already consented** (→ straight to the uniqueness verdict); **if it has none it runs the consent gate first**. It always returns `{ canCreate, role, reason?, consent?, existingSameRole, providerCount, knownAgentIds }` — **never call `agent get` / `agent consent` yourself for registration**. Branch on the result:
+Run `agent pre-check --role <role>` (internal — never shown). It fetches the wallet's agents; **if the wallet has agents it's already consented** (→ straight to the uniqueness verdict); **if it has none it runs the consent gate first**. It always returns `{ canCreate, role, reason?, consent?, existingSameRole, providerCount }` — **never call `agent get` / `agent consent` yourself for registration**. Branch on the result:
 
 - **`consent` present** (always `canCreate:false`) → first-time wallet, terms not yet accepted. This is a **blocking** legal-confirmation step: render `consent.consent.terms` **complete and translated** (never summarized; **never show the `consentKey`**), then present two numbered choices (localized): **`1. Agree & continue`** / **`2. Decline & cancel`**.
   - **`1` / agree** → re-run `agent pre-check --role <role> --consent-key <uuid>` (passing the consent-key IS the agreement — it submits `agreed=true` and continues).
@@ -29,8 +29,8 @@ Run `agent pre-check --role <role>` (internal — never shown). It fetches the w
   - Ambiguous reply → re-display the two options once; never auto-agree / auto-decline.
 - **`canCreate:false`** (no `consent` field — a single-role identity already exists; `reason` explains) → do NOT create, do NOT offer "create new". Redirect to update with the mandatory per-wallet line, filling `<roleLabel>` / `<N>` / `<name>` from `existingSameRole[0]`:
   > "Under this wallet (当前钱包) you already have a `<roleLabel>` identity #`<N>` (`<name>`). Each address can register only one `<roleLabel>` — say "update #`<N>`" to edit it, or keep using it. To register a separate one under a different address, switch / add a wallet first."
-- **`canCreate:true`** → may register. For a **provider** with existing ASPs (`providerCount` K ≥ 1) offer new-vs-update first (K=1 → *1. Register a new ASP / 2. Update #`<N1>` (`<name1>`)*; K ≥ 2 → list every existing ASP `#<id>` (`<name>`) from `existingSameRole`, ask which by number; never auto-pick). Otherwise (requester/evaluator with none yet, provider with K=0) → proceed to the §3 field Q&A.
-- Pass `knownAgentIds` through verbatim as `--known-agent-ids <csv>` on the eventual `create` so the CLI returns `newAgentId`.
+- **`canCreate:true`** → may register. Provider with existing ASPs (`providerCount` K ≥ 1): offer new-vs-update (K=1 → *1. New ASP / 2. Update #`<N1>` (`<name1>`)*; K ≥ 2 → list each from `existingSameRole` by number, never auto-pick). Mark any `approvalDisplayStatus==5` entry as **"Review failed"** (never the raw integer); if fixing that rejection → steer to option 2 + apply §12 rule (only create if user explicitly insists after steer). Otherwise (requester/evaluator/provider K=0) → §3.
+- Proceed to the §3 field Q&A and eventually `create` — the CLI returns `newAgentId` from the WS push.
 
 **Passive need-requester** (handed in from a task flow): skip the pre-check loop / photo entirely. See §8.
 
@@ -104,8 +104,7 @@ onchainos agent create \
   --name "<name>" \
   [--description "<description>"] \
   [--picture "<url>"] \
-  [--service '[{"name":"…","servicedescription":"…","servicetype":"A2MCP","fee":"10","endpoint":"https://…"}]'] \
-  --known-agent-ids <csv from pre-check>
+  [--service '[{"name":"…","servicedescription":"…","servicetype":"A2MCP","fee":"10","endpoint":"https://…"}]']
 ```
 
 **On any non-success** (region `50125`/`80001`, consent `40020`–`40022`, whitelist `10016`, or anything else) → load `references/errors.md` and match the row; never interpret a code inline. errors.md is the single source for every code→message.
@@ -122,15 +121,19 @@ onchainos agent create \
 
   Carve-outs: never present staking as a *pre-create* gate (it's post-success only — create never consumes the stake); "I don't want to stake" → register now, stake later, and still run comm-init (Step 6); "have I staked?" → you don't read stake state, hand to the task-side staking flow.
 
-If the `#<id>` ladder yields nothing (txHash-only return), omit the `#<id> ` substring entirely and use the fallback wording (`activate #N` placeholder for provider) — never invent or borrow a pre-check id.
+If the `#<id>` ladder yields nothing (txHash-only return), never invent or borrow a pre-check id. Use role-specific fallback wording:
+- **requester / evaluator** — omit the `#<id> ` substring entirely (e.g. "User Agent identity is live …").
+- **provider** — replace the entire action hint with: `Say "list my agents" to find your new identity, then say "activate #<id>" to publish it.`
 
 ---
 
 ## 12. UPDATE flow (`update #N` — reuses this file's QA + card scaffold)
+
+> **Rejected listing → update the same agent, never create new.** QA failure (§4) or review rejection (`approvalStatus`/`approvalDisplayStatus: 5`): fix path is `agent update` on the existing id → re-activate. Never offer a new agent as remedy; only create if user explicitly insists after steer.
 
 1. **`agent get --agent-ids <id>` FIRST — before collecting ANY change** → render the current detail card (§Invariants Verbatim-render contract — render `card[]` verbatim). Never start editing from the user's words alone; always fetch current state first.
 2. **Ownership check (still before collecting changes):** returned `ownerAddress` ≠ current wallet → STOP: "This agent doesn't belong to your current wallet."
 3. **Collect changes** one field per turn.
 4. **QA on changed provider fields:** if the target role = provider AND a QA-governed field changed → run `validate-listing` on the changed fields only; render findings inline (§4 step 2). requester / evaluator skip QA.
 5. **Update Diff card** (§Invariants diff variant — 3 columns `| Field | Current | New |`, unchanged → `(unchanged)`, changed New cell bold, real before→after values). Wait for an explicit confirm token; no `agent update` before confirm.
-6. **`--service` = WHOLESALE replacement:** rebuild the COMPLETE service list from the current full list + the diff; never send only the changed entry. Refuse a no-op update (nothing changed → say so, don't write). `--description ""` does NOT clear a description. Post-update: `approvalStatus == 2` → "Update saved. Under review …" else "Update saved." → Step 6.
+6. **`--service` = WHOLESALE replacement:** rebuild the COMPLETE service list from the current full list + the diff; never send only the changed entry. Refuse a no-op update (nothing changed → say so, don't write). `--description ""` does NOT clear a description. Post-update: `approvalStatus == 2` → "Update saved. Under review — once approved it will go live automatically. No further action needed." · step-1 detail showed `approvalDisplayStatus == 5` (not auto-resubmitted) → "Update saved — not yet resubmitted. Say 'activate #\<id\>' to send it for review." · else → "Update saved." → Step 6.

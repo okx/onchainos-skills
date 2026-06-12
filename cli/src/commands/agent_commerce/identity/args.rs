@@ -15,12 +15,6 @@ pub struct CreateArgs {
     pub picture: Option<String>,
     #[arg(long)]
     pub service: Option<String>,
-    /// Optional pre-write snapshot: comma-separated agent ids that existed
-    /// BEFORE this create (the caller's pre-check `agent get` result). When
-    /// provided and the WS push is absent, the CLI diffs the post-broadcast
-    /// agent list against this snapshot to compute the top-level `newAgentId`.
-    #[arg(long = "known-agent-ids")]
-    pub known_agent_ids: Option<String>,
 }
 
 /// `onchainos agent consent`: standalone first-time-creation terms consent
@@ -53,14 +47,6 @@ pub struct UpdateArgs {
     pub picture: Option<String>,
     #[arg(long)]
     pub service: Option<String>,
-    /// Optional pre-write snapshot: comma-separated agent ids that existed
-    /// BEFORE this update (the caller's pre-check `agent get` result). When
-    /// provided and the WS push is absent, the CLI diffs the post-broadcast
-    /// agent list against this snapshot to compute the top-level `newAgentId`.
-    /// Rarely meaningful for `update` (no new id is minted) but accepted for
-    /// symmetry with `create`.
-    #[arg(long = "known-agent-ids")]
-    pub known_agent_ids: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]

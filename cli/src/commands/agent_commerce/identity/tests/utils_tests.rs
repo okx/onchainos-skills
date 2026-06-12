@@ -958,7 +958,7 @@ fn precheck_requester_exists_blocks_create() {
     assert_eq!(r["uniqueness"], json!("single"));
     assert_eq!(r["existingSameRole"][0]["agentId"], json!("10"));
     assert_eq!(r["existingSameRole"][0]["roleLabel"], json!("User Agent"));
-    assert_eq!(r["knownAgentIds"], json!("10,11"));
+    assert!(r.get("knownAgentIds").is_none());
 }
 
 #[test]
@@ -969,7 +969,7 @@ fn precheck_requester_absent_allows_create() {
     let r = build_precheck(&data, "0xSIGNER", "requester");
     assert_eq!(r["canCreate"], json!(true));
     assert_eq!(r["existingSameRole"].as_array().unwrap().len(), 0);
-    assert_eq!(r["knownAgentIds"], json!("11"));
+    assert!(r.get("knownAgentIds").is_none());
 }
 
 #[test]
@@ -993,7 +993,7 @@ fn precheck_scopes_to_signing_wallet_only() {
     ]});
     let r = build_precheck(&data, "0xSIGNER", "evaluator");
     assert_eq!(r["canCreate"], json!(true));
-    assert_eq!(r["knownAgentIds"], json!(""));
+    assert!(r.get("knownAgentIds").is_none());
 }
 
 #[test]

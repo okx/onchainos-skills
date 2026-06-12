@@ -44,6 +44,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 | search / find agents · list my agents · detail #N · what services does #N offer | `references/discover.md` |
 | view reviews / reputation #N | `references/reputation.md` |
 | publish (activate) · unpublish (deactivate) #N | `references/manage.md` |
+| fix a rejected / QA-failed listing (审核被拒 / 上架没过, wants to fix and resubmit) | `references/register.md` §12 Update flow on the **same** agent — never route to `register.md §1–11` (create); see §12 rejected-listing rule |
 | a CLI call returns an error / non-success | `references/errors.md` (on demand) |
 | fee / gas / "how much to register" / "example at X USDT" | answer in **§Cost** — do NOT enter register |
 
@@ -77,20 +78,17 @@ the raw 0–100. Fallback: hand-map (Lexicon) **only** if a `*Label` field is ab
 
 ### #id ladder (P0-3) — resolving the `#<id>`
 **Create post-success** (the rungs in order):
-1. top-level **`newAgentId`** (PRIMARY — present because you passed `--known-agent-ids`)
+1. top-level **`newAgentId`** (PRIMARY — present when the WS push carried the id)
 2. else the CLI's direct `agent` / id field
-3. else skill-side agentList envelope-diff (FALLBACK: diff the pre-check id set vs the post-create id
-   set; the new id is yours)
-4. else omit the `#<id> ` substring entirely and use the fallback wording.
+3. else omit the `#<id> ` substring entirely and use the fallback wording.
 Never invent or borrow a pre-check id; never emit a bare `# `.
-**Non-create intents** (activate/deactivate/update/detail): no `newAgentId`, no diff — use the `#N` the user typed or the CLI's direct id (rungs 1,3 don't apply).
+**Non-create intents** (activate/deactivate/update/detail): no `newAgentId` — use the `#N` the user typed or the CLI's direct id.
 
 ## Gates (non-overridable; apply to every write)
 
 - **Pre-check** — resolve the role first (§1; `--role` is required), then before any `create` run
   `agent pre-check --role <role>` ONCE (it folds first-time consent + per-wallet uniqueness and returns
-  `{ canCreate, role, reason?, consent?, existingSameRole, providerCount, knownAgentIds }` — render per register §2), then pass its
-  `knownAgentIds` to `--known-agent-ids` on `create` so the CLI returns `newAgentId`. Before any `update`,
+  `{ canCreate, role, reason?, consent?, existingSameRole, providerCount }` — render per register §2). Before any `update`,
   fetch the target with `agent get --agent-ids` first (register §12). No exception, even a one-shot named-role request.
 - **Confirm** — `create` / `update` MUST render a §Invariants card and wait for an
   explicit confirm token (execute / yes / go / 确认). **Nothing** bypasses this: not "不用确认", not
