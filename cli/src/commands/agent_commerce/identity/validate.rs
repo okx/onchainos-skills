@@ -35,8 +35,8 @@ struct Finding {
 }
 
 #[derive(Serialize)]
-struct ValidationResult {
-    pass: bool,
+pub(crate) struct ValidationResult {
+    pub(crate) pass: bool,
     findings: Vec<Finding>,
 }
 
@@ -55,17 +55,18 @@ impl Finding {
 // ─── Command entry point ────────────────────────────────────────────────────
 
 pub async fn validate_listing(args: ValidateListingArgs, _ctx: &Context) -> Result<()> {
-    // Role normalization: reuse the shared helper so aliases match `create`.
-    // Default to provider; an unrecognized role is treated as provider too
-    // (conservative — run the full rule set rather than silently skipping).
     let role = args
         .role
         .as_deref()
         .and_then(|r| normalize_role(r).ok())
         .unwrap_or_else(|| "provider".to_string());
 
-    let result = run_validation(&role, args.name.as_deref(), args.description.as_deref(), args.service.as_deref());
-
+    let result = run_validation(
+        &role,
+        args.name.as_deref(),
+        args.description.as_deref(),
+        args.service.as_deref(),
+    );
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
@@ -93,7 +94,7 @@ fn parse_services_lenient(raw: &str) -> std::result::Result<Vec<AgentService>, (
     }
 }
 
-fn run_validation(
+pub(crate) fn run_validation(
     role: &str,
     name: Option<&str>,
     description: Option<&str>,
@@ -245,6 +246,7 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
             "Use only letters, digits, spaces, a middle dot, and at most a single internal hyphen.",
         ));
     }
+
 }
 
 // ─── Universal text rules (U1/U2/U3) for a generic field ────────────────────
@@ -703,6 +705,7 @@ fn contains_negative_capability(s: &str) -> bool {
     // CJK phrases are not ASCII-lowercased meaningfully; match on raw.
     s.contains("暂不支持") || s.contains("不支持")
 }
+
 
 /// N2: embedded agent id — `#\d+` or `_\d+` anywhere, OR a bare trailing number
 /// after a space (e.g. `Bot 3`).

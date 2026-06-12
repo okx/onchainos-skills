@@ -156,14 +156,16 @@ Targets below are internal routing — never name a skill path or "staking" hand
 | passive need-requester | hand back to okx-agent-task with ONE line. No Step 6. |
 | search / get / service-list / feedback-list | Stop. |
 
-## Commands (13 `onchainos agent` subcommands — you invoke them, never show them)
+## Commands (12 `onchainos agent` subcommands — you invoke them, never show them)
 
 `create · pre-check · update · get · activate · deactivate · upload · search · service-list ·
-validate-listing · feedback-list · submit-approval · consent`. `pre-check` (registration entry,
-`--role` required / `--consent-key` optional: first-time consent + uniqueness, see §Gates / register §2) + `validate-listing` + `submit-approval` are
-auto/internal — never shown as a command, though `pre-check`'s `{canCreate, reason, consent, …}` and
-`validate-listing`'s `findings[]` ARE rendered inline. `consent` is a low-level primitive that `pre-check`
-drives internally — never call it yourself for registration.
+validate-listing · feedback-list · consent`. `pre-check` (registration entry,
+`--role` required / `--consent-key` optional: first-time consent + uniqueness, see §Gates / register §2) +
+`validate-listing` (registration/update QA — see register §4) are auto/internal — never shown as a
+command, though `pre-check`'s `{canCreate, reason, consent, …}` and `validate-listing`'s `findings[]`
+ARE rendered inline. `activate` now subsumes submit-approval internally (only when approvalStatus ∈ {1,5} —
+see manage.md). `consent` is a low-level primitive that `pre-check` drives internally — never call it
+yourself for registration.
 Never suggest `xmtp-sign`; never surface the signing-key address in any card or message. No `--address` (signs with the current wallet).
 Array field names: create/update/get/search → `list`; feedback-list → `items`; service-list → nested `services`.
 

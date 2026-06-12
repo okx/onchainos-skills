@@ -33,8 +33,8 @@ pub enum AgentCommand {
     #[command(name = "get-by-address", hide = true)]
     GetByAddress(identity::GetByAddressArgs),
 
-    /// Activate an Agent
-    Activate(identity::AgentStatusArgs),
+    /// Activate an Agent (runs validate-listing + agent-status + submit-approval)
+    Activate(identity::ActivateArgs),
 
     /// Deactivate an Agent
     Deactivate(identity::AgentStatusArgs),
@@ -60,10 +60,6 @@ pub enum AgentCommand {
     /// Sign an arbitrary message with keyUuid + signing_seed (xmtp etc.); does not broadcast
     #[command(name = "xmtp-sign")]
     XmtpSign(identity::XmtpSignArgs),
-
-    /// Submit an Agent for marketplace listing review (called after activate returns approvalStatus=1)
-    #[command(name = "submit-approval")]
-    SubmitApproval(identity::SubmitApprovalArgs),
 
     /// Validate an Agent listing's fields against marketplace rules (pure-local, no network)
     #[command(name = "validate-listing")]
@@ -840,7 +836,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::FeedbackSubmit(args) => identity::feedback_submit(args, ctx).await,
         AgentCommand::FeedbackList(args) => identity::feedback_list(args, ctx).await,
         AgentCommand::XmtpSign(args) => identity::xmtp_sign(args, ctx).await,
-        AgentCommand::SubmitApproval(args) => identity::submit_approval(args, ctx).await,
         AgentCommand::ValidateListing(args) => identity::validate_listing(args, ctx).await,
 
         // ── Client (buyer) task commands ────────────────────────────

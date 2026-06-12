@@ -235,3 +235,4 @@ fn bare_numeric_fee_ok() {
     assert!(!c.contains(&"P1".to_string()), "got {:?}", c);
     assert!(!c.contains(&"P2".to_string()), "got {:?}", c);
 }
+

@@ -24,9 +24,10 @@ use crate::output;
 use crate::wallet_api::WalletApiClient;
 
 use super::args::{
-    AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackSubmitArgs, PrecheckArgs, SubmitApprovalArgs,
+    ActivateArgs, AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackSubmitArgs, PrecheckArgs,
     UpdateArgs, UploadArgs, XmtpSignArgs,
 };
+use super::validate;
 use super::models::{AgentCard, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_INDEX_NUM};
 use super::signing::{
     build_erc8004_overlay, load_agent_signing_session, load_session_cert, load_signing_seed,
@@ -72,18 +73,13 @@ pub async fn update(args: UpdateArgs, ctx: &Context) -> Result<()> {
     Ok(())
 }
 
-pub async fn activate(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
+pub async fn activate(args: ActivateArgs, ctx: &Context) -> Result<()> {
     output::success(activate_impl(&args, ctx).await?);
     Ok(())
 }
 
 pub async fn deactivate(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
     output::success(deactivate_impl(&args, ctx).await?);
-    Ok(())
-}
-
-pub async fn submit_approval(args: SubmitApprovalArgs, ctx: &Context) -> Result<()> {
-    output::success(submit_approval_impl(&args, ctx).await?);
     Ok(())
 }
 
@@ -488,18 +484,271 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
 
 // ─── `agent activate` / `agent deactivate` ────────────────────────────────
 
-async fn activate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
-    agent_status_impl(args, 1, ctx).await
+/// Unified activation — fully self-contained:
+///   Step 0: GET agent info (role + name + description) → role guard
+///   Step 1: POST agent-status (status=1)
+///   Step 2: if approvalStatus ∈ {1,5} → GET service-list → validate-listing → POST submit-approval
+///
+/// Return-structure contract (all branches):
+///   blockType:1 + reason + agentRole   → not a provider; agent-status never called
+///   blockType:2 + reason + validation  → QA failed; agent-status already ran
+///   activate [+ validation + submitApproval] → normal path
+async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+
+    // ── Step 0: fetch agent info + role guard ─────────────────────────────
+    let agent_info = fetch_agent_info_by_id(agent_id, ctx).await?;
+    if let Some(ref info) = agent_info {
+        if info.role != "provider" {
+            return Ok(json!({
+                "blockType": 1,
+                "reason": "only provider agents can be listed; requester and evaluator roles are not supported.",
+                "agentRole": info.role,
+            }));
+        }
+    }
+
+    // ── Step 1: agent-status (status=1) ──────────────────────────────────
+    let activate_result = agent_status_impl(Some(agent_id), 1, ctx).await?;
+
+    // ── Step 2: QA + submit — only when approvalStatus ∈ {1, 5} ──────────
+    // approvalStatus 1 = initial listing QA required
+    // approvalStatus 5 = re-listing QA required (treat same as 1 per manage.md)
+    let needs_approval = activate_result
+        .get("approvalStatus")
+        .and_then(|v| v.as_u64())
+        .map(|s| s == 1 || s == 5)
+        .unwrap_or(false);
+
+    if !needs_approval {
+        return Ok(json!({ "activate": activate_result }));
+    }
+
+    // ── approvalStatus ∈ {1, 5}: QA then submit ──────────────────────────
+    // --force skips validate-listing entirely (used after user acknowledges
+    // a prior blockType:2 warning).
+    if args.force {
+        let submit_result = submit_approval_impl(
+            Some(agent_id),
+            args.preferred_language.as_deref(),
+            ctx,
+        )
+        .await?;
+        return Ok(json!({
+            "activate": activate_result,
+            "submitApproval": submit_result,
+        }));
+    }
+
+    // Normal path: fetch services, run validate-listing (pure local).
+    let raw_services = fetch_raw_services(agent_id, ctx).await?;
+    let service_objs: Vec<Value> = raw_services.iter().map(service_item_to_validate_obj).collect();
+    let service_json = if service_objs.is_empty() {
+        None
+    } else {
+        serde_json::to_string(&service_objs).ok()
+    };
+
+    let (name_str, desc_str) = match &agent_info {
+        Some(info) => (info.name.clone(), info.description.clone()),
+        None => (String::new(), String::new()),
+    };
+
+    let validation_result = validate::run_validation(
+        "provider",
+        if name_str.is_empty() { None } else { Some(name_str.as_str()) },
+        if desc_str.is_empty() { None } else { Some(desc_str.as_str()) },
+        service_json.as_deref(),
+    );
+    let validation_value = serde_json::to_value(&validation_result)?;
+
+    if !validation_result.pass {
+        return Ok(json!({
+            "blockType": 2,
+            "reason": "listing validation failed — fix findings before activating",
+            "validation": validation_value,
+        }));
+    }
+
+    let submit_result = submit_approval_impl(
+        Some(agent_id),
+        args.preferred_language.as_deref(),
+        ctx,
+    )
+    .await?;
+
+    Ok(json!({
+        "activate": activate_result,
+        "validation": validation_value,
+        "submitApproval": submit_result,
+    }))
+}
+
+// ─── Activate helpers ─────────────────────────────────────────────────────────
+
+struct AgentInfo {
+    role: String,
+    name: String,
+    description: String,
+}
+
+/// Fetch role + name + description for a single agent.
+/// Returns `None` when the agent is not found or the response shape is unexpected.
+/// Network / auth failures propagate as `Err`.
+async fn fetch_agent_info_by_id(agent_id: &str, ctx: &Context) -> Result<Option<AgentInfo>> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    eprintln!("[agent-identity] activate info-fetch: agent-id={}", agent_id);
+
+    let raw = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/agent-list",
+            &access_token,
+            &[
+                ("chainIndex", XLAYER_CHAIN_INDEX),
+                ("agentIdList", agent_id),
+            ],
+        )
+        .await
+        .map_err(format_api_error)?;
+
+    eprintln!(
+        "[agent-identity] activate info-fetch response: {}",
+        serde_json::to_string(&raw).unwrap_or_else(|_| "<serialize failed>".to_string())
+    );
+
+    let normalized = normalize_singleton_object(raw);
+    let items = match normalized.get("list").and_then(Value::as_array) {
+        Some(a) => a.clone(),
+        None => return Ok(None),
+    };
+
+    for item in &items {
+        if let Some(info) = parse_agent_info_row(item) {
+            return Ok(Some(info));
+        }
+        if let Some(rows) = item.get("agentList").and_then(Value::as_array) {
+            for row in rows {
+                if let Some(info) = parse_agent_info_row(row) {
+                    return Ok(Some(info));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Extract `AgentInfo` from a single agent row. Returns `None` when the role
+/// field is absent or unrecognized.
+fn parse_agent_info_row(row: &Value) -> Option<AgentInfo> {
+    let raw_role = match row.get("role")? {
+        Value::String(s) if !s.trim().is_empty() => s.trim().to_string(),
+        Value::Number(n) => n.to_string(),
+        _ => return None,
+    };
+    let role = normalize_role(&raw_role).ok()?;
+
+    let name = row
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+
+    let description = ["description", "profileDescription"]
+        .iter()
+        .find_map(|k| row.get(*k).and_then(Value::as_str).map(str::trim))
+        .unwrap_or("")
+        .to_string();
+
+    Some(AgentInfo { role, name, description })
+}
+
+/// Fetch the raw service items for an agent from GET /agent/services.
+/// Tolerates both response shapes:
+///   • live backend: array of `{ agentInfo, list:[service…] }` wrappers
+///   • legacy: single object with a flat `services` array
+async fn fetch_raw_services(agent_id: &str, ctx: &Context) -> Result<Vec<Value>> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    eprintln!(
+        "[agent-identity] activate service-fetch: agent-id={}",
+        agent_id
+    );
+
+    let raw = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/services",
+            &access_token,
+            &[("agentId", agent_id)],
+        )
+        .await
+        .map_err(format_api_error)?;
+
+    eprintln!(
+        "[agent-identity] activate service-fetch response: {}",
+        serde_json::to_string(&raw).unwrap_or_else(|_| "<serialize failed>".to_string())
+    );
+
+    let mut services: Vec<Value> = Vec::new();
+    if let Some(wrappers) = raw.as_array() {
+        // Live backend shape: array of wrappers each carrying list:[…]
+        for wrapper in wrappers {
+            if let Some(items) = wrapper.get("list").and_then(Value::as_array) {
+                services.extend(items.iter().cloned());
+            }
+        }
+    } else if let Some(items) = raw.get("services").and_then(Value::as_array) {
+        // Legacy shape: { services:[…] }
+        services.extend(items.iter().cloned());
+    }
+    Ok(services)
+}
+
+/// Convert a raw service-list item to the JSON object shape that
+/// `validate::parse_services_lenient` (and `AgentService` serde) expects:
+/// `{ "name", "servicedescription", "servicetype", "fee", "endpoint"? }`.
+fn service_item_to_validate_obj(svc: &Value) -> Value {
+    let get = |keys: &[&str]| -> String {
+        for key in keys {
+            if let Some(s) = svc.get(*key).and_then(Value::as_str) {
+                let t = s.trim();
+                if !t.is_empty() {
+                    return t.to_string();
+                }
+            }
+        }
+        String::new()
+    };
+
+    let name = get(&["serviceName", "ServiceName", "name"]);
+    let desc = get(&["serviceDescription", "ServiceDescription", "servicedescription"]);
+    let stype = get(&["serviceType", "ServiceType", "servicetype"]);
+    let fee = get(&["fee", "Fee"]);
+    let endpoint = get(&["endpoint", "Endpoint"]);
+
+    let mut obj = json!({
+        "name": name,
+        "servicedescription": desc,
+        "servicetype": stype,
+        "fee": fee,
+    });
+    if !endpoint.is_empty() {
+        obj["endpoint"] = json!(endpoint);
+    }
+    obj
 }
 
 async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
-    agent_status_impl(args, 2, ctx).await
+    agent_status_impl(args.agent_id.as_deref(), 2, ctx).await
 }
 
-async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -> Result<Value> {
+async fn agent_status_impl(agent_id_opt: Option<&str>, status: u32, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let agent_id = require_non_empty(agent_id_opt, "--agent-id")?;
     let body = json!({
         "agentId": agent_id,
         "chainIndex": XLAYER_CHAIN_INDEX,
@@ -534,15 +783,19 @@ async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -
     result.map_err(format_api_error)
 }
 
-async fn submit_approval_impl(args: &SubmitApprovalArgs, ctx: &Context) -> Result<Value> {
+async fn submit_approval_impl(
+    agent_id_opt: Option<&str>,
+    preferred_language_opt: Option<&str>,
+    ctx: &Context,
+) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let agent_id = require_non_empty(agent_id_opt, "--agent-id")?;
     let mut body = json!({
         "agentId": agent_id,
         "chainIndex": XLAYER_CHAIN_INDEX,
     });
-    if let Some(lang) = normalize_bcp47(args.preferred_language.as_deref()) {
+    if let Some(lang) = normalize_bcp47(preferred_language_opt) {
         body["preferredLanguage"] = Value::String(lang);
     }
 

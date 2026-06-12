@@ -101,18 +101,21 @@ pub struct AgentStatusArgs {
     pub agent_id: Option<String>,
 }
 
-/// `onchainos agent submit-approval`: same shape as `AgentStatusArgs` plus an
-/// optional language hint. Kept separate so the `--preferred-language` flag is
-/// scoped to submit-approval only (activate / deactivate are unaffected).
+/// `onchainos agent activate`: unified activation that handles role guard,
+/// agent-status(1), and (when approvalStatus ∈ {1,5}) the full QA + submit-approval
+/// pipeline internally. All data fetching is done by the CLI itself.
 #[derive(Args, Clone, Debug)]
-pub struct SubmitApprovalArgs {
+pub struct ActivateArgs {
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
     /// Preferred language for backend review messages (BCP-47, e.g. `zh-CN`,
-    /// `en-US`). Loosely-formatted input is normalized to canonical BCP-47;
-    /// blank / malformed input is omitted so the backend uses its default.
+    /// `en-US`). Normalized to canonical BCP-47; blank / malformed is omitted.
     #[arg(long = "preferred-language")]
     pub preferred_language: Option<String>,
+    /// Skip validate-listing and submit for approval regardless of QA findings.
+    /// Use after the user explicitly acknowledges a blockType:2 warning.
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -139,10 +142,11 @@ pub struct SearchArgs {
     pub page_size: Option<String>,
 }
 
+
 /// `onchainos agent validate-listing`: pure-local (no HTTP, no network)
 /// validator that checks an agent listing's fields against mechanical
-/// marketplace rules and prints a structured JSON result. Moves
-/// deterministic QA out of the markdown skill into the CLI.
+/// marketplace rules. Used during registration / update QA flows (before
+/// `create` / `update`), separately from `activate`.
 #[derive(Args, Clone, Debug)]
 pub struct ValidateListingArgs {
     /// requester / provider / evaluator (aliases: 1/buyer/requestor →
