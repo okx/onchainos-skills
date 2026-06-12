@@ -450,7 +450,8 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         Event::Other(ref s) if s.starts_with("user_decision_") => {
             let source = s["user_decision_".len()..].to_string();
             let reply = data.unwrap_or("").trim();
-            match source.as_str() {
+            let ud_guard = "⚠️ Execute in place — do NOT forward via `xmtp_dispatch_session` (infinite loop) or call `pending-decisions-v2 resolve/pick/cancel/list` (user-session-only).\n\n";
+            let ud_body = match source.as_str() {
                 "job_submitted" | "review_deadline_warn" => format!(
                     "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
@@ -526,7 +527,8 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
                     "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n\n\
                      **Manual routing required** — inspect the scene context (call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if needed) and decide semantically which pseudo-event the user's reply maps to. Then call `onchainos agent next-action --jobid {job_id} --event <chosen-pseudo-event> --role buyer --agentId {agent_id}`.\n"
                 ),
-            }
+            };
+            format!("{ud_guard}{ud_body}")
         }
 
         Event::Other(_) => super::flow_lifecycle::staked_and_unknown(event.as_str(), job_id),
@@ -541,8 +543,9 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         "evaluator_selected" | "vote_committed" | "reveal_started" | "vote_revealed" |
         "vote_commit_deadline_warn" | "vote_reveal_deadline_warn" | "cooldown_entered" | "round_failed" |
         "reward_claimed" | "dispute_resolved" | "close" | "set_public" |
-        "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved"
-    );
+        "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved" |
+        "wakeup_notify" | "task_token_budget_change" | "task_provider_change"
+    ) || event_str.starts_with("user_decision_");
     let use_negotiate_preamble = matches!(event_str,
         "negotiate_reply" | "negotiate_counter"
     );
@@ -550,18 +553,22 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         "job_payment_mode_changed" |
         "provider_applied" | "job_accepted" | "deliverable_received" | "job_visibility_changed" |
         "job_submitted" |
-        "designated_a2a" | "designated_x402" | "designated_error"
+        "designated_a2a" | "designated_x402" | "designated_error" |
+        "job_rejected" | "job_disputed" | "attachment_added" | "provider_conversation"
     );
+    let use_full_preamble = event_str == "job_created";
     let core = if event_str == "create_task" || event_str == "switch_provider" {
         body
     } else if use_slim_preamble {
         format!("{preamble_slim}{prefetched_block}{body}")
     } else if use_negotiate_preamble {
         format!("{preamble_negotiate}{prefetched_block}{body}")
+    } else if use_full_preamble {
+        format!("{context_preamble}{prefetched_block}{body}")
     } else if use_medium_preamble {
         format!("{preamble_medium}{prefetched_block}{body}")
     } else {
-        format!("{context_preamble}{prefetched_block}{body}")
+        format!("{preamble_medium}{prefetched_block}{body}")
     };
     let result = format!("{localization_prefix}{version_prefix}{core}");
     if DEBUG_LOG {
