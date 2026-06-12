@@ -1252,7 +1252,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref())
+                    task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref()).await
                 }
                 "buyer" | "client" => {
                     crate::audit::log(
@@ -1268,7 +1268,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode, prefetched.as_ref())
+                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode, prefetched.as_ref()).await
                 }
                 "evaluator" => {
                     crate::audit::log(
@@ -1284,7 +1284,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id)
+                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id).await
                 }
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };

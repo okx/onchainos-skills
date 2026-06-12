@@ -303,6 +303,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                     },
                 )
                 .await
+                .map(|_| ())
             }
         }
         TaskCommand::MarkFailed { job_id, provider_agent_id } => {

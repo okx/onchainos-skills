@@ -4,25 +4,27 @@
 //!   Phase 1 (`route_only`): call `designated-route` → determine route → call next-action with the matching pseudo-event
 //!   Phase 2 (`branch_a2a` / `branch_x402` / `branch_error`): only the hit branch's playbook
 
-/// Designated-provider B-Step negotiation protocol (three-step handshake + group creation + first inquiry + end turn)
-pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, title_display: &str) -> String {
-    let _ = (short_id, title_display);
-    let attachment_file = super::super::content::attachment_file_to_seller(job_id);
-    let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent recommend {job_id} --agent-id {agent_id}");
-    format!("\
-             🛑 **Hard constraint - the three-step handshake is the ONLY legitimate path to get the ASP to apply**\n\n\
-             To get the ASP to enter the apply phase (escrow), you **must** complete the full three-step handshake:\n\
-             \x20\x201) `[intent:propose]` (you -> ASP, structured proposal)\n\
-             \x20\x202) Wait for the ASP to reply with `[intent:ack]` (all fields equal) or `[intent:counter]` (keep negotiating) or `[intent:reject]` (ASP refuses)\n\
-             \x20\x203) You reply with `[intent:confirm]` (echo back the ACK fields verbatim - the ASP only applies once it sees this marker)\n\
-             \x20\x20⚡ Either side may send `[intent:reject]` at any time to terminate the negotiation (must include jobId + reason); on receipt do **NOT** reply, immediately switch to the next ASP.\n\n\
-             ❌ **Do NOT bypass the handshake with natural language** - do NOT send messages like:\n\
-             \x20\x20- \"Terms are locked / terms finalized / no further proposal needed / please apply directly / please accept the job directly\"\n\
-             \x20\x20- \"Final confirmation: job/price/payment mode ...\" plain-text summaries without the [intent:propose] / [intent:confirm] markers\n\
-             \x20\x20- Any kind of \"alternative handshake\" short-circuit - the ASP flow treats the `[intent:confirm]` literal as the only apply trigger, so a natural-language \"please apply\" will simply not be recognized and the ASP will keep waiting for [intent:propose].\n\n\
-             Correct behavior: once negotiation aligns (after the ASP has replied and you have evaluated in Step 2.5), **strictly use** the `[intent:propose]` template (see B-Step 2 Step 4 below) so the handshake parser succeeds. **Even short negotiations must complete all three steps** - even if it's \"can do, original price OK, escrow OK\" three-liner, turn it into [intent:propose] and send it; never skip.\n\
-             ⚠️ This rule applies to Step 4 onward — the **first message (Step 1) must always be pure natural language** with no `[intent:*]` markers.\n\n\
-             ━━━━━━━━━ Branch B: supportA2MCP=false -> A2A (negotiation required) ━━━━━━━━━\n\n\
+/// Three-step handshake rules — static text shared by every A2A negotiation
+/// path (both `branch_a2a` and `branch_a2a_cli`). No format args here.
+const HANDSHAKE_RULES_A2A: &str = "🛑 **Hard constraint - the three-step handshake is the ONLY legitimate path to get the ASP to apply**\n\n\
+    To get the ASP to enter the apply phase (escrow), you **must** complete the full three-step handshake:\n\
+    \x20\x201) `[intent:propose]` (you -> ASP, structured proposal)\n\
+    \x20\x202) Wait for the ASP to reply with `[intent:ack]` (all fields equal) or `[intent:counter]` (keep negotiating) or `[intent:reject]` (ASP refuses)\n\
+    \x20\x203) You reply with `[intent:confirm]` (echo back the ACK fields verbatim - the ASP only applies once it sees this marker)\n\
+    \x20\x20⚡ Either side may send `[intent:reject]` at any time to terminate the negotiation (must include jobId + reason); on receipt do **NOT** reply, immediately switch to the next ASP.\n\n\
+    ❌ **Do NOT bypass the handshake with natural language** - do NOT send messages like:\n\
+    \x20\x20- \"Terms are locked / terms finalized / no further proposal needed / please apply directly / please accept the job directly\"\n\
+    \x20\x20- \"Final confirmation: job/price/payment mode ...\" plain-text summaries without the [intent:propose] / [intent:confirm] markers\n\
+    \x20\x20- Any kind of \"alternative handshake\" short-circuit - the ASP flow treats the `[intent:confirm]` literal as the only apply trigger, so a natural-language \"please apply\" will simply not be recognized and the ASP will keep waiting for [intent:propose].\n\n\
+    Correct behavior: once negotiation aligns (after the ASP has replied and you have evaluated in Step 2.5), **strictly use** the `[intent:propose]` template (see B-Step 2 Step 4 below) so the handshake parser succeeds. **Even short negotiations must complete all three steps** - even if it's \"can do, original price OK, escrow OK\" three-liner, turn it into [intent:propose] and send it; never skip.\n\
+    ⚠️ This rule applies to Step 4 onward — the **first message (Step 1) must always be pure natural language** with no `[intent:*]` markers.";
+
+/// Branch B title + B-Step 0 (duplicate guard) + B-Step 1 (group creation) +
+/// B-Step 1.5 (SKILL_PREFETCH). Used by the MCP path (`branch_a2a` →
+/// `designated_provider_negotiate`); the CLI path (`branch_a2a_cli`) skips
+/// this section because Rust already executes those three steps inline.
+fn negotiate_section_pre_inquiry(job_id: &str, agent_id: &str, dp_id: &str) -> String {
+    format!("━━━━━━━━━ Branch B: supportA2MCP=false -> A2A (negotiation required) ━━━━━━━━━\n\n\
              **B-Step 0 - duplicate guard (🛑 hard gate):**\n\
              Call `session_status` to check whether this job already has a sub session (i.e. group already created).\n\
              If a sub session **already exists** -> the first inquiry has already been sent. **End this turn immediately** - do not create a group, do not send a message, do not send an inquiry, do not run any subsequent B-Step.\n\
@@ -38,8 +40,100 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20sessionKey = <the sessionKey just returned by xmtp_start_conversation>\n\
              \x20\x20content = `[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via buyer.md §3 routing (#1–#6). Do NOT carry over \"no action\" to business messages.`\n\
              ❌ Do NOT skip this step — the sub session has no context yet; without SKILL_PREFETCH, the first inbound message will be processed without the buyer playbook loaded.\n\
-             ⚠️ Do NOT use `xmtp_send` (that would be visible to the ASP). Use `xmtp_dispatch_session` only.\n\n\
-             **B-Step 2 - automated negotiation (User Agent <-> ASP Agent multi-turn interaction in the sub session):**\n\
+             ⚠️ Do NOT use `xmtp_send` (that would be visible to the ASP). Use `xmtp_dispatch_session` only.")
+}
+
+/// B-Step 2 (automated negotiation) and everything after — first inquiry,
+/// negotiation goals / timeouts / format rules, attachment upload, end-turn
+/// hand-off to the sub session, and a summary of subsequent events.
+/// Shared by `designated_provider_negotiate` (full MCP path) and
+/// `branch_a2a_cli` (CLI path that already ran B-Step 0 / 1 / 1.5 in Rust).
+///
+/// `attachments_handled_in_rust = true` swaps the step 1.5 instructions to a
+/// no-op marker (used by `branch_a2a_cli`, which uploads + forwards
+/// attachments inline before emitting this playbook). When `false`, the
+/// full LLM-driven step 1.5 instructions are emitted (the original MCP path).
+/// Step-1-only playbook for the CLI path (`branch_a2a_cli`). The sub session
+/// has already been created and SKILL_PREFETCH dispatched by Rust before this
+/// function runs; attachments (if any) are uploaded + forwarded by Rust too.
+/// All that's left for the LLM in this turn is: author one natural-language
+/// inquiry, send it, end the turn. Subsequent steps (handshake / ACK / counter
+/// / confirm) are driven by the sub session's own `next-action` calls when
+/// reply events arrive — they do not belong in this output.
+pub(crate) fn negotiate_section_step1_only_cli(
+    job_id: &str,
+    my_agent_id: &str,
+    to_agent_id: &str,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+) -> String {
+    // Inline the task fields the LLM needs to compose the inquiry — saves a
+    // `common context` round-trip. NEVER inline max_budget; that's the whole
+    // point of "do not leak it to the ASP". Description is the source of
+    // truth for both task body and expected deliverable.
+    let task_block = match prefetched {
+        Some(p) => {
+            let desc = if p.description.is_empty() {
+                "(missing — run `onchainos agent common context` if needed)".to_string()
+            } else {
+                p.description.clone()
+            };
+            let amt = if p.token_amount.is_empty() { "?" } else { p.token_amount.as_str() };
+            format!(
+                "**Task fields (already fetched — use these verbatim, do NOT call `common context`):**\n\
+                 \x20\x20• Title: {title}\n\
+                 \x20\x20• Description / expected deliverable: {desc}\n\
+                 \x20\x20• Base budget: {amt} {sym}  (this is the value to mention; max_budget is intentionally withheld)\n\
+                 \x20\x20• Payment mode: escrow (fixed on the A2A path)\n\n",
+                title = p.title,
+                sym = p.token_symbol,
+            )
+        }
+        None => "**Task fields not pre-fetched.** Run `onchainos agent common context {job_id} --role buyer --agent-id <agentId>` first, extract title / description / tokenSymbol / tokenAmount, then proceed.\n\n".to_string(),
+    };
+
+    format!(
+        "{task_block}\
+         **Step 1 — First inquiry to the ASP. Compose a natural-language message in the user's language using the fields above, then run this bash exactly once:**\n\n\
+         ```bash\n\
+         okx-a2a xmtp-send \\\n\
+         \x20\x20--job-id {job_id} \\\n\
+         \x20\x20--my-agent-id {my_agent_id} \\\n\
+         \x20\x20--to-agent-id {to_agent_id} \\\n\
+         \x20\x20--message '<your composed inquiry — see rules below>' \\\n\
+         \x20\x20--json\n\
+         ```\n\n\
+         🛑 **Content iron rules — violation = leak or protocol break:**\n\
+         \x20\x20❌ Do NOT include max_budget / paymentMostTokenAmount / \"最高\" / \"上限\" / \"cap\" / \"maximum\" / any value equal to max_budget — the Rust layer deliberately did not give it to you.\n\
+         \x20\x20❌ Do NOT append `[intent:propose]` / `[intent:confirm]` / `[intent:reject]` / any `[intent:*]` marker — Step 1 is pure natural language; markers are reserved for Step 4 onward (sub session handles).\n\
+         \x20\x20❌ Do NOT promise terms or accept a price — ask the ASP to quote.\n\n\
+         🛑🛑🛑 **End this turn immediately after the command returns.** The ASP's reply will arrive at the sub session and trigger `next-action --event negotiate_reply` automatically. Do NOT poll, do NOT continue to handshake / evaluation / propose / confirm.\n"
+    )
+}
+
+pub(crate) fn negotiate_section_step2_onwards(
+    job_id: &str,
+    agent_id: &str,
+    attachment_file: &str,
+    fallback_cmd: &str,
+    attachments_handled_in_rust: bool,
+) -> String {
+    let step_1_5_block = if attachments_handled_in_rust {
+        "1.5. **Attachments**: ✅ already uploaded and forwarded to the ASP by Rust before this playbook was emitted. Do NOT call `onchainos agent list-attachments`, `xmtp_file_upload`, or `xmtp_send [intent:attachment]` again — they're done.".to_string()
+    } else {
+        format!(
+            "1.5. **Upload pending attachments (if any)**:\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent list-attachments {job_id}\n\
+             \x20\x20```\n\
+             \x20\x20If the output is a non-empty JSON array, iterate over each file path:\n\
+             \x20\x20a) `xmtp_file_upload` (filePath=<path>, agentId={agent_id}, jobId={job_id}) → obtain fileKey + 5 decryption-metadata fields (digest/salt/nonce/secret/filename).\n\
+             \x20\x20b) `xmtp_send` to the provider with the following content (paste all 6 fields verbatim from xmtp_file_upload):\n\
+             \x20\x20{attachment_file}\n\
+             \x20\x20⚠️ **Attachment upload failure MUST NOT block the negotiation flow**: if `xmtp_file_upload` fails for any file, skip that file and continue. The negotiation is the critical path; attachment forwarding is best-effort.\n\
+             \x20\x20If empty (`[]`) or no attachments were found in the earlier attachment check, skip this step."
+        )
+    };
+    format!("**B-Step 2 - automated negotiation (User Agent <-> ASP Agent multi-turn interaction in the sub session):**\n\
              🛑 **Within the same turn after creating the group you MUST call `xmtp_send` to send the first inquiry** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
              ❌ Absolutely forbidden: creating the group and ending the turn without sending a message.\n\
              ❌ Absolutely forbidden: using xmtp_dispatch_user / xmtp_dispatch_session instead of xmtp_send - after the group is created use xmtp_send uniformly.\n\n\
@@ -71,16 +165,7 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              \x20\x20🛑 The first message MUST be natural language only. Do NOT include `[intent:propose]` or any `[intent:*]` marker — propose is only allowed in Step 4, after the ASP has replied and evaluation (Step 2.5) is complete.\n\
              \x20\x20⚠️ `[intent:propose]` is ALWAYS sent by the buyer (you), NEVER by the ASP. Do NOT ask or instruct the ASP to send `[intent:propose]`.\n\
              \x20\x20-> after sending the first inquiry, proceed to step 1.5 before waiting for the reply.\n\n\
-             1.5. **Upload pending attachments (if any)**:\n\
-             \x20\x20```bash\n\
-             \x20\x20onchainos agent list-attachments {job_id}\n\
-             \x20\x20```\n\
-             \x20\x20If the output is a non-empty JSON array, iterate over each file path:\n\
-             \x20\x20a) `xmtp_file_upload` (filePath=<path>, agentId={agent_id}, jobId={job_id}) → obtain fileKey + 5 decryption-metadata fields (digest/salt/nonce/secret/filename).\n\
-             \x20\x20b) `xmtp_send` to the provider with the following content (paste all 6 fields verbatim from xmtp_file_upload):\n\
-             \x20\x20{attachment_file}\n\
-             \x20\x20⚠️ **Attachment upload failure MUST NOT block the negotiation flow**: if `xmtp_file_upload` fails for any file, skip that file and continue. The negotiation is the critical path; attachment forwarding is best-effort.\n\
-             \x20\x20If empty (`[]`) or no attachments were found in the earlier attachment check, skip this step.\n\
+             {step_1_5_block}\n\
              \x20\x20🛑🛑🛑 **MANDATORY — end this turn now.** After the first inquiry (step 1) and attachments (step 1.5) are sent, you **MUST end this turn immediately**.\n\
              \x20\x20The ASP's reply will arrive at the **sub session** (the group created in B-Step 1) as an inbound a2a-agent-chat message; the sub session handles it via buyer.md §3 routing (#6 fallback → `negotiate_reply`).\n\
              \x20\x20❌ Do NOT call `xmtp_get_conversation_history` to poll for the ASP's reply in this turn.\n\
@@ -94,6 +179,18 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              [Subsequent events]\n\
              - escrow -> set-payment-mode -> job_payment_mode_changed -> [intent:confirm] -> ASP apply -> confirm-accept -> job_accepted\n\
              - x402 -> set-payment-mode -> job_payment_mode_changed -> task-402-pay -> job_accepted -> complete\n")
+}
+
+/// Designated-provider B-Step negotiation protocol (three-step handshake + group creation + first inquiry + end turn).
+/// Composed of three reusable sections so the CLI path can skip the
+/// pre-inquiry portion (Rust runs B-Step 0 / 1 / 1.5 inline).
+pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, title_display: &str) -> String {
+    let _ = (short_id, title_display);
+    let attachment_file = super::super::content::attachment_file_to_seller(job_id);
+    let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent recommend {job_id} --agent-id {agent_id}");
+    let pre_inquiry = negotiate_section_pre_inquiry(job_id, agent_id, dp_id);
+    let step2 = negotiate_section_step2_onwards(job_id, agent_id, &attachment_file, &fallback_cmd, false);
+    format!("{HANDSHAKE_RULES_A2A}\n\n{pre_inquiry}\n\n{step2}")
 }
 
 // ── Phase-split functions (route_only + per-branch) ─────────────────
@@ -135,6 +232,112 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
              🛑 **Do NOT execute any D-Step / B-Step / DX-Step in this turn** — the next-action call above returns the matching branch playbook. Follow it verbatim.\n\
              🛑 Do NOT create groups, send messages, or call set-payment-mode before getting the branch playbook.\n\n\
              **End this turn after executing the branch playbook returned by next-action.**\n")
+}
+
+/// CLI-mode variant of `branch_a2a`. Inlines the three LLM-driven MCP tool
+/// calls that begin the A2A negotiation flow:
+///   - B-Step 0  (duplicate guard via `session_status`)  → okx_a2a::session_query_exists
+///   - B-Step 1  (xmtp_start_conversation)               → okx_a2a::session_create
+///   - B-Step 1.5 (SKILL_PREFETCH xmtp_dispatch_session) → okx_a2a::session_send
+/// Everything from B-Step 2 onward (first inquiry, three-step handshake,
+/// timeouts) requires the LLM to author natural-language content and remains
+/// in the returned playbook.
+pub(crate) fn branch_a2a_cli(
+    job_id: &str,
+    agent_id: &str,
+    short_id: &str,
+    dp_id: &str,
+    title_display: &str,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+) -> String {
+    use crate::commands::agent_commerce::task::common::okx_a2a;
+
+    // B-Step 0 — duplicate guard: does this job already have a sub session
+    // with this provider? If yes, the first inquiry was already sent in a
+    // previous turn; bail out so we don't double-send.
+    match okx_a2a::session_query_exists(job_id, agent_id, dp_id) {
+        Ok(true) => return format!(
+            "[Designated ASP route: A2A] Provider {dp_id}\n\n\
+             🛑 Sub session already exists for this job; the first inquiry has already been sent in a prior turn. \
+             End this turn immediately — do not create a group, do not send any message, do not call session_status / xmtp_start_conversation / xmtp_send.\n"
+        ),
+        Ok(false) => { /* fall through to create */ }
+        Err(e) => return format!("[branch_a2a_cli] ERROR: okx-a2a session query failed: {e}\n"),
+    }
+
+    // B-Step 1 — create the sub session (group + session record). The CLI
+    // helper returns the canonical sessionKey assembled from the three IDs;
+    // we use it as <SUB_KEY> in the remaining playbook.
+    let session_key = match okx_a2a::session_create(job_id, agent_id, dp_id) {
+        Ok(sk) => sk,
+        Err(e) => return format!("[branch_a2a_cli] ERROR: okx-a2a session create failed: {e}\n"),
+    };
+
+    // B-Step 1.5 — SKILL_PREFETCH: pre-load the buyer playbook into the
+    // freshly created sub session so its first inbound message has the
+    // correct context. Fire-and-forget (--no-wait baked into helper).
+    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via buyer.md §3 routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
+    if let Err(e) = okx_a2a::session_send(&session_key, prefetch) {
+        return format!("[branch_a2a_cli] ERROR: okx-a2a session send (SKILL_PREFETCH) failed: {e}\n");
+    }
+
+    // B-Step 2 step 1.5 (attachments) — upload each pending attachment via
+    // okx_a2a::file_upload, then forward the file metadata to the ASP via
+    // okx_a2a::xmtp_send so the ASP can call file_download. Best-effort: a
+    // per-file failure must not block the negotiation, so we log the outcome
+    // in the prelude and continue.
+    let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
+    let attachment_section = if attachment_paths.is_empty() {
+        String::new()
+    } else {
+        for path in &attachment_paths {
+            let display_name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path.as_str());
+            if let Ok(meta) = okx_a2a::file_upload(path, agent_id, job_id, Some(display_name), None) {
+                let content = format!(
+                    "jobId: {job_id}\n\
+                     attachmentType: file\n\
+                     fileKey: {file_key}\n\
+                     digest: {digest}\n\
+                     salt: {salt}\n\
+                     nonce: {nonce}\n\
+                     secret: {secret}\n\
+                     filename: {filename}\n\
+                     description: Attachment: {filename}\n\
+                     [intent:attachment]",
+                    file_key = meta.file_key,
+                    digest = meta.digest,
+                    salt = meta.salt,
+                    nonce = meta.nonce,
+                    secret = meta.secret,
+                    filename = meta.filename,
+                );
+                // Best-effort: any upload/send failure is silently skipped —
+                // attachment forwarding is not on the negotiation critical path.
+                let _ = okx_a2a::xmtp_send(job_id, agent_id, dp_id, &content);
+            }
+        }
+        "⚠️ Attachments already uploaded and forwarded by Rust — do NOT call `xmtp_file_upload`, `xmtp_send [intent:attachment]`, or `list-attachments`.\n\n".to_string()
+    };
+
+    // CLI-path negotiation playbook: only Step 1 (first inquiry) is left for
+    // the LLM. Everything before it (group create + SKILL_PREFETCH +
+    // attachments) ran in Rust above; everything after it (handshake / ACK /
+    // counter / confirm) runs in the sub session via `next-action` when the
+    // ASP's reply arrives. The three-step handshake rules (HANDSHAKE_RULES_A2A)
+    // are omitted from this turn — they apply to Step 4 onward, which this
+    // playbook never reaches.
+    let _ = (short_id, title_display, session_key);
+    let step1 = negotiate_section_step1_only_cli(job_id, agent_id, dp_id, prefetched);
+
+    format!(
+        "[Designated ASP route: A2A] Provider {dp_id} is online with escrow support.\n\
+         [Role] User (Buyer)\n\
+         {attachment_section}\
+         {step1}\n"
+    )
 }
 
 /// Phase 2a: A2A branch — group creation + negotiation protocol.

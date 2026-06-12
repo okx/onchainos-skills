@@ -169,7 +169,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
 /// and status names (open / submitted / ...), uniformly parsed by state_machine.
-pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>) -> String {
+pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol version handshake.
@@ -351,7 +351,13 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
 
     let body = match event {
         // ─── Negotiation / matching phase → flow_negotiate ──────────────────────────
-        Event::JobCreated => super::flow_negotiate::job_created(&ctx),
+        Event::JobCreated => {
+            if super::content::is_cli_mode() {
+                super::flow_negotiate::job_created_cli(&ctx).await
+            } else {
+                super::flow_negotiate::job_created(&ctx)
+            }
+        }
         Event::SwitchProvider => super::flow_negotiate::switch_provider(&ctx),
         Event::Other(ref s) if s == "provider_conversation" => super::flow_negotiate::provider_conversation(&ctx),
         Event::Other(ref s) if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" => {
@@ -529,7 +535,19 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         "job_submitted" |
         "designated_a2a" | "designated_x402" | "designated_error"
     );
-    let core = if event_str == "create_task" || event_str == "switch_provider" {
+    // cli-mode short-circuit: when the event's `_cli` handler has already
+    // executed session_status / user_notify / recommend in-process, the body
+    // is a self-contained 2-step playbook. Skip every preamble (IRON RULEs
+    // about xmtp_send / session_status / sessions_spawn don't apply when
+    // those tools aren't in the body) and version_prefix (no xmtp_send call
+    // to validate). Keep only LOCALIZATION_PREFIX — translation may still be
+    // required for the user-facing card body.
+    let use_cli_minimal = super::content::is_cli_mode()
+        && matches!(event_str, "job_created");
+    let core = if use_cli_minimal
+        || event_str == "create_task"
+        || event_str == "switch_provider"
+    {
         body
     } else if use_slim_preamble {
         format!("{preamble_slim}{prefetched_block}{body}")
@@ -540,7 +558,11 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     } else {
         format!("{context_preamble}{prefetched_block}{body}")
     };
-    let result = format!("{localization_prefix}{version_prefix}{core}");
+    let result = if use_cli_minimal {
+        core
+    } else {
+        format!("{localization_prefix}{version_prefix}{core}")
+    };
     if DEBUG_LOG {
         let preview: String = result.chars().take(200).collect();
         eprintln!(

@@ -1,6 +1,7 @@
 //! Event handlers for job_created, switch_provider, and provider_conversation.
 
 use super::super::flow::FlowContext;
+use crate::commands::agent_commerce::task::common::okx_a2a;
 
 // --- Event handler functions ------------------------------------------------
 
@@ -14,6 +15,136 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
         return job_created_non_designated_provider(ctx);
     }
     job_created_with_designated_provider(ctx)
+}
+
+pub(crate) async fn job_created_cli(ctx: &FlowContext<'_>) -> String {
+    // No designated provider → recommend flow; designated → route_only flow.
+    let has_designated = super::super::negotiate::get_designated_provider(ctx.job_id)
+        .ok()
+        .flatten()
+        .is_some();
+    if !has_designated {
+        return job_created_non_designated_provider_cli(ctx).await;
+    }
+    job_created_with_designated_provider_cli(ctx).await
+}
+
+async fn job_created_non_designated_provider_cli(ctx: &FlowContext<'_>) -> String {
+    let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
+    let title = ctx.title_display;
+    let notify_tpl = super::super::content::job_created_non_designated_user_notify();
+    let list_label = format!("[Recommend {short_id}] {title} ASP-pick decision");
+
+    // Action 1 — fetch sessionKey via `okx-a2a session status` (CLI replacement
+    // for the `session_status` MCP tool).
+    let session_key = match okx_a2a::session_status() {
+        Ok(Some(v)) => v,
+        Ok(None) => return "[job_created_cli] ERROR: okx-a2a session status returned no sessionKey\n".to_string(),
+        Err(e) => return format!("[job_created_cli] ERROR: okx-a2a session status failed: {e}\n"),
+    };
+
+    // Action 2 — notify the user that the job is on-chain via `okx-a2a user notify`
+    // (CLI replacement for the `xmtp_dispatch_user` MCP tool). Substitute the
+    // template's <title> / <short_jobId> placeholders before sending; localization
+    // is expected to happen at the host runtime when surfacing to the user.
+    let notify_content = notify_tpl
+        .replace("<title>", title)
+        .replace("<short_jobId>", short_id);
+    if let Err(e) = okx_a2a::user_notify(&notify_content) {
+        return format!("[job_created_cli] ERROR: okx-a2a user notify failed: {e}\n");
+    }
+
+    // Action 3 — fetch recommendations in-process (no extra subprocess / no
+    // LLM round-trip).
+    let cards_path_result = {
+        use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+        let mut client = TaskApiClient::new();
+        super::super::recommend::handle_recommend(
+            &mut client,
+            job_id,
+            agent_id,
+            0,
+            super::super::recommend::EmitDecisionOpts::default(),
+        )
+        .await
+    };
+    let cards_path = match cards_path_result {
+        Ok(Some(path)) => path,
+        Ok(None) => return "[job_created_cli] ERROR: recommend returned no visible providers (empty / all failed)\n".to_string(),
+        Err(e) => return format!("[job_created_cli] ERROR: recommend failed: {e}\n"),
+    };
+
+    // Remaining LLM-driven steps (translation + enqueue). Rust-side
+    // session_status / user_notify / recommend are already done; the LLM
+    // doesn't need to know that — it just sees a 2-step playbook with
+    // session_key / cards_path inlined.
+    format!(
+        "[Trigger] job_created (on-chain, status: pending acceptance)\n\
+         [Role] User (Buyer)\n\n\
+         🛑 Execute the 2 actions below verbatim, in order. Do NOT add steps, do NOT branch. End the turn after Action 2.\n\n\
+         **Action 1 — Read the card file and translate ONCE to the user's chat language.**\n\
+         Use `Read` on `{cards_path}`. Translate the card body to the user's chat language; \
+         preserve every data value (jobId hex, AgentID digits, fee amounts, symbols), every field label \
+         layout, every line break. Do NOT paraphrase, do NOT add extra commentary. Translate the reply-hint \
+         footer (\"Please choose: reply with an index to pick an ASP; or see more / list publicly / cancel\") \
+         to the user's language too. Save the translated string as `<LOCALIZED_CARD>`.\n\n\
+         **Action 2 — Enqueue the pre-localized card as the user-pick decision:**\n\
+         ```bash\n\
+         onchainos agent pending-decisions-v2 request --sub-key \"{session_key}\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<LOCALIZED_CARD>\" --list-label \"{list_label}\" --source-event recommend_pick\n\
+         ```\n"
+    )
+}
+
+async fn job_created_with_designated_provider_cli(ctx: &FlowContext<'_>) -> String {
+    let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
+    let title = ctx.title_display;
+
+    let dp_id = super::super::negotiate::get_designated_provider(job_id)
+        .ok()
+        .flatten()
+        .expect("job_created_with_designated_provider_cli called only when designated provider exists");
+
+    let notify_tpl = super::super::content::job_created_designated_user_notify();
+    let designated_endpoint = super::super::negotiate::get_designated_endpoint(job_id).ok().flatten();
+
+    // Step 0 — notify the user via `okx-a2a user notify` (CLI replacement for
+    // the `xmtp_dispatch_user` MCP tool).
+    let notify_content = notify_tpl
+        .replace("<title>", title)
+        .replace("<short_jobId>", short_id)
+        .replace("<provider_agentId>", &dp_id);
+    if let Err(e) = okx_a2a::user_notify(&notify_content) {
+        return format!("[job_created_cli] ERROR: okx-a2a user notify failed: {e}\n");
+    }
+
+    // D-Step 1 — designated-route query (in-process).
+    let route_result = crate::commands::agent_commerce::task::common::designated_route_inner(
+        &dp_id,
+        designated_endpoint.as_deref(),
+    )
+    .await;
+    let route_json = match route_result {
+        Ok(j) => j,
+        Err(e) => return format!("[job_created_cli] ERROR: designated-route failed: {e}\n"),
+    };
+
+    // D-Step 2 — dispatch in-process to the matching branch playbook, skipping
+    // the "LLM calls `next-action --event designated_*`" round-trip entirely.
+    // The a2a branch additionally inlines B-Step 0 / 1 / 1.5 (session
+    // duplicate guard + create + SKILL_PREFETCH) via `branch_a2a_cli`.
+    let route = route_json.get("route").and_then(|v| v.as_str()).unwrap_or("");
+    match route {
+        "a2a" => super::designated::branch_a2a_cli(job_id, agent_id, short_id, &dp_id, title, ctx.prefetched),
+        "x402" => super::designated::branch_x402(job_id, agent_id, short_id, &dp_id),
+        "error" => super::designated::branch_error(job_id, agent_id, short_id, &dp_id),
+        _ => format!(
+            "[job_created_cli] ERROR: unknown route value '{route}' in designated-route response: {route_json}\n"
+        ),
+    }
 }
 
 /// job_created flow when no provider is designated.
