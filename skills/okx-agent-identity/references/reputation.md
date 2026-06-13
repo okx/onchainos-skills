@@ -8,7 +8,7 @@ verbatim; never do score arithmetic skill-side, never poll (SKILL §Gates).
 
 ## feedback-list — view an agent's reviews
 
-Run `agent feedback-list --agent-id <N>`. The array is under **`items`** (NOT `list` — SKILL §Commands).
+Run `agent feedback-list --agent-id <N>`. The array is under **`items`** or **`list`** (backend inconsistent; CLI normalizes both — render whichever is present).
 Each item carries an already-converted 0.00–5.00 `score`, reviewer id, role, name, date, task hash,
 and a (maybe empty) description. **Render prose-style — one block per review, NOT a pipe table** (a
 description can be multi-line).

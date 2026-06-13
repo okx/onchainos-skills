@@ -88,9 +88,9 @@ These CLI-emitted strings are English-canonical; translate to the conversation l
 
 ### #id ladder (P0-3) — resolving the `#<id>`
 **Create post-success** (the rungs in order):
-1. top-level **`newAgentId`** (PRIMARY — present when the WS push carried the id)
-2. else the CLI's direct `agent` / id field
-3. else omit the `#<id> ` substring entirely and use the fallback wording.
+1. top-level **`newAgentId`** when its value is a **non-empty string** (PRIMARY — WS push succeeded)
+2. else `agent.agentId` from the WS push object (rarely reached in practice)
+3. `newAgentId` is `null` (WS push timed out) — omit the `#<id> ` substring and use the fallback wording.
 Never invent or borrow a pre-check id; never emit a bare `# `.
 **Non-create intents** (activate/deactivate/update/detail): no `newAgentId` — use the `#N` the user typed or the CLI's direct id.
 
@@ -161,16 +161,16 @@ Targets below are internal routing — never name a skill path or "staking" hand
 | passive need-requester | hand back to okx-agent-task with ONE line. No Step 6. |
 | search / get / service-list / feedback-list | Stop. |
 
-## Commands (12 `onchainos agent` subcommands — you invoke them, never show them)
+## Commands (10 `onchainos agent` subcommands — you invoke them, never show them)
 
 `create · pre-check · update · get · activate · deactivate · upload · search · service-list ·
-feedback-submit · feedback-list · consent`. `pre-check` (registration entry,
-`--role` required / `--consent-key` optional: consent + uniqueness, see §Gates / register §2) and
+feedback-submit · feedback-list`. `pre-check` (registration entry,
+`--role` required / `--consent-key` optional: folds consent + uniqueness, see §Gates / register §2) and
 `validate-listing` (QA — see register §4, called internally by activate) are auto/internal — never shown,
 though their outputs (`findings[]`, `canCreate` etc.) ARE rendered inline. `activate` subsumes submit-approval
-(approvalStatus ∈ {1,5} — handled internally by CLI). `consent` is driven by `pre-check` — never call it yourself.
+(approvalStatus ∈ {1,5} — handled internally by CLI). `consent` has no public subcommand — driven by `pre-check`.
 Never suggest `xmtp-sign`; no `--address` (signs with current wallet).
-Array fields: create/update/get/search → `list`; feedback-list → `items`; service-list → nested `services`.
+Array fields: create/update/get/search → `list`; feedback-list → `items` or `list` (backend inconsistent; CLI normalizes both); service-list → nested `services`.
 
 ## Pre-flight
 Session-once (not per-task), before the first onchainos call: run `../okx-agentic-wallet/_shared/preflight.md`.

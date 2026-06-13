@@ -47,8 +47,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 
 ### activate / submit-approval outcomes
 
-- `success:false` + `approvalStatus 2` → "Your agent is under review — usually ready within 24h; once approved it appears on the marketplace." **Stop.** Don't call `submit-approval`; no Step 5/6.
-- `success:false` + `approvalStatus 5` → treat identically to `1`: `activate` handles this internally (QA + submit-approval in one call — see manage.md). Never render a rejection, never echo `rejectReason`.
+- `activate.approvalStatus: 2` → "Your agent is under review — usually ready within 24h; once approved it appears on the marketplace." **Stop.** Don't call `submit-approval`; no Step 5/6.
 - `submit-approval success:true` → "Done — submitted for listing review. Usually ready within 24h; once approved it appears on the marketplace." **Stop.** No Step 5/6.
 - `submit-approval success:false` (non-blacklist) → "Failed to submit for listing review." + raw line + "You can try again later." **Stop.**
 
