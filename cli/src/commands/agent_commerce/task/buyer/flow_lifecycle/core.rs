@@ -244,6 +244,32 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let title_display = ctx.title_display;
     let terminal_session_hint = &ctx.terminal_session_hint;
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+
+    // CLI mode: pre-fetch the sub session's sessionKey so the LLM doesn't
+    // need a separate `session_status` call. Best-effort — on failure /
+    // non-cli mode, fall back to the original `<full sessionKey ...>`
+    // placeholder and let the LLM run the tool.
+    let session_key_inline: Option<String> = if super::super::content::is_cli_mode() {
+        crate::commands::agent_commerce::task::common::okx_a2a::session_status()
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let session_hint = match session_key_inline.as_deref() {
+        Some(sk) => format!(
+            "- sessionKey (use this directly in Step 3; do NOT call `session_status`):\n\
+             \x20\x20\x20\x20`{sk}`"
+        ),
+        None => "- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)".to_string(),
+    };
+    let session_hint_step2b = match session_key_inline.as_deref() {
+        Some(sk) => format!(
+            "sessionKey (use this directly in Step 3; do NOT call `session_status`): `{sk}`."
+        ),
+        None => "First call `session_status` to get the current sub session's sessionKey (reused later; do not call it again this turn).".to_string(),
+    };
+
     // Branch A (escrow) push protocol — user_content is composed at runtime from the
     // deliverable variables extracted in Step 2 (file vs text); pass the placeholder
     // and the templates below the helper output guide the LLM through the composition.
@@ -255,6 +281,13 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
         &format!("[Decision {short_id}] {title_display} acceptance decision"),
         "job_submitted",
     );
+    // If we pre-fetched a sessionKey, substitute it into the bash template's
+    // `<full sessionKey from step 1>` placeholder so the LLM doesn't need to
+    // call `session_status` and copy the result.
+    let request_block = match session_key_inline.as_deref() {
+        Some(sk) => request_block.replace("<full sessionKey from step 1>", sk),
+        None => request_block,
+    };
 
     let pm = ctx.payment_mode;
     let pm_extract = if pm.is_some() { "" } else { "Extract `paymentMode` (int: 1=escrow, 3=x402). " };
@@ -281,11 +314,11 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20- localPath: {path}\n\
      \x20\x20- deliverableType: {dtype}\n\
      \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\
-     \x20\x20- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)\n\
+     \x20\x20{session_hint}\n\
      \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
      \x20\x20- **Skip Step 2b entirely**\n\
      \x20\x20- Go to Step 3\n\n",
-            path = d.path, dtype = d.deliverable_type,
+            path = d.path, dtype = d.deliverable_type, session_hint = session_hint,
         )
     } else {
         format!("\
@@ -298,7 +331,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20- Use the `deliverableType` from the first entry\n\
      \x20\x20- For text deliverables, read the file content at `path` to get `deliverableText`\n\
      \x20\x20- **Skip Step 2b entirely** (no need to re-download or re-save)\n\
-     \x20\x20- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)\n\
+     \x20\x20{session_hint}\n\
      \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
      \x20\x20- Go to Step 3\n\n\
      If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n")
@@ -460,7 +493,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     } else {
         format!("\
      **Step 2b — Fallback: fetch from chat history and save** (only if Step 2a found no saved deliverable):\n\
-     First call `session_status` to get the current sub session's sessionKey (reused later; do not call it again this turn).\n\
+     {session_hint_step2b}\n\
      Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line.\n\n\
      {step2b_branch_header}\
      {step2b_x402}\
