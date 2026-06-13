@@ -608,6 +608,12 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      {branch_header}\
      {escrow_section}\
      {x402_section}\
-     🛑 Forbidden: `xmtp_dispatch_session`, `sessions_spawn`, `sessions_yield`, `xmtp_send` to provider, plain text replies.\n"
+     🛑 Forbidden: `xmtp_dispatch_session`, `sessions_spawn`, `sessions_yield`, `xmtp_send` to provider, plain text replies.\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST include ALL of the following tool calls, in order:\n\
+     1. One `xmtp_dispatch_user` call — completion notification (A/B-Step 1)\n\
+     2. One `onchainos agent feedback-submit` call — auto-rate the ASP (A/B-Step 2)\n\
+     3. One `xmtp_dispatch_user` call — rating notification (A/B-Step 2.5; skip ONLY if Step 2 returned an error)\n\
+     Stopping after Step 1 is a **critical failure** — the user will never see their rating.\n"
     )
 }

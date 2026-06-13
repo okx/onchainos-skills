@@ -232,7 +232,13 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
      - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
      **Step 3 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     Task fully complete.\n"
+     Task fully complete.\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST include ALL of the following tool calls, in order:\n\
+     1. One `xmtp_dispatch_user` call — auto-completion notification (Step 1)\n\
+     2. One `onchainos agent feedback-submit` call — auto-rate the ASP (Step 2)\n\
+     3. One `xmtp_dispatch_user` call — rating notification (Step 2.5; skip ONLY if Step 2 returned an error)\n\
+     Stopping after Step 1 is a **critical failure** — the user will never see their rating.\n"
     )
 }
 
