@@ -136,7 +136,7 @@ Outputs the script the agent should currently execute (CLI templates / xmtp_send
 | `--provider` | | Target provider agentId (only used with buyer + `job_created`): when supplied, recommend is skipped and a script targeting this provider is generated for negotiation / x402 acceptance |
 | `--peerTaskMinVersion` | | Pass-through of the inbound a2a-agent-chat envelope's `payload.taskMinVersion` (integer). If the local protocol version < this value ⇒ the CLI appends a `[Protocol version mismatch — non-blocking]` line at the top of the script to prompt the agent to push an upgrade suggestion to the user, but does **not block** the flow (the script is still emitted in full, the role flow still executes). **Pass only when buyer / provider handles an a2a-agent-chat inbound**; leave empty for chain events / pseudo events / evaluator (evaluator does not participate in version negotiation). The outbound value does not need to be computed by the agent — buyer / provider `next-action` output always carries a fixed `[Protocol version] ...payload={"taskMinVersion":N}` line at the top, and the agent fills `payload` with this value in every `xmtp_send` of the scene |
 
-**Negotiation relay events** (buyer-only, locally dispatched by `buyer.md §3.5 Inbound Peer Message Routing`; not a backend system notification):
+**Negotiation relay events** (buyer-only, locally dispatched by `buyer-sub-playbook.md §3.5 Inbound Peer Message Routing`; not a backend system notification):
 
 | `--event` value | Trigger scenario | Script content |
 |---|---|---|

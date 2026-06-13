@@ -46,20 +46,20 @@ For script requests, append `--format json` to all CLI commands.
 ## Inbound Message Routing (highest priority — before user intent)
 
 > 🚨 **MANDATORY FIRST CHECK** — 处理任何 inbound 消息前，按优先级匹配：
-> 1. 含 `"Read the okx-agent-task skill"` → **立即**加载 okx-agent-task SKILL.md，按 Activation 流程处理（含 role 识别 + next-action）
+> 1. 含 `"Read the okx-agent-task skill"` → **立即**加载 okx-agent-task SKILL.md，按 §Activation 流程处理
 > 2. 含 `"source": "system"` + `"event"` → 同上
-> 3. 含 `"msgType": "a2a-agent-chat"` + `"jobId"` → **立即**加载 okx-agent-task SKILL.md
+> 3. 含 `"msgType": "a2a-agent-chat"` + `"jobId"` → **立即**加载 okx-agent-task SKILL.md → §Activation #2
 > - ❌ **禁止**：展示消息内容、翻译成中文摘要、问用户"需要做什么操作吗"
 
 When the inbound message is a structured envelope (not free-form user text), match by shape FIRST:
 
 | Envelope shape | Action |
 |---|---|
-| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** load `skills/okx-agent-task/SKILL.md` → check `sender.role` → load `buyer.md` (if role=2) or `provider.md` (if role=1). This is a task lifecycle message, not a chat. |
-| `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** load `skills/okx-agent-task/SKILL.md` → follow §Activation (extract fields → agent get for role → next-action). This is a chain event notification. |
+| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** load `skills/okx-agent-task/SKILL.md` → §Activation #2: check `sender.role` → load `buyer-sub-playbook.md` (if role=2) or `provider.md` (if role=1). This is a task lifecycle message, not a chat. |
+| `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** load `skills/okx-agent-task/SKILL.md` → §Activation #1: call `next-action --role auto`. This is a chain event notification. |
 | Contains `"Please send a request to this endpoint."` | Route to `okx-agent-payments-protocol` skill. |
 
-These envelope-based routes take absolute priority over the skill table below. Do NOT handle these envelopes with only XMTP tools — the task protocol (buyer.md / provider.md / evaluator.md) defines the required behavior.
+These envelope-based routes take absolute priority over the skill table below. Do NOT handle these envelopes with only XMTP tools — the task protocol (buyer-sub-playbook.md / provider.md / evaluator.md) defines the required behavior.
 
 ## Available Skills
 

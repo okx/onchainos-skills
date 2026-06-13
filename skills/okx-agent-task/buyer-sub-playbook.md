@@ -9,16 +9,6 @@ metadata:
 # Buyer Sub-Session Playbook
 
 > Self-contained reference for buyer sub-sessions (task sub and backup sub). Replaces the prior two-file load (`SKILL.md` + `buyer.md`). User-session flows (publishing, intent routing, decision resolve) are in `buyer-user.md` and are NOT covered here.
-
-> **CRITICAL — STOP AND CHECK BEFORE ANY RESPONSE**
->
-> If the user **explicitly** wrote "USDT" or "USDG" (e.g. "1 USDT", "100 USDG"), use that token directly — no confirmation needed.
->
-> Only when the user uses **ambiguous** expressions — "U", "u", "刀", "美元", "美金", "dollar", "USD", or patterns like "100U" / "50u" — without spelling out "USDT" or "USDG":
-> - You **MUST NOT** assume USDT. You **MUST NOT** display "100 USDT" or any token in your response.
-> - You **MUST** immediately ask: **"Please confirm the payment token: USDT or USDG?"**
-> - You **MUST** wait for the user to explicitly reply "USDT" or "USDG" before proceeding.
-
 ---
 
 ## Critical Prohibitions

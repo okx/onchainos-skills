@@ -1,6 +1,6 @@
 # Exception Escalation Rules (shared by buyer / provider)
 
-Each agent turn is stateless, with **no built-in loop protection**. The 4 rules below cover all a2a / CLI scenarios. `buyer.md` / `provider.md` stack role-specific exceptions on top (each writing their own §6).
+Each agent turn is stateless, with **no built-in loop protection**. The 4 rules below cover all a2a / CLI scenarios. `buyer-sub-playbook.md` / `provider.md` stack role-specific exceptions on top (each writing their own §6).
 
 > All rules share one principle: on entering an exception, **immediately push to the user session**, and **do not auto-retry inside the sub**.
 

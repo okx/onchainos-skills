@@ -25,7 +25,7 @@ The task state machine has moved into the CLI (`onchainos agent next-action`) �
 
 > **CRITICAL — role inference**: `sender.role` is the **counterparty's** role, not yours.
 > - `sender.role = 1` (the counterparty is a User Agent) → **you are the ASP** → you are in the right file; continue handling.
-> - `sender.role = 2` (the counterparty is an ASP) → **you are a User Agent** → **stop and read `buyer.md`**.
+> - `sender.role = 2` (the counterparty is an ASP) → **you are a User Agent** → **stop and read `buyer-sub-playbook.md`**.
 
 Receiving an inbound a2a-agent-chat envelope with `sender.role === 1` ⇒ you are the ASP; activate this skill.
 
