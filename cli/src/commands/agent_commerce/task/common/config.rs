@@ -40,6 +40,21 @@ pub fn keep_conversation_on_terminal() -> bool {
         })
 }
 
+/// Detect whether the next-action / playbook output is being driven by a
+/// CLI runtime (Claude Code, Codex) rather than an MCP host (OpenClaw,
+/// Hermes). Used to pick between bash-style cli commands and MCP-tool-style
+/// prompts in playbook generation, and to decide when Rust should run an
+/// action in-process instead of emitting instructions for the LLM.
+///
+/// Detection: presence of the runtime-specific env var set by the host.
+pub fn is_cli_mode() -> bool {
+    std::env::var("CLAUDECODE").unwrap_or_default() == "1"
+        || std::env::var("CODEX_THREAD_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .is_some()
+}
+
 /// Task protocol version number — a single value used in both directions: it is both
 /// "the version I am currently on" and "the minimum version I require the peer to be on".
 ///

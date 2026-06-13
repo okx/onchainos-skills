@@ -166,6 +166,25 @@ pub fn session_send(session_key: &str, content: &str) -> Result<()> {
     Ok(())
 }
 
+/// Bridge equivalent: `xmtp_delete_conversation '{sessionKey}'`
+/// Close a session (sub or backup) at terminal state to release resources.
+/// `--session-key` is mandatory.
+pub fn session_delete(session_key: &str) -> Result<()> {
+    let out = Command::new("okx-a2a")
+        .args([
+            "session", "delete",
+            "--session-key", session_key,
+            "--json",
+        ])
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("okx-a2a session delete exit {status}: {stderr}", status = out.status);
+    }
+    Ok(())
+}
+
 // ── XMTP wire messages ────────────────────────────────────────────────────
 
 /// Bridge equivalent: `xmtp_send '{sessionKey, content, payload?}'`

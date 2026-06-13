@@ -29,13 +29,7 @@
 
 // ── Platform detection ────────────────────────────────────────────
 
-pub fn is_cli_mode() -> bool {
-    std::env::var("CLAUDECODE").unwrap_or_default() == "1"
-        || std::env::var("CODEX_THREAD_ID")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .is_some()
-}
+pub use crate::commands::agent_commerce::task::common::config::is_cli_mode;
 
 // ── Event::JobCreated ──────────────────────────────────────────────
 
