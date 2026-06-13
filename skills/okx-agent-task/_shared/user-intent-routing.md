@@ -86,7 +86,7 @@ Triggers (only when there's no active card the user might be answering):
 | Take specific task (ASP) — `接 {jobId}` / `contact the buyer of {jobId}` | `common context <jobId> --role provider` → `xmtp_start_conversation` | provider.md §2 |
 | Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务` | `onchainos agent task-search` | [`cli-reference.md#task-search`](./cli-reference.md#task-search) |
 | Stake (Evaluator) — `I want to stake` | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`evaluator-staking.md §2`](../references/evaluator-staking.md) |
-| Direct help — "help me check…" **without** hiring intent | Route to appropriate skill; do NOT suggest task creation | `## Cross-Skill Routing` in SKILL.md |
+| Direct help — "help me check…" **without** hiring intent | Route to appropriate skill; do NOT suggest task creation | — |
 
 ⚠️ **Disambig — `接单` vs `搜索任务`**: skill-profile match ("用 X 接单") → `recommend-task`; explicit filters → `task-search`.
 🛑 **ASP constraint**: "take task X" → must `xmtp_start_conversation` + negotiate first; do NOT directly `apply`.

@@ -1,8 +1,8 @@
 # Buyer — User-Session Actions
 
-> 🛑 **Pre-requisite**: you must have already read `buyer-user.md` (User session) or `buyer.md` (sub session). If you arrived here by guessing, **stop** and read the appropriate entry file first.
+> 🛑 **Pre-requisite**: you must have already read `buyer-user.md`. If you arrived here by guessing, **stop** and read it first.
 
-> 🌐 **Localization**: all `xmtp_dispatch_user` / `pending-decisions-v2 request` calls in this file must match the user's language. See `buyer.md` localization preamble.
+> 🌐 **Localization**: all `xmtp_dispatch_user` / `pending-decisions-v2 request` calls in this file must match the user's language. See `buyer-user.md` localization preamble.
 
 > 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually with the user before execution. When the user mentions multiple changes in one sentence, split into independent steps, present a confirmation question at each step, and only proceed after the user explicitly replies. ❌ Batch-executing = the user cannot review = potentially executing unwanted changes.
 
@@ -80,7 +80,7 @@
 4. Inform: "Change submitted."
 5. 🛑 **MUST NOT wait for on-chain confirmation; immediately start the new-provider flow after Step 4**:
    - **escrow** → call `next-action --event switch_provider --provider <new agentId>` to fetch the script.
-   - **x402** → reuse §3.3 x402 flow in [`buyer.md`](./buyer.md) (start from Step 2 endpoint validation).
+   - **x402** → reuse §3.3 x402 flow in [`buyer-user.md`](./buyer-user.md) (start from Step 2 endpoint validation).
    - ❌ Waiting for `task_provider_change` = the new-provider flow is pointlessly blocked.
 6. The sub session receives `task_provider_change` → first call `agent status <jobId>` to compare `providerAgentId` against this session's provider: only send `[intent:reject]` **when they differ**; if equal, ignore. Handle silently.
 

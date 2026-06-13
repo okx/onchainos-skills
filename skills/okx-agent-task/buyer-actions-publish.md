@@ -2,7 +2,7 @@
 
 > 🛑 **Pre-requisite**: you must have already read `buyer-user.md` (User session). If you arrived here by guessing, **stop** and read the appropriate entry file first.
 
-> 🌐 **Localization**: all `xmtp_dispatch_user` / `pending-decisions-v2 request` calls in this file must match the user's language. See `buyer.md` localization preamble.
+> 🌐 **Localization**: all `xmtp_dispatch_user` / `pending-decisions-v2 request` calls in this file must match the user's language. See `buyer-user.md` localization preamble.
 
 > 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually with the user before execution. When the user mentions multiple changes in one sentence, split into independent steps, present a confirmation question at each step, and only proceed after the user explicitly replies. ❌ Batch-executing = the user cannot review = potentially executing unwanted changes.
 
