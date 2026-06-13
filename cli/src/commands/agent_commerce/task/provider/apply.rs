@@ -83,6 +83,6 @@ pub async fn handle_apply(
     println!("    - Do NOT call `xmtp_send` to tell the buyer \"application submitted\" or similar");
     println!("    - You will receive a `provider_applied` system notification after on-chain confirmation");
     println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event provider_applied --role provider`,");
-    println!("      then follow the output to call `session_status` + `xmtp_send` to send the payment invoice");
+    println!("      then follow the output.");
     Ok(())
 }
