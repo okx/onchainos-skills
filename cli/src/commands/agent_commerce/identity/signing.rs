@@ -117,13 +117,6 @@ pub(super) fn load_agent_signing_session(
 pub(super) fn sign_key_uuid(key_uuid: &str, signing_seed: &[u8; 32]) -> Result<String> {
     let sig_bytes = crate::crypto::ed25519_sign(signing_seed, key_uuid.as_bytes())?;
     let signature = base64::engine::general_purpose::STANDARD.encode(&sig_bytes);
-    eprintln!(
-        "[agent-identity] sign_key_uuid: keyUuid={} keyUuid_utf8_bytes_hex={} signed_bytes_len={} signing_pubkey_hex={}",
-        key_uuid,
-        hex::encode(key_uuid.as_bytes()),
-        key_uuid.len(),
-        ed25519_pubkey_hex(signing_seed),
-    );
     Ok(signature)
 }
 

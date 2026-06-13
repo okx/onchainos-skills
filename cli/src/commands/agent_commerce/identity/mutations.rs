@@ -45,6 +45,18 @@ const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ─── Public command entry points ──────────────────────────────────────────
 
+fn scrub_body_for_log(body: &serde_json::Value) -> serde_json::Value {
+    let mut b = body.clone();
+    if let Some(obj) = b.as_object_mut() {
+        for k in &["sessionCert", "sessionSignature"] {
+            if obj.contains_key(*k) {
+                obj.insert((*k).to_string(), serde_json::json!("<redacted>"));
+            }
+        }
+    }
+    b
+}
+
 pub async fn create(args: CreateArgs, ctx: &Context) -> Result<()> {
     output::success(create_impl(&args, ctx).await?);
     Ok(())
@@ -130,7 +142,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
-        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string())
+        serde_json::to_string(&scrub_body_for_log(&body)).unwrap_or_else(|_| "<serialize failed>".to_string())
     );
     let response = client
         .post_authed(
@@ -395,7 +407,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
-        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+        serde_json::to_string(&scrub_body_for_log(&body)).unwrap_or_else(|_| "<serialize failed>".to_string()),
     );
     let update_result = client
         .post_authed(
@@ -462,6 +474,9 @@ async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
 
     // ── Step 0: fetch agent info + role guard ─────────────────────────────
     let agent_info = fetch_agent_info_by_id(agent_id, ctx).await?;
+    if agent_info.is_none() {
+        bail!("agent {} not found or not accessible", agent_id);
+    }
     if let Some(ref info) = agent_info {
         if info.role != "provider" {
             return Ok(json!({
@@ -480,7 +495,10 @@ async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
     // approvalStatus 5 = re-listing QA required (treat same as 1 per manage.md)
     let needs_approval = activate_result
         .get("approvalStatus")
-        .and_then(|v| v.as_u64())
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+        })
         .map(|s| s == 1 || s == 5)
         .unwrap_or(false);
 
@@ -894,7 +912,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     // (a serialized JSON string) but at a different nesting level.
     let comment = json!({
         "agentid": agent_id,
-        "value": score.to_string(),
+        "value": score,
         "comment": feedback_desc,
     });
     let mut body = json!({

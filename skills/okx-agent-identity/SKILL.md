@@ -52,9 +52,9 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 ## Invariants (single source of truth for rendering + ids — the references use these, never redraw them)
 
 ### Lexicon (for prose / Q&A / post-success rows where the CLI didn't supply a label)
-- **Roles:** requester → **User Agent** · provider → **Agent Service Provider (ASP)** · evaluator →
-  **Evaluator Agent**. Never the raw enum, never legacy nouns (buyer/seller), never a bilingual
-  parenthetical.
+- **Roles:** requester → **User Agent** / 用户 · provider → **Agent Service Provider (ASP)** / 服务提供商 ·
+  evaluator → **Evaluator Agent** / 仲裁者. Never the raw enum, never legacy nouns (buyer/seller),
+  never a bilingual parenthetical.
 - **Service type:** A2MCP → **API service** · A2A → **agent-to-agent**. Gloss once per table:
   "API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing." Never
   raw A2MCP/A2A.

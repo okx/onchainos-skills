@@ -31,7 +31,7 @@ Run `agent pre-check --role <role>` (internal — never shown). It fetches the w
 
 **provider — two steps** (user may batch):
 - **Step 1 · Identity** — Name (CN 2–12 / EN 3–25; brand name; ❌ test tags / celebrity) · Description (required ≤500) · Photo (optional §5).
-- **Step 2 · Service** — Service name (5–30 noun phrase; ❌ same as agent name / price in name) · Description (3 parts: summary / capabilities / 1–3 prompts) · Type (API / A2A) · Fee (API: `N USDT/USDG` ≤6 dec; A2A: optional) · Endpoint (API only — §6).
+- **Step 2 · Service** — Service name (5–30 noun phrase; ❌ same as agent name / price in name) · Description (3 parts: summary / capabilities / 1–3 prompts) · Type (API service → pass `A2MCP` / agent-to-agent → pass `A2A`) · Fee (API service: `N USDT/USDG` ≤6 dec; A2A: optional) · Endpoint (API service only — §6).
 
 ## 4. QA via `validate-listing` (provider only — requester/evaluator skip)
 
@@ -69,7 +69,7 @@ The FINAL card ends with `> Reply **1** to confirm and run.` (localized) + the g
 
 ## 8. Passive need-requester
 
-Skip role-ask / pre-check / photo. Ask name → (description) → render the card → on confirm, execute. Post-success is ONE line, **no detail card, no Step 6**:
+Run `agent pre-check --role requester` (consent + uniqueness gate, same as §2). On consent required → run full consent flow per §2. On `canCreate:false` (requester already exists) → use the existing one, skip create entirely. On `canCreate:true` → ask name only (skip photo). Then render the card → on confirm, execute. Post-success is ONE line, **no detail card, no Step 6**:
 > "User Agent identity #`<id>` created. Resuming the task-publish flow."
 
 (If a requester already exists: "You already have a User Agent identity #`<N>` (`<name>`) — using it to continue.") Hand back to the task flow with that single line; don't ask "want to publish a task?".

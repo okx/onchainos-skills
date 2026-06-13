@@ -104,7 +104,13 @@ async fn top_asps_impl(limit: usize, ctx: &Context) -> Result<Value> {
 
     // De-dup by agentId (pagination guard), then rank by soldCount, highest first.
     let mut seen = std::collections::HashSet::new();
-    all.retain(|a| seen.insert(a["agentId"].as_str().unwrap_or_default().to_string()));
+    all.retain(|a| {
+        let id = a.get("agentId")
+            .and_then(|v| v.as_u64().map(|n| n.to_string())
+                .or_else(|| v.as_str().map(str::to_string)))
+            .unwrap_or_default();
+        seen.insert(id)
+    });
     let total_pulled = all.len();
     all.sort_by(|a, b| {
         b["soldCount"]

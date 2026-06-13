@@ -28,7 +28,9 @@ pub(super) fn redact_token_for_debug(token: &str) -> String {
     if token.len() <= 16 {
         return format!("{token}***");
     }
-    format!("{}***{}", &token[..8], &token[token.len() - 6..])
+    let head: String = token.chars().take(8).collect();
+    let tail: String = token.chars().rev().take(6).collect::<String>().chars().rev().collect();
+    format!("{}***{}", head, tail)
 }
 
 // Log-only helpers. Precedence mirrors WalletApiClient::with_base_url:
