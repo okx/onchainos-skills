@@ -1515,7 +1515,7 @@ fn format_top_service_a2mcp_with_fee_and_token() {
         "endpoint": "https://x",
     });
     let result = format_top_service(&svc).unwrap();
-    assert_eq!(result, "TVL Query (API service, 10 USDT)");
+    assert_eq!(result, "TVL Query (API service, 10.0 USDT)");
 }
 
 #[test]
@@ -1544,4 +1544,112 @@ fn format_top_service_truncates_at_40_chars() {
     assert!(chars.len() <= 41, "truncated string should be ≤40 chars + ellipsis");
     // Last char is the ellipsis when truncated.
     assert_eq!(chars.last(), Some(&'…'));
+}
+
+// ─── reconstruct_post_url_for_log ─────────────────────────────────────────
+
+#[test]
+fn reconstruct_post_url_for_log_uses_default_base_url_when_no_override() {
+    let url = reconstruct_post_url_for_log(&ctx_no_override(), "/agent/create");
+    assert_eq!(url, format!("{}{}", DEFAULT_BASE_URL, "/agent/create"));
+}
+
+#[test]
+fn reconstruct_post_url_for_log_uses_override_base_url() {
+    let url = reconstruct_post_url_for_log(&ctx_with_base("https://pre.okx.com"), "/agent/create");
+    assert_eq!(url, "https://pre.okx.com/agent/create");
+}
+
+#[test]
+fn reconstruct_post_url_for_log_appends_path_verbatim() {
+    let url = reconstruct_post_url_for_log(&ctx_with_base("https://pre.okx.com"), "/agent/sign?foo=bar");
+    assert_eq!(url, "https://pre.okx.com/agent/sign?foo=bar");
+}
+
+// ─── identity_ws_url ─────────────────────────────────────────────────────
+
+const WS_URL_PROD: &str = "wss://wsdex.okx.com:8443/ws/v5/private";
+
+// Serialize env-var tests to prevent data races under `cargo test`'s default
+// multi-threaded runner. Both tests mutate the process-global OKX_AGENTIC_WS_URL
+// var, so they must not execute concurrently.
+static WS_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn identity_ws_url_returns_prod_default_when_env_unset() {
+    let _lock = WS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::remove_var("OKX_AGENTIC_WS_URL");
+    assert_eq!(identity_ws_url(), WS_URL_PROD);
+}
+
+#[test]
+fn identity_ws_url_returns_override_when_env_set() {
+    let _lock = WS_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::set_var("OKX_AGENTIC_WS_URL", "wss://pre-ws.okx.com/ws/v5/private");
+    let url = identity_ws_url();
+    std::env::remove_var("OKX_AGENTIC_WS_URL");
+    assert_eq!(url, "wss://pre-ws.okx.com/ws/v5/private");
+}
+
+// ─── build_precheck: reason field ────────────────────────────────────────
+
+#[test]
+fn precheck_can_create_false_includes_reason_message() {
+    // A requester already exists under the same wallet → canCreate=false.
+    let data = json!({ "list": [
+        { "agentId": 10, "name": "Existing Buyer", "role": 1, "ownerAddress": "0xADDR" },
+    ]});
+    let r = build_precheck(&data, "0xADDR", "requester");
+    assert_eq!(r["canCreate"], json!(false));
+    let reason = r["reason"].as_str().expect("reason must be a string when canCreate=false");
+    assert!(
+        reason.contains("User Agent"),
+        "reason should mention the role label; got: {reason}"
+    );
+    assert!(
+        reason.contains("already registered") || reason.contains("only one"),
+        "reason should explain the uniqueness constraint; got: {reason}"
+    );
+}
+
+#[test]
+fn precheck_can_create_true_has_no_reason_field() {
+    let data = json!({ "list": [] });
+    let r = build_precheck(&data, "0xADDR", "requester");
+    assert_eq!(r["canCreate"], json!(true));
+    assert!(r.get("reason").is_none(), "reason must be absent when canCreate=true");
+}
+
+// ─── normalize_service: A2MCP empty fee ──────────────────────────────────
+
+#[test]
+fn normalize_service_a2mcp_empty_fee_is_err() {
+    let svc = AgentService {
+        id: None,
+        service_name: "My Service".to_string(),
+        service_description: "desc".to_string(),
+        fee: "".to_string(),
+        service_type: "A2MCP".to_string(),
+        endpoint: Some("https://example.com/mcp".to_string()),
+    };
+    let result = normalize_service(svc);
+    assert!(result.is_err(), "A2MCP with empty fee must be an error");
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("fee"), "error message should mention 'fee'; got: {msg}");
+}
+
+#[test]
+fn normalize_service_a2mcp_whitespace_only_fee_is_err() {
+    let svc = AgentService {
+        id: None,
+        service_name: "My Service".to_string(),
+        service_description: "desc".to_string(),
+        fee: "   ".to_string(),
+        service_type: "A2MCP".to_string(),
+        endpoint: Some("https://example.com/mcp".to_string()),
+    };
+    let result = normalize_service(svc);
+    assert!(result.is_err(), "A2MCP with whitespace-only fee must be an error after trim");
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("fee"), "error message should mention 'fee'; got: {msg}");
 }

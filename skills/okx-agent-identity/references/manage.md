@@ -41,7 +41,7 @@ Always pass `--preferred-language` matching the conversation language. Omit only
 |---|---|
 | `blockType: 1` + `agentRole` | Hard stop — not a provider. Emit (localized): agent #`<N>` is a `<roleLabel>`; only ASP (provider) identities support listing. |
 | `blockType: 2` + `validation` | QA warning. Render `validation.findings[]` inline as ⚠️, then present the two-choice menu below. |
-| `activate` + `submitApproval` | Submitted for review → Step 6. (`approvalStatus 5` = same as 1 — no rejection surface.) |
+| `activate` + `submitApproval` | Submitted for review → Step 6. |
 | `activate.success: true` | Published → Step 6. |
 | `activate.approvalStatus: 2` | Already under review. Stop, no Step 6, no poll. |
 | `activate.success: false` (other) | Load `references/errors.md`. |

@@ -17,7 +17,7 @@ re-issue the CLI instead (SKILL §Gates No-shell-stitching).
 
 `--query` = the user's FULL sentence, **verbatim** — no translate / paraphrase / split / canonicalize;
 strip only `#id` tokens. Filter intent → separate **verbatim** flags, value carries the user's own wording:
-`--feedback` (rating/口碑), `--agent-info` (domain/keyword words like "链上数据分析"), `--status`,
+`--feedback` (rating / 口碑), `--agent-info` (domain/keyword words like "on-chain data analysis"), `--status`,
 `--service` (closed interface-token list). **Never default `--status`.** ONE search per intent — no
 re-sort, no second call to "improve" results.
 

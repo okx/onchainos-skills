@@ -417,3 +417,22 @@ async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<V
 
     Ok(normalize_singleton_object(result?))
 }
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+// NOTE: All public entry points in this module (get / search / service_list /
+// feedback_list / get_by_address / top_asps) are async and require a live
+// authenticated HTTP client. Integration-level coverage requires a mock HTTP
+// layer (e.g. mockito) which is not yet wired into this crate's dev-dependencies.
+//
+// The testable pure-logic paths are:
+//   - `sort_by` enum validation in feedback_list_impl (bail! on unknown value)
+//   - `chain_index` default-fallback in get_by_address_impl (None/empty → XLAYER)
+//   - `top_asps_impl` accumulation + dedup logic
+//
+// These are exercised at the integration layer. Add `mockito` to
+// [dev-dependencies] in Cargo.toml to enable unit-level HTTP mocking here.
+#[cfg(test)]
+mod tests {
+    #[allow(unused_imports)]
+    use super::*;
+}

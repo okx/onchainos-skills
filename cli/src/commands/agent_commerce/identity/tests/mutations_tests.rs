@@ -204,3 +204,51 @@ fn service_item_to_validate_obj_lowercase_name_fallback() {
     let obj = service_item_to_validate_obj(&svc);
     assert_eq!(obj["name"], json!("Fallback Name"));
 }
+
+// ─── build_erc8004_overlay: task_id inclusion / omission ─────────────────
+// The feedback_submit_impl builds an erc8004 overlay with ("taskId", &task_id).
+// build_erc8004_overlay filters empty strings, so an absent / empty task_id
+// must not produce a "taskId" key in the overlay.
+
+#[test]
+fn erc8004_overlay_with_non_empty_task_id_includes_taskid() {
+    let overlay = build_erc8004_overlay(&[
+        ("taskId", "JOB-123"),
+        ("feedBackAgentId", "agent-42"),
+    ]);
+    let overlay = overlay.expect("non-empty fields must produce Some(overlay)");
+    let inner = overlay["erc8004Msg"].as_object().unwrap();
+    assert_eq!(inner.get("taskId").and_then(|v| v.as_str()), Some("JOB-123"));
+}
+
+#[test]
+fn erc8004_overlay_with_empty_task_id_omits_taskid() {
+    // Mirrors: task_id = trim_or_empty(args.task_id.as_deref()); → empty string.
+    let overlay = build_erc8004_overlay(&[
+        ("taskId", ""),           // empty → filtered
+        ("feedBackAgentId", "agent-42"),
+    ]);
+    let overlay = overlay.expect("feedBackAgentId is non-empty → Some(overlay)");
+    let inner = overlay["erc8004Msg"].as_object().unwrap();
+    assert!(
+        inner.get("taskId").is_none(),
+        "empty taskId must be omitted; got {inner:?}"
+    );
+}
+
+#[test]
+fn erc8004_overlay_all_empty_fields_returns_none() {
+    // If every field is empty, the overlay itself must be None (no erc8004Msg).
+    let overlay = build_erc8004_overlay(&[("taskId", ""), ("feedBackAgentId", "")]);
+    assert!(overlay.is_none(), "all-empty fields must yield None");
+}
+
+#[test]
+fn erc8004_overlay_task_id_present_without_feedback_agent() {
+    // taskId alone (feedBackAgentId absent) is still a valid overlay.
+    let overlay = build_erc8004_overlay(&[("taskId", "JOB-XYZ"), ("feedBackAgentId", "")]);
+    let overlay = overlay.expect("non-empty taskId must produce Some(overlay)");
+    let inner = overlay["erc8004Msg"].as_object().unwrap();
+    assert_eq!(inner.get("taskId").and_then(|v| v.as_str()), Some("JOB-XYZ"));
+    assert!(inner.get("feedBackAgentId").is_none());
+}

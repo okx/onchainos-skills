@@ -21,7 +21,6 @@ use uuid::Uuid;
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::Context;
 use crate::output;
-use crate::wallet_api::WalletApiClient;
 
 use super::args::{
     ActivateArgs, AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackSubmitArgs, PrecheckArgs,
@@ -1031,7 +1030,7 @@ async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
 
 /// Drain the WS subscription waiting for the matching push. Any failure
 /// (including timeout) collapses to `None`; the surrounding command then
-/// emits `txHash` + `agentList` only.
+/// emits `txHash` + `newAgentId` only.
 async fn wait_for_identity_push(
     subscription: Option<IdentitySubscription>,
     tx_hash: &str,

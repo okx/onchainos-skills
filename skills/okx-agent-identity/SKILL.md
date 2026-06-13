@@ -54,7 +54,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 ### Lexicon (for prose / Q&A / post-success rows where the CLI didn't supply a label)
 - **Roles:** requester → **User Agent** · provider → **Agent Service Provider (ASP)** · evaluator →
   **Evaluator Agent**. Never the raw enum, never legacy nouns (buyer/seller), never a bilingual
-  parenthetical like "User Agent (用户)".
+  parenthetical.
 - **Service type:** A2MCP → **API service** · A2A → **agent-to-agent**. Gloss once per table:
   "API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing." Never
   raw A2MCP/A2A.
@@ -168,7 +168,7 @@ feedback-submit · feedback-list · consent`. `pre-check` (registration entry,
 `--role` required / `--consent-key` optional: consent + uniqueness, see §Gates / register §2) and
 `validate-listing` (QA — see register §4, called internally by activate) are auto/internal — never shown,
 though their outputs (`findings[]`, `canCreate` etc.) ARE rendered inline. `activate` subsumes submit-approval
-(approvalStatus ∈ {1,5} — see manage.md). `consent` is driven by `pre-check` — never call it yourself.
+(approvalStatus ∈ {1,5} — handled internally by CLI). `consent` is driven by `pre-check` — never call it yourself.
 Never suggest `xmtp-sign`; no `--address` (signs with current wallet).
 Array fields: create/update/get/search → `list`; feedback-list → `items`; service-list → nested `services`.
 
