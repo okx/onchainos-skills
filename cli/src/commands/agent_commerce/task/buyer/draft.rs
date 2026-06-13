@@ -590,10 +590,17 @@ pub async fn handle_draft_publish(
         }
     }
     if super::content::is_cli_mode() {
-        println!("[Watch] Per `okx-task-watch` SKILL.md, start the monitor now:");
-        println!("okx-a2a user watch --once --json --poll-ms 1000 --limit 50 --job-id {returned_job_id}");
+        println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
         println!();
-        println!("If you haven't read `okx-task-watch/SKILL.md` in this session, read it first.");
+        println!("**Step 1 — If you haven't read `skills/okx-task-watch/SKILL.md` in this session, read it FIRST.**");
+        println!("(It explains: watch is a single foreground long-poll — the wait IS the design;");
+        println!(" the call may block this turn until events arrive; do NOT background, do NOT loop-wrap.)");
+        println!();
+        println!("**Step 2 — Run the bash below (foreground, long-poll blocks this turn until events arrive):**");
+        println!("```bash");
+        println!("okx-a2a user watch --once --json --poll-ms 1000 --limit 50 --job-id {returned_job_id}");
+        println!("```");
+        println!("Then dispatch each returned item per `skills/okx-task-watch/SKILL.md` §Dispatch and re-enter the same command per §re-arm.");
     }
     Ok(())
 }
