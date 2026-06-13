@@ -488,7 +488,11 @@ async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
     }
 
     // ── Step 1: agent-status (status=1) ──────────────────────────────────
-    let activate_result = agent_status_impl(Some(agent_id), 1, ctx).await?;
+    // Backend returns a single-element array; normalize to object so field
+    // access (approvalStatus) works correctly on the next step.
+    let activate_result = normalize_singleton_object(
+        agent_status_impl(Some(agent_id), 1, ctx).await?,
+    );
 
     // ── Step 2: QA + submit — only when approvalStatus ∈ {1, 5} ──────────
     // approvalStatus 1 = initial listing QA required
@@ -724,7 +728,9 @@ fn service_item_to_validate_obj(svc: &Value) -> Value {
 }
 
 async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
-    agent_status_impl(args.agent_id.as_deref(), 2, ctx).await
+    Ok(normalize_singleton_object(
+        agent_status_impl(args.agent_id.as_deref(), 2, ctx).await?,
+    ))
 }
 
 async fn agent_status_impl(agent_id_opt: Option<&str>, status: u32, ctx: &Context) -> Result<Value> {

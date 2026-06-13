@@ -33,7 +33,6 @@ onchainos agent activate --agent-id <N> --preferred-language <BCP-47>
 onchainos agent activate --agent-id <N> --preferred-language <BCP-47> --force
 ```
 
-Always pass `--preferred-language` matching the conversation language. Omit only when unclear.
 
 ### Response — match in order
 

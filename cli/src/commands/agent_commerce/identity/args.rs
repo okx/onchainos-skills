@@ -94,9 +94,9 @@ pub struct AgentStatusArgs {
 pub struct ActivateArgs {
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
-    /// Preferred language for backend review messages (BCP-47, e.g. `zh-CN`,
-    /// `en-US`). Normalized to canonical BCP-47; blank / malformed is omitted.
-    #[arg(long = "preferred-language")]
+    /// Required: preferred language for backend review messages (BCP-47,
+    /// e.g. `zh-CN`, `en-US`). Normalized to canonical BCP-47.
+    #[arg(long = "preferred-language", required = true)]
     pub preferred_language: Option<String>,
     /// Skip validate-listing and submit for approval regardless of QA findings.
     /// Use after the user explicitly acknowledges a blockType:2 warning.
