@@ -555,7 +555,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     // to validate). Keep only LOCALIZATION_PREFIX — translation may still be
     // required for the user-facing card body.
     let use_cli_minimal = super::content::is_cli_mode()
-        && matches!(event_str, "job_created" | "negotiate_reply" | "negotiate_ack" | "provider_applied");
+        && matches!(event_str, "job_created" | "negotiate_reply" | "negotiate_ack" | "provider_applied" | "deliverable_received");
     let core = if use_cli_minimal
         || event_str == "create_task"
         || event_str == "switch_provider"

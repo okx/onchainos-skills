@@ -149,16 +149,38 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
 
+    // Inline task fields from prefetched into the save command template
+    // when available; fall back to `<placeholder>` markers otherwise (LLM
+    // fills from session context).
+    let (title_field, sym_field, amt_field, provider_field, step0_block) = match ctx.prefetched {
+        Some(p) => {
+            let prov = p.provider_agent_id.clone().unwrap_or_else(|| "<providerAgentId>".to_string());
+            (
+                p.title.clone(),
+                p.token_symbol.clone(),
+                p.token_amount.clone(),
+                prov,
+                "**Step 0 — Task context** (pre-fetched and inlined below; `providerName` is best-effort from session context).\n\n".to_string(),
+            )
+        }
+        None => (
+            "<title>".to_string(),
+            "<tokenSymbol>".to_string(),
+            "<tokenAmount>".to_string(),
+            "<providerAgentId>".to_string(),
+            "**Step 0 — Task context** (prefetch failed; fall back to `[Pre-fetched task context]` block above or session-context best-effort):\n\
+             \x20\x20- `title`, `providerAgentId`, `providerName` (best-effort), `tokenSymbol`, `tokenAmount`\n\
+             A missing field does not block the save.\n\n".to_string(),
+        ),
+    };
+
     format!(
     "[Current action] deliverable_received — download, persist, and notify\n\
      [Role] User (User Agent)\n\n\
      🛑 This playbook fires when the ASP's a2a-agent-chat message contains `[intent:deliver]`.\n\
      Its sole purpose is: **download → save → brief notification**. The full review card is owned by `job_submitted`.\n\n\
      [Your next actions]\n\n\
-     **Step 0 — Task context** (pre-fetched; no CLI call needed):\n\
-     Read from the `[Pre-fetched task context]` block above:\n\
-     \x20\x20- `title`, `providerAgentId`, `providerName` (best-effort), `tokenSymbol`, `tokenAmount`\n\
-     If any field is missing, use best-effort values from session context; a missing field does not block the save.\n\n\
+     {step0_block}\
      **Step 1 — Download/extract + save + notify** (complete all sub-steps before ending the turn):\n\n\
      --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret) ---\n\n\
      1a. Call xmtp_file_download:\n\
@@ -171,10 +193,10 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      1b. Persist the deliverable:\n\
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
-       --file \"<localPath>\" --deliverable-type file --title \"<title>\" \\\n\
+       --file \"<localPath>\" --deliverable-type file --title \"{title_field}\" \\\n\
        --short-id {short_id} --file-key \"<fileKey>\" \\\n\
-       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
+       --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"{sym_field}\" --token-amount \"{amt_field}\"\n\
      ```\n\
      Record the saved path from the command output. If save fails, log the error but continue.\n\n\
      --- Case B: deliverableType=text (body content between `- - -` separators) ---\n\n\
@@ -183,9 +205,9 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
        --file \"<temp .txt path>\" --deliverable-type text \\\n\
-       --title \"<title>\" --short-id {short_id} \\\n\
-       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
+       --title \"{title_field}\" --short-id {short_id} \\\n\
+       --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"{sym_field}\" --token-amount \"{amt_field}\"\n\
      ```\n\
      Record the saved path from the command output. If save fails, log the error but continue.\n\n\
      --- After save returns (both cases) — 🛑 SAME TURN, do NOT end the turn yet ---\n\n\
@@ -193,8 +215,8 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      {l10n_dispatch}\n\
      \x20\x20content template (fill from Step 0 + 1a/1b results; translate to user's language):\n\
      \x20\x20```\n\
-     \x20\x20[Deliverable Received] <title> (`{short_id}`)\n\
-     \x20\x20Provider: <providerName> (<providerAgentId>)\n\
+     \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
+     \x20\x20Provider: <providerName> ({provider_field})\n\
      \x20\x20Type: <file|text>\n\
      \x20\x20Saved at: <savedPath from 1b output>\n\
      \x20\x20\n\
