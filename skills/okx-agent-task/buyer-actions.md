@@ -16,6 +16,8 @@
 | §2 Mid-task attachment | User wants to add files to an active task |
 | §3 Terms changes | Modify token / budget / provider / max-budget |
 | §4 View deliverables | User wants to see submitted deliverables |
+| §5 Designated-Provider A2A | User designates a specific provider (A2A path) |
+| §6 Designated-Provider x402 | User designates a provider with x402 endpoint |
 
 ---
 
@@ -80,7 +82,7 @@
 4. Inform: "Change submitted."
 5. 🛑 **MUST NOT wait for on-chain confirmation; immediately start the new-provider flow after Step 4**:
    - **escrow** → call `next-action --event switch_provider --provider <new agentId>` to fetch the script.
-   - **x402** → reuse §3.3 x402 flow in [`buyer-user.md`](./buyer-user.md) (start from Step 2 endpoint validation).
+   - **x402** → reuse §6 x402 flow below (start from Step 2 endpoint validation).
    - ❌ Waiting for `task_provider_change` = the new-provider flow is pointlessly blocked.
 6. The sub session receives `task_provider_change` → first call `agent status <jobId>` to compare `providerAgentId` against this session's provider: only send `[intent:reject]` **when they differ**; if equal, ignore. Handle silently.
 
@@ -167,3 +169,63 @@ For all jobs (`results` array):
 If the result is empty, reply in the user's language (EN: "No saved deliverables found." / ZH: "没有已保存的交付物。").
 
 ⚠️ File paths MUST be absolute (the user needs to locate the file on disk).
+
+---
+
+## 5. Designated-Provider A2A flow
+
+**Trigger**: user message contains "Please initiate a direct conversation with this provider to discuss the task details."
+
+> ⚠️ **A2MCP with known endpoint → NOT this skill.** If the user provides a concrete endpoint URL (`http(s)://…`) AND the serviceType is A2MCP (or the message explicitly says "A2MCP"), this is a direct x402 pay-per-call — hand off to `okx-agent-payments-protocol`. Do NOT enter §6 or create a task.
+>
+> ⚠️ If it contains "Please send a request to this endpoint." **but not** "use onchainos" → does NOT belong to this skill.
+> If it contains "Please use onchainos to send a request to this endpoint" **and** serviceType is NOT A2MCP → go to **§6** below.
+
+Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `Price` / `symbol` (mutable).
+
+**Flow**:
+1. **Provider validation**: `onchainos agent profile <agentId>` — `ok=false` / `data.role ≠ 2` → inform the user; do NOT continue. ⚠️ The `role` in this response belongs to the **queried agent** (the provider), NOT to you — you remain the **buyer** (`--role buyer`).
+2. **Service-type determination**: `onchainos agent service-list --agent-id <agentId>` (joint check on serviceType + endpoint):
+   - x402 supported → carry `agentId` + `endpoint` and enter §6 below (from Step 2).
+   - Otherwise → A2A (step 3 below).
+   - ⚠️ **Do NOT call `xmtp_start_conversation` directly.**
+3. **A2A path**: map fields (`description` ← ServiceTitle, `budget` ← Price, `currency` ← symbol), cache `designatedProvider = { agentId, serviceType }` → enter [`buyer-actions-publish.md`](./buyer-actions-publish.md) to publish the task (🛑 must run the full publishing flow including confirmation form).
+4. `job_created` arrives → detect `designatedProvider` → **skip `recommend`, keep it private** → directly create the group and negotiate.
+5. Negotiation fails → automatically run `recommend <jobId>` to display for user to choose.
+
+---
+
+## 6. Designated-Provider x402 flow
+
+**Trigger**: user message contains "Please use onchainos to send a request to this endpoint".
+
+Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (all required; no Price — pricing is fetched from the endpoint).
+
+**Flow**:
+1. **Provider validation**: same as §5 step 1.
+2. **Endpoint validation**: `onchainos agent x402-check --endpoint <endpoint>` — `valid=false` → inform "invalid"; `tokenSymbol` not USDT/USDG → inform "unsupported".
+3. **User pricing confirmation** → show a 2-column table (`| Field | Value |`): 卖家/Seller, 服务/Service, Endpoint (in backticks), 费用/Price. If refused, end.
+4. **Field collection & confirmation form** (🛑🛑🛑 may NOT be skipped):
+   - The agent auto-generates `title` (≤30 chars), `description` (≥10 chars), `description-summary` (≤200 chars) based on the ServiceTitle.
+   - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
+   - `currency` = `tokenSymbol`.
+   - `deadline-open` / `deadline-submit`: **must be asked of the user**; do NOT auto-fill.
+   - ⚠️ **Language matching**: field labels MUST match the user's language.
+   - Display the full confirmation form (format see `buyer-actions-publish.md` Appendix A) → **end this turn** and wait for explicit confirmation.
+   - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn.**
+5. **Create the task after user confirmation**: `create-task` → **end this turn**, wait for `job_created`, cache `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`.
+6. **set-payment-mode** (triggered by `job_created`): `set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>` → **end this turn**, wait for `job_payment_mode_changed`.
+7. **task-402-pay** (triggered by `job_payment_mode_changed`): `task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt>`
+   - `replaySuccess=true` → notify deliverable + "awaiting on-chain confirmation".
+   - `replaySuccess=false` → notify replay failure.
+8. Wait for `job_accepted` → call `next-action --event job_accepted`; follow the script to complete.
+
+### Error Handling
+
+| Error | Response |
+|---|---|
+| Provider does not exist | "This Provider (agentId: xxx) does not exist; please confirm the ID." |
+| Endpoint invalid | "This endpoint is not a valid x402 service; please confirm the address." |
+| tokenSymbol not USDT/USDG | "This service charges in <symbol>; the task system currently only supports USDT and USDG." |
+| Create-task failed | Check network status; guide a retry. |
+| Payment signing failed | Inspect `executeErrorMsg`. Do NOT default to "balance insufficient" — the system is gas-free. |

@@ -197,14 +197,6 @@ CLI does semantic mapping and returns a routing playbook. Follow verbatim. Do NO
 
 **❌ Illegal**: self-loop / cross-task dispatch / crafting `source:"system"` envelopes / `xmtp_dispatch_session` from sub.
 
-### Sub-session state machine
-
-| State | Trigger | Action |
-|---|---|---|
-| System event | `source:"system"` | 🛑 `next-action` → execute. Push to user only if script says so. |
-| User-decision relay | `user_decision_<src>` | `next-action --data`. ❌ No resolve/pick/cancel. |
-| Peer message | a2a-agent-chat | Communication Boundary → Peer Message Routing above. |
-
 **Push is opt-in**: do NOT push just because "user should know". After txHash, do NOT push — wait for system event. Negotiation progress is NOT pushed.
 
 🛑 Never substitute `pending-decisions-v2 request` for `xmtp_dispatch_user` or vice versa — use whichever the script specifies.
@@ -288,12 +280,3 @@ Backup sub (sessionKey contains `:backup:`) follows this same playbook. Key rule
 - `sender_id=main` only means "originated from user session"; it doesn't mean YOU are a user session.
 - `xmtp_start_conversation` timing: NOT after `recommend` — only AFTER user picks an ASP.
 
----
-
-## Helper Commands
-
-| Scenario | Command |
-|---|---|
-| Task context | `onchainos agent common context <jobId> --role buyer --agent-id <agentId>` |
-| Task status | `onchainos agent status <jobId>` |
-| Saved deliverables | `onchainos agent task-deliverable-list --role buyer [--job-id <jobId>]` |

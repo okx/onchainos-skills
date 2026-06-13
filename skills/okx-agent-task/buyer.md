@@ -57,7 +57,7 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 > - `sender.role = 1` (counterparty is Buyer) → **you are the Provider** → **stop and read `provider.md`**.
 
 > **⚡ x402 routing split**:
-> - User message contains "Please **use onchainos to** send a request to this endpoint" → **belongs to this skill** (see [`buyer-user.md`](./buyer-user.md) §3.3); continue.
+> - User message contains "Please **use onchainos to** send a request to this endpoint" → **belongs to this skill** (see [`buyer-actions.md`](./buyer-actions.md) §6); continue.
 > - User message contains "Please send a request to this endpoint." **but not** "use onchainos" → **NOT this skill**; route to `okx-agent-payments-protocol`. **Stop immediately.**
 
 Receiving an inbound a2a-agent-chat envelope with `sender.role === 2` ⇒ you are the buyer; activate this skill.
