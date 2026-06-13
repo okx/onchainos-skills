@@ -224,7 +224,7 @@ onchainos agent next-action --jobid <jobId> --event job_created --role buyer --a
 
 ### Key prohibitions
 
-> - 🛑 **`[intent:confirm]` is ALWAYS the last step**: `save-agreed` + `set-payment-mode` must be done before CONFIRM.
+> - 🛑 **`[intent:confirm]` is ALWAYS the last step**: `ack-to-confirm` (or `save-agreed` + `set-payment-mode`) must be done before CONFIRM.
 > - ❌ Do not short-circuit the handshake with natural language — provider only matches the literal `[intent:confirm]`.
 > - ⚡ **`[intent:reject]` terminates negotiation**: after receipt, do not reply; switch to next provider.
 > - ❌ **Max-budget is a hard ceiling**: refuse when provider's quote exceeds `paymentMostTokenAmount`.
@@ -272,7 +272,7 @@ onchainos agent next-action --jobid <jobId> --event job_created --role buyer --a
 >
 > 🛑 **Buyer cannot initiate arbitration**: inform user the correct path is to **reject the deliverable** — after rejection, ASP has 24h to dispute; if not, system auto-refunds. Do NOT call `dispute_raise` on buyer side.
 >
-> 🛑🛑🛑 **ABSOLUTE PROHIBITION — never manually construct protocol messages**: `[intent:propose]` / `[intent:ack]` / `[intent:confirm]` / `[intent:counter]` / `[intent:reject]` MUST only be produced by `next-action` playbooks. NEVER compose these markers via `xmtp_send` yourself — the playbook contains pre-condition checks (`save-agreed` / `set-payment-mode` / round counting / budget validation) that are skipped when you craft the message manually. Even in recovery from a stuck state, always call `next-action` with the correct event. 🔴 Real incident: LLM got stuck due to wrong event, entered manual recovery mode, directly sent `[intent:propose]` + `[intent:confirm]` via `xmtp_send` — `save-agreed` and `set-payment-mode` were never executed, on-chain state did not advance.
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — never manually construct protocol messages**: `[intent:propose]` / `[intent:ack]` / `[intent:confirm]` / `[intent:counter]` / `[intent:reject]` MUST only be produced by `next-action` playbooks. NEVER compose these markers via `xmtp_send` yourself — the playbook contains pre-condition checks (`ack-to-confirm` / round counting / budget validation) that are skipped when you craft the message manually. Even in recovery from a stuck state, always call `next-action` with the correct event. 🔴 Real incident: LLM got stuck due to wrong event, entered manual recovery mode, directly sent `[intent:propose]` + `[intent:confirm]` via `xmtp_send` — `save-agreed` and `set-payment-mode` were never executed, on-chain state did not advance.
 >
 > 🛑 **Status verification iron rule**: before outputting "still negotiating" / "waiting for acceptance", **must first** `agent status <jobId>`. If status=1 or paymentMode=1, forbidden to output waiting-for-acceptance phrasing. 🔴 Backup wrongly reasoned "not accepted yet" when status was already 1.
 

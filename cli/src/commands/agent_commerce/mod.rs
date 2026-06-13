@@ -161,6 +161,22 @@ pub enum AgentCommand {
         #[arg(long)] endpoint: Option<String>,
     },
 
+    /// Composite: save-agreed + conditional set-payment-mode → confirmNow branch
+    #[command(name = "ack-to-confirm")]
+    AckToConfirm {
+        job_id: String,
+        #[arg(long = "provider-agent-id")] provider_agent_id: String,
+        #[arg(long = "token-symbol")] token_symbol: String,
+        #[arg(long = "token-amount")] token_amount: String,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
+
+    /// Read locally persisted negotiation result (no network)
+    #[command(name = "get-agreed")]
+    GetAgreed {
+        job_id: String,
+    },
+
     /// Client confirms provider and executes payment (setPaymentMode must be done first).
     /// All parameters are auto-resolved from the local negotiate-state written by save-agreed.
     #[command(name = "confirm-accept")]
@@ -864,6 +880,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             task::buyer::run_task(T::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
+
+        AgentCommand::AckToConfirm { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
+            task::buyer::run_task(T::AckToConfirm { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
+
+        AgentCommand::GetAgreed { job_id } =>
+            task::buyer::run_task(T::GetAgreed { job_id }, ctx).await,
 
         AgentCommand::ConfirmAccept { job_id } =>
             task::buyer::run_task(T::ConfirmAccept { job_id }, ctx).await,

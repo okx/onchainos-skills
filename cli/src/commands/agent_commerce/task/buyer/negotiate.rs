@@ -288,6 +288,19 @@ pub fn current_agreed_provider(job_id: &str) -> Result<Option<(String, String, S
     Ok(Some((key, terms.token_symbol, terms.token_amount)))
 }
 
+/// Return the agreed terms as a JSON value (for the `get-agreed` CLI command).
+pub fn get_agreed_json(job_id: &str) -> Result<Option<serde_json::Value>> {
+    let (provider, symbol, amount) = match current_agreed_provider(job_id)? {
+        Some(t) => t,
+        None => return Ok(None),
+    };
+    Ok(Some(serde_json::json!({
+        "providerAgentId": provider,
+        "tokenSymbol": symbol,
+        "tokenAmount": amount,
+    })))
+}
+
 /// Save the designated provider (specified via `create-task --provider`; on `job_created` we skip `recommend`).
 pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result<()> {
     save_designated_provider_with_endpoint(job_id, provider_agent_id, None)

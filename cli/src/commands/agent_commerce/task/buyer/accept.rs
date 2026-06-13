@@ -240,6 +240,121 @@ pub async fn handle_set_payment_mode(
     Ok(())
 }
 
+/// ack-to-confirm — composite: save-agreed + conditional set-payment-mode + confirmNow branch.
+///
+/// Merges the negotiate_ack → job_payment_mode_changed two-turn flow into a conditional one-turn flow.
+/// Output:
+/// - `confirmNow=true` (paymentMode already escrow): `{ "ok": true, "data": { "confirmNow": true, "confirmContent": "..." } }`
+/// - `confirmNow=false` (needs on-chain setPaymentMode): `{ "confirming": true, ... }`
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_ack_to_confirm(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    provider_agent_id: &str,
+    token_symbol: &str,
+    token_amount: &str,
+    agent_id: Option<&str>,
+) -> Result<()> {
+    // Step 1: save-agreed (persist negotiation result + maxBudget validation).
+    negotiate::save_agreed(client, job_id, provider_agent_id, token_symbol, token_amount, agent_id).await?;
+
+    // Resolve wallet + agent for on-chain operations.
+    let (account_id, address, resolved_agent_id) =
+        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
+
+    // Step 2: query task detail for current paymentMode + status check.
+    let task_resp = client.get_with_identity(&client.task_path(job_id), &resolved_agent_id).await?;
+    let task_status = common::state_machine::Status::from_int(
+        task_resp["status"].as_i64().unwrap_or(-1) as i32,
+    );
+    if task_status != common::state_machine::Status::Created {
+        bail!(
+            "current task status is {:?}; ack-to-confirm is only allowed in `created` status",
+            task_status
+        );
+    }
+
+    let current_mode = PaymentMode::from_int(
+        task_resp["paymentMode"].as_i64().unwrap_or(0) as i32,
+    );
+    let already_escrow = current_mode == PaymentMode::Escrow;
+
+    // Balance pre-check.
+    let amt: f64 = token_amount.parse().unwrap_or(0.0);
+    if amt > 0.0 {
+        common::ensure_sufficient_balance(amt, token_symbol).await?;
+    }
+
+    // Step 3: branch on current paymentMode.
+    if already_escrow {
+        let confirm_content = format!(
+            "jobId: {job_id}\npaymentMode: escrow\ntokenSymbol: {token_symbol}\ntokenAmount: {token_amount}\n[intent:confirm]"
+        );
+        audit::log(
+            "cli",
+            "buyer/ack_to_confirm_skip",
+            true,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("provider={provider_agent_id}"),
+                format!("paymentMode=escrow(alreadySet)"),
+            ]),
+            None,
+        );
+        println!("✓ paymentMode already escrow; skipping on-chain setPaymentMode.");
+        crate::output::success(serde_json::json!({
+            "confirmNow": true,
+            "confirmContent": confirm_content,
+            "providerAgentId": provider_agent_id,
+            "tokenSymbol": token_symbol,
+            "tokenAmount": token_amount,
+        }));
+    } else {
+        let mode_int = PaymentMode::Escrow.as_int();
+        let resp = client.post_with_identity(
+            &client.endpoint(job_id, "setPaymentMode"),
+            &serde_json::json!({ "paymentMode": mode_int }),
+            &resolved_agent_id,
+        ).await?;
+
+        let tx_hash = signing::sign_uop_and_broadcast(
+            client, &resp["uopData"], &account_id, &address,
+            job_id, signing::extract_biz_type(&resp), &resolved_agent_id,
+            None,
+        ).await?;
+
+        audit::log(
+            "cli",
+            "buyer/ack_to_confirm_set",
+            true,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("provider={provider_agent_id}"),
+                format!("paymentMode=escrow(new)"),
+                format!("txHash={tx_hash}"),
+            ]),
+            None,
+        );
+        println!("✓ save-agreed + setPaymentMode(escrow) complete; awaiting on-chain confirmation...");
+        crate::output::confirming(
+            &format!("ack-to-confirm: save-agreed + setPaymentMode(escrow) complete. txHash={tx_hash}"),
+            "Wait for the `job_payment_mode_changed` system notification, then send [intent:confirm].",
+        );
+    }
+    Ok(())
+}
+
+/// get-agreed — return the locally persisted negotiation result (no network).
+pub fn handle_get_agreed(job_id: &str) -> Result<()> {
+    match negotiate::get_agreed_json(job_id)? {
+        Some(data) => crate::output::success(data),
+        None => bail!("no agreed terms found for job {job_id}; save-agreed must run first"),
+    }
+    Ok(())
+}
+
 /// confirm-accept — confirm acceptance of the provider (setPaymentMode must already have run via set-payment-mode).
 ///
 /// All parameters (provider, token symbol, amount) are read from the local negotiate-state;

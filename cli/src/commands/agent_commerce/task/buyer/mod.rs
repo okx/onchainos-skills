@@ -126,6 +126,23 @@ pub enum TaskCommand {
         #[arg(long)]
         endpoint: Option<String>,
     },
+    /// Composite: save-agreed + conditional set-payment-mode → confirmNow branch.
+    /// Merges negotiate_ack → job_payment_mode_changed into a conditional one-turn flow.
+    AckToConfirm {
+        job_id: String,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "token-symbol")]
+        token_symbol: String,
+        #[arg(long = "token-amount")]
+        token_amount: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Read locally persisted negotiation result (no network).
+    GetAgreed {
+        job_id: String,
+    },
     /// Client confirms provider and executes payment (setPaymentMode must be done first).
     /// Provider, token symbol, and amount are read from the local negotiate-state.
     ConfirmAccept {
@@ -300,6 +317,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
         TaskCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
+        TaskCommand::AckToConfirm { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
+            accept::handle_ack_to_confirm(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await,
+        TaskCommand::GetAgreed { job_id } =>
+            accept::handle_get_agreed(&job_id),
         TaskCommand::ConfirmAccept { job_id } =>
             accept::handle_confirm_accept(&mut client, &job_id).await,
         TaskCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>

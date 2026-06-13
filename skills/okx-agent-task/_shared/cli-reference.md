@@ -297,6 +297,35 @@ Buyer sets the task's payment mode on-chain. Stand-alone step that must run **be
 | `--token-symbol` / `--token-amount` | Required for both modes; the agreed price token + amount from the `[intent:ack]` → `[intent:confirm]` handshake (cached via `save-agreed`) |
 | `--endpoint` | Required for `x402` only; the x402 service endpoint URL (e.g. `https://api.example.com/v1/cat-image`) |
 
+### ack-to-confirm
+
+```
+agent ack-to-confirm <jobId> --provider-agent-id <providerAgentId> --token-symbol <sym> --token-amount <amt> --agent-id <agentId>
+```
+
+Composite command: save-agreed + conditional set-payment-mode → `confirmNow` branch.
+Replaces the separate `save-agreed` + `set-payment-mode` two-step in the negotiate_ack event.
+
+| Parameter | When to fill |
+|---|---|
+| `<jobId>` | Required |
+| `--provider-agent-id` | Required; from the ASP's `[intent:ack]` message |
+| `--token-symbol` / `--token-amount` | Required; from the ASP's `[intent:ack]` fields |
+| `--agent-id` | Optional; auto-resolved if omitted |
+
+Output branches:
+- `{ "ok": true, "data": { "confirmNow": true, "confirmContent": "..." } }` — paymentMode already escrow; send `confirmContent` as `[intent:confirm]` immediately.
+- `{ "confirming": true, ... }` — setPaymentMode submitted on-chain; wait for `job_payment_mode_changed`.
+
+### get-agreed
+
+```
+agent get-agreed <jobId>
+```
+
+Read locally persisted negotiation result (no network). Returns `{ providerAgentId, tokenSymbol, tokenAmount }`.
+Used by the `job_payment_mode_changed` playbook to avoid session-history replay.
+
 ### confirm-accept
 
 ```
@@ -304,7 +333,7 @@ agent confirm-accept <jobId>
 ```
 
 Buyer confirms the provider's acceptance + escrow payment (for escrow, funds are deposited into the contract).
-Provider, token symbol, and amount are read automatically from the local negotiate-state (written by `save-agreed`).
+Provider, token symbol, and amount are read automatically from the local negotiate-state (written by `save-agreed` / `ack-to-confirm`).
 
 | Parameter | When to fill |
 |---|---|

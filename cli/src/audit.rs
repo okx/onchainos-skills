@@ -364,6 +364,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Status { .. } => "status".into(),
         AgentCommand::Tasks { .. } => "tasks".into(),
         AgentCommand::SetPaymentMode { .. } => "set-payment-mode".into(),
+        AgentCommand::AckToConfirm { .. } => "ack-to-confirm".into(),
+        AgentCommand::GetAgreed { .. } => "get-agreed".into(),
         AgentCommand::ConfirmAccept { .. } => "confirm-accept".into(),
         AgentCommand::DirectAccept { .. } => "direct-accept".into(),
         AgentCommand::Task402Pay { .. } => "task-402-pay".into(),
