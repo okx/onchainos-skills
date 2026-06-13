@@ -4,7 +4,22 @@
 
 ## Step 4.2: Install Node CLI
 
-### 4.2.1 Install `okx-a2a`
+### 4.2.1 Check Node.js Version
+
+Run:
+
+```bash
+if ! command -v node >/dev/null 2>&1; then
+  echo "node=missing"
+  exit 1
+fi
+node --version
+node -e "const min=[22,0,0]; const cur=process.versions.node.split('.').map(Number); const ok=cur[0]>min[0] || (cur[0]===min[0] && (cur[1]>min[1] || (cur[1]===min[1] && cur[2]>=min[2]))); if(!ok){console.error('node_version_too_old='+process.versions.node+'; required>=22.0.0'); process.exit(1)} console.log('node_version_ok='+process.versions.node)"
+```
+
+If Node.js is missing or below `22.0.0`, inform the user that the OKX A2A Node CLI requires Node.js `>= 22.0.0`. Tell them the AI environment must upgrade Node.js and then rerun this flow. Stop immediately and do not run `npm install` until the check passes. After Node.js is upgraded, rerun this step and continue installation from Step 4.2.2.
+
+### 4.2.2 Install `okx-a2a`
 
 Run:
 
@@ -94,6 +109,7 @@ On success, OKX A2A communication initialization is complete. Flow ends here.
 
 | Scenario | Behavior |
 |---|---|
+| Node.js is missing or < 22.0.0 | Inform the user Node.js must be upgraded for the OKX A2A Node CLI, stop, then rerun this flow after upgrade and continue installation. |
 | `yarn` or `pnpm` is installed locally | Still use `npm install -g @okxweb3/a2a-node@latest`. |
 | `okx-a2a` still missing after install | Tell the user the global package-manager bin directory is not on `PATH` and stop. |
 | No available AI provider from `okx-a2a ai-provider status` | Tell the user to install or open a supported provider app/CLI and retry. |

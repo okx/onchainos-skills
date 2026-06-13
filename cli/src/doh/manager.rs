@@ -205,6 +205,21 @@ impl DohManager {
         self.mode.as_ref() == Some(&DohMode::Proxy) && self.node.is_some()
     }
 
+    /// True when the proxy node returned a non-JSON response (CDN block page).
+    /// OKX APIs always return application/json; anything else in proxy mode means
+    /// the node is intercepting traffic (e.g. user switched from China to VPN).
+    pub fn should_failover_on_response(&self, resp: &reqwest::Response) -> bool {
+        if !self.is_proxy() {
+            return false;
+        }
+        !resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| ct.contains("application/json"))
+            .unwrap_or(false)
+    }
+
     /// Resolve node.ip to an IpAddr. Handles two cases:
     /// 1. node.ip is a real IP like "8.212.1.102" → parse directly
     /// 2. node.ip is a CNAME domain like "xyz.aliyunddos.com" → DNS lookup

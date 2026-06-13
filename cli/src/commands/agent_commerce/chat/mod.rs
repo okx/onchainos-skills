@@ -43,7 +43,7 @@ pub enum ChatCommand {
         job_id: String,
         group_id: String,
         direction: String,
-        provider_security_rate: String,
+        provider_security_rate: Option<String>,
         client_communication_address: String,
         provider_communication_address: String,
     },
@@ -97,7 +97,7 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
                     &job_id,
                     &group_id,
                     &direction,
-                    &provider_security_rate,
+                    provider_security_rate.as_deref(),
                     &client_communication_address,
                     &provider_communication_address,
                 )
@@ -269,30 +269,28 @@ pub async fn fetch_message_eligible(
     job_id: &str,
     group_id: &str,
     direction: &str,
-    provider_security_rate: &str,
+    provider_security_rate: Option<&str>,
     client_communication_address: &str,
     provider_communication_address: &str,
 ) -> Result<Value> {
     let headers = agent_commerce_headers(agent_id);
+    let mut query: Vec<(&str, &str)> = vec![
+        ("clientAgentId", client_agent_id),
+        ("providerAgentId", provider_agent_id),
+        ("jobId", job_id),
+        ("groupId", group_id),
+        ("direction", direction),
+        ("clientCommunicationAddress", client_communication_address),
+        (
+            "providerCommunicationAddress",
+            provider_communication_address,
+        ),
+    ];
+    if let Some(rate) = provider_security_rate {
+        query.push(("providerSecurityRate", rate));
+    }
     let result = client
-        .get_authed_with_headers(
-            MESSAGE_ELIGIBLE_PATH,
-            access_token,
-            &[
-                ("clientAgentId", client_agent_id),
-                ("providerAgentId", provider_agent_id),
-                ("jobId", job_id),
-                ("groupId", group_id),
-                ("direction", direction),
-                ("providerSecurityRate", provider_security_rate),
-                ("clientCommunicationAddress", client_communication_address),
-                (
-                    "providerCommunicationAddress",
-                    provider_communication_address,
-                ),
-            ],
-            Some(&headers),
-        )
+        .get_authed_with_headers(MESSAGE_ELIGIBLE_PATH, access_token, &query, Some(&headers))
         .await;
 
     match result {

@@ -198,7 +198,7 @@ async fn run() {
         cli.chain = Some("xlayer".to_string());
     }
 
-    // Propagate --base-url to env so WalletApiClient and refresh_jwt_inline pick it up.
+    // Propagate --base-url to env so WalletApiClient and the token-refresh path pick it up.
     if let Some(ref url) = cli.base_url {
         std::env::set_var("OKX_BASE_URL", url);
     }
@@ -260,7 +260,7 @@ async fn run() {
     if let Err(e) = result {
         match e.downcast::<output::CliConfirming>() {
             Ok(c) => {
-                output::confirming(&c.message, &c.next);
+                output::confirming_scene(&c.message, &c.next, c.scene.as_deref());
                 std::process::exit(2);
             }
             Err(e) => match e.downcast::<output::CliSetupRequired>() {

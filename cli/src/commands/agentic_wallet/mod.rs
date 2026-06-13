@@ -7,6 +7,7 @@ pub mod common;
 pub mod gas_station;
 pub mod geoblock;
 pub mod history;
+pub mod locale;
 pub mod plugin;
 pub mod sign;
 pub mod transfer;

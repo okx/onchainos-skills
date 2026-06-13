@@ -567,8 +567,9 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     // 请求体：create-comment 需要 chainIndex + sessionCert + feedBackAgentId +
     // comment（fromAddr 已不再带）。feedBackAgentId 是评价发起方的 agent id，与
     // 广播 extraData.erc8004Msg.feedBackAgentId 同源（均来自 --creator-id），
-    // 但在请求体里放在顶层（和 chainIndex 同级），不进 comment 子对象。
-    // 本地 XLayer 地址解析仍然要做，结果只给下一步广播用。
+    // 但在请求体里放在顶层（和 chainIndex 同级），不进 comment 子对象。taskId 选填，
+    // 有值时同样放顶层（与广播 extraData.erc8004Msg.taskId 同源，均来自 --task-id），
+    // 为空则不写入。本地 XLayer 地址解析仍然要做，结果只给下一步广播用。
     // 注意：comment 子对象里的 "comment" 字段就是原来的 feedbackDesc，
     // 与外层 body.comment（序列化后的 JSON 字符串）同名但是不同层级，别混淆。
     let comment = json!({
@@ -576,12 +577,15 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         "value": score.to_string(),
         "comment": feedback_desc,
     });
-    let body = json!({
+    let mut body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
         "sessionCert": &signing_session.session_cert,
         "feedBackAgentId": creator_id,
         "comment": serde_json::to_string(&comment).context("failed to serialize comment")?,
     });
+    if !task_id.is_empty() {
+        body["taskId"] = json!(task_id);
+    }
 
     eprintln!(
         "[agent-identity] feedback-submit request: url={} access_token_len={} access_token_prefix={} body={}",

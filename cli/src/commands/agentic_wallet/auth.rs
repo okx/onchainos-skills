@@ -5,6 +5,7 @@ use anyhow::{bail, Result};
 use base64::Engine;
 use serde_json::json;
 
+use super::locale::{detect_system_locale, normalize_locale};
 use crate::audit;
 use crate::keyring_store;
 use crate::output;
@@ -613,6 +614,7 @@ fn check_login_mode_diff(
     let confirming = output::CliConfirming {
         message,
         next: "If the user confirms, re-run the same command with --force flag appended to proceed.".to_string(),
+        scene: None,
     };
 
     if let Some(start) = t {
@@ -622,21 +624,6 @@ fn check_login_mode_diff(
         );
     }
     Err(confirming.into())
-}
-
-/// Validate a user-supplied locale value against the OTP-email whitelist.
-///
-/// Returns `(validated_locale, did_fallback)`:
-/// - If the input matches the whitelist (case-sensitive) -> pass through, `false`.
-/// - Otherwise -> fall back to `"en_US"`, `true`.
-///
-/// Callers should emit a stderr warning when `did_fallback == true`.
-pub(crate) fn validate_locale(locale: &str) -> (&'static str, bool) {
-    match locale {
-        "en_US" => ("en_US", false),
-        "zh_CN" => ("zh_CN", false),
-        _ => ("en_US", true),
-    }
 }
 
 /// onchainos wallet login [email] [--locale <locale>] [--force]
@@ -664,24 +651,24 @@ pub(super) async fn cmd_login(
         // warning).
         check_login_mode_diff("email", Some(email), None, force)?;
 
-        // Validate locale before calling auth_init.
-        let validated_locale: Option<&str> = match locale {
-            Some(loc) => {
-                let (validated, did_fallback) = validate_locale(loc);
-                if did_fallback {
-                    eprintln!(
-                        "locale '{}' not in supported list (en_US, zh_CN), falling back to en_US",
-                        loc,
-                    );
+        // Normalize --locale (zh*→zh_CN, en*→en_US, others pass through);
+        // an invalid value is dropped (email path tolerates a missing locale).
+        let normalized_locale: Option<String> = match locale {
+            Some(loc) => match normalize_locale(loc) {
+                Some(norm) => Some(norm),
+                None => {
+                    eprintln!("locale '{loc}' is invalid, omitting locale field");
+                    None
                 }
-                Some(validated)
-            }
+            },
             None => None,
         };
+        // sysLocale comes from the OS; unreadable/invalid → omitted (silent).
+        let sys_locale = detect_system_locale();
 
         let mut client = WalletApiClient::new()?;
         let resp = client
-            .auth_init(email, validated_locale)
+            .auth_init(email, normalized_locale.as_deref(), sys_locale.as_deref())
             .await
             .map_err(format_api_error)?;
 
@@ -725,7 +712,7 @@ pub(super) async fn cmd_login(
                 cmd_login_ak(&api_key, &secret_key, &passphrase, locale).await
             }
             _ => {
-                bail!("please set OKX_API_KEY, OKX_SECRET_KEY, OKX_PASSPHRASE env vars for API Key login");
+                bail!("to log in with email, run `onchainos wallet login <email>`; or set OKX_API_KEY, OKX_SECRET_KEY, OKX_PASSPHRASE env vars for API Key login");
             }
         }
     }
@@ -762,7 +749,13 @@ async fn cmd_login_ak(
         );
     }
 
-    let locale_val = locale.unwrap_or("en-US");
+    // Normalize --locale; the AK signed string requires a non-empty value,
+    // so a missing/invalid locale defaults to canonical "en_US".
+    let locale_val = locale
+        .and_then(normalize_locale)
+        .unwrap_or_else(|| "en_US".to_string());
+    // sysLocale from OS — body only, NOT folded into the signed string (Q3).
+    let sys_locale = detect_system_locale();
     let timestamp = chrono::Utc::now().timestamp_millis() as u64;
     let method = "GET";
     let sign_path = "/web3/ak/agentic/login";
@@ -787,7 +780,8 @@ async fn cmd_login_ak(
             passphrase,
             &timestamp_str,
             &sign,
-            locale_val,
+            &locale_val,
+            sys_locale.as_deref(),
         )
         .await
         .map_err(format_api_error)?;
@@ -2081,32 +2075,5 @@ mod tests {
         );
 
         cmd_login_mode_diff_cleanup();
-    }
-
-    // ── validate_locale tests ────────────────────────────────────────
-
-    #[test]
-    fn validate_locale_passes_en_us() {
-        assert_eq!(validate_locale("en_US"), ("en_US", false));
-    }
-
-    #[test]
-    fn validate_locale_passes_zh_cn() {
-        assert_eq!(validate_locale("zh_CN"), ("zh_CN", false));
-    }
-
-    #[test]
-    fn validate_locale_falls_back_for_hyphenated_en() {
-        assert_eq!(validate_locale("en-US"), ("en_US", true));
-    }
-
-    #[test]
-    fn validate_locale_falls_back_for_arbitrary() {
-        assert_eq!(validate_locale("xx-YY"), ("en_US", true));
-    }
-
-    #[test]
-    fn validate_locale_falls_back_for_empty_string() {
-        assert_eq!(validate_locale(""), ("en_US", true));
     }
 }
