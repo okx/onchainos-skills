@@ -168,7 +168,7 @@ After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you 
 ===============================================================\n\
 🛑🛑🛑 STOP -- after create-task + task-attach (if any) + watch (if prompted), you **MUST end this turn**\n\
 ===============================================================\n\
-✅ **Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, run the emitted `okx-a2a user watch ...` command before ending the turn. Read `okx-task-watch/SKILL.md` first if you haven't in this session.\n\
+✅ **Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, run the emitted `okx-a2a user watch ...` command before ending the turn. Read `skills/okx-task-watch/SKILL.md` first if you haven't in this session.\n\
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.\n\
 ❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.\n\
 ❌ **Do not call any other onchainos agent commands** (except `task-attach` in Step 6.5 and `okx-a2a user watch` above) -- all further actions are driven by on-chain events.\n\
