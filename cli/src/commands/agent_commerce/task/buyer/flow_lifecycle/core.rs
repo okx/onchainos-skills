@@ -8,33 +8,39 @@ pub(crate) fn provider_applied(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
-    let step1 = if ctx.prefetched.is_some() {
-        format!("\
-         **Step 1 -- Use pre-fetched task context above:**\n\
-         Read providerAgentId, paymentMode, tokenSymbol, tokenAmount from the `[Pre-fetched task context]` block.\n\
-         ⚠️ If any field is missing, fall back to:\n\
-         ```bash\n\
-         onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-         ```\n\
-         ⚠️ paymentMode should be escrow (1) at this point.\n\n")
-    } else {
-        format!("\
-         **Step 1 -- Fetch task info:**\n\
-         ```bash\n\
-         onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-         ```\n\
-         Extract: providerAgentId, paymentMode, tokenSymbol, tokenAmount.\n\
-         ⚠️ paymentMode should be escrow (1) at this point.\n\n")
+    // When prefetched is available, inline tokenSymbol / tokenAmount into the
+    // confirm-accept template — the LLM only has to extract providerAgentId
+    // (the iron rule requires it come from THIS turn's a2a-agent-chat sender,
+    // NOT from task detail / state). When prefetched is missing, fall back
+    // to a 2-step plan that fetches the task context first.
+    let (prelude, sym_field, amt_field, action_header) = match ctx.prefetched {
+        Some(p) => (
+            String::new(),
+            p.token_symbol.clone(),
+            p.token_amount.clone(),
+            "**Run confirm-accept (settle the accept on-chain):**".to_string(),
+        ),
+        None => (
+            format!(
+                "**Step 1 -- Fetch task info:**\n\
+                 ```bash\n\
+                 onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+                 ```\n\
+                 Extract: tokenSymbol, tokenAmount.\n\n"
+            ),
+            "<tokenSymbol>".to_string(),
+            "<tokenAmount>".to_string(),
+            "**Step 2 -- Run confirm-accept (settle the accept on-chain):**".to_string(),
+        ),
     };
 
     format!(
     "[Current Status] provider_applied (ASP has submitted an on-chain apply)\n\
      [Role] User (User Agent)\n\n\
-     [Your next actions (strict order)]\n\n\
-     {step1}\
-     **Step 2 -- Run confirm-accept (settle the accept on-chain):**\n\
+     {prelude}\
+     {action_header}\n\
      ```bash\n\
-     onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
+     onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol {sym_field} --token-amount {amt_field}\n\
      ```\n\
      ⚠️ The flag is `--provider-agent-id`, not `--agent-id`.\n\
      🛑 **provider-agent-id MUST match the sender.agentId of the ASP's a2a-agent-chat message** -- take it from the ASP message received in this turn first, then fall back to the [intent:ack] entry in sub-session history. Do not use the value from common context (it can cross-pollute under multi-task scenarios).\n\
