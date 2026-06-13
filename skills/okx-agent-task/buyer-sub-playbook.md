@@ -82,7 +82,7 @@ Then execute the returned script step by step.
 
 ## SKILL_PREFETCH Handling
 
-Content starts with `[SKILL_PREFETCH]` → this playbook is now loaded. No action needed for the prefetch message itself — **but process all subsequent messages normally via Peer Message Routing below**.
+The sub session receives `[SKILL_PREFETCH]` → SKILL.md is loaded. When the next inbound a2a-agent-chat arrives, SKILL.md Activation #2 routes here based on `sender.role`. No action needed for the prefetch message itself.
 
 🔴 Do NOT carry "no action" to business messages in the same or later turn.
 

@@ -36,7 +36,7 @@ pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_
              🛑 **B-Step 1.5 - SKILL_PREFETCH (mandatory for new sub sessions):**\n\
              Immediately after xmtp_start_conversation returns, call `xmtp_dispatch_session` to pre-load the skill into the newly created sub session:\n\
              \x20\x20sessionKey = <the sessionKey just returned by xmtp_start_conversation>\n\
-             \x20\x20content = `[SKILL_PREFETCH] Read okx-agent-task/buyer-sub-playbook.md. No action needed for this message — but process all subsequent messages normally via Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.`\n\
+             \x20\x20content = `[SKILL_PREFETCH] Read okx-agent-task/SKILL.md. No action needed for this message — but process all subsequent messages normally. Do NOT carry over \"no action\" to business messages.`\n\
              ❌ Do NOT skip this step — the sub session has no context yet; without SKILL_PREFETCH, the first inbound message will be processed without the buyer playbook loaded.\n\
              ⚠️ Do NOT use `xmtp_send` (that would be visible to the ASP). Use `xmtp_dispatch_session` only.\n\n\
              **B-Step 2 - automated negotiation (User Agent <-> ASP Agent multi-turn interaction in the sub session):**\n\

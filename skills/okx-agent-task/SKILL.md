@@ -15,7 +15,7 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 ## Reading Order
 
 > **`[SKILL_PREFETCH]`** (content starts with `[SKILL_PREFETCH]`):
-> Read the named file directly (e.g. `buyer-sub-playbook.md` or `provider.md`). Skip pre-flight, skip activation, skip the rest of this file. Process subsequent messages via that playbook's routing.
+> This skill is now loaded. No action for the prefetch itself. When the next inbound message arrives, use the Activation rules below to route it.
 
 > **User session** (sessionKey does NOT contain `:group:` or `:evaluate:`):
 > Read [`buyer-user.md`](./buyer-user.md) directly — it is self-contained for user-session buyer flows.
