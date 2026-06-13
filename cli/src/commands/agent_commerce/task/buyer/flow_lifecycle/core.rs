@@ -19,7 +19,11 @@ pub(crate) fn provider_applied(ctx: &FlowContext<'_>) -> String {
      ⚠️ **Do not query the task API to verify whether the ASP has applied** — on-chain indexing has a delay; `confirm-accept` performs the chain-side check internally.\n\
      ❌ Do not call apply (apply is a provider action; the user never runs it).\n\
      ❌ Do not call set-payment-mode (already done in the negotiate_ack event).\n\n\
-     → After running, **end this turn** and wait for the `job_accepted` system notification.\n"
+     → After running, **end this turn** and wait for the `job_accepted` system notification.\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `onchainos agent confirm-accept` call\n\
+     No other text or tool calls. End turn after the call completes.\n"
     )
 }
 

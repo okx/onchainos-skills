@@ -18,7 +18,11 @@ pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
      {refunded_notify}\n\n\
      **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     Refund flow fully complete.\n"
+     Refund flow fully complete.\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `xmtp_dispatch_user` call with the content above\n\
+     No other text or tool calls. End turn after the call completes.\n"
     )
 }
 
@@ -41,7 +45,11 @@ pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
      {auto_refunded_notify}\n\n\
      **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     Refund flow fully complete.\n"
+     Refund flow fully complete.\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `xmtp_dispatch_user` call with the content above\n\
+     No other text or tool calls. End turn after the call completes.\n"
     )
 }
 
@@ -56,7 +64,11 @@ pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
      [Your next actions]\n\n\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the task expired** ({l10n_short}):\n\
      \x20\x20content: {expired_notify}\n\n\
-     This task reached a terminal state; the flow ends.\n"
+     This task reached a terminal state; the flow ends.\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `xmtp_dispatch_user` call with the content above\n\
+     No other text or tool calls. End turn after the call completes.\n"
     )
 }
 
@@ -77,7 +89,11 @@ pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
      \x20\x20content: {closed_notify}\n\n\
      **Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     Close flow ends.\n"
+     Close flow ends.\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `xmtp_dispatch_user` call with the content above\n\
+     No other text or tool calls. End turn after the call completes.\n"
     )
 }
 
@@ -98,7 +114,12 @@ pub(crate) fn submit_expired(ctx: &FlowContext<'_>) -> String {
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
      **Step 2 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
-     content: \"{submit_expired}\"\n"
+     content: \"{submit_expired}\"\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `onchainos agent claim-auto-refund` call\n\
+     2. One `xmtp_dispatch_user` call with the content above\n\
+     No other text or tool calls.\n"
     )
 }
 
@@ -117,7 +138,12 @@ pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
      onchainos agent claim-auto-refund {job_id}\n\
      ```\n\n\
      **Step 2 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
-     content: \"{reject_expired}\"\n"
+     content: \"{reject_expired}\"\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `onchainos agent claim-auto-refund` call\n\
+     2. One `xmtp_dispatch_user` call with the content above\n\
+     No other text or tool calls.\n"
     )
 }
 
@@ -160,7 +186,11 @@ pub(crate) fn review_expired(ctx: &FlowContext<'_>) -> String {
      **Step 1 -- Call xmtp_dispatch_user to notify the user the review window expired** ({l10n_short}):\n\
      \x20\x20content:\n\
      {review_expired}\n\n\
-     **Step 2** -- Wait for the `job_auto_completed` system notification and then wrap up.\n"
+     **Step 2** -- Wait for the `job_auto_completed` system notification and then wrap up.\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `xmtp_dispatch_user` call with the content above\n\
+     No other text or tool calls. End turn after the call completes.\n"
     )
 }
 
@@ -221,7 +251,12 @@ pub(crate) fn close_task(ctx: &FlowContext<'_>) -> String {
      onchainos agent close {job_id}\n\
      ```\n\n\
      **Step 2 -- Notify the user via xmtp_dispatch_user** ({l10n_short}):\n\
-     content: \"{close_notify}\"\n"
+     content: \"{close_notify}\"\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `onchainos agent close` call\n\
+     2. One `xmtp_dispatch_user` call with the content above\n\
+     No other text or tool calls.\n"
     )
 }
 
@@ -238,7 +273,12 @@ pub(crate) fn set_public(ctx: &FlowContext<'_>) -> String {
      onchainos agent set-public {job_id}\n\
      ```\n\n\
      **Step 2 -- Notify the user via xmtp_dispatch_user** ({l10n_short}):\n\
-     content: \"{set_public_notify}\"\n"
+     content: \"{set_public_notify}\"\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `onchainos agent set-public` call\n\
+     2. One `xmtp_dispatch_user` call with the content above\n\
+     No other text or tool calls.\n"
     )
 }
 
@@ -247,14 +287,18 @@ pub(crate) fn set_public(ctx: &FlowContext<'_>) -> String {
 pub(crate) fn submit_deadline_warn() -> String {
     "[System Notification] submit_deadline_warn (provider-side deadline reminder)\n\
      [Role] User (User Agent)\n\n\
-     [Advice] Stay silent and observe; wait for the provider to submit the deliverable (job_submitted notification) before acting.\n".to_string()
+     [Advice] Stay silent and observe; wait for the provider to submit the deliverable (job_submitted notification) before acting.\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     End turn immediately with no tool calls or text output.\n".to_string()
 }
 
 pub(crate) fn evaluator_events(event_str: &str) -> String {
     format!(
     "[System Notification] {event_str} (internal arbitration event, handled by evaluator)\n\
      [Role] User (User Agent)\n\n\
-     [Advice] Stay silent and observe. After `dispute_resolved` arrives, call next-action to wrap up.\n"
+     [Advice] Stay silent and observe. After `dispute_resolved` arrives, call next-action to wrap up.\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     End turn immediately with no tool calls or text output.\n"
     )
 }
 
@@ -271,7 +315,11 @@ pub(crate) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
      [Your next actions]\n\n\
      {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the reward has arrived** ({l10n_short}):\n\
-     \x20\x20content: {reward_claimed}\n"
+     \x20\x20content: {reward_claimed}\n\n\
+     [OUTPUT_TEMPLATE]\n\
+     Your entire response for this event MUST be exactly:\n\
+     1. One `xmtp_dispatch_user` call with the content above\n\
+     No other text or tool calls. End turn after the call completes.\n"
     )
 }
 
