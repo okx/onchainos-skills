@@ -374,7 +374,13 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         }
         Event::JobVisibilityChanged => super::flow_negotiate::job_visibility_changed(&ctx),
         Event::JobPaymentModeChanged => super::flow_negotiate::job_payment_mode_changed(&ctx),
-        Event::NegotiateReply => super::flow_negotiate::negotiate_reply(&ctx),
+        Event::NegotiateReply => {
+            if super::content::is_cli_mode() {
+                super::flow_negotiate::negotiate_reply_cli(&ctx)
+            } else {
+                super::flow_negotiate::negotiate_reply(&ctx)
+            }
+        }
         Event::NegotiateAck => super::flow_negotiate::negotiate_ack(&ctx),
         Event::NegotiateCounter => super::flow_negotiate::negotiate_counter(&ctx),
 
@@ -543,7 +549,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     // to validate). Keep only LOCALIZATION_PREFIX — translation may still be
     // required for the user-facing card body.
     let use_cli_minimal = super::content::is_cli_mode()
-        && matches!(event_str, "job_created");
+        && matches!(event_str, "job_created" | "negotiate_reply");
     let core = if use_cli_minimal
         || event_str == "create_task"
         || event_str == "switch_provider"
