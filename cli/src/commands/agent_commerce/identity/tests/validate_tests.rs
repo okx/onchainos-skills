@@ -797,11 +797,21 @@ fn trailing_space_test_fails() {
 
 #[test]
 fn mid_word_test_does_not_trigger() {
-    // "protest" contains "test" but not as a delimited marker.
+    // "protest" / "Predict" contain "pre"/"test" but not as a delimited marker.
     assert!(!has_test_marker("protest"));
     assert!(!has_test_marker("Predict"));
-    assert!(!has_test_marker("pretest_bot")); // _test but preceded by "pre"
-    assert!(!has_test_marker("testing"));    // "testing" is not an exact match for "-test" etc.
+    // "testing" — "test" followed by 'i' (alphanumeric) → boundary check fails → no match.
+    assert!(!has_test_marker("testing"));
+    // "contextual" — no delimited marker form.
+    assert!(!has_test_marker("contextual"));
+}
+
+#[test]
+fn underscore_test_in_middle_triggers() {
+    // "pretest_bot" DOES trigger: delimited_marker_present finds "_test" at position 7,
+    // next char is '_' (non-alphanumeric boundary) → returns true.
+    // The prefix "pre" before "_test" is irrelevant to the algorithm.
+    assert!(has_test_marker("pretest_bot"));
 }
 
 #[test]

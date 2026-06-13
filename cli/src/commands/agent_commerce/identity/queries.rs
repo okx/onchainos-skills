@@ -163,8 +163,10 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
     match &result {
         Ok(data) => eprintln!(
             "[agent-identity] get response: {}",
-            serde_json::to_string(data)
-                .unwrap_or_else(|_| "<serialize failed>".to_string())
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
         ),
         Err(e) => eprintln!("[agent-identity] get response err: {:#}", e),
     }
@@ -230,8 +232,10 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
     match &result {
         Ok(data) => eprintln!(
             "[agent-identity] search response: {}",
-            serde_json::to_string(data)
-                .unwrap_or_else(|_| "<serialize failed>".to_string())
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
         ),
         Err(e) => eprintln!("[agent-identity] search response err: {:#}", e),
     }
@@ -275,8 +279,10 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
     match &result {
         Ok(data) => eprintln!(
             "[agent-identity] service-list response: {}",
-            serde_json::to_string(data)
-                .unwrap_or_else(|_| "<serialize failed>".to_string())
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
         ),
         Err(e) => eprintln!("[agent-identity] service-list response err: {:#}", e),
     }
@@ -344,8 +350,10 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
     match &result {
         Ok(data) => eprintln!(
             "[agent-identity] feedback-list response: {}",
-            serde_json::to_string(data)
-                .unwrap_or_else(|_| "<serialize failed>".to_string())
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
         ),
         Err(e) => eprintln!("[agent-identity] feedback-list response err: {:#}", e),
     }
@@ -415,8 +423,10 @@ async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<V
     match &result {
         Ok(data) => eprintln!(
             "[agent-identity] get-by-address response: {}",
-            serde_json::to_string(data)
-                .unwrap_or_else(|_| "<serialize failed>".to_string())
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
         ),
         Err(e) => eprintln!("[agent-identity] get-by-address response err: {:#}", e),
     }

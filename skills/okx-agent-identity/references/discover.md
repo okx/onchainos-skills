@@ -44,7 +44,7 @@ column, divide a score, or add a column the cells don't carry.
 - "Read as" omitted if no filter survived. Gloss footnote once; omit if already shown this conversation.
 - Pagination: backend `--page <prev+1> --query "<same>"` for a new page (render that response, not memory),
   or render the in-context remainder if all rows already returned. Never stitch two pages into one table.
-  Page size is capped at 50 (asking for more 4xx's) — fetch more with `--page N+1`, never a bigger page.
+  Page size is capped at 100 — fetch more with `--page N+1`, never a bigger page.
 - **No sort knob on search.** `agent search` has no sort option. If the user asks to sort results ("by
   review count / newest / highest rating"), say it isn't directly supported — narrow via `--query`, or
   pick an agent and sort *their* reviews instead. Never promise or paste a sort flag (SKILL §UX Red Lines).

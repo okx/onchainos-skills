@@ -108,6 +108,14 @@ pub(crate) fn run_validation(
         check_universal_text("description", description, &mut findings);
         if role == "provider" {
             check_description_url_and_addr("description", description, &mut findings);
+            if description.chars().count() > 500 {
+                findings.push(Finding::block(
+                    "description",
+                    "D8",
+                    "Agent description exceeds 500 characters.",
+                    "Shorten the description to 500 characters or fewer.",
+                ));
+            }
         }
     }
 
@@ -354,6 +362,41 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
             "A2A service must not have an endpoint.",
             "Remove the endpoint field for A2A services.",
         ));
+    }
+
+    // ── T4: endpoint URL security (A2MCP only) ────────────────────────────
+    if is_a2mcp && !endpoint_empty {
+        let ep = svc.endpoint.as_deref().unwrap_or("").trim();
+        if !ep.starts_with("https://") {
+            findings.push(Finding::block(
+                f("endpoint"),
+                "T4",
+                "Endpoint must use HTTPS.",
+                "Change the URL scheme to https://.",
+            ));
+        } else {
+            let host = ep.strip_prefix("https://")
+                .and_then(|s| s.split('/').next())
+                .map(|h| h.split(':').next().unwrap_or(h))
+                .unwrap_or("")
+                .to_lowercase();
+            let is_private = host == "localhost"
+                || host == "127.0.0.1"
+                || host == "0.0.0.0"
+                || host.starts_with("10.")
+                || host.starts_with("192.168.")
+                || host.ends_with(".local")
+                || host.ends_with(".internal")
+                || host.strip_prefix("172.").and_then(|r| r.split('.').next()?.parse::<u8>().ok()).map(|n| (16..=31).contains(&n)).unwrap_or(false);
+            if is_private {
+                findings.push(Finding::block(
+                    f("endpoint"),
+                    "T4",
+                    "Endpoint must be a publicly reachable HTTPS URL (not localhost, 127.0.0.1, or a private network address).",
+                    "Deploy the service to a public host and provide its https:// URL.",
+                ));
+            }
+        }
     }
 
     // ── U5 contradicting standalone A2A / A2MCP token in name/description ──

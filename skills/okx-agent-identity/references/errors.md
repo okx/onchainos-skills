@@ -22,7 +22,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | `missing required parameter: <flag>` | "`<flag>` can't be empty." → re-ask it. `--agent-id` → ask which agent (`agent get` if needed); `--file` → ask path. |
 | `unexpected argument '<v>' found` (positional) | User typed e.g. `update 42`. Re-ask in plain language; you supply the flag yourself, never echo it. |
 | `missing required field in --service: name`/`: servicedescription` | "Service <name/description> can't be empty." → re-ask that field. |
-| `... for A2MCP: fee`/`: endpoint` | API service needs a fee (USDT ≤6 dp) / a public https endpoint → re-ask. Gloss type once (SKILL §Invariants Lexicon); never echo `A2MCP`. |
+| `missing required field in --service: fee`/`: endpoint` | API service needs a fee (USDT ≤6 dp) / a public https endpoint → re-ask. Gloss type once (SKILL §Invariants Lexicon); never echo `A2MCP`. |
 | `invalid servicetype` | "Type must be API service or agent-to-agent." → re-render numbered type prompt. Never echo `A2MCP`/`A2A`. |
 | `invalid value for --role` | "Role must be User Agent / ASP / Evaluator Agent." → re-render numbered role prompt. Never echo the enum. |
 | `provider agents require at least one service` | "An ASP needs at least one service." → return to service Q&A. No raw `provider`. |
@@ -51,7 +51,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 - `submit-approval success:true` → "Done — submitted for listing review. Usually ready within 24h; once approved it appears on the marketplace." **Stop.** No Step 5/6.
 - `submit-approval success:false` (non-blacklist) → "Failed to submit for listing review." + raw line + "You can try again later." **Stop.**
 
-## Skill-side guards (caught before the CLI — no bail!)
+## Skill-side guards (skill layer only — no bail!)
 
 - **No-op update** — nothing changed → "No changes to submit." Don't call `agent update`; re-enter update Q&A.
 - **Empty search query** — catch before sending; ask for the query.

@@ -39,7 +39,7 @@ The CLI is the QA engine; you render its `findings[]` and add ONE check it can't
 
 1. **Run at the Step-2 service card only** (not at Step-1). Pass the full set: `--role provider --name … --description … --service '[…]'`. Returns `{ pass, findings[{field, code, severity:"block", issue, fix}] }`. `field` uses dot-notation (e.g. `service[0].fee`).
 2. **Render each finding inline on its field row** as ` ⚠️ <issue> → <fix>`, mapping by the dotted `finding.field` to its card row (`service[0].fee` → the Fee row, `name` → the Name row). Surface a `(test)` marker on the identity name row if the name carries one.
-3. **Findings are warnings, not blocks. Do NOT hand-apply rule tables. Do NOT silently auto-correct.** When `findings[]` is non-empty (regardless of `pass`), after rendering the card present exactly TWO numbered choices (localized):
+3. **Do NOT hand-apply rule tables. Do NOT silently auto-correct.** When `findings[]` is non-empty, after rendering the card present exactly TWO numbered choices (localized):
    > 1. Fix — re-collect only the flagged field(s), then re-run `validate-listing` once.
    > 2. Skip — advance to the confirmation card immediately; do NOT re-run `validate-listing` (saves one API call).
    On choice **1**: accept the corrected value(s), re-run once, then show the card again (findings or not). On choice **2**: proceed without re-running. Never loop automatically; never force a fix.

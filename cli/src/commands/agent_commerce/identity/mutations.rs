@@ -325,7 +325,7 @@ async fn precheck_impl(args: &PrecheckArgs, ctx: &Context) -> Result<Value> {
     // absent → check consent status, returning terms (canCreate:false) if not yet
     // accepted so the skill can run the blocking legal-confirmation step.
     if !has_agents {
-        if args.consent_key.is_some() {
+        if args.consent_key.as_deref().map(|k| !k.trim().is_empty()).unwrap_or(false) {
             consent_impl(
                 &ConsentArgs { consent_key: args.consent_key.clone(), agreed: Some(true) },
                 ctx,
@@ -912,7 +912,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     // (a serialized JSON string) but at a different nesting level.
     let comment = json!({
         "agentid": agent_id,
-        "value": score,
+        "value": score.to_string(),
         "comment": feedback_desc,
     });
     let mut body = json!({
@@ -933,7 +933,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
-        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+        serde_json::to_string(&scrub_body_for_log(&body)).unwrap_or_else(|_| "<serialize failed>".to_string()),
     );
 
     let result = client
@@ -1007,7 +1007,7 @@ async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
-        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+        serde_json::to_string(&scrub_body_for_log(&body)).unwrap_or_else(|_| "<serialize failed>".to_string()),
     );
 
     let result = client
