@@ -417,6 +417,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Heartbeat { .. } => "heartbeat".into(),
         AgentCommand::WakeupNotify { .. } => "wakeup-notify".into(),
         AgentCommand::SaveAgreed { .. } => "save-agreed".into(),
+        AgentCommand::SaveAgreedAndSetPayment { .. } => "save-agreed-and-set-payment".into(),
         AgentCommand::MarkFailed { .. } => "mark-failed".into(),
         AgentCommand::MyAgents { .. } => "my-agents".into(),
         AgentCommand::ActiveTasks { .. } => "active-tasks".into(),
