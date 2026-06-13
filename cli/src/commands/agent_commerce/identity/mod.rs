@@ -29,8 +29,11 @@ mod validate;
 pub use args::{
     ActivateArgs, AgentStatusArgs, CreateArgs, FeedbackListArgs, FeedbackSubmitArgs,
     GetArgs, GetByAddressArgs, PrecheckArgs, SearchArgs, ServiceListArgs, UpdateArgs, UploadArgs,
-    XmtpSignArgs,
+    ValidateListingArgs, XmtpSignArgs,
 };
+
+// Pure-local validator — hidden CLI entry point used by the skill during QA.
+pub use validate::validate_listing;
 
 // Read-side commands.
 pub use queries::{feedback_list, get, get_by_address, search, service_list, top_asps};

@@ -193,3 +193,22 @@ pub struct XmtpSignArgs {
     #[arg(long)]
     pub message: Option<String>,
 }
+
+/// `onchainos agent validate-listing`: pure-local (no HTTP, no network)
+/// validator. Hidden (`hide=true`) — not shown in `--help`; used by the
+/// skill during registration QA.
+#[derive(Args, Clone, Debug)]
+pub struct ValidateListingArgs {
+    /// requester / provider / evaluator (aliases: 1/buyer/requestor →
+    /// requester, 2 → provider, 3 → evaluator). Defaults to provider.
+    #[arg(long)]
+    pub role: Option<String>,
+    #[arg(long)]
+    pub name: Option<String>,
+    #[arg(long)]
+    pub description: Option<String>,
+    /// JSON array string with the same element shape as create/update's
+    /// `--service`. Ignored for non-provider roles.
+    #[arg(long)]
+    pub service: Option<String>,
+}

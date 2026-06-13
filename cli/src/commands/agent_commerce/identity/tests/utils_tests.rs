@@ -1,5 +1,25 @@
 use super::*;
 use serde_json::json;
+use super::super::models::{AgentCard, AgentService};
+use crate::client::DEFAULT_BASE_URL;
+use crate::commands::Context;
+use crate::config::AppConfig;
+
+fn ctx_no_override() -> Context {
+    Context {
+        config: AppConfig::default(),
+        base_url_override: None,
+        chain_override: None,
+    }
+}
+
+fn ctx_with_base(url: &str) -> Context {
+    Context {
+        config: AppConfig::default(),
+        base_url_override: Some(url.to_string()),
+        chain_override: None,
+    }
+}
 
 // ─── parse_stars_arg: happy path ─────────────────────────────────────
 
@@ -1015,4 +1035,513 @@ fn collect_owned_counts_for_has_agents_gate() {
     ]});
     assert_eq!(collect_owned_agents(&data, "0xSIGNER").len(), 1);
     assert_eq!(collect_owned_agents(&data, "0xOTHER").len(), 0);
+}
+
+// ─── parse_agent_unsigned ─────────────────────────────────────────────
+
+#[test]
+fn parse_agent_unsigned_empty_array_is_err() {
+    assert!(parse_agent_unsigned(json!([])).is_err());
+}
+
+#[test]
+fn parse_agent_unsigned_non_array_is_err() {
+    // Backend wraps data in an array; a bare object is unexpected.
+    assert!(parse_agent_unsigned(json!({ "unsignedTxHash": "0xabc" })).is_err());
+    assert!(parse_agent_unsigned(json!(null)).is_err());
+}
+
+#[test]
+fn parse_agent_unsigned_empty_object_returns_ok_with_defaults() {
+    // All fields have `#[serde(default)]` → an empty object deserializes fine.
+    let result = parse_agent_unsigned(json!([{}])).expect("empty element should deserialize");
+    assert_eq!(result.unsigned_tx_hash, "");
+    assert_eq!(result.sign_type, "");
+}
+
+#[test]
+fn parse_agent_unsigned_extracts_first_element() {
+    let result = parse_agent_unsigned(json!([
+        { "unsignedTxHash": "0xfirst" },
+        { "unsignedTxHash": "0xsecond" },
+    ]))
+    .expect("first element should parse");
+    assert_eq!(result.unsigned_tx_hash, "0xfirst");
+}
+
+#[test]
+fn parse_agent_unsigned_reads_sign_type_and_extra_data() {
+    let result = parse_agent_unsigned(json!([{
+        "unsignedTxHash": "0xabc",
+        "signType": "ed25519",
+        "extraData": { "communicationAddress": "0xaddr" },
+    }]))
+    .expect("should parse");
+    assert_eq!(result.unsigned_tx_hash, "0xabc");
+    assert_eq!(result.sign_type, "ed25519");
+    assert_eq!(result.extra_data["communicationAddress"], json!("0xaddr"));
+}
+
+// ─── reconstruct_get_url_for_log ──────────────────────────────────────
+
+#[test]
+fn reconstruct_get_url_no_query_omits_question_mark() {
+    let ctx = ctx_no_override();
+    let url = reconstruct_get_url_for_log(&ctx, "/api/v1/agents", &[]);
+    assert_eq!(url, format!("{DEFAULT_BASE_URL}/api/v1/agents"));
+    assert!(!url.contains('?'));
+}
+
+#[test]
+fn reconstruct_get_url_non_empty_query_appends_pairs() {
+    let ctx = ctx_no_override();
+    let url = reconstruct_get_url_for_log(
+        &ctx,
+        "/api/v1/agents",
+        &[("chainIndex", "196"), ("page", "1")],
+    );
+    assert!(url.starts_with(&format!("{DEFAULT_BASE_URL}/api/v1/agents?")));
+    assert!(url.contains("chainIndex=196"));
+    assert!(url.contains("page=1"));
+}
+
+#[test]
+fn reconstruct_get_url_filters_empty_values() {
+    let ctx = ctx_no_override();
+    // Empty-string values are skipped; only non-empty pairs appear.
+    let url = reconstruct_get_url_for_log(
+        &ctx,
+        "/api/v1/agents",
+        &[("chainIndex", "196"), ("agentIdList", ""), ("page", "2")],
+    );
+    assert!(url.contains("chainIndex=196"));
+    assert!(url.contains("page=2"));
+    assert!(!url.contains("agentIdList"));
+}
+
+#[test]
+fn reconstruct_get_url_all_empty_values_omits_question_mark() {
+    let ctx = ctx_no_override();
+    let url = reconstruct_get_url_for_log(
+        &ctx,
+        "/api/v1/agents",
+        &[("chainIndex", ""), ("page", "")],
+    );
+    assert!(!url.contains('?'));
+}
+
+#[test]
+fn reconstruct_get_url_respects_base_url_override() {
+    let ctx = ctx_with_base("https://pre.example.com");
+    let url = reconstruct_get_url_for_log(&ctx, "/api/v1/test", &[("k", "v")]);
+    assert!(url.starts_with("https://pre.example.com/api/v1/test?"));
+    assert!(url.contains("k=v"));
+}
+
+// ─── normalize_role ───────────────────────────────────────────────────
+
+#[test]
+fn normalize_role_canonical_strings() {
+    assert_eq!(normalize_role("requester").unwrap(), "requester");
+    assert_eq!(normalize_role("provider").unwrap(),  "provider");
+    assert_eq!(normalize_role("evaluator").unwrap(), "evaluator");
+}
+
+#[test]
+fn normalize_role_numeric_aliases() {
+    assert_eq!(normalize_role("1").unwrap(), "requester");
+    assert_eq!(normalize_role("2").unwrap(), "provider");
+    assert_eq!(normalize_role("3").unwrap(), "evaluator");
+}
+
+#[test]
+fn normalize_role_string_aliases() {
+    assert_eq!(normalize_role("buyer").unwrap(),     "requester");
+    assert_eq!(normalize_role("requestor").unwrap(), "requester");
+}
+
+#[test]
+fn normalize_role_is_case_insensitive_and_trims_whitespace() {
+    assert_eq!(normalize_role("PROVIDER").unwrap(),        "provider");
+    assert_eq!(normalize_role("Requester").unwrap(),       "requester");
+    assert_eq!(normalize_role("  evaluator  ").unwrap(),   "evaluator");
+}
+
+#[test]
+fn normalize_role_unknown_input_is_err() {
+    assert!(normalize_role("seller").is_err());
+    assert!(normalize_role("admin").is_err());
+    assert!(normalize_role("4").is_err());
+    assert!(normalize_role("").is_err());
+}
+
+// ─── require_non_empty ────────────────────────────────────────────────
+
+#[test]
+fn require_non_empty_returns_trimmed_value() {
+    assert_eq!(require_non_empty(Some("hello"),   "--x").unwrap(), "hello");
+    assert_eq!(require_non_empty(Some("  hi  "),  "--x").unwrap(), "hi");
+}
+
+#[test]
+fn require_non_empty_rejects_blank_and_none() {
+    assert!(require_non_empty(Some(""),    "--x").is_err());
+    assert!(require_non_empty(Some("   "), "--x").is_err());
+    assert!(require_non_empty(None,        "--x").is_err());
+}
+
+// ─── trim_or_empty ────────────────────────────────────────────────────
+
+#[test]
+fn trim_or_empty_trims_and_handles_none() {
+    assert_eq!(trim_or_empty(Some("hello")),   "hello");
+    assert_eq!(trim_or_empty(Some("  hi  ")),  "hi");
+    assert_eq!(trim_or_empty(Some("")),         "");
+    assert_eq!(trim_or_empty(None),             "");
+}
+
+// ─── normalize_singleton_object ───────────────────────────────────────
+
+#[test]
+fn normalize_singleton_object_unwraps_one_element_array() {
+    let arr = json!([{ "key": "val" }]);
+    assert_eq!(normalize_singleton_object(arr), json!({ "key": "val" }));
+}
+
+#[test]
+fn normalize_singleton_object_keeps_multi_element_array() {
+    let arr = json!([{ "a": 1 }, { "b": 2 }]);
+    let orig = arr.clone();
+    assert_eq!(normalize_singleton_object(arr), orig);
+}
+
+#[test]
+fn normalize_singleton_object_keeps_bare_object() {
+    let obj = json!({ "key": "val" });
+    let orig = obj.clone();
+    assert_eq!(normalize_singleton_object(obj), orig);
+}
+
+#[test]
+fn normalize_singleton_object_keeps_empty_array() {
+    let arr = json!([]);
+    let orig = arr.clone();
+    assert_eq!(normalize_singleton_object(arr), orig);
+}
+
+#[test]
+fn normalize_singleton_object_does_not_unwrap_single_non_object() {
+    // A one-element array of a non-object (string, number) must NOT be unwrapped.
+    let arr = json!(["just a string"]);
+    let orig = arr.clone();
+    assert_eq!(normalize_singleton_object(arr), orig);
+
+    let arr2 = json!([42]);
+    let orig2 = arr2.clone();
+    assert_eq!(normalize_singleton_object(arr2), orig2);
+}
+
+// ─── parse_services / normalize_service ──────────────────────────────
+
+#[test]
+fn parse_services_none_returns_empty_vec() {
+    let v = parse_services(None).unwrap();
+    assert!(v.is_empty());
+}
+
+#[test]
+fn parse_services_valid_a2mcp() {
+    let raw = r#"[{"name":"TVL Query","servicedescription":"desc","servicetype":"A2MCP","fee":"10","endpoint":"https://x"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs.len(), 1);
+    assert_eq!(svcs[0].service_name,              "TVL Query");
+    assert_eq!(svcs[0].service_type,              "A2MCP");
+    assert_eq!(svcs[0].fee,                       "10");
+    assert_eq!(svcs[0].endpoint.as_deref(),       Some("https://x"));
+}
+
+#[test]
+fn parse_services_valid_a2a_endpoint_cleared() {
+    // A2A services must not carry an endpoint (normalize_service clears it).
+    let raw = r#"[{"name":"Yield","servicedescription":"yields","servicetype":"A2A","fee":"5","endpoint":"https://should-be-cleared"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs[0].service_type, "A2A");
+    assert!(svcs[0].endpoint.is_none(), "A2A endpoint must be cleared");
+}
+
+#[test]
+fn parse_services_uppercases_servicetype() {
+    let raw = r#"[{"name":"S","servicedescription":"d","servicetype":"a2a","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs[0].service_type, "A2A");
+}
+
+#[test]
+fn parse_services_a2mcp_missing_endpoint_is_err() {
+    let raw = r#"[{"name":"S","servicedescription":"desc","servicetype":"A2MCP","fee":"5"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_unknown_servicetype_is_err() {
+    let raw = r#"[{"name":"S","servicedescription":"desc","servicetype":"REST","fee":"5"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_missing_name_is_err() {
+    let raw = r#"[{"servicedescription":"desc","servicetype":"A2A","fee":"1"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_missing_description_is_err() {
+    let raw = r#"[{"name":"S","servicetype":"A2A","fee":"1"}]"#;
+    // serde requires `servicedescription` field (no default) → deserialization error.
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_invalid_json_is_err() {
+    assert!(parse_services(Some("{not json}")).is_err());
+}
+
+// ─── ensure_provider_has_service ──────────────────────────────────────
+
+fn make_a2a_service() -> AgentService {
+    AgentService {
+        id: None,
+        service_name: "Svc".to_string(),
+        service_description: "d".to_string(),
+        fee: "1".to_string(),
+        service_type: "A2A".to_string(),
+        endpoint: None,
+    }
+}
+
+fn make_card(role: &str, services: Vec<AgentService>) -> AgentCard {
+    AgentCard {
+        role: role.to_string(),
+        name: "X".to_string(),
+        profile_picture: "".to_string(),
+        profile_description: "".to_string(),
+        communication_address: None,
+        services,
+    }
+}
+
+#[test]
+fn ensure_provider_has_service_ok_when_services_present() {
+    let card = make_card("provider", vec![make_a2a_service()]);
+    assert!(ensure_provider_has_service(&card).is_ok());
+}
+
+#[test]
+fn ensure_provider_has_service_err_when_provider_has_no_services() {
+    let card = make_card("provider", vec![]);
+    assert!(ensure_provider_has_service(&card).is_err());
+}
+
+#[test]
+fn ensure_provider_has_service_ok_for_requester_without_services() {
+    let card = make_card("requester", vec![]);
+    assert!(ensure_provider_has_service(&card).is_ok());
+}
+
+#[test]
+fn ensure_provider_has_service_ok_for_evaluator_without_services() {
+    let card = make_card("evaluator", vec![]);
+    assert!(ensure_provider_has_service(&card).is_ok());
+}
+
+// ─── parse_u32_arg ────────────────────────────────────────────────────
+
+#[test]
+fn parse_u32_arg_none_returns_default() {
+    assert_eq!(parse_u32_arg(None, "--x", 5, None, None, false).unwrap(), 5);
+}
+
+#[test]
+fn parse_u32_arg_parses_valid_integer() {
+    assert_eq!(parse_u32_arg(Some("42"), "--x", 0, None, None, false).unwrap(), 42);
+    assert_eq!(parse_u32_arg(Some("0"),  "--x", 1, None, None, false).unwrap(), 0);
+}
+
+#[test]
+fn parse_u32_arg_non_integer_is_err() {
+    assert!(parse_u32_arg(Some("abc"),  "--x", 0, None, None, false).is_err());
+    assert!(parse_u32_arg(Some("3.14"), "--x", 0, None, None, false).is_err());
+    assert!(parse_u32_arg(Some("-1"),   "--x", 0, None, None, false).is_err());
+}
+
+#[test]
+fn parse_u32_arg_below_min_is_err() {
+    assert!(parse_u32_arg(Some("1"), "--x", 0, Some(5), None, false).is_err());
+}
+
+#[test]
+fn parse_u32_arg_at_boundaries_ok() {
+    assert_eq!(parse_u32_arg(Some("5"),  "--x", 0, Some(5), Some(10), false).unwrap(), 5);
+    assert_eq!(parse_u32_arg(Some("10"), "--x", 0, Some(5), Some(10), false).unwrap(), 10);
+}
+
+#[test]
+fn parse_u32_arg_above_max_clamps_when_flag_set() {
+    assert_eq!(parse_u32_arg(Some("100"), "--x", 0, None, Some(20), true).unwrap(), 20);
+}
+
+#[test]
+fn parse_u32_arg_above_max_is_err_without_clamp() {
+    assert!(parse_u32_arg(Some("100"), "--x", 0, None, Some(20), false).is_err());
+}
+
+// ─── push_optional_query ──────────────────────────────────────────────
+
+#[test]
+fn push_optional_query_adds_trimmed_value() {
+    let mut q = Vec::new();
+    push_optional_query(&mut q, "key", Some("  val  "));
+    assert_eq!(q, vec![("key".to_string(), "val".to_string())]);
+}
+
+#[test]
+fn push_optional_query_skips_none_and_blank() {
+    let mut q = Vec::new();
+    push_optional_query(&mut q, "k", None);
+    push_optional_query(&mut q, "k", Some(""));
+    push_optional_query(&mut q, "k", Some("   "));
+    assert!(q.is_empty());
+}
+
+// ─── push_multi_query ─────────────────────────────────────────────────
+
+#[test]
+fn push_multi_query_adds_all_non_blank_trimmed() {
+    let mut q = Vec::new();
+    push_multi_query(&mut q, "k", &["a".to_string(), "  b  ".to_string(), "c".to_string()]);
+    assert_eq!(q, vec![
+        ("k".to_string(), "a".to_string()),
+        ("k".to_string(), "b".to_string()),
+        ("k".to_string(), "c".to_string()),
+    ]);
+}
+
+#[test]
+fn push_multi_query_skips_blank_values() {
+    let mut q = Vec::new();
+    push_multi_query(&mut q, "k", &["".to_string(), "   ".to_string()]);
+    assert!(q.is_empty());
+}
+
+// ─── redact_token_for_debug ───────────────────────────────────────────
+
+#[test]
+fn redact_token_short_appends_stars() {
+    // len <= 16: token + "***"
+    assert_eq!(redact_token_for_debug("abc"),              "abc***");
+    assert_eq!(redact_token_for_debug("1234567890123456"), "1234567890123456***");
+}
+
+#[test]
+fn redact_token_long_shows_first8_and_last6() {
+    // len > 16: first 8 chars + "***" + last 6 chars
+    let token = "abcdefghijklmnopqrstuvwxyz"; // 26 chars
+    assert_eq!(redact_token_for_debug(token), "abcdefgh***uvwxyz");
+}
+
+#[test]
+fn redact_token_exactly_17_chars() {
+    // 17 chars: first 8 + *** + last 6 = "abcdefgh***klmnopq"[last6="lmnopq"]
+    let token = "abcdefghijklmnopq"; // 17 chars
+    assert_eq!(redact_token_for_debug(token), "abcdefgh***lmnopq");
+}
+
+// ─── short_address ────────────────────────────────────────────────────
+
+#[test]
+fn short_address_standard_40_hex_chars() {
+    let addr = "0x30c140554508a515a8da0fe1e2377c4d8eff59d7";
+    assert_eq!(short_address(addr).unwrap(), "0x30c1…59d7");
+}
+
+#[test]
+fn short_address_minimum_8_hex_chars_ok() {
+    assert_eq!(short_address("0x12345678").unwrap(), "0x1234…5678");
+}
+
+#[test]
+fn short_address_7_hex_chars_is_none() {
+    assert!(short_address("0x1234567").is_none());
+}
+
+#[test]
+fn short_address_accepts_uppercase_0x_prefix() {
+    let result = short_address("0X30c140554508a515a8da0fe1e2377c4d8eff59d7");
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), "0x30c1…59d7");
+}
+
+#[test]
+fn short_address_non_hex_chars_is_none() {
+    assert!(short_address("0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG").is_none());
+}
+
+#[test]
+fn short_address_missing_prefix_is_none() {
+    assert!(short_address("30c140554508a515a8da0fe1e2377c4d8eff59d7").is_none());
+}
+
+// ─── format_search_rate ───────────────────────────────────────────────
+
+#[test]
+fn format_search_rate_trims_trailing_zeros() {
+    assert_eq!(format_search_rate(4.6_f64),  "4.6");
+    assert_eq!(format_search_rate(5.0_f64),  "5");
+    assert_eq!(format_search_rate(4.45_f64), "4.45");
+    assert_eq!(format_search_rate(0.0_f64),  "0");
+    assert_eq!(format_search_rate(3.5_f64),  "3.5");
+    assert_eq!(format_search_rate(1.0_f64),  "1");
+}
+
+// ─── format_top_service ───────────────────────────────────────────────
+
+#[test]
+fn format_top_service_a2mcp_with_fee_and_token() {
+    let svc = json!({
+        "serviceName": "TVL Query",
+        "serviceType": "A2MCP",
+        "feeAmount": 10.0,
+        "feeToken": "USDT",
+        "endpoint": "https://x",
+    });
+    let result = format_top_service(&svc).unwrap();
+    assert_eq!(result, "TVL Query (API service, 10 USDT)");
+}
+
+#[test]
+fn format_top_service_a2a_no_fee_renders_free() {
+    let svc = json!({ "serviceName": "Yield Check", "serviceType": "A2A" });
+    let result = format_top_service(&svc).unwrap();
+    assert_eq!(result, "Yield Check (agent-to-agent, free)");
+}
+
+#[test]
+fn format_top_service_no_name_returns_none() {
+    let svc = json!({ "serviceType": "A2MCP", "feeAmount": 5.0 });
+    assert!(format_top_service(&svc).is_none());
+}
+
+#[test]
+fn format_top_service_truncates_at_40_chars() {
+    // Construct a name long enough that the formatted string exceeds 40 chars.
+    let svc = json!({
+        "serviceName": "A Very Long Service Name Indeed For Testing",
+        "serviceType": "A2A",
+    });
+    let result = format_top_service(&svc).unwrap();
+    let chars: Vec<char> = result.chars().collect();
+    // truncate_name pads with '…' when exceeding the limit.
+    assert!(chars.len() <= 41, "truncated string should be ≤40 chars + ellipsis");
+    // Last char is the ellipsis when truncated.
+    assert_eq!(chars.last(), Some(&'…'));
 }

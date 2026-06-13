@@ -1,13 +1,37 @@
 //! Pure-local (no HTTP, no network) validator that checks an agent listing's
-//! fields against mechanical marketplace rules. Called internally by `activate`
-//! and `create`/`update` QA flows — not exposed as a CLI command.
+//! fields against mechanical marketplace rules. Used during registration QA
+//! (skill calls it explicitly) and by `activate` internally.
 //!
 //! Scope (deliberately narrow): only MECHANICAL rules — length / format /
 //! forbidden-marker / structural checks decidable without semantic judgment.
 
+use anyhow::Result;
 use serde::Serialize;
 
+use crate::commands::Context;
+
+use super::args::ValidateListingArgs;
 use super::models::AgentService;
+use super::utils::normalize_role;
+
+// ─── CLI entry point (hidden — not shown in --help) ─────────────────────────
+
+pub async fn validate_listing(args: ValidateListingArgs, _ctx: &Context) -> Result<()> {
+    let role = args
+        .role
+        .as_deref()
+        .and_then(|r| normalize_role(r).ok())
+        .unwrap_or_else(|| "provider".to_string());
+
+    let result = run_validation(
+        &role,
+        args.name.as_deref(),
+        args.description.as_deref(),
+        args.service.as_deref(),
+    );
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
 
 // ─── Output model ───────────────────────────────────────────────────────────
 
