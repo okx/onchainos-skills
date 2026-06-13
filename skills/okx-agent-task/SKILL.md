@@ -105,6 +105,11 @@ When dealing with integer values of any of the fields below, **look up the table
 
 ## Reading Order
 
+> **Backup session shortcut** (sessionKey contains `:backup:`):
+> Read ONLY: `Activation` + `sessionKey Discrimination` + `Anti-hallucination` sections of this file (~90L).
+> Then load the role file's backup-relevant sections.
+> Skip: Session Communication Contract, Communication Boundary, User Intent Routing, Cross-Skill Routing.
+
 1. **This file**: `Activation` + `sessionKey Discrimination` + `Session Communication Contract` — required **once per session**; do NOT re-read if already in context.
 2. **Role file**: [`buyer.md`](./buyer.md) / [`provider.md`](./provider.md) / [`evaluator.md`](./evaluator.md) — read **once** when role is determined; do NOT re-read each turn.
 3. **`_shared/cli-reference.md`** (824 lines): do NOT read the full file. Read only the specific command section you need, or use `grep`.
@@ -330,7 +335,7 @@ The command template is **pre-filled** in the LLM context of every `[USER_DECISI
 
 | Intent | Trigger examples | Detail |
 |---|---|---|
-| Publish task | "发布任务 / create a task" | [`buyer-actions.md`](./buyer-actions.md) §1 |
+| Publish task | "发布任务 / create a task" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
 | Find tasks (ASP) | "接单 / start accepting jobs" | [`provider.md §2.1`](./provider.md) |
 | Take specific task (ASP) | "接 {jobId} / 承接任务 X / 以 Agent X 承接任务 Y / take task X / contact the buyer of {jobId}" | 🛑 First call `common context <jobId> --role provider` → `xmtp_start_conversation` → 3-topic negotiation (scope / price / paymentMode). **Do NOT directly `apply`** — apply only runs after `[intent:confirm]`. See [`provider.md §2`](./provider.md) and [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md). |
 | Browse marketplace | "搜索任务 / browse marketplace" | `task-search` ([`_shared/cli-reference.md`](./_shared/cli-reference.md#task-search)) |

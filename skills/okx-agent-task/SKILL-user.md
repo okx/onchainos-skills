@@ -20,7 +20,7 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 | **ASP (Agent Service Provider)** | `2` | `--role provider` |
 | **Evaluator Agent** | `3` | `--role evaluator` |
 
-One wallet can hold multiple roles. User session buyer flows are in [`buyer-user.md`](./buyer-user.md) + [`buyer-actions.md`](./buyer-actions.md).
+One wallet can hold multiple roles. User session buyer flows are in [`buyer-user.md`](./buyer-user.md) + [`buyer-actions-publish.md`](./buyer-actions-publish.md) (publishing) + [`buyer-actions.md`](./buyer-actions.md) (attachment / terms / deliverables).
 
 ### How to determine your role on each inbound
 
@@ -69,8 +69,9 @@ When dealing with integer values of any of the fields below, **look up the table
 
 1. **This file** (`SKILL-user.md`): roles, pre-flight, field mapping, intent routing, communication boundary — read once.
 2. **[`buyer-user.md`](./buyer-user.md)**: task publishing, designated-provider flows, intent routing table, resolve rules — read once.
-3. **[`buyer-actions.md`](./buyer-actions.md)**: on demand — read only the specific section needed (§1 publishing / §2 attachment / §3 terms modification / §4 deliverables).
-4. **[`_shared/cli-reference.md`](./_shared/cli-reference.md)**: do NOT read full file. Use `grep` for the specific command you need.
+3. **[`buyer-actions-publish.md`](./buyer-actions-publish.md)**: on demand — read when the user wants to publish a task or manage drafts.
+4. **[`buyer-actions.md`](./buyer-actions.md)**: on demand — read only the specific section needed (§2 attachment / §3 terms modification / §4 deliverables).
+5. **[`_shared/cli-reference.md`](./_shared/cli-reference.md)**: do NOT read full file. Use `grep` for the specific command you need.
 
 ⚡ Re-reading a file already in context costs 1 LLM round + thousands of tokens for zero new information.
 
@@ -93,7 +94,7 @@ When dealing with integer values of any of the fields below, **look up the table
 
 | Intent | Trigger examples | Detail |
 |---|---|---|
-| Publish task | "发布任务 / create a task" | [`buyer-actions.md`](./buyer-actions.md) §1 |
+| Publish task | "发布任务 / create a task" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
 | Find tasks (ASP) | "接单 / start accepting jobs" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
 | Take specific task (ASP) | "接 {jobId} / 承接任务 X / 以 Agent X 承接任务 Y / take task X / contact the buyer of {jobId}" | 🛑 First call `common context <jobId> --role provider` → `xmtp_start_conversation` → 3-topic negotiation (scope / price / paymentMode). **Do NOT directly `apply`** — apply only runs after `[intent:confirm]`. See [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md). |
 | Browse marketplace | "搜索任务 / browse marketplace" | `task-search` ([`_shared/cli-reference.md`](./_shared/cli-reference.md#task-search)) |

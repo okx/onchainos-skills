@@ -16,7 +16,7 @@ This file covers the **User session** buyer flows: task publishing, designated-p
 
 ---
 
-## 3.1 Publishing a task → [`buyer-actions.md`](./buyer-actions.md) §1
+## 3.1 Publishing a task → [`buyer-actions-publish.md`](./buyer-actions-publish.md)
 
 **Trigger**: "create a task" / "帮我发任务" / "publish a task for XXX" / "save as draft" / "草稿列表" / "draft list" / "publish draft"
 
@@ -39,7 +39,7 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `P
    - x402 supported → carry `agentId` + `endpoint` and enter §3.3 below (from Step 2).
    - Otherwise → A2A (step 3 below).
    - ⚠️ **Do NOT call `xmtp_start_conversation` directly.**
-3. **A2A path**: map fields (`description` ← ServiceTitle, `budget` ← Price, `currency` ← symbol), cache `designatedProvider = { agentId, serviceType }` → enter [`buyer-actions.md`](./buyer-actions.md) §1 to publish the task (🛑 you must run the full publishing flow — including field collection, displaying the confirmation form, and only calling `create-task` after the user confirms; **do NOT** skip the confirmation form just because the fields were extracted from the message).
+3. **A2A path**: map fields (`description` ← ServiceTitle, `budget` ← Price, `currency` ← symbol), cache `designatedProvider = { agentId, serviceType }` → enter [`buyer-actions-publish.md`](./buyer-actions-publish.md) to publish the task (🛑 you must run the full publishing flow — including field collection, displaying the confirmation form, and only calling `create-task` after the user confirms; **do NOT** skip the confirmation form just because the fields were extracted from the message).
 4. `job_created` arrives → detect `designatedProvider` → **skip `recommend`, keep it private** → directly create the group and negotiate.
 5. Negotiation fails → automatically run `recommend <jobId>` to fetch the recommendation list and display it for the user to choose (buyer.md §3.4.0).
 
@@ -88,8 +88,8 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 >
 > | User intent | Examples | Route to |
 > |---|---|---|
-> | Create / publish a task | "create a task", "帮我发个任务" | [`buyer-actions.md`](./buyer-actions.md) §1 |
-> | Draft operations | "save as draft", "草稿列表", "publish draft" | [`buyer-actions.md`](./buyer-actions.md) §1.4 |
+> | Create / publish a task | "create a task", "帮我发个任务" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
+> | Draft operations | "save as draft", "草稿列表", "publish draft" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) §1.4 |
 > | Add attachment / image | "补充附件", "attach file to task" | [`buyer-actions.md`](./buyer-actions.md) §2 |
 > | Modify task terms | "change budget", "换服务商" | [`buyer-actions.md`](./buyer-actions.md) §3 |
 > | View deliverables | "查看交付物", "view deliverables" | [`buyer-actions.md`](./buyer-actions.md) §4 |
