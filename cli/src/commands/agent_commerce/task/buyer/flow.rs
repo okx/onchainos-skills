@@ -536,7 +536,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "evaluator_selected" | "vote_committed" | "reveal_started" | "vote_revealed" |
         "vote_commit_deadline_warn" | "vote_reveal_deadline_warn" | "cooldown_entered" | "round_failed" |
         "reward_claimed" | "dispute_resolved" | "close" | "set_public" |
-        "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved"
+        "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved" |
+        "user_decision_job_submitted"
     );
     let use_negotiate_preamble = matches!(event_str,
         "negotiate_reply" | "negotiate_counter"
