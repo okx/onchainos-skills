@@ -95,7 +95,6 @@ pub fn job_accepted_escrow_user_notify(job_id: &str, _title: &str) -> String {
         "[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
          Title: <title>\n\
          Description: <description>\n\
-         Deliverable: <deliverable>\n\
          ASP agentId: <providerAgentId>\n\
          Payment: escrow\n\
          Amount: <tokenAmount> <tokenSymbol>{trailing}"
