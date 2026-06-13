@@ -369,7 +369,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
                 Event::JobRefunded => "xmtp_dispatch_user (notify refund complete)",
                 Event::JobAutoRefunded => "xmtp_dispatch_user (claimAutoRefund tx receipt)",
                 Event::NegotiateReply => "xmtp_send (evaluate provider natural-language reply)",
-                Event::NegotiateAck => "save-agreed → set-payment-mode (ACK validation → persist)",
+                Event::NegotiateAck => "save-agreed → [if paymentMode already set: send confirm; else: set-payment-mode]",
                 Event::NegotiateCounter => "xmtp_send (evaluate COUNTER → new PROPOSE or REJECT)",
                 Event::AttachmentAdded => "xmtp_file_upload → xmtp_send (upload + forward attachment to provider)",
                 Event::DeliverableReceived => "task-deliverable-save (download + save deliverable immediately)",
