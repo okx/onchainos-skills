@@ -489,34 +489,28 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-pub(crate) fn approve_review(ctx: &FlowContext<'_>) -> String {
+/// Directly runs `onchainos agent complete` in-process. The single-arg bash
+/// command provides no LLM decision-making value — Rust just broadcasts and
+/// returns. Iron rules from the previous LLM-driven version ("don't
+/// xmtp_dispatch_user / don't auto-rate / don't say funds released before
+/// job_completed") all become moot — Rust cannot misbehave.
+///
+/// Failure path: the playbook emitted on error directs the LLM into the
+/// standard cli_failed 5-substep protocol (push a decision to the user).
+pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
-
-    format!(
-    "[Current Action] Approve review — broadcast the complete transaction\n\
-     [Role] User (User Agent)\n\n\
-     🛑🛑🛑 You are the **sub session** (executor). Your job is to run the on-chain `complete` command below — NOT to relay, forward, or dispatch the decision.\n\
-     ❌ Do NOT call `xmtp_dispatch_session` — that is the user-session agent's tool, not yours.\n\
-     ❌ Do NOT skip Step 1 (`onchainos agent complete`) — skipping it = funds stay locked forever.\n\n\
-     Routed in via the buyer-side keyword router (the user approved the deliverable in their reply). The pending-decisions-v2 entry was already cleared by `resolve` in the user-session; no manual remove needed here.\n\n\
-     **Step 1 -- Broadcast the dual-signature approval:**\n\
-     ```bash\n\
-     onchainos agent complete {job_id}\n\
-     ```\n\
-     If this command fails → push a `cli_failed` decision to the user (see Rule 2), end turn.\n\n\
-     🛑🛑🛑 **CRITICAL — broadcast ≠ on-chain confirmed:**\n\
-     `complete` CLI success = transaction **broadcast** submitted to the network.\n\
-     It does NOT mean the transaction is confirmed on-chain.\n\
-     ❌ Do NOT call `xmtp_dispatch_user` / `xmtp_prompt_user` here — the user has NOT received funds confirmation yet.\n\
-     ❌ Do NOT say \"task complete\" / \"funds released\" / \"任务完成\" in any output — that is factually wrong at this point.\n\
-     ❌ Do NOT auto-rate the ASP here — rating happens after on-chain confirmation.\n\n\
-     After Step 1 succeeds → **end this turn immediately**.\n\n\
-     ⚠️⚠️⚠️ **WHAT HAPPENS NEXT (READ CAREFULLY):**\n\
-     After on-chain confirmation, a `job_completed` system event (`source:\"system\"`) will be fired.\n\
-     That event is the **on-chain confirmation** — it is the ONLY moment when \"funds released\" becomes true.\n\
-     When `job_completed` arrives, you **MUST** run `onchainos agent next-action` and follow its playbook to notify the user.\n\
-     🔴 **If you do not handle `job_completed`, the user will never know funds have been released. This is a critical failure.**\n"
-    )
+    let mut client = TaskApiClient::new();
+    match super::super::complete::handle_complete(&mut client, job_id).await {
+        Ok(()) => format!(
+            "[approve_review] ✅ `onchainos agent complete {job_id}` broadcast by Rust in-process. End the turn now.\n\n\
+             ⚠️ broadcast ≠ on-chain confirmed. The `job_completed` system event will fire after on-chain confirmation — handle it via `next-action --event job_completed` to notify the user.\n"
+        ),
+        Err(e) => format!(
+            "[approve_review] ❌ `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
 pub(crate) fn reject_review(ctx: &FlowContext<'_>) -> String {
