@@ -93,7 +93,7 @@ After success, notify the user with the `jobId` — the draft can be edited or p
 onchainos agent draft list [--page 1] [--limit 20]
 ```
 
-Displays a table: `jobId` / `Title` / `Budget` / `Status` (all drafts show `📝 Draft`). See `references/display-formats.md §1.1`.
+Displays a table: `jobId` / `Title` / `Budget` / `Status` (all drafts show `📝 Draft`). Budget shows `{amount} {symbol}` or `—` if unset. Empty list → `No drafts found.` / `暂无草稿。`
 
 #### Update a draft
 
@@ -126,8 +126,6 @@ The CLI performs its own validation as a safety net. After a successful publish,
 ---
 
 ## Appendix A: Task Creation Confirmation Card Template
-
-> Inlined from `references/display-formats.md §3` to avoid an extra file read during publish flows.
 
 Chinese variant:
 

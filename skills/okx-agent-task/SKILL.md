@@ -402,7 +402,6 @@ Send refusal template or enqueue `pending-decisions-v2 request` — but **never 
 - [`xmtp-tools.md`](./_shared/xmtp-tools.md) — long-tail XMTP tool invocations (Paths 5-9)
 
 **`references/`**:
-- [`display-formats.md`](./references/display-formats.md) — confirmation forms, draft list, pricing card formats
 - [`evaluator-decision-rubric.md`](./references/evaluator-decision-rubric.md) — decision methodology
 - [`evaluator-staking.md`](./references/evaluator-staking.md) — staking flow
 - [`troubleshooting.md`](./references/troubleshooting.md) — error codes

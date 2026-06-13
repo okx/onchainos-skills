@@ -75,7 +75,7 @@ All post-creation negotiation, notifications, and review depend on the messaging
 3. After it finishes, proceed to Step 5
 
 ================================================
-Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/references/display-formats.md` Section 3)
+Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/buyer-actions-publish.md` Appendix A)
 ================================================
 
 | Field | Value |

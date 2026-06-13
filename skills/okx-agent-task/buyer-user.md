@@ -54,14 +54,14 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 **Flow**:
 1. **Provider validation**: same as §3.2 step 1.
 2. **Endpoint validation**: `onchainos agent x402-check --endpoint <endpoint>` — `valid=false` → inform "invalid"; `tokenSymbol` not USDT/USDG → inform "unsupported".
-3. **User pricing confirmation** (format see `references/display-formats.md` §4) → if refused, end.
+3. **User pricing confirmation** → show a 2-column table (`| Field | Value |`): 卖家/Seller, 服务/Service, Endpoint (in backticks), 费用/Price. If refused, end.
 4. **Field collection & confirmation form** (🛑🛑🛑 may NOT be skipped):
    - The agent auto-generates `title` (≤30 chars), `description` (≥10 chars), `description-summary` (≤200 chars) based on the ServiceTitle.
    - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
    - `currency` = `tokenSymbol`.
    - `deadline-open` / `deadline-submit`: **must be asked of the user**; do NOT auto-fill with a "reasonable default". Prompt the user: "How long should the acceptance window (how long after publishing before auto-closing if no one accepts) and the delivery window (how long after acceptance to complete) be?"
    - ⚠️ **Language matching**: field labels MUST match the user's language (Chinese → 标题/摘要/描述/支付代币/预算/最高预算/任务过期时间/预期工作时长; English → Title/Summary/...). The playbook is in English; output must match the **user's** language.
-   - Display the full confirmation form (format see `references/display-formats.md` §3, including title / summary / description / token / budget / max-budget / acceptance window / delivery window / designated seller) → **end this turn** and wait for the user's explicit confirmation of **this form**.
+   - Display the full confirmation form (format see `buyer-actions-publish.md` Appendix A, including title / summary / description / token / budget / max-budget / acceptance window / delivery window / designated seller) → **end this turn** and wait for the user's explicit confirmation of **this form**.
    - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn** — the form is a question, not an answer; the user has not confirmed.
 5. **Create the task after user confirmation** (🛑 must NOT be in the same turn as step 4): `create-task` (parameters from the confirmation form) → **end this turn**, wait for `job_created`, cache `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`.
 6. **set-payment-mode** (triggered by `job_created`): `set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>` → **end this turn**, wait for `job_payment_mode_changed`.
