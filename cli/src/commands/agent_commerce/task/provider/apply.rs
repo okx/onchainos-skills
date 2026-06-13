@@ -80,7 +80,6 @@ pub async fn handle_apply(
     println!("  txHash: {tx_hash}");
     println!();
     println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
-    println!("    - Do NOT call `xmtp_send` to tell the buyer \"application submitted\" or similar");
     println!("    - You will receive a `provider_applied` system notification after on-chain confirmation");
     println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event provider_applied --role provider`,");
     println!("      then follow the output.");
