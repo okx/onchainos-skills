@@ -410,8 +410,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::JobAutoRefunded => super::flow_lifecycle::job_auto_refunded(&ctx),
         Event::JobExpired => super::flow_lifecycle::job_expired(&ctx),
         Event::JobClosed => super::flow_lifecycle::job_closed(&ctx),
-        Event::SubmitExpired => super::flow_lifecycle::submit_expired(&ctx),
-        Event::RejectExpired => super::flow_lifecycle::reject_expired(&ctx),
+        Event::SubmitExpired => super::flow_lifecycle::submit_expired(&ctx).await,
+        Event::RejectExpired => super::flow_lifecycle::reject_expired(&ctx).await,
         Event::ReviewDeadlineWarn => super::flow_lifecycle::review_deadline_warn(&ctx),
         Event::ReviewExpired => super::flow_lifecycle::review_expired(&ctx),
         Event::JobAutoCompleted => super::flow_lifecycle::job_auto_completed(&ctx),
@@ -571,7 +571,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         && matches!(event_str,
             "job_created" | "negotiate_reply" | "negotiate_ack" |
             "provider_applied" | "deliverable_received" | "approve_review" |
-            "review_expired"
+            "review_expired" |
+            "submit_expired" | "reject_expired"
         );
     let core = if use_cli_minimal
         || event_str == "create_task"

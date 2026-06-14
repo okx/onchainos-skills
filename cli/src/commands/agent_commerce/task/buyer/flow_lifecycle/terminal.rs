@@ -83,42 +83,49 @@ pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
 
 // --- Timeouts / auto-completion ---------------------------------------
 
-pub(crate) fn submit_expired(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let submit_expired = super::super::content::submit_expired_user_notify(job_id);
-    format!(
-    "[System Notification] ASP failed to submit the deliverable in time\n\
-     [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\
-     The ASP did not submit the deliverable within the allowed window; auto-refund kicks in.\n\n\
-     **Step 1 -- Claim auto-refund immediately (no user confirmation needed):**\n\
-     ```bash\n\
-     onchainos agent claim-auto-refund {job_id}\n\
-     ```\n\n\
-     **Step 2 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
-     content: \"{submit_expired}\"\n"
-    )
+
+    // Rust in-process claim-auto-refund — symmetric to approve_review /
+    // reject_review (each broadcasts a tx in-process and tells the LLM to
+    // just notify the user). Failure → cli_failed bail.
+    let mut client = TaskApiClient::new();
+    match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
+        Ok(()) => format!(
+            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
+             content: \"{submit_expired}\"\n"
+        ),
+        Err(e) => format!(
+            "[submit_expired] ❌ `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
-pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn reject_expired(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let reject_expired = super::super::content::reject_expired_user_notify(job_id);
-    format!(
-    "[System Notification] ASP arbitration window expired\n\
-     [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\
-     After your rejection, the ASP did not open a dispute in time; auto-refund kicks in.\n\n\
-     **Step 1 -- Claim auto-refund immediately (no user confirmation needed):**\n\
-     ```bash\n\
-     onchainos agent claim-auto-refund {job_id}\n\
-     ```\n\n\
-     **Step 2 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
-     content: \"{reject_expired}\"\n"
-    )
+
+    let mut client = TaskApiClient::new();
+    match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
+        Ok(()) => format!(
+            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
+             content: \"{reject_expired}\"\n"
+        ),
+        Err(e) => format!(
+            "[reject_expired] ❌ `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
 pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
