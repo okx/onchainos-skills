@@ -26,7 +26,7 @@ const TOOL_RESOLUTION_PREFIX: &str = "⚠️ **Tool resolution** (applies to eve
 \x20\x20\x20\x20\x20\x20🟢 SKIP only the step that needs this tool → move to the next step.\n\
 \x20\x20\x20\x20\x20\x20🛑 Do NOT abort the turn.\n\n";
 
-pub fn generate_next_action(job_id: &str, event: &str, agent_id: &str) -> String {
+pub async fn generate_next_action(job_id: &str, event: &str, agent_id: &str) -> String {
     if let Some(s) = staking_next_action(job_id, event, agent_id) {
         return format!("{LOCALIZATION_PREFIX}{s}");
     }

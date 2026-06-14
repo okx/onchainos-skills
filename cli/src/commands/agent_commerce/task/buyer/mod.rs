@@ -259,6 +259,20 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
+    /// Atomic save-agreed + set-payment-mode (escrow) — used by negotiate_ack
+    /// to collapse the two steps into one CLI call so the LLM cannot reorder
+    /// or skip either. payment-mode is hard-coded to "escrow" (A2A path only).
+    SaveAgreedAndSetPayment {
+        job_id: String,
+        #[arg(long = "provider")]
+        provider_agent_id: String,
+        #[arg(long = "token-symbol")]
+        token_symbol: String,
+        #[arg(long = "token-amount")]
+        token_amount: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
     /// Attach a local file to a task
     TaskAttach {
         job_id: String,
@@ -306,6 +320,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                     },
                 )
                 .await
+                .map(|_| ())
             }
         }
         TaskCommand::MarkFailed { job_id, provider_agent_id } => {
@@ -339,6 +354,14 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             set_terms::handle_set_max_budget(&mut client, &job_id, &max_budget, agent_id.as_deref()).await,
         TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {
             negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await
+        }
+        TaskCommand::SaveAgreedAndSetPayment { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {
+            // Atomic two-step: save-agreed then set-payment-mode (escrow).
+            // If save-agreed fails we short-circuit; if set-payment-mode fails
+            // the agreement is already persisted, which is fine — the LLM
+            // will surface the error via cli_failed and retry just step 2.
+            negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, Some(&agent_id)).await?;
+            accept::handle_set_payment_mode(&mut client, &job_id, Some("escrow"), Some(&token_symbol), Some(&token_amount), None).await
         }
         TaskCommand::TaskAttach { job_id, file_path } => {
             attachments::handle_task_attach(&mut client, &job_id, &file_path).await

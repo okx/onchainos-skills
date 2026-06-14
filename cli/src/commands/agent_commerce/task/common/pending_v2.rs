@@ -559,7 +559,13 @@ fn handle_request(
             created_at: now,
             updated_at: now,
         };
-        print!("{}", playbook_push_cli(&entry));
+        // CLI mode: spawn `okx-a2a user decision-request` in-process instead
+        // of printing the old bash playbook for the LLM to copy-paste. Saves
+        // one LLM round-trip and avoids single-quote escape mishandling.
+        let llm_content = resolve_llm_content_cli(&entry);
+        use crate::commands::agent_commerce::task::common::okx_a2a;
+        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        print!("Decision request submitted. End the turn now.\n");
         return Ok(());
     }
 
@@ -1436,7 +1442,7 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
     let source_event_str = entry.source_event.clone().unwrap_or_default();
     format!(
         "[USER_DECISION_REQUEST][sub_key: {}][job: {}][role: {}]\n\n\
-         Step 1 — Card was just delivered via `xmtp_prompt_user`. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
+         Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — When the user actually replies (next turn):\n\
          \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
          \x20\x20\x20\x20· else → follow `okx-task-watch` SKILL.md §kind == decision_request \"Handling the user reply\": **first claim the todo** per SKILL.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --sub-key \"{}\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\" --source-event \"{}\"` exactly once, then follow the relay playbook it returns. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
@@ -1487,27 +1493,6 @@ fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
         agent = entry.agent_id,
         src = source_event_str,
         defer = DEFER_KEYWORDS.join(" / "),
-    )
-}
-
-/// CLI-driver variant of `playbook_push`. Uses the `okx-a2a user decision-request`
-/// CLI subprocess (writes SQLite `user_attention`) instead of the MCP-only
-/// `xmtp_prompt_user` tool, since CLI mode runs outside of an MCP host.
-fn playbook_push_cli(entry: &PendingEntry) -> String {
-    let llm_content = resolve_llm_content_cli(entry);
-    // Single-quote the bash args; only `'` itself needs escaping via the canonical `'\''` trick.
-    let user_content_q = entry.user_content.replace('\'', "'\\''");
-    let llm_content_q = llm_content.replace('\'', "'\\''");
-    format!(
-        "Now run the EXACT CLI command below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the command returns.\n\n\
-         ```bash\n\
-         okx-a2a user decision-request \\\n\
-         \x20\x20--user-content '{user}' \\\n\
-         \x20\x20--llm-content '{llm}' \\\n\
-         \x20\x20--json\n\
-         ```\n",
-        user = user_content_q,
-        llm = llm_content_q,
     )
 }
 

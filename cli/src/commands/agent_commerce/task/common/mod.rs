@@ -15,6 +15,7 @@ pub mod deliverables;
 pub mod dispute_upload;
 pub mod in_progress;
 pub mod network;
+pub mod okx_a2a;
 pub mod payment_mode;
 pub mod pending_v2;
 pub mod query;
@@ -705,7 +706,12 @@ async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Value> {
 ///   "feeTokenSymbol": "USDT"                 // only when route=x402
 /// }
 /// ```
-pub async fn handle_designated_route(provider_id: &str, target_endpoint: Option<&str>) -> Result<()> {
+/// In-process variant of the `designated-route` query — returns the resolved
+/// route JSON (the same shape that `handle_designated_route` would print to
+/// stdout). Used by buyer CLI flows to inline the routing query without an
+/// LLM round-trip. Errors propagate; success cases (a2a / x402 / error) are
+/// all encoded as `Ok(json)`.
+pub async fn designated_route_inner(provider_id: &str, target_endpoint: Option<&str>) -> Result<serde_json::Value> {
     let id = provider_id.trim();
     if id.is_empty() {
         bail!("--provider must not be empty");
@@ -720,22 +726,20 @@ pub async fn handle_designated_route(provider_id: &str, target_endpoint: Option<
     let profile = match profile_res {
         Ok(p) => p,
         Err(_) => {
-            crate::output::success(serde_json::json!({
+            return Ok(serde_json::json!({
                 "route": "error",
                 "errorType": "not_provider",
             }));
-            return Ok(());
         }
     };
 
     let role = profile.get("role").and_then(|v| v.as_i64()).unwrap_or(0);
     if role != 2 {
-        crate::output::success(serde_json::json!({
+        return Ok(serde_json::json!({
             "route": "error",
             "errorType": "not_provider",
             "providerName": profile.get("name").and_then(|v| v.as_str()).unwrap_or(""),
         }));
-        return Ok(());
     }
 
     let provider_name = profile.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -771,14 +775,13 @@ pub async fn handle_designated_route(provider_id: &str, target_endpoint: Option<
         }).copied() {
             Some(svc) => Some(svc),
             None => {
-                crate::output::success(serde_json::json!({
+                return Ok(serde_json::json!({
                     "route": "error",
                     "errorType": "endpoint_not_found",
                     "providerName": provider_name,
                     "onlineStatus": online_status,
                     "requestedEndpoint": target,
                 }));
-                return Ok(());
             }
         }
     } else {
@@ -826,25 +829,32 @@ pub async fn handle_designated_route(provider_id: &str, target_endpoint: Option<
             }).collect();
             result["services"] = serde_json::json!(svc_list);
         }
-        crate::output::success(result);
+        return Ok(result);
     } else {
         // No endpoint → A2A path; check online status
         if online_status == 2 {
-            crate::output::success(serde_json::json!({
+            return Ok(serde_json::json!({
                 "route": "error",
                 "errorType": "offline",
                 "providerName": provider_name,
                 "onlineStatus": online_status,
             }));
         } else {
-            crate::output::success(serde_json::json!({
+            return Ok(serde_json::json!({
                 "route": "a2a",
                 "providerName": provider_name,
                 "onlineStatus": online_status,
             }));
         }
     }
+}
 
+/// CLI entry point — wraps `designated_route_inner` and prints the resulting
+/// JSON to stdout. Existing callers (mod.rs `AgentCommand::DesignatedRoute`)
+/// keep their `Result<()>` contract unchanged.
+pub async fn handle_designated_route(provider_id: &str, target_endpoint: Option<&str>) -> Result<()> {
+    let result = designated_route_inner(provider_id, target_endpoint).await?;
+    crate::output::success(result);
     Ok(())
 }
 

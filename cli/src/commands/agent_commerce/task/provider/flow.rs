@@ -70,7 +70,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 /// `event_str` accepts either an event name (provider_applied / job_accepted / ...)
 /// or a status name (created / accepted / ...) — internally normalized via state_machine
 /// into an `Event`; unrecognized strings fall through as `Event::Other(s)`.
-pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>) -> String {
+pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol

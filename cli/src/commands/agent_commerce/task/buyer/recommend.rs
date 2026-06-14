@@ -36,13 +36,21 @@ pub struct EmitDecisionOpts {
 }
 
 /// Fetch recommended providers (default mode: call the API + cache).
+///
+/// Returns the path to the freshly-written canonical English card file
+/// (`Some(cards_path)`), or `None` when there is no visible provider on
+/// this page (all failed / empty list). The CLI entry point (and any
+/// caller that doesn't need the path) can simply ignore the returned
+/// value with `.map(|_| ())`. In-process callers (e.g. CLI-mode
+/// `job_created` flow) consume the path to drive subsequent steps
+/// without re-spawning the binary.
 pub async fn handle_recommend(
     client: &mut TaskApiClient,
     job_id: &str,
     agent_id: &str,
     page: usize,
     emit: EmitDecisionOpts,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let resolved;
     let agent_id = if agent_id.is_empty() {
         use crate::commands::agent_commerce::task::common::AGENT_ROLE_BUYER;
@@ -106,7 +114,7 @@ pub async fn handle_recommend(
         }
         println!("The recommended provider list is empty; no matching providers.");
         print_empty_guidance(job_id);
-        return Ok(());
+        return Ok(None);
     }
 
     let cards_path = write_cards_file(job_id, &visible, page)?;
@@ -138,14 +146,15 @@ pub async fn handle_recommend(
                 card_body.len()
             );
         }
-        return pending_v2::enqueue_recommend_decision(
+        pending_v2::enqueue_recommend_decision(
             sub_key,
             job_id.to_string(),
             "buyer".to_string(),
             agent_id.to_string(),
             card_body,
             list_label,
-        );
+        )?;
+        return Ok(Some(cards_path));
     }
 
     println!(
@@ -155,7 +164,7 @@ pub async fn handle_recommend(
         cards_path,
     );
 
-    Ok(())
+    Ok(Some(cards_path))
 }
 
 /// --current: return the current providers (filtered to exclude failed ones).
@@ -207,7 +216,9 @@ pub async fn handle_recommend_next_page(client: &mut TaskApiClient, job_id: &str
     if agent_id.is_empty() {
         anyhow::bail!("No local buyer identity; please register or pass --agent-id");
     }
-    handle_recommend(client, job_id, &agent_id, next_page, EmitDecisionOpts::default()).await
+    handle_recommend(client, job_id, &agent_id, next_page, EmitDecisionOpts::default())
+        .await
+        .map(|_| ())
 }
 
 const DESC_MAX_CHARS: usize = 120;
