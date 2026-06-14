@@ -83,6 +83,9 @@ pub enum AgentCommand {
         #[arg(long = "file")] attachments: Option<Vec<String>>,
         /// Payment mode to set at creation time (escrow / x402).
         #[arg(long = "payment-mode")] payment_mode: Option<String>,
+        /// Accepted for compatibility but ignored — buyer identity is auto-resolved.
+        #[arg(long = "agentId", alias = "agent-id", hide = true)]
+        _agent_id: Option<String>,
     },
 
     /// Get recommended providers for a task
@@ -869,6 +872,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
             deadline_open, deadline_submit, title, provider, endpoint, attachments, payment_mode,
+            _agent_id: _,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,

@@ -44,6 +44,8 @@ Display the confirmation form (format see **Appendix A** below) → **end this t
 
 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` or any `onchainos agent` command in the same turn** — the form is a **question**, not an **answer**; the user has not confirmed; you do not have the authority to decide for the user. It must be a **new turn after the user sees the form** before you may execute the CLI. Violation = an unauthorized on-chain operation = funds at risk.
 
+⚠️ **`create-task` does NOT take `--agentId`** — the CLI auto-resolves the buyer identity internally. Do NOT pass `--agentId` or `--agent-id` to `create-task`; that parameter belongs to `next-action`, not `create-task`.
+
 If the user provided attachment file paths, include them in the `create-task` call via `--file <path>` (repeatable for multiple files). The CLI copies files to `~/.onchainos/task/<jobId>/attachments/` after the jobId is obtained.
 
 After success, inform the user of the `jobId`. ⚠️ Do NOT say "published successfully" (not yet confirmed on-chain). ⚠️ Do NOT call `recommend` (wait for `job_created` to trigger it automatically).
