@@ -220,7 +220,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              [Role] ASP (Agent Service Provider)\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
              **Step 1 — Use `xmtp_dispatch_user` to push the apply-accepted notification to the user**:\n\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              arguments:\n\
              \x20\x20content:\n\
@@ -374,7 +374,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              ```\n\
              Extract title + tokenAmount + tokenSymbol + buyerAgentId (needed for the next step).\n\n\
              **Step 2 — Use `xmtp_dispatch_user` to notify the user of task completion**:\n\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              arguments:\n\
              \x20\x20content:\n\
@@ -390,7 +390,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from Step 1 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 3.5 — Notify the user of the submitted rating**:\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
@@ -430,7 +430,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              **A-Step 3 — Use `xmtp_dispatch_user` to notify the user of the win + claim result**:\n\n\
              From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId.\n\
              ⚠️ content is the **chat the user will see** — plain natural language; **do NOT use** skill names / event names / state names / CLI flags or other technical jargon.\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              arguments:\n\
              \x20\x20content: (choose based on whether A-Step 2 actually claimed)\n\
@@ -449,7 +449,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from A-Step 3 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **A-Step 4.5 — Notify the user of the submitted rating**:\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in A-Step 4; fill `<title>` from task context):\n\
@@ -459,7 +459,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              **B-Step 1 — Use `xmtp_dispatch_user` to notify the user of the loss**:\n\n\
              From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId.\n\
              ⚠️ Same as A-Step 3 — content plain natural language; no technical jargon.\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              arguments:\n\
              \x20\x20content:\n\
@@ -475,7 +475,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from B-Step 1 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **B-Step 2.5 — Notify the user of the submitted rating**:\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
@@ -836,7 +836,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              - `code` = 0 (success) → continue to Step 2.\n\n\
              **Step 2 — Use `xmtp_dispatch_user` to notify the user of fund arrival**:\n\n\
              From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId (needed for Step 3).\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              arguments:\n\
              \x20\x20content:\n\
@@ -853,7 +853,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from Step 2 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 3.5 — Notify the user of the submitted rating:**\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see LOCALIZATION_PREFIX at top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
