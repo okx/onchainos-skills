@@ -571,7 +571,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         && matches!(event_str,
             "job_created" | "negotiate_reply" | "negotiate_ack" |
             "provider_applied" | "deliverable_received" | "approve_review" |
-            "review_expired" | "job_expired" |
+            "review_expired" | "job_expired" | "job_auto_refunded" |
             "submit_expired" | "reject_expired"
         );
     let core = if use_cli_minimal
