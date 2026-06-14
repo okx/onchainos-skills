@@ -155,24 +155,6 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
          ```\n\
          Then follow the command's output to close conversations (if applicable).");
 
-    // User-facing content templates for the preamble's exception-escalation hard rules
-    // (single source of truth in content.rs).
-    let escalation_protocol_misread = super::content::escalation_protocol_misread_notify(job_id);
-    let escalation_cli_failed = super::content::escalation_cli_failed_notify(job_id);
-
-    // Pre-build the cli_failed push block — referenced from IRON RULE 2 in context_preamble.
-    // Uses the same 5-substep helper as the per-scene push procedures (JobRejected /
-    // SubmitDeadlineWarn), so the LLM gets a consistent mental model regardless of whether
-    // the trigger is a normal scene event or a CLI failure.
-    let cli_failed_request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-        job_id,
-        "provider",
-        agent_id,
-        &escalation_cli_failed,
-        &format!("[Error {short_id}] {title_display} error decision"),
-        "cli_failed",
-    );
-
     let context_preamble = format!(
         ""
     );
