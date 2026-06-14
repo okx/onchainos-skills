@@ -448,7 +448,7 @@ fn status_label(status: &Value) -> Option<&'static str> {
 /// appends it when status is 5.
 fn approval_label(status: u64) -> Option<&'static str> {
     match status {
-        1 => Some("Not listed"),
+        1 => Some("Review not submitted"),
         2 => Some("Listing under review"),
         4 => Some("Listed — eligible for task recommendations"),
         5 => Some("Listing rejected"),
@@ -574,6 +574,17 @@ fn first_str<'a>(map: &'a serde_json::Map<String, Value>, keys: &[&str]) -> Opti
         .filter(|s| !s.is_empty())
 }
 
+/// Returns true when `fee` represents a zero amount ("0", "0.0", "0 USDT", etc.).
+/// The numeric part is the first whitespace-delimited token.
+fn is_zero_fee(fee: &str) -> bool {
+    fee.trim()
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse::<f64>().ok())
+        .map(|v| v == 0.0)
+        .unwrap_or(false)
+}
+
 /// Read a fee from any of the candidate keys, accepting either a string or a
 /// JSON number (the backend uses `feeAmount` as a number on some endpoints,
 /// `fee` / `Fee` as a string on others). Returns the verbatim non-empty value.
@@ -605,9 +616,11 @@ fn format_service_value(service: &Value) -> Option<String> {
     };
 
     let fee = first_fee(s, &["fee", "Fee", "feeAmount"]);
-    let fee_str = match fee {
-        Some(f) => format!("{f} USDT"),
-        None => "free".to_string(),
+    let fee_str = match (is_a2a, fee.as_deref()) {
+        (true, None) => "negotiable".to_string(),
+        (true, Some(f)) if is_zero_fee(f) => "negotiable".to_string(),
+        (_, Some(f)) => format!("{f} USDT"),
+        (_, None) => "free".to_string(),
     };
 
     let endpoint = if is_a2a {
@@ -955,20 +968,22 @@ fn format_top_service(service: &Value) -> Option<String> {
     let name = first_str(s, &["serviceName", "ServiceName", "name"])?;
 
     let raw_type = first_str(s, &["serviceType", "ServiceType", "servicetype"]).unwrap_or("");
-    let type_label = match raw_type.to_ascii_uppercase().as_str() {
-        "A2MCP" => "API service".to_string(),
-        "A2A" => "agent-to-agent".to_string(),
-        "" => String::new(),
-        other => other.to_string(),
+    let (type_label, is_a2a) = match raw_type.to_ascii_uppercase().as_str() {
+        "A2MCP" => ("API service".to_string(), false),
+        "A2A" => ("agent-to-agent".to_string(), true),
+        "" => (String::new(), false),
+        other => (other.to_string(), false),
     };
 
-    // feeAmount (search) + feeToken (verbatim). Fall back tolerantly.
+    // feeAmount (search) + feeToken (verbatim). A2A with no/zero fee → "negotiable".
     let fee = first_fee(s, &["feeAmount", "fee", "Fee"]);
     let fee_token = first_str(s, &["feeToken", "FeeToken"]);
-    let fee_str = match (fee, fee_token) {
-        (Some(f), Some(t)) => format!("{f} {t}"),
-        (Some(f), None) => f,
-        (None, _) => "free".to_string(),
+    let fee_str = match (is_a2a, fee.as_deref(), fee_token) {
+        (true, None, _) => "negotiable".to_string(),
+        (true, Some(f), _) if is_zero_fee(f) => "negotiable".to_string(),
+        (_, Some(f), Some(t)) => format!("{f} {t}"),
+        (_, Some(f), None) => f.to_string(),
+        (_, None, _) => "free".to_string(),
     };
 
     let mut segments: Vec<String> = Vec::new();
@@ -1017,11 +1032,13 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
         other => (other.to_string(), false),
     };
 
-    // Fee: `<n> USDT` or `free` (A2A → its fee or `free`; A2MCP same).
+    // Fee: A2A with no/zero fee → "negotiable"; otherwise `<n> USDT` or `free`.
     let fee = first_fee(s, &["fee", "Fee", "feeAmount"]);
-    let fee_str = match fee {
-        Some(f) => format!("{f} USDT"),
-        None => "free".to_string(),
+    let fee_str = match (is_a2a, fee.as_deref()) {
+        (true, None) => "negotiable".to_string(),
+        (true, Some(f)) if is_zero_fee(f) => "negotiable".to_string(),
+        (_, Some(f)) => format!("{f} USDT"),
+        (_, None) => "free".to_string(),
     };
 
     // Endpoint: `—` for A2A; the URL for A2MCP (absent → `—`).

@@ -62,7 +62,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
   — never divide by 20, never show the raw 0–100 score. Null/0 rendering is context-split: **search**
   rows → `null`=`—`, `0`=`No rating yet`; **list / detail / feedback** → no rating=`No rating yet`
   (never `—`).
-- **Fee:** `N USDT`; A2A empty → `free`. **Address:** lowercase `0x…1234`. **Reviewer** slot =
+- **Fee:** `N USDT`; A2A empty or zero → `negotiable`. **Address:** lowercase `0x…1234`. **Reviewer** slot =
   "reviewer", never "creator".
 
 ### Card skeleton (every confirmation / diff / detail card uses THIS; references fill rows only)
@@ -83,7 +83,7 @@ hand-map (Lexicon) if a `*Label` field is absent (legacy response).
 These CLI-emitted strings are English-canonical; translate to the conversation language — never render raw:
 - `roleLabel` / `statusLabel` / `approvalLabel` (role mappings in §Lexicon + skill description)
 - Service type values: "API service" / "agent-to-agent"
-- Placeholder strings: "(not set)" / "default" / "No rating yet" / "(no comment)" / "free"
+- Placeholder strings: "(not set)" / "default" / "No rating yet" / "(no comment)" / "free" / "negotiable"
 - `findings[].issue` and `findings[].fix` — translate the QA guidance text
 
 ### #id ladder (P0-3) — resolving the `#<id>`
@@ -156,7 +156,7 @@ Targets below are internal routing — never name a skill path or "staking" hand
 
 | Last successful CLI | Next |
 |---|---|
-| create requester / provider · update · activate · deactivate | → Step 6: load okx-agent-chat comm-init; it self-gates and stays **silent** on non-OpenClaw (no extra visible line). |
+| create requester / provider · update · activate · deactivate | → Step 6: load okx-agent-chat comm-init. |
 | create evaluator | → okx-agent-task evaluator-staking. Do NOT end on a question or a detail card. |
 | passive need-requester | hand back to okx-agent-task with ONE line. No Step 6. |
 | search / get / service-list / feedback-list | Stop. |

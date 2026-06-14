@@ -53,5 +53,5 @@ Render each finding as `⚠️ <field>: <issue> → <fix>`, then present exactly
 > 2. Skip and activate anyway — submit as-is; review may not pass
 
 - **`1`** → guide the user to `update #<N>` for the flagged fields first, then re-run activate. **Remediation is update-only (⛔):** if the user proposes creating a new agent to bypass the findings, steer back — a new agent does not fix the flagged one and restarts review from zero; only hand off to create if the user explicitly insists after the steer.
-- **`2`** → re-run `activate --agent-id <N> --preferred-language <lang> --force` → proceed to `activate + submitApproval` branch.
+- **`2`** → re-run with `--force` (`activate --agent-id <N> --preferred-language <lang> --force`). **`--force` is mandatory** — omitting it repeats the blockType:2 loop. Proceed to `activate + submitApproval` branch.
 - Any other reply → re-display the two choices once; never auto-pick.

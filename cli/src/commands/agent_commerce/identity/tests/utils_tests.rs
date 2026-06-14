@@ -229,7 +229,7 @@ fn status_label_maps_int_and_string() {
 
 #[test]
 fn approval_label_maps_known_codes() {
-    assert_eq!(approval_label(1), Some("Not listed"));
+    assert_eq!(approval_label(1), Some("Review not submitted"));
     assert_eq!(approval_label(2), Some("Listing under review"));
     assert_eq!(
         approval_label(4),
@@ -364,7 +364,7 @@ fn build_agent_card_provider_full_ordered_with_services_and_rating() {
                 "Service 1",
                 "TVL Query — API service, 10 USDT, https://api.example.com/mcp"
             ),
-            ("Service 2", "Yield Check — agent-to-agent, free"),
+            ("Service 2", "Yield Check — agent-to-agent, negotiable"),
             ("Service 3", "Whale Alert — agent-to-agent, 5 USDT"),
             ("Rating", "★ 4.6 (18 reviews)"),
         ]
@@ -665,7 +665,7 @@ fn build_search_cells_feedbackrate_zero_is_no_rating_yet() {
         pairs[4],
         (
             "Top service".to_string(),
-            "Free Tier (agent-to-agent, free)".to_string()
+            "Free Tier (agent-to-agent, negotiable)".to_string()
         )
     );
 }
@@ -718,8 +718,8 @@ fn build_service_cells_a2a_no_fee_no_endpoint() {
     let cells = build_service_cells(2, &svc).expect("cells");
     let pairs = cell_pairs(&Value::Array(cells));
     assert_eq!(pairs[2], ("Type".to_string(), "agent-to-agent".to_string()));
-    // A2A no fee → free.
-    assert_eq!(pairs[3], ("Fee".to_string(), "free".to_string()));
+    // A2A no fee → negotiable.
+    assert_eq!(pairs[3], ("Fee".to_string(), "negotiable".to_string()));
     // A2A endpoint always `—`.
     assert_eq!(pairs[4], ("Endpoint".to_string(), "—".to_string()));
     // missing description → `—`.
@@ -862,7 +862,7 @@ fn enrich_agent_row_accepts_integer_role() {
     enrich_agent_row(&mut row);
     assert_eq!(row["roleLabel"], json!("Agent Service Provider (ASP)"));
     assert_eq!(row["statusLabel"], json!("active"));
-    assert_eq!(row["approvalLabel"], json!("Not listed"));
+    assert_eq!(row["approvalLabel"], json!("Review not submitted"));
     // role untouched (still the integer).
     assert_eq!(row["role"], json!(2));
 }
@@ -882,7 +882,7 @@ fn enrich_agent_get_rows_walks_single_layer_envelope() {
     let row = &env["list"][0];
     assert_eq!(row["roleLabel"], json!("Agent Service Provider (ASP)"));
     assert_eq!(row["statusLabel"], json!("active"));
-    assert_eq!(row["approvalLabel"], json!("Not listed"));
+    assert_eq!(row["approvalLabel"], json!("Review not submitted"));
     // `card` was assembled too.
     assert!(row["card"].is_array());
 }
@@ -1519,10 +1519,30 @@ fn format_top_service_a2mcp_with_fee_and_token() {
 }
 
 #[test]
-fn format_top_service_a2a_no_fee_renders_free() {
+fn format_top_service_a2a_no_fee_renders_negotiable() {
     let svc = json!({ "serviceName": "Yield Check", "serviceType": "A2A" });
     let result = format_top_service(&svc).unwrap();
-    assert_eq!(result, "Yield Check (agent-to-agent, free)");
+    assert_eq!(result, "Yield Check (agent-to-agent, negotiable)");
+}
+
+#[test]
+fn format_top_service_a2a_zero_fee_variants_render_negotiable() {
+    // fee="0", "0.0", "0 USDT" — all zero variants must render negotiable, not a USDT amount.
+    for fee in &["0", "0.0", "0.00", "0 USDT"] {
+        let svc = json!({ "serviceName": "S", "serviceType": "A2A", "feeAmount": fee });
+        let result = format_top_service(&svc).unwrap();
+        assert_eq!(result, "S (agent-to-agent, negotiable)", "fee={fee} failed");
+    }
+}
+
+#[test]
+fn build_service_cells_a2a_zero_fee_variants_render_negotiable() {
+    for fee in &["0", "0.0", "0.00", "0 USDT"] {
+        let svc = json!({ "ServiceName": "S", "ServiceType": "A2A", "Fee": fee });
+        let cells = build_service_cells(1, &svc).expect("cells");
+        let pairs = cell_pairs(&Value::Array(cells));
+        assert_eq!(pairs[3], ("Fee".to_string(), "negotiable".to_string()), "fee={fee} failed");
+    }
 }
 
 #[test]
