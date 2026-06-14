@@ -1421,7 +1421,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
         "approve_review", "reject_review", "attachment_added", "close", "set_public",
         "dispute_raise", "agree_refund",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
-        "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",
+        "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",
         "reward_claimed",
         "wakeup_notify",
     ];

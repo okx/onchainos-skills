@@ -116,49 +116,83 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
-    let title_in_extract = ctx.title_in_extract;
     let terminal_session_hint = &ctx.terminal_session_hint;
 
     let dispute_won = super::super::content::dispute_won_user_notify(job_id, title_display);
     let dispute_lost = super::super::content::dispute_lost_user_notify(job_id, title_display);
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+
+    // dispute_resolved fires when the chain has settled the arbitration —
+    // prefetched.status MUST be 6 (Completed, ASP wins) or 9 (Failed, user
+    // wins) at this point. Anything else (None / unexpected value / missing
+    // provider) is a data anomaly — bail to a cli_failed instruction instead
+    // of running a half-blind double-branch playbook.
+    let p = match ctx.prefetched {
+        Some(p) => p,
+        None => return format!(
+            "[dispute_resolved] ❌ no prefetched task context for job {job_id}; cannot decide winner.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+    let user_won = match p.status {
+        Some(9) => true,
+        Some(6) => false,
+        Some(other) => return format!(
+            "[dispute_resolved] ❌ unexpected prefetched status {other} for job {job_id}; expected 6 (completed/ASP wins) or 9 (failed/user wins).\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+        None => return format!(
+            "[dispute_resolved] ❌ prefetched.status missing for job {job_id}; cannot decide winner.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+    let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(s) => s,
+        None => return format!(
+            "[dispute_resolved] ❌ prefetched.provider_agent_id missing for job {job_id}; auto-rate cannot run.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+
+    let winner_line = if user_won {
+        "**Step 1 — Arbitration outcome: user WINS** (chain status = 9/failed).\n\n"
+    } else {
+        "**Step 1 — Arbitration outcome: user LOSES** (chain status = 6/completed; ASP wins).\n\n"
+    };
+    let dispatch_content = if user_won { &dispute_won } else { &dispute_lost };
+    let dispatch_header = if user_won {
+        "**Step 3 — Notify the user the arbitration ruled in their favor:**"
+    } else {
+        "**Step 3 — Notify the user the arbitration ruled against them:**"
+    };
+    let score_guide = if user_won {
+        "provider at fault → 0.00–2.00"
+    } else {
+        "provider delivered adequately → 3.00–5.00"
+    };
+
     format!(
     "[Current Status] dispute_resolved (arbitration ruling issued)\n\
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user of the arbitration result; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
-     **Step 1 -- Decide winner**: read `message.jobStatus` from the system notification envelope:\n\
-     - `jobStatus = \"failed\"` → **user wins**\n\
-     - `jobStatus = \"complete\"` → **user loses**\n\
-     - other values (e.g. `disputed`) → cannot decide directly; run Step 1.5 to query task details\n\n\
-     **Step 1.5 (only when jobStatus is not failed/complete) -- Query task details for the actual status:**\n\
-     ```bash\n\
-     onchainos agent status {job_id}\n\
-     ```\n\
-     Decide by the returned `jobStatus` field: `failed` = user wins, `complete` = user loses.\n\n\
-     **Step 2 -- Fetch task info:**\n\
-     ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\
-     Extract {title_in_extract}tokenAmount, tokenSymbol.\n\
-     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade — user wins: `[Dispute Won] Job `{job_id}` — dispute resolved; User Agent wins.` / user loses: `[Dispute Lost] Job `{job_id}` — dispute resolved; ASP wins.` — the user MUST still receive a notification.\n\n\
-     **Step 3 -- Call xmtp_dispatch_user to notify the user of the arbitration outcome** — branch by winner:\n\
-     {l10n_dispatch}\n\n\
-     -------------- User wins (jobStatus=failed) --------------\n\
-     content:\n\
-     {dispute_won}\n\n\
-     -------------- User loses (jobStatus=complete) --------------\n\
-     content:\n\
-     {dispute_lost}\n\n\
+     {winner_line}\
+     **Step 2 — Task fields (pre-fetched; do NOT call `common context`):**\n\
+     \x20\x20- title: {title}\n\
+     \x20\x20- tokenAmount: {amt} | tokenSymbol: {sym}\n\
+     \x20\x20- providerAgentId: {provider_id}\n\n\
+     {dispatch_header}\n\
+     {l10n_dispatch}\n\
+     \x20\x20content:\n\
+     \x20\x20{dispatch_content}\n\n\
      🛑 Do NOT end this turn — Step 4 (auto-rate) and Step 4.5 (notify rating) below are MANDATORY.\n\n\
      **Step 4 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
-     Based on the deliverable vs the task description, quality standards, and the arbitration outcome (user won / lost), generate:\n\
-     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: user won (provider at fault) → 0.00–2.00; user lost (provider delivered adequately) → 3.00–5.00. Adjust within the range based on specific circumstances.\n\
+     Based on the deliverable vs the task description, quality standards, and the arbitration outcome, generate:\n\
+     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: {score_guide}. Adjust within the range based on specific circumstances.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
      Then execute:\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-     ```\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 2 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
+     onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+     ```\n\n\
      **Step 4.5 -- Notify the user of the submitted rating:**\n\
      {l10n_dispatch}\n\
      After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
@@ -168,6 +202,9 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
      **Step 5 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     Arbitration flow fully complete.\n"
+     Arbitration flow fully complete.\n",
+        title = p.title,
+        amt = p.token_amount,
+        sym = p.token_symbol,
     )
 }
