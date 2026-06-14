@@ -538,7 +538,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     let use_slim_preamble = matches!(event_str,
         "negotiate_ack" |
         "approve_review" | "reject_review" |
-        "job_completed" | "job_refunded" | "job_auto_refunded" | "job_expired" | "job_closed" |
+        "job_completed" | "job_refunded" | "job_auto_refunded" | "job_expired" | "job_closed" | "job_rejected" |
         "submit_expired" | "reject_expired" | "review_deadline_warn" | "review_expired" |
         "submit_deadline_warn" | "job_auto_completed" |
         "evaluator_selected" | "vote_committed" | "reveal_started" | "vote_revealed" |
