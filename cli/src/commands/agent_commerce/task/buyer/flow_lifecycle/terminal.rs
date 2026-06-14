@@ -168,41 +168,69 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
-    let title_query_hint = ctx.title_query_hint;
     let terminal_session_hint = &ctx.terminal_session_hint;
 
-    let auto_completed_notify = super::super::content::job_auto_completed_user_notify(job_id, title_display);
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+
+    // job_auto_completed fires on the claimAutoComplete tx receipt — the
+    // chain has settled to Completed and a provider is guaranteed to exist.
+    // Anything else (no prefetched / missing provider) is a data anomaly —
+    // bail to a cli_failed instruction instead of running a half-blind
+    // playbook that asks the LLM to chase down providerAgentId via
+    // `common context`.
+    let p = match ctx.prefetched {
+        Some(p) => p,
+        None => return format!(
+            "[job_auto_completed] ❌ no prefetched task context for job {job_id}; auto-rate cannot run.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+    let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(s) => s,
+        None => return format!(
+            "[job_auto_completed] ❌ prefetched.provider_agent_id missing for job {job_id}; auto-rate cannot run.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+
+    // prefetched.title is authoritative — use it directly instead of
+    // ctx.title_display (which falls back to `<title>` placeholder when the
+    // envelope lacks jobTitle and would force the LLM to query).
+    let auto_completed_notify = super::super::content::job_auto_completed_user_notify(job_id, &p.title);
+
     format!(
     "[System Notification] job_auto_completed (claimAutoComplete tx receipt)\n\
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user the task auto-completed; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions]\n\n\
-     {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed** ({l10n_short}):\n\
      \x20\x20content:\n\
      {auto_completed_notify}\n\n\
-     🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
-     **Step 2 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
-     From the task context (call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not already available), extract providerAgentId.\n\
+     🛑 Do NOT end this turn — Step 3 (auto-rate) and Step 3.5 (notify rating) below are MANDATORY.\n\n\
+     **Step 2 — Task fields (pre-fetched; do NOT call `common context`):**\n\
+     \x20\x20- title: {title}\n\
+     \x20\x20- tokenAmount: {amt} | tokenSymbol: {sym}\n\
+     \x20\x20- providerAgentId: {provider_id}\n\n\
+     **Step 3 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
      Based on the deliverable vs the task description and quality standards, generate:\n\
      \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
      Then execute:\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-     ```\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from task context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
-     **Step 2.5 -- Notify the user of the submitted rating ({l10n_short}):**\n\
+     onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+     ```\n\n\
+     **Step 3.5 -- Notify the user of the submitted rating ({l10n_short}):**\n\
      After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
      - ✅ **Success** (output contains `txHash`):\n\
-     content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
+     content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from Step 2):\n\
      {rating_notify}\n\
      - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
-     **Step 3 -- Terminal wrap-up (keep the sub session):**\n\
+     **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
-     Task fully complete.\n"
+     Task fully complete.\n",
+        title = p.title,
+        amt = p.token_amount,
+        sym = p.token_symbol,
     )
 }
 
