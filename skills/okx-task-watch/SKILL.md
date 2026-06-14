@@ -1,6 +1,6 @@
 ---
 name: okx-task-watch
-description: "ACTIVATE for OKX A2A user-session task-progress flows: live monitoring via `okx-a2a user watch` (returns unread events backlog + long-polls for new ones; destructive read — returned items do not reappear) or outstanding-decision listing via `okx-a2a user outdated-list` (un-`check`ed `decision_request` items only). Claude Code / Codex only (`CLAUDECODE=1` or `CODEX_THREAD_ID`); other platforms stop with an unsupported-platform message. Triggers: 监听任务进展 / 开始监听任务 / 关注任务进展 / 使用监听 skill 监听任务进展 / 帮我盯着任务 / 任务有进度就告诉我 / 任务有动静告诉我 / 开监听 / watch 任务 / 历史消息 / 历史记录 / 过去消息 / 之前的消息 / 帮我看看之前的历史消息 / 看下之前的消息 / 未读消息 / 未决策 / 待决策 / 没有决策 / 未处理 / 待处理 / 没有处理 / task watch / user watch / monitor task progress / keep me posted on tasks / watch tasks / start watching / show past messages / show message history / catch me up on tasks / unread task messages / outstanding decisions / pending decisions / unhandled decisions / what am I missing. Business actions (apply / deliver / dispute / quote / accept) belong to `okx-agent-task`."
+description: "ACTIVATE for OKX A2A user-session task-progress flows: live monitoring via `okx-a2a user watch` (drains unread task-notification backlog, then long-polls; destructive read) and outstanding-decision listing via `okx-a2a user outdated-list` (un-checked decision_request items). Claude Code / Codex only; other platforms get native push. Use whenever the user wants to watch/monitor progress of their published A2A tasks, be kept posted on task events, catch up on missed/unread/past task notifications, review outstanding/pending task decisions, or continue a previous task watch — 监听任务进展 / 帮我盯着任务 / 历史消息 / 未读消息 / 未决策 / 继续监听 and any paraphrase in any language. Read-only notification monitoring: covers A2A task event notifications only — not market prices, wallets, gas, CLI command history, task lists, or one-off task status queries — and surfaces decisions without executing task actions; never wrap the watch in cron/loop schedulers — the call itself long-polls."
 license: Apache-2.0
 metadata:
   author: okx
@@ -122,11 +122,7 @@ The session ends when §Stop condition fires, or when the user starts a **new** 
 - 🛑 **Run `okx-a2a user watch` / `okx-a2a user outdated-list` exactly as written. Do NOT append `| grep` / `| tail` / `| head` / `| awk` / `| sed` / `| jq` / shell redirects.** Both commands emit a single structured JSON document — any pipe/truncation breaks the JSON and silently drops items. If output looks noisy with `[DEBUG]` lines mixed in, those belong on stderr and never affect the JSON on stdout; do not "clean" stdout. Pipe = data loss.
 - 🛑 **Always run `okx-a2a user watch` in the foreground.** On Claude Code, the Bash tool exposes a `run_in_background` parameter — you **MUST** call watch with `run_in_background: false` (the default). Backgrounding the watch breaks the entire dispatch loop: stdout (the JSON with items) is no longer returned synchronously to the same tool call, so you can't dispatch by `kind`, can't render `userContent`, can't claim `decision_request` items, can't even know if watch returned anything. Watch is a single long-poll that must block this turn until it returns; the long-poll IS the wait. If you find yourself reaching for `run_in_background: true` because "watch takes too long", you are misusing the tool — that wait is the design.
 
-  **Recovery if a watch already ended up in the background** (e.g. you accidentally set `run_in_background: true`, or the Bash tool's foreground timeout elapsed and Claude Code's harness silently re-routed the command to the background): Claude Code's harness delivers the watch output as a background-task notification event, often wrapped in `<system-reminder>` carrying `[SYSTEM NOTIFICATION - NOT USER INPUT]` and `Do NOT interpret this as user acknowledgement`. 🛑 **Critical interpretation rule**: that wrapper is **anti-confusion** ("don't treat this as a user reply"), **not anti-disclosure**. The notification body is still meant for the user — only you saw it. Silencing the event because the wrapper says "NOT USER INPUT" is a misinterpretation; you MUST still relay it. Recovery flow:
-  1. **Locate the output-file path in the notification payload** — the harness includes a filesystem path where the watch's stdout was written (exact field name varies by harness version: look for something like `output-file` / `output_file` / `file`, or a value that looks like a writable file path). Use the `Read` tool on that path — it contains the watch JSON output.
-  2. Parse the JSON items and dispatch each per §Dispatch (paste blockquote for notifications; paste blockquote for decision_requests; same rules, same no-thinking ban).
-  3. **Locate the task identifier in the notification payload** (exact field name varies: look for `task-id` / `task_id` / `id` / `bg_id`). Call the `TaskStop` tool on it to terminate the background watch — leaving it alive will keep producing more out-of-band events.
-  4. Restart watch **in the foreground** per §Run watch (preserving sticky `--job-id <X>` per §Session-scoped sticky if applicable).
+  **Recovery if a watch already ended up in the background** (accidental `run_in_background: true`, or a foreground-timeout re-route): the output is delivered as a background-task notification you must still relay to the user. Full recovery flow (locate output-file → dispatch items → `TaskStop` → restart in foreground): see [`references/background-recovery.md`](./references/background-recovery.md).
 
 ## Dispatch by `kind`
 
@@ -176,53 +172,11 @@ The JSON item may also carry a `choices` array auto-derived by the CLI from `use
 
 > ⚠️ **Skip this step for scoped sessions** (watch running with `--job-id <X>`, entered via the CLI `[Watch]` block or continuation-trigger recall). A scoped session is focused on a single task that the user is actively tracking — if they pause to think, they will come back on their own, and an auto-resume would just churn watch against a task that may already be terminal. Only **global sessions** (no `--job-id`, entered via a §Triggers phrase like `监听任务进展` / `task watch` or continuation-trigger global fallback) need the wake to keep the user-session-wide monitor alive across idle periods.
 
-After rendering `userContent`, but **before ending the turn**, schedule a 2-minute **one-shot** wake so the watch loop self-resumes if the user goes idle. Pick the tool by platform (same env vars as §Platform compatibility).
-
-> **Terminology**: the handle returned by either tool is called the **wake id** in this skill.
-
-🛑 **Critical for both platforms**: the `prompt` field must be passed **verbatim** as the exact English string below. Do **NOT** localize it, paraphrase it, or rewrite it based on the current `decision_request`'s content (e.g. do not turn it into "请选择服务商" / "回复 1 或 1727"). The wake fires in a fresh turn; the agent reading the wake prompt must see a generic, content-free "re-enter watch" instruction so it routes back into this skill — a contextualized prompt confuses both the scheduler view and the next-turn agent.
-
-- **Claude Code** (`CLAUDECODE=1`):
-  ```
-  CronCreate(
-    recurring: false,
-    cron: "<minute> <hour> <DoM> <Mon> *",
-    prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --poll-ms 1000 --limit 50"
-  )
-  ```
-  Field notes (do **not** inline these into the call):
-  - `cron`: standard 5-field expression set to **now + 2 minutes in local time**. Example: if now is 14:28 local, use `30 14 <today_DoM> <today_Mon> *`.
-
-  Remember the returned **wake id** (it stays in the assistant transcript and is visible in the next turn).
-
-- **Codex** (`CODEX_THREAD_ID` non-empty):
-  ```
-  codex_app.automation_update(
-    mode: "create",
-    kind: "heartbeat",
-    destination: "thread",
-    rrule: "DTSTART:<YYYYMMDDTHHMMSS>\nRRULE:FREQ=MINUTELY;COUNT=1",
-    prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --poll-ms 1000 --limit 50",
-    status: "ACTIVE"
-  )
-  ```
-  Field notes (do **not** inline these into the call):
-  - `rrule`: iCalendar RRULE syntax — exactly two lines joined by a literal `\n`:
-      1. `DTSTART:<YYYYMMDDTHHMMSS>` — UTC basic format (e.g. `20260607T143000`) set to **now + 2 minutes in UTC**.
-      2. `RRULE:FREQ=MINUTELY;COUNT=1` — fires exactly once (the `COUNT=1` guarantees one-shot semantics).
-
-  Remember the returned **wake id**.
-
-If the scheduling tool is unavailable (unknown tool / returns an error) → **skip silently** and end the turn. The user can re-trigger watch manually if they ignore the item.
-
-**When the wake fires (user idle 2 min)**: its prompt runs `okx-a2a user watch ...` in a fresh turn, which resumes monitoring for **new** events. The original `decision_request` item is **not** re-surfaced by watch — it was already consumed when it first appeared (watch is destructive read). But because the user never `check`ed it, it remains in the outstanding-decisions queue and can be retrieved on demand via `okx-a2a user outdated-list` (see §"Pull outstanding `decision_request` items"). No extra logic needed here.
+After rendering `userContent`, but **before ending the turn**, schedule a 2-minute **one-shot** wake so the watch loop self-resumes if the user goes idle. The exact platform-specific payloads (Claude Code `CronCreate` / Codex `automation_update`), the verbatim-`prompt` rule, the **wake id** terminology, and the unavailable-tool fallback all live in [`references/wake-scheduling.md`](./references/wake-scheduling.md) — follow it. Remember the returned **wake id** for cancellation next turn.
 
 #### Handling the user reply — concurrency-safe relay
 
-0. **First step (always)** — cancel the auto-timeout wake scheduled in the previous turn (best-effort):
-   - Claude Code: `CronDelete(<wake id>)`
-   - Codex: `codex_app.automation_update(mode: "delete", id: <wake id>)`
-   - If the **wake id** is not visible in the assistant transcript (context compacted) or the cancel call errors → **skip and proceed**. Do NOT search for the wake by name/prompt match. A stale wake firing afterwards is harmless: it just re-enters watch to monitor new events; the already-handled `decision_request` item does **not** reappear in watch (it was consumed on the original return — watch is destructive read).
+0. **First step (always)** — cancel the auto-timeout wake scheduled in the previous turn (best-effort). Commands + skip-on-failure rule: see [`references/wake-scheduling.md`](./references/wake-scheduling.md) §Cancelling the wake.
 
 1. User picks `保留` / `skip` → **do NOT** claim; the item stays in the outstanding-decisions queue (un-`check`ed) and can be retrieved later via `okx-a2a user outdated-list` (triggers: `未决策` / `pending decisions`). **STOP the watch loop immediately** — briefly tell the user (localize per LOCALIZATION_PREFIX rules; keep `未决策` / `pending decisions` / `监听任务进展` / `task watch` unchanged): "Item kept on hold; watch loop ended. Say `未决策` / `pending decisions` to see all unhandled decisions, or `监听任务进展` / `task watch` to resume monitoring new events." The user explicitly chose to defer; honor that and stop background monitoring.
 2. Otherwise claim first: `okx-a2a user check --todo-ids <id> --json`.
@@ -236,52 +190,7 @@ If the scheduling tool is unavailable (unknown tool / returns an error) → **sk
 
 ## Pull outstanding `decision_request` items — `okx-a2a user outdated-list`
 
-User-initiated query, separate from the live watch loop. When the user explicitly asks to see decision_request items they have **not yet replied to** (rendered previously but no choice picked), surface all of them in one shot.
-
-### Triggers
-- Chinese: `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理`
-- English: `outstanding decisions` / `pending decisions` / `unhandled decisions` / `what am I missing`
-
-### Action
-
-```bash
-okx-a2a user outdated-list --json
-```
-
-Returns the set of `decision_request` items the user has **not yet `check`ed** (i.e. watch has already surfaced them but the user never committed a reply). These items stay in the outstanding-decisions queue until `okx-a2a user check --todo-ids …` commits a decision. (Notifications are not included — watch consumes them on return and they have no outstanding state.)
-
-### Rendering — batch, not per-item
-
-Unlike watch's per-item flow, render **all returned items in a single assistant message**:
-
-1. Number each item (`1`, `2`, `3`, ...) so the user can disambiguate.
-2. For each item, paste its `userContent` as a markdown blockquote (same copy-not-rewrite rule as §`kind == notification` / §`kind == decision_request` above — no wrapper sentences, no summarization, no cross-item merging).
-3. After the last item, append this disambiguation hint **exactly once** (translate to the user's language per LOCALIZATION_PREFIX rules; keep the literal token `JobID` and the examples unchanged):
-   `💡 When replying, use either form to indicate which item you're answering: (1) list index + answer, e.g. "1 关闭" / "2: approve" / "3 — 956"; (2) JobID prefix + answer, e.g. "JobID 0x49fa — 1" (first 6 chars of jobId).`
-4. End turn. Do **NOT** auto-re-enter `watch` or any other command — `outdated-list` is a one-shot query, not a loop.
-
-### Handling the user's reply
-
-Route in the following order:
-
-1. **Reply starts with a list index** (digit `1` / `2` / `3` / ..., followed by separator `:` / `—` / space / newline, or standing alone):
-   - Map the index back to the Nth `decision_request` rendered.
-   - The text after the index (if any) is the verbatim answer for that item.
-   - If the user sent only an index with no answer content (e.g. just `1`), **ask the user to supplement the answer** ("Please add your reply for decision 1, e.g. `1 关闭` / `1 956` / `1 自定义回复`") rather than guessing.
-
-2. **Reply starts with `JobID <prefix>`** (or variants `JobID <prefix> — <answer>` / `<prefix>: <answer>`, etc.):
-   - Match `<prefix>` against the listed items' jobIds (first 6 chars of jobId).
-   - The text after the prefix is the verbatim answer for that item.
-
-3. **Only one item is outstanding** → no ambiguity; treat the reply as belonging to that item whether or not it carries an index / prefix.
-
-4. **Multiple outstanding items AND the reply carries neither an index nor a prefix** → ask the user to re-send using one of the forms above.
-
-### Anti-patterns
-- Do NOT call `okx-a2a user watch` for this intent — `watch` long-polls; `outdated-list` is a snapshot.
-- Do NOT auto-re-enter any command after rendering. Wait for the user's reply (either an index or a JobID prefix is accepted).
-- Do NOT schedule a 2-minute wake here — the wake belongs to the live watch flow for fresh `decision_request` items, not to a static list.
-- Do NOT render items one by one across multiple assistant messages — batch them into a single message.
+Separate user-initiated intent (triggers: `未决策` / `待决策` / `outstanding decisions` / `pending decisions` / `what am I missing`): a one-shot snapshot of decision_request items the user surfaced but never replied to. It does NOT long-poll and does NOT re-enter watch. Full flow — command, batch-render rule, the `JobID <prefix>` disambiguation hint, reply routing, and anti-patterns — is in [`references/outdated-list.md`](./references/outdated-list.md). Load it when this intent fires.
 
 ## Stop condition
 

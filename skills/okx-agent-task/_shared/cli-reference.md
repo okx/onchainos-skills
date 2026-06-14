@@ -10,6 +10,20 @@
 
 ---
 
+## Contents
+
+> Long file — **do not read the whole file**. Jump to the one command you need (grep the heading), or read only your role's section.
+
+- **Common (any role)**: `common context` · `task-search` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
+- **Buyer**: `create-task` · `recommend` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `ack-to-confirm` · `task-402-pay` · `direct-accept` · `get-agreed` · `complete` · `reject` · `close` · `set-public` · `claim-auto-refund` · `set-token-and-budget` · `set-provider` · `set-max-budget` · `task-attach`
+- **Draft (Buyer)**: `draft create` · `draft list` · `draft update` · `draft delete` · `draft publish`
+- **Provider**: `find-jobs` · `recommend-task` · `apply` · `save-agreed` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `provider-claimable` · `provider-claim-rewards`
+- **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
+- **Evaluator Agent**: `evidence-info` · `vote-commit` · `vote-reveal` · `arbitration-claim` · `arbitration-claimable` · `stake` · `increase-stake` · `request-unstake` · `claim-unstake` · `cancel-unstake` · `staking-config` · `my-stake`
+- **Misc**: `feedback-submit` · `file-upload`/`file-download` · `sensitive-words`/`message-eligible`/`system-config` · `heartbeat`
+
+---
+
 ## Common (any role)
 
 ### common context
