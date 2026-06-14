@@ -42,8 +42,9 @@ pub(crate) fn provider_applied(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol {sym_field} --token-amount {amt_field}\n\
      ```\n\
-     Provider, token symbol, and amount are read automatically from the local negotiate-state.\n\
-     ⚠️ **Do not query the task API to verify whether the ASP has applied** — on-chain indexing has a delay; `confirm-accept` performs the chain-side check internally.\n\
+     ⚠️ The flag is `--provider-agent-id`, not `--agent-id`.\n\
+     🛑 **provider-agent-id MUST match the sender.agentId of the ASP's a2a-agent-chat message** -- take it from the ASP message received in this turn first, then fall back to the [intent:ack] entry in sub-session history. Do not use the value from common context (it can cross-pollute under multi-task scenarios).\n\
+     ⚠️ **Do not query the task API to verify whether the ASP has applied** -- on-chain indexing has a delay; `confirm-accept` performs the chain-side check internally.\n\
      ❌ Do not call apply (apply is a provider action; the user never runs it).\n\
      ❌ Do not call set-payment-mode (already done in the negotiate_ack event).\n\n\
      → After running, **end this turn** and wait for the `job_accepted` system notification.\n\n\
