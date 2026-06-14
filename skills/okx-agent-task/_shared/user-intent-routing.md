@@ -81,7 +81,7 @@ Triggers (only when there's no active card the user might be answering):
 | Intent | Action | Detail |
 |---|---|---|
 | Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --jobid _ --event create_task --role buyer --agentId <X>` → follow script | buyer publish flow |
-| Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → Scene 1.7 | [`buyer-actions.md`](../buyer-actions.md) §5 |
+| Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → designated-provider flow | [`buyer-actions.md`](../buyer-actions.md) §5 |
 | Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs` | [`provider.md`](../provider.md) §2.1. Do NOT route to `task-search`. | provider.md §2.1 |
 | Take specific task (ASP) — `接 {jobId}` / `contact the buyer of {jobId}` | `common context <jobId> --role provider` → `xmtp_start_conversation` | provider.md §2 |
 | Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务` | `onchainos agent task-search` | [`cli-reference.md#task-search`](./cli-reference.md#task-search) |

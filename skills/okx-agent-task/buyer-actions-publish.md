@@ -1,10 +1,7 @@
 # Buyer — Publishing a Task
 
-> 🛑 **Pre-requisite**: you must have already read `buyer-user.md` (User session). If you arrived here by guessing, **stop** and read the appropriate entry file first.
-
-> 🌐 **Localization**: all `xmtp_dispatch_user` / `pending-decisions-v2 request` calls in this file must match the user's language. See `buyer-user.md` localization preamble.
-
-> 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually with the user before execution. When the user mentions multiple changes in one sentence, split into independent steps, present a confirmation question at each step, and only proceed after the user explicitly replies. ❌ Batch-executing = the user cannot review = potentially executing unwanted changes.
+> 🛑 **Pre-requisite**: read `buyer-user.md` first. 🌐 All user-facing content must match the user's language.
+> 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually before execution. Multiple changes → split into steps, confirm each.
 
 ---
 
@@ -29,7 +26,7 @@ After collecting fields per the next-action script, **additionally** perform the
 1. **Token validation**: not USDT / USDG → **"Only USDT and USDG are currently supported; please choose one."**, do NOT silently substitute.
 2. **Description length validation**: `description` < 10 chars → **"The more detailed the description, the more accurate the Provider matching. Could you add more specifics?"**
 3. **Payment-method intercept**: the user mentions a payment-method preference (escrow / guarantee / x402) → **do NOT set it**; inform the user: "The payment method will be determined during negotiation with the provider, based on what the provider supports and your preferences."
-4. **Attachment reminder**: if the task description mentions reference materials, images, documents, or any phrasing that implies supplementary files (e.g. "see attached", "refer to the file", "according to the document", "as shown in the image", "参考附件", "见附件", "根据文档", "参照图片", "如图", "详见文件", "附上了", "这是文件") → proactively ask the user whether they want to attach those files now (provide local file paths) or add them later after the task is created. Match the user's language.
+4. **Attachment reminder**: if description implies supplementary files (e.g. "see attached" / "参考附件" / "如图" / "详见文件") → ask user whether to attach now or after creation.
 
 ### 1.2 Confirmation Form + Create Task
 
@@ -54,16 +51,13 @@ After success, inform the user of the `jobId`. ⚠️ Do NOT say "published succ
 
 | Error | Response |
 |---|---|
-| Unsupported token | "Only USDT and USDG are currently supported; please choose one." |
-| Budget / max-budget currency mismatch | "The budget and max budget must use the same token; please confirm: USDT or USDG?" |
-| Description < 10 chars | "The more detailed the description, the more accurate the Provider matching. Could you add more specifics?" |
-| Title > 30 chars | The agent automatically re-summarizes. |
-| Max budget < budget | "The max budget cannot be smaller than the budget." |
-| Max budget missing | "Please set a max budget (the upper price limit during negotiation); the provider's quote may not exceed this value." |
-| Budget decimal > 5 places | "Budget precision is limited to 5 decimal places." |
-| Budget > 10,000,000 | "Per-task budget may not exceed 10,000,000." |
-| Deadline out of range | Inform the user of the range limits. |
-| create-task tx failure | Check network status and guide a retry. |
+| Unsupported token / currency mismatch | "Only USDT and USDG supported; budget and max-budget must use the same token." |
+| Description < 10 chars | "Add more specifics for better Provider matching." |
+| Title > 30 chars | Agent auto re-summarizes. |
+| Max budget < budget / missing | "Max budget must be ≥ budget. Please set it (upper limit during negotiation)." |
+| Budget decimal > 5 / > 10M | Inform the limit. |
+| Deadline out of range | Inform range limits. |
+| create-task tx failure | Check network; guide retry. |
 
 ### 1.4 Draft tasks (save, edit, list, delete, publish)
 
@@ -128,7 +122,9 @@ The CLI performs its own validation as a safety net. After a successful publish,
 
 ## Appendix A: Task Creation Confirmation Card Template
 
-Chinese variant:
+Display as a `| Field | Value |` table with these rows: **Title**, **Summary**, **Description**, **Currency**, **Budget**, **Max Budget**, **Acceptance Window**, **Delivery Window**. If attachments present, add **Attachments** row with file count + names.
+
+Example (Chinese — translate labels to match user's language):
 
 | 字段 | 值 |
 |---|---|
@@ -143,27 +139,4 @@ Chinese variant:
 
 > 确认无误？确认后我立即上链创建任务。
 
-English variant:
-
-| Field | Value |
-|---|---|
-| Title | Query Jiangsu weather |
-| Summary | Query current weather of Jiangsu province including temperature and humidity. |
-| Description | Query the current weather of Jiangsu province... |
-| Currency | USDT |
-| Budget | 0.1 |
-| Max Budget | 0.15 |
-| Acceptance Window | 24h |
-| Delivery Window | 24h |
-
-> Confirm? I will submit the task on-chain immediately after confirmation.
-
-Rules:
-
-- The summary always goes inside the table.
-- When the description is ≤ 200 chars, put it in the table; when > 200 chars, write `见下方` / `See below` in that row and render the full text as prose under the table.
-- Do not display the acceptance criteria field.
-- Do NOT add a Visibility / 可见性 row — visibility is not set at creation time and does not belong in the creation form.
-- Chinese/English field labels match user language.
-- If attachments are present, add a row: `附件` / `Attachments` with the file count and names (e.g. `2 files: spec.pdf, mockup.png`).
-- Footer must be a blockquote asking for confirmation.
+Rules: summary always in table; description > 200 chars → `见下方`/`See below` + prose below table; no Visibility row; no acceptance-criteria row; footer = blockquote asking confirmation.

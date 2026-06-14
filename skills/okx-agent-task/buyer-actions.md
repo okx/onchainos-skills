@@ -1,10 +1,7 @@
 # Buyer — User-Session Actions
 
-> 🛑 **Pre-requisite**: you must have already read `buyer-user.md`. If you arrived here by guessing, **stop** and read it first.
-
-> 🌐 **Localization**: all `xmtp_dispatch_user` / `pending-decisions-v2 request` calls in this file must match the user's language. See `buyer-user.md` localization preamble.
-
-> 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually with the user before execution. When the user mentions multiple changes in one sentence, split into independent steps, present a confirmation question at each step, and only proceed after the user explicitly replies. ❌ Batch-executing = the user cannot review = potentially executing unwanted changes.
+> 🛑 **Pre-requisite**: read `buyer-user.md` first. 🌐 All user-facing content must match the user's language.
+> 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually before execution. Multiple changes in one sentence → split into steps, confirm each. ❌ Batch-executing = user cannot review.
 
 ---
 
@@ -23,10 +20,7 @@
 
 ## 2. Mid-task attachment (user session)
 
-**Trigger**: the user wants to add an attachment or image to an existing task:
-- Chinese: 补充附件, 补充图片, 补充材料, 给任务加个文件, 发个文件给卖家, 上传文件到任务
-- English: add file to task, attach this to job, send file to provider, upload file to task, add attachment
-- Implicit: User **directly sends a file or image** during an active task conversation (confirm intent first — the user may have sent it for a non-task purpose)
+**Trigger**: 补充附件/补充图片/给任务加文件/add file to task/attach this to job/upload file to task, or user directly sends a file during an active task conversation (confirm intent first).
 
 **Flow**:
 
@@ -50,9 +44,7 @@
 
 > **Pre-condition**: the task is in the **Created** state (before Accepted). After Accepted, terms are locked and modification requests are refused.
 
-### 3.0 Priority rule
-
-🛑 **MANDATORY: user instruction priority > agent-to-agent matching/negotiation.** When the user issues a terms-change or stop instruction, you **must immediately interrupt the current automated flow** and handle the user's instruction first.
+🛑 **Priority rule**: user instruction > automated flow. Terms-change or stop from user → immediately interrupt and handle first.
 
 ### 3.1 Modifiable fields
 
@@ -131,44 +123,15 @@ The user wants to see saved deliverables from completed or in-progress tasks.
 
 **Step 2 — Run the CLI** (substitute `<role>` with `buyer` or `provider`):
 
-Single job:
-```bash
-onchainos agent task-deliverable-list --job-id <jobId> --role <role>
-```
+- Single job: `onchainos agent task-deliverable-list --job-id <jobId> --role <role>`
+- All / search: `onchainos agent task-deliverable-list --role <role> [--search "<keyword>"]`
 
-All deliverables (with optional keyword search):
-```bash
-onchainos agent task-deliverable-list --role <role> [--search "<keyword>"]
-```
+**Step 3 — Present results directly to the user** (🌐 translate labels to user's language):
 
-**Step 3 — Present results directly to the user**:
-
-🌐 Translate all labels to the user's language (e.g. Deliverables → 交付物, Path → 路径, Saved → 保存时间).
-
-For single job (`deliverables` array):
-```
-[Deliverables] Job <jobId> — <title>
-<for each entry>
-  • <originalName> (<deliverableType>, <sizeBytes human-readable>)
-    Path: <path>
-    Saved: <savedAt>
-</for each>
-```
-
-For all jobs (`results` array):
-```
-[My Deliverables] <count> job(s) with saved deliverables:
-<for each job>
-  <title> (<jobId>) — <deliverableCount> file(s)
-  <for each entry>
-    • <originalName> — <path>
-  </for each>
-</for each>
-```
-
-If the result is empty, reply in the user's language (EN: "No saved deliverables found." / ZH: "没有已保存的交付物。").
-
-⚠️ File paths MUST be absolute (the user needs to locate the file on disk).
+- Single job: list each entry with `originalName`, `deliverableType`, `sizeBytes` (human-readable), absolute `path`, `savedAt`.
+- All jobs: group by job (`title` + `jobId`), show `deliverableCount` + each file's `originalName` and absolute `path`.
+- Empty → "No saved deliverables found." / "没有已保存的交付物。"
+- ⚠️ File paths MUST be absolute.
 
 ---
 
@@ -176,10 +139,7 @@ If the result is empty, reply in the user's language (EN: "No saved deliverables
 
 **Trigger**: user message contains "Please initiate a direct conversation with this provider to discuss the task details."
 
-> ⚠️ **A2MCP with known endpoint → NOT this skill.** If the user provides a concrete endpoint URL (`http(s)://…`) AND the serviceType is A2MCP (or the message explicitly says "A2MCP"), this is a direct x402 pay-per-call — hand off to `okx-agent-payments-protocol`. Do NOT enter §6 or create a task.
->
-> ⚠️ If it contains "Please send a request to this endpoint." **but not** "use onchainos" → does NOT belong to this skill.
-> If it contains "Please use onchainos to send a request to this endpoint" **and** serviceType is NOT A2MCP → go to **§6** below.
+> ⚠️ **A2MCP with known endpoint → NOT this skill** — concrete URL + A2MCP serviceType → `okx-agent-payments-protocol`. "Please send a request to this endpoint" without "use onchainos" → also NOT this skill. "Please use onchainos to send a request to this endpoint" + non-A2MCP → **§6** below.
 
 Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `Price` / `symbol` (mutable).
 
@@ -224,8 +184,6 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 
 | Error | Response |
 |---|---|
-| Provider does not exist | "This Provider (agentId: xxx) does not exist; please confirm the ID." |
-| Endpoint invalid | "This endpoint is not a valid x402 service; please confirm the address." |
-| tokenSymbol not USDT/USDG | "This service charges in <symbol>; the task system currently only supports USDT and USDG." |
-| Create-task failed | Check network status; guide a retry. |
-| Payment signing failed | Inspect `executeErrorMsg`. Do NOT default to "balance insufficient" — the system is gas-free. |
+| Provider not found / Endpoint invalid / tokenSymbol not USDT/USDG | Inform user with specific reason; do not proceed. |
+| Create-task failed | Check network; guide retry. |
+| Payment signing failed | Inspect `executeErrorMsg`. Do NOT default to "balance insufficient" — system is gas-free. |
