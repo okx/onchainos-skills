@@ -12,13 +12,12 @@
 
 This file only covers the content **specific** to the Buyer role. Generic rules (envelope shapes / tool usage / anti-hallucination / push-to-user-session opt-in / communication boundary) all live in `SKILL.md`.
 
-> 🌐 **[Localization]** — applies to ALL `xmtp_dispatch_user` / `pending-decisions-v2 request` calls in this file: the `content` / `--user-content` / `--list-label` you compose must match the user's language. (1) For English-speaking users: use the English template verbatim (fill placeholders only). (2) For non-English users: translate faithfully, preserving all field labels, data values, structure, and line breaks. Do NOT add information, time estimates, or promises not in the template. (CLI playbooks from `next-action` carry their own `[Localization]` prefix — this rule covers the direct calls in buyer.md that bypass `next-action`.)
+> 🌐 **[Localization]** — applies to ALL `pending-decisions-v2 request` calls in this file: the `content` / `--user-content` / `--list-label` you compose must match the user's language. (1) For English-speaking users: use the English template verbatim (fill placeholders only). (2) For non-English users: translate faithfully, preserving all field labels, data values, structure, and line breaks. Do NOT add information, time estimates, or promises not in the template. (CLI playbooks from `next-action` carry their own `[Localization]` prefix — this rule covers the direct calls in buyer.md that bypass `next-action`.)
 
 > **Fully gas-free**: every buyer on-chain action goes through the platform's paymaster — **never** prompt for gas or factor gas reserves into any amount suggestion.
 
 > 🛑🛑🛑 **ABSOLUTE PROHIBITION — `sessions_spawn` / `sessions_yield` are forbidden**: you (sub / backup) **are** the agent responsible for executing the script. Call `next-action` and execute **yourself**; never delegate via `sessions_spawn` or `sessions_yield`.
-> 🔴 I-backup-spawn: backup received `job_created` → `sessions_spawn` → designated-provider context severed → stuck.
-> 🔴 I-MiniMax: backup → `sessions_spawn` → child printed text "negotiation started" → user saw nothing → `recommend` never triggered → permanently stuck. **`sessions_spawn` is the #1 fatal mistake on backup.**
+> 🔴 Spawning severs context and makes output invisible to user — #1 fatal mistake on backup.
 
 > 🛑🛑🛑 **System events MUST call `next-action`; directly executing CLI is forbidden** — after receiving any `source: "system"` event (`job_payment_mode_changed` / `job_accepted` / `job_submitted` / `job_created` / `job_disputed` / ...), the first action MUST be `next-action`. Directly calling business CLIs (`confirm-accept` / `complete` / `reject` / `set-payment-mode` / ...) without `next-action` is forbidden — the script contains pre-condition checks, action whitelists, and ordering constraints; skipping = executing the wrong command = stuck flow or funds at risk. See SKILL.md `## Activation`. 🛑 Role MUST be re-resolved per envelope; do NOT inherit from sub history or sessionKey — in same-wallet multi-role setups, an envelope may carry an agentId that belongs to a different role (e.g. evaluator). Use `--role auto` so the CLI resolves the envelope's `<agentId>` internally; if the CLI's resolved role is not `buyer`, it will dispatch to the correct playbook automatically, so you never accidentally run the buyer flow on an evaluator agent. (🔴 I-19)
 
@@ -43,12 +42,6 @@ This file only covers the content **specific** to the Buyer role. Generic rules 
 | §7 Common helper commands | status / context / active-tasks |
 
 ---
-
-> 🛑 **[Tool-call batching — MANDATORY]** — splitting independent tool calls into separate rounds wastes 1 LLM round (~50K tokens context reload) per split. The following pairs MUST be called in a SINGLE response:
-> - `session_status` + `onchainos agent common context <jobId>` — both read-only, no ordering dependency
-> - `xmtp_send` + `xmtp_dispatch_user` — peer message + user notification are independent targets
->
-> When the playbook's current step and next step have no data dependency, also batch them. When in doubt about dependency, call sequentially — correctness > speed.
 
 ## 1. Trigger identification
 
@@ -146,17 +139,16 @@ onchainos agent next-action --jobid <jobId> --event job_created --role buyer --a
 >
 > ⚠️ **These routing priorities override the generic "receiving peer message" rule in SKILL.md.** Do NOT use status from `common context` to call `next-action` — use the `event` matched below.
 >
-> 🔴 Real incidents (condensed): I-1: provider sent "0.1 USDG" quote → agent skipped `next-action` → directly `xmtp_dispatch_user` forwarding to user asking "do you confirm?" → completely bypassed three-step handshake → provider never received `[intent:propose]`. I-1b: used `xmtp_dispatch_user` to forward quote — equally forbidden as `xmtp_prompt_user`. I-2: used `common context` status=created → `next-action --event job_created` → re-sent first inquiry (correct: `negotiate_reply`). I-3: provider said "I accept, 0.1 USDG, escrow" → agent treated as `[intent:ack]` → skipped [intent:propose] → stuck. **Most frequent severe mistake** — provider's first reply is always natural language, never structured `[intent:ack]`. I-4: agent printed text directly in sub session → invisible to user → stuck. **Correct approach**: route #6 → `next-action --event negotiate_reply` → read budget/max_budget → quote ≤ budget → directly `xmtp_send` `[intent:propose]` (fully automatic; do not ask user).
+> 🔴 **Common fatal mistakes**: (1) forwarding provider quote to user via `xmtp_dispatch_user` instead of calling `next-action` — bypasses three-step handshake; (2) using `--event job_created` when provider replies (correct: `negotiate_reply`); (3) treating provider's natural language "I accept" as `[intent:ack]` — provider's first reply is never structured; (4) printing text in sub session — invisible to user. **Correct**: always route #6 → `next-action --event negotiate_reply`.
 >
 > 🛑 **Structured marker vs natural language — iron rule**:
 > - **Decision method**: perform a **substring containment match** via `content.includes("[intent:")` — only if it matches do you route to #3, otherwise **unconditionally route to #6**. **Semantic inference is forbidden** — do NOT infer `[intent:ack]` just because the provider said "accept / agree / OK / sure / no problem".
 > - **Structured marker**: content **must contain** the literal `[intent:ack]` / `[intent:counter]` / `[intent:reject]` / `[intent:propose]` (substring match).
 > - **Natural language**: anything **not containing** `[intent:` — including "I accept / agreed / OK / sure / quote 0.1 USDG" → **all route via #6 fallback → `negotiate_reply`**.
-> - **Logical proof**: if you have not yet sent `[intent:propose]`, the provider **cannot** reply `[intent:ack]` — ACK responds to PROPOSE. First message = 100% not ACK.
 
 > 📌 **`--peerTaskMinVersion`**: pass through `payload.taskMinVersion` from the inbound envelope; if absent → omit the parameter entirely (backward compatible).
 >
-> 0. **Skill prefetch** (source: self via `xmtp_dispatch_session`): content starts with `[SKILL_PREFETCH]` → SKILL.md is loaded; when the next a2a-agent-chat arrives, Activation #2 routes to this playbook. The prefetch itself requires no action — **but any other inbound message in the same or later turn MUST be processed via #1–#6 as normal**. 🔴 I-prefetch-1: prefetch + ASP quote in same turn → agent applied "no action" to both → stuck. 🔴 I-prefetch-2: prefetch in turn 1, ASP quote in turn 2 → agent carried "prefetch mode" across turns, still refused to execute → stuck.
+> 0. **Skill prefetch** (source: self via `xmtp_dispatch_session`): content starts with `[SKILL_PREFETCH]` → SKILL.md is loaded; when the next a2a-agent-chat arrives, Activation #2 routes to this playbook. The prefetch itself requires no action — **but any other inbound message in the same or later turn MUST be processed via #1–#6 as normal**. 🔴 Do NOT carry "no action" to non-prefetch messages in the same or subsequent turns.
 > 1. **Provider apply notification** (source: peer): content contains `[intent:applied]`, or semantically expresses "apply submitted / please run confirm-accept" → **immediately** `onchainos agent next-action --jobid <jobId> --event provider_applied --role buyer --agentId <your agentId>` → execute `confirm-accept` per script. (`confirm-accept` only takes `jobId`; provider/token are read from negotiate-state. Buyer does NOT receive a `provider_applied` system event; this is triggered by a2a-agent-chat. **Do NOT** query task API to validate.)
 > 2. **Delivery notification** (source: peer): content contains `[intent:deliver]` → **immediately** `onchainos agent next-action --jobid <jobId> --event deliverable_received --role buyer --agentId <your agentId>` → follow playbook (download → save → brief user notification). Full deliverable shown at `job_submitted` acceptance card.
 > 3. **Negotiation structured marker** (source: peer) (🛑 literal `content.includes("[intent:")` only; semantic inference forbidden) → dispatch by marker:
@@ -179,7 +171,7 @@ onchainos agent next-action --jobid <jobId> --event job_created --role buyer --a
 >
 > 🛑 **Buyer cannot initiate arbitration**: inform user the correct path is to **reject the deliverable** — after rejection, ASP has 24h to dispute; if not, system auto-refunds. Do NOT call `dispute_raise` on buyer side.
 >
-> 🛑🛑🛑 **ABSOLUTE PROHIBITION — never manually construct protocol messages**: `[intent:propose]` / `[intent:ack]` / `[intent:confirm]` / `[intent:counter]` / `[intent:reject]` MUST only be produced by `next-action` playbooks. NEVER compose these markers via `xmtp_send` yourself — the playbook contains pre-condition checks (`ack-to-confirm` / round counting / budget validation) that are skipped when you craft the message manually. Even in recovery from a stuck state, always call `next-action` with the correct event. 🔴 Real incident: LLM got stuck due to wrong event, entered manual recovery mode, directly sent `[intent:propose]` + `[intent:confirm]` via `xmtp_send` — `save-agreed` and `set-payment-mode` were never executed, on-chain state did not advance.
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — never manually construct protocol messages**: `[intent:propose]` / `[intent:ack]` / `[intent:confirm]` / `[intent:counter]` / `[intent:reject]` MUST only be produced by `next-action` playbooks. NEVER compose these via `xmtp_send` — the playbook contains pre-condition checks (budget validation / round counting / state persistence) that manual sends skip, causing on-chain state to not advance.
 >
 > 🛑 **Status verification iron rule**: before outputting "still negotiating" / "waiting for acceptance", **must first** `agent status <jobId>`. If status=1 or paymentMode=1, forbidden to output waiting-for-acceptance phrasing. 🔴 Backup wrongly reasoned "not accepted yet" when status was already 1.
 
@@ -195,12 +187,11 @@ onchainos agent next-action --jobid <jobId> --event job_created --role buyer --a
 
 **Rules**:
 
-1. **Context fetching**: extract locked parameters from `agent status` output already used at priority 4 — no need to call `common context` again.
-2. **Locked parameters are immutable**: if the provider tries to modify description / tokenAmount / tokenSymbol / paymentMode / expireConfig → `xmtp_send` to refuse, then end turn.
-3. **No CLI**: do NOT call confirm-accept / set-payment-mode / apply / create-task / deliver / complete / reject.
-4. **Exempt from preamble rule 8**: proactive `xmtp_send` replies to the provider are allowed in this mode.
-5. **Autonomous reply**: for execution-detail questions where the agent has enough information → `xmtp_send` reply; only one message per turn.
-6. **Fallback to user forwarding**: questions beyond the agent's capability → `xmtp_dispatch_user` forwards to the user.
+1. **Locked parameters are immutable**: if the provider tries to modify description / tokenAmount / tokenSymbol / paymentMode / expireConfig → `xmtp_send` to refuse, then end turn.
+2. **No CLI**: do NOT call confirm-accept / set-payment-mode / apply / create-task / deliver / complete / reject.
+3. **Exempt from preamble rule 8**: proactive `xmtp_send` replies to the provider are allowed in this mode.
+4. **Autonomous reply**: for execution-detail questions where the agent has enough information → `xmtp_send` reply; only one message per turn.
+5. **Fallback to user forwarding**: questions beyond the agent's capability → `xmtp_dispatch_user` forwards to the user.
 
 ---
 
@@ -251,8 +242,7 @@ The buyer must **NEVER** call `onchainos agent apply`. Wait for the provider to 
 
 ### 6.2 ❌ Minimize `session_status` calls
 
-- **Within a single turn**: call at most once and cache the result. If you find yourself calling it again in the same turn, check whether you are looping — repeated calls with the same input are a loop signal.
-- **Across turns (same sub-session)**: the sessionKey does NOT change during a sub-session's lifetime. After the first resume has confirmed the sessionKey via `session_status`, subsequent resumes SHOULD skip the call and reuse the known sessionKey from conversation history. Exception: if the conversation history has been truncated and sessionKey is unknown, call once to re-establish.
+- Call at most once per turn and cache the result. sessionKey does not change within a sub-session — reuse from conversation history on subsequent resumes unless history was truncated.
 
 ---
 
