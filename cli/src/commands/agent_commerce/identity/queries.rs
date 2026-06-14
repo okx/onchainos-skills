@@ -306,7 +306,7 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
     )];
     if let Some(page_raw) = args.page.as_deref() {
         let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
-        query.push(("page".to_string(), page.to_string()));
+        query.push(("pageNo".to_string(), page.to_string()));
     }
     if let Some(page_size_raw) = args.page_size.as_deref() {
         let page_size = parse_u32_arg(
