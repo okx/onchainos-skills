@@ -85,6 +85,10 @@ pub(super) struct FlowContext<'a> {
     pub terminal_session_hint: String,
     pub payment_mode: Option<i64>,
     pub prefetched: Option<&'a crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    /// Verbatim `--data` arg from `next-action`, used by event handlers that
+    /// need user-routed input (e.g. `reject_review` reading the rejection
+    /// reason extracted from the relayed `user_decision_job_submitted` reply).
+    pub data: Option<&'a str>,
 }
 
 /// List of CLI commands the buyer can execute under a given status (used in the menu at the tail of `agent common context` output).
@@ -319,6 +323,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         terminal_session_hint,
         payment_mode,
         prefetched,
+        data,
     };
 
     let event = parse_status_or_event(event_str);
@@ -398,7 +403,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::JobRejected => super::flow_lifecycle::job_rejected(&ctx),
         Event::JobDisputed => super::flow_lifecycle::job_disputed(&ctx),
         Event::Other(ref s) if s == "approve_review" => super::flow_lifecycle::approve_review(&ctx).await,
-        Event::Other(ref s) if s == "reject_review" => super::flow_lifecycle::reject_review(&ctx),
+        Event::Other(ref s) if s == "reject_review" => super::flow_lifecycle::reject_review(&ctx).await,
         Event::JobCompleted => super::flow_lifecycle::job_completed(&ctx),
         Event::DisputeResolved => super::flow_lifecycle::dispute_resolved(&ctx),
         Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx),
@@ -454,7 +459,10 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20• **`reject_review`** — user rejects and wants revisions/refund (typical intents: B / 拒绝 / 不通过 / 不满意 / 不接受 / reject / refuse / 不行 / 不达标 — anything meaning dissatisfaction; extract the reason if the user provided one after `理由` / `reason` / `因为`; ⚠️ the reason is critical — it will be auto-submitted as evidence if the ASP files a dispute).\n\n\
                      If the user's reply clearly maps to one of these → call:\n\
                      ```bash\n\
-                     onchainos agent next-action --jobid {job_id} --event <approve_review|reject_review> --role buyer --agentId {agent_id}\n\
+                     # For approve_review (no extra args needed):\n\
+                     onchainos agent next-action --jobid {job_id} --event approve_review --role buyer --agentId {agent_id}\n\
+                     # For reject_review — pass the extracted rejection reason via --data (empty string if user gave no reason; the handler falls back to a default):\n\
+                     onchainos agent next-action --jobid {job_id} --event reject_review --role buyer --agentId {agent_id} --data \"<extracted reason from user's reply, or empty>\"\n\
                      ```\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--sub-key` and `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
                 ),
