@@ -31,10 +31,6 @@ metadata:
 
 > 🌐 **[Localization]** — all `xmtp_dispatch_user` / `pending-decisions-v2 request` content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure.
 
-> **[Tool-call batching — MANDATORY]** — independent tool calls MUST be batched in a single response:
-> - `session_status` + `onchainos agent common context <jobId>` — both read-only
-> - `xmtp_send` + `xmtp_dispatch_user` — independent targets
-
 ---
 
 ## System Event Handling
