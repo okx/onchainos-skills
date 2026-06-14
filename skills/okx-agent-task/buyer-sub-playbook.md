@@ -1,6 +1,6 @@
 ---
 name: okx-agent-task-buyer-sub
-description: "Merged playbook for buyer sub-sessions (task sub + backup sub). Self-contained — replaces SKILL.md + buyer.md loading in SKILL_PREFETCH."
+description: "Self-contained playbook for buyer sub-sessions (task sub + backup sub)."
 metadata:
   author: okx
   version: "1.0.0"
@@ -8,7 +8,7 @@ metadata:
 
 # Buyer Sub-Session Playbook
 
-> Self-contained reference for buyer sub-sessions (task sub and backup sub). Replaces the prior two-file load (`SKILL.md` + `buyer.md`). User-session flows (publishing, intent routing, decision resolve) are in `buyer-user.md` and are NOT covered here.
+> Self-contained reference for buyer sub-sessions (task sub and backup sub). User-session flows (publishing, intent routing, decision resolve) are in `buyer-user.md` and are NOT covered here.
 ---
 
 ## Critical Prohibitions

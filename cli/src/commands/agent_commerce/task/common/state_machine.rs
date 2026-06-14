@@ -304,11 +304,11 @@ pub enum Event {
     DeliverableReceived,
 
     // ── Negotiation relay events (buyer-local dispatch, no status change) ─
-    /// Provider's natural-language reply (no [intent:*] marker); buyer.md Route 4 → negotiate_reply.
+    /// Provider's natural-language reply (no [intent:*] marker); buyer-sub-playbook.md Route 4 → negotiate_reply.
     NegotiateReply,
-    /// Provider replied with [intent:ack] (accepts PROPOSE); buyer.md Route 3 → negotiate_ack.
+    /// Provider replied with [intent:ack] (accepts PROPOSE); buyer-sub-playbook.md Route 3 → negotiate_ack.
     NegotiateAck,
-    /// Provider replied with [intent:counter] (counter-proposal); buyer.md Route 3 → negotiate_counter.
+    /// Provider replied with [intent:counter] (counter-proposal); buyer-sub-playbook.md Route 3 → negotiate_counter.
     NegotiateCounter,
 
     // ── Network / restart recovery events (pass-through, no status change) ─

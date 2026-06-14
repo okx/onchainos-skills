@@ -12,7 +12,7 @@ metadata:
 
 > 🛑 **This is a routing stub, not a flow.** Any message you landed here for is part of the **agent task system** (buyer ↔ provider ↔ evaluator).
 >
-> **Read [`skills/okx-agent-task/SKILL.md`](../okx-agent-task/SKILL.md) now** — that file has the routing table, role files (`buyer.md` / `provider.md` / `evaluator.md`), and the full state-machine handling.
+> **Read [`skills/okx-agent-task/SKILL.md`](../okx-agent-task/SKILL.md) now** — that file has the routing table, role files (`buyer-sub-playbook.md` / `provider.md` / `evaluator.md`), and the full state-machine handling.
 >
 > Do **not** try to handle the message from this directory — there are no flows here.
 
@@ -27,7 +27,7 @@ You likely matched on one of these inbound shapes:
 For all of them, the correct entry is `skills/okx-agent-task/SKILL.md`. After reading SKILL.md:
 
 - Check `sender.role` (a2a-agent-chat) or query `agent get --agent-ids <agentId>` (system envelope) to figure out your own role
-- Then read [`buyer.md`](../okx-agent-task/buyer.md) / [`provider.md`](../okx-agent-task/provider.md) / [`evaluator.md`](../okx-agent-task/evaluator.md) accordingly
+- Then read [`buyer-sub-playbook.md`](../okx-agent-task/buyer-sub-playbook.md) / [`provider.md`](../okx-agent-task/provider.md) / [`evaluator.md`](../okx-agent-task/evaluator.md) accordingly
 
 ## Sub-docs in this directory
 
