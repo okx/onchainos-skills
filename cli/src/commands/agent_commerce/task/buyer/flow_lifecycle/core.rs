@@ -6,14 +6,41 @@ use super::super::flow::FlowContext;
 
 pub(crate) fn provider_applied(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+
+    // When prefetched is available, inline tokenSymbol / tokenAmount into the
+    // confirm-accept template — the LLM only has to extract providerAgentId
+    // (the iron rule requires it come from THIS turn's a2a-agent-chat sender,
+    // NOT from task detail / state). When prefetched is missing, fall back
+    // to a 2-step plan that fetches the task context first.
+    let (prelude, sym_field, amt_field, action_header) = match ctx.prefetched {
+        Some(p) => (
+            String::new(),
+            p.token_symbol.clone(),
+            p.token_amount.clone(),
+            "**Run confirm-accept (settle the accept on-chain):**".to_string(),
+        ),
+        None => (
+            format!(
+                "**Step 1 -- Fetch task info:**\n\
+                 ```bash\n\
+                 onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+                 ```\n\
+                 Extract: tokenSymbol, tokenAmount.\n\n"
+            ),
+            "<tokenSymbol>".to_string(),
+            "<tokenAmount>".to_string(),
+            "**Step 2 -- Run confirm-accept (settle the accept on-chain):**".to_string(),
+        ),
+    };
 
     format!(
     "[Current Status] provider_applied (ASP has submitted an on-chain apply)\n\
      [Role] User (User Agent)\n\n\
-     [Your next action]\n\n\
-     **Run confirm-accept (settle the accept on-chain):**\n\
+     {prelude}\
+     {action_header}\n\
      ```bash\n\
-     onchainos agent confirm-accept {job_id}\n\
+     onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol {sym_field} --token-amount {amt_field}\n\
      ```\n\
      Provider, token symbol, and amount are read automatically from the local negotiate-state.\n\
      ⚠️ **Do not query the task API to verify whether the ASP has applied** — on-chain indexing has a delay; `confirm-accept` performs the chain-side check internally.\n\
@@ -125,16 +152,38 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
 
+    // Inline task fields from prefetched into the save command template
+    // when available; fall back to `<placeholder>` markers otherwise (LLM
+    // fills from session context).
+    let (title_field, sym_field, amt_field, provider_field, step0_block) = match ctx.prefetched {
+        Some(p) => {
+            let prov = p.provider_agent_id.clone().unwrap_or_else(|| "<providerAgentId>".to_string());
+            (
+                p.title.clone(),
+                p.token_symbol.clone(),
+                p.token_amount.clone(),
+                prov,
+                "**Step 0 — Task context** (pre-fetched and inlined below; `providerName` is best-effort from session context).\n\n".to_string(),
+            )
+        }
+        None => (
+            "<title>".to_string(),
+            "<tokenSymbol>".to_string(),
+            "<tokenAmount>".to_string(),
+            "<providerAgentId>".to_string(),
+            "**Step 0 — Task context** (prefetch failed; fall back to `[Pre-fetched task context]` block above or session-context best-effort):\n\
+             \x20\x20- `title`, `providerAgentId`, `providerName` (best-effort), `tokenSymbol`, `tokenAmount`\n\
+             A missing field does not block the save.\n\n".to_string(),
+        ),
+    };
+
     format!(
     "[Current action] deliverable_received — download, persist, and notify\n\
      [Role] User (User Agent)\n\n\
      🛑 This playbook fires when the ASP's a2a-agent-chat message contains `[intent:deliver]`.\n\
      Its sole purpose is: **download → save → brief notification**. The full review card is owned by `job_submitted`.\n\n\
      [Your next actions]\n\n\
-     **Step 0 — Task context** (pre-fetched; no CLI call needed):\n\
-     Read from the `[Pre-fetched task context]` block above:\n\
-     \x20\x20- `title`, `providerAgentId`, `providerName` (best-effort), `tokenSymbol`, `tokenAmount`\n\
-     If any field is missing, use best-effort values from session context; a missing field does not block the save.\n\n\
+     {step0_block}\
      **Step 1 — Download/extract + save + notify** (complete all sub-steps before ending the turn):\n\n\
      --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret) ---\n\n\
      1a. Call xmtp_file_download:\n\
@@ -147,10 +196,10 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      1b. Persist the deliverable:\n\
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
-       --file \"<localPath>\" --deliverable-type file --title \"<title>\" \\\n\
+       --file \"<localPath>\" --deliverable-type file --title \"{title_field}\" \\\n\
        --short-id {short_id} --file-key \"<fileKey>\" \\\n\
-       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
+       --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"{sym_field}\" --token-amount \"{amt_field}\"\n\
      ```\n\
      Record the saved path from the command output. If save fails, log the error but continue.\n\n\
      --- Case B: deliverableType=text (body content between `- - -` separators) ---\n\n\
@@ -159,9 +208,9 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
        --file \"<temp .txt path>\" --deliverable-type text \\\n\
-       --title \"<title>\" --short-id {short_id} \\\n\
-       --counterparty-agent-id \"<providerAgentId>\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"<tokenSymbol>\" --token-amount \"<tokenAmount>\"\n\
+       --title \"{title_field}\" --short-id {short_id} \\\n\
+       --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"{sym_field}\" --token-amount \"{amt_field}\"\n\
      ```\n\
      Record the saved path from the command output. If save fails, log the error but continue.\n\n\
      --- After save returns (both cases) — 🛑 SAME TURN, do NOT end the turn yet ---\n\n\
@@ -169,8 +218,8 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      {l10n_dispatch}\n\
      \x20\x20content template (fill from Step 0 + 1a/1b results; translate to user's language):\n\
      \x20\x20```\n\
-     \x20\x20[Deliverable Received] <title> (`{short_id}`)\n\
-     \x20\x20Provider: <providerName> (<providerAgentId>)\n\
+     \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
+     \x20\x20Provider: <providerName> ({provider_field})\n\
      \x20\x20Type: <file|text>\n\
      \x20\x20Saved at: <savedPath from 1b output>\n\
      \x20\x20\n\
@@ -198,6 +247,32 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     let title_display = ctx.title_display;
     let terminal_session_hint = &ctx.terminal_session_hint;
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+
+    // CLI mode: pre-fetch the sub session's sessionKey so the LLM doesn't
+    // need a separate `session_status` call. Best-effort — on failure /
+    // non-cli mode, fall back to the original `<full sessionKey ...>`
+    // placeholder and let the LLM run the tool.
+    let session_key_inline: Option<String> = if super::super::content::is_cli_mode() {
+        crate::commands::agent_commerce::task::common::okx_a2a::session_status()
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let session_hint = match session_key_inline.as_deref() {
+        Some(sk) => format!(
+            "- sessionKey (use this directly in Step 3; do NOT call `session_status`):\n\
+             \x20\x20\x20\x20`{sk}`"
+        ),
+        None => "- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)".to_string(),
+    };
+    let session_hint_step2b = match session_key_inline.as_deref() {
+        Some(sk) => format!(
+            "sessionKey (use this directly in Step 3; do NOT call `session_status`): `{sk}`."
+        ),
+        None => "First call `session_status` to get the current sub session's sessionKey (reused later; do not call it again this turn).".to_string(),
+    };
+
     // Branch A (escrow) push protocol — user_content is composed at runtime from the
     // deliverable variables extracted in Step 2 (file vs text); pass the placeholder
     // and the templates below the helper output guide the LLM through the composition.
@@ -209,6 +284,13 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
         &format!("[Decision {short_id}] {title_display} acceptance decision"),
         "job_submitted",
     );
+    // If we pre-fetched a sessionKey, substitute it into the bash template's
+    // `<full sessionKey from step 1>` placeholder so the LLM doesn't need to
+    // call `session_status` and copy the result.
+    let request_block = match session_key_inline.as_deref() {
+        Some(sk) => request_block.replace("<full sessionKey from step 1>", sk),
+        None => request_block,
+    };
 
     let pm = ctx.payment_mode;
     let pm_extract = if pm.is_some() { "" } else { "Extract `paymentMode` (int: 1=escrow, 3=x402). " };
@@ -235,11 +317,11 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20- localPath: {path}\n\
      \x20\x20- deliverableType: {dtype}\n\
      \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\
-     \x20\x20- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)\n\
+     \x20\x20{session_hint}\n\
      \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
      \x20\x20- **Skip Step 2b entirely**\n\
      \x20\x20- Go to Step 3\n\n",
-            path = d.path, dtype = d.deliverable_type,
+            path = d.path, dtype = d.deliverable_type, session_hint = session_hint,
         )
     } else {
         format!("\
@@ -252,7 +334,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
      \x20\x20- Use the `deliverableType` from the first entry\n\
      \x20\x20- For text deliverables, read the file content at `path` to get `deliverableText`\n\
      \x20\x20- **Skip Step 2b entirely** (no need to re-download or re-save)\n\
-     \x20\x20- Call `session_status` to get the current sub session's sessionKey (reused in Step 3)\n\
+     \x20\x20{session_hint}\n\
      \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
      \x20\x20- Go to Step 3\n\n\
      If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n")
@@ -414,7 +496,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     } else {
         format!("\
      **Step 2b — Fallback: fetch from chat history and save** (only if Step 2a found no saved deliverable):\n\
-     First call `session_status` to get the current sub session's sessionKey (reused later; do not call it again this turn).\n\
+     {session_hint_step2b}\n\
      Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line.\n\n\
      {step2b_branch_header}\
      {step2b_x402}\
@@ -443,59 +525,61 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-pub(crate) fn approve_review(ctx: &FlowContext<'_>) -> String {
+/// Directly runs `onchainos agent complete` in-process. The single-arg bash
+/// command provides no LLM decision-making value — Rust just broadcasts and
+/// returns. Iron rules from the previous LLM-driven version ("don't
+/// xmtp_dispatch_user / don't auto-rate / don't say funds released before
+/// job_completed") all become moot — Rust cannot misbehave.
+///
+/// Failure path: the playbook emitted on error directs the LLM into the
+/// standard cli_failed 5-substep protocol (push a decision to the user).
+pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
-
-    format!(
-    "[Current Action] Approve review — broadcast the complete transaction\n\
-     [Role] User (User Agent)\n\n\
-     🛑🛑🛑 You are the **sub session** (executor). Your job is to run the on-chain `complete` command below — NOT to relay, forward, or dispatch the decision.\n\
-     ❌ Do NOT call `xmtp_dispatch_session` — that is the user-session agent's tool, not yours.\n\
-     ❌ Do NOT skip Step 1 (`onchainos agent complete`) — skipping it = funds stay locked forever.\n\n\
-     Routed in via the buyer-side keyword router (the user approved the deliverable in their reply). The pending-decisions-v2 entry was already cleared by `resolve` in the user-session; no manual remove needed here.\n\n\
-     **Step 1 -- Broadcast the dual-signature approval:**\n\
-     ```bash\n\
-     onchainos agent complete {job_id}\n\
-     ```\n\
-     If this command fails → push a `cli_failed` decision to the user (see Rule 2), end turn.\n\n\
-     🛑🛑🛑 **CRITICAL — broadcast ≠ on-chain confirmed:**\n\
-     `complete` CLI success = transaction **broadcast** submitted to the network.\n\
-     It does NOT mean the transaction is confirmed on-chain.\n\
-     ❌ Do NOT call `xmtp_dispatch_user` / `xmtp_prompt_user` here — the user has NOT received funds confirmation yet.\n\
-     ❌ Do NOT say \"task complete\" / \"funds released\" / \"任务完成\" in any output — that is factually wrong at this point.\n\
-     ❌ Do NOT auto-rate the ASP here — rating happens after on-chain confirmation.\n\n\
-     After Step 1 succeeds → **end this turn immediately**.\n\n\
-     ⚠️⚠️⚠️ **WHAT HAPPENS NEXT (READ CAREFULLY):**\n\
-     After on-chain confirmation, a `job_completed` system event (`source:\"system\"`) will be fired.\n\
-     That event is the **on-chain confirmation** — it is the ONLY moment when \"funds released\" becomes true.\n\
-     When `job_completed` arrives, you **MUST** run `onchainos agent next-action` and follow its playbook to notify the user.\n\
-     🔴 **If you do not handle `job_completed`, the user will never know funds have been released. This is a critical failure.**\n"
-    )
+    let mut client = TaskApiClient::new();
+    match super::super::complete::handle_complete(&mut client, job_id).await {
+        Ok(()) => format!(
+            "[approve_review] ✅ `onchainos agent complete {job_id}` broadcast by Rust in-process. End the turn now.\n\n\
+             ⚠️ broadcast ≠ on-chain confirmed. The `job_completed` system event will fire after on-chain confirmation — handle it via `next-action --event job_completed` to notify the user.\n"
+        ),
+        Err(e) => format!(
+            "[approve_review] ❌ `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
-pub(crate) fn reject_review(ctx: &FlowContext<'_>) -> String {
+/// Directly runs `onchainos agent reject` in-process. The rejection reason
+/// is expected on `ctx.data` (forwarded from `next-action --data` by the
+/// `user_decision_job_submitted` router after the LLM extracts it from
+/// the relayed user reply); falls back to "did not meet acceptance
+/// criteria" when absent. Iron rules from the previous LLM-driven version
+/// ("don't xmtp_send to ASP about the rejection") become moot — Rust just
+/// broadcasts and returns.
+///
+/// Failure path: standard cli_failed instruction (push decision to user).
+pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
-    let _agent_id = ctx.agent_id;
 
-    format!(
-    "[Current Action] Reject review -- run reject\n\
-     [Role] User (User Agent)\n\n\
-     Routed in via the buyer-side keyword router (the user rejected the deliverable in their reply). The pending-decisions-v2 entry was already cleared by `resolve` in the user-session; no manual remove needed here.\n\
-     Extract the rejection reason from the relayed verbatim (look for `理由` / `reason` / `因为`); if not stated, default to `did not meet acceptance criteria`.\n\n\
-     **Step 1 -- Dual-signature rejection:**\n\
-     ```bash\n\
-     onchainos agent reject {job_id} --reason \"<rejection reason from user's words>\"\n\
-     ```\n\
-     Internal flow:\n\
-     \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-reject (EIP-712 standard, not uop) → get digest\n\
-     \x20\x202. ED25519 sign digest → signature\n\
-     \x20\x203. POST /priapi/v1/aieco/task/{job_id}/reject (body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}) → get uopData\n\
-     \x20\x204. Sign uopHash → broadcast on-chain\n\
-     \x20\x20→ Task status becomes Rejected; the ASP can open a dispute or agree to a refund.\n\
-     \x20\x20⚠️ **The buyer cannot initiate arbitration** — only the ASP can. If the user asks, explain: after rejection the ASP decides whether to dispute; if the ASP takes no action, the system auto-refunds.\n\n\
-     ⚠️ **Do not xmtp_send any message to the ASP** (e.g. \"rejected\"); the ASP learns via on-chain events.\n\n\
-     After Step 1 → **end this turn** and wait for the `job_rejected` system notification.\n"
-    )
+    let reason = ctx
+        .data
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("did not meet acceptance criteria");
+
+    let mut client = TaskApiClient::new();
+    match super::super::reject::handle_reject(&mut client, job_id, reason).await {
+        Ok(()) => format!(
+            "[reject_review] ✅ `onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
+             ⚠️ broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (arbitration) or agree to a refund. The buyer cannot initiate arbitration.\n\
+             ❌ Do NOT xmtp_send any message to the ASP about the rejection — they learn via on-chain events.\n"
+        ),
+        Err(e) => format!(
+            "[reject_review] ❌ `onchainos agent reject {job_id} --reason \"{reason}\"` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
 // --- Terminal states ---------------------------------------------------

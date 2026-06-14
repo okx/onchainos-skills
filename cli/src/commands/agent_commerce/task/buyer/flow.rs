@@ -88,6 +88,10 @@ pub(super) struct FlowContext<'a> {
     pub terminal_session_hint: String,
     pub payment_mode: Option<i64>,
     pub prefetched: Option<&'a crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    /// Verbatim `--data` arg from `next-action`, used by event handlers that
+    /// need user-routed input (e.g. `reject_review` reading the rejection
+    /// reason extracted from the relayed `user_decision_job_submitted` reply).
+    pub data: Option<&'a str>,
 }
 
 /// List of CLI commands the buyer can execute under a given status (used in the menu at the tail of `agent common context` output).
@@ -187,7 +191,7 @@ fn mark_l10n_emitted(job_id: &str) {
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
 /// and status names (open / submitted / ...), uniformly parsed by state_machine.
-pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>) -> String {
+pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol version handshake.
@@ -330,10 +334,6 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
          - **session_status**: call at most once per turn; reuse the result.\n\
          - ⚡ **Zero-narration**: EVERY response MUST contain ≥1 tool_use block AND ≤2 lines of non-tool text. ✅ `// decision: X` (≤30 tokens). ❌ narrating, recapping, explaining.\n\n";
 
-    let preamble_micro = "\
-         🛑 **Core**: (1) Sub output invisible to user — push via `xmtp_dispatch_user` / `pending-decisions-v2 request` only. \
-         (2) No narration — tool calls only, ≤2 lines of non-tool text. (3) Follow playbook literally.\n\n";
-
     // Pre-fetched context block — when available, inlined at the top of the playbook so the agent
     // can skip the "Step 1: run common context" CLI round-trip.
     let prefetched_block = prefetched.map(|p| p.format_inline()).unwrap_or_default();
@@ -348,6 +348,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         terminal_session_hint,
         payment_mode,
         prefetched,
+        data,
     };
 
     let event = parse_status_or_event(event_str);
@@ -380,7 +381,13 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
 
     let body = match event {
         // ─── Negotiation / matching phase → flow_negotiate ──────────────────────────
-        Event::JobCreated => super::flow_negotiate::job_created(&ctx),
+        Event::JobCreated => {
+            if super::content::is_cli_mode() {
+                super::flow_negotiate::job_created_cli(&ctx).await
+            } else {
+                super::flow_negotiate::job_created(&ctx)
+            }
+        }
         Event::SwitchProvider => super::flow_negotiate::switch_provider(&ctx),
         Event::Other(ref s) if s == "provider_conversation" => super::flow_negotiate::provider_conversation(&ctx),
         Event::Other(ref s) if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" => {
@@ -397,8 +404,20 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         }
         Event::JobVisibilityChanged => super::flow_negotiate::job_visibility_changed(&ctx),
         Event::JobPaymentModeChanged => super::flow_negotiate::job_payment_mode_changed(&ctx),
-        Event::NegotiateReply => super::flow_negotiate::negotiate_reply(&ctx),
-        Event::NegotiateAck => super::flow_negotiate::negotiate_ack(&ctx),
+        Event::NegotiateReply => {
+            if super::content::is_cli_mode() {
+                super::flow_negotiate::negotiate_reply_cli(&ctx)
+            } else {
+                super::flow_negotiate::negotiate_reply(&ctx)
+            }
+        }
+        Event::NegotiateAck => {
+            if super::content::is_cli_mode() {
+                super::flow_negotiate::negotiate_ack_cli(&ctx)
+            } else {
+                super::flow_negotiate::negotiate_ack(&ctx)
+            }
+        }
         Event::NegotiateCounter => super::flow_negotiate::negotiate_counter(&ctx),
 
         // ─── Task execution + arbitration + terminal states → flow_lifecycle ─────────────────
@@ -408,8 +427,8 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),
         Event::JobRejected => super::flow_lifecycle::job_rejected(&ctx),
         Event::JobDisputed => super::flow_lifecycle::job_disputed(&ctx),
-        Event::Other(ref s) if s == "approve_review" => super::flow_lifecycle::approve_review(&ctx),
-        Event::Other(ref s) if s == "reject_review" => super::flow_lifecycle::reject_review(&ctx),
+        Event::Other(ref s) if s == "approve_review" => super::flow_lifecycle::approve_review(&ctx).await,
+        Event::Other(ref s) if s == "reject_review" => super::flow_lifecycle::reject_review(&ctx).await,
         Event::JobCompleted => super::flow_lifecycle::job_completed(&ctx),
         Event::DisputeResolved => super::flow_lifecycle::dispute_resolved(&ctx),
         Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx),
@@ -466,7 +485,10 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
                      \x20\x20• **`reject_review`** — user rejects and wants revisions/refund (typical intents: B / 拒绝 / 不通过 / 不满意 / 不接受 / reject / refuse / 不行 / 不达标 — anything meaning dissatisfaction; extract the reason if the user provided one after `理由` / `reason` / `因为`; ⚠️ the reason is critical — it will be auto-submitted as evidence if the ASP files a dispute).\n\n\
                      If the user's reply clearly maps to one of these → call:\n\
                      ```bash\n\
-                     onchainos agent next-action --jobid {job_id} --event <approve_review|reject_review> --role buyer --agentId {agent_id}\n\
+                     # For approve_review (no extra args needed):\n\
+                     onchainos agent next-action --jobid {job_id} --event approve_review --role buyer --agentId {agent_id}\n\
+                     # For reject_review — pass the extracted rejection reason via --data (empty string if user gave no reason; the handler falls back to a default):\n\
+                     onchainos agent next-action --jobid {job_id} --event reject_review --role buyer --agentId {agent_id} --data \"<extracted reason from user's reply, or empty>\"\n\
                      ```\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--sub-key` and `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
                 ),
@@ -540,25 +562,18 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         Event::Other(_) => super::flow_lifecycle::staked_and_unknown(event.as_str(), job_id),
     };
 
-    let use_micro_preamble = matches!(event_str,
-        // Terminal / observer-only / deterministic CLI+notify
-        "job_completed" | "job_refunded" | "job_auto_refunded" | "job_expired" | "job_closed" |
-        "submit_expired" | "reject_expired" | "review_expired" |
-        "submit_deadline_warn" |
-        "evaluator_selected" | "vote_committed" | "reveal_started" | "vote_revealed" |
-        "vote_commit_deadline_warn" | "vote_reveal_deadline_warn" | "cooldown_entered" | "round_failed" |
-        "reward_claimed" | "close" | "set_public" |
-        "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved" |
-        "task_token_budget_change" | "task_provider_change"
-    );
     let use_slim_preamble = matches!(event_str,
         "negotiate_ack" |
         "approve_review" | "reject_review" |
-        "review_deadline_warn" |
-        "job_auto_completed" |
-        "dispute_resolved" |
-        "wakeup_notify"
-    ) || event_str.starts_with("user_decision_");
+        "job_completed" | "job_refunded" | "job_auto_refunded" | "job_expired" | "job_closed" |
+        "submit_expired" | "reject_expired" | "review_deadline_warn" | "review_expired" |
+        "submit_deadline_warn" | "job_auto_completed" |
+        "evaluator_selected" | "vote_committed" | "reveal_started" | "vote_revealed" |
+        "vote_commit_deadline_warn" | "vote_reveal_deadline_warn" | "cooldown_entered" | "round_failed" |
+        "reward_claimed" | "dispute_resolved" | "close" | "set_public" |
+        "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved" |
+        "user_decision_job_submitted"
+    );
     let use_negotiate_preamble = matches!(event_str,
         "negotiate_reply" | "negotiate_counter"
     );
@@ -569,23 +584,34 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
         "designated_a2a" | "designated_x402" | "designated_error" |
         "job_rejected" | "job_disputed" | "attachment_added" | "provider_conversation"
     );
-    let use_full_preamble = event_str == "job_created";
-    let core = if event_str == "create_task" || event_str == "switch_provider" {
+    // cli-mode short-circuit: when the event's `_cli` handler has already
+    // executed session_status / user_notify / recommend in-process, the body
+    // is a self-contained 2-step playbook. Skip every preamble (IRON RULEs
+    // about xmtp_send / session_status / sessions_spawn don't apply when
+    // those tools aren't in the body) and version_prefix (no xmtp_send call
+    // to validate). Keep only LOCALIZATION_PREFIX — translation may still be
+    // required for the user-facing card body.
+    let use_cli_minimal = super::content::is_cli_mode()
+        && matches!(event_str, "job_created" | "negotiate_reply" | "negotiate_ack" | "provider_applied" | "deliverable_received" | "approve_review");
+    let core = if use_cli_minimal
+        || event_str == "create_task"
+        || event_str == "switch_provider"
+    {
         body
-    } else if use_micro_preamble {
-        format!("{preamble_micro}{body}")
     } else if use_slim_preamble {
         format!("{preamble_slim}{prefetched_block}{body}")
     } else if use_negotiate_preamble {
         format!("{preamble_negotiate}{prefetched_block}{body}")
-    } else if use_full_preamble {
-        format!("{context_preamble}{prefetched_block}{body}")
     } else if use_medium_preamble {
         format!("{preamble_medium}{prefetched_block}{body}")
     } else {
-        format!("{preamble_medium}{prefetched_block}{body}")
+        format!("{context_preamble}{prefetched_block}{body}")
     };
-    let result = format!("{localization_prefix}{version_prefix}{core}");
+    let result = if use_cli_minimal {
+        core
+    } else {
+        format!("{localization_prefix}{version_prefix}{core}")
+    };
     if DEBUG_LOG {
         let preview: String = result.chars().take(200).collect();
         eprintln!(

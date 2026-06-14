@@ -380,6 +380,24 @@ pub enum AgentCommand {
         agent_id: Option<String>,
     },
 
+    /// Atomic save-agreed + set-payment-mode(escrow) — used by negotiate_ack
+    /// to collapse two LLM steps into one CLI call. payment-mode is fixed to
+    /// escrow (A2A negotiation path). If save-agreed fails the call short-
+    /// circuits; if set-payment-mode fails the agreement is already persisted
+    /// and the LLM can retry just step 2 via cli_failed.
+    #[command(name = "save-agreed-and-set-payment")]
+    SaveAgreedAndSetPayment {
+        job_id: String,
+        #[arg(long = "provider")]
+        provider_agent_id: String,
+        #[arg(long = "token-symbol")]
+        token_symbol: String,
+        #[arg(long = "token-amount")]
+        token_amount: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
     /// Client claims auto-refund after provider timeout
     #[command(name = "claim-auto-refund")]
     ClaimAutoRefund { job_id: String },
@@ -925,6 +943,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
             task::buyer::run_task(T::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
 
+        AgentCommand::SaveAgreedAndSetPayment { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
+            task::buyer::run_task(T::SaveAgreedAndSetPayment { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
+
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
 
@@ -1270,7 +1291,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref())
+                    task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref()).await
                 }
                 "buyer" | "client" => {
                     crate::audit::log(
@@ -1286,7 +1307,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode, prefetched.as_ref())
+                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode, prefetched.as_ref()).await
                 }
                 "evaluator" => {
                     crate::audit::log(
@@ -1302,7 +1323,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id)
+                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id).await
                 }
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };
