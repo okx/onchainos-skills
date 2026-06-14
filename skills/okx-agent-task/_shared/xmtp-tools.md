@@ -1,8 +1,8 @@
 # XMTP Tools — Detailed Reference (Paths 5-9)
 
-Rarely-used XMTP-plugin tools, full details. SKILL.md `Session Communication Contract §4` keeps short pointers; come here when you actually need to invoke one of these tools.
+Rarely-used XMTP-plugin tools, full details. `buyer-sub-playbook.md` §Communication Contract keeps short pointers; come here when you actually need to invoke one of these tools.
 
-> Core paths (Path 1 chain→sub / 2a dispatch_user / 2b prompt_user via pending-decisions-v2 / 3 dispatch_session relay / 4 xmtp_send peer-to-peer) live in SKILL.md `§4`. Those are the every-turn paths; this file covers the long-tail.
+> Core paths (Path 1 chain→sub / 2a dispatch_user / 2b prompt_user via pending-decisions-v2 / 3 dispatch_session relay / 4 xmtp_send peer-to-peer) live in `buyer-sub-playbook.md` §Communication Contract. Those are the every-turn paths; this file covers the long-tail.
 
 ---
 

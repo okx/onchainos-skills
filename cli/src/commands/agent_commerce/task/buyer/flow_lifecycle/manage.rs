@@ -4,9 +4,9 @@
 
 pub(crate) fn create_task() -> String {
     "\
-🔒 **Pre-flight check**: have you read `skills/okx-agent-task/SKILL.md` and `skills/okx-agent-task/buyer.md`?\n\
-If not → **stop executing this playbook immediately**; first load SKILL.md per the CLAUDE.md routing rules → confirm role is buyer → read buyer.md → then come back here.\n\
-Skipping skill loading = not knowing the tool whitelist / communication protocol / security gates = downstream steps (job_created event handling, negotiation, accept) will fail.\n\n\
+🔒 **Pre-flight check**: have you read `skills/okx-agent-task/buyer-user.md`?\n\
+If not → **stop executing this playbook immediately**; first load buyer-user.md per the CLAUDE.md routing rules → then come back here.\n\
+Skipping skill loading = not knowing the publishing flow / field rules / confirmation form = create-task will fail.\n\n\
 [Current Operation] Publish task (create_task)
 [Role] User (User Agent)
 [Session Type] user session (talking directly to the user)

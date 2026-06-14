@@ -214,10 +214,10 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      ⚠️ Use `xmtp_dispatch_session` (internal), NOT `xmtp_send` (which the ASP would see).\n\n\
      🛑 **Within the same turn after creating the group you MUST call `xmtp_send` to send the first message** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
      ❌ Absolutely forbidden: creating the group and ending the turn without sending a message.\n\n\
-     A-Step 2: once the group is created you are inside the sub session; call xmtp_send to start negotiating with the ASP (refer to buyer.md 3.2 negotiation three-step handshake):\n\
+     A-Step 2: once the group is created you are inside the sub session; call xmtp_send to start negotiating with the ASP (refer to buyer-sub-playbook.md §Peer Message Routing):\n\
      \x20\x20⚠️ **Do NOT** use xmtp_dispatch_user / xmtp_dispatch_session; after the group is created use xmtp_send uniformly.\n\
      \x20\x20content: Hi, I have a job (jobId: {job_id}) - are you interested in taking it on?\n\n\
-     A-Step 3: negotiation success -> ASP applies on-chain -> wait for the ASP's XMTP message announcing the apply (buyer.md routing #2 triggers confirm-accept).\n\n\
+     A-Step 3: negotiation success -> ASP applies on-chain -> wait for the ASP's XMTP message announcing the apply (buyer-sub-playbook.md routing #1 triggers confirm-accept).\n\n\
      A-Step 4: negotiation failure (ASP rejects / timeout / terms mismatch) -> jump to Branch C.\n\n\
      ━━━━━━━━━ Branch B: verbatim contains `skip all` / `跳过` / `不选` → skip all pending ASPs ━━━━━━━━━\n\n\
      End the flow — call xmtp_dispatch_user:\n\

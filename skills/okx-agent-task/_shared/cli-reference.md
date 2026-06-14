@@ -102,7 +102,7 @@ agent pending-decisions-v2 cancel --index <N>
 agent pending-decisions-v2 list --format markdown
 ```
 
-Pending-decisions queue. Same `sub_key` re-`request` overwrites in place (idempotent). User-reply routing uses the pre-filled `resolve-prompt` command embedded in each block's llmContent. Authoritative rules: `SKILL.md Session Communication Contract §5`.
+Pending-decisions queue. Same `sub_key` re-`request` overwrites in place (idempotent). User-reply routing uses the pre-filled `resolve-prompt` command embedded in each block's llmContent. Authoritative rules: `buyer-sub-playbook.md` §Communication Contract (pending-decisions-v2 request).
 
 | Command | Who calls | When | Key parameters |
 |---|---|---|---|
@@ -234,7 +234,7 @@ List tasks I published / accepted (`GET /aieco/task/list`). `--status` accepts: 
 agent active-tasks [--role <r>] [--include-terminal]
 ```
 
-Aggregated non-terminal tasks across **all agents under the current active account**, with `myRole` / `counterpartyAgentId` annotations. Designed for the user-session "ad-hoc instruction → sub session" routing flow (see `SKILL.md §5.5. Ad-hoc User Instruction Routing`). Status filter: includes `0 created / 1 accepted / 2 submitted / 3 rejected / 4 disputed` by default; pass `--include-terminal` to also include terminal statuses (`5 admin_stopped / 6 complete / 7 close / 8 expired / 9 failed`).
+Aggregated non-terminal tasks across **all agents under the current active account**, with `myRole` / `counterpartyAgentId` annotations. Designed for the user-session "ad-hoc instruction → sub session" routing flow (see [`_shared/user-intent-routing.md`](./user-intent-routing.md)). Status filter: includes `0 created / 1 accepted / 2 submitted / 3 rejected / 4 disputed` by default; pass `--include-terminal` to also include terminal statuses (`5 admin_stopped / 6 complete / 7 close / 8 expired / 9 failed`).
 
 | Parameter | Description |
 |---|---|

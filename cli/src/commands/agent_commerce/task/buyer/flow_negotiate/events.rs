@@ -72,7 +72,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ⚠️ apply is an ASP action; the user does not execute apply.\n\n\
      **Step 4 - notify the user via xmtp_dispatch_user** ({l10n_dispatch}):\n\
      \x20\x20content: {payment_escrow_notify}\n\n\
-     -> **end this turn** and wait for the ASP's XMTP message announcing the apply (handled by buyer.md routing priority #2).\n\n\
+     -> **end this turn** and wait for the ASP's XMTP message announcing the apply (handled by buyer-sub-playbook.md routing #1).\n\n\
      ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\
      From the previous set-payment-mode / x402-check output, extract endpoint, acceptsJson, feeTokenSymbol, feeAmount, providerAgentId.\n\n\
      ⚠️ **Parameter-loss fallback** (context compaction may drop the previous turn's output):\n\

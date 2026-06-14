@@ -23,6 +23,10 @@ metadata:
 
 🛑🛑🛑 **Never manually construct protocol messages** — `[intent:propose]` / `[intent:ack]` / `[intent:confirm]` / `[intent:counter]` / `[intent:reject]` MUST only be produced by `next-action` playbooks. Even in stuck-state recovery, always call `next-action`.
 
+🛑 **[intent:confirm] is ALWAYS last**: ack-to-confirm must precede CONFIRM. x402 is forbidden in A2A negotiation sessions; only escrow.
+
+🛑 **Sub sessions MUST NOT call pending-decisions-v2** (resolve / pick / cancel / list) — decision management belongs to the user session only.
+
 > **Fully gas-free**: every on-chain action goes through the platform's paymaster — never prompt for gas.
 
 > 🌐 **[Localization]** — all `xmtp_dispatch_user` / `pending-decisions-v2 request` content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure.
@@ -33,58 +37,14 @@ metadata:
 
 ---
 
-## ⚠️ Critical Field Mapping Table
+## System Event Handling
 
-| Field | Mapping |
-|---|---|
-| `paymentMode` | `0` = unset / `1` = escrow / `3` = x402 |
-| `sender.role` (a2a-agent-chat) | Counterparty: `1` = User Agent (you are ASP) / `2` = ASP (you are User Agent) |
-| `vote` (Evaluator) | `0` = Approve (buyer wins) / `1` = Reject (ASP wins) |
-| `status` (task) | `-1`=draft / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete / `7`=close / `8`=expired / `9`=failed |
+System events (`message.source == "system"`) → follow SKILL.md `## Activation` #1. Supplements beyond what Activation covers:
 
-🛑 Before writing any semantic judgment about these fields, cross-check this table.
-
----
-
-## OKX A2A Runtime Bridge
-
-This playbook names legacy OpenClaw A2A tools (`xmtp_send`, `xmtp_dispatch_user`, `xmtp_prompt_user`, `xmtp_dispatch_session`, `xmtp_get_conversation_history`, `xmtp_sessions_query`, `session_status`).
-
-When a step needs one of those tools, first load [`okx-agent-chat/references/okx-a2a-legacy-tool-bridge/SKILL.md`](../okx-agent-chat/references/okx-a2a-legacy-tool-bridge/SKILL.md). That bridge checks: native tools exist → use them; absent → use the bridge with the same parameter names.
-
----
-
-## System Event Handling (Activation)
-
-When `message.source == "system"` + `message.event` present — your entire job is:
-
-```bash
-onchainos agent next-action \
-  --jobid <message.jobId> \
-  --event <message.event> \
-  --role auto \
-  --agentId <envelope's top-level agentId> \
-  --jobTitle <message.jobTitle>
-```
-
-Then execute the returned script step by step.
-
-**Rules**:
-- `--role auto`: CLI resolves role from `<agentId>` internally — no separate `agent profile` call.
-- `--jobid` source: system event → `message.jobId` (nested under `message`); a2a-agent-chat → top-level `jobId`; `user_decision_*` → `message.jobId`. **NEVER** cache from a previous turn or infer from sessionKey.
+- Also pass `--jobTitle <message.jobTitle>` when present (saves an extra API query).
 - If `event` starts with `user_decision_`, also pass `--data "<message.data>"`.
 - `wakeup_notify` → use `message.jobStatus` as the event, not `wakeup_notify` itself.
-- **Terminal events** (`job_completed` / `job_refunded` / `job_closed` / `job_expired` / `job_auto_completed` / `job_auto_refunded` / `dispute_resolved`) STILL require `next-action` — their playbooks handle final notification, rating, deliverable persistence, cleanup. Skipping = user never learns the task ended + resources leak.
-
-🛑 **First action is non-negotiable**: first tool call MUST be `next-action`. No `sessions_spawn`, `session_status`, queries, "let me check first", or loading domain skills based on `jobTitle` / `content`. Violating = task stalls + funds frozen.
-
----
-
-## SKILL_PREFETCH Handling
-
-The sub session receives `[SKILL_PREFETCH]` → SKILL.md is loaded. When the next inbound a2a-agent-chat arrives, SKILL.md Activation #2 routes here based on `sender.role`. No action needed for the prefetch message itself.
-
-🔴 Do NOT carry "no action" to business messages in the same or later turn.
+- **Terminal events** (`job_completed` / `job_refunded` / `job_closed` / `job_expired` / `job_auto_completed` / `job_auto_refunded` / `dispute_resolved`) STILL require `next-action` — their playbooks handle final notification, rating, deliverable persistence, cleanup.
 
 ---
 
@@ -121,43 +81,6 @@ Match by priority — stop at first hit:
 
 ---
 
-## Negotiation Phase (§3.4)
-
-**Single source of truth**: every negotiation scene → call `next-action`.
-
-**Two entry points**:
-- Initial: `--event job_created` (includes creating group + sending inquiry)
-- Mid-negotiation: Peer Message Routing dispatches to `negotiate_reply` / `negotiate_ack` / `negotiate_counter`
-
-**Unified entry**:
-```bash
-# Designated provider
-onchainos agent next-action --jobid <jobId> --event job_created --role buyer --agentId <yours> --provider <provider agentId>
-
-# Unspecified provider
-onchainos agent next-action --jobid <jobId> --event job_created --role buyer --agentId <yours>
-```
-
-### Recommendation-list display (§3.4.0)
-
-After `job_created`, `onchainos agent recommend <jobId>` → display for user to choose (do NOT auto-iterate):
-1. Display list (Agent Name / service / credit / payment methods); already-failed filtered.
-2. User picks → `next-action --provider <agentId>`.
-3. Pagination → `recommend <jobId> --next-page`.
-4. Current page fully filtered → auto-advance.
-5. Negotiation failed → `mark-failed <jobId> --provider <agentId>` → `recommend --current` → none → `--next-page`.
-6. All exhausted → guide: designate / convert to public / close.
-
-### Key prohibitions
-
-- 🛑 `[intent:confirm]` is ALWAYS last: `ack-to-confirm` must precede CONFIRM.
-- ❌ Don't short-circuit handshake with natural language — provider only matches literal markers.
-- ⚡ `[intent:reject]` terminates negotiation; don't reply; switch to next provider.
-- ❌ Max-budget is a hard ceiling; refuse when quote exceeds `paymentMostTokenAmount`.
-- ❌ x402 is forbidden in A2A negotiation sessions; only `escrow`.
-
----
-
 ## Accepted-Execution Discussion Mode (§3.6)
 
 > Trigger: Peer Message Routing #6 fallback, status=1 (accepted). Sub session, reactive only.
@@ -167,20 +90,6 @@ After `job_created`, `onchainos agent recommend <jobId>` → display for user to
 3. **No CLI**: do NOT call confirm-accept / set-payment-mode / apply / create-task / deliver / complete / reject.
 4. Autonomous reply for execution-detail questions; one message per turn via `xmtp_send`.
 5. Beyond capability → `xmtp_dispatch_user` forwards to user.
-
----
-
-## User Decision Relay (§5)
-
-Extract `message.jobId`, `message.event`, `message.data`:
-
-```bash
-onchainos agent next-action --jobid <jobId> --event <event verbatim> --role buyer --agentId <yours> --data "<message.data verbatim>"
-```
-
-CLI does semantic mapping and returns a routing playbook. Follow verbatim. Do NOT keyword-match `message.data` yourself.
-
-❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` / `list` from sub side.
 
 ---
 
