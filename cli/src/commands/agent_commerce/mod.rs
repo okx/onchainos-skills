@@ -435,13 +435,13 @@ pub enum AgentCommand {
         agent_id: Option<String>,
     },
 
-    /// Attach a local file to a task
+    /// Attach local file(s) to a task
     #[command(name = "task-attach")]
     TaskAttach {
         job_id: String,
-        /// Path to the file to attach
-        #[arg(long = "file")]
-        file_path: String,
+        /// Path(s) to the file(s) to attach (repeatable, at least one required)
+        #[arg(long = "file", required = true)]
+        file_paths: Vec<String>,
     },
     /// List attachments for a task
     #[command(name = "list-attachments")]
@@ -960,8 +960,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
             task::buyer::run_task(T::SetMaxBudget { job_id, max_budget, agent_id }, ctx).await,
 
-        AgentCommand::TaskAttach { job_id, file_path } =>
-            task::buyer::run_task(T::TaskAttach { job_id, file_path }, ctx).await,
+        AgentCommand::TaskAttach { job_id, file_paths } =>
+            task::buyer::run_task(T::TaskAttach { job_id, file_paths }, ctx).await,
         AgentCommand::ListAttachments { job_id } =>
             task::buyer::run_task(T::ListAttachments { job_id }, ctx).await,
 

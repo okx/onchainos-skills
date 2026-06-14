@@ -122,7 +122,7 @@ Pending-decisions queue. Same `sub_key` re-`request` overwrites in place (idempo
 ### next-action
 
 ```
-agent next-action --jobid <jobId> --event <event> --agentId <agentId> --role <buyer|provider|evaluator> [--provider <providerAgentId>] [--peerTaskMinVersion <int>]
+agent next-action --jobid <jobId> --event <event> --agentId <agentId> --role <buyer|provider|evaluator> [--code <int>] [--jobTitle <title>] [--provider <providerAgentId>] [--peerTaskMinVersion <int>] [--data <payload>]
 ```
 
 Outputs the script the agent should currently execute (CLI templates / xmtp_send templates / closing scripts) based on (event, role). Pass the envelope's `message.event` to `--event`.
@@ -133,8 +133,11 @@ Outputs the script the agent should currently execute (CLI templates / xmtp_send
 | `--event` | ✅ | Event name from `message.event` (`provider_applied` / `job_completed` / pseudo events like `create_task` / `dispute_raise` / ...) |
 | `--agentId` | ✅ | Pass through the envelope's top-level agentId |
 | `--role` | ✅ | Role of the current sub session |
+| `--code` | | Envelope `message.code` (tx receipt); non-zero = tx failed. Default `0` |
+| `--jobTitle` | | Envelope `message.title` (task title from system notification); alias `--job-title` |
 | `--provider` | | Target provider agentId (only used with buyer + `job_created`): when supplied, recommend is skipped and a script targeting this provider is generated for negotiation / x402 acceptance |
 | `--peerTaskMinVersion` | | Pass-through of the inbound a2a-agent-chat envelope's `payload.taskMinVersion` (integer). If the local protocol version < this value ⇒ the CLI appends a `[Protocol version mismatch — non-blocking]` line at the top of the script to prompt the agent to push an upgrade suggestion to the user, but does **not block** the flow (the script is still emitted in full, the role flow still executes). **Pass only when buyer / provider handles an a2a-agent-chat inbound**; leave empty for chain events / pseudo events / evaluator (evaluator does not participate in version negotiation). The outbound value does not need to be computed by the agent — buyer / provider `next-action` output always carries a fixed `[Protocol version] ...payload={"taskMinVersion":N}` line at the top, and the agent fills `payload` with this value in every `xmtp_send` of the scene |
+| `--data` | | User's decision payload from a `user_decision_*` relay envelope's `message.data` field. Required when `--event` starts with `user_decision_`; ignored otherwise |
 
 **Negotiation relay events** (buyer-only, locally dispatched by `buyer-sub-playbook.md §3.5 Inbound Peer Message Routing`; not a backend system notification):
 
@@ -179,13 +182,16 @@ Publish a new task (`POST /aieco/task/create` → uopData → sign → broadcast
 | `--deadline-submit` | ✅ | Delivery window (RFC3339) |
 | `--title` |  | Task title; defaults to a truncated form of description |
 | `--provider` |  | Designated provider agentId; when set, `job_created` skips recommend and routes directly via service-list |
+| `--endpoint` |  | Designated service endpoint (for multi-service providers); persisted alongside `--provider` |
+| `--file` |  | Local file path to attach (repeatable for multiple files) |
+| `--payment-mode` |  | Payment mode to set at creation time: `escrow` or `x402` |
 
 Before running, the CLI auto-calls `wallet balance` to self-check USDT/USDG balance; insufficient balance bails directly, prompting the user to top up via `okx-dex-swap`.
 
 ### recommend
 
 ```
-agent recommend <jobId> [--agent-id <id>] [--next] [--current] [--page <n>] [--next-page]
+agent recommend <jobId> [--agent-id <id>] [--next] [--current] [--page <n>] [--next-page] [--emit-decision] [--sub-key <key>] [--job-title <title>] [--user-content <text>]
 ```
 
 Fetch the recommended provider list (`POST /aieco/task/match`); providers marked by `mark-failed` are automatically filtered out.
@@ -198,6 +204,10 @@ Fetch the recommended provider list (`POST /aieco/task/match`); providers marked
 | `--current` | Show the currently selectable providers on the page (excluding failed ones) |
 | `--page <n>` | Page number (0-based); defaults to 0 |
 | `--next-page` | Advance to the next page (current cached page +1) |
+| `--emit-decision` | Enqueue the recommendation card as a `pending-decisions-v2` `recommend_pick` decision. Requires `--sub-key` |
+| `--sub-key` | Full XMTP sessionKey (from `session_status`). Required with `--emit-decision` |
+| `--job-title` | Task title for the decision label (defaults to `<title>` placeholder) |
+| `--user-content` | Pre-localized card body to enqueue instead of the auto-written canonical English card |
 
 ### mark-failed
 
@@ -293,9 +303,9 @@ Buyer sets the task's payment mode on-chain. Stand-alone step that must run **be
 | Parameter | When to fill |
 |---|---|
 | `<jobId>` | Required |
-| `--payment-mode` | Required: `escrow` (担保托管) or `x402` (HTTP 402 即时支付) |
-| `--token-symbol` / `--token-amount` | Required for both modes; the agreed price token + amount from the `[intent:ack]` → `[intent:confirm]` handshake (cached via `save-agreed`) |
-| `--endpoint` | Required for `x402` only; the x402 service endpoint URL (e.g. `https://api.example.com/v1/cat-image`) |
+| `--payment-mode` | Required: `escrow` (担保托管) or `x402` (HTTP 402 即时支付). Always pass explicitly |
+| `--token-symbol` / `--token-amount` | Required for both modes; the agreed price token + amount from the `[intent:ack]` → `[intent:confirm]` handshake (cached via `save-agreed`). Always pass explicitly |
+| `--endpoint` | For `x402` only; the x402 service endpoint URL (e.g. `https://api.example.com/v1/cat-image`) |
 
 ### ack-to-confirm
 
@@ -344,7 +354,7 @@ Before the CLI call, balance pre-checks are auto-performed internally (USDT/USDG
 ### task-402-pay
 
 ```
-agent task-402-pay <jobId> --provider-agent-id <providerAgentId> --accepts <accepts-json> --endpoint <url> --token-symbol <sym> --token-amount <amt>
+agent task-402-pay <jobId> --provider-agent-id <providerAgentId> --accepts <accepts-json> --endpoint <url> --token-symbol <sym> --token-amount <amt> [--from <address>] [--body <json>]
 ```
 
 x402 Phase 2 helper: sign the x402 payment intent + execute the HTTP 402 endpoint replay in one call. Used by buyer's x402 flow between `set-payment-mode` (x402) and `direct-accept`.
@@ -356,6 +366,8 @@ x402 Phase 2 helper: sign the x402 payment intent + execute the HTTP 402 endpoin
 | `--accepts` | Required; raw JSON `accepts` array from the HTTP 402 response (e.g. `[{"scheme":"exact","network":"base",...}]`) |
 | `--endpoint` | Required; same x402 endpoint URL as in `set-payment-mode` |
 | `--token-symbol` / `--token-amount` | Required; the agreed price |
+| `--from` | Optional; payer address override (auto-resolved if omitted) |
+| `--body` | Optional; JSON business body to POST during replay (for endpoints that require business parameters) |
 
 ### direct-accept
 
@@ -371,7 +383,7 @@ Typical sequence: buyer receives `job_payment_mode_changed` (x402) → calls `ta
 |---|---|
 | `<jobId>` | Required |
 | `--provider-agent-id` | Required; pulled from the inbound `[intent:ack]` sender |
-| `--token-symbol` / `--token-amount` | Required; the agreed price (same as in `save-agreed`) |
+| `--token-symbol` / `--token-amount` | Required; the agreed price (same as in `save-agreed`). Always pass explicitly |
 
 ### complete
 
@@ -396,7 +408,7 @@ Buyer rejects the deliverable (status: submitted → rejected). After receiving 
 ### close
 
 ```
-agent close <jobId>
+agent close <jobId> [--agent-id <id>]
 ```
 
 Buyer closes the task in `created` status (funds not yet deposited → direct close).
@@ -404,7 +416,7 @@ Buyer closes the task in `created` status (funds not yet deposited → direct cl
 ### set-public
 
 ```
-agent set-public <jobId>
+agent set-public <jobId> [--agent-id <id>]
 ```
 
 Convert a private task to public (VisibilityEnum 0=PUBLIC / 1=PRIVATE). Buyer uses it to widen the candidate pool when negotiations are failing.
@@ -490,8 +502,8 @@ Save a task as a draft (off-chain, status = -1). `--title`, `--description`, and
 | Parameter | Required | Description |
 |---|---|---|
 | `--title` | ✅ | Task title (≤ 30 chars, agent-generated from description) |
-| `--description` | ✅ | Task description (20–2000 chars, user-provided) |
-| `--description-summary` | ✅ | Task summary (≤ 200 chars, agent-generated from description) |
+| `--description` | | Task description (20–2000 chars, user-provided); optional for drafts, required at publish time |
+| `--description-summary` | | Task summary (≤ 200 chars, agent-generated from description); optional for drafts, auto-generated from description if omitted |
 | `--budget` | | Budget amount (> 0, ≤ 10M, ≤ 5 decimals) |
 | `--max-budget` | | Maximum budget (≥ budget) |
 | `--currency` | | `USDT` or `USDG` |
@@ -519,14 +531,14 @@ List the current buyer's drafts (paginated).
 agent draft update <jobId> [--title <txt>] [--description <txt>] [--description-summary <txt>] [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--deadline-open <dur>] [--deadline-submit <dur>] [--provider <agentId>]
 ```
 
-Partial update of a draft. At least one field must be provided. Validation rules are the same as `draft create` (validate only provided fields).
+Partial update of a draft. At least one field must be provided. Validation rules are the same as `draft create` (validate only provided fields). When `--description` is updated without `--description-summary`, the summary is auto-regenerated from the new description.
 
 ⚠️ `<jobId>` is a **positional argument**, NOT a `--job-id` flag.
 
 | Parameter | Required | Description |
 |---|---|---|
 | `<jobId>` | ✅ | Draft job ID (positional, not a flag) |
-| (all other flags) | | Same as `draft create`; only provided fields are updated |
+| (all other flags) | | Same as `draft create`; only provided fields are updated. `--description-summary` can now be set independently |
 
 ### draft delete
 

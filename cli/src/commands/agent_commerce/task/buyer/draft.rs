@@ -377,6 +377,7 @@ pub async fn handle_draft_update(
     job_id: &str,
     title: Option<&str>,
     description: Option<&str>,
+    description_summary: Option<&str>,
     budget: Option<f64>,
     max_budget: Option<f64>,
     currency: Option<&str>,
@@ -414,8 +415,13 @@ pub async fn handle_draft_update(
     }
     if let Some(d) = description {
         body.insert("description".into(), serde_json::json!(d));
-        let summary: String = d.chars().take(MAX_SUMMARY_CHARS).collect();
-        body.insert("descriptionSummary".into(), serde_json::json!(summary));
+        if description_summary.is_none() {
+            let summary: String = d.chars().take(MAX_SUMMARY_CHARS).collect();
+            body.insert("descriptionSummary".into(), serde_json::json!(summary));
+        }
+    }
+    if let Some(ds) = description_summary {
+        body.insert("descriptionSummary".into(), serde_json::json!(ds));
     }
     if let Some(ref c) = currency_norm {
         body.insert("paymentTokenSymbol".into(), serde_json::json!(c.to_uppercase()));

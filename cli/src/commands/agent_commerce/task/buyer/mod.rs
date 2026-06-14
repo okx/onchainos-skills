@@ -280,12 +280,12 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Attach a local file to a task
+    /// Attach local file(s) to a task
     TaskAttach {
         job_id: String,
-        /// Path to the file to attach
-        #[arg(long = "file")]
-        file_path: String,
+        /// Path(s) to the file(s) to attach (repeatable, at least one required)
+        #[arg(long = "file", required = true)]
+        file_paths: Vec<String>,
     },
     /// List attachments for a task
     ListAttachments {
@@ -374,8 +374,14 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, Some(&agent_id)).await?;
             accept::handle_set_payment_mode(&mut client, &job_id, Some("escrow"), Some(&token_symbol), Some(&token_amount), None).await
         }
-        TaskCommand::TaskAttach { job_id, file_path } => {
-            attachments::handle_task_attach(&mut client, &job_id, &file_path).await
+        TaskCommand::TaskAttach { job_id, file_paths } => {
+            if file_paths.is_empty() {
+                anyhow::bail!("at least one --file <path> is required");
+            }
+            for fp in &file_paths {
+                attachments::handle_task_attach(&mut client, &job_id, fp).await?;
+            }
+            Ok(())
         }
         TaskCommand::ListAttachments { job_id } => {
             attachments::handle_task_attachments(&job_id)
@@ -429,6 +435,8 @@ pub enum DraftCommand {
         title: Option<String>,
         #[arg(long)]
         description: Option<String>,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
         #[arg(long)]
         budget: Option<f64>,
         #[arg(long = "max-budget")]
@@ -478,7 +486,7 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
             draft::handle_draft_list(&mut client, page, limit).await
         }
         DraftCommand::Update {
-            job_id, title, description, budget, max_budget, currency,
+            job_id, title, description, description_summary, budget, max_budget, currency,
             deadline_open, deadline_submit, provider,
         } => {
             draft::handle_draft_update(
@@ -486,6 +494,7 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
                 &job_id,
                 title.as_deref(),
                 description.as_deref(),
+                description_summary.as_deref(),
                 budget,
                 max_budget,
                 currency.as_deref(),
