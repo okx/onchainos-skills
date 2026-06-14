@@ -300,26 +300,13 @@ pub(crate) fn negotiate_reply_cli(ctx: &FlowContext<'_>) -> String {
 /// (save-agreed → set-payment-mode) into one atomic
 /// `save-agreed-and-set-payment` call so the LLM can't reorder or skip
 /// either, and payment-mode is fixed to escrow internally (no need to expose
-/// the flag). Task fields inlined from prefetched; no IRON RULE preamble via
-/// cli_minimal short-circuit.
+/// the flag). No IRON RULE preamble via cli_minimal short-circuit.
 pub(crate) fn negotiate_ack_cli(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let title = ctx.title_display;
-
-    let task_block = if ctx.prefetched.is_some() {
-        format!(
-            "**Task fields (already fetched):**\n\
-             \x20\x20• Title: {title}\n\
-             \x20\x20• Payment mode: escrow (fixed on A2A path; will be set on-chain by the commit command below)\n\n",
-        )
-    } else {
-        String::new()
-    };
 
     format!(
-        "{task_block}\
-         [Negotiation relay] negotiate_ack (ASP replied [intent:ack] — accepting your last [intent:propose])\n\
+        "[Negotiation relay] negotiate_ack (ASP replied [intent:ack] — accepting your last [intent:propose])\n\
          [Role] User (Buyer)\n\n\
          **Step 1 — Verify the ACK matches your last PROPOSE.**\n\
          Read the ASP's `[intent:ack]` body; extract `tokenSymbol` and `tokenAmount`. Replay sub session history and find the most recent `[intent:propose]` you sent — compare its `tokenSymbol` / `tokenAmount` against the ACK's.\n\n\
