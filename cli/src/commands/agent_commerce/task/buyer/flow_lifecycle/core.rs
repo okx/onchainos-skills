@@ -546,29 +546,37 @@ pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
     }
 }
 
-pub(crate) fn reject_review(ctx: &FlowContext<'_>) -> String {
+/// Directly runs `onchainos agent reject` in-process. The rejection reason
+/// is expected on `ctx.data` (forwarded from `next-action --data` by the
+/// `user_decision_job_submitted` router after the LLM extracts it from
+/// the relayed user reply); falls back to "did not meet acceptance
+/// criteria" when absent. Iron rules from the previous LLM-driven version
+/// ("don't xmtp_send to ASP about the rejection") become moot — Rust just
+/// broadcasts and returns.
+///
+/// Failure path: standard cli_failed instruction (push decision to user).
+pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
-    let _agent_id = ctx.agent_id;
 
-    format!(
-    "[Current Action] Reject review -- run reject\n\
-     [Role] User (User Agent)\n\n\
-     Routed in via the buyer-side keyword router (the user rejected the deliverable in their reply). The pending-decisions-v2 entry was already cleared by `resolve` in the user-session; no manual remove needed here.\n\
-     Extract the rejection reason from the relayed verbatim (look for `理由` / `reason` / `因为`); if not stated, default to `did not meet acceptance criteria`.\n\n\
-     **Step 1 -- Dual-signature rejection:**\n\
-     ```bash\n\
-     onchainos agent reject {job_id} --reason \"<rejection reason from user's words>\"\n\
-     ```\n\
-     Internal flow:\n\
-     \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-reject (EIP-712 standard, not uop) → get digest\n\
-     \x20\x202. ED25519 sign digest → signature\n\
-     \x20\x203. POST /priapi/v1/aieco/task/{job_id}/reject (body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}) → get uopData\n\
-     \x20\x204. Sign uopHash → broadcast on-chain\n\
-     \x20\x20→ Task status becomes Rejected; the ASP can open a dispute or agree to a refund.\n\
-     \x20\x20⚠️ **The buyer cannot initiate arbitration** — only the ASP can. If the user asks, explain: after rejection the ASP decides whether to dispute; if the ASP takes no action, the system auto-refunds.\n\n\
-     ⚠️ **Do not xmtp_send any message to the ASP** (e.g. \"rejected\"); the ASP learns via on-chain events.\n\n\
-     After Step 1 → **end this turn** and wait for the `job_rejected` system notification.\n"
-    )
+    let reason = ctx
+        .data
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("did not meet acceptance criteria");
+
+    let mut client = TaskApiClient::new();
+    match super::super::reject::handle_reject(&mut client, job_id, reason).await {
+        Ok(()) => format!(
+            "[reject_review] ✅ `onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
+             ⚠️ broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (arbitration) or agree to a refund. The buyer cannot initiate arbitration.\n\
+             ❌ Do NOT xmtp_send any message to the ASP about the rejection — they learn via on-chain events.\n"
+        ),
+        Err(e) => format!(
+            "[reject_review] ❌ `onchainos agent reject {job_id} --reason \"{reason}\"` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
 // --- Terminal states ---------------------------------------------------
