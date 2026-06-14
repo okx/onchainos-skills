@@ -265,21 +265,26 @@ pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
     }
 }
 
-pub(crate) fn set_public(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn set_public(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
 
     let set_public_notify = super::super::content::set_public_user_notify(job_id);
-    format!(
-    "[Current Action] Convert to public task\n\
-     [Role] User (User Agent)\n\n\
-     **Step 1 -- Convert to public task:**\n\
-     ```bash\n\
-     onchainos agent set-public {job_id}\n\
-     ```\n\n\
-     **Step 2 -- Notify the user via xmtp_dispatch_user** ({l10n_short}):\n\
-     content: \"{set_public_notify}\"\n"
-    )
+
+    let mut client = TaskApiClient::new();
+    match super::super::changepublic::handle_set_public(&mut client, job_id, Some(agent_id)).await {
+        Ok(()) => format!(
+            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Call xmtp_dispatch_user to notify the user the task is now public** ({l10n_short}):\n\
+             content: \"{set_public_notify}\"\n"
+        ),
+        Err(e) => format!(
+            "[set_public] ❌ `onchainos agent set-public {job_id}` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
 // --- Other events ------------------------------------------------------

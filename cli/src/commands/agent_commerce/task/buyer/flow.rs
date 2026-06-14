@@ -427,7 +427,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::WakeupNotify => super::flow_lifecycle::wakeup_notify(&ctx),
         Event::Other(ref s) if s == "create_task" => super::flow_lifecycle::create_task(),
         Event::Other(ref s) if s == "close" => super::flow_lifecycle::close_task(&ctx).await,
-        Event::Other(ref s) if s == "set_public" => super::flow_lifecycle::set_public(&ctx),
+        Event::Other(ref s) if s == "set_public" => super::flow_lifecycle::set_public(&ctx).await,
         Event::AttachmentAdded => super::flow_lifecycle::attachment_added(&ctx),
         Event::TaskTokenBudgetChange => super::flow_lifecycle::task_token_budget_change(&ctx),
         Event::TaskProviderChange => super::flow_lifecycle::task_provider_change(&ctx),
@@ -543,7 +543,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "submit_deadline_warn" | "job_auto_completed" |
         "evaluator_selected" | "vote_committed" | "reveal_started" | "vote_revealed" |
         "vote_commit_deadline_warn" | "vote_reveal_deadline_warn" | "cooldown_entered" | "round_failed" |
-        "reward_claimed" | "dispute_resolved" | "set_public" |
+        "reward_claimed" | "dispute_resolved" |
         "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved" |
         "user_decision_job_submitted" | "user_decision_review_deadline_warn" |
         "user_decision_recommend_pick" | "user_decision_provider_pending" |
@@ -578,7 +578,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
             "provider_applied" | "deliverable_received" | "approve_review" |
             "review_expired" | "job_expired" | "job_auto_refunded" |
             "submit_expired" | "reject_expired" |
-            "close"
+            "close" | "set_public"
         );
     let core = if use_cli_minimal
         || event_str == "create_task"
