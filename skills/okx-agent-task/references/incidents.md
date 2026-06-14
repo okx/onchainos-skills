@@ -2,6 +2,8 @@
 
 Reference log of real production incidents from the okx-agent-task flow. Each entry shows what went wrong + what the correct behavior would have been. Use as case studies when debugging similar deviations. SKILL.md / role files link here from one-line summaries instead of inlining the full narrative.
 
+> **Do not read the whole file.** Each `I-N` is self-contained — grep the symptom (e.g. `apply`, `[intent:confirm]`, `--role`, `sessions_spawn`) or follow the one-line link that sent you here, and read only that incident.
+
 ---
 
 ## I-1 — ASP skipped `next-action`, treated inquiry as ChatGPT (jobId=108)

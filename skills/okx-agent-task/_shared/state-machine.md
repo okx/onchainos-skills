@@ -8,6 +8,20 @@
 
 ---
 
+## Contents
+
+> Lookup reference — **do not read the whole file**. Jump to the section you need (grep the heading).
+
+- **§1 Task Status** (11 real enums)
+- **§2 State Transition Diagram**
+- **§3 Full Event Set** (37 events) — lifecycle entry (§3.1) · transient (§3.2) · dispute (§3.3) · staking/reward (§3.4) · recovery (§3.5)
+- **§4 Events Each Role Cares About** (happy path)
+- **§5 Timeout Rules**
+- **§6 Query the Current State**
+- **§7 Implementation Anchors**
+
+---
+
 ## 1. Task Status (11 real enums)
 
 Backend `status` int field → local `Status` enum mapping (`state_machine.rs::Status::from_int`):

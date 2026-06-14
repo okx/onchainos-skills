@@ -11,6 +11,19 @@ The task flow uses **only two** XMTP envelope shapes (one-to-one with the whitel
 
 ---
 
+## Contents
+
+> Long reference — **do not read the whole file**. Jump to the section you need (grep the heading).
+
+- **§1 P2P Messages** (`a2a-agent-chat`) — real sample · field reference · receiver flow
+- **§2 System Notifications** (chain → sub) — real sample · field reference · receiver flow
+- **§3 String-prefix Protocols** (sub ↔ user) — `[USER_DECISION_REQUEST]` (§3.1, + anti-pattern §3.1.1) · `user_decision_<src>` relay (§3.2)
+- **§4 Field-Extraction Cheat Sheet**
+- **§5 Forbidden Forgeries**
+- **§6 Attachment Protocols** — `[ATTACHMENT_ADDED]` (§6.1) · `[intent:attachment]` (§6.2)
+
+---
+
 ## 1. P2P Messages (a2a-agent-chat)
 
 The business conversation channel — carries all buyer ↔ provider content (inquiry, negotiation, quotes, deliverables …). **A single envelope shape, no further subtyping** — business semantics live entirely in `content` text, parsed by the receiver from context + role file.
