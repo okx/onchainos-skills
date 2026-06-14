@@ -556,15 +556,23 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "job_submitted" | "job_disputed" |
         "designated_a2a" | "designated_x402" | "designated_error"
     );
-    // cli-mode short-circuit: when the event's `_cli` handler has already
-    // executed session_status / user_notify / recommend in-process, the body
-    // is a self-contained 2-step playbook. Skip every preamble (IRON RULEs
-    // about xmtp_send / session_status / sessions_spawn don't apply when
-    // those tools aren't in the body) and version_prefix (no xmtp_send call
-    // to validate). Keep only LOCALIZATION_PREFIX — translation may still be
-    // required for the user-facing card body.
+    // cli-mode short-circuit: applies to events whose body is self-contained
+    // and does NOT call any of the IRON-RULE-governed tools (xmtp_send /
+    // session_status / sessions_spawn / pending-decisions-v2 request). Two
+    // shapes qualify:
+    //   1. `_cli` handlers that executed session_status / user_notify /
+    //      recommend in-process — body is a self-contained 2-step playbook.
+    //   2. Terminal / notification-only events (e.g. `review_expired`) whose
+    //      body is a single xmtp_dispatch_user + end-turn — the body already
+    //      embeds L10N_DISPATCH_SHORT translation hints.
+    // Skip every preamble (the IRON RULEs do not apply) and version_prefix
+    // (no xmtp_send call to validate).
     let use_cli_minimal = super::content::is_cli_mode()
-        && matches!(event_str, "job_created" | "negotiate_reply" | "negotiate_ack" | "provider_applied" | "deliverable_received" | "approve_review");
+        && matches!(event_str,
+            "job_created" | "negotiate_reply" | "negotiate_ack" |
+            "provider_applied" | "deliverable_received" | "approve_review" |
+            "review_expired"
+        );
     let core = if use_cli_minimal
         || event_str == "create_task"
         || event_str == "switch_provider"
