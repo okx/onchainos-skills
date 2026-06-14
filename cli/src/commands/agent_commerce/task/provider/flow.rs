@@ -89,7 +89,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
     // Short jobId, used as the `[Job <shortId> — you are the ASP]` prefix on the first
     // line of `xmtp_prompt_user` userContent (the canonical templates live in content.rs).
     // When multiple prompts run concurrently it provides the user and the user agent a
-    // dual disambiguation anchor. See buyer-sub-playbook.md §Communication Contract §5.
+    // dual disambiguation anchor. See SKILL.md Session Communication Contract §5.
     let short_id = short_job_id(job_id);
 
     // jobTitle carried by the envelope — when present, inlined directly into the
@@ -100,7 +100,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
 
     // ──────────────────────────────────────────────────────────────────────
     // Communication mechanics (how to send, whether you can send, form whitelist) —
-    // all defined in buyer-sub-playbook.md §Communication Contract. This file only tells
+    // all defined in SKILL.md Session Communication Contract. This file only tells
     // the agent **what content to send where** at each step; it does not re-explain
     // tool usage.
     //
@@ -750,7 +750,7 @@ pub fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_t
              ⚠️ **After apply, end the turn directly**:\n\
              ❌ **Do NOT call `onchainos agent deliver`** in this scene — deliver is gated by the `job_accepted` system notification which arrives ≥ 2 events later (provider_applied → confirm-accept → job_accepted). CLI rejects with `status != accepted` but you should never even attempt it. See **Hard rules** at the top of this scene.\n\
              ❌ Do NOT push to the user with `xmtp_dispatch_user` — `apply submitted / txHash / awaiting provider_applied` is filler state\n\
-             ❌ Do NOT send any ACK / thanks / `started processing` filler to the User Agent via `xmtp_send` — at this point the User Agent is already running confirm-accept; your ACK is noise and triggers the User Agent's `no repeated xmtp_send within one turn` iron rule (see `buyer-sub-playbook.md` §Communication Boundary)\n\
+             ❌ Do NOT send any ACK / thanks / `started processing` filler to the User Agent via `xmtp_send` — at this point the User Agent is already running confirm-accept; your ACK is noise and triggers the User Agent's `no repeated xmtp_send within one turn` iron rule (see SKILL.md `🔒 Communication Boundary and Security Gate`)\n\
              ✅ The next step happens only after the on-chain `provider_applied` notification arrives and next-action is called again.\n\n\
              **If any item is not agreed upon** → first call `session_status` to get sessionKey, then call `xmtp_send`:\n\
              \x20\x20tool: xmtp_send\n\
