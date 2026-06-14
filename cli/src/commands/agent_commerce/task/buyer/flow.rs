@@ -553,7 +553,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     let use_medium_preamble = matches!(event_str,
         "job_payment_mode_changed" |
         "provider_applied" | "job_accepted" | "deliverable_received" | "job_visibility_changed" |
-        "job_submitted" |
+        "job_submitted" | "job_disputed" |
         "designated_a2a" | "designated_x402" | "designated_error"
     );
     // cli-mode short-circuit: when the event's `_cli` handler has already

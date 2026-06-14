@@ -1,6 +1,7 @@
 //! Rejection / arbitration prompt generators.
 
 use super::super::flow::FlowContext;
+use crate::commands::agent_commerce::task::common::okx_a2a;
 
 pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
@@ -38,34 +39,65 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
-    let session_hint = super::super::flow::SESSION_STATUS_HINT;
+
+    // Fetch sessionKey + chat history in-process and inline the formatted
+    // block into the playbook. Errors propagate as an error playbook (LLM
+    // pushes a cli_failed decision); no LLM-driven fallback path here.
+    let session_key = match okx_a2a::session_status() {
+        Ok(Some(sk)) => sk,
+        Ok(None) => return format!(
+            "[job_disputed] ❌ No active sub session reported by `okx-a2a session status` for job {job_id}; cannot fetch chat history for dispute evidence.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` so they can decide how to proceed.\n"
+        ),
+        Err(e) => return format!(
+            "[job_disputed] ❌ `okx-a2a session status` failed: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+    let messages = match okx_a2a::xmtp_get_conversation_history(&session_key) {
+        Ok(m) => m,
+        Err(e) => return format!(
+            "[job_disputed] ❌ `okx-a2a session get` (chat history) failed: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+    let chat_block = if messages.is_empty() {
+        "(no chat history available)".to_string()
+    } else {
+        messages.into_iter()
+            .map(|m| {
+                let ts = m.sent_at.map(|v| v.to_string()).unwrap_or_else(|| "?".to_string());
+                let status = if m.delivery_status.is_empty() {
+                    "?".to_string()
+                } else {
+                    m.delivery_status
+                };
+                format!("[{ts}][{status}] sender={}: {}", m.sender_inbox_id, m.content)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
 
     format!(
     "[Current Status] job_disputed (arbitration opened; CLI auto-submits evidence on this event)\n\
      [Role] User (User Agent)\n\n\
      🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
-     The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
-     session, calls `dispute upload` (which also auto-attaches every saved deliverable from\n\
-     `~/.onchainos/deliverables/buyer/{job_id}/`), and then notifies the user via\n\
-     `xmtp_dispatch_user`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
-     **Do NOT** call `xmtp_send` to the ASP — both sides see the arbitration via on-chain events.\n\n\
+     The agent does NOT ask the user for evidence; it formats the chat history, calls `dispute upload`\n\
+     (which also auto-attaches every saved deliverable from `~/.onchainos/deliverables/buyer/{job_id}/`),\n\
+     and then notifies the user via `xmtp_dispatch_user`. **Do NOT** use `pending-decisions-v2 request`\n\
+     for this event. **Do NOT** call `xmtp_send` to the ASP — both sides see the arbitration via on-chain events.\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 — Pull this sub session's negotiation / delivery chat history:**\n\n\
-     {session_hint}\n\
-     Then call `xmtp_get_conversation_history` with that sessionKey to fetch the full a2a-agent-chat history with the ASP.\n\n\
-     **Step 2 — Format the chat history as the `--text` body**:\n\n\
+     **Step 1 — Chat history (pre-fetched and inlined below; do NOT call `session_status` or `xmtp_get_conversation_history`):**\n\n\
      ```\n\
-     ==== Negotiation / delivery chat history (from xmtp_get_conversation_history) ====\n\
-     [time] ASP(<agentId>): ...\n\
-     [time] User(<agentId>): ...\n\
-     ... (chronological; key checkpoints: quote / [intent:propose] / [intent:ack] / [intent:confirm] / deliverable message)\n\
+     ==== Negotiation / delivery chat history ====\n\
+     {chat_block}\n\
      ```\n\n\
-     ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints (PROPOSE / ACK / CONFIRM / deliverable / both sides' key dispute points) and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
-     If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
+     **Step 2 — Extract a `--text` body from the chat history above** (≤16 KB):\n\
+     Keep ONLY the key checkpoints — PROPOSE / ACK / CONFIRM / deliverable messages + both sides' key dispute points. Prepend `(key checkpoints extracted)` so the arbiter knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
      **Step 3 — Upload (off-chain multipart):**\n\
      ```bash\n\
-     onchainos agent dispute upload {job_id} --role buyer --agent-id {agent_id} --text \"<chat history block>\"\n\
+     onchainos agent dispute upload {job_id} --role buyer --agent-id {agent_id} --text \"<chat history block from Step 2>\"\n\
      ```\n\
      The CLI auto-attaches every entry under `~/.onchainos/deliverables/buyer/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
      **Step 4 — Notify the user (after upload returns):**\n\n\
