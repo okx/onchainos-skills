@@ -243,21 +243,26 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
 
 // --- User-action pseudo events ----------------------------------------
 
-pub(crate) fn close_task(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
 
     let close_notify = super::super::content::close_user_notify(job_id);
-    format!(
-    "[Current Action] Close task\n\
-     [Role] User (User Agent)\n\n\
-     **Step 1 -- Close the task (only valid in Open state):**\n\
-     ```bash\n\
-     onchainos agent close {job_id}\n\
-     ```\n\n\
-     **Step 2 -- Notify the user via xmtp_dispatch_user** ({l10n_short}):\n\
-     content: \"{close_notify}\"\n"
-    )
+
+    let mut client = TaskApiClient::new();
+    match super::super::close::handle_close(&mut client, job_id, Some(agent_id)).await {
+        Ok(()) => format!(
+            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Call xmtp_dispatch_user to notify the user the task was closed** ({l10n_short}):\n\
+             content: \"{close_notify}\"\n"
+        ),
+        Err(e) => format!(
+            "[close_task] ❌ `onchainos agent close {job_id}` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
 pub(crate) fn set_public(ctx: &FlowContext<'_>) -> String {
