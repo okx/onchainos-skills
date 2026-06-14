@@ -442,6 +442,40 @@ pub(crate) fn task_provider_change(ctx: &super::super::flow::FlowContext<'_>) ->
         "- If you are the **backup session** → **ignore this event, end the turn immediately, do not call any tool**\n".to_string()
     };
 
+    let p = match ctx.prefetched {
+        Some(p) => p,
+        None => return format!(
+            "[task_provider_change] ❌ no prefetched task context for job {job_id}; sub-session cannot decide whether to send REJECT.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+    let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(s) => s,
+        None => return format!(
+            "[task_provider_change] ❌ prefetched.provider_agent_id missing for job {job_id}; sub-session cannot decide whether to send REJECT.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+    let session_key_inline: Option<String> = if crate::commands::agent_commerce::task::common::config::is_cli_mode() {
+        crate::commands::agent_commerce::task::common::okx_a2a::session_status().ok().flatten()
+    } else {
+        None
+    };
+    let step2 = match session_key_inline.as_deref() {
+        Some(sk) => format!(
+            "**Step 2 -- sessionKey (CLI pre-fetched; do NOT call `session_status`):**\n\
+             \x20\x20`{sk}`\n\n"
+        ),
+        None => "**Step 2 -- 🛑 MUST get the sessionKey:**\n\
+                 Call the `session_status` tool to obtain the current sub session's `sessionKey`.\n\
+                 ❌ Skipping this step = xmtp_send lacks sessionKey = REJECT cannot be sent\n\n".to_string(),
+    };
+    let sk_hint_in_step3 = if session_key_inline.is_some() {
+        "sessionKey from Step 2 above"
+    } else {
+        "value from Step 2"
+    };
+
     format!(
     "[System Notification] task_provider_change (provider change settled on-chain)\n\
      [Role] User (User Agent)\n\n\
@@ -455,22 +489,16 @@ pub(crate) fn task_provider_change(ctx: &super::super::flow::FlowContext<'_>) ->
      Review this session's context: if you have sent or received a message containing `[intent:reject]` in this session (negotiation terminated),\n\
      **ignore this event, end the turn** -- a terminated negotiation does not need another REJECT.\n\
      Only continue to Step 1 when you have confirmed this session is still active (negotiation in progress).\n\n\
-     **Step 1 -- 🛑 MUST query task details to compare whether the provider has changed (skipping = may wrongly close the new provider's session):**\n\
-     ```bash\n\
-     onchainos agent status {job_id}\n\
-     ```\n\
-     Extract `providerAgentId` (the current on-chain provider) and compare it with **the provider agentId this session is negotiating with**:\n\
+     **Step 1 -- 🛑 Compare against the on-chain provider (CLI pre-fetched; do NOT call `agent status`):**\n\
+     The on-chain current providerAgentId is **{provider_id}**. Compare it with **the provider agentId this session is negotiating with**:\n\
      \x20\x20- **Match** (this session's provider IS the on-chain provider) → this session belongs to the new provider; **ignore this event, end the turn**, do not send REJECT\n\
      \x20\x20- **Mismatch** (this session's provider has been replaced) → continue to Step 2 and send REJECT\n\
-     \x20\x20- **providerAgentId is empty or missing** → continue to Step 2 and send REJECT (conservative)\n\
      ❌ Skipping this step = sending REJECT indiscriminately to all sub sessions = even the new provider's session gets closed = negotiation broken\n\n\
-     **Step 2 -- 🛑 MUST get the sessionKey (one of the two mandatory steps for path 4):**\n\
-     Call the `session_status` tool to obtain the current sub session's `sessionKey`.\n\
-     ❌ Skipping this step = xmtp_send lacks sessionKey = REJECT cannot be sent\n\n\
+     {step2}\
      **Step 3 -- 🛑 MUST send [intent:reject] to this session's provider (do not skip):**\n\
      This task's provider has changed on-chain to a different ASP; the current session's negotiation terminates immediately.\n\
      ❌ Not sending REJECT = old provider does not know they were replaced = keeps waiting / messaging = negotiation hangs forever\n\n\
-     Call xmtp_send (sessionKey = value from Step 2):\n\
+     Call xmtp_send ({sk_hint_in_step3}):\n\
      \x20\x20content:\n\
      \x20\x20jobId: {job_id}\n\
      \x20\x20reason: user has switched provider\n\

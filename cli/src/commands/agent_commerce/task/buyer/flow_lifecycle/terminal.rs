@@ -99,52 +99,49 @@ pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
 
 // --- Timeouts / auto-completion ---------------------------------------
 
-pub(crate) fn submit_expired(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let submit_expired = super::super::content::submit_expired_user_notify(job_id);
-    format!(
-    "[System Notification] ASP failed to submit the deliverable in time\n\
-     [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\
-     The ASP did not submit the deliverable within the allowed window; auto-refund kicks in.\n\n\
-     **Step 1 -- Claim auto-refund immediately (no user confirmation needed):**\n\
-     ```bash\n\
-     onchainos agent claim-auto-refund {job_id}\n\
-     ```\n\n\
-     **Step 2 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
-     content: \"{submit_expired}\"\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent claim-auto-refund` call\n\
-     2. One `xmtp_dispatch_user` call with the content above\n\
-     No other text or tool calls.\n"
-    )
+
+    // Rust in-process claim-auto-refund — symmetric to approve_review /
+    // reject_review (each broadcasts a tx in-process and tells the LLM to
+    // just notify the user). Failure → cli_failed bail.
+    let mut client = TaskApiClient::new();
+    match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
+        Ok(()) => format!(
+            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
+             content: \"{submit_expired}\"\n"
+        ),
+        Err(e) => format!(
+            "[submit_expired] ❌ `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
-pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn reject_expired(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let reject_expired = super::super::content::reject_expired_user_notify(job_id);
-    format!(
-    "[System Notification] ASP arbitration window expired\n\
-     [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\
-     After your rejection, the ASP did not open a dispute in time; auto-refund kicks in.\n\n\
-     **Step 1 -- Claim auto-refund immediately (no user confirmation needed):**\n\
-     ```bash\n\
-     onchainos agent claim-auto-refund {job_id}\n\
-     ```\n\n\
-     **Step 2 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
-     content: \"{reject_expired}\"\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent claim-auto-refund` call\n\
-     2. One `xmtp_dispatch_user` call with the content above\n\
-     No other text or tool calls.\n"
-    )
+
+    let mut client = TaskApiClient::new();
+    match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
+        Ok(()) => format!(
+            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
+             content: \"{reject_expired}\"\n"
+        ),
+        Err(e) => format!(
+            "[reject_expired] ❌ `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
 pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
@@ -198,94 +195,123 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
-    let title_query_hint = ctx.title_query_hint;
     let terminal_session_hint = &ctx.terminal_session_hint;
 
-    let auto_completed_notify = super::super::content::job_auto_completed_user_notify(job_id, title_display);
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+
+    // job_auto_completed fires on the claimAutoComplete tx receipt — the
+    // chain has settled to Completed and a provider is guaranteed to exist.
+    // Anything else (no prefetched / missing provider) is a data anomaly —
+    // bail to a cli_failed instruction instead of running a half-blind
+    // playbook that asks the LLM to chase down providerAgentId via
+    // `common context`.
+    let p = match ctx.prefetched {
+        Some(p) => p,
+        None => return format!(
+            "[job_auto_completed] ❌ no prefetched task context for job {job_id}; auto-rate cannot run.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+    let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(s) => s,
+        None => return format!(
+            "[job_auto_completed] ❌ prefetched.provider_agent_id missing for job {job_id}; auto-rate cannot run.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+        ),
+    };
+
+    // prefetched.title is authoritative — use it directly instead of
+    // ctx.title_display (which falls back to `<title>` placeholder when the
+    // envelope lacks jobTitle and would force the LLM to query).
+    let auto_completed_notify = super::super::content::job_auto_completed_user_notify(job_id, &p.title);
+
     format!(
     "[System Notification] job_auto_completed (claimAutoComplete tx receipt)\n\
      [Role] User (User Agent)\n\n\
      🛑 **You MUST call `xmtp_dispatch_user` to notify the user the task auto-completed; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions]\n\n\
-     {title_query_hint}\
      **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed** ({l10n_short}):\n\
      \x20\x20content:\n\
      {auto_completed_notify}\n\n\
-     🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
-     **Step 2 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
-     From the task context (call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not already available), extract providerAgentId.\n\
+     🛑 Do NOT end this turn — Step 3 (auto-rate) and Step 3.5 (notify rating) below are MANDATORY.\n\n\
+     **Step 2 — Task fields (pre-fetched; do NOT call `common context`):**\n\
+     \x20\x20- title: {title}\n\
+     \x20\x20- tokenAmount: {amt} | tokenSymbol: {sym}\n\
+     \x20\x20- providerAgentId: {provider_id}\n\n\
+     **Step 3 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
      Based on the deliverable vs the task description and quality standards, generate:\n\
      \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
      Then execute:\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-     ```\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from task context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
-     **Step 2.5 -- Notify the user of the submitted rating ({l10n_short}):**\n\
+     onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+     ```\n\n\
+     **Step 3.5 -- Notify the user of the submitted rating ({l10n_short}):**\n\
      After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
      - ✅ **Success** (output contains `txHash`):\n\
-     content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
+     content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from Step 2):\n\
      {rating_notify}\n\
      - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
-     **Step 3 -- Terminal wrap-up (keep the sub session):**\n\
+     **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\n\
      [OUTPUT_TEMPLATE]\n\
      Your entire response for this event MUST include ALL of the following tool calls, in order:\n\
      1. One `xmtp_dispatch_user` call — auto-completion notification (Step 1)\n\
-     2. One `onchainos agent feedback-submit` call — auto-rate the ASP (Step 2)\n\
-     3. One `xmtp_dispatch_user` call — rating notification (Step 2.5; skip ONLY if Step 2 returned an error)\n\
+     2. One `onchainos agent feedback-submit` call — auto-rate the ASP (Step 3)\n\
+     3. One `xmtp_dispatch_user` call — rating notification (Step 3.5; skip ONLY if Step 3 returned an error)\n\
      Stopping after Step 1 is a **critical failure** — the user will never see their rating.\n"
+    ,
+    title = p.title,
+    amt = p.token_amount,
+    sym = p.token_symbol,
     )
 }
 
 // --- User-action pseudo events ----------------------------------------
 
-pub(crate) fn close_task(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
 
     let close_notify = super::super::content::close_user_notify(job_id);
-    format!(
-    "[Current Action] Close task\n\
-     [Role] User (User Agent)\n\n\
-     **Step 1 -- Close the task (only valid in Open state):**\n\
-     ```bash\n\
-     onchainos agent close {job_id}\n\
-     ```\n\n\
-     **Step 2 -- Notify the user via xmtp_dispatch_user** ({l10n_short}):\n\
-     content: \"{close_notify}\"\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent close` call\n\
-     2. One `xmtp_dispatch_user` call with the content above\n\
-     No other text or tool calls.\n"
-    )
+
+    let mut client = TaskApiClient::new();
+    match super::super::close::handle_close(&mut client, job_id, Some(agent_id)).await {
+        Ok(()) => format!(
+            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Call xmtp_dispatch_user to notify the user the task was closed** ({l10n_short}):\n\
+             content: \"{close_notify}\"\n"
+        ),
+        Err(e) => format!(
+            "[close_task] ❌ `onchainos agent close {job_id}` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
-pub(crate) fn set_public(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn set_public(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
 
     let set_public_notify = super::super::content::set_public_user_notify(job_id);
-    format!(
-    "[Current Action] Convert to public task\n\
-     [Role] User (User Agent)\n\n\
-     **Step 1 -- Convert to public task:**\n\
-     ```bash\n\
-     onchainos agent set-public {job_id}\n\
-     ```\n\n\
-     **Step 2 -- Notify the user via xmtp_dispatch_user** ({l10n_short}):\n\
-     content: \"{set_public_notify}\"\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent set-public` call\n\
-     2. One `xmtp_dispatch_user` call with the content above\n\
-     No other text or tool calls.\n"
-    )
+
+    let mut client = TaskApiClient::new();
+    match super::super::changepublic::handle_set_public(&mut client, job_id, Some(agent_id)).await {
+        Ok(()) => format!(
+            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Call xmtp_dispatch_user to notify the user the task is now public** ({l10n_short}):\n\
+             content: \"{set_public_notify}\"\n"
+        ),
+        Err(e) => format!(
+            "[set_public] ❌ `onchainos agent set-public {job_id}` failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    }
 }
 
 // --- Other events ------------------------------------------------------

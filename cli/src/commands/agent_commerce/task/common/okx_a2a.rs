@@ -7,6 +7,7 @@
 //! consumers should minimize calls in hot paths.
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 
 /// Spawn `okx-a2a session status --json` and return the active sessionKey.
@@ -210,6 +211,82 @@ pub fn xmtp_send(job_id: &str, my_agent_id: &str, to_agent_id: &str, message: &s
         anyhow::bail!("okx-a2a xmtp-send exit {status}: {stderr}", status = out.status);
     }
     Ok(())
+}
+
+// ── XMTP conversation history ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RawMessage {
+    id: String,
+    #[serde(rename = "senderInboxId", default)]
+    sender_inbox_id: Option<String>,
+    #[serde(rename = "rawText", default)]
+    raw_text: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(rename = "xmtpSentAtMs", default)]
+    xmtp_sent_at_ms: Option<i64>,
+    #[serde(rename = "receivedAtMs", default)]
+    received_at_ms: Option<i64>,
+    #[serde(rename = "deliveryStatus", default)]
+    delivery_status: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawFile {
+    #[serde(default)]
+    messages: Vec<RawMessage>,
+}
+
+#[derive(Deserialize)]
+struct RawResp {
+    #[serde(default)]
+    file: Option<RawFile>,
+}
+
+/// Normalized message record returned by `xmtp_get_conversation_history`.
+#[derive(Serialize, Debug)]
+pub struct ConversationMessage {
+    pub id: String,
+    #[serde(rename = "senderInboxId")]
+    pub sender_inbox_id: String,
+    pub content: String,
+    #[serde(rename = "sentAt")]
+    pub sent_at: Option<i64>,
+    #[serde(rename = "deliveryStatus")]
+    pub delivery_status: String,
+}
+
+/// Bridge equivalent: `xmtp_get_conversation_history '{sessionKey}'`
+/// Fetch the full XMTP message history for a sub session via
+/// `okx-a2a session get` and normalize the records (collapses `rawText` /
+/// `content` and `xmtpSentAtMs` / `receivedAtMs` into single fields).
+pub fn xmtp_get_conversation_history(session_key: &str) -> Result<Vec<ConversationMessage>> {
+    let out = Command::new("okx-a2a")
+        .args([
+            "session", "get",
+            "--session-key", session_key,
+            "--json",
+        ])
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("okx-a2a session get exit {status}: {stderr}", status = out.status);
+    }
+    let resp: RawResp = serde_json::from_slice(&out.stdout)
+        .map_err(|e| anyhow::anyhow!("parse okx-a2a session get json failed: {e}"))?;
+    let messages = resp.file.map(|f| f.messages).unwrap_or_default();
+    Ok(messages
+        .into_iter()
+        .map(|m| ConversationMessage {
+            id: m.id,
+            sender_inbox_id: m.sender_inbox_id.unwrap_or_default(),
+            content: m.raw_text.or(m.content).unwrap_or_default(),
+            sent_at: m.xmtp_sent_at_ms.or(m.received_at_ms),
+            delivery_status: m.delivery_status.unwrap_or_default(),
+        })
+        .collect())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

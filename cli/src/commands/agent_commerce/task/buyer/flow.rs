@@ -435,8 +435,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::JobAutoRefunded => super::flow_lifecycle::job_auto_refunded(&ctx),
         Event::JobExpired => super::flow_lifecycle::job_expired(&ctx),
         Event::JobClosed => super::flow_lifecycle::job_closed(&ctx),
-        Event::SubmitExpired => super::flow_lifecycle::submit_expired(&ctx),
-        Event::RejectExpired => super::flow_lifecycle::reject_expired(&ctx),
+        Event::SubmitExpired => super::flow_lifecycle::submit_expired(&ctx).await,
+        Event::RejectExpired => super::flow_lifecycle::reject_expired(&ctx).await,
         Event::ReviewDeadlineWarn => super::flow_lifecycle::review_deadline_warn(&ctx),
         Event::ReviewExpired => super::flow_lifecycle::review_expired(&ctx),
         Event::JobAutoCompleted => super::flow_lifecycle::job_auto_completed(&ctx),
@@ -451,8 +451,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::RewardClaimed => super::flow_lifecycle::reward_claimed(&ctx),
         Event::WakeupNotify => super::flow_lifecycle::wakeup_notify(&ctx),
         Event::Other(ref s) if s == "create_task" => super::flow_lifecycle::create_task(),
-        Event::Other(ref s) if s == "close" => super::flow_lifecycle::close_task(&ctx),
-        Event::Other(ref s) if s == "set_public" => super::flow_lifecycle::set_public(&ctx),
+        Event::Other(ref s) if s == "close" => super::flow_lifecycle::close_task(&ctx).await,
+        Event::Other(ref s) if s == "set_public" => super::flow_lifecycle::set_public(&ctx).await,
         Event::AttachmentAdded => super::flow_lifecycle::attachment_added(&ctx),
         Event::TaskTokenBudgetChange => super::flow_lifecycle::task_token_budget_change(&ctx),
         Event::TaskProviderChange => super::flow_lifecycle::task_provider_change(&ctx),
@@ -565,14 +565,19 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     let use_slim_preamble = matches!(event_str,
         "negotiate_ack" |
         "approve_review" | "reject_review" |
-        "job_completed" | "job_refunded" | "job_auto_refunded" | "job_expired" | "job_closed" |
+        "job_completed" | "job_refunded" | "job_auto_refunded" | "job_expired" | "job_closed" | "job_rejected" |
         "submit_expired" | "reject_expired" | "review_deadline_warn" | "review_expired" |
         "submit_deadline_warn" | "job_auto_completed" |
         "evaluator_selected" | "vote_committed" | "reveal_started" | "vote_revealed" |
         "vote_commit_deadline_warn" | "vote_reveal_deadline_warn" | "cooldown_entered" | "round_failed" |
-        "reward_claimed" | "dispute_resolved" | "close" | "set_public" |
+        "reward_claimed" | "dispute_resolved" |
         "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved" |
-        "user_decision_job_submitted"
+        "user_decision_job_submitted" | "user_decision_review_deadline_warn" |
+        "user_decision_recommend_pick" | "user_decision_provider_pending" |
+        "user_decision_no_asp_found" | "user_decision_not_provider" |
+        "user_decision_provider_offline" | "user_decision_x402_invalid" |
+        "user_decision_over_budget" |
+        "user_decision_negotiate_over_budget" | "user_decision_x402_price_mismatch"
     );
     let use_negotiate_preamble = matches!(event_str,
         "negotiate_reply" | "negotiate_counter"
@@ -584,15 +589,25 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "designated_a2a" | "designated_x402" | "designated_error" |
         "job_rejected" | "job_disputed" | "attachment_added" | "provider_conversation"
     );
-    // cli-mode short-circuit: when the event's `_cli` handler has already
-    // executed session_status / user_notify / recommend in-process, the body
-    // is a self-contained 2-step playbook. Skip every preamble (IRON RULEs
-    // about xmtp_send / session_status / sessions_spawn don't apply when
-    // those tools aren't in the body) and version_prefix (no xmtp_send call
-    // to validate). Keep only LOCALIZATION_PREFIX — translation may still be
-    // required for the user-facing card body.
+    // cli-mode short-circuit: applies to events whose body is self-contained
+    // and does NOT call any of the IRON-RULE-governed tools (xmtp_send /
+    // session_status / sessions_spawn / pending-decisions-v2 request). Two
+    // shapes qualify:
+    //   1. `_cli` handlers that executed session_status / user_notify /
+    //      recommend in-process — body is a self-contained 2-step playbook.
+    //   2. Terminal / notification-only events (e.g. `review_expired`) whose
+    //      body is a single xmtp_dispatch_user + end-turn — the body already
+    //      embeds L10N_DISPATCH_SHORT translation hints.
+    // Skip every preamble (the IRON RULEs do not apply) and version_prefix
+    // (no xmtp_send call to validate).
     let use_cli_minimal = super::content::is_cli_mode()
-        && matches!(event_str, "job_created" | "negotiate_reply" | "negotiate_ack" | "provider_applied" | "deliverable_received" | "approve_review");
+        && matches!(event_str,
+            "job_created" | "negotiate_reply" | "negotiate_ack" |
+            "provider_applied" | "deliverable_received" | "approve_review" |
+            "review_expired" | "job_expired" | "job_auto_refunded" |
+            "submit_expired" | "reject_expired" |
+            "close" | "set_public"
+        );
     let core = if use_cli_minimal
         || event_str == "create_task"
         || event_str == "switch_provider"
