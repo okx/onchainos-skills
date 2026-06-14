@@ -1322,31 +1322,71 @@ pub fn request_command_block(
     let user_content_escaped = user_content
         .replace('\\', "\\\\")
         .replace('"', "\\\"");
-    format!(
-        "Execute these 5 sub-steps strictly in order. ALL FIVE are mandatory; skipping any breaks the flow.\n\n\
-         **(1) Get sessionKey** — call `session_status` once this turn; pass the returned key as `--sub-key` in step (3). Do NOT invent prefixes (`review-`, `decision-`, the raw jobId, etc.) — those silently break dispatch routing.\n\n\
-         **(2) Translate `--user-content` AND `--list-label` to the user's language BEFORE step (3)**. The bash in (3) shows English placeholders — the actual strings you pass MUST be localized per the rules below.\n\
-         \x20\x20• **Language signal** = user's OWN typed messages in THIS session ONLY. Task title / description / peer's message / playbook examples are NOT signals (even if they contain non-English text). Unsure → default English.\n\
-         \x20\x20• **Translate EVERY user-visible word** — outer prose, text inside single-quotes, placeholder words inside `<...>`, AND task title. The only thing kept verbatim is the shortJobId hex (it's an identifier, not language).\n\
-         \x20\x20• **No mixed-language in any single string**.\n\n\
-         **(3) Run `pending-decisions-v2 request`** using sessionKey from (1) and translated args from (2):\n\
-         ```bash\n\
-         onchainos agent pending-decisions-v2 request \\\n\
-         \x20\x20--sub-key \"<full sessionKey from step 1>\" \\\n\
-         \x20\x20--job-id {job_id} --role {role} --agent-id {agent_id} \\\n\
-         \x20\x20--user-content \"{content}\" \\\n\
-         \x20\x20--list-label \"{label}\" \\\n\
-         \x20\x20--source-event {source_event}\n\
-         ```\n\n\
-         **(4) Read step (3)'s stdout and follow it verbatim.** 🛑 The printed text IS your next-action playbook (it self-describes: tells you which xmtp tool to call with which args, or to end the turn) — it is NOT a success-confirmation receipt. Skipping (4) = card never reaches the user → flow stalls → 24h auto-refund / mistaken auto-decline. Do NOT hand-craft `llmContent` or call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
-         **(5) End the turn** after (4)'s tool call returns 'sent' (or immediately if (4) was the no-tool branch). Do NOT call further tools, do NOT loop back to (3).\n",
-        job_id = job_id,
-        role = role,
-        agent_id = agent_id,
-        content = user_content_escaped,
-        label = list_label_full,
-        source_event = source_event,
-    )
+
+    // CLI mode: pre-fetch the sub session's sessionKey so the LLM doesn't need
+    // to call `session_status` itself. Falls through to the original 5-step
+    // template (with the `<full sessionKey from step 1>` placeholder) when:
+    //   - not in CLI mode (MCP host doesn't guarantee `okx-a2a` on PATH);
+    //   - `okx-a2a session status` failed / returned no active session;
+    //   - the spawn cost (~100ms) isn't justified.
+    let prefetched_sk = if crate::commands::agent_commerce::task::common::config::is_cli_mode() {
+        crate::commands::agent_commerce::task::common::okx_a2a::session_status().ok().flatten()
+    } else {
+        None
+    };
+
+    match prefetched_sk {
+        Some(sk) => format!(
+            "Execute these 4 sub-steps strictly in order. ALL FOUR are mandatory; skipping any breaks the flow.\n\n\
+             **(1) Translate `--user-content` AND `--list-label` to the user's language BEFORE step (2)**. The bash in (2) shows English placeholders — the actual strings you pass MUST be localized per the rules below.\n\
+             \x20\x20• **Language signal** = user's OWN typed messages in THIS session ONLY. Task title / description / peer's message / playbook examples are NOT signals (even if they contain non-English text). Unsure → default English.\n\
+             \x20\x20• **Translate EVERY user-visible word** — outer prose, text inside single-quotes, placeholder words inside `<...>`, AND task title. The only thing kept verbatim is the shortJobId hex (it's an identifier, not language).\n\
+             \x20\x20• **No mixed-language in any single string**.\n\n\
+             **(2) Run `pending-decisions-v2 request`** with sessionKey already inlined (CLI pre-fetched; do NOT call `session_status`) and translated args from (1):\n\
+             ```bash\n\
+             onchainos agent pending-decisions-v2 request \\\n\
+             \x20\x20--sub-key \"{sk}\" \\\n\
+             \x20\x20--job-id {job_id} --role {role} --agent-id {agent_id} \\\n\
+             \x20\x20--user-content \"{content}\" \\\n\
+             \x20\x20--list-label \"{label}\" \\\n\
+             \x20\x20--source-event {source_event}\n\
+             ```\n\n\
+             **(3) Read step (2)'s stdout and follow it verbatim.** 🛑 The printed text IS your next-action playbook (it self-describes: tells you which xmtp tool to call with which args, or to end the turn) — it is NOT a success-confirmation receipt. Skipping (3) = card never reaches the user → flow stalls → 24h auto-refund / mistaken auto-decline. Do NOT hand-craft `llmContent` or call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
+             **(4) End the turn** after (3)'s tool call returns 'sent' (or immediately if (3) was the no-tool branch). Do NOT call further tools, do NOT loop back to (2).\n",
+            sk = sk,
+            job_id = job_id,
+            role = role,
+            agent_id = agent_id,
+            content = user_content_escaped,
+            label = list_label_full,
+            source_event = source_event,
+        ),
+        None => format!(
+            "Execute these 5 sub-steps strictly in order. ALL FIVE are mandatory; skipping any breaks the flow.\n\n\
+             **(1) Get sessionKey** — call `session_status` once this turn; pass the returned key as `--sub-key` in step (3). Do NOT invent prefixes (`review-`, `decision-`, the raw jobId, etc.) — those silently break dispatch routing.\n\n\
+             **(2) Translate `--user-content` AND `--list-label` to the user's language BEFORE step (3)**. The bash in (3) shows English placeholders — the actual strings you pass MUST be localized per the rules below.\n\
+             \x20\x20• **Language signal** = user's OWN typed messages in THIS session ONLY. Task title / description / peer's message / playbook examples are NOT signals (even if they contain non-English text). Unsure → default English.\n\
+             \x20\x20• **Translate EVERY user-visible word** — outer prose, text inside single-quotes, placeholder words inside `<...>`, AND task title. The only thing kept verbatim is the shortJobId hex (it's an identifier, not language).\n\
+             \x20\x20• **No mixed-language in any single string**.\n\n\
+             **(3) Run `pending-decisions-v2 request`** using sessionKey from (1) and translated args from (2):\n\
+             ```bash\n\
+             onchainos agent pending-decisions-v2 request \\\n\
+             \x20\x20--sub-key \"<full sessionKey from step 1>\" \\\n\
+             \x20\x20--job-id {job_id} --role {role} --agent-id {agent_id} \\\n\
+             \x20\x20--user-content \"{content}\" \\\n\
+             \x20\x20--list-label \"{label}\" \\\n\
+             \x20\x20--source-event {source_event}\n\
+             ```\n\n\
+             **(4) Read step (3)'s stdout and follow it verbatim.** 🛑 The printed text IS your next-action playbook (it self-describes: tells you which xmtp tool to call with which args, or to end the turn) — it is NOT a success-confirmation receipt. Skipping (4) = card never reaches the user → flow stalls → 24h auto-refund / mistaken auto-decline. Do NOT hand-craft `llmContent` or call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n\n\
+             **(5) End the turn** after (4)'s tool call returns 'sent' (or immediately if (4) was the no-tool branch). Do NOT call further tools, do NOT loop back to (3).\n",
+            job_id = job_id,
+            role = role,
+            agent_id = agent_id,
+            content = user_content_escaped,
+            label = list_label_full,
+            source_event = source_event,
+        ),
+    }
 }
 
 /// Map internal role enum to the short user-facing label used in notifications.

@@ -273,6 +273,8 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     // Branch A (escrow) push protocol — user_content is composed at runtime from the
     // deliverable variables extracted in Step 2 (file vs text); pass the placeholder
     // and the templates below the helper output guide the LLM through the composition.
+    // `request_command_block` handles the CLI-mode sessionKey prefetch + bash
+    // inline internally; no further replace needed here.
     let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
         job_id,
         "buyer",
@@ -281,13 +283,6 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
         &format!("[Decision {short_id}] {title_display} acceptance decision"),
         "job_submitted",
     );
-    // If we pre-fetched a sessionKey, substitute it into the bash template's
-    // `<full sessionKey from step 1>` placeholder so the LLM doesn't need to
-    // call `session_status` and copy the result.
-    let request_block = match session_key_inline.as_deref() {
-        Some(sk) => request_block.replace("<full sessionKey from step 1>", sk),
-        None => request_block,
-    };
 
     let pm = ctx.payment_mode;
     let pm_extract = if pm.is_some() { "" } else { "Extract `paymentMode` (int: 1=escrow, 3=x402). " };
