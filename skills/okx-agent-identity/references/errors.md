@@ -51,9 +51,3 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 - `submit-approval success:true` → see manage.md `activate + submitApproval` row (→ Step 6).
 - `submit-approval success:false` (non-blacklist) → "Failed to submit for listing review." + raw line + "You can try again later." **Stop.**
 
-## Skill-side guards (skill layer only — no bail!)
-
-- **No-op update** — nothing changed → "No changes to submit." Don't call `agent update`; re-enter update Q&A.
-- **Empty search query** — catch before sending; ask for the query.
-- **A2A fee format** — non-empty fee not a number ≤6 dp (`5 USDT`, `approx 10`) → "agent-to-agent fee is optional — leave it empty or give a USDT number with up to 6 decimal places." Re-ask.
-- **Endpoint >512 chars** → "The endpoint URL must be at most 512 chars; this one is longer. Use a shorter URL." Re-ask (mention the limit only here).

@@ -15,6 +15,8 @@ re-issue the CLI instead (SKILL §Gates No-shell-stitching).
 
 ## search — `agent search`
 
+**Empty query guard** — if the user expressed search intent but gave no keywords, ask for the query before calling `agent search`.
+
 `--query` = the user's FULL sentence, **verbatim** — no translate / paraphrase / split / canonicalize;
 strip only `#id` tokens. Filter intent → separate **verbatim** flags, value carries the user's own wording:
 `--feedback` (rating-related words), `--agent-info` (domain/keyword words like "on-chain data analysis"), `--status`,
