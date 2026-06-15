@@ -59,24 +59,49 @@ pub struct GetArgs {
     pub page_size: Option<String>,
 }
 
+/// `onchainos agent precheck`: unified registration entry (see the registration
+/// flow diagram). `--role` is REQUIRED; `--consent-key` optional. Always returns
+/// `{ canCreate, role, agentList?, reason?, consent? }`:
+///   • canCreate:true                          → may register this role
+///   • canCreate:false + reason + agentList    → blocked (single role already exists)
+///   • canCreate:false + reason + consent{...}  → first-time wallet, terms not yet
+///     accepted; the skill shows `consent.terms`, then re-invokes with `--consent-key`.
+#[derive(Args, Clone, Debug)]
+pub struct PrecheckArgs {
+    /// Required (same shape as `agent create`: clap-optional, runtime-enforced).
+    /// requester / provider / evaluator (aliases: 1/buyer/requestor → requester,
+    /// 2 → provider, 3 → evaluator). Missing → `missing required parameter`;
+    /// an unrecognized value → `invalid value for --role`.
+    #[arg(long)]
+    pub role: Option<String>,
+    /// The one-time consentKey from a prior `consent` block. PRESENCE means "the
+    /// user agreed" — the CLI submits the consent with `agreed=true`. Omit it and
+    /// (for a first-time wallet) the CLI checks consent status / returns terms.
+    #[arg(long = "consent-key")]
+    pub consent_key: Option<String>,
+}
+
 #[derive(Args, Clone, Debug)]
 pub struct AgentStatusArgs {
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
 }
 
-/// `onchainos agent submit-approval`: same shape as `AgentStatusArgs` plus an
-/// optional language hint. Kept separate so the `--preferred-language` flag is
-/// scoped to submit-approval only (activate / deactivate are unaffected).
+/// `onchainos agent activate`: unified activation that handles role guard,
+/// agent-status(1), and (when approvalStatus ∈ {1,5}) the full QA + submit-approval
+/// pipeline internally. All data fetching is done by the CLI itself.
 #[derive(Args, Clone, Debug)]
-pub struct SubmitApprovalArgs {
+pub struct ActivateArgs {
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
-    /// Preferred language for backend review messages (BCP-47, e.g. `zh-CN`,
-    /// `en-US`). Loosely-formatted input is normalized to canonical BCP-47;
-    /// blank / malformed input is omitted so the backend uses its default.
-    #[arg(long = "preferred-language")]
+    /// Required: preferred language for backend review messages (BCP-47,
+    /// e.g. `zh-CN`, `en-US`). Normalized to canonical BCP-47.
+    #[arg(long = "preferred-language", required = true)]
     pub preferred_language: Option<String>,
+    /// Skip validate-listing and submit for approval regardless of QA findings.
+    /// Use after the user explicitly acknowledges a blockType:2 warning.
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -103,43 +128,43 @@ pub struct SearchArgs {
     pub page_size: Option<String>,
 }
 
+
 #[derive(Args, Clone, Debug)]
 pub struct ServiceListArgs {
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
 }
 
-/// `onchainos agent get-by-address`: 按通信地址 + 链反查 agent。
-/// 隐藏指令（hide=true），仅服务于 sub agent / xmtp 场景，不进 `agent -h`。
+/// `onchainos agent get-by-address`: reverse-lookup an agent by communication
+/// address + chain. Hidden (hide=true); only used by sub-agent / xmtp flows.
 #[derive(Args, Clone, Debug)]
 pub struct GetByAddressArgs {
-    /// 通信地址（agent 上链注册时绑定的 communicationAddress）— 必填
+    /// Communication address bound to the agent on-chain — required.
     #[arg(long = "communication-address", required = true)]
     pub communication_address: String,
-    /// 链 chainIndex，缺省走 XLayer (196)
+    /// Chain index; defaults to XLayer (196).
     #[arg(long = "chain-index")]
     pub chain_index: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct FeedbackSubmitArgs {
-    /// 必填：被评价的 agent id，进 create-comment 请求体 `comment.agentid`。
+    /// Required: agent id being reviewed; maps to `comment.agentid` in the create-comment body.
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
-    /// 必填：评价发起方的 agent id，进广播 `extraData.erc8004Msg.feedBackAgentId`。
+    /// Required: agent id of the reviewer; maps to `extraData.erc8004Msg.feedBackAgentId`.
     #[arg(long = "creator-id")]
     pub creator_id: Option<String>,
-    /// 必填：0.00-5.00 的星数，最多 2 位小数（步长 0.01）。CLI 内部 *20 后
-    /// round-half-up 转成 0-100 u32 写入 create-comment 请求体
-    /// `comment.value`（后端 wire 格式仍是 0-100 整数）。格式校验 + 映射
-    /// 规则统一在 `utils::parse_stars_arg`。
+    /// Required: star rating 0.00–5.00 (up to 2 decimal places, step 0.01).
+    /// The CLI multiplies by 20 with round-half-up to produce the 0–100 u32
+    /// wire value for `comment.value`. Validation and mapping live in
+    /// `utils::parse_stars_arg`.
     #[arg(long)]
     pub score: Option<String>,
-    /// 选填：文字评价，进 create-comment 请求体 `comment.comment`。
+    /// Optional: free-text review; maps to `comment.comment` in the create-comment body.
     #[arg(long)]
     pub description: Option<String>,
-    /// 选填：taskId，有值时进 create-comment 请求体 `taskId` 顶层字段与广播
-    /// `extraData.erc8004Msg.taskId`；为空则两处都不写入。
+    /// Optional: taskId; maps to `extraData.erc8004Msg.taskId`. Omitted when empty.
     #[arg(long = "task-id")]
     pub task_id: Option<String>,
 }
@@ -152,18 +177,36 @@ pub struct FeedbackListArgs {
     pub page: Option<String>,
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
-    #[arg(long = "sort-by")]
-    pub sort_by: Option<String>,
 }
 
-/// `onchainos agent xmtp-sign` 用户使用本地 signing_seed 对任意 message 做代签。
-/// 不走广播，直接 POST 到 pre-transaction/sign-msg 拿后端返回的 signature。
+/// `onchainos agent xmtp-sign`: sign an arbitrary message with the local
+/// signing_seed. No broadcast — POSTs directly to pre-transaction/sign-msg
+/// and returns the backend's signature.
 #[derive(Args, Clone, Debug)]
 pub struct XmtpSignArgs {
-    /// keyUuid：之前 create 时生成过的那个 UUID，用户可通过 agent get 查出来
+    /// The keyUuid generated at create time; retrievable via `agent get`.
     #[arg(long = "key-uuid")]
     pub key_uuid: Option<String>,
-    /// 要签名的消息，原样传给后端
+    /// Message to sign; forwarded verbatim to the backend.
     #[arg(long)]
     pub message: Option<String>,
+}
+
+/// `onchainos agent validate-listing`: pure-local (no HTTP, no network)
+/// validator. Hidden (`hide=true`) — not shown in `--help`; used by the
+/// skill during registration QA.
+#[derive(Args, Clone, Debug)]
+pub struct ValidateListingArgs {
+    /// requester / provider / evaluator (aliases: 1/buyer/requestor →
+    /// requester, 2 → provider, 3 → evaluator). Defaults to provider.
+    #[arg(long)]
+    pub role: Option<String>,
+    #[arg(long)]
+    pub name: Option<String>,
+    #[arg(long)]
+    pub description: Option<String>,
+    /// JSON array string with the same element shape as create/update's
+    /// `--service`. Ignored for non-provider roles.
+    #[arg(long)]
+    pub service: Option<String>,
 }
