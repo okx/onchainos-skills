@@ -4,7 +4,7 @@ description: "MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:
 license: Apache-2.0
 metadata:
   author: okx
-  version: "3.20.1-beta"
+  version: "3.20.2-beta"
   homepage: "https://web3.okx.com"
 ---
 

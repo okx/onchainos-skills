@@ -342,7 +342,7 @@ pub(super) fn is_session_key_expired(expire_at: &str) -> bool {
 /// Format an API error for propagation.
 pub(crate) fn format_api_error(e: anyhow::Error) -> anyhow::Error {
     match e.downcast::<ApiCodeError>() {
-        Ok(api_err) => anyhow::anyhow!("{}", api_err.msg),
+        Ok(api_err) => anyhow::anyhow!("code={} msg={}", api_err.code, api_err.msg),
         Err(e) => e,
     }
 }
