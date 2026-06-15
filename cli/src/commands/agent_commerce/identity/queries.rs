@@ -4,7 +4,7 @@
 //! - `agent service-list`→ `GET /agent/services`
 //! - `agent feedback-list`→ `GET /agent/reviews`
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde_json::{json, Value};
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
