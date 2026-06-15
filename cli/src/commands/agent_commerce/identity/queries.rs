@@ -299,7 +299,7 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
 
-    // agentId is required; page / pageSize / sortBy are optional — omit when not provided, let the backend use its defaults
+    // agentId is required; page / pageSize are optional — omit when not provided, let the backend use its defaults
     let mut query = vec![(
         "agentId".to_string(),
         require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string(),
@@ -318,13 +318,6 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
             true,
         )?;
         query.push(("pageSize".to_string(), page_size.to_string()));
-    }
-    if let Some(sort_by_raw) = args.sort_by.as_deref() {
-        let sort_by = match sort_by_raw {
-            "time_desc" | "score_desc" => sort_by_raw,
-            other => bail!("invalid value for --sort-by: {other}"),
-        };
-        query.push(("sortBy".to_string(), sort_by.to_string()));
     }
     let query_refs: Vec<(&str, &str)> = query
         .iter()
@@ -441,7 +434,6 @@ async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<V
 // layer (e.g. mockito) which is not yet wired into this crate's dev-dependencies.
 //
 // The testable pure-logic paths are:
-//   - `sort_by` enum validation in feedback_list_impl (bail! on unknown value)
 //   - `chain_index` default-fallback in get_by_address_impl (None/empty → XLAYER)
 //   - `top_asps_impl` accumulation + dedup logic
 //

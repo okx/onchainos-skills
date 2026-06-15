@@ -177,8 +177,6 @@ pub struct FeedbackListArgs {
     pub page: Option<String>,
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
-    #[arg(long = "sort-by")]
-    pub sort_by: Option<String>,
 }
 
 /// `onchainos agent xmtp-sign`: sign an arbitrary message with the local

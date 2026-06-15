@@ -35,15 +35,7 @@ Per item: `#<i> · <date> · reviewer #<id> (<role label> <name>) · ★ <stars>
 - (no comment)
 ```
 
-Footer = page indicator + **natural-language** sort summary. NEVER paste the raw `--sort-by` /
-`time_desc` / `score_desc` literal (CLI flags never appear in user text — SKILL §UX Red Lines). Use:
-`Sorted by date (newest first)` / `Sorted by rating (highest first)` / `Sorted by backend default`.
+Footer = page indicator. Reviews are returned in backend default order.
 ```
-> Page 1/2 — reply **1** for next page. Sorted by date (newest first).
+> Page 1/2 — reply **1** for next page.
 ```
-The user-supplied sort intent → `--sort-by` mapping is your internal concern; re-issue the CLI to
-re-sort or page (SKILL §Gates No-shell-stitching) — never parse the JSON yourself.
-
-**Only two sorts exist** — newest-first and highest-rating-first. "Lowest / worst / one-star first" is
-**not supported**: tell the user only newest or highest-rating are available, then offer highest-rating
-and let them page to the tail. Never invent or promise a flag for it.
