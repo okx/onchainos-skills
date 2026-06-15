@@ -4,7 +4,7 @@ description: "Use this skill when the user asks to export audit logs, find audit
 license: MIT
 metadata:
   author: okx
-  version: "3.20.1-beta"
+  version: "3.20.2-beta"
   homepage: "https://web3.okx.com"
 ---
 
