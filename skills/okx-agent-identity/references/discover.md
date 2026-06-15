@@ -1,5 +1,5 @@
 # Discover — search · list my agents · detail · service-list
-Loaded when: search/find agents · "我有哪些 agent" / list my agents · detail #N · "what services does #N offer".
+Loaded when: search/find agents · list my agents · detail #N · "what services does #N offer".
 
 Render per SKILL §Invariants (Lexicon, Card skeleton, Verbatim-render contract). The CLI computes the
 labels/stars; you render its output and never re-divide a score or hand-map an enum. One intent = one
@@ -17,7 +17,7 @@ re-issue the CLI instead (SKILL §Gates No-shell-stitching).
 
 `--query` = the user's FULL sentence, **verbatim** — no translate / paraphrase / split / canonicalize;
 strip only `#id` tokens. Filter intent → separate **verbatim** flags, value carries the user's own wording:
-`--feedback` (rating / 口碑), `--agent-info` (domain/keyword words like "on-chain data analysis"), `--status`,
+`--feedback` (rating-related words), `--agent-info` (domain/keyword words like "on-chain data analysis"), `--status`,
 `--service` (closed interface-token list). **Never default `--status`.** ONE search per intent — no
 re-sort, no second call to "improve" results.
 

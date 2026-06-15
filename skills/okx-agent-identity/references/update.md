@@ -1,6 +1,6 @@
 # Update flow — `update #N`
 
-Loaded when: user wants to update an existing agent, or fix a rejected / QA-failed listing (审核被拒 / 上架没过). Pairs with SKILL.md.
+Loaded when: user wants to update an existing agent, or fix a rejected / QA-failed listing. Pairs with SKILL.md.
 
 > **Rejected listing → update the same agent, never create new.** QA failure (§4 of register.md) or review rejection (`approvalStatus`/`approvalDisplayStatus: 5`): fix path is `agent update` on the existing id → re-activate. Never offer a new agent as remedy; only create if user explicitly insists after steer.
 
