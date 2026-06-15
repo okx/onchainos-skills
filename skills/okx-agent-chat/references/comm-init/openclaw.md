@@ -1,6 +1,6 @@
 # Step 2: OpenClaw Flow
 
-> **Precondition**: Step 0 in [ensure-okx-a2a-communication-ready.md](../../ensure-okx-a2a-communication-ready.md) already confirmed `xmtp_refresh_agents` is absent from the toolset, and Step 1 returned `runtime=openclaw`. If the tool is in fact present in the current toolset, go back and call it directly instead — do not run this install flow.
+> **Precondition**: [ensure-okx-a2a-communication-ready.md](../../ensure-okx-a2a-communication-ready.md) already confirmed `xmtp_refresh_agents` is absent from the toolset, and the runtime detector returned `runtime: "openclaw"`. If the tool is in fact present in the current toolset, go back and call it directly instead — do not run this install flow.
 
 The OpenClaw branch is the established implementation. Preserve the existing behavior in this file over any conflicting summary.
 
