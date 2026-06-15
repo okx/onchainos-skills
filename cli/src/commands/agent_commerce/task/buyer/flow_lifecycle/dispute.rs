@@ -40,9 +40,53 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
 
-    // Fetch sessionKey + chat history in-process and inline the formatted
-    // block into the playbook. Errors propagate as an error playbook (LLM
-    // pushes a cli_failed decision); no LLM-driven fallback path here.
+    // Non-CLI mode: `okx-a2a` binary is not available; fall back to the
+    // LLM-driven Step 1/2 (call `session_status` + `xmtp_get_conversation_history`
+    // via MCP tools). Matches the pre-`6faf6eb3` behavior.
+    if !super::super::content::is_cli_mode() {
+        let session_hint = super::super::flow::SESSION_STATUS_HINT;
+        return format!(
+        "[Current Status] job_disputed (arbitration opened; CLI auto-submits evidence on this event)\n\
+         [Role] User (User Agent)\n\n\
+         🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
+         The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
+         session, calls `dispute upload` (which also auto-attaches every saved deliverable from\n\
+         `~/.onchainos/deliverables/buyer/{job_id}/`), and then notifies the user via\n\
+         `xmtp_dispatch_user`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
+         **Do NOT** call `xmtp_send` to the ASP — both sides see the arbitration via on-chain events.\n\n\
+         [Your next actions (strict order)]\n\n\
+         {title_query_hint}\
+         **Step 1 — Pull this sub session's negotiation / delivery chat history:**\n\n\
+         {session_hint}\n\
+         Then call `xmtp_get_conversation_history` with that sessionKey to fetch the full a2a-agent-chat history with the ASP.\n\n\
+         **Step 2 — Format the chat history as the `--text` body**:\n\n\
+         ```\n\
+         ==== Negotiation / delivery chat history (from xmtp_get_conversation_history) ====\n\
+         [time] ASP(<agentId>): ...\n\
+         [time] User(<agentId>): ...\n\
+         ... (chronological; key checkpoints: quote / [intent:propose] / [intent:ack] / [intent:confirm] / deliverable message)\n\
+         ```\n\n\
+         ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints (PROPOSE / ACK / CONFIRM / deliverable / both sides' key dispute points) and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
+         If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
+         **Step 3 — Upload (off-chain multipart):**\n\
+         ```bash\n\
+         onchainos agent dispute upload {job_id} --role buyer --agent-id {agent_id} --text \"<chat history block>\"\n\
+         ```\n\
+         The CLI auto-attaches every entry under `~/.onchainos/deliverables/buyer/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
+         **Step 4 — Notify the user (after upload returns):**\n\n\
+         content:\n\
+         \x20\x20\x20\x20[Dispute opened] Arbitration for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the arbiter's verdict.\n\
+         {l10n_dispatch}\n\n\
+         **Step 5 — End this turn.** Do NOT `xmtp_send` anything to the ASP.\n\n\
+         [Follow-up events]\n\
+         - job_completed → arbitration ruled for the ASP, task completes\n\
+         - job_refunded → arbitration ruled for the user, refund\n"
+        );
+    }
+
+    // CLI mode: pre-fetch sessionKey + chat history in-process and inline
+    // the formatted block into the playbook. Errors propagate as an error
+    // playbook (LLM pushes a cli_failed decision); no LLM-driven fallback.
     let session_key = match okx_a2a::session_status() {
         Ok(Some(sk)) => sk,
         Ok(None) => return format!(
