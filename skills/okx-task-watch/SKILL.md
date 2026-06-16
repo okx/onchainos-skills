@@ -10,7 +10,7 @@ metadata:
 
 # OKX Task Watch
 
-Live monitor for the user-session task inbox. Owns: triggers, the watch command, anti-cron rules, item dispatch (`notification` / `decision_request`), claim semantics, relay protocol, stop conditions.
+Live monitor for the user-session task inbox. Owns: triggers, the watch command, anti-cron rules, item dispatch (`notification` / `decision_request`), claim semantics, `llmContent` execution, stop conditions.
 
 Business actions (apply / deliver / dispute / quote / accept) belong to `okx-agent-task`. This skill only handles the watch loop.
 
@@ -78,7 +78,7 @@ If the user's message matched a **continuation-style** phrase (`继续监听` / 
 1. **Trigger-phrase entry** — this turn's user message matched a §Triggers phrase (e.g. `监听任务进展` / `历史消息` / `task watch`). **Exception**: a continuation-style phrase (`继续监听` / `keep watching` / ...) only triggers the banner when the recall fails and the watch falls back to global — see §Continuation triggers for the full rule.
 2. **CLI `[Watch]` block entry** — a command earlier in this turn emitted a `[Watch]` block in stdout: a hint block that starts with `[Watch]` and instructs the current call to run `okx-a2a user watch ...` (typical sample: `` [Watch] Per `okx-task-watch` SKILL.md, start the monitor now: ``, output by `agent create-task` / `agent publish-draft`).
 
-Any watch call that does not match one of these two entries **must NOT** emit the banner (including dispatch resume, wake fire, post-`pending-decisions-v2 resolve` relay — all session-continuation paths).
+Any watch call that does not match one of these two entries **must NOT** emit the banner — all session-continuation paths (dispatch resume, wake fire, etc.) are excluded.
 
 **How to send**: emit the exact canonical banner as a standalone **user-visible assistant message** (the message that appears in chat as the AI's reply to the user — NOT tool stdout, thinking blocks, or internal annotations the user cannot see).
 
@@ -93,7 +93,7 @@ Any watch call that does not match one of these two entries **must NOT** emit th
 - Saying `我现在开始监听` / `I'll start watching now` (or any paraphrase) **without** the exact canonical string in the same assistant message.
 - Calling the watch tool before the banner has appeared.
 - Embedding the banner inside Bash tool stdout / thinking block / tool-call arguments — these locations are invisible to the user, so the banner was not actually delivered.
-- Emitting the banner on a re-entry path (resume after notification/decision_request handling, wake fire, post-relay resume) — these are not new entries.
+- Emitting the banner on a re-entry path (resume after notification/decision_request handling, wake fire) — these are not new entries.
 
 ### Run watch
 
@@ -174,19 +174,19 @@ The JSON item may also carry a `choices` array auto-derived by the CLI from `use
 
 After rendering `userContent`, but **before ending the turn**, schedule a 2-minute **one-shot** wake so the watch loop self-resumes if the user goes idle. The exact platform-specific payloads (Claude Code `CronCreate` / Codex `automation_update`), the verbatim-`prompt` rule, the **wake id** terminology, and the unavailable-tool fallback all live in [`references/wake-scheduling.md`](./references/wake-scheduling.md) — follow it. Remember the returned **wake id** for cancellation next turn.
 
-#### Handling the user reply — concurrency-safe relay
+#### Handling the user reply — concurrency-safe `llmContent` execution
 
 0. **First step (always)** — cancel the auto-timeout wake scheduled in the previous turn (best-effort). Commands + skip-on-failure rule: see [`references/wake-scheduling.md`](./references/wake-scheduling.md) §Cancelling the wake.
 
 1. User picks `保留` / `skip` → **do NOT** claim; the item stays in the outstanding-decisions queue (un-`check`ed) and can be retrieved later via `okx-a2a user outdated-list` (triggers: `未决策` / `pending decisions`). **STOP the watch loop immediately** — briefly tell the user (localize per LOCALIZATION_PREFIX rules; keep `未决策` / `pending decisions` / `监听任务进展` / `task watch` unchanged): "Item kept on hold; watch loop ended. Say `未决策` / `pending decisions` to see all unhandled decisions, or `监听任务进展` / `task watch` to resume monitoring new events." The user explicitly chose to defer; honor that and stop background monitoring.
 2. Otherwise claim first: `okx-a2a user check --todo-ids <id> --json`.
-3. On `handled` → **execute the relay per `llmContent`'s instructions**. `llmContent` itself tells you which command to run, which target to relay to, and how to assemble the payload — just follow it. **Do NOT** semantically interpret the user's reply (no provider picking, no session creation, no XMTP solicitation), and do not bypass `llmContent` through any other path. Hand the relay off to the target session and do not wait for the target sub to finish.
-4. On `alreadyHandled` → tell the user "this item was processed in another window"; **then re-enter `okx-a2a user watch --once --json --poll-ms 1000 --limit 50`** (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable) (the watch session continues — only the duplicate item is dropped). Do not execute the relay again.
-5. Claim succeeded but relay failed → create a new `okx-a2a user notify` with the failure reason and a retry command; **do NOT** flip the original item back to pending. **Then re-enter `okx-a2a user watch --once --json --poll-ms 1000 --limit 50`** (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable).
+3. On `handled` → **execute the commands specified in `llmContent` verbatim**. The instructions can be anything the issuer chose — a relay to another session (`xmtp-send` / `session send`), a wallet / onchain call, an agent CLI command, an arbitrary tool invocation, or a multi-step sequence. `llmContent` itself names the command(s), the target(s), and how to assemble the payload — just follow it. After firing off what `llmContent` specifies, end the turn promptly; do not block on downstream effects.
+4. On `alreadyHandled` → tell the user "this item was processed in another window"; **then re-enter `okx-a2a user watch --once --json --poll-ms 1000 --limit 50`** (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable) (the watch session continues — only the duplicate item is dropped). Do not execute `llmContent` again.
+5. Claim succeeded but `llmContent` execution failed → create a new `okx-a2a user notify` with the failure reason and a retry command; **do NOT** flip the original item back to pending. **Then re-enter `okx-a2a user watch --once --json --poll-ms 1000 --limit 50`** (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable).
 
-🛑 **After `decision_request` outcomes 3, 4, 5 above, resume watching** — call `okx-a2a user watch --once --json --poll-ms 1000 --limit 50` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable). Outcome 1 (`保留` / `skip`) is a hard STOP — see §Stop condition. Do NOT stop in outcomes 3/4/5 just because the relay completed / the item turned out duplicate / the relay failed.
+🛑 **After `decision_request` outcomes 3, 4, 5 above, resume watching** — call `okx-a2a user watch --once --json --poll-ms 1000 --limit 50` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable). Outcome 1 (`保留` / `skip`) is a hard STOP — see §Stop condition. Do NOT stop in outcomes 3/4/5 just because `llmContent` execution completed / the item turned out duplicate / `llmContent` execution failed.
 
-🛑 **User-session authority boundary**: while handling a `decision_request` item, the user session is only a **relay endpoint**, not a business executor. The user's reply (`956`, `1`, `关闭`, `approve`, …) is the verbatim answer to that item — it must not be reinterpreted as a new "pick a provider / start negotiation / create a group / solicit a quote" intent. In the user session, **never** execute: `okx-a2a session create` / `okx-a2a xmtp-send` / `xmtp_start_conversation` / `xmtp_send` / `onchainos agent next-action` / `agent common context` / `agent recommend` / `agent service-list`. Those business steps belong to the target job/session after it has received the relay.
+🛑 **User-session authority boundary**: when executing `llmContent`, run **only** the commands `llmContent` explicitly specifies — do not synthesize additional steps from the user's reply text. The user's reply (`956`, `1`, `关闭`, `approve`, …) is the verbatim answer to that item; it is **not** a license to autonomously pick a provider, start a negotiation, solicit quotes, open a session, send an XMTP message, or kick off any other business flow on your own. If `llmContent` doesn't tell you to do it, don't do it.
 
 ## Pull outstanding `decision_request` items — `okx-a2a user outdated-list`
 
@@ -208,5 +208,5 @@ After processing all returned items, **always** call `okx-a2a user watch --once 
 
 - A `notification` was just rendered (auto-consumed by watch — no claim step exists for notifications).
 - A `notification` whose content contains any terminal-state marker (`[Job Completed]` / `[Job Auto-Completed]` / `[x402 Job Completed]` / `[Job Expired]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]`) **in a global session** — the global watch monitors the user-session-wide inbox; one task's terminal state ≠ the loop's terminal state (other tasks may still produce events). **In a scoped session (with `--job-id <X>`) these markers ARE stop signals** — see §Stop condition above for the scoped terminal-state rule.
-- A `decision_request` was just handled — relay completed (step 3) / `alreadyHandled` (step 4) / claim-succeeded-but-relay-failed (step 5). **Note**: `保留` / `skip` (step 1) is a STOP, listed above.
+- A `decision_request` was just handled — `llmContent` execution completed (step 3) / `alreadyHandled` (step 4) / claim-succeeded-but-`llmContent`-execution-failed (step 5). **Note**: `保留` / `skip` (step 1) is a STOP, listed above.
 - Watch returned 0 items (empty result / long-poll elapsed with no new events) — re-enter watch and keep waiting.
