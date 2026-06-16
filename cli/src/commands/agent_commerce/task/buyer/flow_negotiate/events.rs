@@ -195,10 +195,27 @@ pub(crate) fn negotiate_counter(ctx: &FlowContext<'_>) -> String {
 ///                          user's language, then run `okx-a2a user decision-request` to
 ///                          deliver the 4-option card. The `--llm-content` routing block
 ///                          stays English (consumed only by the user-session agent).
-pub(crate) async fn provider_reject(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
+
+    // visibility: 0 = public, 1 = private. The "make public" option only makes sense
+    // when the task is currently private; otherwise drop the option and renumber close.
+    let is_private = visibility == 1;
+    let option_count_word = if is_private { "four" } else { "three" };
+    let option_count_num = if is_private { "4" } else { "3" };
+    let close_num = if is_private { "4" } else { "3" };
+    let option3_user_line = if is_private {
+        "3. Make the task public so any qualified ASP can apply\n     "
+    } else {
+        ""
+    };
+    let option3_llm_line = if is_private {
+        format!("\x20\x20• 3 / \"public\" / \"open\" / \"公开\"                  → run `onchainos agent set-public {job_id} --agent-id {agent_id}` then END TURN.\n     ")
+    } else {
+        String::new()
+    };
 
     // Step 0 — reset the rejected ASP binding on the task record (empty body).
     let mut client = TaskApiClient::new();
@@ -217,22 +234,21 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>) -> String {
 
     format!(
     "[Your next action — call ONE command only, then END TURN]\n\n\
-     🌐 **Localize first** — rewrite the `--user-content` template below into the user's language (preserve the four numbered choices and their order). The `--llm-content` block stays English verbatim — it is consumed by the user-session agent for routing, not by the human user.\n\n\
-     Run `okx-a2a user decision-request` to deliver the 4-option card:\n\
+     🌐 **Localize first** — rewrite the `--user-content` template below into the user's language (preserve the {option_count_word} numbered choices and their order). The `--llm-content` block stays English verbatim — it is consumed by the user-session agent for routing, not by the human user.\n\n\
+     Run `okx-a2a user decision-request` to deliver the {option_count_num}-option card:\n\
      ```bash\n\
      okx-a2a user decision-request \\\n\
      \x20\x20--user-content '<LOCALIZED user-facing text — see template below>' \\\n\
      \x20\x20--llm-content '<English routing block — see template below; copy verbatim>' \\\n\
      \x20\x20--json\n\
      ```\n\n\
-     **`--user-content` template (translate to the user's language; keep the 4 numbered options):**\n\
+     **`--user-content` template (translate to the user's language; keep the {option_count_num} numbered options):**\n\
      ```\n\
      ASP declined to take this task (jobId: {job_id}).\n\n\
      What would you like to do next?\n\
      1. Browse the recommended ASP list\n\
      2. Designate a specific ASP by agentId\n\
-     3. Make the task public so any qualified ASP can apply\n\
-     4. Close the task\n\
+     {option3_user_line}{close_num}. Close the task\n\
      ```\n\n\
      **`--llm-content` block (keep English; copy verbatim — do NOT translate):**\n\
      ```\n\
@@ -241,8 +257,7 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>) -> String {
      Step 2 — When the user actually replies (next turn), route by choice:\n\
      \x20\x20• 1 / \"list\" / \"recommend\" / \"浏览\" / \"推荐\"   → **TBD (implementation pending)**: fetch the recommended-ASP list and re-prompt the user to pick one.\n\
      \x20\x20• 2 / \"designate\" / \"specify\" / \"指定\"           → **TBD (implementation pending)**: once an `agentId` is collected, run `onchainos agent set-provider {job_id} --provider-agent-id <agentId> --agent-id {agent_id}`.\n\
-     \x20\x20• 3 / \"public\" / \"open\" / \"公开\"                  → run `onchainos agent set-public {job_id} --agent-id {agent_id}` then END TURN.\n\
-     \x20\x20• 4 / \"close\" / \"cancel\" / \"关闭\"                  → run `onchainos agent close {job_id} --agent-id {agent_id}` then END TURN.\n\
+     {option3_llm_line}\x20\x20• {close_num} / \"close\" / \"cancel\" / \"关闭\"                  → run `onchainos agent close {job_id} --agent-id {agent_id}` then END TURN.\n\
      ```\n\n\
      → After `decision-request` returns, **END THIS TURN**. Do NOT call any other tool in this turn.\n"
     )

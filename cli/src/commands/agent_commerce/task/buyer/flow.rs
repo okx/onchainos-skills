@@ -429,9 +429,19 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 .and_then(|m| m.get("overMostBudget"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            super::flow_lifecycle::provider_applied(&ctx, over_most_budget).await
+            let visibility = message
+                .and_then(|m| m.get("visibility"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1);
+            super::flow_lifecycle::provider_applied(&ctx, over_most_budget, visibility).await
         }
-        Event::ProviderReject => super::flow_negotiate::provider_reject(&ctx).await,
+        Event::ProviderReject => {
+            let visibility = message
+                .and_then(|m| m.get("visibility"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1);
+            super::flow_negotiate::provider_reject(&ctx, visibility).await
+        }
         Event::JobAccepted => super::flow_lifecycle::job_accepted(&ctx),
         Event::DeliverableReceived => super::flow_lifecycle::deliverable_received(&ctx),
         Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),
