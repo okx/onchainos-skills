@@ -16,6 +16,7 @@
 
 mod agreerefund;
 mod apply;
+mod asp_reject;
 mod content;
 mod deliver;
 mod dispute_confirm;
@@ -75,6 +76,18 @@ pub enum ProviderCommand {
         /// Provider agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
+    },
+    /// Provider declines a buyer-designated assignment (off-chain) — POST asp/reject API.
+    /// Used before negotiation begins (`job_asp_selected` scene) when capability /
+    /// price gate fails. No on-chain action; the buyer is then free to re-route.
+    AspReject {
+        job_id: String,
+        /// Provider agentId (required).
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        /// Optional decline reason surfaced to the buyer's backend record.
+        #[arg(long, default_value = "")]
+        reason: String,
     },
     /// Provider claims after submit→complete timeout (claimAutoComplete API → sign → broadcast)
     ClaimAutoComplete {
@@ -179,6 +192,8 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id).await,
         ProviderCommand::AgreeRefund { job_id, agent_id } =>
             agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
+        ProviderCommand::AspReject { job_id, agent_id, reason } =>
+            asp_reject::handle_asp_reject(&mut client, &job_id, &agent_id, &reason).await,
         ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
             provider_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
         ProviderCommand::Status { job_id, agent_id } => {

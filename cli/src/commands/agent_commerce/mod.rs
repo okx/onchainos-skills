@@ -366,6 +366,17 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: String,
     },
 
+    /// Provider declines a buyer-designated task (off-chain backend call, no signing).
+    /// Used by the `job_asp_selected` flow when capability / price gate fails.
+    #[command(name = "asp-reject")]
+    AspReject {
+        job_id: String,
+        /// Provider agentId (required)
+        #[arg(long = "agent-id")] agent_id: String,
+        /// Optional decline reason recorded by the backend.
+        #[arg(long, default_value = "")] reason: String,
+    },
+
 
 
     /// Save negotiated payment params locally (agent calls after negotiation)
@@ -655,45 +666,33 @@ pub enum AgentCommand {
     #[command(subcommand)]
     Common(task::common::CommonCommand),
 
-    /// Get next-step instruction prompt for current job state
+    /// Get next-step instruction prompt for current job state.
+    ///
+    /// Invocation contract — exactly **three** flags:
+    ///   `--role <buyer|provider|evaluator|auto>` — playbook routing role
+    ///   `--agentId <agentId>`                    — receiving agent
+    ///   `--message <envelope JSON>`              — the full `message` object
+    ///                                              from the inbound notification
+    ///
+    /// All other inputs (`jobId`, `event`, `code`, `jobTitle`, `provider`, `data`,
+    /// `peerTaskMinVersion`, etc.) are extracted from inside the `--message` JSON.
+    /// This keeps the LLM-facing surface minimal: copy the envelope through, the
+    /// CLI parses out whatever it needs.
     #[command(name = "next-action")]
     NextAction {
-        /// Accepts both `--jobid` (legacy camelCase) and `--job-id` (kebab)
-        #[arg(long = "jobid", alias = "job-id")] job_id: String,
-        /// envelope `message.event` — required. Drives playbook routing for all roles
-        /// (buyer / provider / evaluator). Pass the envelope's `message.event` value here.
-        #[arg(long = "event")] event: String,
-        /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab)
+        /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab).
         #[arg(long = "agentId", alias = "agent-id")] agent_id: String,
         /// Role: `buyer` / `provider` / `evaluator`, or `auto` to let the CLI
-        /// resolve the role from `--agentId` (saves a separate `agent profile`
-        /// round-trip).
+        /// resolve the role from `--agentId` (saves a separate `agent profile` round-trip).
         #[arg(long)] role: String,
-        /// envelope message.code (tx receipt); non-zero = tx failed
-        #[arg(long, default_value_t = 0)]
-        code: i32,
-        /// envelope message.title (task title from system notification);
-        /// accepts both `--jobTitle` (legacy) and `--job-title` (kebab)
-        #[arg(long = "jobTitle", alias = "job-title")]
-        job_title: Option<String>,
-        /// Target provider agentId (for job_created: skip recommend, go straight to this provider)
+        /// Full system event envelope as a JSON string — the entire `message` object.
+        /// Required. Must contain at least `event` and `jobId`; optional fields the
+        /// CLI reads: `code` / `jobTitle` / `provider` / `data` / `taskMinVersion`
+        /// (plus any task-detail fields like `paymentMode` / `visibility` /
+        /// `tokenAmount` / `tokenSymbol` / `serviceParams` that downstream scenes
+        /// may consume directly).
         #[arg(long)]
-        provider: Option<String>,
-        /// Peer's required minimum task-system version, extracted from inbound
-        /// `xmtp_send` envelope's `payload.taskMinVersion`. If present and
-        /// greater than this binary's `TASK_MIN_VERSION`, next-action prepends
-        /// a `[Protocol version mismatch — non-blocking]` directive that tells the agent
-        /// to push an upgrade prompt to the user, **without** halting the flow
-        /// — the scene below still runs normally. Omit for chain-event /
-        /// pseudo events that don't originate from a peer envelope.
-        #[arg(long = "peerTaskMinVersion", alias = "peer-task-min-version")]
-        peer_task_min_version: Option<u32>,
-        /// User's decision payload from a `user_decision_*` relay envelope's
-        /// `message.data` field (the user's verbatim reply to a pending decision,
-        /// e.g. `A` / `approve` / `通过` / `agree to refund`). Required when
-        /// `--event` starts with `user_decision_`; ignored otherwise.
-        #[arg(long)]
-        data: Option<String>,
+        message: String,
     },
 
     // Chat
@@ -1049,6 +1048,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::provider::ProviderCommand::AgreeRefund { job_id, agent_id }, ctx,
             ).await,
 
+        AgentCommand::AspReject { job_id, agent_id, reason } =>
+            task::provider::run_provider(
+                task::provider::ProviderCommand::AspReject { job_id, agent_id, reason }, ctx,
+            ).await,
+
 
         // ── Sub-groups ──────────────────────────────────────────────
         AgentCommand::Draft(c) =>
@@ -1116,7 +1120,42 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { job_id, event, agent_id, role, code, job_title, provider, peer_task_min_version, data } => {
+        AgentCommand::NextAction { agent_id, role, message } => {
+            // Parse the `--message` envelope (required). Bail hard on parse failure —
+            // it's the sole source of every routing field except `--role` / `--agentId`.
+            let parsed_message: serde_json::Value = serde_json::from_str(&message)
+                .map_err(|e| anyhow::anyhow!("--message must be a valid JSON object: {e}"))?;
+            if DEBUG_LOG {
+                eprintln!("[next-action] --message parsed: {} keys",
+                    parsed_message.as_object().map(|o| o.len()).unwrap_or(0));
+            }
+
+            // Field extractors — all routing inputs live inside `--message`.
+            let msg_str = |key: &str| -> Option<String> {
+                parsed_message.get(key)
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            };
+            let msg_i64 = |key: &str| -> Option<i64> {
+                parsed_message.get(key).and_then(|v| v.as_i64())
+            };
+
+            let job_id: String = msg_str("jobId")
+                .ok_or_else(|| anyhow::anyhow!("--message.jobId is required"))?;
+            let event: String = msg_str("event")
+                .ok_or_else(|| anyhow::anyhow!("--message.event is required"))?;
+            let code: i32 = msg_i64("code").and_then(|v| i32::try_from(v).ok()).unwrap_or(0);
+            let job_title: Option<String> = msg_str("jobTitle");
+            let provider: Option<String> = msg_str("provider");
+            let data: Option<String> = msg_str("data");
+            let peer_task_min_version: Option<u32> = parsed_message.get("taskMinVersion")
+                .and_then(|v| v.as_u64())
+                .and_then(|v| u32::try_from(v).ok())
+                .or_else(|| parsed_message.get("payload")
+                    .and_then(|p| p.get("taskMinVersion"))
+                    .and_then(|v| v.as_u64())
+                    .and_then(|v| u32::try_from(v).ok()));
+            let parsed_message = Some(parsed_message);
             if let Err(msg) = task::common::util::validate_job_id(&job_id) {
                 anyhow::bail!(msg);
             }
@@ -1304,7 +1343,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref()).await
+                    task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
                 }
                 "buyer" | "client" => {
                     crate::audit::log(
@@ -1531,7 +1570,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
          - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\n\
          **必须做**（二选一）：\n\
          1. 如果当前 inbound 是 **P2P 消息**（a2a-agent-chat）→ 你很可能用错了 event。回到 buyer-sub-playbook.md / provider.md §3 Inbound Message Routing 重新匹配正确的事件（例如 `[intent:deliver]` → `deliverable_received`，自然语言报价 → `negotiate_reply`，`[intent:ack]` → `negotiate_ack`）。这些伪事件不受 freshness 限制。\n\
-         2. 如果当前 inbound 是 **system event** → 重调 next-action 并传 `--event {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
+         2. 如果当前 inbound 是 **system event** → 重调 next-action，并在 `--message` JSON 里把 `event` 字段改成 `{actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
          **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 xmtp_dispatch_user 推用户。\n",
         expected_str = expected.as_str(),
     )), prefetched)

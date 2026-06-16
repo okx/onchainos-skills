@@ -125,7 +125,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      After complete is settled on-chain, a `job_completed` system event will arrive.\n\
      Upon receiving `job_completed`, you **MUST** call:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --event job_completed --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_completed\",\"jobId\":\"{job_id}\"}}'\n\
      ```\n\
      Follow the returned playbook (it will guide you to notify the user that the job is complete).\n\
      ❌ **NEVER** ignore the `job_completed` event -- ignoring it = user never learns the job is done.\n\
@@ -246,7 +246,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      \x20\x20```\n\
      ⚠️ This is a preview card, NOT the formal review card. Do NOT include A/B acceptance choices.\n\n\
      **Step 2 — End this turn**. Wait for the `job_submitted` system event.\n\
-     When `job_submitted` arrives, call `onchainos agent next-action --jobid {job_id} --event job_submitted --role buyer --agentId {agent_id}`.\n\
+     When `job_submitted` arrives, call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n\
      The `job_submitted` playbook will check for already-saved deliverables and skip re-download if found.\n"
     )
 }
@@ -548,7 +548,7 @@ pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
     match super::super::complete::handle_complete(&mut client, job_id).await {
         Ok(()) => format!(
             "[approve_review] ✅ `onchainos agent complete {job_id}` broadcast by Rust in-process. End the turn now.\n\n\
-             ⚠️ broadcast ≠ on-chain confirmed. The `job_completed` system event will fire after on-chain confirmation — handle it via `next-action --event job_completed` to notify the user.\n"
+             ⚠️ broadcast ≠ on-chain confirmed. The `job_completed` system event will fire after on-chain confirmation — handle it via `next-action` with `event=job_completed` in --message to notify the user.\n"
         ),
         Err(e) => format!(
             "[approve_review] ❌ `onchainos agent complete {job_id}` failed in-process: {e}\n\n\

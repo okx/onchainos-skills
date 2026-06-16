@@ -727,8 +727,9 @@ fn handle_resolve_with_sessionkey(
     let relay_event = format!("user_decision_{}", source_event);
     let description = format!(
         "User-decision relay envelope (CLI mode). Call `onchainos agent next-action \
-         --jobid {jid} --event {evt} --role {role} --agentId {agent} \
-         --data \"<message.data verbatim>\"` to fetch the routing playbook; follow it. \
+         --role {role} --agentId {agent} \
+         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"}}'` \
+         to fetch the routing playbook; follow it. \
          ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
          user-session-only; the user-session already issued this relay envelope.",
         jid = job_id, evt = relay_event, role = role, agent = agent_id,
@@ -775,8 +776,9 @@ fn handle_resolve_prompt(
     let relay_event = format!("user_decision_{}", source_event);
     let description = format!(
         "User-decision relay envelope (MCP prompt mode). Call `onchainos agent next-action \
-         --jobid {jid} --event {evt} --role {role} --agentId {agent} \
-         --data \"<message.data verbatim>\"` to fetch the routing playbook; follow it. \
+         --role {role} --agentId {agent} \
+         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"}}'` \
+         to fetch the routing playbook; follow it. \
          ❌ Do NOT call `pending-decisions-v2 resolve` / `resolve-with-sessionkey` / `resolve-prompt` / `pick` / `cancel` — those are user-session-only; the user-session already issued this relay envelope.",
         jid = job_id, evt = relay_event, role = role, agent = agent_id,
     );
@@ -873,8 +875,9 @@ fn handle_resolve(user_reply: String) -> Result<()> {
     // is user-session-only — user-session ALREADY called it to produce THIS envelope).
     let description = format!(
         "User-decision relay envelope (sub session). Call `onchainos agent next-action \
-         --jobid {jid} --event {evt} --role {role} --agentId {agent} \
-         --data \"<message.data verbatim>\"` to fetch the routing playbook; follow it. \
+         --role {role} --agentId {agent} \
+         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"}}'` \
+         to fetch the routing playbook; follow it. \
          ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
          user-session-only; the user-session already called `resolve` to produce this \
          envelope. The sub session has no queue file; calling resolve here = wasted turn \

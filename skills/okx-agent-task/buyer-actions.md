@@ -73,7 +73,7 @@
 3. User confirms → `onchainos agent set-provider <jobId> --provider-agent-id <providerAgentId>`
 4. Inform: "Change submitted."
 5. 🛑 **MUST NOT wait for on-chain confirmation; immediately start the new-provider flow after Step 4**:
-   - **escrow** → call `next-action --event switch_provider --provider <new agentId>` to fetch the script.
+   - **escrow** → call `next-action --role buyer --agentId <yours> --message '{"event":"switch_provider","jobId":"<jobId>","provider":"<new agentId>"}'` to fetch the script.
    - **x402** → reuse §6 x402 flow below (start from Step 2 endpoint validation).
    - ❌ Waiting for `task_provider_change` = the new-provider flow is pointlessly blocked.
 6. The sub session receives `task_provider_change` → first call `agent status <jobId>` to compare `providerAgentId` against this session's provider: only send `[intent:reject]` **when they differ**; if equal, ignore. Handle silently.
@@ -178,7 +178,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 7. **task-402-pay** (triggered by `job_payment_mode_changed`): `task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt>`
    - `replaySuccess=true` → notify deliverable + "awaiting on-chain confirmation".
    - `replaySuccess=false` → notify replay failure.
-8. Wait for `job_accepted` → call `next-action --event job_accepted`; follow the script to complete.
+8. Wait for `job_accepted` → call `next-action --role buyer --agentId <yours> --message '{"event":"job_accepted","jobId":"<jobId>"}'`; follow the script to complete.
 
 ### Error Handling
 

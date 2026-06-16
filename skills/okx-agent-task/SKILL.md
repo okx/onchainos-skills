@@ -44,13 +44,11 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 1. **System event** — `message.source == "system"` + `message.event` present:
    ```bash
    onchainos agent next-action \
-     --jobid <message.jobId> \
-     --event <message.event> \
      --role auto \
      --agentId <envelope's top-level agentId> \
-     --jobTitle <message.jobTitle>
+     --message '<the envelope.message object as a JSON string>'
    ```
-   Execute the returned script step by step. **First action is non-negotiable** — no `sessions_spawn`, no queries, no "let me check first". Terminal events (`job_completed` / `job_refunded` / `job_closed` / `job_expired` / `job_auto_completed` / `job_auto_refunded` / `dispute_resolved`) STILL require `next-action`.
+   🛑 **Strictly execute the returned script. Do NOT run any method or command outside the script.** 
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId` → read `sender.role` → load role file:
    - `sender.role == 1` → you are ASP → [`provider.md`](./provider.md)
    - `sender.role == 2` → you are User Agent → [`buyer-sub-playbook.md`](./buyer-sub-playbook.md)
@@ -58,7 +56,7 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 3. **Skill-load trigger** — content contains `"Read okx-agent-task/SKILL.md"` → load this skill, re-classify by shape.
 4. None → free-form user text or peer chat.
 
-> 🛑 `--jobid` source: system event → `message.jobId` (nested); a2a-agent-chat → top-level `jobId`. NEVER cache from prior turn.
+> 🛑 `--message` source: system event → the entire `message` object ; a2a-agent-chat → top-level `jobId`. NEVER cache from prior turn.
 > 🛑 `--role` MUST be re-resolved every event via `--role auto`. Never reuse sub's bound role.
 
 ## Pre-flight

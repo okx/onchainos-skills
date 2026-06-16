@@ -8,62 +8,6 @@
 
 use crate::commands::agent_commerce::task::common::config::TASK_MIN_VERSION;
 use crate::commands::agent_commerce::task::common::util::short_job_id;
-use crate::commands::agent_commerce::task::common::state_machine::Status;
-
-/// The next step the ASP should take under a given status (used at the tail of
-/// `agent common context` as a menu).
-///
-/// The first line is always a `next-action` invocation — this is the sub agent's
-/// **only first action** in the current status: fetch the script, follow the script.
-/// Terminal / exception states include a plain-language status summary.
-/// `generate_next_action` lives in the same file and routes by the entry event
-/// corresponding to the status.
-pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
-    let next_action = |evt: &str| {
-        format!("**Next step (mandatory)** → `onchainos agent next-action --jobid {job_id} --event {evt} --role provider --agentId <agentId>` to fetch the full script for the current status, and **follow the script strictly**.\n  ⚠️ **Do NOT** infer CLI commands directly from the status name (apply / deliver / dispute raise / agree-refund / dispute upload, etc.) — the script typically prefixes steps such as `xmtp_prompt_user` / `xmtp_send` / `pending-decisions-v2 request`; skipping them causes incidents (this has happened before).")
-    };
-    match status {
-        Status::Created => vec![next_action("job_created")],
-        Status::Accepted => vec![next_action("job_accepted")],
-        Status::Submitted => vec![
-            next_action("job_submitted"),
-            "(Passive wait) Awaiting User Agent review: job_completed → task complete; job_rejected → enter arbitration / refund decision.".to_string(),
-        ],
-        Status::Rejected => vec![next_action("job_rejected")],
-        Status::Disputed => vec![next_action("job_disputed")],
-        Status::Completed => vec![
-            next_action("job_completed"),
-            "(Terminal state) Task COMPLETE — **funds released to you (the ASP)**".to_string(),
-            "  ▸ User Agent review passed (job_completed) → escrow funds released".to_string(),
-            "  ▸ Arbitration ruled in ASP's favor (dispute_resolved seller-wins) → escrow funds released".to_string(),
-            "Sub session can be closed.".to_string(),
-        ],
-        Status::Failed => vec![
-            next_action("job_refunded"),
-            "(Terminal state) Task FAILED — **funds refunded to the User Agent**".to_string(),
-            "  ▸ You agreed to refund (agree-refund) / auto-refund → funds returned to User Agent".to_string(),
-            "  ▸ Arbitration ruled in User Agent's favor (dispute_resolved buyer-wins) → refund".to_string(),
-            "Sub session can be closed.".to_string(),
-        ],
-        Status::Close => vec![
-            "Task was closed by the User Agent (Close). Sub session can be closed.".to_string(),
-        ],
-        Status::Expired => vec![
-            "Task has expired (Expired). Sub session can be closed.".to_string(),
-        ],
-        Status::AdminStopped => vec![
-            "Task was stopped by an administrator (AdminStopped). Contact platform support to find out why.".to_string(),
-        ],
-        Status::Init => vec![
-            "Task is initializing (awaiting on-chain confirmation) → waiting for job_created event.".to_string(),
-        ],
-        Status::Other(s) => vec![
-            format!("Current task status=`{s}` is not in the provider's state set of interest (created / accepted / submitted / rejected / disputed / completed / failed / close / expired / admin_stopped)"),
-            "→ No task-level action required for this role; wait for the next relevant on-chain event / user decision before acting.".to_string(),
-            "→ end this turn.".to_string(),
-        ],
-    }
-}
 
 /// Generate the structured next-action prompt for the ASP based on event.
 ///
@@ -77,7 +21,9 @@ pub async fn generate_next_action(
     job_title: Option<&str>,
     data: Option<&str>,
     prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    message: Option<&serde_json::Value>,
 ) -> String {
+    let _ = message; // currently used only by event handlers that opt in (see JobAspSelected below); silence the unused-arg warning when no scene reads it.
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol
@@ -108,7 +54,8 @@ pub async fn generate_next_action(
     // Per-scene helper — render the pre-fetched task fields inline, or fall back to
     // the "call common context" CLI instruction when prefetched is None / a field is
     // missing. `fields` is the ordered subset of: title / tokenAmount / tokenSymbol /
-    // buyerAgentId / description / paymentMode / visibility / providerAgentId / status.
+    // buyerAgentId / description / paymentMode / visibility / providerAgentId / status /
+    // serviceId / serviceTokenAddress / serviceTokenAmount / serviceParams.
     // Output goes directly into the playbook where Step 1 used to instruct the LLM
     // to run `onchainos agent common context …`.
     let inline_task_fields = |fields: &[&str]| -> String {
@@ -126,7 +73,13 @@ pub async fn generate_next_action(
                     "providerAgentId" => p.provider_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
                     "paymentMode" => p.payment_mode.map(|v| format!("\x20\x20- paymentMode: {v} ({})\n", match v { 1 => "escrow", 3 => "x402", _ => "unknown" })),
                     "visibility" => p.visibility.map(|v| format!("\x20\x20- visibility: {v} ({})\n", match v { 0 => "public", 1 => "private", _ => "unknown" })),
-                    "maxBudget" => p.max_budget.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- paymentMostTokenAmount (max budget): {v}\n")),
+                    "serviceId" => p.service_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceId: {v}\n")),
+                    "serviceTokenAddress" => p.service_token_address.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAddress: {v}\n")),
+                    "serviceTokenAmount" => p.service_token_amount.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAmount: {v}\n")),
+                    "serviceParams" => p.service_params.as_ref().filter(|v| !v.is_null()).map(|v| {
+                        let compact = serde_json::to_string(v).unwrap_or_else(|_| "<unserializable>".to_string());
+                        format!("\x20\x20- serviceParams: {compact}\n")
+                    }),
                     _ => None,
                 };
                 if let Some(l) = line { out.push_str(&l); any = true; }
@@ -293,8 +246,8 @@ pub async fn generate_next_action(
              **Step 4 — After Step 3c ends this turn immediately** (the deliverable was already delivered to the User Agent in Step 3b; do NOT send any filler `xmtp_send` / `xmtp_dispatch_user` here).\n\n\
              🛑 **The next system events for this ASP are `job_completed` OR `job_rejected` — both are action-required, NEITHER is observer-only.** Provider does NOT receive a `job_submitted` envelope after deliver. On either event below, you MUST call `next-action` again.\n\n\
              [Follow-up events]\n\
-             - `job_completed` (buyer reviewed and accepted) → call `next-action --event job_completed` ← **REQUIRED — auto-rate the buyer + notify the user**\n\
-             - `job_rejected`  (buyer rejected the deliverable) → call `next-action --event job_rejected` ← **REQUIRED — push dispute-vs-refund decision to the user**\n"
+             - `job_completed` (buyer reviewed and accepted) → call `next-action --role provider --agentId {agent_id} --message '{{\"event\":\"job_completed\",\"jobId\":\"{job_id}\"}}'` ← **REQUIRED — auto-rate the buyer + notify the user**\n\
+             - `job_rejected`  (buyer rejected the deliverable) → call `next-action --role provider --agentId {agent_id} --message '{{\"event\":\"job_rejected\",\"jobId\":\"{job_id}\"}}'` ← **REQUIRED — push dispute-vs-refund decision to the user**\n"
             )
         }
 
@@ -311,8 +264,8 @@ pub async fn generate_next_action(
              - **End this turn directly**; wait for the User Agent to complete/reject and trigger the next event\n\n\
              🛑 **DO NOT extend `observe silently` to the next event.** When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the buyer / push a dispute-vs-refund decision to the user). You MUST call `next-action` again — see [Follow-up events] below. Treating a subsequent `job_completed` envelope as silent = the user never gets the completion notice + the buyer never gets rated.\n\n\
              [Follow-up events]\n\
-             - Received `job_completed` (review passed) → `onchainos agent next-action --jobid {job_id} --event job_completed --role provider --agentId {agent_id}` ← **REQUIRED, not optional**\n\
-             - Received `job_rejected`  (User Agent rejected) → `onchainos agent next-action --jobid {job_id} --event job_rejected --role provider --agentId {agent_id}` ← **REQUIRED, not optional**\n"
+             - Received `job_completed` (review passed) → `onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"job_completed\",\"jobId\":\"{job_id}\"}}'` ← **REQUIRED, not optional**\n\
+             - Received `job_rejected`  (User Agent rejected) → `onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"job_rejected\",\"jobId\":\"{job_id}\"}}'` ← **REQUIRED, not optional**\n"
         ),
 
         // ─── Scene 6: User Agent rejected the deliverable ─────────────────────────────────
@@ -571,9 +524,158 @@ pub async fn generate_next_action(
              \x20\x20• Both markers present → use the cached playbook; do NOT fetch again.\n\
              \x20\x20• Missing / only opening visible → fetch:\n\
              ```bash\n\
-             onchainos agent next-action --jobid {job_id} --event job_created_playbook --role provider --agentId {agent_id}\n\
+             onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"job_created_playbook\",\"jobId\":\"{job_id}\"}}'\n\
              ```\n"
         ),
+
+        // ─── Scene 1.5: Buyer designated this ASP for a private task ──────────
+        // Same downstream behavior as Event::JobCreated (status is still `created`;
+        // ASP starts negotiation), but the trigger is buyer's designated-route
+        // selection rather than the initial on-chain task creation. Re-uses the
+        // JobCreated playbook cache to avoid emitting the full ~80-line playbook
+        // twice when both events arrive for the same job.
+        Event::JobAspSelected => {
+            // CODE-DRIVEN PATH: fetch service-list, match by serviceId, pre-compute price
+            // gate, emit deterministic playbook. LLM only does the semantic capability
+            // judgment (does task description fit service description?) and picks ONE
+            // of two pre-built actions (apply or xmtp_send-reject). Single turn, no
+            // intermediate CLI calls in the LLM context.
+            let p = prefetched;
+            let service_id = p.and_then(|x| x.service_id.as_deref()).filter(|s| !s.is_empty()).unwrap_or("");
+            // buyer's offered amount: prefer service-level, fall back to task-level
+            let offer_amount = p
+                .and_then(|x| x.service_token_amount.as_deref())
+                .filter(|s| !s.is_empty())
+                .or_else(|| p.map(|x| x.token_amount.as_str()).filter(|s| !s.is_empty()))
+                .unwrap_or("");
+            // buyer's token symbol — always use buyer's specified token (task-level)
+            let buyer_token_symbol = p.map(|x| x.token_symbol.as_str()).filter(|s| !s.is_empty() && *s != "?").unwrap_or("USDT");
+            let task_title = p.map(|x| x.title.as_str()).unwrap_or("");
+            let task_desc = p.map(|x| x.description.as_str()).unwrap_or("");
+
+            if service_id.is_empty() {
+                // No designated serviceId → fall back to the generic JobCreated negotiation flow.
+                format!(
+                    "[Current state] job_asp_selected — designated by buyer, but no specific `serviceId` was pinned. jobId=`{job_id}` agentId={agent_id}\n\n\
+                     ⚡ Route to the standard JobCreated negotiation flow. Playbook cache check:\n\
+                     \x20\x20• Both `[JOBCREATED_PLAYBOOK_CACHE@{job_id}]` markers present → use the cached playbook.\n\
+                     \x20\x20• Missing → fetch:\n\
+                     ```bash\n\
+                     onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"job_created_playbook\",\"jobId\":\"{job_id}\"}}'\n\
+                     ```\n"
+                )
+            } else {
+                // CODE: fetch service catalog and find the designated entry.
+                let svc_data = crate::commands::agent_commerce::task::common::spawn_service_list(agent_id).await.ok();
+                let matched = svc_data.as_ref().and_then(|v| {
+                    v.as_array()
+                        .and_then(|arr| arr.first())
+                        .and_then(|item| item.get("list"))
+                        .and_then(|list| list.as_array())
+                        .and_then(|list| list.iter().find(|s| s.get("serviceId").and_then(|v| v.as_str()) == Some(service_id)).cloned())
+                });
+
+                // Deterministic reject template (used for service-not-found / capability-mismatch / price-too-low).
+                // Backend off-chain endpoint: POST /priapi/v1/aieco/task/{jobId}/asp/reject — no signing required.
+                let reject_template = format!(
+                    "**REJECT path** — call the off-chain decline endpoint, then end the turn:\n\
+                     ```bash\n\
+                     onchainos agent asp-reject {job_id} --agent-id {agent_id} --reason \"<short reason: capability mismatch / price too low / designated service not registered>\"\n\
+                     ```\n\
+                     End the turn after the command returns. ❌ Do NOT call `apply`. ❌ Do NOT xmtp_send the buyer — `asp-reject` notifies the backend, which routes the decline to the buyer automatically.\n"
+                );
+
+                match matched {
+                    None => {
+                        // CODE-decided REJECT: service not in catalog.
+                        format!(
+                            "[Auto-decision] ❌ REJECT — designated `serviceId={service_id}` is NOT in your registered catalog (service-list returned no match). This is the ONLY action; no LLM judgment needed.\n\n\
+                             Task: {task_title}\n\
+                             Buyer offer: {offer_amount} {buyer_token_symbol}\n\n\
+                             {reject_template}"
+                        )
+                    }
+                    Some(svc) => {
+                        let svc_name = svc.get("serviceName").and_then(|v| v.as_str()).unwrap_or("");
+                        let svc_desc = svc.get("serviceDescription").and_then(|v| v.as_str()).unwrap_or("");
+                        let svc_fee  = svc.get("fee").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or("");
+
+                        // CODE: numerical price gate.
+                        // `fee_num=None` means "service has no registered fee" → LLM estimates by complexity.
+                        let offer_num = offer_amount.parse::<f64>().ok();
+                        let fee_num = if svc_fee.is_empty() { None } else { svc_fee.parse::<f64>().ok() };
+                        let (price_status, price_summary, price_action) = match (offer_num, fee_num) {
+                            (Some(o), Some(f)) if o >= f => (
+                                "OK",
+                                format!("buyer offer {offer_amount} ≥ registered fee {svc_fee} ✅"),
+                                "Apply at offer amount."
+                            ),
+                            (Some(_), Some(_)) => (
+                                "TOO_LOW",
+                                format!("buyer offer {offer_amount} < registered fee {svc_fee} ❌"),
+                                "Reject — price below registered floor."
+                            ),
+                            (_, None) => (
+                                "ESTIMATE",
+                                format!("registered fee not set; buyer offer {offer_amount} {buyer_token_symbol} — judge by task complexity"),
+                                "If offer is fair for the workload → apply at offer; else reject."
+                            ),
+                            _ => (
+                                "PARSE_FAIL",
+                                format!("could not parse offer=`{offer_amount}` fee=`{svc_fee}`"),
+                                "Treat as ESTIMATE; LLM judges based on complexity."
+                            ),
+                        };
+
+                        // Deterministic apply command — uses buyer's token symbol (per spec).
+                        let apply_template = format!(
+                            "**APPLY path**:\n\
+                             ```bash\n\
+                             onchainos agent apply {job_id} --agent-id {agent_id} --token-amount {offer_amount} --token-symbol {buyer_token_symbol}\n\
+                             ```\n\
+                             End the turn after apply; wait for the `provider_applied` system event.\n"
+                        );
+
+                        // Decide which branches the LLM can take, based on the code-computed price gate.
+                        let llm_decision = match price_status {
+                            "OK" => format!(
+                                "**LLM judgment** — single question: does the service description capability-match the task description?\n\
+                                 \x20\x20• YES → run **APPLY path** below.\n\
+                                 \x20\x20• NO  → run **REJECT path** below (reason = capability mismatch).\n\n\
+                                 {apply_template}\n\
+                                 {reject_template}"
+                            ),
+                            "TOO_LOW" => format!(
+                                "**Auto-decision** — price gate already FAILED in code (see Price below). Capability is moot; run **REJECT path** regardless.\n\n\
+                                 {reject_template}"
+                            ),
+                            "ESTIMATE" | "PARSE_FAIL" => format!(
+                                "**LLM judgment** — two questions:\n\
+                                 \x20\x20• Capability: does the service description match the task?\n\
+                                 \x20\x20• Price: is the buyer's offer fair for this task's workload?\n\
+                                 \x20\x20• BOTH yes → run **APPLY path** below.\n\
+                                 \x20\x20• Either no → run **REJECT path** below.\n\n\
+                                 {apply_template}\n\
+                                 {reject_template}"
+                            ),
+                            _ => unreachable!(),
+                        };
+
+                        format!(
+                            "[Auto-decision context — pre-computed by CLI]\n\
+                             \x20\x20Task title:          {task_title}\n\
+                             \x20\x20Task description:    {task_desc}\n\
+                             \x20\x20Designated service:  {svc_name} (`{service_id}`)\n\
+                             \x20\x20Service description: {svc_desc}\n\
+                             \x20\x20Price gate ({price_status}): {price_summary}\n\
+                             \x20\x20Recommended action:  {price_action}\n\
+                             \x20\x20Apply currency:      {buyer_token_symbol} (buyer's specified token)\n\n\
+                             {llm_decision}"
+                        )
+                    }
+                }
+            }
+        },
 
         // ─── Scene 1 full playbook: emitted only when `next-action --event
         // job_created_playbook` is called explicitly (per the cache-decision shim in
@@ -605,7 +707,7 @@ pub async fn generate_next_action(
              \x20\x202) `[intent:ack]` or `[intent:counter]` (provider → buyer) or `[intent:reject]` (either side rejects)\n\
              \x20\x203) `[intent:confirm]` (buyer → provider, echoing all fields verbatim)\n\
              \x20\x20⚡ `[intent:reject]` is **soft-terminal**: sending it ends THIS round (do not auto-reply / do not chase the other side after sending). **But the negotiation thread is NOT permanently closed**:\n\
-             \x20\x20\x20\x20- If the OTHER side comes back with a NEW `[intent:propose]` (materially different terms — e.g. higher price after you rejected a low one), treat it as **negotiation reopened**: call `next-action --event job_created` again, re-evaluate the new fields, and proceed with the normal Propose → Ack → Confirm flow (ACK if acceptable, COUNTER if still off, [intent:reject] again only if still unacceptable).\n\
+             \x20\x20\x20\x20- If the OTHER side comes back with a NEW `[intent:propose]` (materially different terms — e.g. higher price after you rejected a low one), treat it as **negotiation reopened**: call `next-action` again with `event=job_created` in the `--message` JSON, re-evaluate the new fields, and proceed with the normal Propose → Ack → Confirm flow (ACK if acceptable, COUNTER if still off, [intent:reject] again only if still unacceptable).\n\
              \x20\x20\x20\x20- If the other side just sends natural-language follow-up (e.g. \"can you reconsider 0.5 USDT?\") after your reject, you may reply naturally and continue Step 3 first-round negotiation; the prior [intent:reject] does NOT mean ignore them forever.\n\
              \x20\x20\x20\x20- The thread is only **truly dead** when BOTH sides have sent [intent:reject] AND no follow-up arrives, OR when the chain emits `job_closed` / `job_expired`.\n\n\
              **The inbound you received in the same turn determines what you can do**:\n\
@@ -713,7 +815,7 @@ pub async fn generate_next_action(
              \x20\x20`I can do this; acceptance criteria are fine. 0.1 USDT is well below my registered price of 1 USDT; based on the workload I can do 0.7 USDT, escrowed payment works to avoid disputes. If that sounds good, let's lock in the terms and move forward.`\n\n\
              🛑 **Do NOT include literal `[intent:propose]` in the natural-language message** (Step 3). `[intent:propose]` is a machine-readable protocol token sent BY the User Agent — it must NEVER appear in YOUR natural-language text (e.g. \"please send [intent:propose]\" or \"reply with [intent:propose] to lock the agreement\"). The User Agent's routing logic triggers on substring `[intent:` — if you embed the marker in a sentence, the User Agent's router will misclassify your natural-language reply as a structured handshake message and malfunction.\n\n\
              ⚠️ Counter-offer reference: within service-list unit price × (1 ± 30%) usually goes through; absurd quotes (× 5+) get you swapped out by the User Agent directly.\n\n\
-             🛑🛑🛑 **Anti-pattern — do NOT abandon negotiation after one low offer**: 🔴 real incident — registered price 1 USDT, User Agent's first offer 0.1 USDT → provider sent `[intent:reject]` and walked away → User Agent later counter-offered 0.5 USDT and then 1 USDT but provider's agent thought \"I already rejected, conversation over\" and stayed silent → task stuck. **Correct behavior**: counter with YOUR floor price in natural language, end the turn, wait for the User Agent's next message. If the User Agent's next message has a new price (whether higher / same / lower) — even after you sent natural-language refusal earlier — you MUST call `next-action --event job_created` again and re-evaluate. \"I refused in natural language\" or \"my desired price wasn't met yet\" is NOT a reason to ignore the User Agent's follow-up — only literal `[intent:reject]` from EITHER side terminates negotiation.\n\n\
+             🛑🛑🛑 **Anti-pattern — do NOT abandon negotiation after one low offer**: 🔴 real incident — registered price 1 USDT, User Agent's first offer 0.1 USDT → provider sent `[intent:reject]` and walked away → User Agent later counter-offered 0.5 USDT and then 1 USDT but provider's agent thought \"I already rejected, conversation over\" and stayed silent → task stuck. **Correct behavior**: counter with YOUR floor price in natural language, end the turn, wait for the User Agent's next message. If the User Agent's next message has a new price (whether higher / same / lower) — even after you sent natural-language refusal earlier — you MUST call `next-action` again with `event=job_created` in the `--message` JSON and re-evaluate. \"I refused in natural language\" or \"my desired price wasn't met yet\" is NOT a reason to ignore the User Agent's follow-up — only literal `[intent:reject]` from EITHER side terminates negotiation.\n\n\
              {send_to_peer}\n\
              <natural-language splicing of 1) 2) 3) above as the three-item negotiation stance>\n\n\
              **Step 3.5 — Handling the User Agent's structured [intent:propose] proposal:**\n\n\
@@ -998,7 +1100,7 @@ pub async fn generate_next_action(
              From the wakeup_notify envelope that triggered this turn, read the `message.jobStatus` field (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed`, etc. — the real status string).\n\n\
              **Step 2 — Use the real status to call next-action and fetch the current script**:\n\
              ```bash\n\
-             onchainos agent next-action --jobid {job_id} --event <value of the message.jobStatus field> --role provider --agentId {agent_id}\n\
+             onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"<value of the message.jobStatus field>\",\"jobId\":\"{job_id}\"}}'\n\
              ```\n\
              Follow the returned script for what to do in the current status.\n\n\
              **Step 3 — Idempotency self-check (avoid re-prompting the user)**:\n\
@@ -1040,14 +1142,14 @@ pub async fn generate_next_action(
                      \x20\x20• **`agree_refund`** — user accepts the refund and walks away (typical intents: B / 同意退款 / agree refund / 退款 / 算了 / 不争了 / OK refund / let it go).\n\n\
                      If the user's reply clearly maps to one of these → call:\n\
                      ```bash\n\
-                     onchainos agent next-action --jobid {job_id} --event <dispute_raise|agree_refund> --role provider --agentId {agent_id}\n\
+                     onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"<dispute_raise|agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
                      ```\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--sub-key` and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=file dispute  B=accept refund\".\n"
                 ),
                 "submit_deadline_warn" => format!(
                     "[User decision relay] source_event=`submit_deadline_warn`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means:\n\n\
-                     \x20\x20• **Submit now** — user wants to deliver immediately (typical intents: 立即提交 / 我提交 / submit now / I'll deliver / ready / 现在交). Route: call `onchainos agent next-action --jobid {job_id} --event job_accepted --role provider --agentId {agent_id}` and run its Step 2-3 (skip Step 1 apply-accepted notification — user already knows).\n\
+                     \x20\x20• **Submit now** — user wants to deliver immediately (typical intents: 立即提交 / 我提交 / submit now / I'll deliver / ready / 现在交). Route: call `onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'` and run its Step 2-3 (skip Step 1 apply-accepted notification — user already knows).\n\
                      \x20\x20• **Let it timeout** — user lets the deadline pass (typical intents: silence / 算了 / 不交了 / let it timeout / skip / 放弃). Route: end the turn; the chain will fire `submit_expired` and the User Agent auto-refunds.\n\n\
                      If ambiguous: re-ask via `pending-decisions-v2 request` (`--source-event submit_deadline_warn`).\n"
                 ),
@@ -1061,19 +1163,15 @@ pub async fn generate_next_action(
                      ⚠️ If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event cli_failed`. **`--user-content` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
                 ),
                 _ => format!(
-                    "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n\n\
-                     **Manual routing required** — inspect the scene context (call `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` if needed) and decide semantically which pseudo-event the user's reply maps to. Then call `onchainos agent next-action --jobid {job_id} --event <chosen-pseudo-event> --role provider --agentId {agent_id}`.\n"
+                    "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n"
                 ),
             }
         }
 
-        Event::Other(ref other) => format!(
-            "[Unknown state] {other}\n\
-             [Recommendation]\n\
-             1. Call `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` to view the full context\n\
-             2. If this state is not in the expected flow, wait for user instructions\n\
-             3. Do NOT predict / assume other notifications\n"
-        ),
+        // provider_reject: off-chain receipt confirming this ASP's own asp-reject;
+        // no provider-side action needed (the buyer side handles the re-route).
+        Event::ProviderReject => format!("[System notification] provider_reject (your decline was registered; no further action).\n"),
+        Event::Other(ref other) => format!("[Unknown state] {other}\n"),
     };
     // Three mutually exclusive shapes:
     //   • short shim (Event::JobCreated)         → body only; preamble lives in

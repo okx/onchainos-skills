@@ -181,6 +181,5 @@ pub async fn handle_deliver(
     println!();
     println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
     println!("    - You will receive a `job_submitted` system notification after on-chain confirmation");
-    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event job_submitted --role provider`");
     Ok(())
 }

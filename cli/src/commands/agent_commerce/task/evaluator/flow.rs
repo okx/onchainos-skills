@@ -1,21 +1,5 @@
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
-pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
-    let status_str = status.as_str();
-    let next_action = |evt: &str| {
-        format!("**Next required action** → `onchainos agent next-action --jobid {job_id} --event {evt} --role evaluator --agentId <agentId>` (fetch the full playbook for the current status; **follow the playbook**, do not bypass next-action and call the CLI below directly).")
-    };
-
-    match status {
-        Status::Disputed => vec![next_action("evaluator_selected")],
-        Status::Completed | Status::Failed => vec![next_action("dispute_resolved")],
-        _ => vec![
-            format!("Current task status=`{status_str}` → evaluator has no task-level action; just wait for the next relevant chain event."),
-            "→ **Do not** rerun `agent status` / `agent common context` (the result will be identical); end this turn.".to_string(),
-        ],
-    }
-}
-
 const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` templates below are **canonical text, NOT samples** — **translate to the user's language** before `xmtp_dispatch_user`.\n\n";
 
 const TOOL_RESOLUTION_PREFIX: &str = "⚠️ **Tool resolution** (applies to every `xmtp_*` / `session_*` call below):\n\

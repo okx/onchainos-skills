@@ -121,7 +121,7 @@ Pending-decisions queue. Same `sub_key` re-`request` overwrites in place (idempo
 | Command | Who calls | When | Key parameters |
 |---|---|---|---|
 | `request` | sub agent | When the script says "push a decision to the user". Sub does not call `xmtp_prompt_user` directly; CLI returns the exact tool-invocation playbook. | `--sub-key` (required, full XMTP sessionKey from `session_status`) / `--job-id` / `--role` / `--agent-id` (all required) / `--user-content` (required, full userContent shown to user verbatim) / `--list-label` (required, short label for multi-decision list view, e.g. `[Decision 0x3938…815d] Approve / Reject`) / `--source-event` (optional but recommended — chain event name, used to build `user_decision_<source_event>` on resolve) / `--llm-content` (optional override). Returns: `playbook_push_cli` (when `OKX_A2A_IS_CLI=1` — emits `okx-a2a user decision-request` bash command); otherwise `playbook_push_prompt_user` (MCP `xmtp_prompt_user` form, with embedded `resolve-prompt` template). |
-| `resolve-prompt` | user-session agent | After the user actually replies to a `[USER_DECISION_REQUEST]`. Copy the **pre-filled command template embedded in the block's llmContent verbatim** — only fill in `--user-reply`. User-session does not call `xmtp_dispatch_session` directly; CLI returns a relay playbook. | All required: `--user-reply` (verbatim user wording, no interpretation) / `--sub-key` (from the block's `[sub_key:]` header) / `--job-id` / `--role` / `--agent-id` / `--source-event`. Builds the relay content as a **JSON envelope** shaped like a chain notification (`{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role, code:0, description, timestamp}}`). Best-effort deletes the matching queue entry by `--sub-key`. Returns `playbook_relay_only_prompt` (MCP `xmtp_dispatch_session` form). Sub receives the envelope and routes via `next-action --event user_decision_<source_event> --data "<message.data>"`. |
+| `resolve-prompt` | user-session agent | After the user actually replies to a `[USER_DECISION_REQUEST]`. Copy the **pre-filled command template embedded in the block's llmContent verbatim** — only fill in `--user-reply`. User-session does not call `xmtp_dispatch_session` directly; CLI returns a relay playbook. | All required: `--user-reply` (verbatim user wording, no interpretation) / `--sub-key` (from the block's `[sub_key:]` header) / `--job-id` / `--role` / `--agent-id` / `--source-event`. Builds the relay content as a **JSON envelope** shaped like a chain notification (`{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role, code:0, description, timestamp}}`). Best-effort deletes the matching queue entry by `--sub-key`. Returns `playbook_relay_only_prompt` (MCP `xmtp_dispatch_session` form). Sub receives the envelope and routes via `next-action --role <role> --agentId <yours> --message '{"event":"user_decision_<source_event>","jobId":"<jobId>","data":"<message.data>"}'`. |
 | `cancel` | user-session agent | When the user says "ignore / cancel / delete this decision" (e.g. `忽略这个决策` / `取消第 2 条` / `cancel this`). **Silent delete** — does NOT dispatch a relay to the sub (the sub will TTL-evict the entry eventually or be re-triggered by a new system event). | `--index N` (1-based, from the latest displayed list snapshot) or `--sub-key <key>`. Behavior: removes the matching entry from the queue file. Returns: `playbook_cancel` (with the standard list view body when the queue has remaining entries). |
 | `list` | user-session agent (user-facing entry) | When the user explicitly says `决策列表` / `查看决策` / `decision list` / `what's pending` / etc. **The stdout is a self-contained playbook** — render the user-visible source body to chat AND follow the printed routing rules verbatim when the user replies. Do NOT call other pending-decisions-v2 subcommands from skill knowledge. | `--format markdown` (the user-facing rendering). Side effect: refreshes the internal display snapshot used by follow-up commands embedded in the playbook. |
 
@@ -136,22 +136,28 @@ Pending-decisions queue. Same `sub_key` re-`request` overwrites in place (idempo
 ### next-action
 
 ```
-agent next-action --jobid <jobId> --event <event> --agentId <agentId> --role <buyer|provider|evaluator> [--code <int>] [--jobTitle <title>] [--provider <providerAgentId>] [--peerTaskMinVersion <int>] [--data <payload>]
+agent next-action --role <buyer|provider|evaluator|auto> --agentId <agentId> --message '<envelope.message as JSON>'
 ```
 
-Outputs the script the agent should currently execute (CLI templates / xmtp_send templates / closing scripts) based on (event, role). Pass the envelope's `message.event` to `--event`.
+Outputs the script the agent should currently execute (CLI templates / xmtp_send templates / closing scripts) based on `(event, role)`. The CLI extracts every routing field from inside the `--message` JSON; only three flags are accepted.
 
 | Parameter | Required | Description |
 |---|---|---|
-| `--jobid` | ✅ | Task ID |
-| `--event` | ✅ | Event name from `message.event` (`provider_applied` / `job_completed` / pseudo events like `create_task` / `dispute_raise` / ...) |
-| `--agentId` | ✅ | Pass through the envelope's top-level agentId |
-| `--role` | ✅ | Role of the current sub session |
-| `--code` | | Envelope `message.code` (tx receipt); non-zero = tx failed. Default `0` |
-| `--jobTitle` | | Envelope `message.title` (task title from system notification); alias `--job-title` |
-| `--provider` | | Target provider agentId (only used with buyer + `job_created`): when supplied, recommend is skipped and a script targeting this provider is generated for negotiation / x402 acceptance |
-| `--peerTaskMinVersion` | | Pass-through of the inbound a2a-agent-chat envelope's `payload.taskMinVersion` (integer). If the local protocol version < this value ⇒ the CLI appends a `[Protocol version mismatch — non-blocking]` line at the top of the script to prompt the agent to push an upgrade suggestion to the user, but does **not block** the flow (the script is still emitted in full, the role flow still executes). **Pass only when buyer / provider handles an a2a-agent-chat inbound**; leave empty for chain events / pseudo events / evaluator (evaluator does not participate in version negotiation). The outbound value does not need to be computed by the agent — buyer / provider `next-action` output always carries a fixed `[Protocol version] ...payload={"taskMinVersion":N}` line at the top, and the agent fills `payload` with this value in every `xmtp_send` of the scene |
-| `--data` | | User's decision payload from a `user_decision_*` relay envelope's `message.data` field. Required when `--event` starts with `user_decision_`; ignored otherwise |
+| `--role` | ✅ | Role of the current sub session: `buyer` / `provider` / `evaluator`, or `auto` to let the CLI resolve from `--agentId` |
+| `--agentId` | ✅ | The receiving agent's id (envelope's top-level `agentId`) |
+| `--message` | ✅ | The entire `message` object from the envelope as a JSON string. CLI extracts fields below |
+
+#### Fields the CLI reads from inside `--message`
+
+| Field | Required | Description |
+|---|---|---|
+| `event` | ✅ | Event name (`provider_applied` / `job_completed` / pseudo events like `create_task` / `dispute_raise` / ...) |
+| `jobId` | ✅ | Task ID (use `"_"` for jobless flows like `create_task`) |
+| `code` | | Envelope `message.code` (tx receipt); non-zero = tx failed. Default `0` |
+| `jobTitle` | | Task title from system notification |
+| `provider` | | Target provider agentId (only used with buyer + `job_created`): when supplied, recommend is skipped and a script targeting this provider is generated for negotiation / x402 acceptance |
+| `taskMinVersion` (or `payload.taskMinVersion`) | | Inbound a2a-agent-chat envelope's `payload.taskMinVersion` (integer). If the local protocol version < this value ⇒ the CLI appends a `[Protocol version mismatch — non-blocking]` line at the top of the script to prompt the agent to push an upgrade suggestion to the user, but does **not block** the flow. **Include only when buyer / provider handles an a2a-agent-chat inbound**; omit for chain events / pseudo events / evaluator |
+| `data` | | User's decision payload from a `user_decision_*` relay envelope's `message.data` field. Required when `event` starts with `user_decision_`; ignored otherwise |
 
 **Negotiation relay events** (buyer-only, locally dispatched by `buyer-sub-playbook.md §3.5 Inbound Peer Message Routing`; not a backend system notification):
 
@@ -616,7 +622,7 @@ The mandatory pre-conditions (per `provider.md §2.1` / §2.2):
 1. **User says "take task X"** → provider runs `xmtp_start_conversation(myAgentId, toAgentId=task.buyerAgentId, jobId=X)` → group + sub session created
 2. Provider sends a **cold-start opener** via `xmtp_send` (self-introduction + interest + asking about budget / acceptance criteria / payment mode) — NOT a price quote
 3. **End the turn**; wait for the User Agent's reply
-4. After User Agent replies, call `next-action --event job_created --role provider` to fetch the negotiation script
+4. After User Agent replies, call `next-action --role provider --agentId <yours> --message '{"event":"job_created","jobId":"<jobId>"}'` to fetch the negotiation script
 5. **Three-step handshake**: User Agent sends `[intent:propose]` → provider sends `[intent:ack]` → User Agent sends **`[intent:confirm]`** (literal, exact string)
 6. ⚠️ **Only after the provider actually receives an inbound a2a-agent-chat envelope whose `content` literally contains `[intent:confirm]` AND whose `sender.role == 1` may you call `apply`**. A User Agent's natural-language "please apply / I confirm / accept directly" is **NOT** a legitimate trigger.
 

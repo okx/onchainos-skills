@@ -370,7 +370,7 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
      From the wakeup_notify envelope that triggered this turn, read `message.jobStatus` (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed` and other real status strings).\n\n\
      **Step 2 -- Re-call next-action with the real status to fetch the current playbook**:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --event <value of message.jobStatus> --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"<value of message.jobStatus>\",\"jobId\":\"{job_id}\"}}'\n\
      ```\n\
      Follow the returned playbook for what to do at the current status.\n\n\
      **Step 3 -- Idempotency self-check (avoid re-prompting the user)**:\n\

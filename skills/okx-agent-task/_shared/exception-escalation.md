@@ -52,7 +52,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 4. Follow the playbook the CLI returns verbatim, then end the turn
 5. When the user-session relays the reply back as a system envelope (`event:"user_decision_cli_failed"`, `message.data:<user verbatim>`) in a later turn, call:
    ```bash
-   onchainos agent next-action --jobid <jobId> --event user_decision_cli_failed --role <buyer|provider> --agentId <your agentId> --data "<message.data verbatim>"
+   onchainos agent next-action --role <buyer|provider> --agentId <your agentId> --message '{"event":"user_decision_cli_failed","jobId":"<jobId>","data":"<message.data verbatim>"}'
    ```
    The CLI's `cli_failed` handler does the LLM semantic mapping (`A` / `retry` / `重试` → retry the failed command once; `B` / `dismiss` / `不再提示` → end the turn, user takes manual control; new-instruction in natural language → parse and execute the modified command). Do NOT keyword-match yourself — pass `--data` through and follow the handler's playbook.
 

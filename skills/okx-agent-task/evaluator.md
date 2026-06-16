@@ -12,11 +12,12 @@ After receiving a `source:"system"` envelope, **immediately** call:
 
 ```bash
 onchainos agent next-action \
-  --jobid <message.jobId> \
-  --event <message.event> \
-  --agentId <top-level agentId> \
-  --role auto
+  --role auto \
+  --agentId <envelope's top-level agentId> \
+  --message '<the envelope.message object as a JSON string>'
 ```
+
+Pass the entire `message` object verbatim as a JSON string to `--message`. The CLI extracts `jobId` / `event` / and any other fields from inside it.
 
 **Strictly follow the playbook printed by the command.**
 

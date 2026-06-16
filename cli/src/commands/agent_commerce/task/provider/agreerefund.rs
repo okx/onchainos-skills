@@ -52,6 +52,5 @@ pub async fn handle_agree_refund(
     println!();
     println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
     println!("    - You will receive a `job_refunded` system notification after on-chain confirmation");
-    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event job_refunded --role provider`");
     Ok(())
 }

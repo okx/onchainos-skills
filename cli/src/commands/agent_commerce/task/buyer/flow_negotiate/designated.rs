@@ -107,7 +107,7 @@ pub(crate) fn negotiate_section_step1_only_cli(
          \x20\x20❌ Do NOT discuss price / tokenSymbol / tokenAmount / paymentMode / budget — pricing is locked at accept time, not in chat.\n\
          \x20\x20❌ Do NOT include any `[intent:*]` marker — the structured intent handshake has been removed.\n\
          \x20\x20❌ Do NOT promise terms or ask the ASP to quote — discuss scope, requirements, deliverable format, and timeline only.\n\n\
-         🛑🛑🛑 **End this turn immediately after the command returns.** The ASP's reply will arrive at the sub session and trigger `next-action --event negotiate_reply` automatically. Do NOT poll, do NOT continue.\n"
+         🛑🛑🛑 **End this turn immediately after the command returns.** The ASP's reply will arrive at the sub session and trigger `next-action` with `event=negotiate_reply` in --message automatically. Do NOT poll, do NOT continue.\n"
     )
 }
 
@@ -212,7 +212,7 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
              | `error` | `endpoint_not_found` | `designated_error` |\n\n\
              Execute:\n\
              ```bash\n\
-             onchainos agent next-action --jobid {job_id} --event <from table above> --role buyer --agentId {agent_id} --provider {dp_id}\n\
+             onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"<from table above>\",\"jobId\":\"{job_id}\",\"provider\":\"{dp_id}\"}}'\n\
              ```\n\
              🛑 **Do NOT execute any D-Step / B-Step / DX-Step in this turn** — the next-action call above returns the matching branch playbook. Follow it verbatim.\n\
              🛑 Do NOT create groups, send messages, or call set-payment-mode before getting the branch playbook.\n\n\
@@ -442,7 +442,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          **A-Step 3 result branch (🛑 MANDATORY — getting this wrong = the flow stalls):**\n\
          Inspect the CLI output (JSON) of set-payment-mode:\n\
          - Output contains `\"alreadySet\": true` -> **do NOT wait for `job_payment_mode_changed`**;\n\
-         \x20\x20call `onchainos agent next-action --jobid {job_id} --event job_payment_mode_changed --role buyer --agentId {agent_id}` immediately.\n\
+         \x20\x20call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\"}}'` immediately.\n\
          - Output contains `\"confirming\": true` -> **end this turn** and wait for `job_payment_mode_changed`.\n")
 }
 

@@ -146,6 +146,10 @@ pub struct PreFetchedTaskContext {
     pub visibility: Option<i64>,
     pub status: Option<i64>,
     pub deliverable: Option<PreFetchedDeliverable>,
+    pub service_id: Option<String>,
+    pub service_token_address: Option<String>,
+    pub service_token_amount: Option<String>,
+    pub service_params: Option<serde_json::Value>,
 }
 
 impl PreFetchedTaskContext {
@@ -163,6 +167,10 @@ impl PreFetchedTaskContext {
             visibility: v["visibility"].as_i64(),
             status: v["status"].as_i64(),
             deliverable: None,
+            service_id: v["serviceId"].as_str().map(String::from),
+            service_token_address: v["serviceTokenAddress"].as_str().map(String::from),
+            service_token_amount: v["serviceTokenAmount"].as_str().map(String::from),
+            service_params: v.get("serviceParams").filter(|x| !x.is_null()).cloned(),
         }
     }
 
@@ -667,7 +675,7 @@ pub async fn handle_profile(agent_id: &str) -> Result<()> {
 
 /// Spawn `onchainos agent service-list --agent-id <id>` as subprocess and
 /// return the parsed `data` field (services array/object).
-async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Value> {
+pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Value> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
 
@@ -1161,22 +1169,6 @@ fn status_desc(s: &str) -> &str {
 
 fn payment_mode_desc(pm: i32) -> &'static str {
     PaymentMode::from_int(pm).desc()
-}
-
-/// Given the role + task status, list the CLI actions currently available.
-/// Routes by role into the corresponding `available_actions` in each flow.rs;
-/// the single source of truth lives in the buyer/provider/evaluator modules.
-fn available_actions(role: &str, status: &str, job_id: &str) -> Vec<String> {
-    use state_machine::{Role, Status};
-    let status = Status::parse(status);
-    match Role::parse(role) {
-        Some(Role::Buyer)     => super::buyer::flow::available_actions(&status, job_id),
-        Some(Role::Provider)  => super::provider::flow::available_actions(&status, job_id),
-        Some(Role::Evaluator) => super::evaluator::flow::available_actions(&status, job_id),
-        None => vec![
-            format!("onchainos agent status {job_id}         # query latest task status"),
-        ],
-    }
 }
 
 // ─── Command handling ───────────────────────────────────────────────────

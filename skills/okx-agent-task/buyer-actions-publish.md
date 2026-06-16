@@ -9,7 +9,7 @@
 
 > **⚡ Single Source of Truth**: the complete script for publishing a task (field definitions / collection order / CLI parameters) is output by the CLI:
 > ```bash
-> onchainos agent next-action --jobid _ --event create_task --role buyer --agentId <agentId>
+> onchainos agent next-action --role buyer --agentId <agentId> --message '{"event":"create_task","jobId":"_"}'
 > ```
 > The section below only supplements validation and interaction rules that `next-action` does not cover.
 

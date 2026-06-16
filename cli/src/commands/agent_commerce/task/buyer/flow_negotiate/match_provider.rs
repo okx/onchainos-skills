@@ -269,8 +269,8 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
     let dp_id = match &designated_provider {
         Some(id) => id.clone(),
         None => {
-            return format!("[Error] switch_provider is missing the --provider argument.\n\
-                 Please call again: onchainos agent next-action --jobid {job_id} --event switch_provider --role buyer --agentId {agent_id} --provider <new ASP agentId>\n");
+            return format!("[Error] switch_provider is missing the `provider` field in --message.\n\
+                 Please call again: onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"switch_provider\",\"jobId\":\"{job_id}\",\"provider\":\"<new ASP agentId>\"}}'\n");
         }
     };
 
@@ -339,7 +339,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \n\
      Reply with the ASP's number to start, or reply 「skip all」.\n\n\
      {follow_playbook}\n\n\
-     **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action --event user_decision_provider_pending --data \"<message.data>\"` — both paths point to the same Branch A/B/C below.)\n\n\
+     **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action` with `event=user_decision_provider_pending` and `data=<message.data>` in --message — both paths point to the same Branch A/B/C below.)\n\n\
      ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\
      A-Step 1: map the user's reply to agentId (index → AgentID via the pending list, or use a 3-digit AgentID directly); call xmtp_start_conversation to create the group + the sub session:\n\
      \x20\x20Args: myAgentId={agent_id}, toAgentId=<agentId from the pending list above>, jobId={job_id}\n\

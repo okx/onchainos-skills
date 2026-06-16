@@ -227,7 +227,7 @@ pub async fn handle_set_payment_mode(
             crate::output::success(serde_json::json!({
                 "alreadySet": true,
                 "paymentMode": mode_str,
-                "next": "Payment mode already on-chain. Call next-action --event job_payment_mode_changed to get the script; then wait for the provider to submit their apply on-chain before confirm-accept.",
+                "next": "Payment mode already on-chain. Call next-action with `event=job_payment_mode_changed` in --message to get the script; then wait for the provider to submit their apply on-chain before confirm-accept.",
             }));
         } else {
             println!("✓ Payment mode set to {mode_str}; awaiting on-chain confirmation...");

@@ -93,7 +93,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      🛑🛑🛑 **Iron rule (MANDATORY) after receiving `job_accepted`**:\n\
      After the `job_accepted` system event arrives, you **must** call:\n\
      ```bash\n\
-     onchainos agent next-action --jobid {job_id} --event job_accepted --role buyer --agentId {agent_id}\n\
+     onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'\n\
      ```\n\
      Follow the returned script (the script will guide you to run `onchainos agent complete`).\n\
      ❌ **Absolutely forbidden**: re-running this turn's `x402-check` / `task-402-pay` / `xmtp_dispatch_user` - those completed in this turn; re-running causes double payment or duplicate notification.\n\

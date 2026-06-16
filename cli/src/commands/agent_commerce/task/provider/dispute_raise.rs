@@ -89,8 +89,5 @@ pub async fn handle_dispute_raise(
     println!();
     println!("⚠️  Stage 1 complete — **end this turn** and wait for the on-chain `dispute_approved` system notification:");
     println!("    - Do NOT call `dispute confirm` in the same turn");
-    println!("    - Once you receive the `dispute_approved` notification, run:");
-    println!("      onchainos agent next-action --jobid {job_id} --event dispute_approved --role provider --agentId {agent_id}");
-    println!("      next-action will output the stage 2 script (calling dispute confirm to trigger the actual dispute)");
     Ok(())
 }

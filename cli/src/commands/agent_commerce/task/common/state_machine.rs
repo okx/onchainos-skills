@@ -190,7 +190,11 @@ pub enum Event {
     JobCreated,
     /// Provider apply on-chain (status remains created; pass-through event; notifies the provider that just applied).
     ProviderApplied,
+    /// Provider declined a buyer-designated assignment (off-chain; notifies the buyer that re-routing is needed).
     ProviderReject,
+    /// Buyer designated a specific ASP for the task (private-task path; status remains created;
+    /// notifies the chosen provider that they have been selected and should start negotiation).
+    JobAspSelected,
     /// Buyer confirm-accept on-chain (status enters accepted; notifies provider).
     JobAccepted,
     /// Provider deliver on-chain (status enters submitted; notifies buyer to review).
@@ -336,6 +340,7 @@ impl Event {
             "job_created"               => Event::JobCreated,
             "provider_applied"          => Event::ProviderApplied,
             "provider_reject"           => Event::ProviderReject,
+            "job_asp_selected"          => Event::JobAspSelected,
             "job_accepted"              => Event::JobAccepted,
             "job_submitted"             => Event::JobSubmitted,
             "job_completed"             => Event::JobCompleted,
@@ -399,6 +404,7 @@ impl Event {
             Event::JobCreated             => "job_created",
             Event::ProviderApplied        => "provider_applied",
             Event::ProviderReject         => "provider_reject",
+            Event::JobAspSelected         => "job_asp_selected",
             Event::JobAccepted            => "job_accepted",
             Event::JobSubmitted           => "job_submitted",
             Event::JobCompleted           => "job_completed",
@@ -479,7 +485,7 @@ impl Event {
 pub fn status_when_event(e: &Event) -> Status {
     match e {
         // Main flow
-        Event::JobCreated | Event::ProviderApplied
+        Event::JobCreated | Event::ProviderApplied | Event::JobAspSelected
         | Event::ProviderReject
         | Event::TaskTokenBudgetChange | Event::TaskProviderChange
         | Event::SwitchProvider
