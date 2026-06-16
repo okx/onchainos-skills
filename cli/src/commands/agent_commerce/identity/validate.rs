@@ -899,8 +899,8 @@ fn contains_negotiation_language(fee: &str) -> bool {
 
 /// Parse the "core" fee (parenthetical already stripped). Returns
 /// (format_ok, detected_currency_token). Accepts:
-///   `^\d+(\.\d{1,6})?$`                 (bare numeric)
-///   `^\d+(\.\d{1,6})?\s+[A-Za-z]+$`     (numeric + currency token)
+///   `^\d+(\.\d{1,6})?$`                          (bare numeric)
+///   `^\d+(\.\d{1,6})?\s*[A-Za-z]+$`              (numeric + currency token, space optional)
 /// The currency token (if present) is returned so P2 can validate it. A bare
 /// numeric returns currency=None. Malformed → (false, None | Some(...)).
 fn parse_fee_core(core: &str) -> (bool, Option<String>) {
@@ -914,14 +914,27 @@ fn parse_fee_core(core: &str) -> (bool, Option<String>) {
     let cur = it.next();
     let extra = it.next();
 
-    let num_ok = is_valid_numeric(num);
-
     match (cur, extra) {
-        (None, None) => (num_ok, None),
         (Some(c), None) => {
-            // currency token must be alphabetic; report it for P2 either way.
+            // Spaced form: "<num> <cur>"
+            let num_ok = is_valid_numeric(num);
             let cur_alpha = c.chars().all(|ch| ch.is_ascii_alphabetic()) && !c.is_empty();
             (num_ok && cur_alpha, Some(c.to_string()))
+        }
+        (None, None) => {
+            // Bare numeric, or no-space form like "10USDT" / "1.5USDG".
+            if is_valid_numeric(num) {
+                return (true, None);
+            }
+            // Try splitting at the first alphabetic character.
+            if let Some(split_pos) = num.find(|c: char| c.is_ascii_alphabetic()) {
+                let (n, c) = num.split_at(split_pos);
+                let num_ok = is_valid_numeric(n);
+                let cur_alpha = c.chars().all(|ch| ch.is_ascii_alphabetic()) && !c.is_empty();
+                (num_ok && cur_alpha, if cur_alpha { Some(c.to_string()) } else { None })
+            } else {
+                (false, None)
+            }
         }
         // Anything beyond "<num> <cur>" is malformed.
         _ => (false, cur.map(str::to_string)),

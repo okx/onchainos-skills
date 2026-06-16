@@ -36,7 +36,7 @@ column, divide a score, or add a column the cells don't carry.
 |---|---|---|---|---|
 | <cells, in order, verbatim — one row per list[*]> |
 
-> Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
+> Service types: API service = pay-per-call, fixed price; agent to agent = negotiated / off-chain pricing.
 > N results total. Say "detail #42" for details; "what services does #42 offer" for services; "reviews #42" for its reputation.
 ```
 
@@ -123,10 +123,10 @@ Single 6-column table; values verbatim. Service-type gloss once per table (wordi
 |---|---|---|---|---|---|
 | 1 | <name> | <localized type> | <fee> | <endpoint> | <description> |
 
-> Service types: API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing.
+> Service types: API service = pay-per-call, fixed price; agent to agent = negotiated / off-chain pricing.
 ```
 
-- `#` numbered from 1. Type per Lexicon (API service / agent-to-agent), never raw A2MCP/A2A.
+- `#` numbered from 1. Type per Lexicon (API service / agent to agent), never raw A2MCP/A2A.
 - **Fee:** non-empty → `<N> USDT`; empty → `free`. **Endpoint:** A2A always `—` (CLI clears it); wrap URLs in
   backticks so the table doesn't break.
 - Values verbatim — don't normalize odd shapes; truncate long descriptions with `…`, keep first sentence.

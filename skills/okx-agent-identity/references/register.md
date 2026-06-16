@@ -31,7 +31,7 @@ Run `agent pre-check --role <role>` (internal — never shown). It fetches the w
 
 **provider — two steps** (user may batch):
 - **Step 1 · Identity** — Name (CN 2–12 / EN 3–25; brand name; ❌ test tags / celebrity) · Description (required ≤500) · Photo (optional §5).
-- **Step 2 · Service** — Service name (5–30 noun phrase; ❌ same as agent name / price in name) · Description (3 parts: summary / capabilities / 1–3 prompts) · Type (API service → pass `A2MCP` / agent-to-agent → pass `A2A`) · Fee (API service: `N USDT/USDG` ≤6 dec; A2A: optional — if provided must be a plain number ≤6 decimal places; reject natural-language amounts like `5 USDT` or `approx 10` → "agent-to-agent fee is optional — leave it empty or give a USDT number with up to 6 decimal places." Re-ask.) · Endpoint (API service only — §6).
+- **Step 2 · Service** — Service name (5–30 noun phrase; ❌ same as agent name / price in name) · Description (3 parts: summary / capabilities / 1–3 prompts) · Type (API service → pass `A2MCP` / agent-to-agent → pass `A2A`) · Fee — `N USDT/USDG` (localized display: API service required, A2A optional); ≤6 dec; A2A may be left empty; reject `approx 10` / `5元` → re-ask · Endpoint (API service only — §6). After the first service: ask once (localized) **1. Add another service / 2. Done** — on 1 repeat fields; on 2 (or other) → §4. All services go in one `agent create`.
 
 ## 4. QA via `validate-listing` (provider only — requester/evaluator skip)
 
@@ -56,7 +56,7 @@ The CLI is the QA engine; you render its `findings[]` and add ONE check it can't
 
 ## 6. Endpoint anti-pattern (provider API service)
 
-Require `https://`, publicly reachable, and really deployed. **Reject** `http://`, `localhost`, `127.0.0.1`, RFC-1918 private IPs (`192.168.*` / `10.*` / `172.16–31.*`), `*.local` / `*.internal`, mock URLs, and placeholders. Never suggest any of those as acceptable. Explain a publicly-reachable `https://` URL is required and is permanent on-chain (changing it later needs another update). If the user has no deployed endpoint yet: deploy first, or switch to agent-to-agent.
+Require `https://`, publicly reachable, and really deployed. **Reject** `http://`, `localhost`, `127.0.0.1`, RFC-1918 private IPs (`192.168.*` / `10.*` / `172.16–31.*`), `*.local` / `*.internal`, mock URLs, and placeholders. Never suggest any of those as acceptable. Explain a publicly-reachable `https://` URL is required and is permanent on-chain (changing it later needs another update). If the user has no deployed endpoint yet: deploy first, or switch to agent to agent.
 
 **Length guard** — endpoint URL must be ≤512 chars; if longer → "The endpoint URL must be at most 512 chars; this one is longer. Use a shorter URL." Re-ask.
 

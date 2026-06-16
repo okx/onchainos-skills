@@ -240,6 +240,24 @@ fn bare_numeric_fee_ok() {
     assert!(!c.contains(&"P2".to_string()), "got {:?}", c);
 }
 
+#[test]
+fn fee_no_space_between_number_and_currency_ok() {
+    // "1USDT" and "1.5USDG" (no space) must be accepted the same as "1 USDT".
+    for fee in &["1USDT", "1.5USDG", "10USDT", "0USDG"] {
+        let service = svc(
+            "Some Service",
+            "Does a thing.\nMore detail here.\nDo the thing",
+            "A2MCP",
+            fee,
+            Some("https://example.com/mcp"),
+        );
+        let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+        let c = codes(&r);
+        assert!(!c.contains(&"P1".to_string()), "fee={fee} got {:?}", c);
+        assert!(!c.contains(&"P2".to_string()), "fee={fee} got {:?}", c);
+    }
+}
+
 // ─── N1: Latin/mixed name length boundary values ──────────────────────────
 
 #[test]

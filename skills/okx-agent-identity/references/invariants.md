@@ -7,7 +7,7 @@ Load this file when: rendering a card / diff / detail view, resolving `#<id>`, t
 ## Lexicon (prose / Q&A / post-success rows when CLI label is absent)
 
 - **Roles:** requester → **User Agent** / 用户 · provider → **Agent Service Provider (ASP)** / 服务提供商 · evaluator → **Evaluator Agent** / 仲裁者. Never raw enum, never legacy nouns (buyer/seller), never bilingual parenthetical.
-- **Service type:** A2MCP → **API service** · A2A → **agent-to-agent**. Gloss once per table: "API service = pay-per-call, fixed price; agent-to-agent = negotiated / off-chain pricing." Never raw A2MCP/A2A.
+- **Service type:** A2MCP → **API service** · A2A → **agent to agent**. Gloss once per table: "API service = pay-per-call, fixed price; agent to agent = negotiated / off-chain pricing." Never raw A2MCP/A2A.
 - **Stars:** render `★ <value>` from CLI's `ratingStars` / `feedbackRate` / `average` **directly** — never divide by 20, never show raw 0–100. Null/0 context-split: **search** rows → `null`=`—`, `0`=`No rating yet`; **list / detail / feedback** → no rating = `No rating yet` (never `—`).
 - **Fee:** `N USDT`; A2A empty or zero → `negotiable`. **Address:** lowercase `0x…1234`. **Reviewer** slot = "reviewer", never "creator".
 
@@ -25,7 +25,7 @@ When CLI returns `card[]` / `cells[]` plus `roleLabel` / `statusLabel` / `approv
 ## CLI output fields — translate before rendering
 
 - `roleLabel` / `statusLabel` / `approvalLabel`
-- Service type values: "API service" / "agent-to-agent"
+- Service type values: "API service" / "agent to agent"
 - Placeholder strings: "(not set)" / "default" / "No rating yet" / "(no comment)" / "free" / "negotiable"
 - `findings[].issue` and `findings[].fix` — translate the QA guidance text
 
