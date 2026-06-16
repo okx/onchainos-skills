@@ -476,7 +476,7 @@ fn validate_payment_inputs(amount: &str, pay_to: &str, asset: &str) -> Result<u1
 /// All crypto happens in `payment_flow::sign_payment_with_preference`. Passes
 /// `None` for the preference so the user's saved default asset does NOT
 /// influence which accepts entry gets signed — this command signs exactly
-/// what the caller supplied via `--accepts`.
+/// what the caller supplied via `--payload`.
 async fn cmd_pay(payload: &str, selected_index: Option<usize>) -> Result<()> {
     let (mut accepts_val, resource_val) = decode_pay_payload(payload)?;
     if let Some(i) = selected_index {
@@ -526,7 +526,7 @@ fn select_accepts_index(accepts: &Value, index: usize) -> Result<Value> {
 }
 
 /// Shape the `payment pay` / `pay-local` output. When a `resource` is available
-/// (x402 v2 — from `--payload` or `--resource`), emit the assembled
+/// (x402 v2 — carried inside the decoded `--payload`), emit the assembled
 /// `PAYMENT-SIGNATURE` header + routing metadata; otherwise emit the raw proof
 /// (legacy contract — caller assembles the header).
 fn emit_pay_result(

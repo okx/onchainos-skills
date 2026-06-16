@@ -378,7 +378,7 @@ pub(crate) fn prepare_resolved_entry(
 /// Variant of `sign_payment` that signs exactly what the caller's
 /// `accepts` says, without consulting the saved default asset. Used by
 /// the manual `onchainos payment pay` command so the user-supplied
-/// `--accepts` isn't silently reordered by a stored preference.
+/// `--payload` isn't silently reordered by a stored preference.
 pub async fn sign_payment_with_preference(
     accepts: &Value,
     from: Option<&str>,
@@ -656,7 +656,7 @@ pub async fn sign_payment_with_preference(
 ///
 /// Signs exactly what `accepts` carries — does NOT consult the saved
 /// default asset. Used by the manual `payment pay-local` command,
-/// which inherits `payment pay`'s "sign what --accepts says" contract so
+/// which inherits `payment pay`'s "sign what --payload says" contract so
 /// the caller's supplied entry isn't silently reordered by a stored
 /// preference.
 ///
@@ -902,8 +902,8 @@ pub fn build_payment_header(
 
 /// Same as [`build_payment_header`] but takes the `resource` value verbatim
 /// (the object exactly as it appeared in the decoded 402 payload) instead of
-/// reconstructing it from a URL string. Used by `onchainos payment pay
-/// --resource` so the header round-trips whatever the server sent — including
+/// reconstructing it from a URL string. Used by `onchainos payment pay`
+/// so the header round-trips whatever the server sent — including
 /// fields like `description` that a reconstruction would drop.
 ///
 /// v2 only (emits `PAYMENT-SIGNATURE`).
@@ -1324,7 +1324,7 @@ mod tests {
         assert_eq!(body["accepted"]["extra"]["sessionCert"], "cert-123");
     }
 
-    // ── P1: `payment pay --resource` direct-header emission ──────────────────
+    // ── P1: `payment pay` direct-header emission ──────────────────
 
     #[test]
     fn assemble_v2_header_embeds_resource_verbatim() {
@@ -1781,7 +1781,7 @@ mod tests {
         // select the exact entry. This locks in scheme-priority behavior
         // for the manual-command variant, which passes `preferred = None`
         // down to `sign_payment_local_with_preference` unconditionally so
-        // it signs exactly what the caller supplied via `--accepts`.
+        // it signs exactly what the caller supplied via `--payload`.
         let _lock = crate::home::TEST_ENV_MUTEX
             .lock()
             .unwrap_or_else(|e| e.into_inner());
