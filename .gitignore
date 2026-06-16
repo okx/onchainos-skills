@@ -76,3 +76,6 @@ test-cases.json
 
 evals/
 .gs-recovery/
+
+# oli-flow session-local runtime state (never committed)
+.harness-paths
