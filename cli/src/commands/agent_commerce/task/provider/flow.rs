@@ -70,7 +70,14 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 /// `event_str` accepts either an event name (provider_applied / job_accepted / ...)
 /// or a status name (created / accepted / ...) — internally normalized via state_machine
 /// into an `Event`; unrecognized strings fall through as `Event::Other(s)`.
-pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>) -> String {
+pub async fn generate_next_action(
+    job_id: &str,
+    event_str: &str,
+    agent_id: &str,
+    job_title: Option<&str>,
+    data: Option<&str>,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol
@@ -97,6 +104,47 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     // via `common context`. Used in --list-label so the reprompt notification can
     // show the task name (e.g. "Data Analysis Report · Approve / Reject").
     let title_display = job_title.unwrap_or("<title>");
+
+    // Per-scene helper — render the pre-fetched task fields inline, or fall back to
+    // the "call common context" CLI instruction when prefetched is None / a field is
+    // missing. `fields` is the ordered subset of: title / tokenAmount / tokenSymbol /
+    // buyerAgentId / description / paymentMode / visibility / providerAgentId / status.
+    // Output goes directly into the playbook where Step 1 used to instruct the LLM
+    // to run `onchainos agent common context …`.
+    let inline_task_fields = |fields: &[&str]| -> String {
+        use crate::commands::agent_commerce::task::common::PreFetchedTaskContext;
+        let render = |p: &PreFetchedTaskContext| -> Option<String> {
+            let mut out = String::from("**Task fields** (pre-fetched; use directly — skip the `common context` call unless a value below is empty / null):\n");
+            let mut any = false;
+            for f in fields {
+                let line = match *f {
+                    "title" if !p.title.is_empty() => Some(format!("\x20\x20- title: {}\n", p.title)),
+                    "description" if !p.description.is_empty() => Some(format!("\x20\x20- description: {}\n", p.description)),
+                    "tokenAmount" if !p.token_amount.is_empty() => Some(format!("\x20\x20- tokenAmount: {}\n", p.token_amount)),
+                    "tokenSymbol" if !p.token_symbol.is_empty() && p.token_symbol != "?" => Some(format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol)),
+                    "buyerAgentId" => p.buyer_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
+                    "providerAgentId" => p.provider_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
+                    "paymentMode" => p.payment_mode.map(|v| format!("\x20\x20- paymentMode: {v} ({})\n", match v { 1 => "escrow", 3 => "x402", _ => "unknown" })),
+                    "visibility" => p.visibility.map(|v| format!("\x20\x20- visibility: {v} ({})\n", match v { 0 => "public", 1 => "private", _ => "unknown" })),
+                    "maxBudget" => p.max_budget.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- paymentMostTokenAmount (max budget): {v}\n")),
+                    _ => None,
+                };
+                if let Some(l) = line { out.push_str(&l); any = true; }
+            }
+            if any { Some(out) } else { None }
+        };
+        match prefetched.and_then(render) {
+            Some(s) => s,
+            None => format!(
+                "**Load task context first**:\n\
+                 ```bash\n\
+                 onchainos agent common context {job_id} --role provider --agent-id {agent_id}\n\
+                 ```\n\
+                 Extract {} (needed below).\n",
+                fields.join(" + "),
+            ),
+        }
+    };
 
     // ──────────────────────────────────────────────────────────────────────
     // Communication mechanics (how to send, whether you can send, form whitelist) —
@@ -197,17 +245,19 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
             let user_notify = super::content::job_accepted_user_notify(job_id, agent_id);
             let deliver_text = super::content::deliver_text_to_buyer(job_id);
             let deliver_file = super::content::deliver_file_to_buyer(job_id);
+            let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol"]);
             format!(
             "[Current state] job_accepted (User Agent has confirmed the apply)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
+             {task_fields}\n\
              **Step 1 — Use `xmtp_dispatch_user` to push the apply-accepted notification to the user**:\n\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              arguments:\n\
              \x20\x20content:\n\
              {user_notify}\n\n\
-             Field values are read from the output of `onchainos agent common context {job_id} --role provider --agent-id {agent_id}`.\n\
+             Fill the `<title>` / `<description>` / `<amount>` / `<tokenSymbol>` placeholders from the **Task fields** block above.\n\
              ⚠️ Do NOT send `xmtp_send` `received apply confirmation` filler to the User Agent — the User Agent just ran confirm-accept; they already know.\n\n\
              **Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
              {execute_task}\n\n\
@@ -341,6 +391,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::JobCompleted => {
             let user_notify = super::content::job_completed_user_notify(job_id);
             let rating_notify = super::content::rating_submitted_user_notify(job_id);
+            let task_fields = inline_task_fields(&["title", "tokenAmount", "tokenSymbol", "buyerAgentId"]);
             format!(
             "[Current state] job_completed (task completed; funds received)\n\
              [Role] ASP (Agent Service Provider)\n\n\
@@ -350,11 +401,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
              Either path means funds have landed; when notifying the user simply say `funds received`.\n\n\
              [Your next action]\n\n\
              ⚠️ Do NOT send `xmtp_send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
-             **Step 1 — Load task context**:\n\
-             ```bash\n\
-             onchainos agent common context {job_id} --role provider --agent-id {agent_id}\n\
-             ```\n\
-             Extract title + tokenAmount + tokenSymbol + buyerAgentId (needed for the next step).\n\n\
+             {task_fields}\n\
              **Step 2 — Use `xmtp_dispatch_user` to notify the user of task completion**:\n\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
@@ -370,7 +417,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
              ```bash\n\
              onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
-             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from Step 1 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
+             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 3.5 — Notify the user of the submitted rating**:\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
@@ -390,6 +437,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
             let dispute_won_no_claim = super::content::dispute_won_no_claim_user_notify(job_id);
             let dispute_lost = super::content::dispute_lost_user_notify(job_id);
             let rating_notify = super::content::rating_submitted_user_notify(job_id);
+            let task_fields = inline_task_fields(&["title", "tokenAmount", "tokenSymbol", "buyerAgentId"]);
             format!(
             "[Current state] dispute_resolved (arbitration ruling delivered)\n\
              [Role] ASP (Agent Service Provider)\n\n\
@@ -398,6 +446,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
              - `jobStatus = \"failed\"` → **you (provider) lost**; funds refunded to the User Agent\n\
              [Your next action (branch by win/loss)]\n\n\
              ⚠️ Do NOT send `xmtp_send` `ruling supports party X` filler to the User Agent — both sides receive the `dispute_resolved` system event.\n\n\
+             {task_fields}\n\
              ━━━━━━━━━━━━━ Branch A: jobStatus=complete (ASP won) ━━━━━━━━━━━━━\n\n\
              **A-Step 1 — Check claimable rewards (account-pull)**:\n\
              ```bash\n\
@@ -410,7 +459,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
              ```\n\
              Record stdout's txHash + the actual amount / token claimed (used to notify the user in the next step).\n\n\
              **A-Step 3 — Use `xmtp_dispatch_user` to notify the user of the win + claim result**:\n\n\
-             From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId.\n\
+             Field values for the `content` template come from the **Task fields** block above.\n\
              ⚠️ content is the **chat the user will see** — plain natural language; **do NOT use** skill names / event names / state names / CLI flags or other technical jargon.\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
@@ -429,7 +478,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
              ```bash\n\
              onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
-             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from A-Step 3 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
+             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **A-Step 4.5 — Notify the user of the submitted rating**:\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
@@ -439,7 +488,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
              - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
              ━━━━━━━━━━━━━ Branch B: jobStatus=failed (ASP lost) ━━━━━━━━━━━━━\n\n\
              **B-Step 1 — Use `xmtp_dispatch_user` to notify the user of the loss**:\n\n\
-             From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId.\n\
+             Field values for the `content` template come from the **Task fields** block above (same fields as Branch A).\n\
              ⚠️ Same as A-Step 3 — content plain natural language; no technical jargon.\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
@@ -455,7 +504,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
              ```bash\n\
              onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
-             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from B-Step 1 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
+             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **B-Step 2.5 — Notify the user of the submitted rating**:\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
@@ -807,9 +856,11 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
             let user_notify = super::content::job_auto_completed_user_notify(job_id);
             let failed_notify = super::content::job_auto_completed_failed_user_notify(job_id);
             let rating_notify = super::content::rating_submitted_user_notify(job_id);
+            let task_fields = inline_task_fields(&["title", "tokenAmount", "tokenSymbol", "buyerAgentId"]);
             format!(
             "[System notification] job_auto_completed (claimAutoComplete tx receipt)\n\
              [Role] ASP (Agent Service Provider)\n\n\
+             {task_fields}\n\
              **Step 1 — Check the envelope's `message.code` field:**\n\
              - `code` non-zero (failed) → call `xmtp_dispatch_user` with these arguments, then end the turn:\n\
              \x20\x20tool: xmtp_dispatch_user\n\
@@ -817,7 +868,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
              \x20\x20\x20\x20content: \"{failed_notify}\"\n\
              - `code` = 0 (success) → continue to Step 2.\n\n\
              **Step 2 — Use `xmtp_dispatch_user` to notify the user of fund arrival**:\n\n\
-             From `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` get task title + tokenAmount + tokenSymbol + buyerAgentId (needed for Step 3).\n\
+             Field values for the `content` template come from the **Task fields** block above.\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              tool: xmtp_dispatch_user\n\
              arguments:\n\
@@ -833,7 +884,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
              ```bash\n\
              onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
-             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from Step 2 context); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
+             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 3.5 — Notify the user of the submitted rating:**\n\
              🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\

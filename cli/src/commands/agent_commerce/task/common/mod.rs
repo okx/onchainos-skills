@@ -1360,7 +1360,7 @@ async fn build_context(
     // fail to match is it judged a mismatch. profileDescription is a fallback reference
     // only and is not the sole criterion (the description is a generic self-intro,
     // service-list is the real capability set).
-    if role_enum == Some(state_machine::Role::Provider)
+    /*if role_enum == Some(state_machine::Role::Provider)
         && task_status == state_machine::Status::Created
     {
         let services = fetch_agent_services(profile.agent_id.as_deref().unwrap_or("")).await;
@@ -1460,7 +1460,7 @@ async fn build_context(
     for a in &actions {
         out.push_str(&format!("- {a}\n"));
     }
-    out.push('\n');
+    out.push('\n');*/
 
     // ── Role guide that must be loaded ───────────────────────────────────
     let skill_file = match role {
