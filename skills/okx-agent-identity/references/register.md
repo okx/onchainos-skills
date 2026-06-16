@@ -30,7 +30,10 @@ Run `agent pre-check --role <role>` (internal — never shown). It fetches the w
 - **Description** — do NOT prompt. If the user volunteers one, add a Description row to the card; otherwise omit the row and send `ProfileDescription:""` silently.
 
 **provider — two steps** (user may batch):
-- **Step 1 · Identity** — Name (CN 2–12 / EN 3–25; brand name; ❌ test tags / celebrity) · Description (required ≤500) · Photo (optional §5).
+- **Step 1 · Identity** — Present all three as a **single numbered list in one message** (do NOT split into separate turns):
+  1. **Name** — brand name (CN 2–12 chars / EN 3–25 chars; ❌ test markers / celebrity names)
+  2. **Description** — one-sentence summary of what the Agent does (required, ≤500 chars)
+  3. **Avatar** — inline sub-choices inside item 3 (see §5 for wording); skip → keep default
 - **Step 2 · Service** — Service name (5–30 noun phrase; ❌ same as agent name / price in name) · Description (3 parts: summary / capabilities / 1–3 prompts) · Type (API service → pass `A2MCP` / agent-to-agent → pass `A2A`) · Fee — `N USDT/USDG` (localized display: API service required, A2A optional); ≤6 dec; A2A may be left empty; reject `approx 10` / `5元` → re-ask · Endpoint (API service only — §6). After the first service: ask once (localized) **1. Add another service / 2. Done** — on 1 repeat fields; on 2 (or other) → §4. All services go in one `agent create`.
 
 ## 4. QA via `validate-listing` (provider only — requester/evaluator skip)
@@ -49,8 +52,10 @@ The CLI is the QA engine; you render its `findings[]` and add ONE check it can't
 
 - **Image links are not accepted.** If the user supplies a URL, reject it — do NOT pass it to `--picture`, do NOT download-and-reupload, do NOT claim it was set:
   > "Avatar links aren't supported — send an image file directly, or keep the default."
-- **Actively offer at the provider identity card's close** (a CTA, not a passive row):
-  > 📷 Profile photo is the default — **send an image to set one** (a plain square, no rounded corners or borders, renders best). Reply **1** when ready.
+- **Avatar appears as item 3 in the Step 1 numbered list** — render as a single optional line (no sub-choices):
+  > 3. Avatar — 📷 Optional. Send an image file to set a custom avatar; skip to keep the default.
+
+  User sends an image file → upload it; no image / skips → keep default. Never ask the user to pick 1/2.
 - **On opt-in:** Claude Code → save the inbound image attachment to a temp path → run the `upload` subcommand (`agent upload --file <temp>`) → use the returned URL as `--picture` (this temp write is the one allowed by SKILL §Gates One-call rule); >1 MB → stop and ask for a smaller one; render the URL verbatim in the Profile photo row. No image supplied → keep the default. 1:1 square is the tip.
 - **Upload as-is — never resize/crop/convert.** >1 MB → ask for a smaller file; non-1:1 → accept and upload (square is advisory); non-PNG/JPEG/WebP → ask to convert and resend.
 
