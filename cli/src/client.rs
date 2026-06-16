@@ -14,7 +14,7 @@ use crate::output::CliConfirming;
 use crate::payment_cache::{self, PaymentCache, PaymentDefault};
 use crate::payment_notify::{self, Flag, NotifyInput, TierState, UserType};
 
-pub const DEFAULT_BASE_URL: &str = "https://web3.okx.com";
+pub const DEFAULT_BASE_URL: &str = "http://okx-defi-walletmain-api.forked-walletmain-swim.swim.env";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Market API config endpoint — returns the path→tier `endpointList` map plus

@@ -6,7 +6,6 @@
 //! `exec onchainos agent next-action ...` to fetch the prompt and execute it directly,
 //! without having to reason over the entire document.
 
-use crate::commands::agent_commerce::task::common::config::TASK_MIN_VERSION;
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 
 /// Generate the structured next-action prompt for the ASP based on event.
@@ -26,21 +25,12 @@ pub async fn generate_next_action(
     let _ = message; // currently used only by event handlers that opt in (see JobAspSelected below); silence the unused-arg warning when no scene reads it.
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
-    // Two fixed prefix lines at the top of the output: localization rule + protocol
-    // version handshake. version_prefix uses format! to inject the current
-    // TASK_MIN_VERSION constant so the script auto-updates when the constant bumps.
-    let localization_prefix = "\
-[Localization] Rules for `content:` / `userContent:` / `--list-label` templates below:\n\
-(1) **User language signal = user's OWN typed messages in this session ONLY.** Playbook examples / agent output / envelope fields are NOT signals. If unsure → default English.\n\
-(2) Fill `<...>` placeholders with real values; do NOT add / rephrase / embellish content not in the template.\n\
-(3) English user → template verbatim. Non-English user → faithful translation, covering every user-visible token: role labels (ASP/User Agent), field labels (Job/Choose/reply), option body, reply-hint quotes (Chinese: `'...'` → 「...」), AND `--list-label` (user picks from this label in selection mode).\n\
-🔴 Past bugs: (a) Chinese user saw `Job`/`ASP` left in English; (b) `--list-label` left in English on a Chinese card; (c) English user got a Chinese card because the sub mistook playbook examples as a language signal.\n\n";
-    let version_prefix = format!(
-        "[Protocol version] When calling `xmtp_send`, the `payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
-    );
+    // (Old MCP-era `okx-a2a session send` `payload` version handshake was removed when the script
+    // migrated to `okx-a2a session send`, which has no equivalent `payload` parameter.
+    // Protocol version is now enforced server-side, not via wire-level payload tagging.)
 
     // Short jobId, used as the `[Job <shortId> — you are the ASP]` prefix on the first
-    // line of `xmtp_prompt_user` userContent (the canonical templates live in content.rs).
+    // line of `okx-a2a user decision-request` userContent (the canonical templates live in content.rs).
     // When multiple prompts run concurrently it provides the user and the user agent a
     // dual disambiguation anchor. See SKILL.md Session Communication Contract §5.
     let short_id = short_job_id(job_id);
@@ -106,45 +96,43 @@ pub async fn generate_next_action(
     // tool usage.
     //
     // Three communication tools:
-    //   - xmtp_send: send to the User Agent (peer sub session); params sessionKey + content
-    //   - xmtp_dispatch_user: notify the user (no user decision required); param: content
-    //   - xmtp_prompt_user: needs user interaction (confirmation / decision);
+    //   - okx-a2a session send: send to the User Agent (peer sub session); args --job-id + --to-agent-id + --content
+    //   - okx-a2a user notify: notify the user (no user decision required); arg --content
+    //   - okx-a2a user decision-request: needs user interaction (confirmation / decision);
     //     params: llmContent + userContent
     //     llmContent = instruction injected into the user session LLM (invisible to user;
     //                  contains sub_key so the user agent can relay the decision back to sub)
     //     userContent = the user-visible message to send to the user
-    //
-    // The old `xmtp_dispatch_session` form (omitted sessionKey + `[STATUS_NOTIFY]` wrapper)
-    // has been replaced by `xmtp_dispatch_user` / `xmtp_prompt_user` — this file no longer
-    // uses dispatch_session to push messages to the user.
-    // Note: the `[USER_DECISION_REQUEST]` tag still appears inside the llmContent of
-    // `xmtp_prompt_user`; it is an inline tag for the user agent to recognize "awaiting
-    // user decision", not the old envelope wrapper — after the user agent receives the
-    // sub_key it relays back to sub via path 3 (`xmtp_dispatch_session` carrying a
-    // `{source:"system", event:"user_decision_<src>", data:<reply>, ...}` envelope).
     // ──────────────────────────────────────────────────────────────────────
     let send_to_peer = format!(
-        "→ First call `session_status` (once per turn; reuse the result) → get the current sub session's `sessionKey`. Then call `xmtp_send` with these exact arguments (Current jobId={job_id}, our agentId={agent_id}):\n\
-         tool: xmtp_send\n\
-         arguments:\n\
-         \x20\x20sessionKey: \"<the full sessionKey string returned by session_status, verbatim>\"\n\
-         \x20\x20content:"
+        "→ Run `okx-a2a session send` (Current jobId={job_id}, our agentId={agent_id}). Resolve `<buyerAgentId>` from the task fields above (or via `common context`):\n\
+         ```bash\n\
+         okx-a2a session send \\\n\
+         \x20\x20--job-id {job_id} \\\n\
+         \x20\x20--to-agent-id <buyerAgentId> \\\n\
+         \x20\x20--content \"<content shown below>\"\n\
+         ```\n\
+         Content:"
     );
 
     // Shared "execute task autonomously" guidance for escrow Step 2 — the script does
     // not prescribe how to do it; list a few examples so the agent knows "pick your own
     // tool" is the expected behavior.
-    let execute_task = "Pick the right tool / capability for the task content to get the work done. For example:\n\
+    let execute_task = format!(
+        "Pick the right tool / capability for the task content to get the work done. For example:\n\
         \x20\x20• `Generate a cat image` → call an image-generation tool, get the local file path\n\
         \x20\x20• `Check the weather` → call wttr.in / a weather API, get a text result\n\
         \x20\x20• `Audit a smart contract` → read the code, produce an audit report\n\
         Tool choice is outside the script's scope; the agent decides autonomously.\n\n\
-        ⚠️ If you have questions about task details / acceptance criteria → first call `session_status` to get sessionKey, then call `xmtp_send` with these arguments:\n\
-        \x20\x20\x20\x20tool: xmtp_send\n\
-        \x20\x20\x20\x20arguments:\n\
-        \x20\x20\x20\x20\x20\x20sessionKey: \"<verbatim from session_status>\"\n\
-        \x20\x20\x20\x20\x20\x20content: \"<plain natural-language question to the User Agent>\"\n\
-        End this turn after sending, wait for the reply; once you have the answer, start the work. Do not guess and produce a deliverable that misses the mark.";
+        ⚠️ If you have questions about task details / acceptance criteria → run `okx-a2a session send` (resolve `<buyerAgentId>` from the task fields above):\n\
+        \x20\x20\x20\x20```bash\n\
+        \x20\x20\x20\x20okx-a2a session send \\\n\
+        \x20\x20\x20\x20\x20\x20--job-id {job_id} \\\n\
+        \x20\x20\x20\x20\x20\x20--to-agent-id <buyerAgentId> \\\n\
+        \x20\x20\x20\x20\x20\x20--content \"<plain natural-language question to the User Agent>\"\n\
+        \x20\x20\x20\x20```\n\
+        End this turn after sending, wait for the reply; once you have the answer, start the work. Do not guess and produce a deliverable that misses the mark."
+    );
 
     // Terminal-state (completed / refunded / close / dispute_resolved, etc.) session
     // retain-vs-release policy is governed by common::config::KEEP_CONVERSATION_ON_TERMINAL —
@@ -155,10 +143,6 @@ pub async fn generate_next_action(
          onchainos agent session-cleanup --job-id {job_id} --role provider\n\
          ```\n\
          Then follow the command's output to close conversations (if applicable).");
-
-    let context_preamble = format!(
-        ""
-    );
 
     let event = parse_status_or_event(event_str);
     // `Event::JobCreated` is now a thin cache-decision shim — preamble is
@@ -171,27 +155,23 @@ pub async fn generate_next_action(
     let is_playbook_emit = matches!(&event, Event::Other(s) if s == "job_created_playbook");
     let body = match event {
         // ─── Scene 3: Apply has been recorded on-chain (escrow path; the User Agent issues the payment) ──
-        Event::ProviderApplied => format!(
-            "[Current state] provider_applied (escrow path: apply has been recorded on-chain)\n\
+        Event::ProviderApplied => {
+            let user_notify = super::content::provider_applied_user_notify(job_id, agent_id);
+            format!(
+            "[Current state] provider_applied (apply has been recorded on-chain)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             [Your next action]\n\n\
-             **Send a single `xmtp_send` to notify the User Agent that the apply is on-chain and ask them to run confirm-accept to fund escrow**:\n\n\
-             **Step 1 — call `session_status`** (once per turn; reuse the result) → get the current sub session's `sessionKey` (full string, e.g. `agent:main:okx-a2a:group:okx-xmtp:my=...&to=...&job={job_id}&gid=...`).\n\n\
-             **Step 2 — call `xmtp_send`** with these exact arguments:\n\
+             **Step 1 — Use `okx-a2a user notify` to push the apply-submitted notification to the user**:\n\n\
+             🌐 **Localize first** — rewrite `content` below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<the template below, localized>\"\n\
              ```\n\
-             tool: xmtp_send\n\
-             arguments:\n\
-             \x20\x20sessionKey: \"<the full sessionKey string returned by session_status in Step 1, verbatim>\"\n\
-             \x20\x20content: \"Apply has been recorded on-chain (jobId={job_id}, ASP agentId={agent_id}). Please run confirm-accept to fund escrow.\\n[intent:applied]\"\n\
-             \x20\x20payload: {{\"taskMinVersion\":{TASK_MIN_VERSION}}}\n\
-             ```\n\
-             ⚠️ **`content` formatting rules**: plain natural language, **no** markdown / code blocks / JSON wrapper / `jobId:` / `type:` header lines — the XMTP plugin auto-wraps the message into an a2a-agent-chat envelope at send time.\n\
-             ⚠️ **`[intent:applied]` is a protocol routing tag** — the User Agent uses it to trigger `confirm-accept`. You MUST include it **verbatim** in the `content` string exactly as shown above. Do NOT remove, translate, or rephrase it. Missing this tag = User Agent cannot recognize the message = task stalls.\n\
-             ⚠️ **`payload` is required** — copy the literal `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}` from above (the value is baked in at compile time).\n\n\
-             After `xmtp_send` returns → **end this turn immediately**, wait for the `job_accepted` notification. (Reminder: Rule 5 + the JobCreated 5-step chain already specify that deliver only fires after `job_accepted` — do NOT call `deliver` in this provider_applied scene.)\n\n\
+             `--content` template (canonical English; do NOT add / drop fields):\n\
+             {user_notify}\n\n\
+             ❌ Do NOT communicate with the buyer. ❌ Do NOT deliver directly.\n\n\
              [Follow-up events]\n\
-             - job_accepted → User Agent has confirm-accepted, escrow funding complete; **only then** can you deliver\n"
-        ),
+             - job_accepted → User Agent has confirm-accepted, escrow funding complete.\n"
+            )
+        },
 
         // ─── Scene 4: User Agent has confirmed the apply; execute and deliver ──
         Event::JobAccepted => {
@@ -204,28 +184,27 @@ pub async fn generate_next_action(
              [Role] ASP (Agent Service Provider)\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
              {task_fields}\n\
-             **Step 1 — Use `xmtp_dispatch_user` to push the apply-accepted notification to the user**:\n\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             tool: xmtp_dispatch_user\n\
-             arguments:\n\
-             \x20\x20content:\n\
+             **Step 1 — Notify the user (apply accepted) via `okx-a2a user notify`**:\n\n\
+             🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             ```\n\
+             content:\n\
              {user_notify}\n\n\
              Fill the `<title>` / `<description>` / `<amount>` / `<tokenSymbol>` placeholders from the **Task fields** block above.\n\
-             ⚠️ Do NOT send `xmtp_send` `received apply confirmation` filler to the User Agent — the User Agent just ran confirm-accept; they already know.\n\n\
+             ⚠️ Do NOT send `okx-a2a session send` `received apply confirmation` filler to the User Agent — the User Agent just ran confirm-accept; they already know.\n\n\
              **Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
              {execute_task}\n\n\
-             **Step 3 — Deliver** (first `xmtp_send` the deliverable to the User Agent, then deliver on-chain):\n\n\
-             ⚠️ **Order**: first `xmtp_send` the deliverable to the User Agent, then deliver on-chain. The on-chain deliver only advances the task state to submitted (giving the User Agent an acceptance entry point); the deliverable itself was already delivered via xmtp_send.\n\n\
+             **Step 3 — Deliver** (first `okx-a2a session send` the deliverable to the User Agent, then deliver on-chain):\n\n\
+             ⚠️ **Order**: first `okx-a2a session send` the deliverable to the User Agent, then deliver on-chain. The on-chain deliver only advances the task state to submitted (giving the User Agent an acceptance entry point); the deliverable itself was already delivered via okx-a2a session send.\n\n\
              **Step 3a — Prepare the deliverable (branch by type)**:\n\n\
-             ▸ **Plain text / URL deliverable**: assemble the text content directly, skip xmtp_file_upload, go to Step 3b.\n\n\
-             ▸ **File deliverable** (image / PDF / document): call `xmtp_file_upload` with these arguments (mechanism: see skills/okx-agent-task/_shared/xmtp-tools.md → Path 8 `xmtp_file_upload`):\n\
-             \x20\x20tool: xmtp_file_upload\n\
-             \x20\x20arguments:\n\
-             \x20\x20\x20\x20filePath: \"<absolute local file path>\"\n\
-             \x20\x20\x20\x20agentId: \"{agent_id}\"\n\
-             \x20\x20\x20\x20jobId: \"{job_id}\"\n\
+             ▸ **Plain text / URL deliverable**: assemble the text content directly, skip `okx-a2a file upload`, go to Step 3b.\n\n\
+             ▸ **File deliverable** (image / PDF / document): run `okx-a2a file upload`:\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a file upload --file-path \"<absolute local file path>\" --agent-id {agent_id} --job-id {job_id}\n\
+             \x20\x20```\n\
              \x20\x20Record all five return fields (`fileKey` / `digest` / `salt` / `nonce` / `secret` — decryption metadata).\n\n\
-             **Step 3b — `xmtp_send` the deliverable to the User Agent** (in the same turn, immediately following Step 3a):\n\
+             **Step 3b — `okx-a2a session send` the deliverable to the User Agent** (in the same turn, immediately following Step 3a):\n\
              ⚠️ content **MUST end with the `[intent:deliver]` line as a trailing suffix** — the User Agent routes by this suffix to recognize the deliverable. Missing suffix = the User Agent cannot recognize it as a deliverable = the flow stalls.\n\n\
              Text-deliverable content:\n\
              {send_to_peer}\n\
@@ -243,7 +222,7 @@ pub async fn generate_next_action(
              onchainos agent deliver {job_id} --file \"\" --deliverable-text \"<the full text deliverable content from Step 3b>\" --agent-id {agent_id}\n\
              ```\n\
              CLI internals: POST submit API → sign uopHash → broadcast on-chain → auto-save deliverable (file via --file, text via --deliverable-text).\n\n\
-             **Step 4 — After Step 3c ends this turn immediately** (the deliverable was already delivered to the User Agent in Step 3b; do NOT send any filler `xmtp_send` / `xmtp_dispatch_user` here).\n\n\
+             **Step 4 — After Step 3c ends this turn immediately** (the deliverable was already delivered to the User Agent in Step 3b; do NOT send any filler `okx-a2a session send` / `okx-a2a user notify` here).\n\n\
              🛑 **The next system events for this ASP are `job_completed` OR `job_rejected` — both are action-required, NEITHER is observer-only.** Provider does NOT receive a `job_submitted` envelope after deliver. On either event below, you MUST call `next-action` again.\n\n\
              [Follow-up events]\n\
              - `job_completed` (buyer reviewed and accepted) → call `next-action --role provider --agentId {agent_id} --message '{{\"event\":\"job_completed\",\"jobId\":\"{job_id}\"}}'` ← **REQUIRED — auto-rate the buyer + notify the user**\n\
@@ -252,15 +231,15 @@ pub async fn generate_next_action(
         }
 
         // ─── Scene 5: Deliverable confirmed on-chain (observer-only) ──────────────────
-        // In the new flow the deliverable was already sent to the User Agent via xmtp_send
+        // In the new flow the deliverable was already sent to the User Agent via okx-a2a session send
         // in Scene 4 A-Step 2; when the job_submitted system event reaches this sub there
-        // is no need to xmtp_send again, to avoid the User Agent receiving duplicate messages.
+        // is no need to okx-a2a session send again, to avoid the User Agent receiving duplicate messages.
         Event::JobSubmitted => format!(
             "[System notification] job_submitted (deliverable confirmed on-chain; task state is now submitted)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             ⚠️ **observer-only — SCOPE: THIS turn / THIS event only**: the deliverable was already sent to the User Agent in the `job_accepted` script (A-Step 2); this event **must NOT trigger a second xmtp_send** — duplicating would cause the User Agent to receive double messages and trigger a loop.\n\n\
+             ⚠️ **observer-only — SCOPE: THIS turn / THIS event only**: the deliverable was already sent to the User Agent in the `job_accepted` script (A-Step 2); this event **must NOT trigger a second okx-a2a session send** — duplicating would cause the User Agent to receive double messages and trigger a loop.\n\n\
              [Your next action]\n\
-             - **Just observe silently**; do NOT call xmtp_send / xmtp_file_upload / xmtp_dispatch_user / xmtp_prompt_user\n\
+             - **Just observe silently**; do NOT call okx-a2a session send / okx-a2a file upload / okx-a2a user notify / okx-a2a user decision-request\n\
              - **End this turn directly**; wait for the User Agent to complete/reject and trigger the next event\n\n\
              🛑 **DO NOT extend `observe silently` to the next event.** When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the buyer / push a dispute-vs-refund decision to the user). You MUST call `next-action` again — see [Follow-up events] below. Treating a subsequent `job_completed` envelope as silent = the user never gets the completion notice + the buyer never gets rated.\n\n\
              [Follow-up events]\n\
@@ -282,11 +261,11 @@ pub async fn generate_next_action(
             format!(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the decision (dispute vs refund) to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `xmtp_dispatch_user`)**.\n\
-             `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → the decision flow deadlocks. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `xmtp_prompt_user` (with llmContent + userContent) so the user session can relay the decision back. Direct text output in this sub session = user doesn't see it + relay channel broken + 24h timeout → auto-refund.\n\
+             🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the decision (dispute vs refund) to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `okx-a2a user notify`)**.\n\
+             `okx-a2a user notify` is a pure notification: user replies cannot be relayed back to the sub session → the decision flow deadlocks. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `okx-a2a user decision-request` (with llmContent + userContent) so the user session can relay the decision back. Direct text output in this sub session = user doesn't see it + relay channel broken + 24h timeout → auto-refund.\n\
              ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
-             ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request`.\n\
-             ⚠️ Do NOT send `xmtp_send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\n\
+             ❌ Do not substitute `okx-a2a user notify` for the `pending-decisions-v2 request`.\n\
+             ⚠️ Do NOT send `okx-a2a session send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\n\
              **Push the decision to the user (5-substep protocol; read ALL 5 before running any command)**:\n\n\
              {request_block}\n\
              ⚠️ Decision must be made within 24h; otherwise funds are auto-refunded to the User Agent.\n",
@@ -304,7 +283,7 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /dispute/approve → uopData → sign uopHash → broadcast. Wait for the on-chain `dispute_approved` notification.\n\n\
              ⚠️ **After dispute raise ends this turn directly**:\n\
-             - Do NOT send any xmtp_send to the User Agent (`dispute raised` is filler; wait until phase 2 completes)\n\
+             - Do NOT send any okx-a2a session send to the User Agent (`dispute raised` is filler; wait until phase 2 completes)\n\
              - Do NOT call `dispute confirm` in the same turn (must wait for the on-chain dispute_approved notification)\n\n\
              [Follow-up events]\n\
              - `dispute_approved` system notification → call next-action to fetch the phase-2 script (dispute confirm)\n\
@@ -321,10 +300,10 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /dispute → uopData → sign uopHash → broadcast. Wait for the on-chain `job_disputed` notification.\n\n\
              ⚠️ **After dispute confirm ends this turn directly**:\n\
-             - Do NOT xmtp_send the User Agent (still filler state)\n\
+             - Do NOT okx-a2a session send the User Agent (still filler state)\n\
              - Do NOT submit evidence in the same turn (evidence goes through dispute upload; must wait for the `job_disputed` notification + user-provided content)\n\n\
              [Follow-up events]\n\
-             - `job_disputed` system notification → enter 1-hour evidence preparation window → next-action will instruct you to `xmtp_prompt_user` for evidence from the user\n"
+             - `job_disputed` system notification → enter 1-hour evidence preparation window → next-action will instruct you to `okx-a2a user decision-request` for evidence from the user\n"
         ),
 
         // ─── Scene 6.2: User chose to agree to refund (user-instruction pseudo-event) ───
@@ -336,8 +315,8 @@ pub async fn generate_next_action(
              onchainos agent agree-refund {job_id} --agent-id {agent_id}\n\
              ```\n\n\
              After Step 1 → **end this turn**.\n\
-             ⚠️ Do NOT send `xmtp_send` `agreed to refund` filler to the User Agent — both sides receive the `job_refunded` system event.\n\
-             ⚠️ Do NOT push to the user with `xmtp_dispatch_user`.\n"
+             ⚠️ Do NOT send `okx-a2a session send` `agreed to refund` filler to the User Agent — both sides receive the `job_refunded` system event.\n\
+             ⚠️ Do NOT push to the user with `okx-a2a user notify`.\n"
         ),
 
         // ─── Scene 7: Task completed (review passed / arbitration won) ────────────────
@@ -353,13 +332,14 @@ pub async fn generate_next_action(
              \x20\x20• x402 → the User Agent paid via x402 signature during the accept phase\n\
              Either path means funds have landed; when notifying the user simply say `funds received`.\n\n\
              [Your next action]\n\n\
-             ⚠️ Do NOT send `xmtp_send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
+             ⚠️ Do NOT send `okx-a2a session send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
              {task_fields}\n\
-             **Step 2 — Use `xmtp_dispatch_user` to notify the user of task completion**:\n\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             tool: xmtp_dispatch_user\n\
-             arguments:\n\
-             \x20\x20content:\n\
+             **Step 2 — Notify the user of task completion via `okx-a2a user notify`**:\n\n\
+             🌐 **Localize first** — rewrite the content below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             ```\n\
+             content:\n\
              {user_notify}\n\n\
              🛑 Do NOT end this turn — Step 3 (auto-rate) and Step 3.5 (notify rating) below are MANDATORY.\n\n\
              **Step 3 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
@@ -372,9 +352,12 @@ pub async fn generate_next_action(
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 3.5 — Notify the user of the submitted rating**:\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
+             🌐 **Localize first** — rewrite the content below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             ```\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
              {rating_notify}\n\
              - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
@@ -398,7 +381,7 @@ pub async fn generate_next_action(
              - `jobStatus = \"complete\"` → **you (provider) won**; funds released to you\n\
              - `jobStatus = \"failed\"` → **you (provider) lost**; funds refunded to the User Agent\n\
              [Your next action (branch by win/loss)]\n\n\
-             ⚠️ Do NOT send `xmtp_send` `ruling supports party X` filler to the User Agent — both sides receive the `dispute_resolved` system event.\n\n\
+             ⚠️ Do NOT send `okx-a2a session send` `ruling supports party X` filler to the User Agent — both sides receive the `dispute_resolved` system event.\n\n\
              {task_fields}\n\
              ━━━━━━━━━━━━━ Branch A: jobStatus=complete (ASP won) ━━━━━━━━━━━━━\n\n\
              **A-Step 1 — Check claimable rewards (account-pull)**:\n\
@@ -411,13 +394,14 @@ pub async fn generate_next_action(
              onchainos agent provider-claim-rewards --agent-id {agent_id}\n\
              ```\n\
              Record stdout's txHash + the actual amount / token claimed (used to notify the user in the next step).\n\n\
-             **A-Step 3 — Use `xmtp_dispatch_user` to notify the user of the win + claim result**:\n\n\
-             Field values for the `content` template come from the **Task fields** block above.\n\
+             **A-Step 3 — Notify the user of the win + claim result via `okx-a2a user notify`**:\n\n\
+             Field values for the content template come from the **Task fields** block above.\n\
              ⚠️ content is the **chat the user will see** — plain natural language; **do NOT use** skill names / event names / state names / CLI flags or other technical jargon.\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             tool: xmtp_dispatch_user\n\
-             arguments:\n\
-             \x20\x20content: (choose based on whether A-Step 2 actually claimed)\n\
+             🌐 **Localize first** — rewrite the content below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             ```\n\
+             content (choose based on whether A-Step 2 actually claimed):\n\
              \x20\x20\x20\x20Claimed:\n\
              {dispute_won_claim}\n\
              \x20\x20\x20\x20Nothing to claim:\n\
@@ -433,20 +417,24 @@ pub async fn generate_next_action(
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **A-Step 4.5 — Notify the user of the submitted rating**:\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
+             🌐 **Localize first** — rewrite the content below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             ```\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in A-Step 4; fill `<title>` from task context):\n\
              {rating_notify}\n\
              - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
              ━━━━━━━━━━━━━ Branch B: jobStatus=failed (ASP lost) ━━━━━━━━━━━━━\n\n\
-             **B-Step 1 — Use `xmtp_dispatch_user` to notify the user of the loss**:\n\n\
-             Field values for the `content` template come from the **Task fields** block above (same fields as Branch A).\n\
+             **B-Step 1 — Notify the user of the loss via `okx-a2a user notify`**:\n\n\
+             Field values for the content template come from the **Task fields** block above (same fields as Branch A).\n\
              ⚠️ Same as A-Step 3 — content plain natural language; no technical jargon.\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             tool: xmtp_dispatch_user\n\
-             arguments:\n\
-             \x20\x20content:\n\
+             🌐 **Localize first** — rewrite the content below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             ```\n\
+             content:\n\
              {dispute_lost}\n\n\
              🛑 Do NOT end this turn — B-Step 2 (auto-rate) and B-Step 2.5 (notify rating) below are MANDATORY.\n\n\
              **B-Step 2 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
@@ -459,9 +447,12 @@ pub async fn generate_next_action(
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **B-Step 2.5 — Notify the user of the submitted rating**:\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
+             🌐 **Localize first** — rewrite the content below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             ```\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
              {rating_notify}\n\
              - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
@@ -475,26 +466,31 @@ pub async fn generate_next_action(
             "[Current state] job_refunded (funds refunded to the User Agent)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              [Your next action]\n\n\
-             ⚠️ Do NOT send `xmtp_send` `refund on-chain` filler to the User Agent — both sides already receive the `job_refunded` system event.\n\
+             ⚠️ Do NOT send `okx-a2a session send` `refund on-chain` filler to the User Agent — both sides already receive the `job_refunded` system event.\n\
              {terminal_session_hint}\n\n\
              **End this turn directly**; the refund flow is fully complete.\n"
         ),
 
         // ─── Scene 6.4: Arbitration on-chain; CLI auto-submits evidence ─────────────────────
-        Event::JobDisputed => format!(
+        Event::JobDisputed => {
+            let task_fields = inline_task_fields(&["buyerAgentId"]);
+            format!(
             "[Current state] job_disputed (arbitration is on-chain; CLI auto-submits evidence on this event)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
              The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
              session, calls `dispute upload` (which also auto-attaches the deliverable copy saved under\n\
              `~/.onchainos/deliverables/provider/{job_id}/`), and then notifies the user via\n\
-             `xmtp_dispatch_user`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
-             **Do NOT** `xmtp_send` anything to the User Agent — both sides see the arbitration via on-chain events.\n\n\
-             **Step 1 — Pull this sub session's chat history:**\n\n\
-             First call `session_status` to get the current sessionKey (only once per turn). Then call `xmtp_get_conversation_history` with that sessionKey to retrieve the full a2a-agent-chat history with the User Agent.\n\n\
+             `okx-a2a user notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
+             **Do NOT** `okx-a2a session send` anything to the User Agent — both sides see the arbitration via on-chain events.\n\n\
+             {task_fields}\n\
+             **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
+             ```bash\n\
+             okx-a2a session history --job-id {job_id} --to-agent-id <buyerAgentId> --json\n\
+             ```\n\n\
              **Step 2 — Format the chat history as the `--text` body**:\n\n\
              ```\n\
-             ==== Negotiation / delivery chat history (from xmtp_get_conversation_history) ====\n\
+             ==== Negotiation / delivery chat history (from okx-a2a session history) ====\n\
              [time] User Agent(<agentId>): ...\n\
              [time] ASP(<agentId>): ...\n\
              ... (chronological; key checkpoints: User Agent inquiry / [intent:propose] / your [intent:ack] / User Agent [intent:confirm] / your deliver message)\n\
@@ -509,11 +505,12 @@ pub async fn generate_next_action(
              **Step 4 — Notify the user (after upload returns):**\n\n\
              content:\n\
              \x20\x20\x20\x20[Arbitration opened] Arbitration for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverable). Awaiting the arbiter's verdict.\n\n\
-             **Step 5 — End this turn.** Do NOT `xmtp_send` anything to the User Agent.\n\n\
+             **Step 5 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
              - dispute_resolved → lost, funds refunded to the User Agent\n"
-        ),
+            )
+        }
 
         // ─── Scene 1: task is on-chain — thin cache-decision shim. Full playbook lives
         // in `generate_playbook` (fetched via `onchainos agent playbook ...`) and gets
@@ -538,61 +535,88 @@ pub async fn generate_next_action(
             // CODE-DRIVEN PATH: fetch service-list, match by serviceId, pre-compute price
             // gate, emit deterministic playbook. LLM only does the semantic capability
             // judgment (does task description fit service description?) and picks ONE
-            // of two pre-built actions (apply or xmtp_send-reject). Single turn, no
+            // of two pre-built actions (apply or okx-a2a session send-reject). Single turn, no
             // intermediate CLI calls in the LLM context.
+            // Field sourcing priority — `--message` envelope wins (it's the inbound
+            // system event payload, source-of-truth for this turn). Falls back to
+            // `prefetched` (GET /task API response) when the envelope omits a field.
             let p = prefetched;
-            let service_id = p.and_then(|x| x.service_id.as_deref()).filter(|s| !s.is_empty()).unwrap_or("");
-            // buyer's offered amount: prefer service-level, fall back to task-level
-            let offer_amount = p
-                .and_then(|x| x.service_token_amount.as_deref())
-                .filter(|s| !s.is_empty())
+            let msg_str = |k: &str| -> Option<&str> {
+                message.and_then(|m| m.get(k)).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+            };
+
+            let service_id = msg_str("serviceId")
+                .or_else(|| p.and_then(|x| x.service_id.as_deref()).filter(|s| !s.is_empty()))
+                .unwrap_or("");
+            // buyer's offered amount: prefer service-level over task-level; envelope over prefetched within each level.
+            let offer_amount = msg_str("serviceTokenAmount")
+                .or_else(|| p.and_then(|x| x.service_token_amount.as_deref()).filter(|s| !s.is_empty()))
+                .or_else(|| msg_str("tokenAmount"))
                 .or_else(|| p.map(|x| x.token_amount.as_str()).filter(|s| !s.is_empty()))
                 .unwrap_or("");
-            // buyer's token symbol — always use buyer's specified token (task-level)
-            let buyer_token_symbol = p.map(|x| x.token_symbol.as_str()).filter(|s| !s.is_empty() && *s != "?").unwrap_or("USDT");
-            let task_title = p.map(|x| x.title.as_str()).unwrap_or("");
-            let task_desc = p.map(|x| x.description.as_str()).unwrap_or("");
+            // buyer's token symbol — task-level; envelope wins.
+            let buyer_token_symbol = msg_str("tokenSymbol")
+                .or_else(|| p.map(|x| x.token_symbol.as_str()).filter(|s| !s.is_empty() && *s != "?"))
+                .unwrap_or("USDT");
+            let task_title = msg_str("jobTitle")
+                .or_else(|| msg_str("title"))
+                .or_else(|| p.map(|x| x.title.as_str()).filter(|s| !s.is_empty()))
+                .unwrap_or("");
+            let task_desc = msg_str("description")
+                .or_else(|| p.map(|x| x.description.as_str()).filter(|s| !s.is_empty()))
+                .unwrap_or("");
 
             if service_id.is_empty() {
-                // No designated serviceId → fall back to the generic JobCreated negotiation flow.
+                // No designated serviceId → notify the user, then end the turn.
+                let user_notify = super::content::job_asp_selected_no_service_notify(job_id);
                 format!(
                     "[Current state] job_asp_selected — designated by buyer, but no specific `serviceId` was pinned. jobId=`{job_id}` agentId={agent_id}\n\n\
-                     ⚡ Route to the standard JobCreated negotiation flow. Playbook cache check:\n\
-                     \x20\x20• Both `[JOBCREATED_PLAYBOOK_CACHE@{job_id}]` markers present → use the cached playbook.\n\
-                     \x20\x20• Missing → fetch:\n\
+                     **Notify the user, then end the turn** (🌐 translate template to user's language first):\n\
+                     {user_notify}\n\n\
                      ```bash\n\
-                     onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"job_created_playbook\",\"jobId\":\"{job_id}\"}}'\n\
+                     okx-a2a user notify --content \"<translated text>\"\n\
                      ```\n"
                 )
             } else {
                 // CODE: fetch service catalog and find the designated entry.
-                let svc_data = crate::commands::agent_commerce::task::common::spawn_service_list(agent_id).await.ok();
-                let matched = svc_data.as_ref().and_then(|v| {
-                    v.as_array()
-                        .and_then(|arr| arr.first())
-                        .and_then(|item| item.get("list"))
-                        .and_then(|list| list.as_array())
-                        .and_then(|list| list.iter().find(|s| s.get("serviceId").and_then(|v| v.as_str()) == Some(service_id)).cloned())
-                });
+                let matched = crate::commands::agent_commerce::task::common::find_service(agent_id, service_id).await.ok().flatten();
 
-                // Deterministic reject template (used for service-not-found / capability-mismatch / price-too-low).
+                // Build a reject template factory — the reason can be either a code-determined
+                // fixed string (passed verbatim) or the LLM-fillable `<reason>` placeholder.
                 // Backend off-chain endpoint: POST /priapi/v1/aieco/task/{jobId}/asp/reject — no signing required.
-                let reject_template = format!(
-                    "**REJECT path** — call the off-chain decline endpoint, then end the turn:\n\
-                     ```bash\n\
-                     onchainos agent asp-reject {job_id} --agent-id {agent_id} --reason \"<short reason: capability mismatch / price too low / designated service not registered>\"\n\
-                     ```\n\
-                     End the turn after the command returns. ❌ Do NOT call `apply`. ❌ Do NOT xmtp_send the buyer — `asp-reject` notifies the backend, which routes the decline to the buyer automatically.\n"
+                let build_reject_template = |reason_for_cli: &str, reason_for_notify: &str| {
+                    let notify_body = super::content::job_asp_selected_rejected_notify(job_id, reason_for_notify);
+                    format!(
+                        "**REJECT path** — run in order, then end the turn:\n\
+                         ```bash\n\
+                         onchainos agent asp-reject {job_id} --agent-id {agent_id} --reason \"{reason_for_cli}\"\n\
+                         ```\n\
+                         Then (🌐 translate template to user's language first):\n\
+                         {notify_body}\n\n\
+                         ```bash\n\
+                         okx-a2a user notify --content \"<translated text>\"\n\
+                         ```\n\
+                         ❌ Do NOT call `apply`. ❌ Do NOT okx-a2a session send the buyer.\n"
+                    )
+                };
+                // Generic LLM-fillable reject template (used by capability-mismatch / general fallbacks).
+                let reject_template = build_reject_template(
+                    "<short reason: capability mismatch / price too low / designated service not registered>",
+                    "<reason>",
                 );
 
                 match matched {
                     None => {
-                        // CODE-decided REJECT: service not in catalog.
+                        // CODE-decided REJECT: service not in catalog. Reason is fully known.
+                        let reject_template_fixed = build_reject_template(
+                            "designated service not registered",
+                            "designated service not registered",
+                        );
                         format!(
                             "[Auto-decision] ❌ REJECT — designated `serviceId={service_id}` is NOT in your registered catalog (service-list returned no match). This is the ONLY action; no LLM judgment needed.\n\n\
                              Task: {task_title}\n\
                              Buyer offer: {offer_amount} {buyer_token_symbol}\n\n\
-                             {reject_template}"
+                             {reject_template_fixed}"
                         )
                     }
                     Some(svc) => {
@@ -628,12 +652,26 @@ pub async fn generate_next_action(
                         };
 
                         // Deterministic apply command — uses buyer's token symbol (per spec).
+                        // After apply, push a user-facing notification via `okx-a2a user notify`.
+                        let apply_user_notify = super::content::job_asp_selected_accepted_notify(job_id);
+                        let apply_failed_notify = super::content::job_asp_selected_apply_failed_notify(job_id, "<one-line error from apply's stderr>");
                         let apply_template = format!(
-                            "**APPLY path**:\n\
+                            "**APPLY path** — run apply, then branch by exit code:\n\
                              ```bash\n\
                              onchainos agent apply {job_id} --agent-id {agent_id} --token-amount {offer_amount} --token-symbol {buyer_token_symbol}\n\
+                             ```\n\n\
+                             ✅ **On success** (exit code 0 + `txHash` in stdout) — notify the user (🌐 fill `<serviceName>` / `<offerAmount>` / `<tokenSymbol>` from [Auto-decision context] above, then translate):\n\
+                             {apply_user_notify}\n\n\
+                             ```bash\n\
+                             okx-a2a user notify --content \"<filled + translated text>\"\n\
                              ```\n\
-                             End the turn after apply; wait for the `provider_applied` system event.\n"
+                             Then end the turn; wait for the `provider_applied` system event.\n\n\
+                             ❌ **On failure** (non-zero exit / stderr / no txHash) — DO NOT proceed to the success notify. Push a failure notification instead (🌐 fill `<one-line error from apply's stderr>`, then translate):\n\
+                             {apply_failed_notify}\n\n\
+                             ```bash\n\
+                             okx-a2a user notify --content \"<filled + translated text>\"\n\
+                             ```\n\
+                             Then end the turn. Do NOT retry apply automatically — the user will decide manually.\n"
                         );
 
                         // Decide which branches the LLM can take, based on the code-computed price gate.
@@ -645,10 +683,17 @@ pub async fn generate_next_action(
                                  {apply_template}\n\
                                  {reject_template}"
                             ),
-                            "TOO_LOW" => format!(
-                                "**Auto-decision** — price gate already FAILED in code (see Price below). Capability is moot; run **REJECT path** regardless.\n\n\
-                                 {reject_template}"
-                            ),
+                            "TOO_LOW" => {
+                                // Price-too-low reason is fully determined in code; no LLM judgment.
+                                let too_low_reason = format!(
+                                    "price below registered fee: offer {offer_amount} {buyer_token_symbol} < registered fee {svc_fee} {buyer_token_symbol}"
+                                );
+                                let too_low_template = build_reject_template(&too_low_reason, &too_low_reason);
+                                format!(
+                                    "**Auto-decision** — price gate already FAILED in code (see Price below). Capability is moot; run **REJECT path** regardless.\n\n\
+                                     {too_low_template}"
+                                )
+                            },
                             "ESTIMATE" | "PARSE_FAIL" => format!(
                                 "**LLM judgment** — two questions:\n\
                                  \x20\x20• Capability: does the service description match the task?\n\
@@ -692,16 +737,16 @@ pub async fn generate_next_action(
              \x20\x20② **Apply on-chain** (Step 4) — `onchainos agent apply` (ONLY after literal `[intent:confirm]` arrives)\n\
              \x20\x20③ Wait for `provider_applied` system notification (chain confirms your apply)\n\
              \x20\x20④ User Agent calls `confirm-accept` → wait for `job_accepted` system notification (escrow funded)\n\
-             \x20\x20⑤ ONLY THEN — in the `job_accepted` script's Step 2 — execute the task + `xmtp_send` deliverable + `onchainos agent deliver`\n\n\
+             \x20\x20⑤ ONLY THEN — in the `job_accepted` script's Step 2 — execute the task + `okx-a2a session send` deliverable + `onchainos agent deliver`\n\n\
              ❌ **Forbidden in this scene** (each rule below has caused a live incident):\n\
              \x20\x20• `onchainos agent deliver` — gated by `job_accepted` (≥ 2 events later). `[intent:confirm]` authorizes **only** Step 4 `apply`, NOT `deliver`. Skipping ②③ and going straight to `deliver` = apply never ran + escrow never funded + work given away for free.\n\
              \x20\x20• `onchainos agent apply` before literal `[intent:confirm]` — apply is on-chain (gas + signing + broadcast); a failed negotiation cannot be undone. Natural-language `agree / accept / please apply` does NOT count.\n\
              \x20\x20• Producing work content (wttr.in / image generation / search / external query / etc.) — execution belongs to step ⑤ only.\n\
-             \x20\x20• `xmtp_send` with `delivered` / `here is the result` / `Status: ✅ Delivered` / `please confirm and pay` / `data provided` phrasing — even if work was already generated, do NOT send it; it tricks the User Agent into skipping confirm-accept.\n\
-             \x20\x20• Self-confirming phrasing such as `I confirm the three items / three items confirmed / I will apply immediately` in your `xmtp_send` — the three are questions to ASK the User Agent, not for you to declare done unilaterally.\n\n\
+             \x20\x20• `okx-a2a session send` with `delivered` / `here is the result` / `Status: ✅ Delivered` / `please confirm and pay` / `data provided` phrasing — even if work was already generated, do NOT send it; it tricks the User Agent into skipping confirm-accept.\n\
+             \x20\x20• Self-confirming phrasing such as `I confirm the three items / three items confirmed / I will apply immediately` in your `okx-a2a session send` — the three are questions to ASK the User Agent, not for you to declare done unilaterally.\n\n\
              🛑 **What counts as `received [intent:propose]`**: this turn's inbound must literally contain the `[intent:propose]` marker. Natural-language inquiry with embedded fields (budget / payment preference / etc.) is **NOT** propose — that's the buyer's wish list in prose, not the handshake. No literal marker → `[intent:ack]` forbidden; go to Step 3 text negotiation.\n\n\
              🛑 **What counts as `received [intent:confirm]`**: ONLY an actual inbound `a2a-agent-chat` envelope in this turn's `tool_result` whose `content` literally contains `[intent:confirm]` AND whose `sender.role == 1`. Your own thinking / narration / pre-declaration does NOT count. After sending `[intent:ack]`, end the turn and wait for the next inbound; do NOT predict / pre-narrate that confirm has arrived, and do NOT `apply` based on that prediction. If no qualifying inbound exists in this turn, **apply is forbidden — full stop**.\n\n\
-             🔴 **Real incident**: provider received `Check weather; escrow payment` inquiry → called wttr.in → `xmtp_sent` weather table with `Status: delivered` → User Agent never went through confirm-accept → escrow never funded → provider produced work for free + task stuck. CLI bails `deliver`, but the work content already leaked via `xmtp_send`.\n\n\
+             🔴 **Real incident**: provider received `Check weather; escrow payment` inquiry → called wttr.in → `okx-a2a session sent` weather table with `Status: delivered` → User Agent never went through confirm-accept → escrow never funded → provider produced work for free + task stuck. CLI bails `deliver`, but the work content already leaked via `okx-a2a session send`.\n\n\
              **Three-step handshake protocol** (iron rule of the buyer protocol; enforced in User Agent's code):\n\
              \x20\x201) `[intent:propose]` (buyer → provider)\n\
              \x20\x202) `[intent:ack]` or `[intent:counter]` (provider → buyer) or `[intent:reject]` (either side rejects)\n\
@@ -713,7 +758,7 @@ pub async fn generate_next_action(
              **The inbound you received in the same turn determines what you can do**:\n\
              \x20\x20• Free-form inquiry (no `[intent:propose]` literal — even if it lists budget / payment) → Step 3 text negotiation only; **do NOT `[intent:ack]`**, **do NOT apply**.\n\
              \x20\x20• `[intent:propose]` literal marker present → Step 3.5 — reply with `[intent:ack]` / `[intent:counter]` / `[intent:reject]`; **do NOT apply**.\n\
-             \x20\x20• User Agent's `[intent:confirm]` → verify fields match, then go to Step 4 to run `apply` directly. ❌ Do NOT `xmtp_send` anything in response — no `[intent:ack]`, no `[intent:confirm_ack]`, no thanks / acknowledgement filler. The handshake ENDS at `[intent:confirm]` (asymmetric — only PROPOSE→ACK is paired; CONFIRM is consumed silently).\n\
+             \x20\x20• User Agent's `[intent:confirm]` → verify fields match, then go to Step 4 to run `apply` directly. ❌ Do NOT `okx-a2a session send` anything in response — no `[intent:ack]`, no `[intent:confirm_ack]`, no thanks / acknowledgement filler. The handshake ENDS at `[intent:confirm]` (asymmetric — only PROPOSE→ACK is paired; CONFIRM is consumed silently).\n\
              \x20\x20• No literal `[intent:confirm]` in this turn's inbound → **never apply**, no matter what the User Agent said in natural language.\n\n\
              ❌ **Do NOT be led on by the User Agent's natural language**:\n\
              \x20\x20• User Agent says `escrow / 担保` = **paymentMode on-chain config description** (state-machine semantics), **NOT a command to deliver immediately**\n\
@@ -721,7 +766,7 @@ pub async fn generate_next_action(
              \x20\x20• User Agent says `I'm in a rush / just do it for me` → still follow the protocol handshake; **do NOT skip negotiation**\n\n\
              📋 **Error-pattern case studies** (all real incidents; do not repeat):\n\n\
              ❌ Case 1: User Agent sends `Check the weather in Changsha; escrow payment`\n\
-             \x20\x20Wrong: provider calls wttr.in directly → xmtp_send full weather table + writes `Status: delivered`\n\
+             \x20\x20Wrong: provider calls wttr.in directly → okx-a2a session send full weather table + writes `Status: delivered`\n\
              \x20\x20Right: Step 3 natural language: `I can do this task; workload at 0.01 USDG is reasonable; escrow OK. Ready when you are — let's lock in the terms.`\n\n\
              ❌ Case 2: User Agent sends `I'm in a rush; just do it for me`\n\
              \x20\x20Wrong: agent thinks `the user is urgent` and skips negotiation to do the work\n\
@@ -732,12 +777,12 @@ pub async fn generate_next_action(
              ❌ Case 4 (high risk — the inquiry contains the full task description + expected deliverable format): User Agent sends\n\
              \x20\x20`Help me find recommended DeFi projects, including name/category/highlights. May I ask the quote, delivery time, and payment method?`\n\
              \x20\x20Wrong: agent parses this as `a concrete query request + three questions` → calls a DeFi data API →\n\
-             \x20\x20\x20\x20xmtp_sends the project table in the first message + replies `free, instant delivery, no payment required`\n\
+             \x20\x20\x20\x20okx-a2a session sends the project table in the first message + replies `free, instant delivery, no payment required`\n\
              \x20\x20Right: this is an **inquiry**, **NOT a green light to start work**. The User Agent putting task details in the inquiry is for you to **assess your capability / quote**, not to deliver immediately.\n\
              \x20\x20\x20\x20Step 3 natural language: `I can do DeFi project recommendations, based on OKX DeFi data.\n\
              \x20\x20\x20\x20\x20\x20Workload roughly 0.X USDG/USDT (based on search + curation time); what's your budget?\n\
              \x20\x20\x20\x20\x20\x20Delivery time ~N minutes. paymentMode preference: escrow (more stable; funds in custody). Ready when you are — let's lock in the terms.`\n\n\
-             ❌ Case 5 (high risk — self-quoting `free` price): the agent looks at a simple task or public data and xmtp_sends back\n\
+             ❌ Case 5 (high risk — self-quoting `free` price): the agent looks at a simple task or public data and okx-a2a session sends back\n\
              \x20\x20`Quote: free` / `0 USDT` / `market rate` / `up to your discretion`\n\
              \x20\x20Wrong: pricing is not for the agent to decide on its own — the task has escrow funding / on-chain actions / reputation accrual; the agent must not unilaterally discard this incentive structure.\n\
              \x20\x20\x20\x20`Free` = simultaneously skipping the three negotiation items + skipping on-chain escrow = the entire escrow protocol breaks.\n\
@@ -751,16 +796,14 @@ pub async fn generate_next_action(
              **Step 2 — Branch by visibility + professional match**:\n\n\
              ━━━━━━━━━ Branch A: visibility = Public (visibility=0) ━━━━━━━━━\n\n\
              A-Step 0 — Determine who initiates: **was this turn triggered by an a2a-agent-chat inbound from the User Agent** (`sender.role===1`)?\n\
-             \x20\x20• YES → the group + session already exist (the User Agent created them when sending the inquiry); **skip A-Step 1 entirely** and go straight to A-Step 2 / Step 3 using the inbound's `sessionKey`. Do NOT call `xmtp_start_conversation` again — it would create a duplicate group.\n\
+             \x20\x20• YES → the group + session already exist (the User Agent created them when sending the inquiry); **skip A-Step 1 entirely** and go straight to A-Step 2 / Step 3 using the inbound's `sessionKey`. Do NOT call `okx-a2a session create` again — it would create a duplicate group.\n\
              \x20\x20• NO (you arrived here because the user said \"take task X\" or similar; there is no inbound a2a-agent-chat envelope in this turn's tool_result) → run A-Step 1 to create the group proactively.\n\n\
-             A-Step 1 (only when YOU initiate): call `xmtp_start_conversation` with these arguments to create the group and the session:\n\
-             \x20\x20tool: xmtp_start_conversation\n\
-             \x20\x20arguments:\n\
-             \x20\x20\x20\x20myAgentId: \"{agent_id}\"\n\
-             \x20\x20\x20\x20toAgentId: \"<task.buyerAgentId from `common context`>\"\n\
-             \x20\x20\x20\x20jobId: \"{job_id}\"\n\
-             \x20\x20On success returns sessionKey + xmtpGroupId (use the returned sessionKey directly for subsequent xmtp_send in this turn; do NOT call session_status again — during bootstrap it may return the user session's key, which is wrong).\n\n\
-             A-Step 2: once the group exists (whether YOU created it in A-Step 1 or the User Agent created it earlier), **fall through directly to Step 3 below to run the first negotiation round** (Step 3 ends with the full `xmtp_send` signature + content guidance).\n\n\
+             A-Step 1 (only when YOU initiate): run `okx-a2a session create` to create the group and the session:\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id <task.buyerAgentId from `common context`>\n\
+             \x20\x20```\n\
+             \x20\x20On success returns sessionKey + xmtpGroupId. Subsequent `okx-a2a session send` in this turn uses `--job-id` + `--to-agent-id` addressing directly — no sessionKey threading needed.\n\n\
+             A-Step 2: once the group exists (whether YOU created it in A-Step 1 or the User Agent created it earlier), **fall through directly to Step 3 below to run the first negotiation round** (Step 3 ends with the full `okx-a2a session send` signature + content guidance).\n\n\
              ━━━━━━━━━ Branch B: visibility = Private (visibility=1) — passive wait ━━━━━━━━━\n\n\
              B-Step 1: **Do NOT create the group proactively**. Wait for the User Agent's a2a-agent-chat envelope to arrive first (only the User Agent has permission to designate a provider).\n\
              \x20\x20End this turn; wait for the next inbound to arrive, then run Step 3 (three-item negotiation).\n\
@@ -768,22 +811,24 @@ pub async fn generate_next_action(
              ━━━━━━━━━ Shared: professional matching judgment ━━━━━━━━━\n\n\
              Look at the `Professional matching check` block in context:\n\
              - Domain match → go to Step 3 (private task: wait for User Agent first; public task: A-Step 2 proactive send)\n\
-             - Domain mismatch → first call `session_status` to get sessionKey, then call `xmtp_send`:\n\
-             \x20\x20\x20\x20tool: xmtp_send\n\
-             \x20\x20\x20\x20arguments:\n\
-             \x20\x20\x20\x20\x20\x20sessionKey: \"<verbatim from session_status>\"\n\
-             \x20\x20\x20\x20\x20\x20content: \"<rejection template provided by the `Professional matching check` block in context; plain natural language>\"\n\
+             - Domain mismatch → run `okx-a2a session send` (resolve `<buyerAgentId>` from task fields):\n\
+             \x20\x20\x20\x20```bash\n\
+             \x20\x20\x20\x20okx-a2a session send \\\n\
+             \x20\x20\x20\x20\x20\x20--job-id {job_id} \\\n\
+             \x20\x20\x20\x20\x20\x20--to-agent-id <buyerAgentId> \\\n\
+             \x20\x20\x20\x20\x20\x20--content \"<rejection template provided by the `Professional matching check` block in context; plain natural language>\"\n\
+             \x20\x20\x20\x20```\n\
              \x20\x20End the turn after sending.\n\n\
              **Step 3 — First negotiation round (natural language; you may counter-offer / express paymentMode preference):**\n\n\
              🔍 **Mandatory pre-Step-3 self-check** (defend against literal-pattern induction):\n\
              \x20\x201. What message did I just receive from the User Agent?\n\
-             \x20\x20\x20• Free-form inquiry / [intent:propose] / [intent:counter] / [intent:confirm] / natural-language follow-up (**including any follow-up new price after you previously sent a natural-language refusal or counter** — User Agent re-quoting = continuing negotiation, NOT terminated) → ✅ go negotiate; xmtp_send may only contain a text stance or the literal `[intent:*]`\n\
+             \x20\x20\x20• Free-form inquiry / [intent:propose] / [intent:counter] / [intent:confirm] / natural-language follow-up (**including any follow-up new price after you previously sent a natural-language refusal or counter** — User Agent re-quoting = continuing negotiation, NOT terminated) → ✅ go negotiate; okx-a2a session send may only contain a text stance or the literal `[intent:*]`\n\
              \x20\x20\x20• `[intent:reject]` (literal marker from User Agent) → this specific round ends; **do not reply** to the [intent:reject] itself; end this turn. BUT [intent:reject] is **soft-terminal** — if the User Agent's NEXT message (in a later turn) is a fresh `[intent:propose]` with materially different terms, that means they're reopening; resume negotiation per the normal decision criteria. Your OWN previous natural-language rejection / counter-offer also does NOT terminate the negotiation; if the User Agent comes back with a new price (higher / same / lower), you MUST re-evaluate.\n\
              \x20\x20\x20• `job_accepted` system notification → ❌ that's the JobAccepted arm, not JobCreated; immediately re-call next-action\n\
              \x20\x202. Am I about to call any external tool (wttr.in / search / image generation, etc.) to produce work content?\n\
              \x20\x20\x20• Yes → ❌ stop; this violates the negotiation-phase iron rule; switch to Step-3 text negotiation\n\
              \x20\x20\x20• No → ✅ continue\n\
-             \x20\x203. Am I about to send `deliverable / data / delivered` content in xmtp_send?\n\
+             \x20\x203. Am I about to send `deliverable / data / delivered` content in okx-a2a session send?\n\
              \x20\x20\x20• Yes → ❌ stop; switch to a Step-3 text negotiation stance\n\
              \x20\x20\x20• No → ✅ continue\n\n\
              ⚠️ **The initial token symbol must be read from the tokenSymbol field of the task details** (USDT or USDG). **Do NOT assume USDT** — many tasks use USDG. The token symbol is open to negotiation, but both sides must explicitly agree.\n\n\
@@ -804,7 +849,7 @@ pub async fn generate_next_action(
              \x20\x20\x20\x20- ❌ Don't self-discount to 0 / free — see the iron rule above: `price is always asked, never assumed`\n\
              \x20\x20\x20\x20- Simple query tasks (1 API call / 1 datum) typically 0.001–0.05 USDT; complex tasks (multi-step / long text generation / reports) 0.05–1 USDT; deep research > 1 USDT requires solid justification.\n\n\
              🛑 **The one exception where you may counter DOWN**: if the User Agent's offer is absurdly high (e.g. 100× of comparable workload) AND the task is small enough that you'd feel uncomfortable accepting (ethical / reputation concern), you may counter down to a fair-market price. **This is rare**; default behavior for high offers is ACCEPT.\n\n\
-             Based on the above, one `xmtp_send` expresses three things (**NOT a mechanical three-choice; bring your own stance**):\n\
+             Based on the above, one `okx-a2a session send` expresses three things (**NOT a mechanical three-choice; bring your own stance**):\n\
              \x20\x201) Capability / acceptance criteria: can you do it, any follow-up questions\n\
              \x20\x202) **Price stance — DEFAULT to COUNTER, NOT REJECT** when the User Agent's price differs from your expectation:\n\
              \x20\x20\x20• Accept original price (only when User Agent's price ≥ your registration price)\n\
@@ -836,35 +881,44 @@ pub async fn generate_next_action(
              \x20\x20• User Agent's tokenAmount is **materially below your expectation** (>10% gap; User Agent did not adopt your Step 3 counter / counter margin too small) → COUNTER UP and keep negotiating; do NOT reluctantly ACK and accept a bad deal.\n\
              \x20\x20• paymentMode is opposite to the preference you expressed in Step 3, and amount is non-trivial → COUNTER to change paymentMode.\n\n\
              🛑 **Reminder: NEVER counter DOWN from a high offer**. If the User Agent gives more than you asked for, that is the deal closing — ACK immediately. Countering down here is a bug pattern; one real incident lost ~0.7 USDT this way (see Step 3 iron rule above).\n\n\
-             ▸ **Agree to everything** → first call `session_status` to get sessionKey, then call `xmtp_send` with these arguments (you MUST use this content format strictly, echoing every field verbatim):\n\
-             \x20\x20tool: xmtp_send\n\
-             \x20\x20arguments:\n\
-             \x20\x20\x20\x20sessionKey: \"<verbatim from session_status>\"\n\
-             \x20\x20\x20\x20content:\n\
-             \x20\x20\x20\x20\x20\x20jobId: <exactly as in PROPOSE>\n\
-             \x20\x20\x20\x20\x20\x20paymentMode: <exactly as in PROPOSE>\n\
-             \x20\x20\x20\x20\x20\x20tokenSymbol: <exactly as in PROPOSE>\n\
-             \x20\x20\x20\x20\x20\x20tokenAmount: <exactly as in PROPOSE>\n\
-             \x20\x20\x20\x20\x20\x20[intent:ack]\n\n\
-             ▸ **Partial disagreement** (e.g. price too low) → call `session_status` first, then `xmtp_send` with these arguments (fill in your desired values):\n\
-             \x20\x20tool: xmtp_send\n\
-             \x20\x20arguments:\n\
-             \x20\x20\x20\x20sessionKey: \"<verbatim from session_status>\"\n\
-             \x20\x20\x20\x20content:\n\
-             \x20\x20\x20\x20\x20\x20jobId: <same as PROPOSE>\n\
-             \x20\x20\x20\x20\x20\x20paymentMode: <unchanged if you agree; your version if you disagree>\n\
-             \x20\x20\x20\x20\x20\x20tokenSymbol: <unchanged if you agree; your desired symbol if you disagree>\n\
-             \x20\x20\x20\x20\x20\x20tokenAmount: <your desired amount>\n\
-             \x20\x20\x20\x20\x20\x20reason: <brief explanation of the change>\n\
-             \x20\x20\x20\x20\x20\x20[intent:counter]\n\n\
-             ▸ **Full rejection** → call `session_status` first, then `xmtp_send` with these arguments to end negotiation:\n\
-             \x20\x20tool: xmtp_send\n\
-             \x20\x20arguments:\n\
-             \x20\x20\x20\x20sessionKey: \"<verbatim from session_status>\"\n\
-             \x20\x20\x20\x20content:\n\
-             \x20\x20\x20\x20\x20\x20jobId: <same as PROPOSE>\n\
-             \x20\x20\x20\x20\x20\x20reason: <brief reason for rejection, e.g. `price below cost`, `cannot meet the delivery deadline`>\n\
-             \x20\x20\x20\x20\x20\x20[intent:reject]\n\
+             ▸ **Agree to everything** → run `okx-a2a session send` (you MUST use this content format strictly, echoing every field verbatim; resolve `<buyerAgentId>` from task fields):\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a session send \\\n\
+             \x20\x20\x20\x20--job-id {job_id} \\\n\
+             \x20\x20\x20\x20--to-agent-id <buyerAgentId> \\\n\
+             \x20\x20\x20\x20--content \"<content shown below>\"\n\
+             \x20\x20```\n\
+             \x20\x20content:\n\
+             \x20\x20\x20\x20jobId: <exactly as in PROPOSE>\n\
+             \x20\x20\x20\x20paymentMode: <exactly as in PROPOSE>\n\
+             \x20\x20\x20\x20tokenSymbol: <exactly as in PROPOSE>\n\
+             \x20\x20\x20\x20tokenAmount: <exactly as in PROPOSE>\n\
+             \x20\x20\x20\x20[intent:ack]\n\n\
+             ▸ **Partial disagreement** (e.g. price too low) → run `okx-a2a session send` (fill in your desired values; resolve `<buyerAgentId>` from task fields):\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a session send \\\n\
+             \x20\x20\x20\x20--job-id {job_id} \\\n\
+             \x20\x20\x20\x20--to-agent-id <buyerAgentId> \\\n\
+             \x20\x20\x20\x20--content \"<content shown below>\"\n\
+             \x20\x20```\n\
+             \x20\x20content:\n\
+             \x20\x20\x20\x20jobId: <same as PROPOSE>\n\
+             \x20\x20\x20\x20paymentMode: <unchanged if you agree; your version if you disagree>\n\
+             \x20\x20\x20\x20tokenSymbol: <unchanged if you agree; your desired symbol if you disagree>\n\
+             \x20\x20\x20\x20tokenAmount: <your desired amount>\n\
+             \x20\x20\x20\x20reason: <brief explanation of the change>\n\
+             \x20\x20\x20\x20[intent:counter]\n\n\
+             ▸ **Full rejection** → run `okx-a2a session send` to end negotiation (resolve `<buyerAgentId>` from task fields):\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a session send \\\n\
+             \x20\x20\x20\x20--job-id {job_id} \\\n\
+             \x20\x20\x20\x20--to-agent-id <buyerAgentId> \\\n\
+             \x20\x20\x20\x20--content \"<content shown below>\"\n\
+             \x20\x20```\n\
+             \x20\x20content:\n\
+             \x20\x20\x20\x20jobId: <same as PROPOSE>\n\
+             \x20\x20\x20\x20reason: <brief reason for rejection, e.g. `price below cost`, `cannot meet the delivery deadline`>\n\
+             \x20\x20\x20\x20[intent:reject]\n\
              \x20\x20After sending, **end this turn**; do not reply to subsequent User Agent messages.\n\n\
              ⚠️ After replying with [intent:ack], **end this turn**; wait for the User Agent to send [intent:confirm] (step 3 of the three-step handshake; the buyer will send it after verifying your ACK fields match). **Before [intent:confirm] arrives, do NOT run any onchainos CLI (apply)**.\n\
              ⚠️ If what arrives instead is `[intent:reject]` rather than `[intent:confirm]` → User Agent terminated negotiation; **do not reply**; end this turn.\n\n\
@@ -878,15 +932,17 @@ pub async fn generate_next_action(
              ```\n\n\
              **Verify field by field** whether [intent:confirm] is fully consistent with the [intent:ack] you previously sent:\n\
              \x20\x20• All match → negotiation officially locked; proceed to Step 4 to run apply\n\
-             \x20\x20• Any field differs → treat as tampering; first call `session_status` to get sessionKey, then call `xmtp_send` with these arguments (point out which field is wrong in the content); **do NOT apply**; end the turn:\n\
-             \x20\x20\x20\x20tool: xmtp_send\n\
-             \x20\x20\x20\x20arguments:\n\
-             \x20\x20\x20\x20\x20\x20sessionKey: \"<verbatim from session_status>\"\n\
-             \x20\x20\x20\x20\x20\x20content: \"Field mismatch detected: your [intent:confirm] does not match my prior [intent:ack] on <name the specific field that differs and what each side sent>. Please re-send [intent:propose] with corrected fields if you still want to proceed.\"\n\n\
-             🛑🛑🛑 **HARDSTOP — `[intent:confirm]` IS NOT followed by `[intent:ack]`**: the handshake is asymmetric. The full sequence is `[intent:propose]` (User Agent → ASP) → `[intent:ack]` (ASP → User Agent) → `[intent:confirm]` (User Agent → ASP) — **and stops**. `[intent:confirm]` is the FINAL handshake step; the ASP does NOT echo / acknowledge / reply with `[intent:ack]` (or `[intent:confirm_ack]` / `[intent:done]` / any other marker) afterwards. On receiving `[intent:confirm]`, the ASP's **only** next action is Step 4 (`onchainos agent apply`) — no `xmtp_send` first, no acknowledgement message, no \"received, applying\" filler. The User Agent runs `confirm-accept` immediately after sending `[intent:confirm]` and does NOT wait for your ACK; a stray `[intent:ack]` from you = pollutes the User Agent's three-step handshake validator + may cause the User Agent to loop / re-emit `[intent:propose]` / silently fail. 🔴 Real incident: ASP received `[intent:confirm]` and reflexively sent `[intent:ack]` back; the User Agent's handshake state machine rejected the late ACK as protocol violation → negotiation history corrupted.\n\n\
-             🛑 **After [intent:confirm] fields fully match, only perform the business action in Step 4; strictly do NOT xmtp_send any ACK / thanks / P2P message to the User Agent** —\n\
+             \x20\x20• Any field differs → treat as tampering; run `okx-a2a session send` (point out which field is wrong in the content; resolve `<buyerAgentId>` from task fields); **do NOT apply**; end the turn:\n\
+             \x20\x20\x20\x20```bash\n\
+             \x20\x20\x20\x20okx-a2a session send \\\n\
+             \x20\x20\x20\x20\x20\x20--job-id {job_id} \\\n\
+             \x20\x20\x20\x20\x20\x20--to-agent-id <buyerAgentId> \\\n\
+             \x20\x20\x20\x20\x20\x20--content \"Field mismatch detected: your [intent:confirm] does not match my prior [intent:ack] on <name the specific field that differs and what each side sent>. Please re-send [intent:propose] with corrected fields if you still want to proceed.\"\n\
+             \x20\x20\x20\x20```\n\n\
+             🛑🛑🛑 **HARDSTOP — `[intent:confirm]` IS NOT followed by `[intent:ack]`**: the handshake is asymmetric. The full sequence is `[intent:propose]` (User Agent → ASP) → `[intent:ack]` (ASP → User Agent) → `[intent:confirm]` (User Agent → ASP) — **and stops**. `[intent:confirm]` is the FINAL handshake step; the ASP does NOT echo / acknowledge / reply with `[intent:ack]` (or `[intent:confirm_ack]` / `[intent:done]` / any other marker) afterwards. On receiving `[intent:confirm]`, the ASP's **only** next action is Step 4 (`onchainos agent apply`) — no `okx-a2a session send` first, no acknowledgement message, no \"received, applying\" filler. The User Agent runs `confirm-accept` immediately after sending `[intent:confirm]` and does NOT wait for your ACK; a stray `[intent:ack]` from you = pollutes the User Agent's three-step handshake validator + may cause the User Agent to loop / re-emit `[intent:propose]` / silently fail. 🔴 Real incident: ASP received `[intent:confirm]` and reflexively sent `[intent:ack]` back; the User Agent's handshake state machine rejected the late ACK as protocol violation → negotiation history corrupted.\n\n\
+             🛑 **After [intent:confirm] fields fully match, only perform the business action in Step 4; strictly do NOT okx-a2a session send any ACK / thanks / P2P message to the User Agent** —\n\
              \x20\x20• escrow path: run apply CLI → end the turn directly (wait for the provider_applied notification)\n\
-             \x20\x20• The User Agent runs confirm-accept immediately after sending [intent:confirm], not waiting for your ACK; your ACK would conversely trigger a User Agent loop + the `no repeated xmtp_send within one turn` iron rule.\n\n\
+             \x20\x20• The User Agent runs confirm-accept immediately after sending [intent:confirm], not waiting for your ACK; your ACK would conversely trigger a User Agent loop + the `no repeated okx-a2a session send within one turn` iron rule.\n\n\
              ⚠️ Do NOT treat the User Agent's natural-language `agreed / OK / please apply` as [intent:confirm] — only literal messages carrying the `[intent:confirm]` marker count; anything else is treated as incomplete negotiation.\n\n\
              🛑 **Protocol literal whitelist**: `[intent:*]` has exactly 5 legal values — `[intent:propose]` / `[intent:ack]` / `[intent:counter]` / `[intent:confirm]` / `[intent:reject]`. **Strictly do NOT invent**: `[intent:confirm_ack]` / `[intent:confirm_ok]` / `[intent:done]` / `[confirm_ack]` etc. are hallucinations; the User Agent's code does not recognize them, and sending them pollutes the conversation history. `[intent:confirm]` **has no corresponding ACK** (unlike PROPOSE→ACK, which is a symmetric handshake) — on receiving CONFIRM, go straight to Step 4's business action; **do not reply with any P2P message**.\n\n\
              **Step 4 — After receiving [intent:confirm] and verifying consistency, run apply on-chain:**\n\n\
@@ -900,14 +956,16 @@ pub async fn generate_next_action(
              apply is an on-chain signing action; the CLI internally does unsigned info → sign → broadcast; wait for the on-chain provider_applied notification.\n\n\
              ⚠️ **After apply, end the turn directly**:\n\
              ❌ **Do NOT call `onchainos agent deliver`** in this scene — deliver is gated by the `job_accepted` system notification which arrives ≥ 2 events later (provider_applied → confirm-accept → job_accepted). CLI rejects with `status != accepted` but you should never even attempt it. See **Hard rules** at the top of this scene.\n\
-             ❌ Do NOT push to the user with `xmtp_dispatch_user` — `apply submitted / txHash / awaiting provider_applied` is filler state\n\
-             ❌ Do NOT send any ACK / thanks / `started processing` filler to the User Agent via `xmtp_send` — at this point the User Agent is already running confirm-accept; your ACK is noise and triggers the User Agent's `no repeated xmtp_send within one turn` iron rule (see SKILL.md `🔒 Communication Boundary and Security Gate`)\n\
+             ❌ Do NOT push to the user with `okx-a2a user notify` — `apply submitted / txHash / awaiting provider_applied` is filler state\n\
+             ❌ Do NOT send any ACK / thanks / `started processing` filler to the User Agent via `okx-a2a session send` — at this point the User Agent is already running confirm-accept; your ACK is noise and triggers the User Agent's `no repeated okx-a2a session send within one turn` iron rule (see SKILL.md `🔒 Communication Boundary and Security Gate`)\n\
              ✅ The next step happens only after the on-chain `provider_applied` notification arrives and next-action is called again.\n\n\
-             **If any item is not agreed upon** → first call `session_status` to get sessionKey, then call `xmtp_send`:\n\
-             \x20\x20tool: xmtp_send\n\
-             \x20\x20arguments:\n\
-             \x20\x20\x20\x20sessionKey: \"<verbatim from session_status>\"\n\
-             \x20\x20\x20\x20content: \"Sorry, cannot accept the current terms\"\n\
+             **If any item is not agreed upon** → run `okx-a2a session send` (resolve `<buyerAgentId>` from task fields):\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a session send \\\n\
+             \x20\x20\x20\x20--job-id {job_id} \\\n\
+             \x20\x20\x20\x20--to-agent-id <buyerAgentId> \\\n\
+             \x20\x20\x20\x20--content \"Sorry, cannot accept the current terms\"\n\
+             \x20\x20```\n\
              \x20\x20End the turn after sending.\n\n\
              [Follow-up events]\n\
              - apply on-chain succeeds → receive `provider_applied` system notification → call next-action again for the script\n"
@@ -946,8 +1004,8 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /claimAutoComplete → uopData → sign uopHash → broadcast. Wait for the on-chain `job_auto_completed` notification.\n\n\
              ⚠️ **After claim-auto-complete, end the turn directly**:\n\
-             - Do NOT send any xmtp_send to the User Agent (filler in between; wait until the job_auto_completed on-chain receipt arrives)\n\
-             - Do NOT push to the user with `xmtp_dispatch_user`\n\n\
+             - Do NOT send any okx-a2a session send to the User Agent (filler in between; wait until the job_auto_completed on-chain receipt arrives)\n\
+             - Do NOT push to the user with `okx-a2a user notify`\n\n\
              [Follow-up events]\n\
              - `job_auto_completed` (status=success) → next-action provides the funds-received script (push to user; conversation retained)\n\
              - `job_auto_completed` (status=failed)  → retry claim-auto-complete per errorCode\n"
@@ -964,19 +1022,20 @@ pub async fn generate_next_action(
              [Role] ASP (Agent Service Provider)\n\n\
              {task_fields}\n\
              **Step 1 — Check the envelope's `message.code` field:**\n\
-             - `code` non-zero (failed) → call `xmtp_dispatch_user` with these arguments, then end the turn:\n\
-             \x20\x20tool: xmtp_dispatch_user\n\
-             \x20\x20arguments:\n\
-             \x20\x20\x20\x20content: \"{failed_notify}\"\n\
+             - `code` non-zero (failed) → run `okx-a2a user notify`, then end the turn:\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a user notify --content \"{failed_notify}\"\n\
+             \x20\x20```\n\
              - `code` = 0 (success) → continue to Step 2.\n\n\
-             **Step 2 — Use `xmtp_dispatch_user` to notify the user of fund arrival**:\n\n\
-             Field values for the `content` template come from the **Task fields** block above.\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             tool: xmtp_dispatch_user\n\
-             arguments:\n\
-             \x20\x20content:\n\
+             **Step 2 — Notify the user of fund arrival via `okx-a2a user notify`**:\n\n\
+             Field values for the content template come from the **Task fields** block above.\n\
+             🌐 **Localize first** — rewrite the content below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             ```\n\
+             content:\n\
              {user_notify}\n\n\
-             ⚠️ Do NOT send `xmtp_send` filler to the User Agent — both sides receive the `job_auto_completed` system event.\n\n\
+             ⚠️ Do NOT send `okx-a2a session send` filler to the User Agent — both sides receive the `job_auto_completed` system event.\n\n\
              🛑 Do NOT end this turn — Step 3 (auto-rate) and Step 3.5 (notify rating) below are MANDATORY.\n\n\
              **Step 3 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
              Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
@@ -988,9 +1047,12 @@ pub async fn generate_next_action(
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 3.5 — Notify the user of the submitted rating:**\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
+             🌐 **Localize first** — rewrite the content below in the user's language before sending (mandatory; see the `[Localization]` block at the top of this output). Do NOT pass the English template verbatim to a non-English user.\n\
+             After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             ```\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
              {rating_notify}\n\
              - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
@@ -1014,11 +1076,11 @@ pub async fn generate_next_action(
             format!(
             "[System notification] submit_deadline_warn (deadline for submitting the deliverable is approaching)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the deadline decision (submit immediately vs let it time out) to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `xmtp_dispatch_user`)**.\n\
-             `xmtp_dispatch_user` is a pure notification: user replies cannot be relayed back to the sub session → the user cannot signal `submit now` → the deadline silently expires → auto-refund to the User Agent. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `xmtp_prompt_user` so the user session can relay the decision back.\n\
+             🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the deadline decision (submit immediately vs let it time out) to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `okx-a2a user notify`)**.\n\
+             `okx-a2a user notify` is a pure notification: user replies cannot be relayed back to the sub session → the user cannot signal `submit now` → the deadline silently expires → auto-refund to the User Agent. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `okx-a2a user decision-request` so the user session can relay the decision back.\n\
              ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
-             ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request`.\n\
-             ❌ Do NOT `xmtp_send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
+             ❌ Do not substitute `okx-a2a user notify` for the `pending-decisions-v2 request`.\n\
+             ❌ Do NOT `okx-a2a session send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
              **Step 0 — Idempotency check** (CLI's pending queue is the source of truth):\n\
              ```bash\n\
              onchainos agent pending-decisions-v2 list --format json\n\
@@ -1074,12 +1136,15 @@ pub async fn generate_next_action(
             "[System notification] reward_claimed (claimRewards tx receipt)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              **Step 1 — Check the envelope's `message.code` field:**\n\
-             - `code` non-zero (failed) → call xmtp_dispatch_user to notify the user:\n\
-             \x20\x20content: {failed_notify}\n\
-             \x20\x20→ end the turn.\n\n\
+             - `code` non-zero (failed) → run `okx-a2a user notify` to notify the user, then end the turn:\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a user notify --content \"{failed_notify}\"\n\
+             \x20\x20```\n\n\
              - `code` = 0 (success) → continue to Step 2.\n\n\
-             **Step 2 — Call xmtp_dispatch_user to notify the user that the reward has arrived:**\n\
-             \x20\x20content: {claimed_notify}\n"
+             **Step 2 — Notify the user that the reward has arrived via `okx-a2a user notify`:**\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a user notify --content \"{claimed_notify}\"\n\
+             \x20\x20```\n"
             )
         }
 
@@ -1108,9 +1173,9 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent pending-decisions-v2 list --format json\n\
              ```\n\
-             - The returned `entries` already contains a sub_key with `job={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead call `xmtp_dispatch_user` content=`{wakeup_resume}` and end the turn.\n\
+             - The returned `entries` already contains a sub_key with `job={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead run `okx-a2a user notify --content \"{wakeup_resume}\"` and end the turn.\n\
              - No matching entry → run the Step 2 script normally; the `pending-decisions-v2 request` call handles the prompt.\n\n\
-             ⚠️ **Do NOT** xmtp_send the User Agent something like `I'm back online` — the peer does not care about your connection status.\n\
+             ⚠️ **Do NOT** okx-a2a session send the User Agent something like `I'm back online` — the peer does not care about your connection status.\n\
              ⚠️ If the Step 2 script is a passive-wait kind (e.g. status=accepted: ASP is working / status=submitted: waiting for User Agent review), only emit a `task resumed` notification and end the turn; do not proactively run business actions.\n"
             )
         }
@@ -1171,6 +1236,21 @@ pub async fn generate_next_action(
         // provider_reject: off-chain receipt confirming this ASP's own asp-reject;
         // no provider-side action needed (the buyer side handles the re-route).
         Event::ProviderReject => format!("[System notification] provider_reject (your decline was registered; no further action).\n"),
+        // job_user_reject: buyer refused to fund / confirm-accept after the provider applied;
+        // notify the user (the ASP's owner) and end the turn. Terminal for this round.
+        Event::JobUserReject => {
+            let user_notify = super::content::job_user_reject_notify(job_id);
+            format!(
+            "[Current state] job_user_reject (buyer declined to fund / confirm-accept)\n\
+             [Role] ASP (Agent Service Provider)\n\n\
+             **Notify the user, then end the turn** (🌐 translate template to user's language first):\n\
+             {user_notify}\n\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<translated text>\"\n\
+             ```\n\
+             ❌ Do NOT okx-a2a session send the buyer. ❌ Do NOT retry apply.\n"
+            )
+        },
         Event::Other(ref other) => format!("[Unknown state] {other}\n"),
     };
     // Three mutually exclusive shapes:
@@ -1184,10 +1264,10 @@ pub async fn generate_next_action(
     } else if is_playbook_emit {
         format!(
             "[JOBCREATED_PLAYBOOK_CACHE@{job_id}]\n\
-             {localization_prefix}{version_prefix}{context_preamble}{body}\n\
+             {body}\n\
              [/JOBCREATED_PLAYBOOK_CACHE@{job_id}]\n"
         )
     } else {
-        format!("{localization_prefix}{version_prefix}{context_preamble}{body}")
+        body
     }
 }

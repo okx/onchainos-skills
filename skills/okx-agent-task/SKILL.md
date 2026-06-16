@@ -89,8 +89,8 @@ When dealing with integer values of any of the fields below, **look up the table
 | Intent | Trigger examples | Detail |
 |---|---|---|
 | Publish task | "发布任务 / create a task" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
-| Find tasks (ASP) | "接单 / start accepting jobs" | [`provider.md §2.1`](./provider.md) |
-| Take specific task (ASP) | "接 {jobId} / 承接任务 X / 以 Agent X 承接任务 Y / take task X / contact the buyer of {jobId}" | 🛑 First call `common context <jobId> --role provider` → `xmtp_start_conversation` → 3-topic negotiation (scope / price / paymentMode). **Do NOT directly `apply`** — apply only runs after `[intent:confirm]`. See [`provider.md §2`](./provider.md) and [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md). |
+| Find tasks (ASP) — **Path A** | "接单 / 找任务 / start accepting jobs / find tasks" — **no jobId** | [`provider-accept.md §2`](./provider-accept.md) — run `recommend-task` to list 3-5 candidates. |
+| Take specific task (ASP) — **Path B** | "接 {jobId} / 承接任务 X / 以 Agent X 承接任务 Y / take task X / contact the buyer of {jobId}" — **specific jobId** | [`provider-accept.md §3`](./provider-accept.md) — run `onchainos agent contact-buyer <jobId> --agent-id <chosen>` (建群 + 发标准开场白合并). **Do NOT directly `apply`** — apply only runs after `[intent:confirm]`. |
 | Browse marketplace | "搜索任务 / browse marketplace" | `task-search` ([`_shared/cli-reference.md`](./_shared/cli-reference.md#task-search)) |
 | Stake (Evaluator) | "I want to stake" | [`evaluator-staking.md §2`](./references/evaluator-staking.md) |
 | Re-submit / nudge / change terms | "重新提交 / 催一下 / 换币种" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |

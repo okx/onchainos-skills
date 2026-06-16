@@ -699,6 +699,36 @@ pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Val
     Ok(body.get("data").cloned().unwrap_or(serde_json::Value::Null))
 }
 
+/// Fetch an agent's service catalog (via `spawn_service_list`) and return the
+/// single entry matching `service_id`. Returns:
+/// - `Ok(Some(entry))` — service-list fetched, entry found
+/// - `Ok(None)`         — service-list fetched, but no entry has this serviceId
+///                        (e.g. buyer designated a stale / unregistered serviceId)
+/// - `Err(e)`           — service-list fetch failed entirely (subprocess died,
+///                        backend rejected, JSON parse failed). Callers usually
+///                        want to treat this as "no match" — use `.ok().flatten()`.
+///
+/// Response navigation: `data[0].list[*]` (flattened by the same logic that
+/// `designated_route_inner` uses). Empty `service_id` returns `Ok(None)`.
+pub(crate) async fn find_service(
+    agent_id: &str,
+    service_id: &str,
+) -> Result<Option<serde_json::Value>> {
+    if service_id.is_empty() {
+        return Ok(None);
+    }
+    let data = spawn_service_list(agent_id).await?;
+    let matched = data
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|item| item.get("list"))
+        .and_then(|list| list.as_array())
+        .and_then(|list| list.iter().find(|s| {
+            s.get("serviceId").and_then(|v| v.as_str()) == Some(service_id)
+        }).cloned());
+    Ok(matched)
+}
+
 /// `onchainos agent designated-route --provider <agentId>` — runs service-list
 /// + profile in parallel, applies role/online/endpoint routing logic, and
 ///   returns a single JSON with the route decision.

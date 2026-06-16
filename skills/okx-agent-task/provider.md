@@ -7,3 +7,13 @@ This file only covers the content **specific** to the ASP role. Generic rules (e
 The task state machine has moved into the CLI (`onchainos agent next-action`) — **you do not need to memorize the steps for every status**. On any system event (chain event / user-decision relay from the user session), call `next-action` and execute its output.
 
 ---
+
+## Job acceptance / negotiation
+
+See [`provider-accept.md`](./provider-accept.md) — the full cold-start → handshake → apply flow, three-step `[intent:*]` protocol, pricing anchors, and iron rules for the negotiation phase.
+
+Use that file whenever:
+- The user instructs you to "find tasks / take task X / 接单 / 接 0xABC 任务" (active discovery + cold start)
+- You receive an inbound `a2a-agent-chat` envelope with `sender.role===1` (a User Agent's first message)
+- Any `[intent:propose]` / `[intent:counter]` / `[intent:confirm]` peer message arrives during negotiation
+

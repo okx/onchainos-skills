@@ -195,6 +195,9 @@ pub enum Event {
     /// Buyer designated a specific ASP for the task (private-task path; status remains created;
     /// notifies the chosen provider that they have been selected and should start negotiation).
     JobAspSelected,
+    /// Buyer refused to fund / pay after the provider applied (off-chain; notifies the
+    /// provider that the buyer declined payment so this designation is over).
+    JobUserReject,
     /// Buyer confirm-accept on-chain (status enters accepted; notifies provider).
     JobAccepted,
     /// Provider deliver on-chain (status enters submitted; notifies buyer to review).
@@ -341,6 +344,7 @@ impl Event {
             "provider_applied"          => Event::ProviderApplied,
             "provider_reject"           => Event::ProviderReject,
             "job_asp_selected"          => Event::JobAspSelected,
+            "job_user_reject"           => Event::JobUserReject,
             "job_accepted"              => Event::JobAccepted,
             "job_submitted"             => Event::JobSubmitted,
             "job_completed"             => Event::JobCompleted,
@@ -405,6 +409,7 @@ impl Event {
             Event::ProviderApplied        => "provider_applied",
             Event::ProviderReject         => "provider_reject",
             Event::JobAspSelected         => "job_asp_selected",
+            Event::JobUserReject          => "job_user_reject",
             Event::JobAccepted            => "job_accepted",
             Event::JobSubmitted           => "job_submitted",
             Event::JobCompleted           => "job_completed",
@@ -486,7 +491,7 @@ pub fn status_when_event(e: &Event) -> Status {
     match e {
         // Main flow
         Event::JobCreated | Event::ProviderApplied | Event::JobAspSelected
-        | Event::ProviderReject
+        | Event::ProviderReject | Event::JobUserReject
         | Event::TaskTokenBudgetChange | Event::TaskProviderChange
         | Event::SwitchProvider
         | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,

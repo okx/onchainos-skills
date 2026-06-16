@@ -25,6 +25,78 @@
 //! conversation state. To add new copy → add a new fn; to change copy → edit the
 //! fn body; flow.rs only ever calls into here and never embeds literals inline.
 
+/// `Event::JobAspSelected` APPLY path — user-facing notification pushed via
+/// `okx-a2a user notify --content <text>` after the on-chain apply.
+/// Placeholders the agent fills in: `<serviceName>` / `<offerAmount>` /
+/// `<tokenSymbol>`. The agent must localize the entire string to the user's
+/// language before sending (per LOCALIZATION_PREFIX rules).
+pub fn job_asp_selected_accepted_notify(job_id: &str) -> String {
+    format!(
+        "[Designated Task Accepted] Job {job_id} — you have been designated as the ASP and the apply is on-chain.\n\
+         \x20\x20- Service: <serviceName>\n\
+         \x20\x20- Price: <offerAmount> <tokenSymbol>\n\
+         \x20\x20Awaiting the buyer's confirm-accept to fund escrow."
+    )
+}
+
+/// `Event::JobAspSelected` no-serviceId fallback — user-facing notification
+/// pushed via `okx-a2a user notify --content <text>` before the ASP enters
+/// the generic JobCreated negotiation flow. Localize before sending.
+pub fn job_asp_selected_no_service_notify(job_id: &str) -> String {
+    format!(
+        "[Designated Task — Negotiating] Job {job_id} — the buyer designated you as the ASP without pinning a specific service.\n\
+         \x20\x20Starting the standard negotiation flow now; will notify you again once the apply is on-chain."
+    )
+}
+
+/// `Event::JobUserReject` — user-facing notification pushed via
+/// `okx-a2a user notify --content <text>` when the buyer refuses to fund /
+/// confirm-accept after the provider applied. Terminal for this round; the
+/// designation is over. Localize before sending.
+pub fn job_user_reject_notify(job_id: &str) -> String {
+    format!(
+        "[Buyer Declined Payment] Job {job_id} — the buyer refused to fund / confirm-accept after your apply.\n\
+         \x20\x20This designation is over; no further action is needed on this side."
+    )
+}
+
+/// `Event::ProviderApplied` — user-facing notification pushed via
+/// `okx-a2a user notify --content <text>` after the apply has been recorded
+/// on-chain (escrow path). Localize before sending.
+pub fn provider_applied_user_notify(job_id: &str, agent_id: &str) -> String {
+    format!(
+        "[Apply Submitted] Job {job_id} — your apply has been recorded on-chain.\n\
+         \x20\x20- ASP agentId: {agent_id}\n\
+         \x20\x20Awaiting the buyer's confirm-accept to fund escrow."
+    )
+}
+
+/// `Event::JobAspSelected` APPLY failure — pushed when the on-chain `apply`
+/// command returns non-zero. `error_summary` is interpolated directly (caller
+/// passes either the stderr / one-line error message, or a placeholder for the
+/// LLM to fill). Localize before sending.
+pub fn job_asp_selected_apply_failed_notify(job_id: &str, error_summary: &str) -> String {
+    format!(
+        "[Designated Task — Apply Failed] Job {job_id} — the on-chain apply did not go through.\n\
+         \x20\x20- Error: {error_summary}\n\
+         \x20\x20The designated assignment was NOT recorded; please retry or contact the buyer."
+    )
+}
+
+/// `Event::JobAspSelected` REJECT path — user-facing notification pushed via
+/// `okx-a2a user notify --content <text>` after the off-chain `asp-reject`.
+/// `reason` is interpolated directly (caller passes either a fixed string for
+/// code-determined rejections — `"designated service not registered"` /
+/// `"price below registered floor"` — or the literal `<reason>` placeholder
+/// when the LLM picks the wording). Localize the full string before sending.
+pub fn job_asp_selected_rejected_notify(job_id: &str, reason: &str) -> String {
+    format!(
+        "[Designated Task Declined] Job {job_id} — the designated assignment was declined.\n\
+         \x20\x20- Reason: {reason}\n\
+         \x20\x20The buyer can now re-route to another ASP or list the task publicly."
+    )
+}
+
 /// `Event::JobAccepted` Step 1 — job-accepted notice pushed to the user.
 ///
 /// Each line is prefixed with 4 spaces of indentation to align with other step

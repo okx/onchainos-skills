@@ -424,6 +424,18 @@ pub enum AgentCommand {
         #[arg(long, default_value = "")] reason: String,
     },
 
+    /// Provider cold-start: contact the buyer in one shot.
+    /// Combines `xmtp_start_conversation` (group + session create) + `xmtp_send`
+    /// (the canonical self-intro / interest opener) so the LLM only runs ONE
+    /// command instead of chaining two MCP tool calls. Opener content is fixed;
+    /// no customization flag.
+    #[command(name = "contact-buyer")]
+    ContactBuyer {
+        job_id: String,
+        /// Provider agentId (required)
+        #[arg(long = "agent-id")] agent_id: String,
+    },
+
 
 
     /// Save negotiated payment params locally (agent calls after negotiation)
@@ -1112,6 +1124,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::AspReject { job_id, agent_id, reason } =>
             task::provider::run_provider(
                 task::provider::ProviderCommand::AspReject { job_id, agent_id, reason }, ctx,
+            ).await,
+
+        AgentCommand::ContactBuyer { job_id, agent_id } =>
+            task::provider::run_provider(
+                task::provider::ProviderCommand::ContactBuyer { job_id, agent_id }, ctx,
             ).await,
 
 
