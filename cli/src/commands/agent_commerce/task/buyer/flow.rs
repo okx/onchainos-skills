@@ -193,7 +193,7 @@ fn mark_l10n_emitted(job_id: &str) {
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
 /// and status names (open / submitted / ...), uniformly parsed by state_machine.
-pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>) -> String {
+pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>, message: Option<&serde_json::Value>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // Two fixed prefix lines at the top of the output: localization rule + protocol version handshake.
@@ -425,16 +425,10 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
 
         // ─── Task execution + arbitration + terminal states → flow_lifecycle ─────────────────
         Event::ProviderApplied => {
-            // Compare ASP's apply quote (on-chain tokenAmount) vs buyer's max budget
-            // (paymentMostTokenAmount). If quote exceeds max → reject-apply path; else → confirm-accept.
-            let over_most_budget = match ctx.prefetched {
-                Some(p) => {
-                    let max_f: f64 = p.max_budget.as_deref().unwrap_or("0").parse().unwrap_or(0.0);
-                    let amt_f: f64 = p.token_amount.parse().unwrap_or(0.0);
-                    max_f > 0.0 && amt_f > max_f
-                }
-                None => false,
-            };
+            let over_most_budget = message
+                .and_then(|m| m.get("overMostBudget"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
             super::flow_lifecycle::provider_applied(&ctx, over_most_budget).await
         }
         Event::ProviderReject => super::flow_negotiate::provider_reject(&ctx).await,
