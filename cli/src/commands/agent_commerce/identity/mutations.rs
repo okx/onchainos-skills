@@ -385,13 +385,24 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     if !picture.is_empty() {
         card.insert("image".into(), json!(picture));
     }
-    if args.service.is_some() {
-        let services = parse_services(args.service.as_deref())?;
-        card.insert(
-            "services".into(),
-            serde_json::to_value(&services).context("failed to serialize services list")?,
-        );
-    }
+    // Service: backend treats absent `services` field as "clear all services",
+    // so we must always send the complete list. Fetch existing services first,
+    // then merge in any user-supplied changes.
+    let existing_raw = fetch_raw_services(agent_id, ctx).await?;
+    let existing: Vec<super::models::AgentService> = existing_raw
+        .iter()
+        .filter_map(raw_service_to_agent_service)
+        .collect();
+    let final_services = if args.service.is_some() {
+        let new_services = parse_services(args.service.as_deref())?;
+        merge_services(existing, new_services)
+    } else {
+        existing
+    };
+    card.insert(
+        "services".into(),
+        serde_json::to_value(&final_services).context("failed to serialize services list")?,
+    );
 
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
@@ -725,6 +736,82 @@ fn service_item_to_validate_obj(svc: &Value) -> Value {
         obj["endpoint"] = json!(endpoint);
     }
     obj
+}
+
+/// Convert a raw service item from GET /agent/services into an `AgentService`.
+/// Returns `None` when the item has no usable service name (skip silently).
+fn raw_service_to_agent_service(svc: &Value) -> Option<super::models::AgentService> {
+    use super::models::AgentService;
+
+    let get_str = |keys: &[&str]| -> String {
+        for key in keys {
+            if let Some(s) = svc.get(*key).and_then(Value::as_str) {
+                let t = s.trim();
+                if !t.is_empty() {
+                    return t.to_string();
+                }
+            }
+        }
+        String::new()
+    };
+
+    let service_name = get_str(&["serviceName", "ServiceName", "name"]);
+    if service_name.is_empty() {
+        return None;
+    }
+
+    // Service ID: try string keys first, then numeric (backend may return as u64).
+    let id = ["serviceId", "ServiceId", "id"]
+        .iter()
+        .find_map(|k| svc.get(*k).and_then(Value::as_str).map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            ["serviceId", "ServiceId", "id"]
+                .iter()
+                .find_map(|k| svc.get(*k).and_then(Value::as_u64).map(|n| n.to_string()))
+        });
+
+    let service_type = get_str(&["serviceType", "ServiceType", "servicetype"])
+        .to_ascii_uppercase();
+    let endpoint_str = get_str(&["endpoint", "Endpoint"]);
+    let endpoint = if endpoint_str.is_empty() || service_type == "A2A" {
+        None
+    } else {
+        Some(endpoint_str)
+    };
+
+    Some(AgentService {
+        id,
+        service_name,
+        service_description: get_str(&[
+            "serviceDescription",
+            "ServiceDescription",
+            "servicedescription",
+        ]),
+        fee: get_str(&["fee", "Fee", "feeAmount"]),
+        service_type,
+        endpoint,
+    })
+}
+
+/// Merge existing services with user-supplied updates:
+/// - updates with a matching existing ID → replace that entry
+/// - updates with no ID / unrecognized ID → append as new
+/// - existing services not referenced → kept unchanged
+fn merge_services(
+    mut existing: Vec<super::models::AgentService>,
+    updates: Vec<super::models::AgentService>,
+) -> Vec<super::models::AgentService> {
+    for update in updates {
+        if let Some(ref id) = update.id {
+            if let Some(pos) = existing.iter().position(|s| s.id.as_deref() == Some(id.as_str())) {
+                existing[pos] = update;
+                continue;
+            }
+        }
+        existing.push(update);
+    }
+    existing
 }
 
 async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
