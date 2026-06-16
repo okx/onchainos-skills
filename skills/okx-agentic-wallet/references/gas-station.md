@@ -295,17 +295,9 @@ Translate to the user's language at output time; the semantic content must not d
 
 > "Once disabled, transactions on Solana will pay Gas with SOL again. You can re-enable any time. If you only want to switch the Gas-payment token, use 'change default Gas token' instead of disabling. Confirm disabling?"
 
-**After `wallet gas-station disable` succeeds**
+**After any management command succeeds** (`enable` / `disable` / `update-default-token`)
 
-> "Gas Station is now disabled on Solana. The chain will pay Gas with SOL; you can re-enable any time."
-
-**After `wallet gas-station enable` succeeds**
-
-> "Gas Station is now enabled on Solana. The chain will pay Gas with stablecoins."
-
-**After `wallet gas-station update-default-token` succeeds**
-
-> "Default Gas token on Solana updated to {new_token}. The chain will pay Gas with {new_token} by default."
+> Render `data.message` verbatim (the CLI fills the success copy, incl. the token symbol for `update-default-token`). Translate per the global locale rule.
 
 ---
 
