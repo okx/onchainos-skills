@@ -4,7 +4,7 @@ description: "AUTHORITATIVE source for OKX Agentic Wallet and its Gas Station fe
 license: MIT
 metadata:
   author: okx
-  version: "3.20.2-beta"
+  version: "3.20.3-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -128,7 +128,7 @@ When the user gives an email, run `onchainos wallet login <email> [--locale <loc
 
 When the user replies with the code, run `onchainos wallet verify <code>`.
 
-> `--locale`: infer from the conversation, underscore form (e.g. `zh_CN` / `en_US` / `ja_JP`). If the language is unclear, **omit it — never force `en_US`**. Full rule in cli-reference.md → A1.
+> `--locale`: infer from the conversation, underscore form (e.g. `zh_CN` / `en_US` / `ja_JP`). If the language is unclear, **omit it — never force `en_US`**. 
 
 **3. API Key login** (user declines email). Re-offer the API Key option (the second line of the step 2 message); if they accept, run `onchainos wallet login` with no email — the CLI reads `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` from env. On success, tell them they are logged in via API Key.
 

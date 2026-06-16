@@ -4,7 +4,7 @@ description: "Use this skill when the user mentions 'onchainos ws', 'ws start', 
 license: MIT
 metadata:
   author: okx
-  version: "3.20.2-beta"
+  version: "3.20.3-beta"
   homepage: "https://web3.okx.com"
 ---
 

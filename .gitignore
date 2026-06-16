@@ -79,3 +79,6 @@ evals/
 # Agent task workspace (local only)
 skills/okx-agent-task-workspace/
 .gs-recovery/
+
+# oli-flow session-local runtime state (never committed)
+.harness-paths

@@ -4,7 +4,7 @@ description: "Use this skill for token-level data: search tokens, trending/hot t
 license: MIT
 metadata:
   author: okx
-  version: "3.20.2-beta"
+  version: "3.20.3-beta"
   homepage: "https://web3.okx.com"
 ---
 

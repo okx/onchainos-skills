@@ -600,6 +600,7 @@ async fn sig_scan(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)] // approvals/sig_scan are module-private helpers; placing them at EOF is intentional
 mod tests {
     use super::*;
     use serde_json::json;
