@@ -15,6 +15,10 @@ use std::process::Command;
 /// - `Ok(Some(value))` — CLI succeeded, JSON parsed, sessionKey present
 /// - `Ok(None)`        — CLI succeeded but no active session (field absent)
 /// - `Err(e)`          — spawn failed, non-zero exit, or stdout not valid JSON
+#[deprecated(
+    note = "`okx-a2a session status` is not documented in the current CLI spec — \
+            this call will fail at runtime. Migrate to job-id / to-agent-id based lookups."
+)]
 pub fn session_status() -> Result<Option<String>> {
     let out = Command::new("okx-a2a")
         .args(["session", "status", "--json"])
@@ -149,6 +153,7 @@ pub fn session_create(job_id: &str, my_agent_id: &str, to_agent_id: &str) -> Res
 /// bridge wires fire-and-forget; ack waiting would block the sender.
 /// `--session-key` is mandatory — CLI has no default (bridge silently defaults
 /// to "main", but the CLI does not).
+#[deprecated(note = "use `session_send_by_job` — sessionKey path is being phased out per CLI spec")]
 pub fn session_send(session_key: &str, content: &str) -> Result<()> {
     let out = Command::new("okx-a2a")
         .args([
@@ -167,9 +172,37 @@ pub fn session_send(session_key: &str, content: &str) -> Result<()> {
     Ok(())
 }
 
+/// Dispatch a session message using the new job-id based addressing.
+///
+/// - `to_agent_id = None`  → sends to the `backup:<jobId>` session.
+/// - `to_agent_id = Some`  → sends to every session matching `jobId + toAgentId`.
+///   The CLI auto-suffixes message ids to avoid duplicates across fan-out.
+pub fn session_send_by_job(job_id: &str, to_agent_id: Option<&str>, content: &str) -> Result<()> {
+    let mut args: Vec<&str> = vec![
+        "session", "send",
+        "--job-id", job_id,
+        "--content", content,
+        "--json",
+    ];
+    if let Some(to) = to_agent_id {
+        args.push("--to-agent-id");
+        args.push(to);
+    }
+    let out = Command::new("okx-a2a")
+        .args(&args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("okx-a2a session send exit {status}: {stderr}", status = out.status);
+    }
+    Ok(())
+}
+
 /// Bridge equivalent: `xmtp_delete_conversation '{sessionKey}'`
 /// Close a session (sub or backup) at terminal state to release resources.
 /// `--session-key` is mandatory.
+#[deprecated(note = "use `session_delete_by_job` — sessionKey path is being phased out per CLI spec")]
 pub fn session_delete(session_key: &str) -> Result<()> {
     let out = Command::new("okx-a2a")
         .args([
@@ -186,23 +219,49 @@ pub fn session_delete(session_key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Delete sessions matched by job (and optionally peer agent).
+///
+/// - `to_agent_id = None`  → deletes every session matching `jobId`.
+/// - `to_agent_id = Some`  → deletes only sessions matching `jobId + toAgentId`.
+///
+/// When the daemon's lifecycle provider is `openclaw`, the CLI also asks the
+/// gateway to drop the corresponding session.
+pub fn session_delete_by_job(job_id: &str, to_agent_id: Option<&str>) -> Result<()> {
+    let mut args: Vec<&str> = vec![
+        "session", "delete",
+        "--job-id", job_id,
+        "--json",
+    ];
+    if let Some(to) = to_agent_id {
+        args.push("--to-agent-id");
+        args.push(to);
+    }
+    let out = Command::new("okx-a2a")
+        .args(&args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("okx-a2a session delete exit {status}: {stderr}", status = out.status);
+    }
+    Ok(())
+}
+
 // ── XMTP wire messages ────────────────────────────────────────────────────
 
 /// Bridge equivalent: `xmtp_send '{sessionKey, content, payload?}'`
 /// Real-business XMTP message (payload is silently dropped by the bridge, so
 /// we don't expose it here). Note the API divergence:
 /// - CLI uses `--message` (not `--content`, unlike user_notify / session_send).
-/// - sessionKey is NOT accepted directly; caller must split into 3 IDs.
-/// Use `parse_session_key` if all you have is a sessionKey string.
-pub fn xmtp_send(job_id: &str, my_agent_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
+/// - `--my-agent-id` / `--from-agent-id` were removed from the CLI spec —
+///   the daemon resolves the local agent from session metadata.
+pub fn xmtp_send(job_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
     let out = Command::new("okx-a2a")
         .args([
             "xmtp-send",
             "--job-id", job_id,
-            "--my-agent-id", my_agent_id,
             "--to-agent-id", to_agent_id,
             "--message", message,
-            "--json",
         ])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
@@ -287,24 +346,6 @@ pub fn xmtp_get_conversation_history(session_key: &str) -> Result<Vec<Conversati
             delivery_status: m.delivery_status.unwrap_or_default(),
         })
         .collect())
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────
-
-/// Parse a canonical sessionKey of the form `job:{job_id}:my:{my_agent}:to:{to_agent}`
-/// into its three components. Returns `None` if the format does not match.
-/// Used to feed `xmtp_send`, which does not accept a sessionKey directly.
-pub fn parse_session_key(sk: &str) -> Option<(String, String, String)> {
-    let parts: Vec<&str> = sk.splitn(6, ':').collect();
-    if parts.len() == 6 && parts[0] == "job" && parts[2] == "my" && parts[4] == "to" {
-        Some((
-            parts[1].to_string(),
-            parts[3].to_string(),
-            parts[5].to_string(),
-        ))
-    } else {
-        None
-    }
 }
 
 // ── File transfer ────────────────────────────────────────────────────────

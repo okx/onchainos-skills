@@ -316,7 +316,7 @@ pub(crate) fn branch_a2a_cli(
                 );
                 // Best-effort: any upload/send failure is silently skipped —
                 // attachment forwarding is not on the negotiation critical path.
-                let _ = okx_a2a::xmtp_send(job_id, agent_id, dp_id, &content);
+                let _ = okx_a2a::xmtp_send(job_id, dp_id, &content);
             }
         }
         "⚠️ Attachments already uploaded and forwarded by Rust — do NOT call `xmtp_file_upload`, `xmtp_send [intent:attachment]`, or `list-attachments`.\n\n".to_string()
