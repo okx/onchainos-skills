@@ -405,22 +405,16 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 }
             }
         }
-        Event::JobVisibilityChanged => super::flow_negotiate::job_visibility_changed(&ctx),
+        Event::JobVisibilityChanged => {
+            let visibility = message
+                .and_then(|m| m.get("visibility"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1);
+            super::flow_negotiate::job_visibility_changed(&ctx, visibility)
+        }
         Event::JobPaymentModeChanged => super::flow_negotiate::job_payment_mode_changed(&ctx),
-        Event::NegotiateReply => {
-            if super::content::is_cli_mode() {
-                super::flow_negotiate::negotiate_reply_cli(&ctx)
-            } else {
-                super::flow_negotiate::negotiate_reply(&ctx)
-            }
-        }
-        Event::NegotiateAck => {
-            if super::content::is_cli_mode() {
-                super::flow_negotiate::negotiate_ack_cli(&ctx)
-            } else {
-                super::flow_negotiate::negotiate_ack(&ctx)
-            }
-        }
+        Event::NegotiateReply => super::flow_negotiate::negotiate_reply(&ctx),
+        Event::NegotiateAck => super::flow_negotiate::negotiate_ack(&ctx),
         Event::NegotiateCounter => super::flow_negotiate::negotiate_counter(&ctx),
 
         // ─── Task execution + arbitration + terminal states → flow_lifecycle ─────────────────

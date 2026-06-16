@@ -2,29 +2,38 @@
 
 use super::super::flow::FlowContext;
 
-pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
+pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>, visibility: i64) -> String {
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
 
-    let visibility_public = super::super::content::visibility_public_user_notify(job_id, title_display);
-    let visibility_private = super::super::content::visibility_private_user_notify(job_id, title_display);
+    // visibility: 0 = public, 1 = private. Resolved in Rust so the playbook
+    // only renders the branch that actually applies; the LLM no longer has
+    // to read the envelope and branch itself.
+    let is_public = visibility == 0;
+    let notify_content = if is_public {
+        super::super::content::visibility_public_user_notify(job_id, title_display)
+    } else {
+        super::super::content::visibility_private_user_notify(job_id, title_display)
+    };
+    let public_only_warning = if is_public {
+        "⚠️ After switching to public, do **NOT** request the recommended ASP list (recommend); the user just waits for ASPs to reach out.\n     "
+    } else {
+        ""
+    };
     format!(
     "[Current state] job_visibility_changed (public/private toggle is on-chain)\n\
      [Role] User (User Agent)\n\n\
      🛑 **This is not an auxiliary event; you MUST notify the user.**\n\n\
-     [Your next actions (strict order)]\n\n\
+     [Your next action — call ONE command only, then END TURN]\n\n\
      {title_query_hint}\
-     **Step 1 - read the `visibility` field from the system notification envelope:**\n\
-     - `visibility=0` -> public\n\
-     - `visibility=1` -> private\n\n\
-     **Step 2 - call xmtp_dispatch_user to notify the user that visibility has changed** ({l10n_dispatch}):\n\
-     content:\n\
-     \x20\x20- visibility=0 -> {visibility_public}\n\
-     \x20\x20- visibility=1 -> {visibility_private}\n\n\
-     ⚠️ After switching to public, do **NOT** request the ASP list (asp-match); the user just waits for ASPs to reach out.\n\
-     -> **end this turn**.\n"
+     🌐 **Localize first** — translate the canonical English notification below into the user's language (preserve every data value verbatim — jobId hex, AgentID digits, fee amounts, symbols).\n\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
+     ```\n\n\
+     Canonical English content to translate:\n\
+     \x20\x20{notify_content}\n\n\
+     {public_only_warning}-> **end this turn**.\n"
     )
 }
 
@@ -101,52 +110,42 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let title_query_hint = ctx.title_query_hint;
-
-    format!(
-    "[Negotiation relay] negotiate_reply (ASP sent a natural-language message)\n\
-     [Role] User (User Agent)\n\n\
-     {title_query_hint}\
-     The ASP sent you a natural-language message. **Reply only about task details** — scope, requirements, deliverable format, timeline, clarifying questions. **Do NOT discuss price** — pricing is locked at accept time, not in chat.\n\n\
-     🚫 **Forbidden in this event:**\n\
-     \x20\x20❌ Discussing tokenAmount / tokenSymbol / paymentMode / budget — price is not negotiated in chat.\n\
-     \x20\x20❌ `xmtp_dispatch_user` / `pending-decisions-v2 request` to ask the user about the ASP's message — negotiation is autonomous in this sub session.\n\
-     \x20\x20❌ `save-agreed` / `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
-     [Your next action]\n\n\
-     **xmtp_send a single natural-language reply** focused on task details. Keep it concise (capability check, scope clarification, deliverable expectations, timeline). End the turn after sending.\n\n\
-     ⏱ **5-minute timeout**: if the ASP does not reply within 5 minutes, run `onchainos agent mark-failed {job_id} --provider <ASP agentId>` then `onchainos agent asp-match --job-id {job_id}` to switch. Do NOT call `xmtp_delete_conversation` — just ignore further messages from that ASP.\n"
-    )
-}
-
 /// CLI-mode variant of `negotiate_reply`. Inlines task fields from
 /// `ctx.prefetched` so the LLM doesn't need to run `common context`; switches
 /// the tool call from MCP `xmtp_send` to bash `okx-a2a xmtp-send`. Same core
 /// rule as `negotiate_reply`: discuss task details only, price is locked at
 /// accept time.
-pub(crate) fn negotiate_reply_cli(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
-    let task_block = match ctx.prefetched {
-        Some(p) => {
-            let desc = if p.description.is_empty() {
-                "(missing)".to_string()
-            } else {
-                p.description.clone()
-            };
-            format!(
-                "**Task fields (already fetched — use these, do NOT call `common context`):**\n\
-                 \x20\x20• Title: {title}\n\
-                 \x20\x20• Description: {desc}\n\n\
-                 🛑 **Price fields (tokenSymbol / tokenAmount / paymentMostTokenAmount) are intentionally omitted — do NOT discuss price with the ASP.**\n\n",
-                title = p.title,
-            )
-        }
-        None => format!("**Task fields not pre-fetched.** Run `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` first to retrieve title / description, then resume. 🛑 Do NOT discuss price.\n\n"),
+    let p = match ctx.prefetched {
+        Some(p) => p,
+        None => return format!(
+            "[negotiate_reply_cli] ❌ no prefetched task context for job {job_id}; cannot resolve providerAgentId.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
     };
+    let provider_agent_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(s) => s,
+        None => return format!(
+            "[negotiate_reply_cli] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot send a reply.\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        ),
+    };
+
+    let desc = if p.description.is_empty() {
+        "(missing)".to_string()
+    } else {
+        p.description.clone()
+    };
+    let task_block = format!(
+        "**Task fields (already fetched — use these, do NOT call `common context`):**\n\
+         \x20\x20• Title: {title}\n\
+         \x20\x20• Description: {desc}\n\n\
+         🛑 **Price fields (tokenSymbol / tokenAmount / paymentMostTokenAmount) are intentionally omitted — do NOT discuss price with the ASP.**\n\n",
+        title = p.title,
+    );
 
     format!(
         "{task_block}\
@@ -161,28 +160,20 @@ pub(crate) fn negotiate_reply_cli(ctx: &FlowContext<'_>) -> String {
          ```bash\n\
          okx-a2a xmtp-send \\\n\
          \x20\x20--job-id {job_id} \\\n\
-         \x20\x20--my-agent-id {agent_id} \\\n\
-         \x20\x20--to-agent-id <ASP agentId from the negotiate context> \\\n\
+         \x20\x20--to-agent-id {provider_agent_id} \\\n\
          \x20\x20--message '<natural-language reply, task details only — no price talk>' \\\n\
-         \x20\x20--json\n\
+         \x20\x20--no-wait\n\
          ```\n\n\
-         ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, run `onchainos agent mark-failed {job_id} --provider <ASP agentId>` then `onchainos agent asp-match --job-id {job_id}` to switch.\n"
+         ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, run `onchainos agent mark-failed {job_id} --provider {provider_agent_id}` then `onchainos agent asp-match --job-id {job_id} --agent-id {agent_id}` to switch.\n"
     )
 }
 
-/// DEPRECATED — the structured intent handshake ([intent:propose] / [intent:ack] / etc.)
-/// has been removed. All ASP messages are now plain natural-language task-detail
-/// discussion; delegate to `negotiate_reply_cli`.
-pub(crate) fn negotiate_ack_cli(ctx: &FlowContext<'_>) -> String {
-    negotiate_reply_cli(ctx)
-}
-
-/// DEPRECATED — see `negotiate_ack_cli` above; delegates to `negotiate_reply`.
+/// DEPRECATED — see `negotiate_ack_cli` above; delegates to `negotiate_reply_cli`.
 pub(crate) fn negotiate_ack(ctx: &FlowContext<'_>) -> String {
     negotiate_reply(ctx)
 }
 
-/// DEPRECATED — see `negotiate_ack_cli` above; delegates to `negotiate_reply`.
+/// DEPRECATED — see `negotiate_ack_cli` above; delegates to `negotiate_reply_cli`.
 pub(crate) fn negotiate_counter(ctx: &FlowContext<'_>) -> String {
     negotiate_reply(ctx)
 }

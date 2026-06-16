@@ -4,7 +4,6 @@ use super::super::flow::FlowContext;
 use crate::commands::agent_commerce::task::common::okx_a2a;
 
 pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
@@ -13,15 +12,18 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] job_rejected (user rejection settled on-chain; awaiting ASP decision)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user that rejection is settled; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     🛑 **You MUST notify the user that the rejection is settled; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the rejection is confirmed:**\n\
-     {l10n_short}\n\n\
-     content:\n\
+     **Step 1 — Notify the user the rejection is confirmed via `okx-a2a user notify`:**\n\
+     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve jobId hex, amounts, symbols verbatim).\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
+     ```\n\n\
+     Canonical English content:\n\
      {rejected_notify}\n\n\
-     **Step 2 -- Silently wait for the ASP's decision:**\n\n\
-     ⚠️ **Do not send any xmtp_send message to the ASP**. The ASP will decide:\n\
+     **Step 2 — Silently wait for the ASP's decision:**\n\n\
+     ⚠️ **Do not send any message to the ASP**. The ASP will decide:\n\
      - Open a dispute → you will receive job_disputed\n\
      - Agree to refund → you will receive job_refunded\n\
      - Timeout → system auto-refunds, you will receive job_refunded\n\n\
@@ -34,74 +36,25 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
 
-    // Non-CLI mode: `okx-a2a` binary is not available; fall back to the
-    // LLM-driven Step 1/2 (call `session_status` + `xmtp_get_conversation_history`
-    // via MCP tools). Matches the pre-`6faf6eb3` behavior.
-    if !super::super::content::is_cli_mode() {
-        let session_hint = super::super::flow::SESSION_STATUS_HINT;
-        return format!(
-        "[Current Status] job_disputed (arbitration opened; CLI auto-submits evidence on this event)\n\
-         [Role] User (User Agent)\n\n\
-         🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
-         The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
-         session, calls `dispute upload` (which also auto-attaches every saved deliverable from\n\
-         `~/.onchainos/deliverables/buyer/{job_id}/`), and then notifies the user via\n\
-         `xmtp_dispatch_user`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
-         **Do NOT** call `xmtp_send` to the ASP — both sides see the arbitration via on-chain events.\n\n\
-         [Your next actions (strict order)]\n\n\
-         {title_query_hint}\
-         **Step 1 — Pull this sub session's negotiation / delivery chat history:**\n\n\
-         {session_hint}\n\
-         Then call `xmtp_get_conversation_history` with that sessionKey to fetch the full a2a-agent-chat history with the ASP.\n\n\
-         **Step 2 — Format the chat history as the `--text` body**:\n\n\
-         ```\n\
-         ==== Negotiation / delivery chat history (from xmtp_get_conversation_history) ====\n\
-         [time] ASP(<agentId>): ...\n\
-         [time] User(<agentId>): ...\n\
-         ... (chronological; key checkpoints: task-detail discussion / deliverable message)\n\
-         ```\n\n\
-         ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints (task-detail discussion / deliverable / both sides' key dispute points) and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
-         If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
-         **Step 3 — Upload (off-chain multipart):**\n\
-         ```bash\n\
-         onchainos agent dispute upload {job_id} --role buyer --agent-id {agent_id} --text \"<chat history block>\"\n\
-         ```\n\
-         The CLI auto-attaches every entry under `~/.onchainos/deliverables/buyer/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
-         **Step 4 — Notify the user (after upload returns):**\n\n\
-         content:\n\
-         \x20\x20\x20\x20[Dispute opened] Arbitration for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the arbiter's verdict.\n\
-         {l10n_dispatch}\n\n\
-         **Step 5 — End this turn.** Do NOT `xmtp_send` anything to the ASP.\n\n\
-         [Follow-up events]\n\
-         - job_completed → arbitration ruled for the ASP, task completes\n\
-         - job_refunded → arbitration ruled for the user, refund\n"
-        );
-    }
-
-    // CLI mode: pre-fetch sessionKey + chat history in-process and inline
-    // the formatted block into the playbook. Errors propagate as an error
-    // playbook (LLM pushes a cli_failed decision); no LLM-driven fallback.
-    let session_key = match okx_a2a::session_status() {
-        Ok(Some(sk)) => sk,
-        Ok(None) => return format!(
-            "[job_disputed] ❌ No active sub session reported by `okx-a2a session status` for job {job_id}; cannot fetch chat history for dispute evidence.\n\n\
+    let provider_id = match ctx.prefetched
+        .and_then(|p| p.provider_agent_id.as_deref())
+        .filter(|s| !s.is_empty())
+    {
+        Some(s) => s,
+        None => return format!(
+            "[job_disputed] ❌ prefetched.provider_agent_id missing for job {job_id}; cannot fetch chat history for dispute evidence.\n\n\
              Push a `cli_failed` decision to the user via `pending-decisions-v2 request` so they can decide how to proceed.\n"
         ),
-        Err(e) => return format!(
-            "[job_disputed] ❌ `okx-a2a session status` failed: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
-        ),
     };
-    let messages = match okx_a2a::xmtp_get_conversation_history(&session_key) {
+    let messages = match okx_a2a::session_history(job_id, provider_id) {
         Ok(m) => m,
         Err(e) => return format!(
-            "[job_disputed] ❌ `okx-a2a session get` (chat history) failed: {e}\n\n\
+            "[job_disputed] ❌ `okx-a2a session history` failed: {e}\n\n\
              Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
         ),
     };
@@ -128,27 +81,30 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
      The agent does NOT ask the user for evidence; it formats the chat history, calls `dispute upload`\n\
      (which also auto-attaches every saved deliverable from `~/.onchainos/deliverables/buyer/{job_id}/`),\n\
-     and then notifies the user via `xmtp_dispatch_user`. **Do NOT** use `pending-decisions-v2 request`\n\
-     for this event. **Do NOT** call `xmtp_send` to the ASP — both sides see the arbitration via on-chain events.\n\n\
+     and then notifies the user via `okx-a2a user notify`. **Do NOT** use `pending-decisions-v2 request`\n\
+     for this event. **Do NOT** send any message to the ASP — both sides see the arbitration via on-chain events.\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 — Chat history (pre-fetched and inlined below; do NOT call `session_status` or `xmtp_get_conversation_history`):**\n\n\
+     **Step 1 — Chat history (pre-fetched and inlined below; do NOT call `okx-a2a session history` again):**\n\n\
      ```\n\
      ==== Negotiation / delivery chat history ====\n\
      {chat_block}\n\
      ```\n\n\
      **Step 2 — Extract a `--text` body from the chat history above** (≤16 KB):\n\
-     Keep ONLY the key checkpoints — PROPOSE / ACK / CONFIRM / deliverable messages + both sides' key dispute points. Prepend `(key checkpoints extracted)` so the arbiter knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
+     Keep ONLY the key checkpoints — task-detail discussion / deliverable messages + both sides' key dispute points. Prepend `(key checkpoints extracted)` so the arbiter knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
      **Step 3 — Upload (off-chain multipart):**\n\
      ```bash\n\
      onchainos agent dispute upload {job_id} --role buyer --agent-id {agent_id} --text \"<chat history block from Step 2>\"\n\
      ```\n\
      The CLI auto-attaches every entry under `~/.onchainos/deliverables/buyer/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
-     **Step 4 — Notify the user (after upload returns):**\n\n\
-     content:\n\
-     \x20\x20\x20\x20[Dispute opened] Arbitration for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the arbiter's verdict.\n\
-     {l10n_dispatch}\n\n\
-     **Step 5 — End this turn.** Do NOT `xmtp_send` anything to the ASP.\n\n\
+     **Step 4 — Notify the user via `okx-a2a user notify` (after upload returns):**\n\n\
+     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve jobId / title verbatim).\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
+     ```\n\n\
+     Canonical English content:\n\
+     \x20\x20\x20\x20[Dispute opened] Arbitration for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the arbiter's verdict.\n\n\
+     **Step 5 — End this turn.** Do NOT send any message to the ASP.\n\n\
      [Follow-up events]\n\
      - job_completed → arbitration ruled for the ASP, task completes\n\
      - job_refunded → arbitration ruled for the user, refund\n"
@@ -156,7 +112,6 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -199,16 +154,11 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     };
 
     let winner_line = if user_won {
-        "**Step 1 — Arbitration outcome: user WINS** (chain status = 9/failed).\n\n"
+        "**Arbitration outcome: user WINS** (chain status = 9/failed).\n\n"
     } else {
-        "**Step 1 — Arbitration outcome: user LOSES** (chain status = 6/completed; ASP wins).\n\n"
+        "**Arbitration outcome: user LOSES** (chain status = 6/completed; ASP wins).\n\n"
     };
     let dispatch_content = if user_won { &dispute_won } else { &dispute_lost };
-    let dispatch_header = if user_won {
-        "**Step 3 — Notify the user the arbitration ruled in their favor:**"
-    } else {
-        "**Step 3 — Notify the user the arbitration ruled against them:**"
-    };
     let score_guide = if user_won {
         "provider at fault → 0.00–2.00"
     } else {
@@ -218,33 +168,33 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] dispute_resolved (arbitration ruling issued)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user of the arbitration result; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     🛑 **You MUST notify the user of the arbitration result + auto-rating in ONE consolidated message** — auto-rate FIRST, then send a single `okx-a2a user notify` combining both pieces.\n\n\
      {winner_line}\
-     **Step 2 — Task fields (pre-fetched; do NOT call `common context`):**\n\
+     **Step 1 — Task fields (pre-fetched; do NOT call `common context`):**\n\
      \x20\x20- title: {title}\n\
      \x20\x20- tokenAmount: {amt} | tokenSymbol: {sym}\n\
      \x20\x20- providerAgentId: {provider_id}\n\n\
-     {dispatch_header}\n\
-     {l10n_dispatch}\n\
-     \x20\x20content:\n\
-     \x20\x20{dispatch_content}\n\n\
-     🛑 Do NOT end this turn — Step 4 (auto-rate) and Step 4.5 (notify rating) below are MANDATORY.\n\n\
-     **Step 4 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
+     **Step 2 — 🛑 Auto-rate the ASP FIRST (MANDATORY; must complete before Step 3):**\n\
      Based on the deliverable vs the task description, quality standards, and the arbitration outcome, generate:\n\
      \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: {score_guide}. Adjust within the range based on specific circumstances.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
      Then execute:\n\
      ```bash\n\
      onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+     ```\n\
+     Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in Step 3.\n\n\
+     **Step 3 — Notify the user with a SINGLE consolidated message:**\n\
+     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve score / title / amounts / description verbatim).\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
      ```\n\n\
-     **Step 4.5 -- Notify the user of the submitted rating:**\n\
-     {l10n_dispatch}\n\
-     After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
-     - ✅ **Success** (output contains `txHash`):\n\
-     content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 4; fill `<title>` from task context):\n\
-     {rating_notify}\n\
-     - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
-     **Step 5 -- Terminal wrap-up (keep the sub session):**\n\
+     Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
+     ▸ Arbitration outcome (always included):\n\
+     \x20\x20{dispatch_content}\n\n\
+     ▸ Rating info (include ONLY if Step 2's feedback-submit succeeded; if it failed, omit this entire half):\n\
+     \x20\x20{rating_notify}\n\
+     \x20\x20(fill `<score>` with the X.XX value used in Step 2, `<description>` with the comment from Step 2, `<title>` with the task title above)\n\n\
+     **Step 4 — Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Arbitration flow fully complete.\n",
         title = p.title,

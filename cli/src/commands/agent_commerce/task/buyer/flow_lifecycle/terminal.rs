@@ -3,7 +3,6 @@
 use super::super::flow::FlowContext;
 
 pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let terminal_session_hint = &ctx.terminal_session_hint;
 
@@ -11,23 +10,26 @@ pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] job_refunded (funds refunded to the user)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user that the refund completed; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     🛑 **You MUST notify the user that the refund completed; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund completed** ({l10n_short}):\n\n\
-     content:\n\
+     **Step 1 — Notify the user the refund completed via `okx-a2a user notify`:**\n\
+     🌐 **Localize first** — translate the canonical English content below into the user's language.\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
+     ```\n\n\
+     Canonical English content:\n\
      {refunded_notify}\n\n\
-     **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
+     **Step 2 — Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Refund flow fully complete.\n\n\
      [OUTPUT_TEMPLATE]\n\
      Your entire response for this event MUST be exactly:\n\
-     1. One `xmtp_dispatch_user` call with the content above\n\
+     1. One `okx-a2a user notify` bash call with the localized content above\n\
      No other text or tool calls. End turn after the call completes.\n"
     )
 }
 
 pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
@@ -37,24 +39,27 @@ pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
     format!(
     "[System Notification] job_auto_refunded (claimAutoRefund tx receipt)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the refund has arrived; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     🛑 **You MUST notify the user the refund has arrived; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the refund has arrived** ({l10n_short}):\n\n\
-     content:\n\
+     **Step 1 — Notify the user the refund has arrived via `okx-a2a user notify`:**\n\
+     🌐 **Localize first** — translate the canonical English content below into the user's language.\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
+     ```\n\n\
+     Canonical English content:\n\
      {auto_refunded_notify}\n\n\
-     **Step 2 -- Terminal wrap-up (keep the sub session):**\n\
+     **Step 2 — Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Refund flow fully complete.\n\n\
      [OUTPUT_TEMPLATE]\n\
      Your entire response for this event MUST be exactly:\n\
-     1. One `xmtp_dispatch_user` call with the content above\n\
+     1. One `okx-a2a user notify` bash call with the localized content above\n\
      No other text or tool calls. End turn after the call completes.\n"
     )
 }
 
 pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let expired_notify = super::super::content::job_expired_user_notify(job_id);
@@ -62,18 +67,21 @@ pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
     "[Current Status] job_expired (task expired; no ASP accepted or no submission)\n\
      [Role] User (User Agent)\n\n\
      [Your next actions]\n\n\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the task expired** ({l10n_short}):\n\
-     \x20\x20content: {expired_notify}\n\n\
+     **Step 1 — Notify the user the task expired via `okx-a2a user notify`:**\n\
+     🌐 **Localize first** — translate the canonical English content below.\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
+     ```\n\n\
+     Canonical English content: {expired_notify}\n\n\
      This task reached a terminal state; the flow ends.\n\n\
      [OUTPUT_TEMPLATE]\n\
      Your entire response for this event MUST be exactly:\n\
-     1. One `xmtp_dispatch_user` call with the content above\n\
+     1. One `okx-a2a user notify` bash call with the localized content above\n\
      No other text or tool calls. End turn after the call completes.\n"
     )
 }
 
 pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
@@ -85,14 +93,18 @@ pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
-     \x20\x20content: {closed_notify}\n\n\
+     **Step 1 — Notify the user via `okx-a2a user notify`:**\n\
+     🌐 **Localize first** — translate the canonical English content below.\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
+     ```\n\n\
+     Canonical English content: {closed_notify}\n\n\
      **Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Close flow ends.\n\n\
      [OUTPUT_TEMPLATE]\n\
      Your entire response for this event MUST be exactly:\n\
-     1. One `xmtp_dispatch_user` call with the content above\n\
+     1. One `okx-a2a user notify` bash call with the localized content above\n\
      No other text or tool calls. End turn after the call completes.\n"
     )
 }
@@ -101,7 +113,6 @@ pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
 
 pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let submit_expired = super::super::content::submit_expired_user_notify(job_id);
@@ -112,9 +123,13 @@ pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
         Ok(()) => format!(
-            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
-             **Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
-             content: \"{submit_expired}\"\n"
+            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Notify the user via `okx-a2a user notify`:**\n\
+             🌐 **Localize first** — translate the canonical English content below.\n\
+             ```bash\n\
+             okx-a2a user notify --content '<your translated content>' --json\n\
+             ```\n\
+             Canonical English content: \"{submit_expired}\"\n"
         ),
         Err(e) => format!(
             "[submit_expired] ❌ `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
@@ -125,7 +140,6 @@ pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
 
 pub(crate) async fn reject_expired(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let reject_expired = super::super::content::reject_expired_user_notify(job_id);
@@ -133,9 +147,13 @@ pub(crate) async fn reject_expired(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
         Ok(()) => format!(
-            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
-             **Call xmtp_dispatch_user to notify the user** ({l10n_short}):\n\
-             content: \"{reject_expired}\"\n"
+            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Notify the user via `okx-a2a user notify`:**\n\
+             🌐 **Localize first** — translate the canonical English content below.\n\
+             ```bash\n\
+             okx-a2a user notify --content '<your translated content>' --json\n\
+             ```\n\
+             Canonical English content: \"{reject_expired}\"\n"
         ),
         Err(e) => format!(
             "[reject_expired] ❌ `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
@@ -161,38 +179,40 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
     format!(
     "[System Notification] review_deadline_warn (review deadline approaching)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **CRITICAL -- this event MUST push the review decision to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `xmtp_dispatch_user`).**\n\
+     🛑 **CRITICAL — this event MUST push the review decision to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `okx-a2a user notify`).**\n\
      Review deadline = user funds safety red line — if the user is not notified, funds auto-release to the ASP on timeout, irreversibly.\n\
      ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
-     ❌ Do not substitute `xmtp_dispatch_user` for the `pending-decisions-v2 request` (the user must make a review decision; dispatch_user cannot relay).\n\n\
+     ❌ Do not substitute `okx-a2a user notify` for the `pending-decisions-v2 request` (the user must make a review decision; a one-way notify cannot relay).\n\n\
      **Push the review decision to the user (5-substep protocol; read ALL 5 before running any command)**:\n\n\
      {request_block}",
     )
 }
 
 pub(crate) fn review_expired(ctx: &FlowContext<'_>) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
 
     let review_expired = super::super::content::review_expired_user_notify(job_id);
     format!(
     "[System Notification] review_expired (review window expired; task is still submitted)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the review window expired; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     🛑 **You MUST notify the user the review window expired; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
      [Your next actions]\n\n\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the review window expired** ({l10n_short}):\n\
-     \x20\x20content:\n\
+     **Step 1 — Notify the user via `okx-a2a user notify`:**\n\
+     🌐 **Localize first** — translate the canonical English content below.\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
+     ```\n\n\
+     Canonical English content:\n\
      {review_expired}\n\n\
-     **Step 2** -- Wait for the `job_auto_completed` system notification and then wrap up.\n\n\
+     **Step 2** — Wait for the `job_auto_completed` system notification and then wrap up.\n\n\
      [OUTPUT_TEMPLATE]\n\
      Your entire response for this event MUST be exactly:\n\
-     1. One `xmtp_dispatch_user` call with the content above\n\
+     1. One `okx-a2a user notify` bash call with the localized content above\n\
      No other text or tool calls. End turn after the call completes.\n"
     )
 }
 
 pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let terminal_session_hint = &ctx.terminal_session_hint;
@@ -228,39 +248,40 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
     format!(
     "[System Notification] job_auto_completed (claimAutoComplete tx receipt)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST call `xmtp_dispatch_user` to notify the user the task auto-completed; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
-     [Your next actions]\n\n\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the task auto-completed** ({l10n_short}):\n\
-     \x20\x20content:\n\
-     {auto_completed_notify}\n\n\
-     🛑 Do NOT end this turn — Step 3 (auto-rate) and Step 3.5 (notify rating) below are MANDATORY.\n\n\
-     **Step 2 — Task fields (pre-fetched; do NOT call `common context`):**\n\
+     🛑 **You MUST notify the user with the auto-completion result + auto-rating in ONE consolidated message** — auto-rate FIRST, then send a single `okx-a2a user notify` combining both pieces.\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 1 — Task fields (pre-fetched; do NOT call `common context`):**\n\
      \x20\x20- title: {title}\n\
      \x20\x20- tokenAmount: {amt} | tokenSymbol: {sym}\n\
      \x20\x20- providerAgentId: {provider_id}\n\n\
-     **Step 3 -- 🛑 Auto-rate the ASP (MANDATORY):**\n\
+     **Step 2 — 🛑 Auto-rate the ASP FIRST (MANDATORY; must complete before Step 3):**\n\
      Based on the deliverable vs the task description and quality standards, generate:\n\
      \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
      Then execute:\n\
      ```bash\n\
      onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+     ```\n\
+     Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in Step 3.\n\n\
+     **Step 3 — Notify the user with a SINGLE consolidated message:**\n\
+     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve score / title / amounts / description verbatim).\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
      ```\n\n\
-     **Step 3.5 -- Notify the user of the submitted rating ({l10n_short}):**\n\
-     After feedback-submit, call `xmtp_dispatch_user` to notify the user:\n\
-     - ✅ **Success** (output contains `txHash`):\n\
-     content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from Step 2):\n\
-     {rating_notify}\n\
-     - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
-     **Step 4 -- Terminal wrap-up (keep the sub session):**\n\
+     Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
+     ▸ Auto-completion notice (always included):\n\
+     \x20\x20{auto_completed_notify}\n\n\
+     ▸ Rating info (include ONLY if Step 2's feedback-submit succeeded; if it failed, omit this entire half):\n\
+     \x20\x20{rating_notify}\n\
+     \x20\x20(fill `<score>` with the X.XX value used in Step 2, `<description>` with the comment from Step 2, `<title>` with the task title above)\n\n\
+     **Step 4 — Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n\n\
      [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST include ALL of the following tool calls, in order:\n\
-     1. One `xmtp_dispatch_user` call — auto-completion notification (Step 1)\n\
-     2. One `onchainos agent feedback-submit` call — auto-rate the ASP (Step 3)\n\
-     3. One `xmtp_dispatch_user` call — rating notification (Step 3.5; skip ONLY if Step 3 returned an error)\n\
-     Stopping after Step 1 is a **critical failure** — the user will never see their rating.\n"
+     Your entire response for this event MUST include the following tool calls, in order:\n\
+     1. One `onchainos agent feedback-submit` call — auto-rate the ASP (Step 2)\n\
+     2. One `okx-a2a user notify` bash call — consolidated auto-completion + rating notification (Step 3)\n\
+     Skipping Step 2 or sending the notification before rating is a **critical failure** — the user will never see their rating.\n"
     ,
     title = p.title,
     amt = p.token_amount,
@@ -272,7 +293,6 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
 
 pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
@@ -281,9 +301,13 @@ pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     match super::super::close::handle_close(&mut client, job_id, Some(agent_id)).await {
         Ok(()) => format!(
-            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
-             **Call xmtp_dispatch_user to notify the user the task was closed** ({l10n_short}):\n\
-             content: \"{close_notify}\"\n"
+            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Notify the user the task was closed via `okx-a2a user notify`:**\n\
+             🌐 **Localize first** — translate the canonical English content below.\n\
+             ```bash\n\
+             okx-a2a user notify --content '<your translated content>' --json\n\
+             ```\n\
+             Canonical English content: \"{close_notify}\"\n"
         ),
         Err(e) => format!(
             "[close_task] ❌ `onchainos agent close {job_id}` failed in-process: {e}\n\n\
@@ -294,7 +318,6 @@ pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
 
 pub(crate) async fn set_public(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
@@ -303,9 +326,13 @@ pub(crate) async fn set_public(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     match super::super::changepublic::handle_set_public(&mut client, job_id, Some(agent_id)).await {
         Ok(()) => format!(
-            "🛑 **You MUST call `xmtp_dispatch_user` to notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
-             **Call xmtp_dispatch_user to notify the user the task is now public** ({l10n_short}):\n\
-             content: \"{set_public_notify}\"\n"
+            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+             **Notify the user the task is now public via `okx-a2a user notify`:**\n\
+             🌐 **Localize first** — translate the canonical English content below.\n\
+             ```bash\n\
+             okx-a2a user notify --content '<your translated content>' --json\n\
+             ```\n\
+             Canonical English content: \"{set_public_notify}\"\n"
         ),
         Err(e) => format!(
             "[set_public] ❌ `onchainos agent set-public {job_id}` failed in-process: {e}\n\n\
@@ -335,7 +362,6 @@ pub(crate) fn evaluator_events(event_str: &str) -> String {
 }
 
 pub(crate) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
@@ -346,11 +372,15 @@ pub(crate) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
      [Role] User (User Agent)\n\n\
      [Your next actions]\n\n\
      {title_query_hint}\
-     **Step 1 -- Call xmtp_dispatch_user to notify the user the reward has arrived** ({l10n_short}):\n\
-     \x20\x20content: {reward_claimed}\n\n\
+     **Step 1 — Notify the user the reward has arrived via `okx-a2a user notify`:**\n\
+     🌐 **Localize first** — translate the canonical English content below.\n\
+     ```bash\n\
+     okx-a2a user notify --content '<your translated content>' --json\n\
+     ```\n\n\
+     Canonical English content: {reward_claimed}\n\n\
      [OUTPUT_TEMPLATE]\n\
      Your entire response for this event MUST be exactly:\n\
-     1. One `xmtp_dispatch_user` call with the content above\n\
+     1. One `okx-a2a user notify` bash call with the localized content above\n\
      No other text or tool calls. End turn after the call completes.\n"
     )
 }
@@ -366,21 +396,21 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
      ⚠️ This is a wake-up heartbeat event, **not** a business-driven event. The real business status lives in envelope.message.jobStatus.\n\
      You should not run a playbook with `wakeup_notify` as --event -- this playbook is only a guide.\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 1 -- Read the real status from the envelope**:\n\
+     **Step 1 — Read the real status from the envelope**:\n\
      From the wakeup_notify envelope that triggered this turn, read `message.jobStatus` (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed` and other real status strings).\n\n\
-     **Step 2 -- Re-call next-action with the real status to fetch the current playbook**:\n\
+     **Step 2 — Re-call next-action with the real status to fetch the current playbook**:\n\
      ```bash\n\
      onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"<value of message.jobStatus>\",\"jobId\":\"{job_id}\"}}'\n\
      ```\n\
      Follow the returned playbook for what to do at the current status.\n\n\
-     **Step 3 -- Idempotency self-check (avoid re-prompting the user)**:\n\
+     **Step 3 — Idempotency self-check (avoid re-prompting the user)**:\n\
      If the playbook from Step 2 would push a decision to the user — i.e. it contains `onchainos agent pending-decisions-v2 request` — **first** call:\n\
      ```bash\n\
      onchainos agent pending-decisions-v2 list --format json\n\
      ```\n\
-     - The returned `entries` already contains a sub_key with `job={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead call `xmtp_dispatch_user` content=`{wakeup_resume}` (🌐 localize per [Localization] rules) and end the turn.\n\
+     - The returned `entries` already contains a sub_key with `job={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead send the resume notification via `okx-a2a user notify --content '<localized {wakeup_resume}>' --json` (🌐 localize per [Localization] rules) and end the turn.\n\
      - No matching entry → run the Step 2 playbook normally; the `pending-decisions-v2 request` call handles the prompt.\n\n\
-     ⚠️ **Do not** xmtp_send the ASP \"I'm back online\" or similar small talk -- they do not care about your connection state.\n\
+     ⚠️ **Do not** send the ASP \"I'm back online\" or similar small talk — they do not care about your connection state.\n\
      ⚠️ If the Step 2 playbook is passive (e.g. status=accepted waiting for ASP delivery), just emit a \"task resumed\" notification and end the turn; do not proactively run business actions.\n"
     )
 }
