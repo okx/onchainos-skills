@@ -335,8 +335,15 @@ pub fn xmtp_get_conversation_history(session_key: &str) -> Result<Vec<Conversati
     }
     let resp: RawResp = serde_json::from_slice(&out.stdout)
         .map_err(|e| anyhow::anyhow!("parse okx-a2a session get json failed: {e}"))?;
+    Ok(normalize_messages(resp))
+}
+
+/// Shared post-processor for `okx-a2a session get` / `session history`
+/// responses — collapses `rawText` / `content` and `xmtpSentAtMs` /
+/// `receivedAtMs` into the canonical `ConversationMessage` shape.
+fn normalize_messages(resp: RawResp) -> Vec<ConversationMessage> {
     let messages = resp.file.map(|f| f.messages).unwrap_or_default();
-    Ok(messages
+    messages
         .into_iter()
         .map(|m| ConversationMessage {
             id: m.id,
@@ -345,7 +352,29 @@ pub fn xmtp_get_conversation_history(session_key: &str) -> Result<Vec<Conversati
             sent_at: m.xmtp_sent_at_ms.or(m.received_at_ms),
             delivery_status: m.delivery_status.unwrap_or_default(),
         })
-        .collect())
+        .collect()
+}
+
+/// Bridge equivalent: `xmtp_get_conversation_history '{jobId, toAgentId}'`
+/// `okx-a2a session history --job-id <id> --to-agent-id <id> --json` — new
+/// job-id based addressing; matches the session bound to `jobId + toAgentId`.
+pub fn session_history(job_id: &str, to_agent_id: &str) -> Result<Vec<ConversationMessage>> {
+    let out = Command::new("okx-a2a")
+        .args([
+            "session", "history",
+            "--job-id", job_id,
+            "--to-agent-id", to_agent_id,
+            "--json",
+        ])
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("okx-a2a session history exit {status}: {stderr}", status = out.status);
+    }
+    let resp: RawResp = serde_json::from_slice(&out.stdout)
+        .map_err(|e| anyhow::anyhow!("parse okx-a2a session history json failed: {e}"))?;
+    Ok(normalize_messages(resp))
 }
 
 // ── File transfer ────────────────────────────────────────────────────────
