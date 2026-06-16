@@ -201,7 +201,31 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
         other => bail!("invalid servicetype in --service: {other}"),
     }
 
+    // Fee is a PLAIN NUMBER only — USDT is the implicit, only currency. A
+    // currency token / symbol / any extra text is rejected (validate-listing
+    // surfaces the same rule as a P1 finding; create/update bypass validate so
+    // we enforce it here too). Empty A2A fee already returned above as allowed.
+    if !service.fee.is_empty() && !is_plain_number(&service.fee) {
+        bail!("invalid fee in --service: must be a plain number (USDT is the default currency)");
+    }
+
     Ok(service)
+}
+
+/// True when `s` is a plain decimal number: `^\d+(\.\d{1,6})?$` (up to 6
+/// fractional digits). No sign, no currency token, no whitespace. Shared by
+/// `normalize_service` (create/update) and `validate::check_fee` (QA) so both
+/// paths enforce the identical fee contract.
+pub(super) fn is_plain_number(s: &str) -> bool {
+    match s.split_once('.') {
+        None => !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
+        Some((int, frac)) => {
+            !int.is_empty()
+                && int.bytes().all(|b| b.is_ascii_digit())
+                && (1..=6).contains(&frac.len())
+                && frac.bytes().all(|b| b.is_ascii_digit())
+        }
+    }
 }
 
 pub(super) fn normalize_role(role: &str) -> Result<String> {

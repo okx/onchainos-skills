@@ -12,7 +12,7 @@ use crate::commands::Context;
 
 use super::args::ValidateListingArgs;
 use super::models::AgentService;
-use super::utils::normalize_role;
+use super::utils::{is_plain_number, normalize_role};
 
 // ─── CLI entry point (hidden — not shown in --help) ─────────────────────────
 
@@ -455,7 +455,7 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
         }
     }
 
-    // ── Fee (U4/P1/P2/P3/P4) ─────────────────────────────────────────────
+    // ── Fee (U4/P1/P3/P4) — plain number only, USDT implicit ─────────────
     check_fee(index, svc, is_a2mcp, findings);
 
     // ── Description (D1-D7) on servicedescription ────────────────────────
@@ -475,13 +475,13 @@ fn check_fee(index: usize, svc: &AgentService, is_a2mcp: bool, findings: &mut Ve
                 &field,
                 "U4",
                 "A2MCP service has an empty fee.",
-                "Set an explicit fee, e.g. 0 USDT for free.",
+                "Set an explicit fee, e.g. 0 for free.",
             ));
             findings.push(Finding::block(
                 &field,
                 "P1",
                 "A2MCP fee is required.",
-                "Provide a fee like '10 USDT' or a bare number.",
+                "Provide a plain number, e.g. 10 (USDT is the default currency).",
             ));
         }
         // A2A: fee optional → skip silently.
@@ -494,7 +494,7 @@ fn check_fee(index: usize, svc: &AgentService, is_a2mcp: bool, findings: &mut Ve
             &field,
             "P4",
             "Fee contains a parenthetical note.",
-            "Remove the parenthetical; keep only the numeric amount + currency.",
+            "Remove the parenthetical; keep only the plain number.",
         ));
     }
 
@@ -504,35 +504,25 @@ fn check_fee(index: usize, svc: &AgentService, is_a2mcp: bool, findings: &mut Ve
             &field,
             "P3",
             "Fee contains negotiation language.",
-            "Set a concrete fee instead of TBD / negotiable.",
+            "Set a concrete number instead of TBD / negotiable.",
         ));
     }
 
-    // Format + currency: strip a trailing parenthetical for the format check so
-    // P4 is the only finding for the paren itself.
+    // P1 format: the fee must be a PLAIN NUMBER. USDT is the implicit and only
+    // currency — a currency token / symbol / any extra text is rejected. Strip
+    // a trailing parenthetical (already flagged as P4) before the numeric check
+    // so the paren isn't double-counted as a format error.
     let core = match fee.split_once('(') {
         Some((before, _)) => before.trim(),
         None => fee,
     };
-    let (ok_format, currency) = parse_fee_core(core);
-    if !ok_format {
+    if !is_plain_number(core) {
         findings.push(Finding::block(
             &field,
             "P1",
-            "Fee format is invalid.",
-            "Use a number optionally followed by USDT or USDG, e.g. '10 USDT' or '10'.",
+            "Fee must be a plain number.",
+            "Use a plain number, e.g. 10 — USDT is the default currency; do not add a currency symbol or any other text.",
         ));
-    }
-    if let Some(cur) = currency {
-        let cur_up = cur.to_ascii_uppercase();
-        if cur_up != "USDT" && cur_up != "USDG" {
-            findings.push(Finding::block(
-                &field,
-                "P2",
-                "Fee currency must be USDT or USDG.",
-                "Use USDT or USDG as the currency.",
-            ));
-        }
     }
 }
 
@@ -897,61 +887,6 @@ fn contains_negotiation_language(fee: &str) -> bool {
     fee.contains("面议") || fee.contains("协商")
 }
 
-/// Parse the "core" fee (parenthetical already stripped). Returns
-/// (format_ok, detected_currency_token). Accepts:
-///   `^\d+(\.\d{1,6})?$`                          (bare numeric)
-///   `^\d+(\.\d{1,6})?\s*[A-Za-z]+$`              (numeric + currency token, space optional)
-/// The currency token (if present) is returned so P2 can validate it. A bare
-/// numeric returns currency=None. Malformed → (false, None | Some(...)).
-fn parse_fee_core(core: &str) -> (bool, Option<String>) {
-    let core = core.trim();
-    if core.is_empty() {
-        return (false, None);
-    }
-    // Split into number part and optional currency part on whitespace.
-    let mut it = core.split_whitespace();
-    let num = it.next().unwrap_or("");
-    let cur = it.next();
-    let extra = it.next();
-
-    match (cur, extra) {
-        (Some(c), None) => {
-            // Spaced form: "<num> <cur>"
-            let num_ok = is_valid_numeric(num);
-            let cur_alpha = c.chars().all(|ch| ch.is_ascii_alphabetic()) && !c.is_empty();
-            (num_ok && cur_alpha, Some(c.to_string()))
-        }
-        (None, None) => {
-            // Bare numeric, or no-space form like "10USDT" / "1.5USDG".
-            if is_valid_numeric(num) {
-                return (true, None);
-            }
-            // Try splitting at the first alphabetic character.
-            if let Some(split_pos) = num.find(|c: char| c.is_ascii_alphabetic()) {
-                let (n, c) = num.split_at(split_pos);
-                let num_ok = is_valid_numeric(n);
-                let cur_alpha = c.chars().all(|ch| ch.is_ascii_alphabetic()) && !c.is_empty();
-                (num_ok && cur_alpha, if cur_alpha { Some(c.to_string()) } else { None })
-            } else {
-                (false, None)
-            }
-        }
-        // Anything beyond "<num> <cur>" is malformed.
-        _ => (false, cur.map(str::to_string)),
-    }
-}
-
-fn is_valid_numeric(s: &str) -> bool {
-    match s.split_once('.') {
-        None => !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
-        Some((int, frac)) => {
-            !int.is_empty()
-                && int.bytes().all(|b| b.is_ascii_digit())
-                && (1..=6).contains(&frac.len())
-                && frac.bytes().all(|b| b.is_ascii_digit())
-        }
-    }
-}
 
 /// U5: standalone `A2A` / `A2MCP` token (case-insensitive, word-boundary) that
 /// contradicts the actual `stype`. Returns the contradicting token if found.
