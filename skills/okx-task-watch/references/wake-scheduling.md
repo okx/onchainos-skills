@@ -13,7 +13,7 @@ After rendering `userContent`, but **before ending the turn**, schedule a 2-minu
   CronCreate(
     recurring: false,
     cron: "<minute> <hour> <DoM> <Mon> *",
-    prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --poll-ms 1000 --limit 50"
+    prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --json"
   )
   ```
   Field notes (do **not** inline these into the call):
@@ -28,7 +28,7 @@ After rendering `userContent`, but **before ending the turn**, schedule a 2-minu
     kind: "heartbeat",
     destination: "thread",
     rrule: "DTSTART:<YYYYMMDDTHHMMSS>\nRRULE:FREQ=MINUTELY;COUNT=1",
-    prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --poll-ms 1000 --limit 50",
+    prompt: "Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --json",
     status: "ACTIVE"
   )
   ```

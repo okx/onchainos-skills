@@ -641,7 +641,7 @@ pub async fn handle_draft_publish(
         println!();
         println!("**Step 2 — Run the bash below (foreground, long-poll blocks this turn until events arrive):**");
         println!("```bash");
-        println!("okx-a2a user watch --once --json --poll-ms 1000 --limit 50 --job-id {returned_job_id}");
+        println!("okx-a2a user watch --json --job-id {returned_job_id}");
         println!("```");
         println!("Then dispatch each returned item per `skills/okx-task-watch/SKILL.md` §Dispatch and re-enter the same command per §re-arm.");
     }

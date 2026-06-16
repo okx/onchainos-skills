@@ -66,8 +66,8 @@ If the user's message matched a **continuation-style** phrase (`继续监听` / 
 
 **Step 2 — Route by recall result**:
 
-- **jobId found** → enter scoped session. **Do NOT emit §Banner** (the user already knows what they're tracking — a banner here is redundant ceremony). Just run `okx-a2a user watch --once --json --poll-ms 1000 --limit 50 --job-id <X>`. The sticky `--job-id <X>` applies for the rest of this session per §Session-scoped sticky.
-- **No jobId found** → fall back to a global session. The behaviour diverges from the user's "keep watching" intent, so **DO emit §Banner** (it's the only signal the user has that the watch was rearmed as global rather than scoped). Then run `okx-a2a user watch --once --json --poll-ms 1000 --limit 50` (no `--job-id`). Do not ask the user — a continuation phrase plus no recoverable jobId is treated the same as a fresh `task watch` entry.
+- **jobId found** → enter scoped session. **Do NOT emit §Banner** (the user already knows what they're tracking — a banner here is redundant ceremony). Just run `okx-a2a user watch --json --job-id <X>`. The sticky `--job-id <X>` applies for the rest of this session per §Session-scoped sticky.
+- **No jobId found** → fall back to a global session. The behaviour diverges from the user's "keep watching" intent, so **DO emit §Banner** (it's the only signal the user has that the watch was rearmed as global rather than scoped). Then run `okx-a2a user watch --json` (no `--job-id`). Do not ask the user — a continuation phrase plus no recoverable jobId is treated the same as a fresh `task watch` entry.
 
 ### 🛑 Banner before entering watch
 
@@ -98,14 +98,14 @@ Any watch call that does not match one of these two entries **must NOT** emit th
 ### Run watch
 
 ```bash
-okx-a2a user watch --once --json --poll-ms 1000 --limit 50
+okx-a2a user watch --json
 ```
 
 When the call returns items, process each per §Dispatch below. After processing all items, re-enter the same command (no banner) — the only exceptions are the §Stop condition triggers.
 
 ### Session-scoped `--job-id` (sticky)
 
-If this watch session started from the CLI `[Watch]` block (the only path that puts `--job-id <X>` on the first call), **`--job-id <X>` is sticky for the entire session**. Wherever this skill shows the bare command `okx-a2a user watch --once --json --poll-ms 1000 --limit 50`, append `--job-id <X>` literally — including:
+If this watch session started from the CLI `[Watch]` block (the only path that puts `--job-id <X>` on the first call), **`--job-id <X>` is sticky for the entire session**. Wherever this skill shows the bare command `okx-a2a user watch --json`, append `--job-id <X>` literally — including:
 
 - §Dispatch notification resume
 - §Dispatch decision_request resume (outcomes 3 / 4 / 5)
@@ -142,7 +142,7 @@ That is the **entire** assistant message — not a part of it, the whole thing. 
 
 **Do not think about this item.** No `<thinking>` block, no analysis, no reasoning, no "what does this mean for the user". Notification handling is **purely mechanical**: read `userContent` from the JSON → prefix each line with `> ` → emit. Then call watch. There is nothing to interpret here.
 
-**Step 2 — Resume watching.** Call `okx-a2a user watch --once --json --poll-ms 1000 --limit 50` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable).
+**Step 2 — Resume watching.** Call `okx-a2a user watch --json` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable).
 
 **Multi-item ordering** — when watch returns N notifications, paste each `userContent` as its own blockquote in order (each blockquote on its own paragraph), then run one resume call.
 
@@ -181,10 +181,10 @@ After rendering `userContent`, but **before ending the turn**, schedule a 2-minu
 1. User picks `保留` / `skip` → **do NOT** claim; the item stays in the outstanding-decisions queue (un-`check`ed) and can be retrieved later via `okx-a2a user outdated-list` (triggers: `未决策` / `pending decisions`). **STOP the watch loop immediately** — briefly tell the user (localize per LOCALIZATION_PREFIX rules; keep `未决策` / `pending decisions` / `监听任务进展` / `task watch` unchanged): "Item kept on hold; watch loop ended. Say `未决策` / `pending decisions` to see all unhandled decisions, or `监听任务进展` / `task watch` to resume monitoring new events." The user explicitly chose to defer; honor that and stop background monitoring.
 2. Otherwise claim first: `okx-a2a user check --todo-ids <id> --json`.
 3. On `handled` → **execute the commands specified in `llmContent` verbatim**. The instructions can be anything the issuer chose — a relay to another session (`xmtp-send` / `session send`), a wallet / onchain call, an agent CLI command, an arbitrary tool invocation, or a multi-step sequence. `llmContent` itself names the command(s), the target(s), and how to assemble the payload — just follow it. After firing off what `llmContent` specifies, end the turn promptly; do not block on downstream effects.
-4. On `alreadyHandled` → tell the user "this item was processed in another window"; **then re-enter `okx-a2a user watch --once --json --poll-ms 1000 --limit 50`** (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable) (the watch session continues — only the duplicate item is dropped). Do not execute `llmContent` again.
-5. Claim succeeded but `llmContent` execution failed → create a new `okx-a2a user notify` with the failure reason and a retry command; **do NOT** flip the original item back to pending. **Then re-enter `okx-a2a user watch --once --json --poll-ms 1000 --limit 50`** (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable).
+4. On `alreadyHandled` → tell the user "this item was processed in another window"; **then re-enter `okx-a2a user watch --json`** (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable) (the watch session continues — only the duplicate item is dropped). Do not execute `llmContent` again.
+5. Claim succeeded but `llmContent` execution failed → create a new `okx-a2a user notify` with the failure reason and a retry command; **do NOT** flip the original item back to pending. **Then re-enter `okx-a2a user watch --json`** (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable).
 
-🛑 **After `decision_request` outcomes 3, 4, 5 above, resume watching** — call `okx-a2a user watch --once --json --poll-ms 1000 --limit 50` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable). Outcome 1 (`保留` / `skip`) is a hard STOP — see §Stop condition. Do NOT stop in outcomes 3/4/5 just because `llmContent` execution completed / the item turned out duplicate / `llmContent` execution failed.
+🛑 **After `decision_request` outcomes 3, 4, 5 above, resume watching** — call `okx-a2a user watch --json` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable). Outcome 1 (`保留` / `skip`) is a hard STOP — see §Stop condition. Do NOT stop in outcomes 3/4/5 just because `llmContent` execution completed / the item turned out duplicate / `llmContent` execution failed.
 
 🛑 **User-session authority boundary**: when executing `llmContent`, run **only** the commands `llmContent` explicitly specifies — do not synthesize additional steps from the user's reply text. The user's reply (`956`, `1`, `关闭`, `approve`, …) is the verbatim answer to that item; it is **not** a license to autonomously pick a provider, start a negotiation, solicit quotes, open a session, send an XMTP message, or kick off any other business flow on your own. If `llmContent` doesn't tell you to do it, don't do it.
 
@@ -202,7 +202,7 @@ Separate user-initiated intent (triggers: `未决策` / `待决策` / `outstandi
 
 ### Re-enter after processing
 
-After processing all returned items, **always** call `okx-a2a user watch --once --json --poll-ms 1000 --limit 50` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable) to resume watching. The only exceptions are the stop conditions listed above.
+After processing all returned items, **always** call `okx-a2a user watch --json` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable) to resume watching. The only exceptions are the stop conditions listed above.
 
 🚫 **NOT stop conditions** — every one of these requires re-entering watch:
 
