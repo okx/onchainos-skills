@@ -14,6 +14,7 @@
 //! - `query.rs`        — read-only queries (status, list, pay)
 
 mod accept;
+mod asp_ops;
 mod attachments;
 mod changepublic;
 mod claim_auto_refund;
@@ -73,6 +74,60 @@ pub enum TaskCommand {
         /// Payment mode to set at creation time (escrow / x402). When omitted the task is created with paymentMode=0 (unset).
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
+        /// Service ID from asp/match response
+        #[arg(long = "service-id")]
+        service_id: Option<String>,
+        /// Service input parameters (natural language string)
+        #[arg(long = "service-params")]
+        service_params: Option<String>,
+        /// Service token contract address
+        #[arg(long = "service-token-address")]
+        service_token_address: Option<String>,
+        /// Service price (from asp/match feeAmount)
+        #[arg(long = "service-token-amount")]
+        service_token_amount: Option<String>,
+    },
+    /// Search matching ASPs (pre-publish or post-publish)
+    AspMatch {
+        /// Task description (required when no --job-id)
+        #[arg(long = "task-desc", default_value = "")]
+        task_desc: String,
+        /// Job ID (required when task already exists)
+        #[arg(long = "job-id")]
+        job_id: Option<String>,
+        /// Narrow to this ASP's services
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: Option<String>,
+        /// Page number
+        #[arg(long, default_value = "1")]
+        page: usize,
+        /// Buyer agent ID
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
+    SetAsp {
+        job_id: String,
+        #[arg(long = "service-id")]
+        service_id: String,
+        #[arg(long = "service-params")]
+        service_params: String,
+        #[arg(long = "service-price")]
+        service_price: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Clear ASP + service fields (off-chain)
+    ResetAsp {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Reject current ASP (off-chain, clears asp + service fields, triggers job_user_reject)
+    UserReject {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Get recommended providers for a task
     Recommend {
@@ -307,11 +362,20 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments, endpoint, payment_mode } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
                 deadline_open, deadline_submit, title, provider, attachments, endpoint, payment_mode,
+                service_id, service_params, service_token_address, service_token_amount,
             }).await,
+        TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } =>
+            asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), page, agent_id.as_deref()).await,
+        TaskCommand::SetAsp { job_id, service_id, service_params, service_price, agent_id } =>
+            asp_ops::handle_set_asp(&mut client, &job_id, &service_id, &service_params, &service_price, agent_id.as_deref()).await,
+        TaskCommand::ResetAsp { job_id, agent_id } =>
+            asp_ops::handle_reset_asp(&mut client, &job_id, agent_id.as_deref()).await,
+        TaskCommand::UserReject { job_id, agent_id } =>
+            asp_ops::handle_user_reject(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } => {
             if next {
                 recommend::handle_recommend_next(&job_id)
@@ -429,6 +493,14 @@ pub enum DraftCommand {
         provider: Option<String>,
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
+        #[arg(long = "service-id")]
+        service_id: Option<String>,
+        #[arg(long = "service-params")]
+        service_params: Option<String>,
+        #[arg(long = "service-token-address")]
+        service_token_address: Option<String>,
+        #[arg(long = "service-token-amount")]
+        service_token_amount: Option<String>,
     },
     /// List my drafts
     List {
@@ -458,6 +530,14 @@ pub enum DraftCommand {
         deadline_submit: Option<String>,
         #[arg(long)]
         provider: Option<String>,
+        #[arg(long = "service-id")]
+        service_id: Option<String>,
+        #[arg(long = "service-params")]
+        service_params: Option<String>,
+        #[arg(long = "service-token-address")]
+        service_token_address: Option<String>,
+        #[arg(long = "service-token-amount")]
+        service_token_amount: Option<String>,
     },
     /// Delete a draft
     Delete {
@@ -476,6 +556,7 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
         DraftCommand::Create {
             title, description, description_summary, budget, max_budget, currency,
             deadline_open, deadline_submit, provider, attachments,
+            service_id, service_params, service_token_address, service_token_amount,
         } => {
             draft::handle_draft_create(
                 &mut client,
@@ -489,6 +570,10 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
                 deadline_submit.as_deref(),
                 provider.as_deref(),
                 attachments.as_deref(),
+                service_id.as_deref(),
+                service_params.as_deref(),
+                service_token_address.as_deref(),
+                service_token_amount.as_deref(),
             ).await
         }
         DraftCommand::List { page, limit } => {
@@ -497,6 +582,7 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
         DraftCommand::Update {
             job_id, title, description, description_summary, budget, max_budget, currency,
             deadline_open, deadline_submit, provider,
+            service_id, service_params, service_token_address, service_token_amount,
         } => {
             draft::handle_draft_update(
                 &mut client,
@@ -510,6 +596,10 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
                 deadline_open.as_deref(),
                 deadline_submit.as_deref(),
                 provider.as_deref(),
+                service_id.as_deref(),
+                service_params.as_deref(),
+                service_token_address.as_deref(),
+                service_token_amount.as_deref(),
             ).await
         }
         DraftCommand::Delete { job_id } => {

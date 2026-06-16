@@ -83,9 +83,56 @@ pub enum AgentCommand {
         #[arg(long = "file")] attachments: Option<Vec<String>>,
         /// Payment mode to set at creation time (escrow / x402).
         #[arg(long = "payment-mode")] payment_mode: Option<String>,
+        /// Service ID from asp/match response
+        #[arg(long = "service-id")] service_id: Option<String>,
+        /// Service input parameters (natural language string)
+        #[arg(long = "service-params")] service_params: Option<String>,
+        /// Service token contract address
+        #[arg(long = "service-token-address")] service_token_address: Option<String>,
+        /// Service price (from asp/match feeAmount)
+        #[arg(long = "service-token-amount")] service_token_amount: Option<String>,
         /// Accepted for compatibility but ignored — buyer identity is auto-resolved.
         #[arg(long = "agentId", alias = "agent-id", hide = true)]
         _agent_id: Option<String>,
+    },
+
+    /// Search matching ASPs (pre-publish or post-publish)
+    #[command(name = "asp-match")]
+    AspMatch {
+        /// Task description (required when no --job-id)
+        #[arg(long = "task-desc", default_value = "")] task_desc: String,
+        /// Job ID (required when task already exists)
+        #[arg(long = "job-id")] job_id: Option<String>,
+        /// Narrow to this ASP's services
+        #[arg(long = "provider-agent-id")] provider_agent_id: Option<String>,
+        /// Page number
+        #[arg(long, default_value = "1")] page: usize,
+        /// Buyer agent ID
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
+
+    /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
+    #[command(name = "set-asp")]
+    SetAsp {
+        job_id: String,
+        #[arg(long = "service-id")] service_id: String,
+        #[arg(long = "service-params")] service_params: String,
+        #[arg(long = "service-price")] service_price: String,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
+
+    /// Clear ASP + service fields (off-chain)
+    #[command(name = "reset-asp")]
+    ResetAsp {
+        job_id: String,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
+
+    /// Reject current ASP (off-chain, triggers job_user_reject)
+    #[command(name = "user-reject")]
+    UserReject {
+        job_id: String,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
     /// Get recommended providers for a task
@@ -878,13 +925,27 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
             deadline_open, deadline_submit, title, provider, endpoint, attachments, payment_mode,
+            service_id, service_params, service_token_address, service_token_amount,
             _agent_id: _,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
                 deadline_open, deadline_submit, title, provider, endpoint, attachments, payment_mode,
+                service_id, service_params, service_token_address, service_token_amount,
             }, ctx,
         ).await,
+
+        AgentCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } =>
+            task::buyer::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id }, ctx).await,
+
+        AgentCommand::SetAsp { job_id, service_id, service_params, service_price, agent_id } =>
+            task::buyer::run_task(T::SetAsp { job_id, service_id, service_params, service_price, agent_id }, ctx).await,
+
+        AgentCommand::ResetAsp { job_id, agent_id } =>
+            task::buyer::run_task(T::ResetAsp { job_id, agent_id }, ctx).await,
+
+        AgentCommand::UserReject { job_id, agent_id } =>
+            task::buyer::run_task(T::UserReject { job_id, agent_id }, ctx).await,
 
         AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } =>
             task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content }, ctx).await,

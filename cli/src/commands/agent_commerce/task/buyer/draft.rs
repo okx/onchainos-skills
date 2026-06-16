@@ -193,6 +193,10 @@ pub async fn handle_draft_create(
     deadline_submit: Option<&str>,
     provider: Option<&str>,
     attachments: Option<&[String]>,
+    service_id: Option<&str>,
+    service_params: Option<&str>,
+    service_token_address: Option<&str>,
+    service_token_amount: Option<&str>,
 ) -> Result<()> {
     validate_title(title)?;
     validate_description_opt(description)?;
@@ -267,6 +271,18 @@ pub async fn handle_draft_create(
     }
     if let Some(pid) = provider {
         obj.insert("providerAgentId".into(), serde_json::json!(pid));
+    }
+    if let Some(sid) = service_id {
+        obj.insert("serviceId".into(), serde_json::json!(sid));
+    }
+    if let Some(sp) = service_params {
+        obj.insert("serviceParams".into(), serde_json::json!(sp));
+    }
+    if let Some(sta) = service_token_address {
+        obj.insert("serviceTokenAddress".into(), serde_json::json!(sta));
+    }
+    if let Some(stm) = service_token_amount {
+        obj.insert("serviceTokenAmount".into(), serde_json::json!(stm));
     }
 
     let resp = client.post_with_identity(DRAFT_CREATE, &body, &buyer_agent_id).await?;
@@ -384,6 +400,10 @@ pub async fn handle_draft_update(
     deadline_open: Option<&str>,
     deadline_submit: Option<&str>,
     provider: Option<&str>,
+    service_id: Option<&str>,
+    service_params: Option<&str>,
+    service_token_address: Option<&str>,
+    service_token_amount: Option<&str>,
 ) -> Result<()> {
     if let Some(t) = title {
         validate_title(t)?;
@@ -444,6 +464,18 @@ pub async fn handle_draft_update(
     }
     if let Some(pid) = provider {
         body.insert("providerAgentId".into(), serde_json::json!(pid));
+    }
+    if let Some(sid) = service_id {
+        body.insert("serviceId".into(), serde_json::json!(sid));
+    }
+    if let Some(sp) = service_params {
+        body.insert("serviceParams".into(), serde_json::json!(sp));
+    }
+    if let Some(sta) = service_token_address {
+        body.insert("serviceTokenAddress".into(), serde_json::json!(sta));
+    }
+    if let Some(stm) = service_token_amount {
+        body.insert("serviceTokenAmount".into(), serde_json::json!(stm));
     }
 
     if body.is_empty() {

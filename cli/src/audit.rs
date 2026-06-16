@@ -433,6 +433,10 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SessionCleanup { .. } => "session-cleanup".into(),
         AgentCommand::TaskInProgress { .. } => "task-in-progress".into(),
         AgentCommand::TopAsps { .. } => "top-asps".into(),
+        AgentCommand::AspMatch { .. } => "asp-match".into(),
+        AgentCommand::SetAsp { .. } => "set-asp".into(),
+        AgentCommand::ResetAsp { .. } => "reset-asp".into(),
+        AgentCommand::UserReject { .. } => "user-reject".into(),
     }
 }
 

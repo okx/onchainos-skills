@@ -46,6 +46,10 @@ pub struct CreateTaskParams {
     pub attachments: Option<Vec<String>>,
     pub endpoint: Option<String>,
     pub payment_mode: Option<String>,
+    pub service_id: Option<String>,
+    pub service_params: Option<String>,
+    pub service_token_address: Option<String>,
+    pub service_token_amount: Option<String>,
 }
 
 struct ValidatedParams {
@@ -245,6 +249,18 @@ pub async fn handle_create(
     });
     if let Some(ref provider_id) = params.provider {
         body["providerAgentId"] = serde_json::json!(provider_id);
+    }
+    if let Some(ref sid) = params.service_id {
+        body["serviceId"] = serde_json::json!(sid);
+    }
+    if let Some(ref sp) = params.service_params {
+        body["serviceParams"] = serde_json::json!(sp);
+    }
+    if let Some(ref sta) = params.service_token_address {
+        body["serviceTokenAddress"] = serde_json::json!(sta);
+    }
+    if let Some(ref stm) = params.service_token_amount {
+        body["serviceTokenAmount"] = serde_json::json!(stm);
     }
 
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
