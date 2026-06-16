@@ -29,6 +29,7 @@ pub(crate) mod negotiate;
 mod query;
 mod recommend;
 mod reject;
+mod reject_apply;
 mod set_terms;
 mod x402_flow;
 
@@ -246,6 +247,12 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
+    /// Reject a provider's apply (on-chain pass-through; status stays `created`)
+    RejectApply {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
     /// Change max budget (off-chain, succeeds immediately)
     SetMaxBudget {
         job_id: String,
@@ -361,6 +368,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             set_terms::handle_set_token_and_budget(&mut client, &job_id, &token_symbol, &budget, agent_id.as_deref()).await,
         TaskCommand::SetProvider { job_id, provider_agent_id, agent_id } =>
             set_terms::handle_set_provider(&mut client, &job_id, &provider_agent_id, agent_id.as_deref()).await,
+        TaskCommand::RejectApply { job_id, agent_id } =>
+            reject_apply::handle_reject_apply(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
             set_terms::handle_set_max_budget(&mut client, &job_id, &max_budget, agent_id.as_deref()).await,
         TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {

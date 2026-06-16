@@ -4,55 +4,67 @@ use super::super::flow::FlowContext;
 
 // --- Execution stage ----------------------------------------------------
 
-pub(crate) fn provider_applied(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bool) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
-    // When prefetched is available, inline tokenSymbol / tokenAmount into the
-    // confirm-accept template — the LLM only has to extract providerAgentId
-    // (the iron rule requires it come from THIS turn's a2a-agent-chat sender,
-    // NOT from task detail / state). When prefetched is missing, fall back
-    // to a 2-step plan that fetches the task context first.
-    let (prelude, sym_field, amt_field, action_header) = match ctx.prefetched {
-        Some(p) => (
-            String::new(),
-            p.token_symbol.clone(),
-            p.token_amount.clone(),
-            "**Run confirm-accept (settle the accept on-chain):**".to_string(),
-        ),
-        None => (
-            format!(
-                "**Step 1 -- Fetch task info:**\n\
-                 ```bash\n\
-                 onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-                 ```\n\
-                 Extract: tokenSymbol, tokenAmount.\n\n"
-            ),
-            "<tokenSymbol>".to_string(),
-            "<tokenAmount>".to_string(),
-            "**Step 2 -- Run confirm-accept (settle the accept on-chain):**".to_string(),
-        ),
-    };
+    let mut client = TaskApiClient::new();
 
-    format!(
-    "[Current Status] provider_applied (ASP has submitted an on-chain apply)\n\
+    if over_most_budget {
+        // ── Over-budget branch: reject the apply, mirror provider_reject's playbook ──
+        if let Err(e) = super::super::reject_apply::handle_reject_apply(&mut client, job_id, Some(agent_id)).await {
+            return format!(
+                "[provider_applied/over_budget] ❌ reject-apply failed in-process: {e}\n\n\
+                 Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+            );
+        }
+
+        return format!(
+        "[Your next action — call ONE command only, then END TURN]\n\n\
+         🌐 **Localize first** — rewrite the `--user-content` template below into the user's language (preserve the four numbered choices and their order). The `--llm-content` block stays English verbatim — it is consumed by the user-session agent for routing, not by the human user.\n\n\
+         Run `okx-a2a user decision-request` to deliver the 4-option card:\n\
+         ```bash\n\
+         okx-a2a user decision-request \\\n\
+         \x20\x20--user-content '<LOCALIZED user-facing text — see template below>' \\\n\
+         \x20\x20--llm-content '<English routing block — see template below; copy verbatim>' \\\n\
+         \x20\x20--json\n\
+         ```\n\n\
+         **`--user-content` template (translate to the user's language; keep the 4 numbered options):**\n\
+         ```\n\
+         The ASP's quote exceeded the maximum budget for this task (jobId: {job_id}). The apply has been rejected automatically.\n\n\
+         What would you like to do next?\n\
+         1. Browse the recommended ASP list\n\
+         2. Designate a specific ASP by agentId\n\
+         3. Make the task public so any qualified ASP can apply\n\
+         4. Close the task\n\
+         ```\n\n\
+         **`--llm-content` block (keep English; copy verbatim — do NOT translate):**\n\
+         ```\n\
+         [USER_DECISION_REQUEST][source: provider_applied_over_budget][job: {job_id}][role: buyer][agentId: {agent_id}]\n\n\
+         Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
+         Step 2 — When the user actually replies (next turn), route by choice:\n\
+         \x20\x20• 1 / \"list\" / \"recommend\" / \"浏览\" / \"推荐\"   → **TBD (implementation pending)**: fetch the recommended-ASP list and re-prompt the user to pick one.\n\
+         \x20\x20• 2 / \"designate\" / \"specify\" / \"指定\"           → **TBD (implementation pending)**: once an `agentId` is collected, run `onchainos agent set-provider {job_id} --provider-agent-id <agentId> --agent-id {agent_id}`.\n\
+         \x20\x20• 3 / \"public\" / \"open\" / \"公开\"                  → run `onchainos agent set-public {job_id} --agent-id {agent_id}` then END TURN.\n\
+         \x20\x20• 4 / \"close\" / \"cancel\" / \"关闭\"                  → run `onchainos agent close {job_id} --agent-id {agent_id}` then END TURN.\n\
+         ```\n\n\
+         → After `decision-request` returns, **END THIS TURN**. Do NOT call any other tool in this turn.\n"
+        );
+    }
+
+    // ── Within-budget branch: confirm-accept on-chain (escrow funded; status → accepted) ──
+    if let Err(e) = super::super::accept::handle_confirm_accept(&mut client, job_id).await {
+        return format!(
+            "[provider_applied/confirm_accept] ❌ confirm-accept failed in-process: {e}\n\n\
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+        );
+    }
+
+    "[Current state] provider_applied (within max budget; confirm-accept completed in-process)\n\
      [Role] User (User Agent)\n\n\
-     {prelude}\
-     {action_header}\n\
-     ```bash\n\
-     onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol {sym_field} --token-amount {amt_field}\n\
-     ```\n\
-     ⚠️ The flag is `--provider-agent-id`, not `--agent-id`.\n\
-     🛑 **provider-agent-id MUST match the sender.agentId of the ASP's a2a-agent-chat message** -- take it from the ASP message received in this turn first, then fall back to the [intent:ack] entry in sub-session history. Do not use the value from common context (it can cross-pollute under multi-task scenarios).\n\
-     ⚠️ **Do not query the task API to verify whether the ASP has applied** -- on-chain indexing has a delay; `confirm-accept` performs the chain-side check internally.\n\
-     ❌ Do not call apply (apply is a provider action; the user never runs it).\n\
-     ❌ Do not call set-payment-mode (already done in the negotiate_ack event).\n\n\
-     → After running, **end this turn** and wait for the `job_accepted` system notification.\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent confirm-accept` call\n\
-     No other text or tool calls. End turn after the call completes.\n"
-    )
+     ✓ In-process: confirm-accept — escrow funded, on-chain accept submitted (see txHash printed above). Status is now `accepted`.\n\
+     → **End this turn** and wait for the `job_accepted` system notification.\n".to_string()
 }
 
 pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {

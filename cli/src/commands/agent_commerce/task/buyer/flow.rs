@@ -118,6 +118,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent set-token-and-budget {job_id} --token-symbol <USDT|USDG> --budget <amount>  # Change payment token and amount (on-chain)"),
             format!("  onchainos agent set-provider {job_id} --provider-agent-id <agentId>  # Change provider (on-chain)"),
             format!("  onchainos agent set-max-budget {job_id} --max-budget <amount>  # Change max budget (off-chain)"),
+            format!("  onchainos agent reject-apply {job_id}  # Reject the current provider's apply (off-chain)"),
         ],
         Status::Accepted => vec![
             "(escrow) Provider is executing the task, waiting for job_submitted to enter review".to_string(),
@@ -361,7 +362,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
             event,
             match &event {
                 Event::JobCreated => "xmtp_start_conversation (create group) → xmtp_send (send negotiation message)",
-                Event::ProviderApplied => "(no action) wait for job_accepted",
+                Event::ProviderApplied => "in-process branch by over_most_budget: confirm-accept (within budget) OR reject-apply + 4-option card (over budget)",
+                Event::ProviderReject => "in-process POST /reset/asp → playbook tells agent to localize + run okx-a2a user decision-request (4-option card)",
                 Event::JobAccepted => "xmtp_dispatch_user (notify accept success)",
                 Event::JobSubmitted => "pending-decisions-v2 request (forward deliverable, request review decision)",
                 Event::JobRejected => "xmtp_dispatch_user (notify rejection on-chain) → wait for provider decision",
@@ -421,7 +423,20 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::NegotiateCounter => super::flow_negotiate::negotiate_counter(&ctx),
 
         // ─── Task execution + arbitration + terminal states → flow_lifecycle ─────────────────
-        Event::ProviderApplied => super::flow_lifecycle::provider_applied(&ctx),
+        Event::ProviderApplied => {
+            // Compare ASP's apply quote (on-chain tokenAmount) vs buyer's max budget
+            // (paymentMostTokenAmount). If quote exceeds max → reject-apply path; else → confirm-accept.
+            let over_most_budget = match ctx.prefetched {
+                Some(p) => {
+                    let max_f: f64 = p.max_budget.as_deref().unwrap_or("0").parse().unwrap_or(0.0);
+                    let amt_f: f64 = p.token_amount.parse().unwrap_or(0.0);
+                    max_f > 0.0 && amt_f > max_f
+                }
+                None => false,
+            };
+            super::flow_lifecycle::provider_applied(&ctx, over_most_budget).await
+        }
+        Event::ProviderReject => super::flow_negotiate::provider_reject(&ctx).await,
         Event::JobAccepted => super::flow_lifecycle::job_accepted(&ctx),
         Event::DeliverableReceived => super::flow_lifecycle::deliverable_received(&ctx),
         Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),

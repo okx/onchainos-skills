@@ -190,6 +190,7 @@ pub enum Event {
     JobCreated,
     /// Provider apply on-chain (status remains created; pass-through event; notifies the provider that just applied).
     ProviderApplied,
+    ProviderReject,
     /// Buyer confirm-accept on-chain (status enters accepted; notifies provider).
     JobAccepted,
     /// Provider deliver on-chain (status enters submitted; notifies buyer to review).
@@ -334,6 +335,7 @@ impl Event {
             // Main task flow
             "job_created"               => Event::JobCreated,
             "provider_applied"          => Event::ProviderApplied,
+            "provider_reject"           => Event::ProviderReject,
             "job_accepted"              => Event::JobAccepted,
             "job_submitted"             => Event::JobSubmitted,
             "job_completed"             => Event::JobCompleted,
@@ -396,6 +398,7 @@ impl Event {
         match self {
             Event::JobCreated             => "job_created",
             Event::ProviderApplied        => "provider_applied",
+            Event::ProviderReject         => "provider_reject",
             Event::JobAccepted            => "job_accepted",
             Event::JobSubmitted           => "job_submitted",
             Event::JobCompleted           => "job_completed",
@@ -453,6 +456,7 @@ impl Event {
             Event::JobAutoCompleted   => "auto-complete failed",
             Event::RewardClaimed      => "reward claim failed",
             Event::DisputeApproved    => "dispute initiation failed",
+            Event::ProviderReject     => "asp reject apply failed",
             Event::Staked             => "staking failed",
             Event::UnstakeRequested   => "unstake failed",
             Event::UnstakeClaimed     => "unstake claim failed",
@@ -476,6 +480,7 @@ pub fn status_when_event(e: &Event) -> Status {
     match e {
         // Main flow
         Event::JobCreated | Event::ProviderApplied
+        | Event::ProviderReject
         | Event::TaskTokenBudgetChange | Event::TaskProviderChange
         | Event::SwitchProvider
         | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,

@@ -425,6 +425,13 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
+    /// Reject a provider's apply (on-chain pass-through; status stays `created`)
+    #[command(name = "reject-apply")]
+    RejectApply {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
     /// Change max budget (off-chain, succeeds immediately)
     #[command(name = "set-max-budget")]
     SetMaxBudget {
@@ -957,6 +964,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::buyer::run_task(T::SetTokenAndBudget { job_id, token_symbol, budget, agent_id }, ctx).await,
         AgentCommand::SetProvider { job_id, provider_agent_id, agent_id } =>
             task::buyer::run_task(T::SetProvider { job_id, provider_agent_id, agent_id }, ctx).await,
+        AgentCommand::RejectApply { job_id, agent_id } =>
+            task::buyer::run_task(T::RejectApply { job_id, agent_id }, ctx).await,
         AgentCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
             task::buyer::run_task(T::SetMaxBudget { job_id, max_budget, agent_id }, ctx).await,
 
