@@ -280,7 +280,7 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
          [Provider switch] set-provider has been submitted; start the new ASP flow immediately (do NOT wait for the task_provider_change on-chain confirmation).\n\
          [Role] User (User Agent) | [Execution environment] user session\n\n\
          🛑 **CLIs forbidden in this event**: save-agreed / set-payment-mode / confirm-accept / apply / complete / reject - negotiation with the new ASP has not started, all of these are illegal here.\n\n\
-         ⚠️ The old ASP's sub session will automatically send [intent:reject] when it receives the `task_provider_change` on-chain event; no intervention from you required.\n\n\
+         ⚠️ The old ASP's sub session will be cleaned up automatically when it receives the `task_provider_change` on-chain event; no intervention from you required.\n\n\
          [Your next actions (strict order)]\n\n\
          {route}\n")
 }

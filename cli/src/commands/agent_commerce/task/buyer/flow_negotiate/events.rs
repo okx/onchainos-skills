@@ -43,36 +43,18 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     "[Current state] job_payment_mode_changed (payment-mode switch is on-chain)\n\
      [Role] User (User Agent)\n\n\
      🛑 **You MUST notify the user of the payment-mode change.**\n\n\
-     🛑 **Allowed-action whitelist for this event**: escrow path - only xmtp_send [intent:confirm] + xmtp_dispatch_user notify the user; x402 path - only x402-check + task-402-pay + xmtp_dispatch_user.\n\
      ❌ Do NOT call set-payment-mode again (paymentMode is already on-chain; calling again pollutes state).\n\
-     ❌ Do NOT call save-agreed (already done in the negotiate_ack event).\n\
      ❌ Do NOT call apply (apply is an ASP action; the user never executes it).\n\
-     ❌ Do NOT call confirm-accept (the ASP has not applied yet; must wait for the ASP to apply after seeing CONFIRM).\n\n\
+     ❌ Do NOT call confirm-accept (the ASP has not applied yet; must wait for the provider_applied system notification).\n\n\
      [Your next actions]\n\n\
      {title_query_hint}\
      **Step 1 - read the `paymentMode` field from the system notification envelope:**\n\
      paymentMode value mapping: 1=escrow, 3=x402.\n\
      ⚠️ Use the `paymentMode` from the envelope directly; no extra API query needed.\n\n\
-     ━━━━━━━━━ escrow (paymentMode=1) - send [intent:confirm] to trigger ASP apply ━━━━━━━━━\n\n\
-     **Step 2 - read negotiation terms from local state (no session history replay needed):**\n\
-     ```bash\n\
-     onchainos agent get-agreed {job_id}\n\
-     ```\n\
-     Extract `providerAgentId`, `tokenSymbol`, `tokenAmount` from the output.\n\n\
-     **Step 3 - send [intent:confirm] (the ONLY legitimate trigger for ASP apply)**:\n\
-     On-chain paymentMode is now in place; it is safe to send [intent:confirm] for the ASP to apply.\n\
-     Call xmtp_send:\n\
-     \x20\x20content=\n\
-     \x20\x20jobId: {job_id}\n\
-     \x20\x20paymentMode: escrow\n\
-     \x20\x20tokenSymbol: <from get-agreed>\n\
-     \x20\x20tokenAmount: <from get-agreed>\n\
-     \x20\x20[intent:confirm]\n\n\
-     ⚠️ **Do NOT** bypass with natural language like \"please apply / please accept\" - the ASP's flow.rs treats the `[intent:confirm]` literal as the only apply trigger; natural-language instructions **will not be recognized**.\n\
-     ⚠️ apply is an ASP action; the user does not execute apply.\n\n\
-     **Step 4 - notify the user via xmtp_dispatch_user** ({l10n_dispatch}):\n\
+     ━━━━━━━━━ escrow (paymentMode=1) ━━━━━━━━━\n\n\
+     **Step 2 - notify the user via xmtp_dispatch_user** ({l10n_dispatch}):\n\
      \x20\x20content: {payment_escrow_notify}\n\n\
-     -> **end this turn** and wait for the ASP's XMTP message announcing the apply (handled by buyer-sub-playbook.md routing #1).\n\n\
+     -> **end this turn** and wait for the ASP to submit their apply on-chain (provider_applied system notification).\n\n\
      ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\
      From the previous set-payment-mode / x402-check output, extract endpoint, acceptsJson, feeTokenSymbol, feeAmount, providerAgentId.\n\n\
      ⚠️ **Parameter-loss fallback** (context compaction may drop the previous turn's output):\n\
@@ -120,95 +102,33 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
-    let l10n_prompt = super::super::flow::L10N_PROMPT;
-    let session_hint = super::super::flow::SESSION_STATUS_HINT;
-    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let short_id = ctx.short_id;
-    let title = ctx.title_display;
-    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] {title} budget decision"), "negotiate_over_budget");
     let title_query_hint = ctx.title_query_hint;
 
-    let over_budget = super::super::content::over_budget_user_prompt(short_id);
     format!(
-    "[Negotiation relay] negotiate_reply (ASP natural-language reply, no structured marker)\n\
+    "[Negotiation relay] negotiate_reply (ASP sent a natural-language message)\n\
      [Role] User (User Agent)\n\n\
-     During negotiation the ASP sent a natural-language message (could be a quote, detail discussion, a question, etc.). You must **evaluate and respond on your own**.\n\n\
-     🛑 **Mandatory pre-evaluation**: Step 1 and Step 2 are mandatory - they must complete before you may send any xmtp_send (including a reject). Do NOT skip evaluation and reply or reject directly.\n\n\
      {title_query_hint}\
-     [Your next actions (strict order)]\n\n\
-     **Step 1 - load task context (run once per turn if not already done):**\n\
-     Read budget (tokenAmount), paymentMostTokenAmount (max_budget), tokenSymbol, description from the `[Pre-fetched task context]` block above if available.\n\
-     If any field is missing or the block is absent, fall back to:\n\
-     ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\n\
-     **Step 2 - evaluate the ASP's reply:**\n\n\
-     🛑 **Iron rule: any message replying to the ASP must NEVER reveal the max_budget value** - leaking = the ASP quotes the cap immediately = the user loses all bargaining power.\n\
-     🚫 **Negotiation-autonomy red line**: except for the \"quote > max_budget\" auto-REJECT path below, do NOT call **any** user-facing tool (`xmtp_dispatch_user` / `pending-decisions-v2 request`) to make the user decide on negotiation. Negotiation is autonomous in the sub session - evaluate via the decision matrix and reply directly to the ASP (natural-language discussion / [intent:propose]); do NOT forward the quote to the user asking \"do you accept?\" or \"please confirm\".\n\
-     🔴 Real incident: model correctly called next-action but then used `xmtp_dispatch_user` to forward the quote to the user — `xmtp_dispatch_user` is equally forbidden for this purpose.\n\n\
-     Extract quote info from the ASP's message if any: amount, token, payment-mode preference, delivery time.\n\n\
-     🔴 **Quote evaluation decision matrix** (if the ASP gave an explicit price):\n\
-     \x20\x20| ASP quote | Action |\n\
-     \x20\x20|---|---|\n\
-     \x20\x20| <= budget | Price acceptable; after confirming other terms, send [intent:propose] |\n\
-     \x20\x20| budget < quote <= max_budget | Bargaining room, counter on your own |\n\
-     \x20\x20| > max_budget | **auto-REJECT + switch** (see below) |\n\n\
-     **Mandatory action when quote > max_budget**:\n\
-     \x20\x20a) xmtp_send `[intent:reject]`:\n\
-     \x20\x20\x20\x20content=\n\
-     \x20\x20\x20\x20jobId: {job_id}\n\
-     \x20\x20\x20\x20reason: quote exceeds max budget\n\
-     \x20\x20\x20\x20[intent:reject]\n\
-     \x20\x20b) `onchainos agent mark-failed {job_id} --provider <current ASP agentId>`\n\
-     \x20\x20c) Enqueue the user decision via `pending-decisions-v2 request`:\n\
-     \x20\x20\x20\x20{session_hint}\n\
-     \x20\x20\x20\x20```bash\n\
-     \x20\x20\x20\x20{cmd_over_budget}\n\
-     \x20\x20\x20\x20```\n\
-     \x20\x20\x20\x20{l10n_prompt}\n\
-     \x20\x20\x20\x20`--user-content` template (canonical English):\n\
-     {over_budget}\n\
-     \x20\x20\x20\x20{follow_playbook}\n\
-     \x20\x20\x20\x20-> **end this turn** and wait for the user's reply.\n\
-     \x20\x20\x20\x20After the user-session relays the reply as a system envelope (`event:\"user_decision_negotiate_over_budget\"`, `message.data:<verbatim>`), call `next-action --event user_decision_negotiate_over_budget --data \"<message.data>\"` — CLI returns a routing playbook (A=view recommendations / B=specify ASP / C=close); follow it verbatim. Do NOT keyword-match yourself.\n\n\
-     **Step 3 - reply to the ASP (depends on Step 2 evaluation):**\n\n\
-     - **ASP is still in discussion (no explicit price yet or asking for details)** -> xmtp_send a natural-language reply to keep discussing.\n\n\
-     - **Both sides agree on tokenAmount / tokenSymbol / paymentMode** -> send [intent:propose]:\n\
-     \x20\x20📋 **Mandatory pre-fill self-check**: replay sub session history field-by-field and find **the last value both sides explicitly agreed on**.\n\
-     \x20\x20content=\n\
-     \x20\x20jobId: {job_id}\n\
-     \x20\x20paymentMode: escrow\n\
-     \x20\x20tokenSymbol: <USDT|USDG>\n\
-     \x20\x20tokenAmount: <amount>\n\
-     \x20\x20[intent:propose]\n\n\
-     ⚠️ **In an A2A negotiation session paymentMode is fixed to escrow.**\n\
-     ⚠️ **Do NOT replace [intent:propose] with natural language** - the ASP Agent only recognizes structured markers; \"please apply / terms locked\" in natural language will not be parsed.\n\
-     ⚠️ **Only one xmtp_send per turn.**\n\
-     ⏱ **5-minute timeout**: if the ASP does not reply within 5 minutes, xmtp_send `[intent:reject]` (reason: negotiation timeout), then `onchainos agent mark-failed {job_id} --provider <ASP agentId>` + `onchainos agent recommend {job_id} --agent-id {agent_id}` to switch. Do NOT call `xmtp_delete_conversation` when switching — just ignore further messages from that ASP.\n\
-     🚫 🛑 **CRITICAL - this event absolutely forbids save-agreed / set-payment-mode / confirm-accept** - those only run in the later negotiate_ack event. ASP natural-language phrases like \"I accept\", \"agree\", \"OK\", \"no problem\" are **NOT** `[intent:ack]` - only content that starts with the literal `[intent:ack]` square brackets counts. Before the user sends [intent:propose], the ASP cannot reply with [intent:ack]. Violating this = skipping the three-step handshake = the job is permanently stuck.\n\
-     -> **end this turn** and wait for the ASP's reply.\n")
+     The ASP sent you a natural-language message. **Reply only about task details** — scope, requirements, deliverable format, timeline, clarifying questions. **Do NOT discuss price** — pricing is locked at accept time, not in chat.\n\n\
+     🚫 **Forbidden in this event:**\n\
+     \x20\x20❌ Discussing tokenAmount / tokenSymbol / paymentMode / budget — price is not negotiated in chat.\n\
+     \x20\x20❌ `xmtp_dispatch_user` / `pending-decisions-v2 request` to ask the user about the ASP's message — negotiation is autonomous in this sub session.\n\
+     \x20\x20❌ `save-agreed` / `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
+     [Your next action]\n\n\
+     **xmtp_send a single natural-language reply** focused on task details. Keep it concise (capability check, scope clarification, deliverable expectations, timeline). End the turn after sending.\n\n\
+     ⏱ **5-minute timeout**: if the ASP does not reply within 5 minutes, run `onchainos agent mark-failed {job_id} --provider <ASP agentId>` then `onchainos agent recommend {job_id} --agent-id {agent_id}` to switch. Do NOT call `xmtp_delete_conversation` — just ignore further messages from that ASP.\n"
+    )
 }
 
-/// CLI-mode variant of `negotiate_reply`. Differences vs the MCP-path version:
-/// - Task fields (title / description / token_symbol / base budget / max_budget)
-///   are inlined verbatim from `ctx.prefetched`, so the LLM doesn't need to
-///   run `common context` (Step 1 removed).
-/// - The user-facing tool calls switch from MCP `xmtp_send` to bash
-///   `okx-a2a xmtp-send`, so we don't depend on an MCP host being present.
-/// - Routing through `use_cli_minimal` short-circuits the negotiate preamble
-///   and `version_prefix`, leaving only `LOCALIZATION_PREFIX` + this body.
-///
-/// What stays LLM-driven: extracting the ASP's quote (natural language),
-/// applying the decision matrix, and composing the reply body. max_budget is
-/// inlined because the LLM MUST know it to detect over-budget — but the
-/// "never reveal to ASP" iron rule remains.
+/// CLI-mode variant of `negotiate_reply`. Inlines task fields from
+/// `ctx.prefetched` so the LLM doesn't need to run `common context`; switches
+/// the tool call from MCP `xmtp_send` to bash `okx-a2a xmtp-send`. Same core
+/// rule as `negotiate_reply`: discuss task details only, price is locked at
+/// accept time.
 pub(crate) fn negotiate_reply_cli(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let short_id = ctx.short_id;
-    let title = ctx.title_display;
 
     let task_block = match ctx.prefetched {
         Some(p) => {
@@ -217,215 +137,54 @@ pub(crate) fn negotiate_reply_cli(ctx: &FlowContext<'_>) -> String {
             } else {
                 p.description.clone()
             };
-            let amt = if p.token_amount.is_empty() { "?" } else { p.token_amount.as_str() };
-            let max_b = p.max_budget.as_deref().unwrap_or("(not set)");
             format!(
                 "**Task fields (already fetched — use these, do NOT call `common context`):**\n\
                  \x20\x20• Title: {title}\n\
-                 \x20\x20• Description: {desc}\n\
-                 \x20\x20• Base budget: {amt} {sym} (this is the value to mention to the ASP)\n\
-                 \x20\x20• Max budget: {max_b} {sym} 🛑 **INTERNAL — NEVER reveal to ASP under any circumstance**\n\
-                 \x20\x20• Payment mode: escrow (fixed on the A2A path)\n\n",
+                 \x20\x20• Description: {desc}\n\n\
+                 🛑 **Price fields (tokenSymbol / tokenAmount / paymentMostTokenAmount) are intentionally omitted — do NOT discuss price with the ASP.**\n\n",
                 title = p.title,
-                sym = p.token_symbol,
             )
         }
-        None => format!("**Task fields not pre-fetched.** Run `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` first to retrieve title / description / tokenSymbol / tokenAmount / paymentMostTokenAmount, then resume.\n\n"),
+        None => format!("**Task fields not pre-fetched.** Run `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` first to retrieve title / description, then resume. 🛑 Do NOT discuss price.\n\n"),
     };
-
-    let cmd_over_budget = super::super::flow::pending_cmd(
-        job_id, agent_id,
-        &format!("[Over budget {short_id}] {title} budget decision"),
-        "negotiate_over_budget",
-    );
-    let over_budget = super::super::content::over_budget_user_prompt(short_id);
 
     format!(
         "{task_block}\
          [Negotiation relay] negotiate_reply (ASP sent a natural-language message)\n\
          [Role] User (Buyer)\n\n\
-         **Step 1 — Extract the ASP's quote (if any) and apply the decision matrix:**\n\n\
-         \x20\x20| ASP quote vs your budgets | Action (Step 2 branch) |\n\
-         \x20\x20|---|---|\n\
-         \x20\x20| `<= base budget` | 2a or 2b — discuss / propose |\n\
-         \x20\x20| `base < quote <= max_budget` | 2a — counter, negotiate down |\n\
-         \x20\x20| `> max_budget` | **2c — auto-REJECT + switch** (mandatory) |\n\
-         \x20\x20| No explicit price yet | 2a — natural-language reply to keep discussing |\n\n\
-         🛑 **Iron rules:**\n\
-         \x20\x20❌ NEVER mention max_budget / 'cap' / 'maximum' / the max_budget value in messages to the ASP.\n\
-         \x20\x20❌ NEVER forward the ASP's quote to the user via `xmtp_dispatch_user` / `pending-decisions-v2 request`. Negotiation is autonomous in the sub session — except for the 2c over-budget path below, do not consult the user.\n\
-         \x20\x20❌ DO NOT run `save-agreed` / `set-payment-mode` / `confirm-accept` in this event — those belong to `negotiate_ack`. The ASP saying \"I accept\" / \"OK\" / \"agree\" is NOT `[intent:ack]`; only the literal `[intent:ack]` prefix counts.\n\n\
-         **Step 2 — Pick ONE branch based on Step 1:**\n\n\
-         **2a. Still in discussion / counter-offer** → reply naturally:\n\
+         **Reply only about task details** — scope, requirements, deliverable format, timeline, clarifying questions. **Do NOT discuss price** — pricing is locked at accept time, not in chat.\n\n\
+         🚫 **Forbidden in this event:**\n\
+         \x20\x20❌ Discussing tokenAmount / tokenSymbol / paymentMode / budget — price is not negotiated in chat.\n\
+         \x20\x20❌ `xmtp_dispatch_user` / `pending-decisions-v2 request` to ask the user about the ASP's message — negotiation is autonomous in this sub session.\n\
+         \x20\x20❌ `save-agreed` / `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
+         [Your next action — single CLI call, then end the turn]\n\n\
          ```bash\n\
          okx-a2a xmtp-send \\\n\
          \x20\x20--job-id {job_id} \\\n\
          \x20\x20--my-agent-id {agent_id} \\\n\
          \x20\x20--to-agent-id <ASP agentId from the negotiate context> \\\n\
-         \x20\x20--message '<natural-language reply — counter-offer or discussion, no [intent:*] marker>' \\\n\
+         \x20\x20--message '<natural-language reply, task details only — no price talk>' \\\n\
          \x20\x20--json\n\
          ```\n\n\
-         **2b. Both sides agreed on tokenAmount + tokenSymbol + paymentMode** → send `[intent:propose]`:\n\
-         message body MUST be exactly:\n\
-         ```\n\
-         jobId: {job_id}\n\
-         paymentMode: escrow\n\
-         tokenSymbol: <agreed value, USDT|USDG>\n\
-         tokenAmount: <agreed value>\n\
-         [intent:propose]\n\
-         ```\n\
-         ```bash\n\
-         okx-a2a xmtp-send \\\n\
-         \x20\x20--job-id {job_id} \\\n\
-         \x20\x20--my-agent-id {agent_id} \\\n\
-         \x20\x20--to-agent-id <ASP agentId> \\\n\
-         \x20\x20--message '<the body above, including the [intent:propose] line>' \\\n\
-         \x20\x20--json\n\
-         ```\n\n\
-         **2c. Quote > max_budget** → run all 3 commands below in order, then end the turn:\n\
-         ```bash\n\
-         okx-a2a xmtp-send \\\n\
-         \x20\x20--job-id {job_id} \\\n\
-         \x20\x20--my-agent-id {agent_id} \\\n\
-         \x20\x20--to-agent-id <ASP agentId> \\\n\
-         \x20\x20--message $'jobId: {job_id}\\nreason: quote exceeds max budget\\n[intent:reject]' \\\n\
-         \x20\x20--json\n\
-         onchainos agent mark-failed {job_id} --provider <ASP agentId>\n\
-         {cmd_over_budget}\n\
-         ```\n\
-         For the third command, `--user-content` template (🌐 localize to user's language before passing):\n\
-         {over_budget}\n\n\
-         ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, the sub session triggers the 2c path automatically on the next watch tick — do NOT pre-empt here.\n\n\
-         🛑 **End the turn after the chosen branch's bash returns.**\n"
+         ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, run `onchainos agent mark-failed {job_id} --provider <ASP agentId>` then `onchainos agent recommend {job_id} --agent-id {agent_id}` to switch.\n"
     )
 }
 
-/// CLI-mode variant of `negotiate_ack`. Collapses the original 2-step bash
-/// (save-agreed → set-payment-mode) into one atomic
-/// `save-agreed-and-set-payment` call so the LLM can't reorder or skip
-/// either, and payment-mode is fixed to escrow internally (no need to expose
-/// the flag). No IRON RULE preamble via cli_minimal short-circuit.
+/// DEPRECATED — the structured intent handshake ([intent:propose] / [intent:ack] / etc.)
+/// has been removed. All ASP messages are now plain natural-language task-detail
+/// discussion; delegate to `negotiate_reply_cli`.
 pub(crate) fn negotiate_ack_cli(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-
-    format!(
-        "[Negotiation relay] negotiate_ack (ASP replied [intent:ack] — accepting your last [intent:propose])\n\
-         [Role] User (Buyer)\n\n\
-         **Step 1 — Verify the ACK matches your last PROPOSE.**\n\
-         Read the ASP's `[intent:ack]` body; extract `tokenSymbol` and `tokenAmount`. Replay sub session history and find the most recent `[intent:propose]` you sent — compare its `tokenSymbol` / `tokenAmount` against the ACK's.\n\n\
-         \x20\x20• **Any field mismatch** → tampering attempt. `okx-a2a xmtp-send` a natural-language message telling the ASP the fields don't match, then resend `[intent:propose]` with your original values. End the turn.\n\
-         \x20\x20• **All match** → continue to Step 2.\n\n\
-         🛑 The ASP saying \"I accept\" / \"OK\" / \"agree\" in natural language is NOT `[intent:ack]`; only the literal `[intent:ack]` prefix counts.\n\n\
-         **Step 2 — Commit the agreement atomically (one CLI call that does save-agreed THEN set-payment-mode internally):**\n\
-         ```bash\n\
-         onchainos agent save-agreed-and-set-payment {job_id} \\\n\
-         \x20\x20--provider <ASP agentId from the negotiate context> \\\n\
-         \x20\x20--token-symbol <tokenSymbol from ACK> \\\n\
-         \x20\x20--token-amount <tokenAmount from ACK> \\\n\
-         \x20\x20--agent-id {agent_id}\n\
-         ```\n\
-         This single command runs `save-agreed` then `set-payment-mode --payment-mode escrow` in order. payment-mode is fixed to escrow on the A2A path — do NOT pass it.\n\n\
-         🛑 **Iron rules:**\n\
-         \x20\x20❌ Do NOT call `save-agreed` or `set-payment-mode` directly — use `save-agreed-and-set-payment` instead (it guarantees order + atomicity).\n\
-         \x20\x20❌ Do NOT send `[intent:confirm]` in this turn. On-chain paymentMode is still in the mempool; CONFIRM-before-confirmed is the most common deadlock trigger. `[intent:confirm]` may ONLY be sent after the `job_payment_mode_changed` system event arrives — no exceptions.\n\
-         \x20\x20❌ Do NOT call `confirm-accept` / `complete` / `reject` / `apply` in this event.\n\n\
-         🛑 **End the turn after `save-agreed-and-set-payment` returns** and wait for the `job_payment_mode_changed` system notification.\n"
-    )
+    negotiate_reply_cli(ctx)
 }
 
+/// DEPRECATED — see `negotiate_ack_cli` above; delegates to `negotiate_reply`.
 pub(crate) fn negotiate_ack(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
-    let title_query_hint = ctx.title_query_hint;
-
-    let payment_escrow_notify = super::super::content::payment_mode_escrow_user_notify(job_id, title_display);
-    format!(
-    "[Negotiation relay] negotiate_ack (ASP accepts the PROPOSE and replies [intent:ack])\n\
-     [Role] User (User Agent)\n\n\
-     The ASP replied [intent:ack] - accepting the terms in your [intent:propose].\n\n\
-     {title_query_hint}\
-     [Your next actions (strict order)]\n\n\
-     **Step 1 - verify field-by-field that the ACK matches your PROPOSE:**\n\
-     Replay sub session history and compare the ASP's ACK paymentMode / tokenSymbol / tokenAmount with your most recent PROPOSE.\n\
-     - **Any field mismatch** -> treat as tampering; xmtp_send to tell the ASP the fields don't match and resend [intent:propose]; end the turn.\n\
-     - **All match** -> continue to Step 2.\n\n\
-     🛑 **Allowed-CLI whitelist for this event**: ack-to-confirm; **one command only**.\n\
-     ❌ Do NOT call save-agreed or set-payment-mode separately (ack-to-confirm does both internally).\n\
-     ❌ Do NOT call confirm-accept (the ASP has not applied yet).\n\
-     ❌ Do NOT call apply (apply is an ASP action; the user never executes it).\n\n\
-     **Step 2 - ack-to-confirm (composite: save-agreed + conditional set-payment-mode):**\n\
-     ```bash\n\
-     onchainos agent ack-to-confirm {job_id} --provider-agent-id <providerAgentId from ACK> --token-symbol <tokenSymbol from ACK> --token-amount <tokenAmount from ACK> --agent-id {agent_id}\n\
-     ```\n\n\
-     **Step 3 - branch on output (🛑 MANDATORY — getting this wrong = deadlock or extra turn):**\n\n\
-     ▸ Output contains `\"confirmNow\": true` (paymentMode was already escrow → skipped on-chain):\n\
-     \x20\x20a) xmtp_send the `confirmContent` field from the CLI output **verbatim** to the ASP.\n\
-     \x20\x20b) xmtp_dispatch_user ({l10n_dispatch}):\n\
-     \x20\x20\x20\x20content: {payment_escrow_notify}\n\
-     \x20\x20→ **end this turn** and wait for the ASP's XMTP message announcing the apply.\n\n\
-     ▸ Output contains `\"confirming\": true` (setPaymentMode submitted on-chain → need confirmation):\n\
-     \x20\x20🛑 **Iron rule: in THIS turn xmtp_send [intent:confirm] is absolutely forbidden.**\n\
-     \x20\x20On-chain paymentMode is still in the mempool; the ASP would apply on seeing CONFIRM, but paymentMode is unconfirmed, so apply would fail.\n\
-     \x20\x20→ **end this turn** and wait for the `job_payment_mode_changed` system notification.\n"
-    )
+    negotiate_reply(ctx)
 }
 
+/// DEPRECATED — see `negotiate_ack_cli` above; delegates to `negotiate_reply`.
 pub(crate) fn negotiate_counter(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let title_query_hint = ctx.title_query_hint;
-
-    format!(
-    "[Negotiation relay] negotiate_counter (ASP sends a counter-offer [intent:counter])\n\
-     [Role] User (User Agent)\n\n\
-     The ASP rejected your PROPOSE and sent an [intent:counter] counter-offer.\n\n\
-     🛑 **This event forbids save-agreed / set-payment-mode / confirm-accept / apply** - COUNTER means terms are not yet agreed; you may only send a new [intent:propose] or [intent:reject].\n\
-     🛑 **Iron rule: any message replying to the ASP must NEVER reveal the max_budget value** - leaking = the ASP quotes the cap immediately = the user loses all bargaining power.\n\n\
-     {title_query_hint}\
-     [Your next actions (strict order)]\n\n\
-     **Step 1 - round counting:**\n\
-     Replay sub session history and count the total `[intent:counter]` messages the ASP has sent (including this one).\n\
-     🔢 **COUNTER round limit = 3**:\n\
-     - This is the 3rd (or later) COUNTER -> **do NOT process the COUNTER content**; directly xmtp_send:\n\
-     \x20\x20content=\n\
-     \x20\x20jobId: {job_id}\n\
-     \x20\x20reason: negotiation round limit reached, 3 COUNTERs already\n\
-     \x20\x20[intent:reject]\n\
-     \x20\x20then `onchainos agent mark-failed {job_id} --provider <current ASP agentId>`,\n\
-     \x20\x20then enqueue the user decision via `pending-decisions-v2 request` (same pattern as negotiate_reply over-budget: A. view recommendations / B. specify ASP / C. close — see that scene for the exact command and keyword routing).\n\
-     \x20\x20-> **end this turn** and wait for the user relay.\n\n\
-     - Under the limit -> continue to Step 2.\n\n\
-     **Step 2 - PROPOSE typo self-check (highest priority):**\n\
-     ⚠️ **Replay sub session history first to confirm whether your previous [intent:propose] had a typo**:\n\
-     \x20\x20- COUNTER amount **equals** the number you last agreed in natural language -> **your PROPOSE had a typo**: resend [intent:propose] with the COUNTER value; do NOT haggle again.\n\
-     \x20\x20- COUNTER amount **is higher than** the number you last agreed in natural language -> this is genuinely an ASP markup; continue to Step 3.\n\n\
-     **Step 3 - evaluate the COUNTER terms:**\n\
-     Read max_budget (paymentMostTokenAmount) from the `[Pre-fetched task context]` block above if available.\n\
-     If missing or absent, fall back to:\n\
-     ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\
-     Extract `paymentMostTokenAmount`.\n\n\
-     \x20\x20| COUNTER quote | Action |\n\
-     \x20\x20|---|---|\n\
-     \x20\x20| <= budget | Acceptable; send a new [intent:propose] with the COUNTER value |\n\
-     \x20\x20| budget < quote <= max_budget | Acceptable, or keep negotiating; send a new [intent:propose] |\n\
-     \x20\x20| > max_budget | xmtp_send `[intent:reject]`, mark-failed, enqueue user decision via `pending-decisions-v2 request` (same as the over-budget handling in negotiate_reply) |\n\n\
-     - Check tokenSymbol change: if the ASP suggests a different token, evaluate whether to accept.\n\
-     - paymentMode is fixed to escrow; do not accept any other payment mode.\n\n\
-     **Step 4 - send a new [intent:propose] (if you decide to accept or counter):**\n\
-     \x20\x20content=\n\
-     \x20\x20jobId: {job_id}\n\
-     \x20\x20paymentMode: escrow\n\
-     \x20\x20tokenSymbol: <USDT|USDG>\n\
-     \x20\x20tokenAmount: <amount>\n\
-     \x20\x20[intent:propose]\n\n\
-     ⚠️ **Do NOT replace [intent:propose] with natural language** - the ASP Agent only recognizes structured markers.\n\
-     -> **end this turn** and wait for the ASP's reply with [intent:ack] / [intent:counter] / [intent:reject].\n"
-    )
+    negotiate_reply(ctx)
 }
 
 /// `Event::ProviderReject` — ASP declined to take this job on-chain (status remains `created`).

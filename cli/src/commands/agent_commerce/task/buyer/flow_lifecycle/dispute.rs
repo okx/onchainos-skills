@@ -64,9 +64,9 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
          ==== Negotiation / delivery chat history (from xmtp_get_conversation_history) ====\n\
          [time] ASP(<agentId>): ...\n\
          [time] User(<agentId>): ...\n\
-         ... (chronological; key checkpoints: quote / [intent:propose] / [intent:ack] / [intent:confirm] / deliverable message)\n\
+         ... (chronological; key checkpoints: task-detail discussion / deliverable message)\n\
          ```\n\n\
-         ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints (PROPOSE / ACK / CONFIRM / deliverable / both sides' key dispute points) and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
+         ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints (task-detail discussion / deliverable / both sides' key dispute points) and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
          If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
          **Step 3 — Upload (off-chain multipart):**\n\
          ```bash\n\

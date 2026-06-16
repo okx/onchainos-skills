@@ -227,7 +227,7 @@ pub async fn handle_set_payment_mode(
             crate::output::success(serde_json::json!({
                 "alreadySet": true,
                 "paymentMode": mode_str,
-                "next": "Payment mode already on-chain. Call next-action --event job_payment_mode_changed to get the script (escrow: send [intent:confirm] to provider; then wait for provider to apply before confirm-accept).",
+                "next": "Payment mode already on-chain. Call next-action --event job_payment_mode_changed to get the script; then wait for the provider to submit their apply on-chain before confirm-accept.",
             }));
         } else {
             println!("✓ Payment mode set to {mode_str}; awaiting on-chain confirmation...");
@@ -288,7 +288,7 @@ pub async fn handle_ack_to_confirm(
     // Step 3: branch on current paymentMode.
     if already_escrow {
         let confirm_content = format!(
-            "jobId: {job_id}\npaymentMode: escrow\ntokenSymbol: {token_symbol}\ntokenAmount: {token_amount}\n[intent:confirm]"
+            "jobId: {job_id}\npaymentMode: escrow\ntokenSymbol: {token_symbol}\ntokenAmount: {token_amount}"
         );
         audit::log(
             "cli",
@@ -340,7 +340,7 @@ pub async fn handle_ack_to_confirm(
         println!("✓ save-agreed + setPaymentMode(escrow) complete; awaiting on-chain confirmation...");
         crate::output::confirming(
             &format!("ack-to-confirm: save-agreed + setPaymentMode(escrow) complete. txHash={tx_hash}"),
-            "Wait for the `job_payment_mode_changed` system notification, then send [intent:confirm].",
+            "Wait for the `job_payment_mode_changed` system notification, then notify the user; the provider will submit their apply independently.",
         );
     }
     Ok(())

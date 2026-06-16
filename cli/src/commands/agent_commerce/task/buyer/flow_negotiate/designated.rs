@@ -4,20 +4,21 @@
 //!   Phase 1 (`route_only`): call `designated-route` → determine route → call next-action with the matching pseudo-event
 //!   Phase 2 (`branch_a2a` / `branch_x402` / `branch_error`): only the hit branch's playbook
 
-/// Three-step handshake rules — static text shared by every A2A negotiation
-/// path (both `branch_a2a` and `branch_a2a_cli`). No format args here.
-const HANDSHAKE_RULES_A2A: &str = "🛑 **Hard constraint - the three-step handshake is the ONLY legitimate path to get the ASP to apply**\n\n\
-    To get the ASP to enter the apply phase (escrow), you **must** complete the full three-step handshake:\n\
-    \x20\x201) `[intent:propose]` (you -> ASP, structured proposal)\n\
-    \x20\x202) Wait for the ASP to reply with `[intent:ack]` (all fields equal) or `[intent:counter]` (keep negotiating) or `[intent:reject]` (ASP refuses)\n\
-    \x20\x203) You reply with `[intent:confirm]` (echo back the ACK fields verbatim - the ASP only applies once it sees this marker)\n\
-    \x20\x20⚡ Either side may send `[intent:reject]` at any time to terminate the negotiation (must include jobId + reason); on receipt do **NOT** reply, immediately switch to the next ASP.\n\n\
-    ❌ **Do NOT bypass the handshake with natural language** - do NOT send messages like:\n\
-    \x20\x20- \"Terms are locked / terms finalized / no further proposal needed / please apply directly / please accept the job directly\"\n\
-    \x20\x20- \"Final confirmation: job/price/payment mode ...\" plain-text summaries without the [intent:propose] / [intent:confirm] markers\n\
-    \x20\x20- Any kind of \"alternative handshake\" short-circuit - the ASP flow treats the `[intent:confirm]` literal as the only apply trigger, so a natural-language \"please apply\" will simply not be recognized and the ASP will keep waiting for [intent:propose].\n\n\
-    Correct behavior: once negotiation aligns (after the ASP has replied and you have evaluated in Step 2.5), **strictly use** the `[intent:propose]` template (see B-Step 2 Step 4 below) so the handshake parser succeeds. **Even short negotiations must complete all three steps** - even if it's \"can do, original price OK, escrow OK\" three-liner, turn it into [intent:propose] and send it; never skip.\n\
-    ⚠️ This rule applies to Step 4 onward — the **first message (Step 1) must always be pure natural language** with no `[intent:*]` markers.";
+/// Negotiation ground rules — static text shared by every A2A negotiation path
+/// (both `branch_a2a` and `branch_a2a_cli`). No format args here.
+///
+/// The old `[intent:propose] / [intent:ack] / [intent:counter] / [intent:reject]
+/// / [intent:confirm]` three-step handshake has been removed. Negotiation is now
+/// pure natural-language task-detail discussion; pricing is locked at accept time.
+const HANDSHAKE_RULES_A2A: &str = "🛑 **Negotiation ground rules — natural language only, task details only**\n\n\
+    Negotiation is a free-form discussion between you (buyer) and the ASP about **task details only**:\n\
+    \x20\x20• Scope / requirements / deliverable format\n\
+    \x20\x20• Timeline / clarifying questions\n\
+    \x20\x20• ASP's capability to complete the task\n\n\
+    ❌ **Do NOT discuss price** — tokenSymbol / tokenAmount / paymentMode / budget are locked at accept time, not negotiated in chat.\n\
+    ❌ **Do NOT include any `[intent:*]` marker** in your messages — the structured intent handshake has been removed; ASP messages are also plain text.\n\
+    ❌ **Do NOT ask the ASP to quote** — pricing is not part of this conversation.\n\n\
+    Once you've finished clarifying task details, end your turn. The ASP will independently decide when to submit their on-chain apply; you will then receive a `provider_applied` system notification and handle it via `confirm-accept` / `reject-apply`.";
 
 /// Branch B title + B-Step 0 (duplicate guard) + B-Step 1 (group creation) +
 /// B-Step 1.5 (SKILL_PREFETCH). Used by the MCP path (`branch_a2a` →
@@ -102,11 +103,11 @@ pub(crate) fn negotiate_section_step1_only_cli(
          \x20\x20--message '<your composed inquiry — see rules below>' \\\n\
          \x20\x20--json\n\
          ```\n\n\
-         🛑 **Content iron rules — violation = leak or protocol break:**\n\
-         \x20\x20❌ Do NOT include max_budget / paymentMostTokenAmount / \"最高\" / \"上限\" / \"cap\" / \"maximum\" / any value equal to max_budget — the Rust layer deliberately did not give it to you.\n\
-         \x20\x20❌ Do NOT append `[intent:propose]` / `[intent:confirm]` / `[intent:reject]` / any `[intent:*]` marker — Step 1 is pure natural language; markers are reserved for Step 4 onward (sub session handles).\n\
-         \x20\x20❌ Do NOT promise terms or accept a price — ask the ASP to quote.\n\n\
-         🛑🛑🛑 **End this turn immediately after the command returns.** The ASP's reply will arrive at the sub session and trigger `next-action --event negotiate_reply` automatically. Do NOT poll, do NOT continue to handshake / evaluation / propose / confirm.\n"
+         🛑 **Content iron rules — task details only, no price talk:**\n\
+         \x20\x20❌ Do NOT discuss price / tokenSymbol / tokenAmount / paymentMode / budget — pricing is locked at accept time, not in chat.\n\
+         \x20\x20❌ Do NOT include any `[intent:*]` marker — the structured intent handshake has been removed.\n\
+         \x20\x20❌ Do NOT promise terms or ask the ASP to quote — discuss scope, requirements, deliverable format, and timeline only.\n\n\
+         🛑🛑🛑 **End this turn immediately after the command returns.** The ASP's reply will arrive at the sub session and trigger `next-action --event negotiate_reply` automatically. Do NOT poll, do NOT continue.\n"
     )
 }
 
@@ -118,7 +119,7 @@ pub(crate) fn negotiate_section_step2_onwards(
     attachments_handled_in_rust: bool,
 ) -> String {
     let step_1_5_block = if attachments_handled_in_rust {
-        "1.5. **Attachments**: ✅ already uploaded and forwarded to the ASP by Rust before this playbook was emitted. Do NOT call `onchainos agent list-attachments`, `xmtp_file_upload`, or `xmtp_send [intent:attachment]` again — they're done.".to_string()
+        "1.5. **Attachments**: ✅ already uploaded and forwarded to the ASP by Rust before this playbook was emitted. Do NOT call `onchainos agent list-attachments` or `xmtp_file_upload` again — they're done.".to_string()
     } else {
         format!(
             "1.5. **Upload pending attachments (if any)**:\n\
@@ -133,52 +134,36 @@ pub(crate) fn negotiate_section_step2_onwards(
              \x20\x20If empty (`[]`) or no attachments were found in the earlier attachment check, skip this step."
         )
     };
-    format!("**B-Step 2 - automated negotiation (User Agent <-> ASP Agent multi-turn interaction in the sub session):**\n\
+    format!("**B-Step 2 - first inquiry to the designated ASP (task-detail discussion only):**\n\
              🛑 **Within the same turn after creating the group you MUST call `xmtp_send` to send the first inquiry** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
              ❌ Absolutely forbidden: creating the group and ending the turn without sending a message.\n\
              ❌ Absolutely forbidden: using xmtp_dispatch_user / xmtp_dispatch_session instead of xmtp_send - after the group is created use xmtp_send uniformly.\n\n\
-             Negotiation goal: reach agreement on the following structured fields (other fields stick to what the user set when publishing and are not negotiated) -\n\
-             \x20\x20- paymentMode: payment mode (**fixed to escrow in an A2A negotiation session** - x402 goes through recommend auto-routing and does not enter negotiation)\n\
-             \x20\x20- tokenSymbol: payment token\n\
-             \x20\x20- tokenAmount: payment amount\n\n\
-             ⏱ Timeout rule: wait at most 5 minutes for each ASP reply. On timeout -> first xmtp_send `[intent:reject]` (reason: negotiation timeout, no reply within 5 minutes) to the ASP, then `{fallback_cmd}` to switch to the next ASP (**do NOT xmtp_delete_conversation**). After a timeout, if any further a2a-agent-chat message arrives from that ASP, **do not reply or process it**; just ignore.\n\n\
-             ⚠️ **Negotiation message format iron rule**: every structured negotiation message (PROPOSE / CONFIRM / REJECT) **MUST end with the matching `[intent:*]` suffix marker**;\n\
-             the last line of `content` must be `[intent:propose]` / `[intent:confirm]` / `[intent:reject]`, **NEVER replaced by natural language**.\n\
-             The ASP Agent parses the suffix mechanically; a missing suffix stalls the negotiation flow.\n\n\
-             📌 **You hold full negotiation authority - do NOT mechanically accept any ASP quote**. Look at the [job details] + [ASP profile / service-list / historical securityRate / feedback] in context and judge for yourself:\n\
-             \x20\x20- Is the ASP's price reasonable for the workload? Don't force it through if it exceeds your max budget.\n\
-             \x20\x20- Compare the ASP's profile / service-list unit price for similar services vs the current quote (the ASP's own listed price is a reference anchor).\n\
-             \x20\x20- On the A2A negotiation path, paymentMode is fixed to escrow (funds are escrow-protected).\n\
-             \x20\x20- With multiple recommended ASPs, don't force a deal with any single one; if it doesn't fit, just let the 5-minute timeout fire and switch.\n\n\
-             🛑🛑🛑 **ABSOLUTE PROHIBITION - iron rule: throughout negotiation, never reveal the max budget (max_budget / paymentMostTokenAmount) to the ASP.**\n\
-             No message sent to the ASP (natural language, [intent:propose], [intent:confirm]) may **ever** contain the max_budget value.\n\
-             Leaking the max budget = the ASP quotes the cap immediately = the user loses all bargaining power.\n\
-             ❌ Absolutely forbidden: mentioning \"max budget\", \"cap\", \"max budget\", \"the most I can pay\" or the corresponding value in xmtp_send\n\
-             ❌ Absolutely forbidden: writing the `paymentMostTokenAmount` field value into any message to the ASP\n\n\
-             Negotiation steps:\n\
-             1. Call xmtp_send to send the first inquiry (**pure natural language** - let the ASP quote first, then judge):\n\
-             \x20\x20content MUST include: job description, expected deliverable, paymentMode preference, budget (base budget).\n\
-             \x20\x20content MUST NOT include:\n\
-             \x20\x20\x20\x20❌ max_budget / paymentMostTokenAmount / \"最高\" / \"上限\" / \"cap\" / \"maximum\" / \"max\" budget value\n\
-             \x20\x20\x20\x20❌ Any number that equals the max_budget value (even without labeling it as such)\n\
-             \x20\x20🔴 Real incident: the model included \"最高 0.1 USDT\" in the first inquiry — the ASP immediately quoted 0.1 USDT (the cap), and the user lost all bargaining leverage.\n\
-             \x20\x20🛑 The first message MUST be natural language only. Do NOT include `[intent:propose]` or any `[intent:*]` marker — propose is only allowed in Step 4, after the ASP has replied and evaluation (Step 2.5) is complete.\n\
-             \x20\x20⚠️ `[intent:propose]` is ALWAYS sent by the buyer (you), NEVER by the ASP. Do NOT ask or instruct the ASP to send `[intent:propose]`.\n\
-             \x20\x20-> after sending the first inquiry, proceed to step 1.5 before waiting for the reply.\n\n\
+             Negotiation scope (task-detail discussion only):\n\
+             \x20\x20• Scope / requirements / deliverable format\n\
+             \x20\x20• Timeline / clarifying questions\n\
+             \x20\x20• ASP's capability to complete the task\n\n\
+             🛑 **No price talk** — tokenSymbol / tokenAmount / paymentMode / budget / max_budget are locked at accept time, **not** negotiated in chat.\n\
+             🛑 **No `[intent:*]` markers** — the structured intent handshake has been removed.\n\n\
+             ⏱ Timeout rule: wait at most 5 minutes for each ASP reply. On timeout → `{fallback_cmd}` to switch to the next ASP (**do NOT xmtp_delete_conversation**). After a timeout, if any further a2a-agent-chat message arrives from that ASP, **do not reply or process it**; just ignore.\n\n\
+             First inquiry guidance:\n\
+             1. Call xmtp_send with a pure natural-language inquiry covering:\n\
+             \x20\x20\x20✅ Job description + expected deliverable\n\
+             \x20\x20\x20✅ Timeline / capability question\n\
+             \x20\x20❌ Do NOT include any price, token, budget, or paymentMode information — the ASP cannot negotiate price; let them ask clarifying questions about the task only.\n\
+             \x20\x20❌ Do NOT include any `[intent:*]` marker.\n\
+             \x20\x20-> after sending the first inquiry, proceed to step 1.5.\n\n\
              {step_1_5_block}\n\
              \x20\x20🛑🛑🛑 **MANDATORY — end this turn now.** After the first inquiry (step 1) and attachments (step 1.5) are sent, you **MUST end this turn immediately**.\n\
-             \x20\x20The ASP's reply will arrive at the **sub session** (the group created in B-Step 1) as an inbound a2a-agent-chat message; the sub session handles it via buyer-sub-playbook.md §Peer Message Routing (#6 fallback → `negotiate_reply`).\n\
+             \x20\x20The ASP's reply will arrive at the **sub session** (the group created in B-Step 1) as an inbound a2a-agent-chat message; the sub session handles it via buyer-sub-playbook.md §Peer Message Routing → `negotiate_reply`.\n\
              \x20\x20❌ Do NOT call `xmtp_get_conversation_history` to poll for the ASP's reply in this turn.\n\
-             \x20\x20❌ Do NOT continue to Step 2 / 2.5 / 3 / 4 in this turn — those are executed by the **sub session** when it receives the reply.\n\
-             \x20\x20🔴 Real incident: backup session sent the first inquiry, then polled `xmtp_get_conversation_history` in the same turn, saw the ASP's quote, evaluated it, and sent `[intent:propose]` — all from the backup. The sub session had no negotiation context and could not handle subsequent events (ACK / COUNTER / payment-mode-changed).\n\n\
+             \x20\x20❌ Do NOT continue to further steps in this turn — the sub session owns subsequent replies.\n\n\
              ━━━━━━━━━ Sub session negotiation (handled by next-action, NOT by this output) ━━━━━━━━━\n\n\
-             After the first inquiry (step 1 + 1.5) and this turn ends, the ASP's reply arrives at the **sub session**.\n\
-             The sub session calls `onchainos agent next-action` with the matching event (`negotiate_reply` / `negotiate_ack` / `negotiate_counter` / `job_payment_mode_changed`) and follows the returned playbook.\n\
+             After this turn ends, the ASP's reply arrives at the **sub session**. The sub session calls `onchainos agent next-action --event negotiate_reply` and follows the returned playbook (task-detail-only reply).\n\
              **You (backup/user session) do NOT execute any further negotiation steps in this turn.**\n\n\
-             ⚠️ When negotiation fails (timeout / [intent:reject] / round limit), the sub session sends `[intent:reject]` and runs `{fallback_cmd}` to switch. Do NOT call `xmtp_delete_conversation` when switching.\n\n\
+             ⚠️ When negotiation fails (timeout / no agreement reachable on task details), the sub session runs `{fallback_cmd}` to switch. Do NOT call `xmtp_delete_conversation` when switching.\n\n\
              [Subsequent events]\n\
-             - escrow -> set-payment-mode -> job_payment_mode_changed -> [intent:confirm] -> ASP apply -> confirm-accept -> job_accepted\n\
-             - x402 -> set-payment-mode -> job_payment_mode_changed -> task-402-pay -> job_accepted -> complete\n")
+             - escrow → ASP independently submits apply → provider_applied → confirm-accept / reject-apply → job_accepted\n\
+             - x402  → recommend auto-routing → set-payment-mode → job_payment_mode_changed → task-402-pay → job_accepted → complete\n")
 }
 
 /// Designated-provider B-Step negotiation protocol (three-step handshake + group creation + first inquiry + end turn).

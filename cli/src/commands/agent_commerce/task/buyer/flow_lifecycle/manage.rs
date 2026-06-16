@@ -384,42 +384,14 @@ pub(crate) fn task_token_budget_change(ctx: &super::super::flow::FlowContext<'_>
     "[System Notification] task_token_budget_change (payment token / amount change settled on-chain)\n\
      [Role] User (User Agent)\n\n\
      ⚠️ This event is triggered by the user session calling `set-token-and-budget`. The terms are now updated on-chain.\n\n\
-     [Receiving-scenario decision -- 🛑 MANDATORY; wrong decision = flow stuck]\n\
+     [Receiving-scenario decision -- 🛑 MANDATORY]\n\
      This event is broadcast to all user-side sub sessions.\n\
      - If you are the **backup session** → **ignore this event, end the turn immediately, do not call any tool**\n\
-     - If you are a **sub session (a negotiation session with a specific provider)** → first run Step 0 liveness check, then continue\n\n\
-     [Sub-session action (🛑 four steps in strict order; each step MUST wait for the previous tool_result before continuing)]\n\n\
-     **Step 0 -- 🛑 MUST check whether this session is still active (skipping = sending invalid messages to a terminated provider):**\n\
-     Review this session's context: if **any** of the following holds, the session is terminated -- **ignore this event, end the turn**:\n\
-     \x20\x20- You have sent or received `[intent:reject]` (negotiation terminated)\n\
-     \x20\x20- You have called `mark-failed` against the current provider (provider marked failed)\n\
-     \x20\x20- The provider has not replied for over 24h (negotiation cooled down)\n\
-     If context is insufficient → call `xmtp_get_conversation_history` to check recent messages; if it contains [intent:reject], treat as terminated.\n\
-     ⚠️ Only continue to Step 1 when you have confirmed this session is still active (negotiation in progress).\n\n\
-     **Step 1 -- 🛑 MUST query the latest task details (do not use cached / stale values):**\n\
-     ```bash\n\
-     onchainos agent status {job_id}\n\
-     ```\n\
-     Extract the latest tokenSymbol and tokenAmount (budget) from the response.\n\
-     ❌ Skipping this step = PROPOSE sent with stale amount = provider receives expired terms = negotiation based on wrong data\n\n\
-     **Step 2 -- 🛑 MUST get the sessionKey (one of the two mandatory steps for path 4):**\n\
-     Call the `session_status` tool to obtain the current sub session's `sessionKey`.\n\
-     ❌ Skipping this step = xmtp_send lacks sessionKey = message cannot be sent = provider never sees the new terms\n\n\
-     **Step 3 -- 🛑 MUST send a fresh round of [intent:propose] to the provider (do not skip, do not delay):**\n\
-     Use the latest tokenSymbol and tokenAmount from Step 1 to construct the new PROPOSE message.\n\
-     paymentMode is fixed to escrow (term changes only apply to escrow scenarios).\n\n\
-     Call xmtp_send (sessionKey = value from Step 2):\n\
-     \x20\x20content:\n\
-     \x20\x20jobId: {job_id}\n\
-     \x20\x20paymentMode: escrow\n\
-     \x20\x20tokenSymbol: <latest tokenSymbol from Step 1>\n\
-     \x20\x20tokenAmount: <latest tokenAmount from Step 1>\n\
-     \x20\x20[intent:propose]\n\n\
-     ⚠️ This is a new negotiation round; the COUNTER counter resets.\n\
-     ❌ Skipping Step 3 = provider does not know terms changed = negotiation continues on old terms = final accept parameters mismatch\n\
-     ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session)\n\
-     ❌ Do not call set-token-and-budget / set-provider / set-max-budget (the user session already did)\n\n\
-     → **End this turn** and wait for the provider's reply ([intent:ack] / [intent:counter] / [intent:reject]).\n"
+     - If you are a **sub session (a negotiation session with a specific provider)** → **also ignore this event, end the turn**\n\n\
+     Rationale: price is locked at accept time, not negotiated in chat. The on-chain tokenSymbol / tokenAmount update is visible to the ASP via task-detail queries; no `xmtp_send` propagation is needed.\n\n\
+     ❌ Do not xmtp_send to the provider (price talk is forbidden in chat).\n\
+     ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session).\n\
+     ❌ Do not call set-token-and-budget / set-provider / set-max-budget (the user session already did).\n"
     )
 }
 
@@ -485,28 +457,17 @@ pub(crate) fn task_provider_change(ctx: &super::super::flow::FlowContext<'_>) ->
      {backup_instruction}\
      - If you are a **sub session (a negotiation session with a specific provider)** → first run Step 0 liveness check, then continue\n\n\
      [Sub-session action (🛑 four steps in strict order; MUST be fully executed)]\n\n\
-     **Step 0 -- 🛑 MUST check whether this session is still active:**\n\
-     Review this session's context: if you have sent or received a message containing `[intent:reject]` in this session (negotiation terminated),\n\
-     **ignore this event, end the turn** -- a terminated negotiation does not need another REJECT.\n\
-     Only continue to Step 1 when you have confirmed this session is still active (negotiation in progress).\n\n\
-     **Step 1 -- 🛑 Compare against the on-chain provider (CLI pre-fetched; do NOT call `agent status`):**\n\
+     **Step 1 -- Compare against the on-chain provider:**\n\
      The on-chain current providerAgentId is **{provider_id}**. Compare it with **the provider agentId this session is negotiating with**:\n\
-     \x20\x20- **Match** (this session's provider IS the on-chain provider) → this session belongs to the new provider; **ignore this event, end the turn**, do not send REJECT\n\
-     \x20\x20- **Mismatch** (this session's provider has been replaced) → continue to Step 2 and send REJECT\n\
-     ❌ Skipping this step = sending REJECT indiscriminately to all sub sessions = even the new provider's session gets closed = negotiation broken\n\n\
+     \x20\x20- **Match** (this session's provider IS the on-chain provider) → this session belongs to the new provider; **ignore this event, end the turn**\n\
+     \x20\x20- **Mismatch** (this session's provider has been replaced) → continue to Step 2\n\n\
      {step2}\
-     **Step 3 -- 🛑 MUST send [intent:reject] to this session's provider (do not skip):**\n\
-     This task's provider has changed on-chain to a different ASP; the current session's negotiation terminates immediately.\n\
-     ❌ Not sending REJECT = old provider does not know they were replaced = keeps waiting / messaging = negotiation hangs forever\n\n\
-     Call xmtp_send ({sk_hint_in_step3}):\n\
-     \x20\x20content:\n\
-     \x20\x20jobId: {job_id}\n\
-     \x20\x20reason: user has switched provider\n\
-     \x20\x20[intent:reject]\n\n\
-     ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session)\n\
-     ❌ Do not call set-token-and-budget / set-provider / set-max-budget (the user session already did)\n\
-     ❌ Do not call mark-failed (it only ends the negotiation, it does not exclude that provider)\n\
-     ❌ Do not keep talking to that provider after REJECT (negotiation is terminated; this sub session's mission is over)\n\n\
+     **Step 2 (mismatch only) -- send a brief natural-language goodbye to the replaced provider, then end the turn:**\n\
+     Use the sessionKey above; xmtp_send a concise message telling the provider you've switched and the negotiation is over. Plain natural language — no `[intent:*]` markers.\n\n\
+     ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session).\n\
+     ❌ Do not call set-token-and-budget / set-provider / set-max-budget (the user session already did).\n\
+     ❌ Do not call mark-failed (it only ends the negotiation, it does not exclude that provider).\n\
+     ❌ Do not keep talking to that provider after the goodbye message — this sub session's mission is over.\n\n\
      → **End this turn**. The new provider's negotiation is initiated by the user session, unrelated to this sub session.\n"
     )
 }
