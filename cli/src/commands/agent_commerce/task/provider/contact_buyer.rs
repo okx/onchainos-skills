@@ -7,7 +7,8 @@
 //! Internally:
 //!   1. GET /task/{jobId}  → buyerAgentId + title
 //!   2. okx-a2a session create   (creates the group + records the sessionKey)
-//!   3. okx-a2a session send     (the first message to the buyer)
+//!   3. okx-a2a xmtp-send        (the first message to the buyer — peer-to-peer
+//!                                business message, NOT system-relay `session send`)
 //!
 //! Replaces the old two-step playbook (`okx-a2a session create` + `okx-a2a xmtp-send`)
 //! that the LLM had to chain manually — fewer turns, no sessionKey passing
@@ -67,9 +68,10 @@ pub async fn handle_contact_buyer(
     let session_key = okx_a2a::session_create(job_id, agent_id, buyer_agent_id)
         .map_err(|e| anyhow::anyhow!("session create failed: {e}"))?;
 
-    // Step 3: send the opener to the buyer.
-    okx_a2a::session_send_by_job(job_id, Some(buyer_agent_id), &opener)
-        .map_err(|e| anyhow::anyhow!("session send failed: {e}"))?;
+    // Step 3: send the opener to the buyer (peer-to-peer XMTP — `xmtp-send`, not
+    // system-relay `session send`).
+    okx_a2a::xmtp_send(job_id, buyer_agent_id, &opener)
+        .map_err(|e| anyhow::anyhow!("xmtp-send failed: {e}"))?;
 
     audit::log(
         "cli",
