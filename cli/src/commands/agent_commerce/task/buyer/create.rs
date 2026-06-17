@@ -25,10 +25,8 @@ pub const MIN_DESCRIPTION_CHARS: usize = 20;
 pub const MAX_DESCRIPTION_CHARS: usize = 2000;
 pub const MAX_BUDGET_DECIMALS: usize = 5;
 pub const MAX_SUMMARY_CHARS: usize = 200;
-pub const ACCEPT_MIN: u64 = 10 * 60;
-pub const ACCEPT_MAX: u64 = 180 * 86400;
-pub const SUBMIT_MIN: u64 = 60;
-pub const SUBMIT_MAX: u64 = 180 * 86400;
+pub const ACCEPT_DEFAULT: u64 = 30 * 86400;
+pub const SUBMIT_DEFAULT: u64 = 7 * 86400;
 pub const MAX_TITLE_CHARS: usize = 30;
 
 // ─── Parameter struct ────────────────────────────────────────────────────
@@ -39,8 +37,8 @@ pub struct CreateTaskParams {
     pub budget: f64,
     pub max_budget: f64,
     pub currency: String,
-    pub deadline_open: String,
-    pub deadline_submit: String,
+    pub deadline_open: Option<String>,
+    pub deadline_submit: Option<String>,
     pub title: Option<String>,
     pub provider: Option<String>,
     pub attachments: Option<Vec<String>>,
@@ -84,23 +82,14 @@ impl CreateTaskParams {
         validate_budget(self.max_budget)?;
         validate_budget_decimals(self.max_budget)?;
 
-        let open_secs = parse_duration_secs(&self.deadline_open)
-            .map_err(|e| anyhow::anyhow!("--deadline-open {e}"))?;
-        if open_secs < ACCEPT_MIN {
-            bail!("--deadline-open must be at least 10m (10 minutes); current value {}, allowed range 10m ~ 180d", self.deadline_open);
-        }
-        if open_secs > ACCEPT_MAX {
-            bail!("--deadline-open must not exceed 180d (6 months); current value {}, allowed range 10m ~ 180d", self.deadline_open);
-        }
-
-        let submit_secs = parse_duration_secs(&self.deadline_submit)
-            .map_err(|e| anyhow::anyhow!("--deadline-submit {e}"))?;
-        if submit_secs < SUBMIT_MIN {
-            bail!("--deadline-submit must be at least 1m (1 minute); current value {}, allowed range 1m ~ 180d", self.deadline_submit);
-        }
-        if submit_secs > SUBMIT_MAX {
-            bail!("--deadline-submit must not exceed 180d (6 months); current value {}, allowed range 1m ~ 180d", self.deadline_submit);
-        }
+        let open_secs = match &self.deadline_open {
+            Some(v) => parse_duration_secs(v).map_err(|e| anyhow::anyhow!("--deadline-open {e}"))?,
+            None => ACCEPT_DEFAULT,
+        };
+        let submit_secs = match &self.deadline_submit {
+            Some(v) => parse_duration_secs(v).map_err(|e| anyhow::anyhow!("--deadline-submit {e}"))?,
+            None => SUBMIT_DEFAULT,
+        };
 
         let title = match &self.title {
             Some(t) if t.chars().count() > MAX_TITLE_CHARS => t.chars().take(MAX_TITLE_CHARS).collect(),
@@ -222,10 +211,7 @@ pub async fn handle_create(
             if DEBUG_LOG {
                 eprintln!("[task-create] ⚠ balance warning: {e}");
             }
-            Some(format!(
-                "⚠️ Insufficient {} balance on XLayer (need {} {}). Task created, but payment may fail later — please top up via swap.",
-                validated.currency, params.budget, validated.currency,
-            ))
+            Some(format!("⚠️ {e}"))
         }
         Ok(()) => None,
     };

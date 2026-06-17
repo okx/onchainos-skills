@@ -392,7 +392,42 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 super::flow_negotiate::job_created(&ctx)
             }
         }
-        Event::Other(ref s) if s == "provider_conversation" => super::flow_negotiate::provider_conversation(&ctx),
+        Event::Other(ref s) if s == "provider_conversation" => {
+            if super::content::is_cli_mode() {
+                super::flow_negotiate::provider_conversation_cli(&ctx)
+            } else {
+                super::flow_negotiate::provider_conversation(&ctx)
+            }
+        }
+        Event::Other(ref s) if s == "provider_conversation_reject" => {
+            let gid = message
+                .and_then(|m| m.get("groupId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if gid.is_empty() {
+                format!("[Error] provider_conversation_reject requires `groupId` in --message. Call:\n\
+                         onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId>\"}}'\n")
+            } else {
+                super::flow_negotiate::provider_conversation_reject_cli(&ctx, gid)
+            }
+        }
+        Event::Other(ref s) if s == "provider_conversation_pick" => {
+            let dp_id = message
+                .and_then(|m| m.get("provider"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if dp_id.is_empty() {
+                format!("[Error] provider_conversation_pick requires `provider` in --message. Call:\n\
+                         onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<ASP agentId>\"}}'\n")
+            } else {
+                let _ = super::negotiate::save_designated_provider(job_id, dp_id);
+                if super::content::is_cli_mode() {
+                    super::flow_negotiate::provider_conversation_pick_cli(job_id, agent_id, &short_id, dp_id, title_display, prefetched).await
+                } else {
+                    super::flow_negotiate::designated::route_only(job_id, agent_id, &short_id, dp_id, None)
+                }
+            }
+        }
         Event::Other(ref s) if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" => {
             let dp_id = super::negotiate::get_designated_provider(job_id).ok().flatten().unwrap_or_default();
             if dp_id.is_empty() {
@@ -556,11 +591,18 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 ),
                 "provider_pending" => format!(
                     "[User decision relay] source_event=`provider_pending`, user's verbatim reply: `{reply}`\n\n\
-                     The push was the pending-contact ASP list (`okx-a2a task requests` result). **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **Pick an ASP** — number (index) or 3-digit agentId. Action: per match_provider.rs Branch A: run `okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id <picked>` → SKILL_PREFETCH warmup → enter sub session → run `okx-a2a xmtp-send --job-id {job_id} --to-agent-id <picked> --message '<first negotiation message>' --no-wait`.\n\
-                     \x20\x20• **Skip all** — typical intents: `skip all` / `跳过` / `不选` / `skip` / `all skip`. Action: run `okx-a2a user notify --content '<skip_all_pending content>'`, then end the turn.\n\
-                     \x20\x20• **Reject current / negotiation failed** — typical intents: `reject` / `拒绝` / `换一个`. Action: per Branch C: `okx-a2a task reject --group-id <groupId> --agent-id <agentId>` → refresh list via `okx-a2a task requests` → if non-empty, re-push via `--source-event provider_pending`; if empty, enqueue `--source-event no_asp_found` A/B/C.\n\n\
-                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number to start, or 「skip all」.\"\n"
+                     The push was a single-ASP accept/reject card. Extract `[asp: <agentId>]` and `[groupId: <gid>]` from the `--llm-content` block above. **Semantic mapping** — decide:\n\n\
+                     \x20\x20• **Accept** — typical intents: 1 / `accept` / `接受` / `yes` / `好` / `可以`. Run:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<asp agentId from llm-content>\"}}'\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20Follow the returned playbook verbatim.\n\
+                     \x20\x20• **Reject** — typical intents: 2 / `reject` / `拒绝` / `no` / `不` / `换一个` / `next`. Run:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId from llm-content>\"}}'\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20Follow the returned playbook (shows next ASP or close options if none remain).\n\n\
+                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"Please reply 1 (accept) or 2 (reject).\"\n"
                 ),
                 "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => format!(
                     "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
@@ -693,6 +735,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "provider_applied" | "job_accepted" | "deliverable_received" | "job_visibility_changed" |
         "job_submitted" |
         "designated_a2a" | "designated_x402" | "designated_error" |
+        "provider_conversation_pick" | "provider_conversation_reject" |
         "job_rejected" | "job_disputed" | "attachment_added" | "provider_conversation"
     );
     // cli-mode short-circuit: applies to events whose body is self-contained
@@ -708,7 +751,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     // (no `okx-a2a xmtp-send` call to validate).
     let use_cli_minimal = super::content::is_cli_mode()
         && matches!(event_str,
-            "job_created" | "negotiate_reply" | "negotiate_ack" | "negotiate_counter" |
+            "job_created" | "provider_conversation_pick" |
+            "negotiate_reply" | "negotiate_ack" | "negotiate_counter" |
             "provider_applied" | "deliverable_received" | "approve_review" |
             "review_expired" | "job_expired" | "job_auto_refunded" |
             "submit_expired" | "reject_expired" |

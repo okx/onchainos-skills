@@ -191,23 +191,18 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let l10n_prompt = super::super::flow::L10N_PROMPT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
-    let follow_playbook_short = super::super::flow::FOLLOW_PLAYBOOK_SHORT;
-    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let title = ctx.title_display;
     let cmd_pending_asp = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[Pending ASP {short_id}] {title} ASP-contact decision"), "provider_pending");
-    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[No ASP {short_id}] {title} next-step decision"), "no_asp_found");
 
-    let no_sellers = super::super::content::no_more_sellers_user_notify(job_id);
     let pending_empty = super::super::content::pending_list_empty_user_notify();
-    let skip_all = super::super::content::skip_all_pending_user_notify(job_id);
     format!(
-    "[Trigger] Received an \"ASP pending contact\" style message (user session side)\n\
+    "[Trigger] Received an \"ASP pending contact\" style message\n\
      [Role] User (User Agent)\n\n\
-     🛑 **Do NOT auto-create groups**: after receiving the pending_list notification, you must NOT run `okx-a2a session create` on your own.\n\
-     You must first show the list and let the user pick an ASP; only after an explicit user choice may you create the group.\n\n\
+     🛑 **Do NOT auto-create groups or auto-negotiate**: you must NOT call `okx-a2a session create`, `okx-a2a xmtp-send`, or send any message to the ASP on your own.\n\
+     You must fetch the ASP list and let the user pick; the picked ASP will be routed through the designated-provider flow.\n\n\
      🛑 **CRITICAL - this event MUST push the ASP list to the user session via `pending-decisions-v2 request`; printing text reply in the sub session is forbidden.**\n\
      ❌ Do NOT replace the `pending-decisions-v2 request` call with a text reply (sub-session output is invisible to the user).\n\
      ❌ Do NOT use `okx-a2a user notify` instead of `pending-decisions-v2 request` (the user needs to make an ASP-choice decision; notify is pure notification and cannot relay).\n\n\
@@ -219,7 +214,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      If the returned `entries` array already contains an entry with job_id={job_id} and role=buyer -> **the user has already been notified; this is a duplicate event - end the turn without notifying again.**\n\
      If not present -> continue to Step 1.\n\n\
      **Step 1 - fetch the pending-contact ASP list:**\n\
-     Run `okx-a2a task requests --json`. The returned `items` array contains per-ASP entries — capture `groupId` / `agentId` / `name` / `serviceName` / `creditScore` / `completedTaskCount` for each entry (`groupId` is required later for Branch C reject; the others are for rendering).\n\n\
+     Run `okx-a2a task requests --json`. The returned `items` array contains per-ASP entries — capture `agentId` / `name` / `serviceName` / `creditScore` / `completedTaskCount` for each entry.\n\n\
      If the returned `items` array is empty -> run `okx-a2a user notify`:\n\
      \x20\x20```bash\n\
      \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
@@ -229,66 +224,250 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      Then finish.\n\n\
      **Step 2 - enqueue the user decision via `pending-decisions-v2 request`:**\n\
      🛑 **You MUST wait for the user's choice**; you may not decide for them.\n\
-     Run `okx-a2a session status --job-id {job_id}` first to get this sub session's sessionKey (only once per turn). Then run:\n\
      ```bash\n\
      {cmd_pending_asp}\n\
      ```\n\
      {l10n_prompt}\n\
      `--user-content` template (canonical English):\n\
-     [Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
+     [Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to designate as the provider:\n\
      \n\
      [iterate pending list; format per ASP (use fields from the `okx-a2a task requests` response):]\n\
      <N>. agentId: <agentId> | name: <name or serviceName, omit if absent> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
      \n\
-     Reply with the ASP's number to start, or reply 「skip all」.\n\n\
+     Reply with the ASP's number to designate, or reply 「skip all」.\n\n\
      {follow_playbook}\n\n\
-     **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action` with `event=user_decision_provider_pending` and `data=<message.data>` in --message — both paths point to the same Branch A/B/C below.)\n\n\
-     ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\
-     A-Step 1: map the user's reply to agentId (index → AgentID via the pending list, or use a 3-digit AgentID directly); run `okx-a2a session create` to create the group + the sub session:\n\
-     \x20\x20```bash\n\
-     \x20\x20okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id <agentId from the pending list above> --json\n\
-     \x20\x20```\n\
-     \x20\x20⚠️ Before the call, print: `[buyer-xmtp] session create: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
-     \x20\x20⚠️ After the call, print: `[buyer-xmtp] session create result: sessionKey=<returned value>, xmtpGroupId=<returned value>`\n\n\
-     🛑 **A-Step 1.5 - SKILL_PREFETCH (mandatory for new sub sessions):**\n\
-     Immediately after `session create` returns, run `okx-a2a session send` to pre-load the skill into the newly created sub session:\n\
-     \x20\x20```bash\n\
-     \x20\x20okx-a2a session send --session-key <the sessionKey just returned by session create> --content '[SKILL_PREFETCH] Read okx-agent-task/SKILL.md. No action needed for this message — but process all subsequent messages normally. Do NOT carry over \"no action\" to business messages.'\n\
-     \x20\x20```\n\
-     ❌ Do NOT skip this step — the sub session has no context yet; without SKILL_PREFETCH, the first inbound message will be processed without the buyer playbook loaded.\n\
-     ⚠️ Use `okx-a2a session send` (internal), NOT `okx-a2a xmtp-send` (which the ASP would see).\n\n\
-     🛑 **Within the same turn after creating the group you MUST call `okx-a2a xmtp-send` to send the first message** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
-     ❌ Absolutely forbidden: creating the group and ending the turn without sending a message.\n\n\
-     A-Step 2: once the group is created you are inside the sub session; run `okx-a2a xmtp-send` to start negotiating with the ASP (refer to buyer-sub-playbook.md §Peer Message Routing):\n\
-     \x20\x20⚠️ **Do NOT** use `okx-a2a user notify` / `okx-a2a session send`; after the group is created use `okx-a2a xmtp-send` uniformly.\n\
-     \x20\x20content: Hi, I have a job (jobId: {job_id}) - are you interested in taking it on?\n\n\
-     A-Step 3: negotiation success -> ASP applies on-chain -> wait for the ASP's XMTP message announcing the apply (buyer-sub-playbook.md routing #1 triggers confirm-accept).\n\n\
-     A-Step 4: negotiation failure (ASP rejects / timeout / terms mismatch) -> jump to Branch C.\n\n\
-     ━━━━━━━━━ Branch B: verbatim contains `skip all` / `跳过` / `不选` → skip all pending ASPs ━━━━━━━━━\n\n\
-     End the flow — run `okx-a2a user notify`:\n\
-     \x20\x20```bash\n\
-     \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
-     \x20\x20```\n\
-     \x20\x20content (canonical English template — translate before passing): {skip_all}\n\
-     {l10n_short}\n\n\
-     ━━━━━━━━━ Branch C: user rejects current ASP / negotiation failed -> reject and return to the list ━━━━━━━━━\n\n\
-     C-Step 1: reject this ASP via:\n\
-     \x20\x20`okx-a2a task reject --group-id <groupId from Step 1> --agent-id <rejected ASP's agentId> --json`\n\
-     \x20\x20⚠️ Keyed by **groupId** (XMTP group), NOT jobId — use the `groupId` field captured from Step 1's `items` response.\n\n\
-     C-Step 2: run `okx-a2a task requests --json` again to refresh the pending list.\n\n\
-     C-Step 3: if the list is non-empty -> go back to Step 2 and show the remaining ASPs to the user.\n\n\
-     C-Step 4: if the list is empty -> enqueue the user decision via `pending-decisions-v2 request`:\n\
-     \x20\x20```bash\n\
-     \x20\x20{cmd_no_asp}\n\
-     \x20\x20```\n\
-     \x20\x20{l10n_prompt}\n\
-     \x20\x20`--user-content` template (canonical English):\n\
-     \x20\x20{no_sellers}\n\
-     \x20\x20A. Specify an ASP — provide the ASP's agentId\n\
-     \x20\x20B. Make the job public — let more ASPs discover it\n\
-     \x20\x20C. Close the job — cancel and refund\n\
-     \x20\x20{follow_playbook_short}\n\
-     \x20\x20{route_hint}\n\n\
-     [Loop termination conditions] `okx-a2a task requests` returns an empty `items` array, OR negotiation succeeds and enters Scene 6.\n")
+     **Step 3 - End this turn.** The user's reply will be relayed as `user_decision_provider_pending`; the `provider_pending` handler routes the picked ASP through the designated-provider flow (designated-route → branch_a2a / branch_x402 / branch_error).\n")
 
+}
+
+/// CLI-mode handler for `provider_conversation_pick` — user picked an ASP
+/// from the pending list. Runs `designated_route_inner` in-process and
+/// dispatches to the matching branch. For the A2A route, handles the
+/// public-task case where the daemon already created a session when the
+/// ASP sent its conversation request (skips duplicate-guard bail-out).
+pub(crate) async fn provider_conversation_pick_cli(
+    job_id: &str,
+    agent_id: &str,
+    short_id: &str,
+    dp_id: &str,
+    _title_display: &str,
+    _prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+) -> String {
+    let route_result = crate::commands::agent_commerce::task::common::designated_route_inner(
+        dp_id,
+        None,
+    )
+    .await;
+    let route_json = match route_result {
+        Ok(j) => j,
+        Err(e) => return format!("[provider_conversation_pick] ERROR: designated-route failed: {e}\n"),
+    };
+
+    let route = route_json.get("route").and_then(|v| v.as_str()).unwrap_or("");
+    match route {
+        "a2a" => provider_conversation_pick_a2a(job_id, agent_id, dp_id),
+        "x402" => super::designated::branch_x402(job_id, agent_id, short_id, dp_id),
+        "error" => super::designated::branch_error(job_id, agent_id, short_id, dp_id),
+        _ => format!(
+            "[provider_conversation_pick] ERROR: unknown route value '{route}' in designated-route response: {route_json}\n"
+        ),
+    }
+}
+
+/// A2A branch for public-task ASP pick. Unlike `branch_a2a_cli` (which
+/// bails on existing sessions), this handles the public-task case where
+/// the daemon already created a session when the ASP sent its conversation
+/// request: session exists → skip create, ensure SKILL_PREFETCH → wait.
+fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, dp_id: &str) -> String {
+    use crate::commands::agent_commerce::task::common::okx_a2a;
+
+    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. \
+        This prefetch message itself requires no action — but when the NEXT inbound message arrives \
+        (same turn or later turn), you MUST process it normally via buyer-sub-playbook.md \
+        §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
+
+    if !okx_a2a::session_query_exists(job_id, agent_id, dp_id).unwrap_or(false) {
+        if let Err(e) = okx_a2a::session_create(job_id, agent_id, dp_id) {
+            return format!("[provider_conversation_pick] ERROR: session create failed: {e}\n");
+        }
+    }
+    if let Err(e) = okx_a2a::session_send_by_job(job_id, Some(dp_id), prefetch) {
+        return format!("[provider_conversation_pick] ERROR: SKILL_PREFETCH failed: {e}\n");
+    }
+
+    format!(
+        "[Provider picked: A2A] Provider {dp_id} — session ready.\n\
+         [Role] User (Buyer)\n\n\
+         ✅ Sub session and SKILL_PREFETCH ready. The ASP will receive `job_asp_selected` from the backend and independently decide to apply on-chain.\n\n\
+         🛑 **End this turn immediately.** Your ONLY next action is to wait for the `provider_applied` system event.\n\
+         ❌ Do NOT send any message (`xmtp_send`) to the ASP — no negotiation needed; the ASP already expressed interest.\n\
+         ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\n\
+         [What happens next]\n\
+         The ASP receives `job_asp_selected` → ASP on-chain apply → system fires `provider_applied` event.\n"
+    )
+}
+
+/// CLI-mode handler for `provider_conversation`. Fetches ASP list in-process,
+/// takes the first ASP, and pushes an accept/reject decision card to the user.
+/// Reject triggers `provider_conversation_reject` which auto-advances to the
+/// next ASP or pushes close options if none remain.
+pub(crate) fn provider_conversation_cli(ctx: &FlowContext<'_>) -> String {
+    provider_conversation_cli_inner(ctx, None)
+}
+
+/// Shared implementation for both initial `provider_conversation` and
+/// `provider_conversation_reject` (which passes pre-fetched items to skip
+/// the duplicate reject + re-fetch).
+pub(crate) fn provider_conversation_cli_inner(
+    ctx: &FlowContext<'_>,
+    prefetched_items: Option<Vec<serde_json::Value>>,
+) -> String {
+    use crate::commands::agent_commerce::task::common::{okx_a2a, pending_v2};
+
+    let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
+    let title = ctx.title_display;
+    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
+
+    let is_after_reject = prefetched_items.is_some();
+
+    if !is_after_reject {
+        if pending_v2::has_pending_for_job(job_id, "buyer") {
+            return format!(
+                "[provider_conversation] Duplicate event — pending decision already exists for job {short_id}. End turn.\n"
+            );
+        }
+    }
+
+    let items: Vec<serde_json::Value> = match prefetched_items {
+        Some(v) => v,
+        None => match okx_a2a::task_requests() {
+            Ok(v) => v.into_iter()
+                .filter(|item| {
+                    item.get("jobId").and_then(|v| v.as_str()) == Some(job_id)
+                        || !item.get("jobId").map_or(false, |v| v.is_string())
+                })
+                .collect(),
+            Err(e) => return format!("[provider_conversation] ERROR: task requests failed: {e}\n"),
+        },
+    };
+
+    if items.is_empty() {
+        if is_after_reject {
+            let no_sellers = super::super::content::no_more_sellers_user_notify(job_id);
+            let cmd_no_asp = super::super::flow::pending_cmd(
+                job_id, agent_id, None,
+                &format!("[No ASP {short_id}] {title} next-step decision"),
+                "no_asp_found",
+            );
+            let l10n_prompt = super::super::flow::L10N_PROMPT;
+            let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
+            return format!(
+                "[provider_conversation_reject] All pending ASPs rejected; none remaining.\n\n\
+                 🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
+                 ```bash\n\
+                 {cmd_no_asp}\n\
+                 ```\n\
+                 {l10n_prompt}\n\
+                 `--user-content` template (canonical English — translate to user's language):\n\
+                 {no_sellers}\n\
+                 A. Specify an ASP — provide the ASP's agentId\n\
+                 B. Make the job public — let more ASPs discover it\n\
+                 C. Close the job — cancel and refund\n\n\
+                 {follow_playbook}\n"
+            );
+        }
+        let content = super::super::content::pending_list_empty_user_notify();
+        return format!(
+            "[provider_conversation] No pending ASPs.\n\n\
+             **Action — notify the user.** Translate the canonical English below to the user's chat language, then dispatch:\n\
+             Canonical: {content}\n\
+             ```bash\n\
+             okx-a2a user notify --content '<your translated content>' --json\n\
+             ```\n\
+             {l10n_dispatch}\n\
+             🛑 End turn after notifying.\n"
+        );
+    }
+
+    let first = &items[0];
+    let asp_agent_id = first.get("agentId").and_then(|v| v.as_str()).unwrap_or("?");
+    let group_id = first.get("groupId").and_then(|v| v.as_str()).unwrap_or("?");
+    let name = first.get("name").and_then(|v| v.as_str())
+        .or_else(|| first.get("serviceName").and_then(|v| v.as_str()))
+        .unwrap_or("");
+    let credit = first.get("creditScore").and_then(|v| v.as_u64()).unwrap_or(0);
+    let completed = first.get("completedTaskCount").and_then(|v| v.as_u64()).unwrap_or(0);
+    let remaining = items.len() - 1;
+
+    let card_content = super::super::content::provider_pending_single_user_card(
+        short_id, title, asp_agent_id, name, credit, completed,
+    );
+
+    let cmd = super::super::flow::pending_cmd(
+        job_id, agent_id, None,
+        &format!("[ASP {short_id}] Accept provider?"),
+        "provider_pending",
+    );
+    let l10n_prompt = super::super::flow::L10N_PROMPT;
+    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
+
+    format!(
+        "[Trigger] ASP pending contact — showing first of {} ASP(s)\n\
+         [Role] User (Buyer)\n\n\
+         🛑 Push the accept/reject decision card via `pending-decisions-v2 request`, then end turn.\n\n\
+         ASP context (LLM-only; do NOT expose groupId to user):\n\
+         \x20\x20agentId: {asp_agent_id} | groupId: {group_id} | name: {name} | credit: {credit} | completed: {completed} | remaining after this: {remaining}\n\n\
+         ```bash\n\
+         {cmd}\n\
+         ```\n\
+         {l10n_prompt}\n\
+         `--user-content` template (canonical English — translate to user's language):\n\
+         {card_content}\n\n\
+         `--llm-content` block (keep English verbatim — consumed by user-session agent for routing):\n\
+         ```\n\
+         [USER_DECISION_REQUEST][source: provider_pending][job: {job_id}][role: buyer][agentId: {agent_id}]\n\
+         [asp: {asp_agent_id}][groupId: {group_id}][remaining: {remaining}]\n\n\
+         Step 1 — Card delivered. **END THE TURN NOW.**\n\
+         Step 2 — When the user replies, route by choice:\n\
+         \x20\x20• 1 / \"accept\" / \"接受\" / \"yes\" / \"好\"  → run:\n\
+         \x20\x20\x20\x20```bash\n\
+         \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"{asp_agent_id}\"}}'\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20Follow the returned playbook verbatim.\n\
+         \x20\x20• 2 / \"reject\" / \"拒绝\" / \"no\" / \"不\" / \"换一个\" / \"next\"  → run:\n\
+         \x20\x20\x20\x20```bash\n\
+         \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"{group_id}\"}}'\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20Follow the returned playbook (shows next ASP or close options).\n\
+         ```\n\n\
+         {follow_playbook}\n",
+        items.len(),
+    )
+}
+
+/// CLI-mode handler for `provider_conversation_reject`. Rejects the current
+/// ASP (by groupId), re-fetches the list, and either shows the next ASP's
+/// accept/reject card or pushes close options if none remain.
+pub(crate) fn provider_conversation_reject_cli(ctx: &FlowContext<'_>, group_id: &str) -> String {
+    use crate::commands::agent_commerce::task::common::okx_a2a;
+
+    let job_id = ctx.job_id;
+
+    if let Err(e) = okx_a2a::task_reject(group_id) {
+        return format!("[provider_conversation_reject] ERROR: task reject failed: {e}\n");
+    }
+
+    let items: Vec<serde_json::Value> = match okx_a2a::task_requests() {
+        Ok(v) => v.into_iter()
+            .filter(|item| {
+                item.get("jobId").and_then(|v| v.as_str()) == Some(job_id)
+                    || !item.get("jobId").map_or(false, |v| v.is_string())
+            })
+            .collect(),
+        Err(e) => return format!("[provider_conversation_reject] ERROR: task requests failed: {e}\n"),
+    };
+
+    provider_conversation_cli_inner(ctx, Some(items))
 }

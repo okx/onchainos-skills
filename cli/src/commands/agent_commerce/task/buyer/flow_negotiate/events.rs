@@ -134,10 +134,16 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     };
     let provider_agent_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
-        None => return format!(
-            "[negotiate_reply] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot send a reply.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
-        ),
+        None => {
+            let is_public = p.visibility == Some(0) || p.service_id.is_none();
+            if is_public {
+                return super::match_provider::provider_conversation(ctx);
+            }
+            return format!(
+                "[negotiate_reply] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot send a reply.\n\n\
+                 Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+            );
+        }
     };
 
     let desc = if p.description.is_empty() {

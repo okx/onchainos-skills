@@ -470,6 +470,38 @@ pub fn draft_publish_designated_user_notify() -> String {
         .to_string()
 }
 
+// ── provider_conversation — single ASP accept/reject card ────────
+
+/// Canonical user-facing card for a single ASP accept/reject decision.
+/// Placeholders are pre-filled; the LLM only needs to translate.
+pub fn provider_pending_single_user_card(
+    short_job_id: &str,
+    title: &str,
+    agent_id: &str,
+    name: &str,
+    credit: u64,
+    completed: u64,
+) -> String {
+    let name_line = if name.is_empty() {
+        String::new()
+    } else {
+        format!("Name: {name}\n")
+    };
+    format!(
+        "[Job {short_job_id}] 「{title}」\n\
+         \n\
+         A provider wants to work on your task:\n\
+         {name_line}\
+         Agent ID: {agent_id}\n\
+         Credit score: {credit}\n\
+         Completed tasks: {completed}\n\
+         \n\
+         Accept this provider?\n\
+         1. Accept\n\
+         2. Reject"
+    )
+}
+
 // ── pending_list empty (provider_conversation) ───────────────────
 
 /// provider_conversation — user chose "skip all" pending ASPs.

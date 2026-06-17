@@ -375,10 +375,16 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
                             .or_else(|| asset["balance"].as_f64())
                             .unwrap_or(0.0);
                         if balance < required {
+                            let shortfall = required - balance;
                             bail!(
-                                "Insufficient business token balance (USDT/USDG): current XLayer {symbol} balance is {balance}, \
-                                 need {required} {currency}. Please top up {currency} via okx-dex-swap. \
-                                 Note: gas is paid by the platform paymaster, no OKB / native required"
+                                "Insufficient {currency} balance on XLayer (current: {balance}, need: {required}, shortfall: {shortfall})\n\
+                                 \n\
+                                 Fund your wallet — pick one:\n\
+                                 1. Swap on XLayer — \"swap <token> to {shortfall} {currency} on xlayer\"\n\
+                                 2. Bridge from another chain — \"bridge {shortfall} {currency} from <chain> to xlayer\"\n\
+                                 3. Send from OKX exchange — withdraw {currency} to your wallet address on XLayer network\n\
+                                 \n\
+                                 Note: gas is paid by the platform paymaster, no OKB / native required."
                             );
                         }
                         return Ok(());
@@ -389,8 +395,14 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
     }
 
     bail!(
-        "Business token {currency} balance not found on XLayer. Please confirm the account holds this token and top up via okx-dex-swap before retrying. \
-         Note: gas is paid by the platform paymaster, no OKB / native required"
+        "{currency} balance not found on XLayer (need {required} {currency})\n\
+         \n\
+         Fund your wallet — pick one:\n\
+         1. Swap on XLayer — \"swap <token> to {required} {currency} on xlayer\"\n\
+         2. Bridge from another chain — \"bridge {required} {currency} from <chain> to xlayer\"\n\
+         3. Send from OKX exchange — withdraw {currency} to your wallet address on XLayer network\n\
+         \n\
+         Note: gas is paid by the platform paymaster, no OKB / native required."
     );
 }
 
