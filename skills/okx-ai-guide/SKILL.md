@@ -93,3 +93,19 @@ Reached from Step 1 when the user is logged in and already has **≥1** OKX.AI i
 ## Step 5 — Routing after role pick
 
 Handled in [`references/unregistered-role-selection.md`](./references/unregistered-role-selection.md) alongside Step 2 (the `1`/`2`/`3` reply → wait-state line + registration playbook).
+
+## Step 6 — Registered-home menu routing (from Step 4)
+
+Handled in [`references/registered-home.md`](./references/registered-home.md) — covers `1` + Agent ID → `agent task-in-progress` with status mapping, `2` → top ASPs by sales via `agent search --query '按销量从高到低排序'`, and "Register a `<role>` identity" reroutes.
+
+## Acceptance Criteria
+
+1. `detect_harness` returns the right platform for each marker set; everything else → `unknown` → incompatible branch (Step 3).
+2. Compatible branch (Step 1) checks login (`wallet status`) **before** identity (`agent get`) — identity is never queried while logged out.
+   - Not logged in → hand off to the existing wallet-login flow, then resume the check.
+   - Logged in + no identity → role selection page (Step 2); replying `1` / `2` / `3` renders the right wait-state and loads the right registration playbook (Step 5).
+   - Logged in + ≥1 identity → registered user home (Step 4), filled from the `agent get` result; the home menu (Step 6) routes `1` + an Agent ID → that Agent's current tasks via `agent task-in-progress`, mapping each task's `status` to a label (e.g. `2` submitted = delivered/awaiting acceptance) rather than blanket-labeling everything "in progress" (with `code=3001` → "not your Agent, re-enter"), `2` → top ASPs by sales via `agent search --query '按销量从高到低排序'` (backend semantic sort-by-sales).
+3. Incompatible branch (Step 3) shows the three-role intro (no picks) + install heads-up + `{install_doc_url}`; ends the turn.
+4. `OKX.AI 快速开始` / `OKX.AI quick start` triggers this skill.
+5. Fixed-zone copy renders in the user's language; emojis / numbers / URLs / placeholders stay literal.
+6. Zero `onchainos agent create` calls in this skill (only read-only `wallet status` / `agent get`); zero Rust changes.

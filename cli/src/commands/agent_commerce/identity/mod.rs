@@ -32,7 +32,7 @@ pub use args::{
 };
 
 // Read-side commands.
-pub use queries::{feedback_list, get, get_by_address, search, service_list, top_asps};
+pub use queries::{feedback_list, get, get_by_address, search, service_list};
 
 // Write-side commands.
 pub use mutations::{

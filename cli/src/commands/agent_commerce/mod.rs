@@ -851,16 +851,6 @@ pub enum AgentCommand {
         #[arg(long = "agent-ids", value_delimiter = ',')]
         agent_ids: Vec<String>,
     },
-
-    /// List the marketplace's top ASPs by sales (soldCount), highest first.
-    /// Pulls the full ASP list and returns the top `--limit` (default 3; fewer
-    /// if the marketplace has fewer).
-    #[command(name = "top-asps")]
-    TopAsps {
-        /// How many to return, highest sales first. Default 3.
-        #[arg(long, default_value_t = 3)]
-        limit: usize,
-    },
 }
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
@@ -1492,7 +1482,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::common::in_progress::handle_in_progress(&mut client, &agent_ids).await
         }
-        AgentCommand::TopAsps { limit } => identity::top_asps(limit, ctx).await,
     }
 }
 

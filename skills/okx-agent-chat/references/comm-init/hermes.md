@@ -1,6 +1,6 @@
 # Step 3: Hermes Flow
 
-> **Precondition**: Step 0 in [ensure-okx-a2a-communication-ready.md](../../ensure-okx-a2a-communication-ready.md) already confirmed `xmtp_refresh_agents` is absent from the toolset, and Step 1 returned `runtime=hermes`. If the tool is in fact present in the current toolset, go back and call it directly instead — do not run this install flow.
+> **Precondition**: [ensure-okx-a2a-communication-ready.md](../../ensure-okx-a2a-communication-ready.md) already confirmed `xmtp_refresh_agents` is absent from the toolset, and the runtime detector returned `runtime: "hermes"`. If the tool is in fact present in the current toolset, go back and call it directly instead — do not run this install flow.
 
 Use this branch when a Hermes user needs to install the `okx-a2a` plugin from the npm package and restart Hermes Gateway.
 
