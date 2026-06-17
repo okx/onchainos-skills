@@ -265,7 +265,7 @@ pub(crate) async fn provider_conversation_pick_cli(
 
     let route = route_json.get("route").and_then(|v| v.as_str()).unwrap_or("");
     match route {
-        "a2a" => provider_conversation_pick_a2a(job_id, agent_id, dp_id),
+        "a2a" => provider_conversation_pick_a2a(job_id, agent_id, short_id, dp_id),
         "x402" => super::designated::branch_x402(job_id, agent_id, short_id, dp_id),
         "error" => super::designated::branch_error(job_id, agent_id, short_id, dp_id),
         _ => format!(
@@ -274,11 +274,10 @@ pub(crate) async fn provider_conversation_pick_cli(
     }
 }
 
-/// A2A branch for public-task ASP pick. Unlike `branch_a2a_cli` (which
-/// bails on existing sessions), this handles the public-task case where
-/// the daemon already created a session when the ASP sent its conversation
-/// request: session exists → skip create, ensure SKILL_PREFETCH → wait.
-fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, dp_id: &str) -> String {
+/// A2A branch for public-task ASP pick. Creates session + SKILL_PREFETCH,
+/// then returns LLM instructions to run asp-match + set-asp so the server
+/// knows who the provider is and can send `job_asp_selected`.
+fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::okx_a2a;
 
     let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. \
@@ -298,12 +297,43 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, dp_id: &str) -> 
     format!(
         "[Provider picked: A2A] Provider {dp_id} — session ready.\n\
          [Role] User (Buyer)\n\n\
-         ✅ Sub session and SKILL_PREFETCH ready. The ASP will receive `job_asp_selected` from the backend and independently decide to apply on-chain.\n\n\
-         🛑 **End this turn immediately.** Your ONLY next action is to wait for the `provider_applied` system event.\n\
-         ❌ Do NOT send any message (`xmtp_send`) to the ASP — no negotiation needed; the ASP already expressed interest.\n\
+         ✅ Sub session and SKILL_PREFETCH sent.\n\n\
+         **You MUST now set the provider on this task via `set-asp` so the server can notify the ASP.**\n\n\
+         **Step 1 — fetch the ASP's service info:**\n\
+         ```bash\n\
+         onchainos agent asp-match --job-id {job_id} --provider-agent-id {dp_id}\n\
+         ```\n\
+         From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, \
+         `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`.\n\
+         If `asp-match` returns no services, notify the user (🌐 localized): \
+         \"Provider {dp_id} has no registered services.\" and end the turn.\n\n\
+         **Step 2 — collect serviceParams if needed:**\n\
+         If `serviceDescription` is non-empty, ask the user for serviceParams — enqueue:\n\
+         ```bash\n\
+         onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} \
+         --source-event set_asp_params \
+         --user-content \"<compose from template below>\" \
+         --list-label \"[SetASP {short_id}] provide service params\"\n\
+         ```\n\
+         `--user-content` template (canonical English; 🌐 localize per user's language):\n\
+         You selected Agent {dp_id} — <serviceName>.\n\
+         Service: <serviceDescription>\n\
+         Fee: <feeAmount> <feeTokenSymbol>\n\n\
+         Please describe the input for this service (serviceParams):\n\
+         [SERVICE_CONTEXT providerAgentId={dp_id} serviceId=<sid> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
+         **`--list-label` must be localized to the user's language.**\n\
+         Then **end this turn** and wait for the user's reply.\n\n\
+         If `serviceDescription` is empty, skip the decision and go to Step 3 directly (serviceParams = `''`).\n\n\
+         **Step 3 — call `set-asp`:**\n\
+         ```bash\n\
+         onchainos agent set-asp {job_id} --provider-agent-id {dp_id} --service-id <sid> --service-params '<JSON or empty>' \
+         --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+         ```\n\
+         On success → notify user (🌐 localized): \"Provider set to Agent {dp_id}. Waiting for provider to accept.\"\n\n\
+         🛑 **End this turn after `set-asp` succeeds.** Wait for the `provider_applied` system event.\n\
          ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\n\
          [What happens next]\n\
-         The ASP receives `job_asp_selected` → ASP on-chain apply → system fires `provider_applied` event.\n"
+         `set-asp` → server sends `job_asp_selected` to ASP → ASP on-chain apply → system fires `provider_applied` event.\n"
     )
 }
 
