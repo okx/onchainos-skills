@@ -823,9 +823,9 @@ pub enum AgentCommand {
     SessionCleanup {
         #[arg(long = "job-id")]
         job_id: String,
-        /// buyer | provider
+        /// buyer | provider (currently unused but kept for CLI compat)
         #[arg(long)]
-        role: String,
+        role: Option<String>,
     },
 
     /// Query a single Agent's (or up to 20 Agents') in-progress tasks & disputes
@@ -1074,7 +1074,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::PendingDecisionsV2(c) =>
             task::common::pending_v2::run(c).await,
 
-        AgentCommand::SessionCleanup { job_id, role } =>
+        AgentCommand::SessionCleanup { job_id, role: _ } =>
             task::common::session_cleanup::handle_session_cleanup(&job_id),
 
         // ── Evaluator Agent flat dispatch ───────────────────────────
