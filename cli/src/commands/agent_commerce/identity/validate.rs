@@ -12,7 +12,7 @@ use crate::commands::Context;
 
 use super::args::ValidateListingArgs;
 use super::models::AgentService;
-use super::utils::normalize_role;
+use super::utils::{display_width, is_plain_number, normalize_role};
 
 // ─── CLI entry point (hidden — not shown in --help) ─────────────────────────
 
@@ -134,7 +134,7 @@ pub(crate) fn run_validation(
                         "service",
                         "PARSE",
                         "--service is not a valid JSON array of service objects.",
-                        "Provide a JSON array, e.g. [{\"name\":\"...\",\"servicedescription\":\"...\",\"servicetype\":\"A2MCP\",\"fee\":\"0 USDT\",\"endpoint\":\"https://...\"}].",
+                        "Provide a JSON array, e.g. [{\"name\":\"...\",\"servicedescription\":\"...\",\"servicetype\":\"A2MCP\",\"fee\":\"0\",\"endpoint\":\"https://...\"}].",
                     )),
                 }
             }
@@ -246,6 +246,9 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
         ));
     }
 
+    // NOTE: public-figure / celebrity-name checking is deliberately NOT done
+    // here — it lives in the skill's semantic QA layer (register.md §4 step 4),
+    // not as a CLI mechanical rule. Do not add a hard-coded name blocklist.
 }
 
 // ─── Universal text rules (U1/U2/U3) for a generic field ────────────────────
@@ -455,7 +458,7 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
         }
     }
 
-    // ── Fee (U4/P1/P2/P3/P4) ─────────────────────────────────────────────
+    // ── Fee (U4/P1) — plain number only, USDT implicit ───────────────────
     check_fee(index, svc, is_a2mcp, findings);
 
     // ── Description (D1-D7) on servicedescription ────────────────────────
@@ -475,78 +478,68 @@ fn check_fee(index: usize, svc: &AgentService, is_a2mcp: bool, findings: &mut Ve
                 &field,
                 "U4",
                 "A2MCP service has an empty fee.",
-                "Set an explicit fee, e.g. 0 USDT for free.",
+                "Set an explicit fee, e.g. 0 for free.",
             ));
             findings.push(Finding::block(
                 &field,
                 "P1",
                 "A2MCP fee is required.",
-                "Provide a fee like '10 USDT' or a bare number.",
+                "Provide a plain number, e.g. 10 (USDT is the default currency).",
             ));
         }
         // A2A: fee optional → skip silently.
         return;
     }
 
-    // P4 parenthetical after the price.
-    if fee.contains('(') || fee.contains(')') {
-        findings.push(Finding::block(
-            &field,
-            "P4",
-            "Fee contains a parenthetical note.",
-            "Remove the parenthetical; keep only the numeric amount + currency.",
-        ));
-    }
-
-    // P3 negotiation language.
-    if contains_negotiation_language(fee) {
-        findings.push(Finding::block(
-            &field,
-            "P3",
-            "Fee contains negotiation language.",
-            "Set a concrete fee instead of TBD / negotiable.",
-        ));
-    }
-
-    // Format + currency: strip a trailing parenthetical for the format check so
-    // P4 is the only finding for the paren itself.
-    let core = match fee.split_once('(') {
-        Some((before, _)) => before.trim(),
-        None => fee,
-    };
-    let (ok_format, currency) = parse_fee_core(core);
-    if !ok_format {
+    // P1 format: the fee must be a PLAIN NUMBER (spec field 4: amount only,
+    // USDT is the default unit and is never typed). USDT being the implicit,
+    // only currency, ANY extra text — a currency token / symbol, a
+    // parenthetical note, or negotiation wording — makes the whole string
+    // non-numeric and is rejected here. (The spec no longer enumerates the
+    // parenthetical / negotiation cases separately; P1 subsumes them.)
+    if !is_plain_number(fee) {
         findings.push(Finding::block(
             &field,
             "P1",
-            "Fee format is invalid.",
-            "Use a number optionally followed by USDT or USDG, e.g. '10 USDT' or '10'.",
+            "Fee must be a plain number.",
+            "Use a plain number, e.g. 10 — USDT is the default currency; do not add a currency symbol, parenthetical, or any other text.",
         ));
-    }
-    if let Some(cur) = currency {
-        let cur_up = cur.to_ascii_uppercase();
-        if cur_up != "USDT" && cur_up != "USDG" {
-            findings.push(Finding::block(
-                &field,
-                "P2",
-                "Fee currency must be USDT or USDG.",
-                "Use USDT or USDG as the currency.",
-            ));
-        }
     }
 }
 
+// Service description is a TWO-part structure per the okx.ai display spec
+// (field 5) and the backend `AgentLlmReviewServiceImpl.checkServiceDesc`:
+//   part 1 — core-capability summary
+//   part 2 — what the user must provide — REQUIRED
+// Parts are the FIRST and LAST non-empty lines (any middle lines are ignored
+// for the per-part length gate but still count toward the total). Lengths are
+// measured in EAST-ASIAN DISPLAY WIDTH (`display_width`: CJK = 2, ASCII = 1),
+// matching the backend exactly. Limits (width units): each part ≤ 400, total
+// ≤ 800 — i.e. the spec's "≤ 200 chars per part / ≤ 400 chars total" counted
+// in CJK characters.
 fn check_service_description(index: usize, desc: &str, findings: &mut Vec<Finding>) {
     let field = |sub: &str| format!("service[{index}].{sub}");
     let fd = field("servicedescription");
 
-    // D2 total length <= 400.
-    if desc.chars().count() > 400 {
+    // D1 (empty): a blank description has no parts at all.
+    let trimmed = desc.trim();
+    if trimmed.is_empty() {
+        findings.push(Finding::block(
+            &fd,
+            "D1",
+            "Service description must have 2 parts: a core-capability summary and what the user must provide, on separate lines.",
+            "Put the core-capability summary on the first line and what the user must provide on a second line.",
+        ));
+        return;
+    }
+
+    // D2 total display width <= 800 (= 400 CJK characters).
+    if display_width(desc) > 800 {
         findings.push(Finding::block(
             &fd,
             "D2",
-            "Service description exceeds 400 characters.",
-            "Trim the description to 400 characters or fewer.",
+            "Service description is too long (limit: 400 CJK characters, i.e. 800 half-width).",
+            "Trim the description to 400 CJK characters (800 half-width) or fewer.",
         ));
     }
 
@@ -569,58 +562,55 @@ fn check_service_description(index: usize, desc: &str, findings: &mut Vec<Findin
         ));
     }
 
-    // 3-part structure: split on newlines into non-empty parts.
-    let parts: Vec<&str> = desc
-        .split('\n')
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .collect();
+    // Two-part structure: part 1 = first non-empty line, part 2 = last non-empty
+    // line. When there is only one non-empty line, part 2 is absent → D1.
+    let mut first: Option<&str> = None;
+    let mut last: Option<&str> = None;
+    for line in desc.split('\n') {
+        let t = line.trim();
+        if !t.is_empty() {
+            if first.is_none() {
+                first = Some(t);
+            }
+            last = Some(t);
+        }
+    }
+    let part1 = first.unwrap_or("");
+    // part2 exists only when the last non-empty line differs from the first.
+    let part2 = match (first, last) {
+        (Some(f), Some(l)) if !std::ptr::eq(f, l) && f != l => Some(l),
+        _ => None,
+    };
 
-    if parts.len() < 3 {
+    if part2.is_none() {
         findings.push(Finding::block(
             &fd,
             "D1",
-            "Service description must have 3 parts (summary, capabilities, example prompts) separated by newlines.",
-            "Provide a one-line summary, a capabilities paragraph, and 1-3 example prompts on separate lines.",
+            "Service description must have 2 parts: a core-capability summary and what the user must provide, on separate lines.",
+            "Put the core-capability summary on the first line and what the user must provide on a second line.",
         ));
         return;
     }
 
-    // D3 part1 <= 50.
-    if parts[0].chars().count() > 50 {
+    // D3 part 1 (core-capability summary) display width <= 400 (= 200 CJK characters).
+    if display_width(part1) > 400 {
         findings.push(Finding::block(
             &fd,
             "D3",
-            "Description part 1 (summary) exceeds 50 characters.",
-            "Shorten the summary to 50 characters or fewer.",
+            "Description part 1 (core-capability summary) is too long (limit: 200 CJK characters, i.e. 400 half-width).",
+            "Shorten the core-capability summary to 200 CJK characters (400 half-width) or fewer.",
         ));
     }
-    // D4 part2 <= 150.
-    if parts[1].chars().count() > 150 {
-        findings.push(Finding::block(
-            &fd,
-            "D4",
-            "Description part 2 (capabilities) exceeds 150 characters.",
-            "Shorten the capabilities part to 150 characters or fewer.",
-        ));
-    }
-    // D5 part3: 1..=3 prompts, each <= 80 chars. Prompts are the remaining
-    // lines (everything from part index 2 onward counts as prompt lines).
-    let prompts: Vec<&str> = parts[2..].to_vec();
-    if prompts.is_empty() || prompts.len() > 3 {
-        findings.push(Finding::block(
-            &fd,
-            "D5",
-            "Description part 3 must contain 1-3 example prompts.",
-            "Provide between 1 and 3 example prompts.",
-        ));
-    } else if prompts.iter().any(|p| p.chars().count() > 80) {
-        findings.push(Finding::block(
-            &fd,
-            "D5",
-            "An example prompt exceeds 80 characters.",
-            "Keep each example prompt to 80 characters or fewer.",
-        ));
+    // D4 part 2 (what the user must provide) display width <= 400 (= 200 CJK characters).
+    if let Some(p2) = part2 {
+        if display_width(p2) > 400 {
+            findings.push(Finding::block(
+                &fd,
+                "D4",
+                "Description part 2 (what the user must provide) is too long (limit: 200 CJK characters, i.e. 400 half-width).",
+                "Shorten what-the-user-must-provide to 200 CJK characters (400 half-width) or fewer.",
+            ));
+        }
     }
 }
 
@@ -885,59 +875,6 @@ fn standalone_word(lower: &str, word: &str) -> bool {
         from = start + 1;
     }
     false
-}
-
-/// P3: negotiation language in a fee string.
-fn contains_negotiation_language(fee: &str) -> bool {
-    let lower = fee.to_ascii_lowercase();
-    const EN: &[&str] = &["tbd", "negotiable", "flexible"];
-    if EN.iter().any(|w| standalone_word(&lower, w)) {
-        return true;
-    }
-    fee.contains("面议") || fee.contains("协商")
-}
-
-/// Parse the "core" fee (parenthetical already stripped). Returns
-/// (format_ok, detected_currency_token). Accepts:
-///   `^\d+(\.\d{1,6})?$`                 (bare numeric)
-///   `^\d+(\.\d{1,6})?\s+[A-Za-z]+$`     (numeric + currency token)
-/// The currency token (if present) is returned so P2 can validate it. A bare
-/// numeric returns currency=None. Malformed → (false, None | Some(...)).
-fn parse_fee_core(core: &str) -> (bool, Option<String>) {
-    let core = core.trim();
-    if core.is_empty() {
-        return (false, None);
-    }
-    // Split into number part and optional currency part on whitespace.
-    let mut it = core.split_whitespace();
-    let num = it.next().unwrap_or("");
-    let cur = it.next();
-    let extra = it.next();
-
-    let num_ok = is_valid_numeric(num);
-
-    match (cur, extra) {
-        (None, None) => (num_ok, None),
-        (Some(c), None) => {
-            // currency token must be alphabetic; report it for P2 either way.
-            let cur_alpha = c.chars().all(|ch| ch.is_ascii_alphabetic()) && !c.is_empty();
-            (num_ok && cur_alpha, Some(c.to_string()))
-        }
-        // Anything beyond "<num> <cur>" is malformed.
-        _ => (false, cur.map(str::to_string)),
-    }
-}
-
-fn is_valid_numeric(s: &str) -> bool {
-    match s.split_once('.') {
-        None => !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
-        Some((int, frac)) => {
-            !int.is_empty()
-                && int.bytes().all(|b| b.is_ascii_digit())
-                && (1..=6).contains(&frac.len())
-                && frac.bytes().all(|b| b.is_ascii_digit())
-        }
-    }
 }
 
 /// U5: standalone `A2A` / `A2MCP` token (case-insensitive, word-boundary) that

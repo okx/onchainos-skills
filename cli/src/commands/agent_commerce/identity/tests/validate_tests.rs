@@ -26,7 +26,7 @@ fn clean_provider_passes() {
         "Document Summarizer",
         desc,
         "A2MCP",
-        "10 USDT",
+        "10",
         Some("https://example.com/mcp"),
     );
     let r = run_validation(
@@ -70,7 +70,7 @@ fn a2mcp_empty_endpoint_fails_t2() {
         "Some MCP Service",
         "Does a thing.\\nMore detail here.\\nDo the thing",
         "A2MCP",
-        "5 USDT",
+        "5",
         Some(""),
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -84,7 +84,7 @@ fn a2a_with_endpoint_fails_t3() {
         "Some A2A Service",
         "Does a thing.\\nMore detail here.\\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         Some("https://example.com"),
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -93,33 +93,45 @@ fn a2a_with_endpoint_fails_t3() {
 }
 
 #[test]
-fn fee_with_negotiable_paren_fails_p3_and_p4() {
-    let service = svc(
-        "Pricing Service",
-        "Does a thing.\\nMore detail here.\\nDo the thing",
-        "A2A",
-        "0.2 USDT (negotiable)",
-        None,
-    );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
-    let c = codes(&r);
-    assert!(c.contains(&"P3".to_string()), "got {:?}", c);
-    assert!(c.contains(&"P4".to_string()), "got {:?}", c);
-    assert!(!r.pass);
+fn fee_with_negotiation_or_paren_fails_p1() {
+    // The spec no longer enumerates parenthetical / negotiation cases as
+    // separate rules; any non-plain-number fee is rejected via P1 (and there
+    // is no longer a P3 / P4 code). Covers ASCII parens, fullwidth parens, and
+    // negotiation wording.
+    for fee in &["0.2 (negotiable)", "0.05 USDT（支持 USDG 结算）", "按复杂度协商"] {
+        let service = svc(
+            "Pricing Service",
+            "Does a thing.\\nMore detail here.\\nDo the thing",
+            "A2A",
+            fee,
+            None,
+        );
+        let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+        let c = codes(&r);
+        assert!(c.contains(&"P1".to_string()), "fee={fee} got {:?}", c);
+        assert!(!c.contains(&"P3".to_string()), "P3 retired, fee={fee} got {:?}", c);
+        assert!(!c.contains(&"P4".to_string()), "P4 retired, fee={fee} got {:?}", c);
+        assert!(!r.pass);
+    }
 }
 
 #[test]
-fn bad_currency_fails_p2() {
-    let service = svc(
-        "ETH Pricing Service",
-        "Does a thing.\\nMore detail here.\\nDo the thing",
-        "A2A",
-        "5 ETH",
-        None,
-    );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"P2".to_string()), "got {:?}", codes(&r));
-    assert!(!r.pass);
+fn fee_with_currency_token_fails_p1() {
+    // Fee must be a plain number — USDT is implicit. Any currency token (even a
+    // valid one) makes the fee non-numeric → P1. (The old USDT/USDG currency
+    // check, P2, has been removed.)
+    for fee in &["5 ETH", "5 USDT", "5 USDG"] {
+        let service = svc(
+            "Pricing Service",
+            "Does a thing.\\nMore detail here.\\nDo the thing",
+            "A2A",
+            fee,
+            None,
+        );
+        let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+        assert!(codes(&r).contains(&"P1".to_string()), "fee={fee} got {:?}", codes(&r));
+        assert!(!r.pass);
+    }
 }
 
 #[test]
@@ -128,7 +140,7 @@ fn too_short_service_name_fails_s1() {
         "Q",
         "Does a thing.\\nMore detail here.\\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -194,7 +206,7 @@ fn hex_in_service_description_emits_d7_not_duplicate_u2() {
     // A 0x address in `servicedescription` must surface once as D7, never
     // also as U2 for the same field (no duplicate diagnostic).
     let desc = "Summarizes text 0xdeadbeefdeadbeef.\\nHandles long docs.\\nSummarize this";
-    let service = svc("Document Summarizer", desc, "A2A", "0 USDT", None);
+    let service = svc("Document Summarizer", desc, "A2A", "0", None);
     let r = run_validation("provider", Some("Summary Bot"), None, Some(&service));
     let desc_field = "service[0].servicedescription";
     let desc_codes: Vec<&str> = r
@@ -237,7 +249,23 @@ fn bare_numeric_fee_ok() {
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);
     assert!(!c.contains(&"P1".to_string()), "got {:?}", c);
-    assert!(!c.contains(&"P2".to_string()), "got {:?}", c);
+}
+
+#[test]
+fn fee_with_currency_suffix_fails_p1() {
+    // A currency token attached to the number (with or without a space) is no
+    // longer accepted — the fee must be a plain number, USDT implicit.
+    for fee in &["1USDT", "1.5USDG", "10USDT", "0USDG"] {
+        let service = svc(
+            "Some Service",
+            "Does a thing.\nMore detail here.\nDo the thing",
+            "A2MCP",
+            fee,
+            Some("https://example.com/mcp"),
+        );
+        let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+        assert!(codes(&r).contains(&"P1".to_string()), "fee={fee} got {:?}", codes(&r));
+    }
 }
 
 // ─── N1: Latin/mixed name length boundary values ──────────────────────────
@@ -436,7 +464,7 @@ fn service_name_same_as_agent_name_fails_s3() {
         "Agent Name",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -449,7 +477,7 @@ fn service_name_case_insensitive_duplicate_fails_s3() {
         "agent name",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -462,7 +490,7 @@ fn service_name_different_from_agent_passes_s3() {
         "Trade Executor",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -477,7 +505,7 @@ fn service_name_with_usdt_fails_s4() {
         "Pay 5 USDT Service",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Other Agent"), None, Some(&service));
@@ -490,7 +518,7 @@ fn service_name_with_free_fails_s4() {
         "Get Access Free",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "0 USDT",
+        "0",
         None,
     );
     let r = run_validation("provider", Some("Other Agent"), None, Some(&service));
@@ -505,7 +533,7 @@ fn service_name_with_test_marker_fails_s6() {
         "Trade Bot (test)",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Other Agent"), None, Some(&service));
@@ -520,7 +548,7 @@ fn a2a_service_name_mentioning_a2mcp_fails_u5() {
         "My A2MCP Service",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Other Agent"), None, Some(&service));
@@ -533,7 +561,7 @@ fn a2mcp_service_name_mentioning_a2a_fails_u5() {
         "Use a2a protocol",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2MCP",
-        "5 USDT",
+        "5",
         Some("https://example.com/mcp"),
     );
     let r = run_validation("provider", Some("Other Agent"), None, Some(&service));
@@ -555,7 +583,7 @@ fn invalid_servicetype_fails_t1() {
         "Some Service",
         "Does a thing.\nMore detail here.\nDo the thing",
         "REST",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -568,7 +596,7 @@ fn empty_servicetype_fails_t1() {
         "Some Service",
         "Does a thing.\nMore detail here.\nDo the thing",
         "",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -602,16 +630,16 @@ fn requester_ignores_invalid_service_json() {
     assert!(r.pass, "got {:?}", codes(&r));
 }
 
-// ─── D1–D6: service description structure ─────────────────────────────────
+// ─── D1–D7: service description structure (two-part, display-width) ────────
 
 #[test]
-fn description_missing_parts_fails_d1() {
-    // Only one line → D1.
+fn description_single_line_fails_d1() {
+    // Only one non-empty line → no part 2 → D1.
     let service = svc(
         "Doc Summarizer",
         "Does one thing only",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -619,67 +647,72 @@ fn description_missing_parts_fails_d1() {
 }
 
 #[test]
-fn description_two_parts_fails_d1() {
+fn description_empty_fails_d1() {
+    let service = svc("Doc Summarizer", "", "A2A", "5", None);
+    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn description_two_parts_passes_d1() {
+    // First line = summary, second line = what to provide → valid two-part.
     let service = svc(
         "Doc Summarizer",
-        "Summary line.\nCapabilities line.",
+        "Summary line.\nProvide: a document and a target language.",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
-fn description_over_400_chars_fails_d2() {
-    // 401-char description.
-    let long = "x".repeat(401);
-    let service = svc("Doc Summarizer", &long, "A2A", "5 USDT", None);
+fn description_over_800_width_fails_d2() {
+    // 801 half-width chars across two lines → total display width 801 > 800.
+    let part1 = "x".repeat(400);
+    let part2 = "y".repeat(401);
+    let desc = format!("{part1}\n{part2}");
+    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
+    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
+    // 400-CJK-char part 2 is too long too (800 width) → also D4.
+}
+
+#[test]
+fn description_cjk_width_counts_double_d2() {
+    // 401 CJK chars on one line + a short second line. Width = 401*2 = 802 > 800.
+    let part1 = "测".repeat(401);
+    let desc = format!("{part1}\n需要提供钱包地址");
+    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
-fn description_part1_over_50_chars_fails_d3() {
-    // Part 1 (summary) exceeds 50 chars.
-    let p1 = "A".repeat(51);
-    let desc = format!("{p1}\nCapabilities paragraph here.\nExample prompt one");
-    let service = svc("Doc Summarizer", &desc, "A2A", "5 USDT", None);
+fn description_part1_over_400_width_fails_d3() {
+    // Part 1 = first line; 401 half-width chars > 400 width.
+    let p1 = "A".repeat(401);
+    let desc = format!("{p1}\nProvide a document.");
+    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D3".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
-fn description_part2_over_150_chars_fails_d4() {
-    let p2 = "B".repeat(151);
-    let desc = format!("Short summary.\n{p2}\nExample prompt one");
-    let service = svc("Doc Summarizer", &desc, "A2A", "5 USDT", None);
+fn description_part2_over_400_width_fails_d4() {
+    // Part 2 = LAST line; 401 half-width chars > 400 width.
+    let p2 = "B".repeat(401);
+    let desc = format!("Short summary.\n{p2}");
+    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
-fn description_over_3_prompts_fails_d5() {
-    let desc = "Short summary.\nCapabilities line.\nPrompt one\nPrompt two\nPrompt three\nPrompt four";
-    let service = svc("Doc Summarizer", desc, "A2A", "5 USDT", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D5".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn description_prompt_over_80_chars_fails_d5() {
-    let long_prompt = "C".repeat(81);
-    let desc = format!("Short summary.\nCapabilities line.\n{long_prompt}");
-    let service = svc("Doc Summarizer", &desc, "A2A", "5 USDT", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D5".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
 fn description_with_url_fails_d6() {
-    let desc = "Short summary.\nCapabilities.\nhttps://example.com for more";
-    let service = svc("Doc Summarizer", desc, "A2A", "5 USDT", None);
+    let desc = "Short summary.\nhttps://example.com for more";
+    let service = svc("Doc Summarizer", desc, "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D6".to_string()), "got {:?}", codes(&r));
 }
@@ -693,7 +726,7 @@ fn service_name_four_chars_fails_s1() {
         "Abcd",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -706,7 +739,7 @@ fn service_name_five_chars_passes_s1() {
         "Abcde",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -719,7 +752,7 @@ fn service_name_thirty_chars_passes_s1() {
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -732,7 +765,7 @@ fn service_name_thirty_one_chars_fails_s1() {
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ12345",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -808,10 +841,12 @@ fn mid_word_test_does_not_trigger() {
 
 #[test]
 fn underscore_test_in_middle_triggers() {
-    // "pretest_bot" DOES trigger: delimited_marker_present finds "_test" at position 7,
-    // next char is '_' (non-alphanumeric boundary) → returns true.
-    // The prefix "pre" before "_test" is irrelevant to the algorithm.
-    assert!(has_test_marker("pretest_bot"));
+    // "pre_test_bot" DOES trigger: delimited_marker_present finds "_test" at
+    // index 3, and the next char is '_' (a non-alphanumeric boundary) → true.
+    // The "pre" prefix before "_test" is irrelevant to the algorithm.
+    // (Contrast `mid_word_test_does_not_trigger`: "pretest" with no delimiter
+    // before "test" must NOT match — that is correct, by design.)
+    assert!(has_test_marker("pre_test_bot"));
 }
 
 #[test]
@@ -855,7 +890,7 @@ fn s3_does_not_trigger_when_agent_name_empty() {
         "Trade Executor",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     // No name provided → agent_name = "" → S3 guard skips.
@@ -870,7 +905,7 @@ fn service_name_with_cjk_free_fails_s4() {
         "免费翻译服务Pro",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "0 USDT",
+        "0",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -885,7 +920,7 @@ fn empty_service_name_does_not_trigger_s1() {
         "",
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
-        "5 USDT",
+        "5",
         None,
     );
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
@@ -901,16 +936,16 @@ fn hex_address_non_hex_char_terminates_run() {
     assert!(contains_hex_address("0x123456g"));
 }
 
-// D1 + D2 both fire on single long line
+// D1 + D2 both fire on a single over-long line
 #[test]
-fn description_over_400_single_line_fails_d1_and_d2() {
-    // A single line of 401 chars → D2 (too long) and D1 (only 1 part).
-    let long = "x".repeat(401);
-    let service = svc("Doc Summarizer", &long, "A2A", "5 USDT", None);
+fn description_over_800_single_line_fails_d1_and_d2() {
+    // A single line of 801 chars → D2 (total width > 800) and D1 (only 1 part).
+    let long = "x".repeat(801);
+    let service = svc("Doc Summarizer", &long, "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);
     assert!(c.contains(&"D2".to_string()), "expected D2, got {:?}", c);
-    assert!(c.contains(&"D1".to_string()), "expected D1 (single line → <3 parts), got {:?}", c);
+    assert!(c.contains(&"D1".to_string()), "expected D1 (single line → no part 2), got {:?}", c);
 }
 
 // N3 integration: No. suffix through run_validation
