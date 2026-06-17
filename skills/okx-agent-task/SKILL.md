@@ -41,7 +41,7 @@ For system events, top-level `agentId` IS the target (no lookup needed).
 
 When an inbound message arrives, match by **envelope shape first** (stop at first hit):
 
-1. **System event** — `message.source == "system"` + `message.event` present:
+1. **System event** — **JSON object** with `message.source == "system"` + `message.event` present:
    ```bash
    onchainos agent next-action \
      --role auto \
