@@ -288,29 +288,32 @@ async fn cmd_setup(
     .await
 }
 
+/// Attach a ready-to-render `message` to a success payload (single source of
+/// truth for the management-command success copy; the skill renders it verbatim).
+fn attach_success_message(mut data: Value, message: String) -> Value {
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert("message".to_string(), Value::String(message));
+        data
+    } else {
+        json!({ "message": message, "data": data })
+    }
+}
+
 /// Public fetch function for MCP and CLI
 pub async fn fetch_update_default_token(chain: &str, gas_token_address: &str) -> Result<Value> {
-    let access_token = ensure_tokens_refreshed().await?;
-    let chain_index = crate::chains::resolve_chain(chain);
-
-    // Resolve fromAddr from currently selected account for this chain
-    let chain_entry = super::chain::get_chain_by_real_chain_index(&chain_index)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("unsupported chain: {chain}"))?;
-    let chain_name = chain_entry["chainName"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("chain entry missing chainName"))?;
-    let wallets = crate::wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let (_, addr_info) = super::transfer::resolve_address(&wallets, None, chain_name)?;
-    let from_addr = addr_info.address;
-
+    let ctx = build_gs_context(chain, None).await?;
     let mut client = WalletApiClient::new()?;
     let data = client
-        .gas_station_update_default_token(&access_token, &chain_index, gas_token_address, &from_addr)
+        .gas_station_update_default_token(
+            &ctx.access_token,
+            &ctx.chain_index_resolved,
+            gas_token_address,
+            &ctx.addr_info.address,
+        )
         .await
         .map_err(format_api_error)?;
-    Ok(data)
+    let message = "Default Gas token on Solana updated. The chain will pay Gas with the selected stablecoin by default.";
+    Ok(attach_success_message(data, message.to_string()))
 }
 
 /// Flip Gas Station DB flag for a chain (`enable=true` to enable / `false` to disable).
@@ -337,7 +340,12 @@ pub async fn fetch_update(chain: &str, enable: bool) -> Result<Value> {
         .gas_station_update(&access_token, &chain_index, enable, Some(&from_addr))
         .await
         .map_err(format_api_error)?;
-    Ok(data)
+    let message = if enable {
+        "Gas Station is now enabled on Solana. The chain will pay Gas with stablecoins."
+    } else {
+        "Gas Station is now disabled on Solana. The chain will pay Gas with SOL; you can re-enable any time."
+    };
+    Ok(attach_success_message(data, message.to_string()))
 }
 
 #[cfg(test)]

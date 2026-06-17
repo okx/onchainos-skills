@@ -26,6 +26,7 @@ use super::args::{
     ActivateArgs, AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackSubmitArgs, PrecheckArgs,
     UpdateArgs, UploadArgs, XmtpSignArgs,
 };
+use super::validate;
 use super::models::{AgentCard, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_INDEX_NUM};
 use super::signing::{
     build_erc8004_overlay, load_agent_signing_session, load_session_cert, load_signing_seed,

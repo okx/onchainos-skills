@@ -461,9 +461,10 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     // ── Fee (U4/P1) — plain number only, USDT implicit ───────────────────
     check_fee(index, svc, is_a2mcp, findings);
 
-    // ── Description (D1-D7) on servicedescription — always run; an empty
-    //    description is itself a D1 (no parts), matching the backend. ────────
-    check_service_description(index, &svc.service_description, findings);
+    // ── Description (D1-D7) on servicedescription ────────────────────────
+    if !svc.service_description.is_empty() {
+        check_service_description(index, &svc.service_description, findings);
+    }
 }
 
 fn check_fee(index: usize, svc: &AgentService, is_a2mcp: bool, findings: &mut Vec<Finding>) {

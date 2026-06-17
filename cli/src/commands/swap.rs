@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 
 use super::Context;
 use crate::client::ApiClient;
+use crate::commands::common::wait_tx_onchain;
 use crate::output;
 use crate::token_alias::{resolve_token_address, validate_address_for_chain};
 use crate::validators::{readable_to_minimal_str, validate_amount, validate_slippage};
@@ -1495,66 +1496,6 @@ fn token_requires_revoke(chain_index: &str, token: &str) -> bool {
     REVOKE_REQUIRED_TOKENS
         .get(chain_index)
         .is_some_and(|addrs| addrs.iter().any(|a| a.to_lowercase() == token_lc))
-}
-
-/// Per-chain confirmation timeout for [`wait_tx_onchain`]. Picked to cover a
-/// typical block time with a small buffer; falls back to a generous default
-/// for unknown chains so the poller still bounds.
-fn tx_confirmation_timeout(chain_index: &str) -> std::time::Duration {
-    use std::time::Duration;
-    match chain_index {
-        // ETH, Linea
-        "1" | "59144" => Duration::from_secs(20),
-        _ => Duration::from_secs(10),
-    }
-}
-
-/// Poll the public DEX tx-history endpoint until the tx confirms on-chain
-/// (`txStatus == "success"`) or the per-chain timeout elapses.
-///
-/// GET `/api/v6/dex/post-transaction/transaction-detail-by-txhash`
-async fn wait_tx_onchain(client: &mut ApiClient, tx_hash: &str, chain_index: &str) -> Result<()> {
-    use std::time::{Duration, Instant};
-
-    let timeout = tx_confirmation_timeout(chain_index);
-    let poll_interval = Duration::from_secs(1);
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        let result = client
-            .get(
-                "/api/v6/dex/post-transaction/transaction-detail-by-txhash",
-                &[("chainIndex", chain_index), ("txHash", tx_hash)],
-            )
-            .await;
-        if cfg!(feature = "debug-log") {
-            eprintln!(
-                "[DEBUG][wait_tx_onchain] tx={} chain={} response={:?}",
-                tx_hash, chain_index, result
-            );
-        }
-
-        if let Ok(data) = result {
-            let detail = unwrap_api_array(&data);
-            let status = detail["txStatus"].as_str().unwrap_or("");
-            if status.eq_ignore_ascii_case("success") {
-                return Ok(());
-            }
-            if status.eq_ignore_ascii_case("fail") {
-                bail!("tx {} failed on-chain (chain={})", tx_hash, chain_index);
-            }
-        }
-
-        if Instant::now() >= deadline {
-            bail!(
-                "tx {} not confirmed on-chain within {}s (chain={})",
-                tx_hash,
-                timeout.as_secs(),
-                chain_index
-            );
-        }
-        tokio::time::sleep(poll_interval).await;
-    }
 }
 
 /// Compare allowance (spendable) against required amount.
