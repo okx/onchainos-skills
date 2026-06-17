@@ -359,10 +359,7 @@ pub fn task_requests() -> Result<Vec<serde_json::Value>> {
     }
     let json: serde_json::Value = serde_json::from_slice(&out.stdout)
         .map_err(|e| anyhow::anyhow!("task requests stdout not valid JSON: {e}"))?;
-    let arr = json.get("items").and_then(|v| v.as_array())
-        .or_else(|| json.get("requests").and_then(|v| v.as_array()))
-        .or_else(|| json.get("pending").and_then(|v| v.as_array()))
-        .or_else(|| json.as_array())
+    let arr = json.get("payload").and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
     Ok(arr)
