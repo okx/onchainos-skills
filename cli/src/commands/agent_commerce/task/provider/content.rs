@@ -210,12 +210,6 @@ pub fn reward_claimed_user_notify(job_id: &str) -> String {
     format!("[Reward Claimed] Job {job_id} — reward successfully claimed to your wallet.")
 }
 
-/// `Event::WakeupNotify` — resume notice pushed to the user after a network
-/// restart when a pending entry already exists for this jobId.
-pub fn wakeup_resume_user_notify(job_id: &str) -> String {
-    format!("Job {job_id} is back online. Please continue your previous decision.")
-}
-
 /// Preamble exception-escalation hard rule 1) protocol misalignment — content template.
 pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
     format!("[⚠️ Protocol Misalignment] Job {job_id} — repeated clarifications on the same flow, and the remote agent still repeats. Replies have stopped. Please intervene or give a new instruction.")
