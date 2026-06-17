@@ -123,7 +123,6 @@ After success, inform the user of the `jobId`. ⚠️ Do NOT say "published succ
 |---|---|
 | ASP has no service | "This ASP has no registered services. Please choose another or remove the designation." |
 | Currency ≠ feeTokenSymbol | "Task token differs from service fee token. Please change the task token or choose another ASP." |
-| Max budget < feeAmount | "Task max budget is lower than the service price. Please increase the max budget." |
 | create-task tx failure | Check network; guide retry. |
 
 ### 1.6 Draft tasks (save, edit, list, delete, publish)

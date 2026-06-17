@@ -97,7 +97,6 @@ Handle the result:
 
 **Validation (designated):**
 1. Currency consistency: task `currency` must match `feeTokenSymbol`. Mismatch → \"Task payment token ({currency}) differs from the service fee token ({feeTokenSymbol}). Please change the task token or choose another ASP.\"
-2. Budget check: `max-budget` ≥ `feeAmount`. Fail → \"Task max budget ({max-budget}) is lower than the service price ({feeAmount} {feeTokenSymbol}). Please increase the max budget.\"
 
 **B. User did NOT designate a provider:**
 
@@ -185,7 +184,7 @@ After the user replies, determine which path to take:
 
 - **User confirms / says publish / approves** → go to Step 6
 - **User says \"save as draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D
-- **User asks to edit a basic field** (description/budget/currency/deadlines) → update the field, re-run Step 4.5 validation (currency + budget check against the selected service) if currency or max-budget changed, show the form again (return to Step 5)
+- **User asks to edit a basic field** (description/budget/currency/deadlines) → update the field, re-run Step 4.5 validation (currency consistency) if currency changed, show the form again (return to Step 5)
 - **User asks to change the ASP** (\"换个服务商\" / \"change ASP\" / \"other provider\") → go back to Step 4.5 Branch B (show the full asp-match list)
 - **User asks to modify serviceParams** → update serviceParams, show the form again (return to Step 5)
 - **Ambiguous reply** → ask: publish on-chain now, or save as draft?
