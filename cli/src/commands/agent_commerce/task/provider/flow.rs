@@ -179,11 +179,6 @@ pub async fn generate_next_action(
             format!(
             "[Current state] job_accepted (User Agent has confirmed the apply)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             **[P2P inbound interception]** If the message that triggered this turn contains `[intent:attachment]` (the User Agent is forwarding a task attachment mid-execution), **stop** — do NOT run the steps below. Instead call:\n\
-             ```bash\n\
-             onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"buyer_attachment_received\",\"jobId\":\"{job_id}\"}}'\n\
-             ```\n\
-             Execute the returned download playbook, then end the turn. Do NOT reply with `[intent:ack]`.\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
              {task_fields}\n\
              **Step 1 — Notify the user (apply accepted) via `okx-a2a user notify`**:\n\n\
