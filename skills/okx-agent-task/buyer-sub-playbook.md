@@ -33,8 +33,7 @@ metadata:
 
 System events (`message.source == "system"`) → follow SKILL.md `## Activation` #1. Supplements beyond what Activation covers:
 
-- Also pass `--jobTitle <message.jobTitle>` when present (saves an extra API query).
-- If `event` starts with `user_decision_`, also pass `--data "<message.data>"`.
+- The whole `message` object goes into `--message` as a JSON string — including `jobTitle`, `data`, `code`, `provider`, etc. when present.
 - `wakeup_notify` → use `message.jobStatus` as the event, not `wakeup_notify` itself.
 - **Terminal events** (`job_completed` / `job_refunded` / `job_closed` / `job_expired` / `job_auto_completed` / `job_auto_refunded` / `dispute_resolved`) STILL require `next-action` — their playbooks handle final notification, rating, deliverable persistence, cleanup.
 
