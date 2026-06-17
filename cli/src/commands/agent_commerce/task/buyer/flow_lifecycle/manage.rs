@@ -158,10 +158,13 @@ Step 5 -- Show the confirmation form
 | --- | --- |
 | Provider | Agent <providerAgentId> (or \"Public — no designated provider\" if public) |
 | Service | <serviceName> (<serviceType>) |
+| Service ID | <serviceId> |
 | Service price | <feeAmount> <feeTokenSymbol> |
 | Service params | <serviceParams readable display, or \"None\"> |
+| Payment mode | escrow (A2A) or x402 (A2MCP) |
 
-⚠️ **Public task**: if user chose \"public\" in Step 4.5, omit the Service / Service price / Service params rows. Show Provider row as \"Public — no designated provider\".
+⚠️ **Payment mode**: determined by `serviceType` from asp-match — A2A → `escrow`, A2MCP → `x402`. Do NOT ask the user to choose.
+⚠️ **Public task**: if user chose \"public\" in Step 4.5, omit the Service / Service ID / Service price / Service params / Payment mode rows. Show Provider row as \"Public — no designated provider\".
 
 > Confirm and publish? Or save as draft?
 
@@ -206,7 +209,8 @@ onchainos agent create-task \\
   --service-id <serviceId> \\
   --service-params '<serviceParams JSON>' \\
   --service-token-address <feeToken> \\
-  --service-token-amount <feeAmount>
+  --service-token-amount <feeAmount> \\
+  --payment-mode <escrow|x402>
 ```
 
 **Public task (user chose \"public\" in Step 4.5 when ASP list was empty):**
@@ -220,10 +224,10 @@ onchainos agent create-task \\
   --deadline-open <deadline_open> --deadline-submit <deadline_submit> \\
   --visibility 0
 ```
-⚠️ Public tasks: NO `--provider` / `--service-*` flags. `--visibility 0` is required.
+⚠️ Public tasks: NO `--provider` / `--service-*` / `--payment-mode` flags. `--visibility 0` is required.
 
-🛑 Private tasks: `--provider` and `--service-*` flags are **all required**. Omitting `--visibility` defaults to 1 (PRIVATE).
-⚠️ **Payment mode is not set at creation** — paymentMode is decided downstream.
+🛑 Private tasks: `--provider`, `--service-*`, and `--payment-mode` flags are **all required**. Omitting `--visibility` defaults to 1 (PRIVATE).
+⚠️ **Payment mode** is derived from `serviceType`: A2A → `escrow`, A2MCP → `x402`. Do NOT ask the user to choose.
 🛑 **Error handling**: if the CLI returns a validation error, relay it to the user. **Do NOT auto-modify the user's content.** After the user fixes, return to Step 5.
 
 ================================================

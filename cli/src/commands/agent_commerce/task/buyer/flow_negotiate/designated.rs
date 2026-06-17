@@ -266,91 +266,39 @@ pub(crate) fn branch_a2a_cli(
         return format!("[branch_a2a_cli] ERROR: okx-a2a session send (SKILL_PREFETCH) failed: {e}\n");
     }
 
-    // B-Step 2 step 1.5 (attachments) — upload each pending attachment via
-    // okx_a2a::file_upload, then forward the file metadata to the ASP via
-    // okx_a2a::xmtp_send so the ASP can call file_download. Best-effort: a
-    // per-file failure must not block the negotiation, so we log the outcome
-    // in the prelude and continue.
-    let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
-    let attachment_section = if attachment_paths.is_empty() {
-        String::new()
-    } else {
-        for path in &attachment_paths {
-            let display_name = std::path::Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(path.as_str());
-            if let Ok(meta) = okx_a2a::file_upload(path, agent_id, job_id, Some(display_name), None) {
-                let content = format!(
-                    "jobId: {job_id}\n\
-                     attachmentType: file\n\
-                     fileKey: {file_key}\n\
-                     digest: {digest}\n\
-                     salt: {salt}\n\
-                     nonce: {nonce}\n\
-                     secret: {secret}\n\
-                     filename: {filename}\n\
-                     description: Attachment: {filename}\n\
-                     [intent:attachment]",
-                    file_key = meta.file_key,
-                    digest = meta.digest,
-                    salt = meta.salt,
-                    nonce = meta.nonce,
-                    secret = meta.secret,
-                    filename = meta.filename,
-                );
-                // Best-effort: any upload/send failure is silently skipped —
-                // attachment forwarding is not on the negotiation critical path.
-                let _ = okx_a2a::xmtp_send(job_id, dp_id, &content);
-            }
-        }
-        "⚠️ Attachments already uploaded and forwarded by Rust — do NOT call `xmtp_file_upload`, `xmtp_send [intent:attachment]`, or `list-attachments`.\n\n".to_string()
-    };
-
-    // CLI-path negotiation playbook: only Step 1 (first inquiry) is left for
-    // the LLM. Everything before it (group create + SKILL_PREFETCH +
-    // attachments) ran in Rust above; everything after it (handshake / ACK /
-    // counter / confirm) runs in the sub session via `next-action` when the
-    // ASP's reply arrives. The three-step handshake rules (HANDSHAKE_RULES_A2A)
-    // are omitted from this turn — they apply to Step 4 onward, which this
-    // playbook never reaches.
-    let _ = (short_id, title_display, session_key);
-    let step1 = negotiate_section_step1_only_cli(job_id, agent_id, dp_id, prefetched);
+    // Sub session created + SKILL_PREFETCH sent. Do NOT send the first
+    // inquiry or attachments here — the ASP receives `job_asp_selected`
+    // from the backend and will initiate the conversation. Attachments
+    // are forwarded when the ASP's first message arrives (negotiate_reply).
+    let _ = (short_id, title_display, session_key, prefetched);
 
     format!(
-        "[Designated ASP route: A2A] Provider {dp_id} is online with escrow support.\n\
-         [Role] User (Buyer)\n\
-         {attachment_section}\
-         {step1}\n"
+        "[Designated ASP route: A2A] Provider {dp_id} — sub session created.\n\
+         [Role] User (Buyer)\n\n\
+         ✅ Sub session and SKILL_PREFETCH ready. The ASP will receive `job_asp_selected` from the backend and initiate the conversation.\n\
+         🛑 **End this turn immediately.** Do NOT send any message (`xmtp_send`) or upload attachments — wait for the ASP's first message, \
+         which will arrive at the sub session and trigger `negotiate_reply`.\n"
     )
 }
 
 /// Phase 2a: A2A branch — group creation + negotiation protocol.
-pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, title_display: &str) -> String {
-    let attachment_paths = super::super::attachments::list_attachment_paths(job_id);
-    let attachment_section = if attachment_paths.is_empty() {
-        String::new()
-    } else {
-        let paths_list = attachment_paths.iter()
-            .map(|p| format!("  - `{p}`"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "**Pre-step — 🛑 Pending local attachments (auto-detected, MUST upload after first xmtp_send):**\n\
-             The following files are saved locally and MUST be uploaded to the provider **immediately after the first `xmtp_send`** in B-Step 2 step 1.5:\n\
-             {paths_list}\n\
-             ⚠️ Do NOT call `list-attachments` again — the paths above are authoritative.\n\
-             ⚠️ For each file: `xmtp_file_upload` → `xmtp_send [intent:attachment]` (see step 1.5 template).\n\n"
-        )
-    };
+pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &str, _title_display: &str) -> String {
+    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via buyer-sub-playbook.md §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
 
     format!("\
-         [Designated ASP route: A2A] Provider {dp_id} is online with escrow support.\n\
+         [Designated ASP route: A2A] Provider {dp_id} — create sub session only.\n\
          [Role] User (Buyer)\n\n\
-         {attachment_section}\
-         {negotiate}\n",
-        negotiate = designated_provider_negotiate(job_id, agent_id, short_id, dp_id, title_display),
-    )
+         **B-Step 1 — Create the sub session (group + session record):**\n\
+         ```bash\n\
+         xmtp_start_conversation --job-id {job_id} --my-agent-id {agent_id} --to-agent-id {dp_id}\n\
+         ```\n\n\
+         **B-Step 1.5 — Send SKILL_PREFETCH to the sub session:**\n\
+         ```bash\n\
+         xmtp_dispatch_session --session-key <sessionKey from step above> --content '{prefetch}'\n\
+         ```\n\n\
+         ✅ Sub session ready. The ASP will receive `job_asp_selected` from the backend and initiate the conversation.\n\
+         🛑 **End this turn immediately.** Do NOT send any message (`xmtp_send`) or upload attachments — wait for the ASP's first message, \
+         which will arrive at the sub session and trigger `negotiate_reply`.\n")
 }
 
 /// Phase 2b: x402 branch — endpoint validation + set-payment-mode.

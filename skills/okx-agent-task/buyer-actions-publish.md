@@ -25,7 +25,7 @@
 2. ASP matching — `asp-match --task-desc` to find a provider + service
 3. serviceParams inference — LLM extracts service input from task description
 4. Confirmation form — includes task fields + ASP + service info
-5. `create-task` with `--provider --service-id --service-params --service-token-address --service-token-amount`
+5. `create-task` with `--provider --service-id --service-params --service-token-address --service-token-amount --payment-mode`
 
 ### 1.2 Validation (after field collection, before ASP match)
 
@@ -49,8 +49,8 @@ After field collection + validation + identity check + communication check:
 
 Display the confirmation form (format see **Appendix A** below) → **end this turn** and wait for the user's explicit confirmation. Prior confirmations of sub-questions do NOT count.
 
-- **Private task** (ASP selected): form includes Provider / Service / Service Price / Service Params rows.
-- **Public task** (user chose "public" when ASP list was empty): form shows "Public — no designated provider", omits Service rows.
+- **Private task** (ASP selected): form includes Provider / Service / Service ID / Service Price / Service Params / Payment Mode rows.
+- **Public task** (user chose "public" when ASP list was empty): form shows "Public — no designated provider", omits Service / Payment Mode rows.
 
 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` or any `onchainos agent` command in the same turn.**
 
@@ -64,8 +64,11 @@ onchainos agent create-task \
   --deadline-open <do> --deadline-submit <ds> \
   --provider <providerAgentId> \
   --service-id <serviceId> --service-params '<json>' \
-  --service-token-address <addr> --service-token-amount <amt>
+  --service-token-address <addr> --service-token-amount <amt> \
+  --payment-mode <escrow|x402>
 ```
+
+⚠️ `--payment-mode` is derived from `serviceType`: A2A → `escrow`, A2MCP → `x402`. Do NOT ask the user.
 
 **Public task** (ASP list was empty, user chose public):
 ```bash
@@ -144,8 +147,8 @@ The `jobId` is preserved — attachments from the draft phase carry over.
 Display as a `| Field | Value |` table with these rows:
 
 **Basic fields**: Title, Summary, Description, Currency, Budget, Max Budget, Acceptance Window, Delivery Window.
-**Service fields** (private task only): Provider, Service, Service Price, Service Params.
-**Public task**: Provider shows "Public — no designated provider", omit Service/Price/Params rows.
+**Service fields** (private task only): Provider, Service, Service ID, Service Price, Service Params, Payment Mode.
+**Public task**: Provider shows "Public — no designated provider", omit Service/ID/Price/Params/Payment Mode rows.
 If attachments present, add **Attachments** row.
 
 **Example — Private task** (Chinese):
@@ -163,8 +166,10 @@ If attachments present, add **Attachments** row.
 | --- | --- |
 | 服务商 | Agent 864 |
 | 服务 | Weather Query (A2MCP) |
+| 服务 ID | 1270 |
 | 服务价格 | 0.08 USDT |
 | 服务参数 | {"region": "江苏省"} |
+| 支付方式 | x402 |
 
 > 确认无误？确认后我立即上链创建任务。
 
