@@ -2,9 +2,9 @@
 //!
 //! Two categories of templates:
 //!
-//! 1. **User-facing** (`xmtp_dispatch_user(content)` / `xmtp_prompt_user(userContent)`)
-//!    Chat content shown directly to the user. Naming suffix: `_user_notify` / `_user_prompt`.
-//!    Rule: **no technical jargon** — tool names (`xmtp_*`) / event names (`provider_applied`/`job_*` etc.) /
+//! 1. **User-facing** — chat content shown directly to the user via `okx-a2a user notify` /
+//!    `okx-a2a user decision-request`. Naming suffix: `_user_notify` / `_user_prompt`.
+//!    Rule: **no technical jargon** — event names (`provider_applied`/`job_*` etc.) /
 //!    status names (English enums like `Open`/`accepted` are kept as doc-reserved literals) / CLI flags (`--*`) /
 //!    skill names (`okx-agent-identity` etc.) / backend method names (`claimAutoComplete` etc.).
 //!    **Literals in this file are English** (aligned with the PM Review translation baseline),
@@ -18,8 +18,8 @@
 //!    Decision prompts (❓) carry the `[Job {short_id} — you are the User Agent]` prefix.
 //!    User reply instructions use descriptive phrasing (naturally translatable by the sub agent).
 //!
-//! 2. **Peer-facing** (`xmtp_send` content, sent to the provider sub agent)
-//!    Agent-to-agent protocol messages. Naming suffix: `_to_seller`.
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
+//!    to the provider sub agent. Naming suffix: `_to_seller`.
 //!    Rule: may contain protocol literals (`[intent:*]` etc.);
 //!    **never instruct the peer to call CLI** (the peer has its own flow.rs and decides based on chain events;
 //!    issuing commands to the peer is overreach).
@@ -290,7 +290,7 @@ pub fn reject_expired_user_notify(job_id: &str) -> String {
 
 // ── Event::ReviewDeadlineWarn ──────────────────────────────────────
 
-/// `Event::ReviewDeadlineWarn` — review deadline prompt (B-7-7, `xmtp_prompt_user.userContent`).
+/// `Event::ReviewDeadlineWarn` — review deadline prompt (B-7-7).
 pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String {
     format!(
         "[Job {short_id} — you are the User Agent] [⏰ Review Deadline Warning] Job {job_id} — the review deadline is approaching.\n\
@@ -361,22 +361,17 @@ pub fn attachment_phase_blocked_user_notify() -> &'static str {
 
 // ── Attachment (buyer → provider) ──────────────────────────────────
 
-/// File attachment `xmtp_send` content sent from the buyer sub session
-/// to the provider sub session.
-///
-/// The 6 fields (`fileKey` / `digest` / `salt` / `nonce` / `secret` /
-/// `filename`) come from `xmtp_file_upload`; the provider sub agent
-/// parses them and calls `xmtp_file_download` to fetch the file.
+/// File attachment peer message sent from the buyer sub session to the provider sub session.
 pub fn attachment_file_to_seller(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
          attachmentType: file\n\
-         fileKey: <fileKey from xmtp_file_upload — FULL value, no truncation>\n\
+         fileKey: <fileKey from `okx-a2a file upload` — FULL value, no truncation>\n\
          digest: <digest — FULL hex string, no truncation>\n\
          salt: <salt — FULL base64 string, no truncation>\n\
          nonce: <nonce — FULL base64 string, no truncation>\n\
          secret: <secret — FULL base64 string, no truncation (can be 100+ chars)>\n\
-         filename: <filename from xmtp_file_upload>\n\
+         filename: <filename from `okx-a2a file upload`>\n\
          description: This is an attachment/reference material for the task. The ASP should download it for task execution.\n\
          [intent:attachment]"
     )

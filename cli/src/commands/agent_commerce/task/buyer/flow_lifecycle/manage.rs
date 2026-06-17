@@ -250,7 +250,7 @@ If the user's message did NOT include any files, skip this step entirely.
 
 ================================================
 
-After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you are already in the user session):\n\
+After success, tell the user directly (do NOT call `okx-a2a user notify` — you are already in the user session):\n\
 ".to_string()
     + &format!("\
 - Private task (has provider): \"{create_designated}\"\n\
@@ -311,7 +311,7 @@ onchainos agent draft create \\\\\n\
 ```bash\n\
 onchainos agent task-attach --file \"<local file path>\" <jobId>\n\
 ```\n\n\
-After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you are already in the user session):\n\
+After success, tell the user directly (do NOT call `okx-a2a user notify` — you are already in the user session):\n\
 - content: \"{draft_saved}\"\n\
 🌐 Localize to the user's language.\n\n\
 → **End this turn.**\n\
@@ -386,7 +386,7 @@ This command validates all required fields, checks balance (blocking), signs the
 Step 4 -- Notify user
 ================================================
 
-After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you are already in the user session):
+After success, tell the user directly (do NOT call `okx-a2a user notify` — you are already in the user session):
 - No designated provider → \"{publish_public}\"
 - With designated provider → \"{publish_designated}\"
 ⚠️ If the CLI output contains a `⚠️ Insufficient ... balance` warning line, append it to the message above.
@@ -420,7 +420,7 @@ pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> Str
     "[Trigger] attachment_added (user session dispatched `[ATTACHMENT_ADDED]` — a file was saved locally and must be uploaded + forwarded to the provider)\n\
      [Role] User (User Agent)\n\n\
      🛑 **This is the ONLY correct path for forwarding attachments. Do not improvise.**\n\
-     🔴 Real incident: a Minimax model received `[ATTACHMENT_ADDED]`, skipped `xmtp_file_upload`, and sent the raw local file path via `xmtp_send` — \
+     🔴 Real incident: a Minimax model received `[ATTACHMENT_ADDED]`, skipped `okx-a2a file upload`, and sent the raw local file path via `okx-a2a xmtp-send` — \
      the provider received a path like `/Users/.../attachments/photo.jpg` which it cannot access. Then the model called next-action with `event=job_submitted` in --message (wrong event) and the task got stuck.\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 1 — Extract the file path:**\n\
@@ -433,23 +433,23 @@ pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> Str
      Read `status` (int) and branch:\n\n\
      --------- Branch A: status=1 (accepted) OR status=0 (created) with an active sub session ---------\n\n\
      **A-Step 1 — Upload the file (encrypted):**\n\
-     Call `xmtp_file_upload`:\n\
-     \x20\x20- filePath: <extracted path from Step 1>\n\
-     \x20\x20- agentId: {agent_id}\n\
-     \x20\x20- jobId: {job_id}\n\
+     Run `okx-a2a file upload`:\n\
+     \x20\x20```bash\n\
+     \x20\x20okx-a2a file upload --file-path <extracted path from Step 1> --agent-id {agent_id} --job-id {job_id} --json\n\
+     \x20\x20```\n\
      → On success you receive 6 fields: `fileKey`, `digest`, `salt`, `nonce`, `secret`, `filename`.\n\n\
-     ⚠️ If `xmtp_file_upload` fails → call xmtp_dispatch_user to notify the user that the attachment failed to send; **do NOT retry or block** — end the turn.\n\n\
-     **A-Step 2 — Forward to the provider via `xmtp_send`:**\n\
+     ⚠️ If `okx-a2a file upload` fails → run `okx-a2a user notify` to notify the user that the attachment failed to send; **do NOT retry or block** — end the turn.\n\n\
+     **A-Step 2 — Forward to the provider via `okx-a2a xmtp-send`:**\n\
      Send to the provider with **all 6 fields** + `[intent:attachment]` suffix (exact format — paste all fields verbatim):\n\
      ```\n\
      {attachment_template}\n\
      ```\n\
      ❌ Do NOT send the local file path — the provider cannot access your filesystem.\n\
      ❌ Do NOT omit any of the 6 encryption fields — the provider needs all of them to decrypt the file.\n\
-     🛑 **VERBATIM COPY — every field value (especially `secret`, `digest`, `salt`, `nonce`) must be pasted in FULL, character-for-character from `xmtp_file_upload` output. These are base64/hex strings that can be 40-200+ characters long. Do NOT truncate, abbreviate, or replace any part with `...` or ellipsis — even a single missing character = decryption failure.**\n\
+     🛑 **VERBATIM COPY — every field value (especially `secret`, `digest`, `salt`, `nonce`) must be pasted in FULL, character-for-character from `okx-a2a file upload` output. These are base64/hex strings that can be 40-200+ characters long. Do NOT truncate, abbreviate, or replace any part with `...` or ellipsis — even a single missing character = decryption failure.**\n\
      🔴 Real incident: a model abbreviated `secret: SHUJoA...dqE=` (replaced the middle with `...`), the provider could not decrypt the file and the task stalled.\n\n\
      **A-Step 3 — Notify the user:**\n\
-     Call xmtp_dispatch_user:\n\
+     Run `okx-a2a user notify`:\n\
      \x20\x20content: {att_sent}\n\
      Fill: `<short_jobId>` = {short_id}\n\
      {l10n_short}\n\n\
@@ -457,13 +457,13 @@ pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> Str
      --------- Branch B: status=0 (created) and NO active sub session ---------\n\n\
      The file is already stored locally under `~/.onchainos/task/<jobId>/attachments/`.\n\
      It will be uploaded to the provider automatically when the negotiation session starts.\n\n\
-     Call xmtp_dispatch_user:\n\
+     Run `okx-a2a user notify`:\n\
      \x20\x20content: {att_saved}\n\
      Fill: `<short_jobId>` = {short_id}\n\
      {l10n_short}\n\n\
      → **End this turn.**\n\n\
      --------- Branch C: status≥2 (submitted / rejected / disputed / terminal) ---------\n\n\
-     Call xmtp_dispatch_user:\n\
+     Run `okx-a2a user notify`:\n\
      \x20\x20content: {att_blocked}\n\
      Fill: `<short_jobId>` = {short_id}\n\
      {l10n_short}\n\n\
@@ -484,9 +484,9 @@ pub(crate) fn task_token_budget_change(ctx: &super::super::flow::FlowContext<'_>
      This event is broadcast to all user-side sub sessions.\n\
      - If you are the **backup session** → **ignore this event, end the turn immediately, do not call any tool**\n\
      - If you are a **sub session (a negotiation session with a specific provider)** → **also ignore this event, end the turn**\n\n\
-     Rationale: price is locked at accept time, not negotiated in chat. The on-chain tokenSymbol / tokenAmount update is visible to the ASP via task-detail queries; no `xmtp_send` propagation is needed.\n\n\
-     ❌ Do not xmtp_send to the provider (price talk is forbidden in chat).\n\
-     ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session).\n\
+     Rationale: price is locked at accept time, not negotiated in chat. The on-chain tokenSymbol / tokenAmount update is visible to the ASP via task-detail queries; no `okx-a2a xmtp-send` propagation is needed.\n\n\
+     ❌ Do not run `okx-a2a xmtp-send` to the provider (price talk is forbidden in chat).\n\
+     ❌ Do not run `okx-a2a user notify` (the user already knows about the change in the user session).\n\
      ❌ Do not call set-token-and-budget / set-asp / set-max-budget (the user session already did).\n"
     )
 }

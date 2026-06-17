@@ -53,7 +53,7 @@ pub async fn handle_deliver(
         bail!(
             "Deliver rejected: current task status = {} ({}), must be accepted (1) before delivery.\n\
              If you just applied, wait for the buyer to confirm-accept on-chain and receive the `job_accepted` system notification before delivering.\n\
-             Do NOT call xmtp_send to rush the buyer — confirm-accept is a user decision driven by the buyer's session.",
+             Do NOT call `okx-a2a xmtp-send` to rush the buyer — confirm-accept is a user decision driven by the buyer's session.",
             status_int,
             status.as_str(),
         );

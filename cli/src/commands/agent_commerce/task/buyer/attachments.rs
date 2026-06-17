@@ -57,9 +57,9 @@ pub async fn handle_task_attach(client: &mut TaskApiClient, job_id: &str, file_p
     println!();
     println!("🛑 NEXT STEP (MUST NOT SKIP): the file is saved LOCALLY only — it has NOT been sent to the provider yet.");
     println!("   If a sub session exists for this job (task already has a matched provider),");
-    println!("   you MUST call xmtp_dispatch_session to notify the sub session:");
+    println!("   you MUST run `okx-a2a session send` to notify the sub session:");
     println!();
-    println!("   Call xmtp_dispatch_session with (jobId={job_id}, toAgentId=<peer agentId from sub session>) and content=\"[ATTACHMENT_ADDED] {}\"  ← exact prefix, do NOT change", dest.display());
+    println!("   okx-a2a session send --job-id {job_id} --to-agent-id <peer agentId from sub session> --content \"[ATTACHMENT_ADDED] {}\"  ← exact prefix, do NOT change", dest.display());
     println!();
     println!("   If NO sub session exists yet (task not matched with a provider), skip the dispatch —");
     println!("   the sub session will pick up the file automatically via list-attachments when it starts.");

@@ -61,8 +61,11 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      paymentMode value mapping: 1=escrow, 3=x402.\n\
      ⚠️ Use the `paymentMode` from the envelope directly; no extra API query needed.\n\n\
      ━━━━━━━━━ escrow (paymentMode=1) ━━━━━━━━━\n\n\
-     **Step 2 - notify the user via xmtp_dispatch_user** ({l10n_dispatch}):\n\
-     \x20\x20content: {payment_escrow_notify}\n\n\
+     **Step 2 - notify the user via `okx-a2a user notify`** ({l10n_dispatch}):\n\
+     \x20\x20```bash\n\
+     \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+     \x20\x20```\n\
+     \x20\x20content (canonical English template — translate before passing): {payment_escrow_notify}\n\n\
      -> **end this turn** and wait for the ASP to submit their apply on-chain (provider_applied system notification).\n\n\
      ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\
      From the previous set-payment-mode / x402-check output, extract endpoint, acceptsJson, feeTokenSymbol, feeAmount, providerAgentId.\n\n\
@@ -77,9 +80,12 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
      ```\n\
      Extract `acceptsJson`, `tokenSymbol` (= feeTokenSymbol), `amountHuman` (= feeAmount).\n\n\
-     **Step 2 — 🌐 notify the user that payment is in progress via xmtp_dispatch_user:**\n\
+     **Step 2 — 🌐 notify the user that payment is in progress via `okx-a2a user notify`:**\n\
      {l10n_dispatch}\n\
-     \x20\x20content: {x402_paying}\n\n\
+     \x20\x20```bash\n\
+     \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+     \x20\x20```\n\
+     \x20\x20content (canonical English template — translate before passing): {x402_paying}\n\n\
      **Step 3 — sign + direct/accept + endpoint replay (atomic command):**\n\
      ```bash\n\
      onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
@@ -87,7 +93,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      Internally executes: x402_pay signing -> direct/accept on-chain -> assemble payment header -> replay endpoint.\n\
      Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, deliverableSavedPath, signature, authorization, sessionCert, txHash }}\n\
      ✅ The CLI **auto-saves** the deliverable to disk when replaySuccess=true (`deliverableSavedPath` in output). No manual `task-deliverable-save` call needed.\n\n\
-     🔴🔴🔴 **CRITICAL — Step 4: notify the user with the FULL deliverable content via xmtp_dispatch_user**\n\
+     🔴🔴🔴 **CRITICAL — Step 4: notify the user with the FULL deliverable content via `okx-a2a user notify`**\n\
      {l10n_dispatch}\n\
      The `replayBodyDisplay` field in the CLI output IS the deliverable the user paid for. You **MUST** copy it verbatim into the notification template below.\n\
      ❌ Do NOT summarize, truncate, or omit `replayBodyDisplay` — doing so = the user paid but never received the deliverable.\n\
@@ -105,7 +111,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'\n\
      ```\n\
      Follow the returned script (the script will guide you to run `onchainos agent complete`).\n\
-     ❌ **Absolutely forbidden**: re-running this turn's `x402-check` / `task-402-pay` / `xmtp_dispatch_user` - those completed in this turn; re-running causes double payment or duplicate notification.\n\
+     ❌ **Absolutely forbidden**: re-running this turn's `x402-check` / `task-402-pay` / `okx-a2a user notify` - those completed in this turn; re-running causes double payment or duplicate notification.\n\
      ❌ **Absolutely forbidden**: skipping `next-action` and deciding the next step yourself - the `job_accepted` script contains the `complete` step; skipping = the job is permanently stuck in the accepted state.\n"
     )
 }
@@ -190,7 +196,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
          - Rounds sent ≥ 2 → negotiation exceeded the 2-round limit. **Do NOT reply.** Jump to **[Over-limit]** below.\n\n\
          **Reply about**: scope, requirements, deliverable format, timeline, clarifying questions{public_price_note}.\n\n\
          🚫 **Forbidden in this event:**\n\
-         \x20\x20❌ `xmtp_dispatch_user` / `pending-decisions-v2 request` to ask the user about the ASP's message — negotiation is autonomous in this sub session.\n\
+         \x20\x20❌ `okx-a2a user notify` / `pending-decisions-v2 request` to ask the user about the ASP's message — negotiation is autonomous in this sub session.\n\
          \x20\x20❌ `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
          [Normal reply — single CLI call, then end the turn]\n\n\
          ```bash\n\

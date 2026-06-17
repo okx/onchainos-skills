@@ -878,24 +878,23 @@ pub async fn generate_next_action(
              \x20\x20- `filename`\n\
              All 6 fields are REQUIRED for decryption. If any field is missing, log the error and end the turn.\n\n\
              **Step 2 — Download the file:**\n\
-             Call `xmtp_file_download`:\n\
-             \x20\x20- fileKey: <from message>\n\
-             \x20\x20- digest: <from message>\n\
-             \x20\x20- salt: <from message>\n\
-             \x20\x20- nonce: <from message>\n\
-             \x20\x20- secret: <from message>\n\
-             \x20\x20- agentId: {agent_id}\n\
-             \x20\x20- filename: <from message>\n\
-             ⚠️ Before calling, print: `[provider-xmtp] xmtp_file_download: fileKey=<fileKey>, agentId={agent_id}`\n\
-             ⚠️ After calling, print: `[provider-xmtp] xmtp_file_download result: localPath=<returned local path>`\n\n\
+             Run `okx-a2a file download` (pass every metadata field from the inbound message):\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a file download --file-key <fileKey> --agent-id {agent_id} --digest <digest> --salt <salt> --nonce <nonce> --secret <secret> --filename <filename> --json\n\
+             \x20\x20```\n\
+             ⚠️ Before calling, print: `[provider-xmtp] file download: fileKey=<fileKey>, agentId={agent_id}`\n\
+             ⚠️ After calling, print: `[provider-xmtp] file download result: localPath=<returned local path>`\n\n\
              On success, record the localPath.\n\
              On failure → log the error; do NOT block negotiation or task execution.\n\n\
              **Step 3 — Notify the user:**\n\
-             Call xmtp_dispatch_user:\n\
-             \x20\x20content: {att_notify}\n\
+             Run `okx-a2a user notify`:\n\
+             \x20\x20```bash\n\
+             \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+             \x20\x20```\n\
+             \x20\x20content (canonical English template — translate before passing): {att_notify}\n\
              {l10n_short}\n\n\
              **Step 4 — Silent acknowledgement (do NOT reply to the User Agent):**\n\
-             ❌ Do NOT call `xmtp_send` — attachments are supplementary reference materials; no protocol reply is needed.\n\
+             ❌ Do NOT call `okx-a2a xmtp-send` — attachments are supplementary reference materials; no protocol reply is needed.\n\
              ❌ Do NOT treat this as a negotiation turn — do NOT send `[intent:ack]` / `[intent:counter]` / any natural-language reply.\n\n\
              → **End this turn.** Continue negotiation or task execution when the next message arrives.\n")
         }

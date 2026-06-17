@@ -2,11 +2,11 @@
 //!
 //! Two categories of templates:
 //!
-//! 1. **User-facing** (`xmtp_dispatch_user(content)` / `xmtp_prompt_user(userContent)`)
-//!    Chat content shown to the user. Naming suffix: `_user_notify` / `_user_prompt`.
-//!    Rule: **no technical jargon** — tool names (`xmtp_*`) / event names
-//!    (`provider_applied`/`job_*` etc.) / status enums (`open`/`accepted` etc.) /
-//!    CLI flags (`--*`) / skill names (`okx-agent-identity` etc.) /
+//! 1. **User-facing** — chat content shown to the user via `okx-a2a user notify` /
+//!    `okx-a2a user decision-request`. Naming suffix: `_user_notify` / `_user_prompt`.
+//!    Rule: **no technical jargon** — event names (`provider_applied`/`job_*` etc.) /
+//!    status enums (`open`/`accepted` etc.) / CLI flags (`--*`) /
+//!    skill names (`okx-agent-identity` etc.) /
 //!    status field names (`jobStatus`/`paymentMode`) are all banned.
 //!    **The string literals in this file are English** (escrow/x402, review window
 //!    expired, task completed, etc.) and serve as the source-of-truth that the sub
@@ -15,8 +15,8 @@
 //!    users see the equivalent of "escrow/x402, review window expired, task completed"). The no-technical-jargon
 //!    rule applies to all languages, not just English.
 //!
-//! 2. **Peer-facing** (`xmtp_send` content, sent to the User Agent's sub agent)
-//!    Agent-to-agent protocol messages. Naming suffix: `_to_buyer`.
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
+//!    to the User Agent's sub agent. Naming suffix: `_to_buyer`.
 //!    Rule: protocol literals are allowed (`[intent:*]` / `fileKey`/`digest` etc.);
 //!    **do NOT instruct the peer to run CLIs** — the peer has its own flow.rs and
 //!    decides for itself based on chain events; giving direct CLI orders is overreach.
@@ -111,7 +111,7 @@ pub fn job_asp_selected_rejected_notify(job_id: &str, reason: &str) -> String {
 }
 
 pub(super) const L10N_DISPATCH_SHORT: &str = "\
-🌐🛑 **MUST translate** the content below to the user's language before passing to `xmtp_dispatch_user` (rule 5: non-English → faithful translation; rule 4: English → verbatim). Sending English content to a Chinese user is a violation.";
+🌐🛑 **MUST translate** the content below to the user's language before passing to `okx-a2a user notify` (rule 5: non-English → faithful translation; rule 4: English → verbatim). Sending English content to a Chinese user is a violation.";
 
 /// `Event::JobAccepted` Step 1 — job-accepted notice pushed to the user.
 ///
@@ -130,8 +130,7 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
     )
 }
 
-/// `Event::JobRejected` Step 1 — decision prompt shown to the user
-/// (`xmtp_prompt_user.userContent`).
+/// `Event::JobRejected` Step 1 — decision prompt shown to the user.
 ///
 /// The short jobId prefix lets the user tell tasks apart at a glance when
 /// multiple prompts are in flight concurrently.
@@ -241,8 +240,7 @@ pub fn job_auto_completed_user_notify(job_id: &str) -> String {
     )
 }
 
-/// `Event::SubmitDeadlineWarn` — decision prompt shown to the user
-/// (`xmtp_prompt_user.userContent`).
+/// `Event::SubmitDeadlineWarn` — decision prompt shown to the user.
 ///
 /// The short jobId prefix lets the user tell tasks apart at a glance (same as
 /// `job_rejected_user_decision_prompt`). If the user replies `submit now` →
@@ -278,8 +276,7 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
     )
 }
 
-/// `Event::JobAccepted` Step 3 branch A (escrow text deliverable) — `xmtp_send`
-/// content sent to the User Agent.
+/// `Event::JobAccepted` Step 3 branch A (escrow text deliverable) — peer message sent to the User Agent.
 ///
 /// **Do not direct** the peer's CLI — once the User Agent's sub agent receives
 /// this, it follows its own `Event::JobSubmitted` script.
@@ -294,12 +291,11 @@ pub fn deliver_text_to_buyer(job_id: &str) -> String {
     )
 }
 
-/// `Event::JobAccepted` Step 3 branch A (escrow file deliverable) — `xmtp_send`
-/// content sent to the User Agent.
+/// `Event::JobAccepted` Step 3 branch A (escrow file deliverable) — peer message sent to the User Agent.
 ///
 /// The 5 decryption-metadata fields (`fileKey` / `digest` / `salt` / `nonce` /
 /// `secret` / `filename`) are protocol literals; the User Agent's sub agent
-/// parses them and calls `xmtp_file_download` to fetch the local file.
+/// parses them and downloads the local file via the file-attachment flow.
 /// **Do not direct** the peer's CLI.
 pub fn deliver_file_to_buyer(job_id: &str) -> String {
     format!(

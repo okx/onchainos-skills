@@ -124,13 +124,15 @@ fn job_created_non_designated_provider(ctx: &FlowContext<'_>) -> String {
          🛑 You are inside a sub/backup session. Execute the 2 actions below, then end the turn.\n\
          The task is public; ASPs will discover it and reach out via `provider_conversation`.\n\n\
          **Action 1 — Notify the user the job is on-chain** (translate template body to the user's language before sending):\n\
-         tool: `xmtp_dispatch_user`\n\
+         ```bash\n\
+         okx-a2a user notify --content '<translated content from the template below>' --json\n\
+         ```\n\
          content (canonical English template — translate before passing): {notify_tpl}\n\
          Fill: `<title>` = {title} | `<short_jobId>` = {short_id}\n\
          {l10n_short}\n\n\
          **Action 2 — End the turn.**\n\
          Do NOT call `asp-match` — public tasks wait for ASPs to apply.\n\n\
-         🛑 Forbidden: `asp-match`, `xmtp_start_conversation`, `set-payment-mode`, \
+         🛑 Forbidden: `asp-match`, `okx-a2a session create`, `set-payment-mode`, \
          `confirm-accept`, `apply`, `complete`, `reject`.\n"
     )
 }
@@ -163,7 +165,7 @@ fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
          ❌ **Absolutely forbidden**: `sessions_spawn` - do NOT spawn a child agent to \"help you\" handle this event.\n\
          ❌ **Absolutely forbidden**: `sessions_yield` - do NOT hand off control.\n\
          🔴 Real incident: after receiving job_created, a backup called sessions_spawn to delegate to a child agent, which broke the designated-provider consume-context invariant and made negotiation uncontrollable.\n\
-         **Correct behavior**: you yourself execute the CLI commands and xmtp tool calls step by step as below.\n\n\
+         **Correct behavior**: you yourself execute the CLI commands step by step as below.\n\n\
          [Current state] job_created (job is on-chain, status: pending acceptance)\n\
          [Role] User (User Agent)\n\n\
          ⚠️ **Open != public**: Open is a job lifecycle state (pending acceptance), not a visibility (public/private). Job visibility is governed by the `visibility` field (0=public, 1=private), unrelated to the Open state. Do NOT translate Open as \"public\" in notifications.\n\n\
@@ -173,8 +175,11 @@ fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
          🔴 Real incident: a model called next-action, received this playbook, then said \"end turn, wait for User Agent\" without executing any step — the user was never notified and the task was permanently stuck.\n\n\
          [Your next actions (strict order)]\n\n\
          **Step 0 - notify the user session + continue execution in the current sub/backup session:**\n\
-         Call xmtp_dispatch_user to tell the user the job is on-chain:\n\
-         \x20\x20content: {notify_tpl}\n\
+         Run `okx-a2a user notify` to tell the user the job is on-chain:\n\
+         \x20\x20```bash\n\
+         \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+         \x20\x20```\n\
+         \x20\x20content (canonical English template — translate before passing): {notify_tpl}\n\
          {fill}\n\
          {l10n_short}\n\n\
          ⚠️ Subsequent routing -> negotiation / acceptance all run in the **current session**; do NOT switch to the user session, do NOT sessions_spawn.\n\n\
@@ -201,11 +206,11 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Trigger] Received an \"ASP pending contact\" style message (user session side)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **Do NOT auto-create groups**: after receiving the pending_list notification, you must NOT call xmtp_start_conversation on your own.\n\
+     🛑 **Do NOT auto-create groups**: after receiving the pending_list notification, you must NOT run `okx-a2a session create` on your own.\n\
      You must first show the list and let the user pick an ASP; only after an explicit user choice may you create the group.\n\n\
      🛑 **CRITICAL - this event MUST push the ASP list to the user session via `pending-decisions-v2 request`; printing text reply in the sub session is forbidden.**\n\
      ❌ Do NOT replace the `pending-decisions-v2 request` call with a text reply (sub-session output is invisible to the user).\n\
-     ❌ Do NOT use xmtp_dispatch_user instead of `pending-decisions-v2 request` (the user needs to make an ASP-choice decision; dispatch_user is pure notification and cannot relay).\n\n\
+     ❌ Do NOT use `okx-a2a user notify` instead of `pending-decisions-v2 request` (the user needs to make an ASP-choice decision; notify is pure notification and cannot relay).\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 0 - idempotency check: query whether a pending decision already exists for this job:**\n\
      ```bash\n\
@@ -215,13 +220,16 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      If not present -> continue to Step 1.\n\n\
      **Step 1 - fetch the pending-contact ASP list:**\n\
      Run `okx-a2a task requests --json`. The returned `items` array contains per-ASP entries — capture `groupId` / `agentId` / `name` / `serviceName` / `creditScore` / `completedTaskCount` for each entry (`groupId` is required later for Branch C reject; the others are for rendering).\n\n\
-     If the returned `items` array is empty -> call xmtp_dispatch_user:\n\
-     \x20\x20content: {pending_empty}\n\
+     If the returned `items` array is empty -> run `okx-a2a user notify`:\n\
+     \x20\x20```bash\n\
+     \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+     \x20\x20```\n\
+     \x20\x20content (canonical English template — translate before passing): {pending_empty}\n\
      {l10n_short}\n\
      Then finish.\n\n\
      **Step 2 - enqueue the user decision via `pending-decisions-v2 request`:**\n\
      🛑 **You MUST wait for the user's choice**; you may not decide for them.\n\
-     Call `session_status` first to get this sub session's sessionKey (only once per turn). Then run:\n\
+     Run `okx-a2a session status --job-id {job_id}` first to get this sub session's sessionKey (only once per turn). Then run:\n\
      ```bash\n\
      {cmd_pending_asp}\n\
      ```\n\
@@ -236,26 +244,32 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      {follow_playbook}\n\n\
      **Step 3 - End this turn. When the user-session relays the reply as a system envelope (`event:\"user_decision_provider_pending\"`, `message.data:<user verbatim>`), branch by intent below.** (You may also follow the routing playbook returned by `next-action` with `event=user_decision_provider_pending` and `data=<message.data>` in --message — both paths point to the same Branch A/B/C below.)\n\n\
      ━━━━━━━━━ Branch A: verbatim is a number (index) or a 3-digit AgentID → map index to AgentID from the pending list above; establish session, then negotiate ━━━━━━━━━\n\n\
-     A-Step 1: map the user's reply to agentId (index → AgentID via the pending list, or use a 3-digit AgentID directly); call xmtp_start_conversation to create the group + the sub session:\n\
-     \x20\x20Args: myAgentId={agent_id}, toAgentId=<agentId from the pending list above>, jobId={job_id}\n\
-     \x20\x20⚠️ Before the call, print: `[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
-     \x20\x20⚠️ After the call, print: `[buyer-xmtp] xmtp_start_conversation result: sessionKey=<returned value>, xmtpGroupId=<returned value>`\n\n\
+     A-Step 1: map the user's reply to agentId (index → AgentID via the pending list, or use a 3-digit AgentID directly); run `okx-a2a session create` to create the group + the sub session:\n\
+     \x20\x20```bash\n\
+     \x20\x20okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id <agentId from the pending list above> --json\n\
+     \x20\x20```\n\
+     \x20\x20⚠️ Before the call, print: `[buyer-xmtp] session create: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
+     \x20\x20⚠️ After the call, print: `[buyer-xmtp] session create result: sessionKey=<returned value>, xmtpGroupId=<returned value>`\n\n\
      🛑 **A-Step 1.5 - SKILL_PREFETCH (mandatory for new sub sessions):**\n\
-     Immediately after xmtp_start_conversation returns, call `xmtp_dispatch_session` to pre-load the skill into the newly created sub session:\n\
-     \x20\x20sessionKey = <the sessionKey just returned by xmtp_start_conversation>\n\
-     \x20\x20content = `[SKILL_PREFETCH] Read okx-agent-task/SKILL.md. No action needed for this message — but process all subsequent messages normally. Do NOT carry over \"no action\" to business messages.`\n\
+     Immediately after `session create` returns, run `okx-a2a session send` to pre-load the skill into the newly created sub session:\n\
+     \x20\x20```bash\n\
+     \x20\x20okx-a2a session send --session-key <the sessionKey just returned by session create> --content '[SKILL_PREFETCH] Read okx-agent-task/SKILL.md. No action needed for this message — but process all subsequent messages normally. Do NOT carry over \"no action\" to business messages.'\n\
+     \x20\x20```\n\
      ❌ Do NOT skip this step — the sub session has no context yet; without SKILL_PREFETCH, the first inbound message will be processed without the buyer playbook loaded.\n\
-     ⚠️ Use `xmtp_dispatch_session` (internal), NOT `xmtp_send` (which the ASP would see).\n\n\
-     🛑 **Within the same turn after creating the group you MUST call `xmtp_send` to send the first message** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
+     ⚠️ Use `okx-a2a session send` (internal), NOT `okx-a2a xmtp-send` (which the ASP would see).\n\n\
+     🛑 **Within the same turn after creating the group you MUST call `okx-a2a xmtp-send` to send the first message** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
      ❌ Absolutely forbidden: creating the group and ending the turn without sending a message.\n\n\
-     A-Step 2: once the group is created you are inside the sub session; call xmtp_send to start negotiating with the ASP (refer to buyer-sub-playbook.md §Peer Message Routing):\n\
-     \x20\x20⚠️ **Do NOT** use xmtp_dispatch_user / xmtp_dispatch_session; after the group is created use xmtp_send uniformly.\n\
+     A-Step 2: once the group is created you are inside the sub session; run `okx-a2a xmtp-send` to start negotiating with the ASP (refer to buyer-sub-playbook.md §Peer Message Routing):\n\
+     \x20\x20⚠️ **Do NOT** use `okx-a2a user notify` / `okx-a2a session send`; after the group is created use `okx-a2a xmtp-send` uniformly.\n\
      \x20\x20content: Hi, I have a job (jobId: {job_id}) - are you interested in taking it on?\n\n\
      A-Step 3: negotiation success -> ASP applies on-chain -> wait for the ASP's XMTP message announcing the apply (buyer-sub-playbook.md routing #1 triggers confirm-accept).\n\n\
      A-Step 4: negotiation failure (ASP rejects / timeout / terms mismatch) -> jump to Branch C.\n\n\
      ━━━━━━━━━ Branch B: verbatim contains `skip all` / `跳过` / `不选` → skip all pending ASPs ━━━━━━━━━\n\n\
-     End the flow — call xmtp_dispatch_user:\n\
-     \x20\x20content: {skip_all}\n\
+     End the flow — run `okx-a2a user notify`:\n\
+     \x20\x20```bash\n\
+     \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+     \x20\x20```\n\
+     \x20\x20content (canonical English template — translate before passing): {skip_all}\n\
      {l10n_short}\n\n\
      ━━━━━━━━━ Branch C: user rejects current ASP / negotiation failed -> reject and return to the list ━━━━━━━━━\n\n\
      C-Step 1: reject this ASP via:\n\

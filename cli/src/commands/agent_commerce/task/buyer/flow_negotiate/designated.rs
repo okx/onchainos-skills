@@ -27,21 +27,24 @@ const HANDSHAKE_RULES_A2A: &str = "🛑 **Negotiation ground rules — natural l
 fn negotiate_section_pre_inquiry(job_id: &str, agent_id: &str, dp_id: &str) -> String {
     format!("━━━━━━━━━ Branch B: supportA2MCP=false -> A2A (negotiation required) ━━━━━━━━━\n\n\
              **B-Step 0 - duplicate guard (🛑 hard gate):**\n\
-             Call `session_status` to check whether this job already has a sub session (i.e. group already created).\n\
+             Run `okx-a2a session status --job-id {job_id} --to-agent-id <{dp_id}>` to check whether this job already has a sub session (i.e. group already created).\n\
              If a sub session **already exists** -> the first inquiry has already been sent. **End this turn immediately** - do not create a group, do not send a message, do not send an inquiry, do not run any subsequent B-Step.\n\
              If it does **not** exist -> continue to B-Step 1.\n\n\
              **B-Step 1 - create the group:**\n\
-             Call xmtp_start_conversation to create the group + the sub session:\n\
-             \x20\x20Args: myAgentId={agent_id}, toAgentId=<{dp_id}>, jobId={job_id}\n\
+             Run `okx-a2a session create` to create the group + the sub session:\n\
+             ```bash\n\
+             okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id <{dp_id}> --json\n\
+             ```\n\
              \x20\x20On success returns sessionKey + xmtpGroupId.\n\
-             \x20\x20⚠️ Before the call, print: `[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<providerAgentId>, jobId={job_id}`\n\
-             \x20\x20⚠️ After the call, print: `[buyer-xmtp] xmtp_start_conversation result: sessionKey=<returned value>, xmtpGroupId=<returned value>`\n\n\
+             \x20\x20⚠️ Before the call, print: `[buyer-xmtp] session create: myAgentId={agent_id}, toAgentId=<providerAgentId>, jobId={job_id}`\n\
+             \x20\x20⚠️ After the call, print: `[buyer-xmtp] session create result: sessionKey=<returned value>, xmtpGroupId=<returned value>`\n\n\
              🛑 **B-Step 1.5 - SKILL_PREFETCH (mandatory for new sub sessions):**\n\
-             Immediately after xmtp_start_conversation returns, call `xmtp_dispatch_session` to pre-load the skill into the newly created sub session:\n\
-             \x20\x20sessionKey = <the sessionKey just returned by xmtp_start_conversation>\n\
-             \x20\x20content = `[SKILL_PREFETCH] Read okx-agent-task/SKILL.md. No action needed for this message — but process all subsequent messages normally. Do NOT carry over \"no action\" to business messages.`\n\
+             Immediately after `session create` returns, run `okx-a2a session send` to pre-load the skill into the newly created sub session:\n\
+             ```bash\n\
+             okx-a2a session send --session-key <the sessionKey just returned by session create> --content '[SKILL_PREFETCH] Read okx-agent-task/SKILL.md. No action needed for this message — but process all subsequent messages normally. Do NOT carry over \"no action\" to business messages.'\n\
+             ```\n\
              ❌ Do NOT skip this step — the sub session has no context yet; without SKILL_PREFETCH, the first inbound message will be processed without the buyer playbook loaded.\n\
-             ⚠️ Do NOT use `xmtp_send` (that would be visible to the ASP). Use `xmtp_dispatch_session` only.")
+             ⚠️ Do NOT use `okx-a2a xmtp-send` (that would be visible to the ASP). Use `okx-a2a session send` only.")
 }
 
 /// B-Step 2 (automated negotiation) and everything after — first inquiry,
@@ -119,7 +122,7 @@ pub(crate) fn negotiate_section_step2_onwards(
     attachments_handled_in_rust: bool,
 ) -> String {
     let step_1_5_block = if attachments_handled_in_rust {
-        "1.5. **Attachments**: ✅ already uploaded and forwarded to the ASP by Rust before this playbook was emitted. Do NOT call `onchainos agent list-attachments` or `xmtp_file_upload` again — they're done.".to_string()
+        "1.5. **Attachments**: ✅ already uploaded and forwarded to the ASP by Rust before this playbook was emitted. Do NOT call `onchainos agent list-attachments` or `okx-a2a file upload` again — they're done.".to_string()
     } else {
         format!(
             "1.5. **Upload pending attachments (if any)**:\n\
@@ -127,26 +130,26 @@ pub(crate) fn negotiate_section_step2_onwards(
              \x20\x20onchainos agent list-attachments {job_id}\n\
              \x20\x20```\n\
              \x20\x20If the output is a non-empty JSON array, iterate over each file path:\n\
-             \x20\x20a) `xmtp_file_upload` (filePath=<path>, agentId={agent_id}, jobId={job_id}) → obtain fileKey + 5 decryption-metadata fields (digest/salt/nonce/secret/filename).\n\
-             \x20\x20b) `xmtp_send` to the provider with the following content (paste all 6 fields verbatim from xmtp_file_upload):\n\
+             \x20\x20a) `okx-a2a file upload --file-path <path> --agent-id {agent_id} --job-id {job_id}` → obtain fileKey + 5 decryption-metadata fields (digest/salt/nonce/secret/filename).\n\
+             \x20\x20b) `okx-a2a xmtp-send` to the provider with the following content (paste all 6 fields verbatim from the upload output):\n\
              \x20\x20{attachment_file}\n\
-             \x20\x20⚠️ **Attachment upload failure MUST NOT block the negotiation flow**: if `xmtp_file_upload` fails for any file, skip that file and continue. The negotiation is the critical path; attachment forwarding is best-effort.\n\
+             \x20\x20⚠️ **Attachment upload failure MUST NOT block the negotiation flow**: if `okx-a2a file upload` fails for any file, skip that file and continue. The negotiation is the critical path; attachment forwarding is best-effort.\n\
              \x20\x20If empty (`[]`) or no attachments were found in the earlier attachment check, skip this step."
         )
     };
     format!("**B-Step 2 - first inquiry to the designated ASP (task-detail discussion only):**\n\
-             🛑 **Within the same turn after creating the group you MUST call `xmtp_send` to send the first inquiry** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
+             🛑 **Within the same turn after creating the group you MUST call `okx-a2a xmtp-send` to send the first inquiry** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
              ❌ Absolutely forbidden: creating the group and ending the turn without sending a message.\n\
-             ❌ Absolutely forbidden: using xmtp_dispatch_user / xmtp_dispatch_session instead of xmtp_send - after the group is created use xmtp_send uniformly.\n\n\
+             ❌ Absolutely forbidden: using `okx-a2a user notify` / `okx-a2a session send` instead of `okx-a2a xmtp-send` - after the group is created use `xmtp-send` uniformly.\n\n\
              Negotiation scope (task-detail discussion only):\n\
              \x20\x20• Scope / requirements / deliverable format\n\
              \x20\x20• Timeline / clarifying questions\n\
              \x20\x20• ASP's capability to complete the task\n\n\
              🛑 **No price talk** — tokenSymbol / tokenAmount / paymentMode / budget / max_budget are locked at accept time, **not** negotiated in chat.\n\
              🛑 **No `[intent:*]` markers** — the structured intent handshake has been removed.\n\n\
-             ⏱ Timeout rule: wait at most 5 minutes for each ASP reply. On timeout → `{fallback_cmd}` to switch to the next ASP (**do NOT xmtp_delete_conversation**). After a timeout, if any further a2a-agent-chat message arrives from that ASP, **do not reply or process it**; just ignore.\n\n\
+             ⏱ Timeout rule: wait at most 5 minutes for each ASP reply. On timeout → `{fallback_cmd}` to switch to the next ASP (**do NOT run `okx-a2a session delete`**). After a timeout, if any further a2a-agent-chat message arrives from that ASP, **do not reply or process it**; just ignore.\n\n\
              First inquiry guidance:\n\
-             1. Call xmtp_send with a pure natural-language inquiry covering:\n\
+             1. Run `okx-a2a xmtp-send` with a pure natural-language inquiry covering:\n\
              \x20\x20\x20✅ Job description + expected deliverable\n\
              \x20\x20\x20✅ Timeline / capability question\n\
              \x20\x20❌ Do NOT include any price, token, budget, or paymentMode information — the ASP cannot negotiate price; let them ask clarifying questions about the task only.\n\
@@ -160,7 +163,7 @@ pub(crate) fn negotiate_section_step2_onwards(
              ━━━━━━━━━ Sub session negotiation (handled by next-action, NOT by this output) ━━━━━━━━━\n\n\
              After this turn ends, the ASP's reply arrives at the **sub session**. The sub session calls `onchainos agent next-action --event negotiate_reply` and follows the returned playbook (task-detail-only reply).\n\
              **You (backup/user session) do NOT execute any further negotiation steps in this turn.**\n\n\
-             ⚠️ When negotiation fails (timeout / no agreement reachable on task details), the sub session runs `{fallback_cmd}` to switch. Do NOT call `xmtp_delete_conversation` when switching.\n\n\
+             ⚠️ When negotiation fails (timeout / no agreement reachable on task details), the sub session runs `{fallback_cmd}` to switch. Do NOT run `okx-a2a session delete` when switching.\n\n\
              [Subsequent events]\n\
              - escrow → ASP independently submits apply → provider_applied → job_accepted\n\
              - x402  → asp-match auto-routing → set-payment-mode → job_payment_mode_changed → task-402-pay → job_accepted → complete\n")
@@ -219,11 +222,11 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
              **End this turn after executing the branch playbook returned by next-action.**\n")
 }
 
-/// CLI-mode variant of `branch_a2a`. Inlines the three LLM-driven MCP tool
-/// calls that begin the A2A negotiation flow:
-///   - B-Step 0  (duplicate guard via `session_status`)  → okx_a2a::session_query_exists
-///   - B-Step 1  (xmtp_start_conversation)               → okx_a2a::session_create
-///   - B-Step 1.5 (SKILL_PREFETCH xmtp_dispatch_session) → okx_a2a::session_send
+/// CLI-mode variant of `branch_a2a`. Inlines the three calls that begin the A2A
+/// negotiation flow:
+///   - B-Step 0   (duplicate guard)        → okx_a2a::session_query_exists
+///   - B-Step 1   (create sub session)     → okx_a2a::session_create
+///   - B-Step 1.5 (SKILL_PREFETCH dispatch) → okx_a2a::session_send
 /// Everything from B-Step 2 onward (first inquiry, three-step handshake,
 /// timeouts) requires the LLM to author natural-language content and remains
 /// in the returned playbook.
@@ -244,7 +247,7 @@ pub(crate) fn branch_a2a_cli(
         Ok(true) => return format!(
             "[Designated ASP route: A2A] Provider {dp_id}\n\n\
              🛑 Sub session already exists for this job; the first inquiry has already been sent in a prior turn. \
-             End this turn immediately — do not create a group, do not send any message, do not call session_status / xmtp_start_conversation / xmtp_send.\n"
+             End this turn immediately — do not create a group, do not send any message, do not run `okx-a2a session status` / `okx-a2a session create` / `okx-a2a xmtp-send`.\n"
         ),
         Ok(false) => { /* fall through to create */ }
         Err(e) => return format!("[branch_a2a_cli] ERROR: okx-a2a session query failed: {e}\n"),
@@ -276,7 +279,7 @@ pub(crate) fn branch_a2a_cli(
          [Role] User (Buyer)\n\n\
          ✅ Sub session and SKILL_PREFETCH ready. The ASP will receive `job_asp_selected` from the backend and independently decide to apply on-chain.\n\n\
          🛑 **End this turn immediately.** Your ONLY next action is to wait for the `provider_applied` system event.\n\
-         ❌ Do NOT send any message (`xmtp_send`) — no negotiation conversation is needed.\n\
+         ❌ Do NOT send any message (`okx-a2a xmtp-send`) — no negotiation conversation is needed.\n\
          ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\
          ❌ Do NOT call `asp-match` / `apply` / `complete` / `reject`.\n\n\
          [What happens next]\n\
@@ -293,15 +296,15 @@ pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
          [Role] User (Buyer)\n\n\
          **B-Step 1 — Create the sub session (group + session record):**\n\
          ```bash\n\
-         xmtp_start_conversation --job-id {job_id} --my-agent-id {agent_id} --to-agent-id {dp_id}\n\
+         okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id {dp_id} --json\n\
          ```\n\n\
          **B-Step 1.5 — Send SKILL_PREFETCH to the sub session:**\n\
          ```bash\n\
-         xmtp_dispatch_session --session-key <sessionKey from step above> --content '{prefetch}'\n\
+         okx-a2a session send --session-key <sessionKey from step above> --content '{prefetch}'\n\
          ```\n\n\
          ✅ Sub session ready. The ASP will receive `job_asp_selected` from the backend and independently decide to apply on-chain.\n\n\
          🛑 **End this turn immediately.** Your ONLY next action is to wait for the `provider_applied` system event.\n\
-         ❌ Do NOT send any message (`xmtp_send`) — no negotiation conversation is needed.\n\
+         ❌ Do NOT send any message (`okx-a2a xmtp-send`) — no negotiation conversation is needed.\n\
          ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\
          ❌ Do NOT call `asp-match` / `apply` / `complete` / `reject`.\n\n\
          [What happens next]\n\
