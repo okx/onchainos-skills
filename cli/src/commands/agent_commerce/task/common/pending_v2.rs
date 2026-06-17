@@ -1403,7 +1403,7 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
          Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — When the user actually replies (next turn):\n\
          \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
-         \x20\x20\x20\x20· else → follow `okx-task-watch` SKILL.md §kind == decision_request \"Handling the user reply\": **first claim the todo** per SKILL.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\"{} --source-event \"{}\"` exactly once, then follow the relay playbook it returns. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
+         \x20\x20\x20\x20· else → follow `skills/okx-task-watch/SKILL.md` §kind == decision_request \"Handling the user reply\": **first claim the todo** per SKILL.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\"{} --source-event \"{}\"` exactly once, then follow the relay playbook it returns. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
         entry.job_id,
         entry.role,
         entry.agent_id,
@@ -1619,7 +1619,7 @@ fn playbook_relay_only_cli(job_id: &str, to_agent_id: Option<&str>, relay_conten
          ```\n\n\
          ⚠️ Run this command **exactly once**. Repeat = recursion loop; skip = task stalls.\n\
          🛑 User reply consumed — do NOT reuse it (no `resolve-with-sessionkey` retry, no future-card reference); wait for a fresh user message.\n\
-         ▶️ After the relay succeeds, **resume watching** — re-enter the watch loop per `okx-task-watch` SKILL.md (preserve the session's sticky `--job-id` if it was started post-publish).\n",
+         ▶️ After the relay succeeds, **resume watching** — re-enter the watch loop per `skills/okx-task-watch/SKILL.md` (preserve the session's sticky `--job-id` if it was started post-publish).\n",
         job = job_id_q,
         to_flag = fmt_to_agent_flag_bash(to_agent_id),
         content = relay_content_q,
