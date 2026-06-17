@@ -563,19 +563,31 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      qualityStandards: extract from the description field above (task creation time value is authoritative).\n\n\
      **Step 2 — Obtain the deliverable content:**\n\n\
      {step2}\
-     --------- Step 3: x402 — notify + auto-rate ---------\n\n\
-     **B-Step 1 — Notify the user via `okx-a2a user notify`** — pick the template that matches `deliverableType`:\n\
-     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve every data value verbatim — jobId hex, paths, URLs).\n\
+     --------- Step 3: x402 — auto-rate FIRST, then single consolidated notify ---------\n\n\
+     🛑 Auto-rate the ASP FIRST, then send ONE consolidated `okx-a2a user notify` that combines the deliverable notice and the rating info.\n\n\
+     **B-Step 1 — 🛑 Auto-rate the ASP FIRST (MANDATORY; must complete before B-Step 2):**\n\
+     Based on the deliverable content vs the task description and quality standards, generate:\n\
+     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
+     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
+     Then execute:\n\
+     ```bash\n\
+     onchainos agent feedback-submit --agent-id {provider_field} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+     ```\n\
+     ⚠️ `--agent-id` is the ASP being rated (providerAgentId); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
+     Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in B-Step 2.\n\n\
+     **B-Step 2 — Notify the user with a SINGLE consolidated message via `okx-a2a user notify`:**\n\
+     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve every data value verbatim — jobId hex, paths, URLs, score, comment).\n\
      ```bash\n\
      okx-a2a user notify --content '<your translated content>' --json\n\
      ```\n\n\
-     Canonical English content templates:\n\n\
-     \x20\x20▸ deliverableType=file:\n\
+     Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
+     ▸ Deliverable received notice (always included; pick the sub-template that matches `deliverableType`):\n\n\
+     \x20\x20deliverableType=file:\n\
      \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
      \x20\x20Deliverable file path: <localPath> (full absolute path, e.g. /Users/xxx/Downloads/task.png)\n\
      \x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
      \x20\x20Deliverable URL: <deliverableUrl>\n\n\
-     \x20\x20▸ deliverableType=text — branch by localPath availability:\n\n\
+     \x20\x20deliverableType=text — branch by localPath availability:\n\n\
      \x20\x20\x20\x20✅ localPath is available (save succeeded):\n\
      \x20\x20\x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
      \x20\x20\x20\x20Deliverable saved at: <localPath> (full absolute path)\n\
@@ -590,21 +602,9 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20<deliverableText — full content, no truncation, no summarization>\n\
      \x20\x20\x20\x20---End of deliverable---\n\
      \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\n\
-     🛑 Do NOT end this turn — B-Step 2 (auto-rate) and B-Step 2.5 (notify rating) below are MANDATORY.\n\n\
-     **B-Step 2 — 🛑 Auto-rate the ASP (MANDATORY):**\n\
-     Based on the deliverable content vs the task description and quality standards, generate:\n\
-     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
-     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
-     Then execute:\n\
-     ```bash\n\
-     onchainos agent feedback-submit --agent-id {provider_field} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-     ```\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId); `--creator-id` is the buyer's own agent id ({agent_id}).\n\n\
-     **B-Step 2.5 — Notify the user of the submitted rating:**\n\
-     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve score / title / description verbatim).\n\
-     - ✅ **Success** (output contains `txHash`): run `okx-a2a user notify --content '<your translated content>' --json` with the canonical English template below (fill `<score>` with the X.XX value, `<description>` with the comment used in B-Step 2, `<title>` from task context):\n\
-     {rating_notify}\n\
-     - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
+     ▸ Rating info (include ONLY if B-Step 1's feedback-submit succeeded; if it failed, omit this entire half):\n\
+     \x20\x20{rating_notify}\n\
+     \x20\x20(fill `<score>` with the X.XX value used in B-Step 1, `<description>` with the comment from B-Step 1, `<title>` from task context)\n\n\
      **B-Step 3 — Terminal wrap-up (keep the sub session):**\n\
      {terminal_session_hint}\n\
      Task fully complete.\n"
