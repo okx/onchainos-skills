@@ -405,6 +405,35 @@ pub enum PendingDecisionsV2Command {
         source_event: Option<String>,
     },
 
+    /// (sub, synchronous direct push — bypass queue + playbook emission)
+    /// Same routing arguments as `Request`, but immediately invokes
+    /// `okx-a2a user decision-request` from inside the CLI and returns. The
+    /// caller never sees a playbook to execute — push is already done when
+    /// this command exits. Use when the sub agent has all the inputs ready
+    /// and just wants the card delivered without the LLM having to re-run
+    /// any tool.
+    #[command(name = "request-prompt")]
+    RequestPrompt {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "to-agent-id")]
+        to_agent_id: Option<String>,
+        #[arg(long = "user-content", required_unless_present = "user_content_file")]
+        user_content: Option<String>,
+        #[arg(long = "user-content-file", conflicts_with = "user_content")]
+        user_content_file: Option<String>,
+        #[arg(long = "list-label")]
+        list_label: String,
+        #[arg(long = "llm-content")]
+        llm_content: Option<String>,
+        #[arg(long = "source-event")]
+        source_event: Option<String>,
+    },
+
     /// (user-session) Resolve the current active decision with user's reply.
     Resolve {
         #[arg(long = "user-reply")]
@@ -507,6 +536,27 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             };
             handle_request(job_id, role, agent_id, to_agent_id, resolved_content, list_label, llm_content, source_event)
         }
+        PendingDecisionsV2Command::RequestPrompt {
+            job_id,
+            role,
+            agent_id,
+            to_agent_id,
+            user_content,
+            user_content_file,
+            list_label,
+            llm_content,
+            source_event,
+        } => {
+            let resolved_content = match (user_content, user_content_file) {
+                (Some(c), _) => c,
+                (None, Some(path)) => {
+                    std::fs::read_to_string(&path)
+                        .map_err(|e| anyhow::anyhow!("failed to read --user-content-file {path}: {e}"))?
+                }
+                (None, None) => bail!("either --user-content or --user-content-file is required"),
+            };
+            handle_request_prompt(job_id, role, agent_id, to_agent_id, resolved_content, list_label, llm_content, source_event)
+        }
         PendingDecisionsV2Command::Resolve { user_reply } => handle_resolve(user_reply),
         PendingDecisionsV2Command::ResolveWithSessionkey {
             user_reply, job_id, role, agent_id, to_agent_id, source_event,
@@ -521,6 +571,100 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
 }
 
 // ─── Handlers ──────────────────────────────────────────────────────────
+
+/// Synchronous direct-push variant of `Request`.
+///
+/// Branches on `OKX_A2A_IS_CLI`:
+/// - `OKX_A2A_IS_CLI=1` (CLI driver mode) → no queue write, no playbook
+///   emission; immediately invokes `okx-a2a user decision-request` from inside
+///   the CLI. On return the card is already in the user session.
+/// - Otherwise (queue mode) → falls back to the same queue-write + playbook
+///   emission path as `handle_request`. The LLM still executes the printed
+///   `okx-a2a user decision-request` bash block, but the queue lifecycle
+///   stays consistent with `Request`.
+#[allow(clippy::too_many_arguments)]
+fn handle_request_prompt(
+    job_id: String,
+    role: String,
+    agent_id: String,
+    to_agent_id: Option<String>,
+    user_content: String,
+    list_label: String,
+    llm_content: Option<String>,
+    source_event: Option<String>,
+) -> Result<()> {
+    let cli_mode_env = std::env::var("OKX_A2A_IS_CLI").unwrap_or_default();
+    let cli_mode = cli_mode_env == "1";
+    trace_log(&format!(
+        "handle_request_prompt {} (OKX_A2A_IS_CLI={:?}): job_id={} role={} agent_id={} to_agent_id={:?}",
+        if cli_mode { "CLI_MODE" } else { "QUEUE_MODE" },
+        cli_mode_env, job_id, role, agent_id, to_agent_id,
+    ));
+
+    if cli_mode {
+        let now = Utc::now();
+        let entry = PendingEntry {
+            job_id,
+            role,
+            agent_id,
+            to_agent_id,
+            user_content,
+            list_label,
+            llm_content_override: llm_content,
+            source_event,
+            status: Status::Active,
+            created_at: now,
+            updated_at: now,
+        };
+        let llm_content = resolve_llm_content_cli(&entry);
+        use crate::commands::agent_commerce::task::common::okx_a2a;
+        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        println!("Decision request submitted. ");
+        return Ok(());
+    }
+
+    {
+        let now = Utc::now();
+        let to_ref = to_agent_id.as_deref();
+        let new_entry_template = PendingEntry {
+            job_id: job_id.clone(),
+            role: role.clone(),
+            agent_id: agent_id.clone(),
+            to_agent_id: to_agent_id.clone(),
+            user_content: user_content.clone(),
+            list_label: list_label.clone(),
+            llm_content_override: llm_content.clone(),
+            source_event: source_event.clone(),
+            status: Status::Queued,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let _lock = acquire_lock()?;
+        let mut q = read_queue()?;
+        let original_created_at = q
+            .entries
+            .iter()
+            .find(|e| entry_matches(e, &job_id, &role, &agent_id, to_ref))
+            .map(|e| e.created_at)
+            .unwrap_or(now);
+        q.entries.retain(|e| !entry_matches(e, &job_id, &role, &agent_id, to_ref));
+        q.entries.push(PendingEntry {
+            created_at: original_created_at,
+            ..new_entry_template
+        });
+        write_queue_atomic(&q)?;
+        // Push synchronously — do not emit a playbook for the LLM. Reuse the
+        // same llmContent generator as the CLI-mode branch so resolve behavior
+        // stays consistent across modes.
+        let entry = q.entries.last().unwrap();
+        let llm_content = resolve_llm_content_cli(entry);
+        use crate::commands::agent_commerce::task::common::okx_a2a;
+        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        println!("Decision request submitted (queued for tracking). ");
+        Ok(())
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 #[allow(unreachable_code)]
