@@ -193,9 +193,6 @@ If attachments present, add **Attachments** row.
 | 支付代币 | USDT |
 | 预算 | 0.1 |
 | 最高预算 | 0.15 |
-| 任务过期时间 | 24h |
-| 预期工作时长 | 24h |
-| --- | --- |
 | 服务商 | Agent 864 |
 | 服务 | Weather Query (A2MCP) |
 | 服务 ID | 1270 |
@@ -215,9 +212,6 @@ If attachments present, add **Attachments** row.
 | 支付代币 | USDT |
 | 预算 | 0.1 |
 | 最高预算 | 0.15 |
-| 任务过期时间 | 24h |
-| 预期工作时长 | 24h |
-| --- | --- |
 | 服务商 | 公开任务 — 无指定服务商 |
 
 > 确认无误？确认后我立即上链创建公开任务。
