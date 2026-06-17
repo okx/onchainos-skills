@@ -275,12 +275,15 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
     format!(
     "[Your next action — call ONE command only, then END TURN]\n\n\
      🌐 **Localize first** — rewrite the `--user-content` template below into the user's language (preserve the {option_count_word} numbered choices and their order). The `--llm-content` block stays English verbatim — it is consumed by the user-session agent for routing, not by the human user.\n\n\
-     Run `okx-a2a user decision-request` to deliver the {option_count_num}-option card:\n\
+     Deliver the {option_count_num}-option card:\n\
      ```bash\n\
-     okx-a2a user decision-request \\\n\
+     onchainos agent pending-decisions-v2 request \\\n\
+     \x20\x20--job-id {job_id} \\\n\
+     \x20\x20--role buyer \\\n\
+     \x20\x20--agent-id {agent_id} \\\n\
+     \x20\x20--list-label '' \\\n\
      \x20\x20--user-content '<LOCALIZED user-facing text — see template below>' \\\n\
-     \x20\x20--llm-content '<English routing block — see template below; copy verbatim>' \\\n\
-     \x20\x20--json\n\
+     \x20\x20--llm-content '<English routing block — see template below; copy verbatim>'\n\
      ```\n\n\
      **`--user-content` template (translate to the user's language; keep the {option_count_num} numbered options):**\n\
      ```\n\

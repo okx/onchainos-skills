@@ -30,7 +30,6 @@ pub async fn generate_next_action(
     // Protocol version is now enforced server-side, not via wire-level payload tagging.)
 
     // Short jobId, used as the `[Job <shortId> — you are the ASP]` prefix on the first
-    // line of `okx-a2a user decision-request` userContent (the canonical templates live in content.rs).
     // When multiple prompts run concurrently it provides the user and the user agent a
     // dual disambiguation anchor. See SKILL.md Session Communication Contract §5.
     let short_id = short_job_id(job_id);
@@ -92,15 +91,6 @@ pub async fn generate_next_action(
     // the agent **what content to send where** at each step; it does not re-explain
     // tool usage.
     //
-    // Three communication tools:
-    //   - okx-a2a xmtp-send: send to the User Agent (peer sub session); args --job-id + --to-agent-id + --message
-    //   - okx-a2a user notify: notify the user (no user decision required); arg --content
-    //   - okx-a2a user decision-request: needs user interaction (confirmation / decision);
-    //     params: llmContent + userContent
-    //     llmContent = instruction injected into the user session LLM (invisible to user;
-    //                  contains (jobId, role, agentId, toAgentId?) routing fields so the user agent can relay the decision back to sub)
-    //     userContent = the user-visible message to send to the user
-    // ──────────────────────────────────────────────────────────────────────
     let send_to_peer = format!(
         "→ Run `okx-a2a xmtp-send` (Current jobId={job_id}, our agentId={agent_id}). Resolve `<buyerAgentId>` from the task fields above (or via `common context`):\n\
          ```bash\n\
@@ -252,7 +242,6 @@ pub async fn generate_next_action(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the decision (dispute vs refund) to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `okx-a2a user notify`)**.\n\
-             `okx-a2a user notify` is a pure notification: user replies cannot be relayed back to the sub session → the decision flow deadlocks. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `okx-a2a user decision-request` (with llmContent + userContent) so the user session can relay the decision back. Direct text output in this sub session = user doesn't see it + relay channel broken + 24h timeout → auto-refund.\n\
              ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
              ❌ Do not substitute `okx-a2a user notify` for the `pending-decisions-v2 request`.\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\n\
@@ -293,7 +282,7 @@ pub async fn generate_next_action(
              - Do NOT okx-a2a xmtp-send the User Agent (still filler state)\n\
              - Do NOT submit evidence in the same turn (evidence goes through dispute upload; must wait for the `job_disputed` notification + user-provided content)\n\n\
              [Follow-up events]\n\
-             - `job_disputed` system notification → enter 1-hour evidence preparation window → next-action will instruct you to `okx-a2a user decision-request` for evidence from the user\n"
+             - `job_disputed` system notification\n"
         ),
 
         // ─── Scene 6.2: User chose to agree to refund (user-instruction pseudo-event) ───
@@ -827,7 +816,6 @@ pub async fn generate_next_action(
             "[System notification] submit_deadline_warn (deadline for submitting the deliverable is approaching)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the deadline decision (submit immediately vs let it time out) to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `okx-a2a user notify`)**.\n\
-             `okx-a2a user notify` is a pure notification: user replies cannot be relayed back to the sub session → the user cannot signal `submit now` → the deadline silently expires → auto-refund to the User Agent. The correct flow handles this via `pending-decisions-v2 request` → CLI playbook → `okx-a2a user decision-request` so the user session can relay the decision back.\n\
              ❌ Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
              ❌ Do not substitute `okx-a2a user notify` for the `pending-decisions-v2 request`.\n\
              ❌ Do NOT `okx-a2a xmtp-send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\

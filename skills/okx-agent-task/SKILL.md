@@ -108,7 +108,6 @@ When dealing with integer values of any of the fields below, **look up the table
 - [`preflight.md`](./_shared/preflight.md) — wallet + agent pre-flight
 - [`message-types.md`](./_shared/message-types.md) — XMTP envelope shapes
 - [`user-intent-routing.md`](./_shared/user-intent-routing.md) — user session free-form text routing
-- [`xmtp-tools.md`](./_shared/xmtp-tools.md) — long-tail XMTP tool invocations (Paths 5-9)
 
 **`references/`**:
 - [`evaluator-decision-rubric.md`](./references/evaluator-decision-rubric.md) — decision methodology

@@ -3,7 +3,6 @@
 //! Two categories of templates:
 //!
 //! 1. **User-facing** — chat content shown to the user via `okx-a2a user notify` /
-//!    `okx-a2a user decision-request`. Naming suffix: `_user_notify` / `_user_prompt`.
 //!    Rule: **no technical jargon** — event names (`provider_applied`/`job_*` etc.) /
 //!    status enums (`open`/`accepted` etc.) / CLI flags (`--*`) /
 //!    skill names (`okx-agent-identity` etc.) /

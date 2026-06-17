@@ -534,9 +534,6 @@ fn handle_request(
     llm_content: Option<String>,
     source_event: Option<String>,
 ) -> Result<()> {
-    // CLI mode: the driver (Claude Code / Codex) owns turn-taking and doesn't need
-    // queue routing. Bypass the queue file entirely — build an ad-hoc entry and
-    // run `okx-a2a user decision-request` in-process immediately.
     let cli_mode_env = std::env::var("OKX_A2A_IS_CLI").unwrap_or_default();
     let cli_mode = cli_mode_env == "1";
     trace_log(&format!(
@@ -559,9 +556,6 @@ fn handle_request(
             created_at: now,
             updated_at: now,
         };
-        // CLI mode: spawn `okx-a2a user decision-request` in-process instead
-        // of printing the old bash playbook for the LLM to copy-paste. Saves
-        // one LLM round-trip and avoids single-quote escape mishandling.
         let llm_content = resolve_llm_content_cli(&entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
@@ -569,11 +563,6 @@ fn handle_request(
         return Ok(());
     }
 
-    // Non-CLI mode: emit the bash `okx-a2a user decision-request` playbook via playbook_push_prompt_user.
-    // Persist the entry to the queue file as Status::Queued, keyed by
-    // (jobId, role, agentId, toAgentId?) (same key overwrites in place, preserving
-    // created_at). At resolve time, `handle_resolve_prompt` looks up by the same
-    // key tuple and removes the entry.
     {
         let now = Utc::now();
         let to_ref = to_agent_id.as_deref();
@@ -1363,7 +1352,7 @@ fn resolve_llm_content(entry: &PendingEntry) -> String {
     };
     format!(
         "[USER_DECISION_REQUEST][job: {}][role: {}][agent: {}]{}\n\n\
-         Step 1 — Card was just delivered via `okx-a2a user decision-request`. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
+         Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — When the user actually replies (next turn):\n\
          \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
          \x20\x20\x20\x20· else → run `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording — no interpretation, no translation>\"` exactly once, then follow the relay playbook it returns.",
