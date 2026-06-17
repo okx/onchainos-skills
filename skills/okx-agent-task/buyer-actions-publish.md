@@ -22,28 +22,37 @@
 ### 1.1 Flow overview
 
 1. Collect task fields (description, budget, currency, deadlines, optional provider)
-2. **Validate fields** — `onchainos agent draft validate` (pure local, no network)
-3. ASP matching — `asp-match --task-desc` to find a provider + service
-4. serviceParams inference — LLM extracts service input from task description
-5. Confirmation form — includes task fields + ASP + service info
-6. `create-task` with `--provider --service-id --service-params --service-token-address --service-token-amount --payment-mode`
+2. **`prepare-create`** — validate + preflight + routing in one call
+3. serviceParams inference — LLM extracts service input from task description
+4. Confirmation form — includes task fields + ASP + service info
+5. `create-task` with `--provider --service-id --service-params --service-token-address --service-token-amount --payment-mode`
 
-### 1.2 Validation (after field collection, before ASP match)
+> **Designated-provider path**: steps 2-4 collapse — `prepare-create` returns routing with service info, LLM infers serviceParams, shows confirmation form, then `create-task`.
+>
+> **No-provider path**: `prepare-create` without `--provider` validates fields + preflight only. Then run `asp-match` separately (§1.3).
 
-Run `draft validate` with the collected fields to check all rules in one shot:
+### 1.2 Prepare-create (after field collection)
+
+Run one command to validate fields, check readiness, and resolve provider routing:
 
 ```bash
-onchainos agent draft validate \
+onchainos agent prepare-create \
   --description "<desc>" --title "<title>" \
   --budget <b> --max-budget <mb> --currency <token> \
-  --deadline-open <do> --deadline-submit <ds>
+  --deadline-open <do> --deadline-submit <ds> \
+  [--provider <agentId>]
 ```
 
-Returns `{ ok, checks[], errors[] }`:
-- `ok: true` → all fields valid, proceed to ASP matching.
-- `ok: false` → `errors[]` lists every failing field. Show all errors to the user at once; do NOT ask one-by-one.
+Returns `{ ok, stage, validation, preflight, routing }`. Pipeline short-circuits on first failure:
 
-**Checks performed** (all fields optional — only provided fields are validated):
+| `ok` | `stage` | Meaning | Action |
+|------|---------|---------|--------|
+| `false` | `validation` | Field errors | Show all `validation.errors[]` to user at once; do NOT ask one-by-one |
+| `false` | `preflight` | Readiness gate failed | Check `preflight.wallet` / `identity` / `communication` — fix the `ok: false` gate per §Pre-flight in `buyer-user.md` |
+| `false` | `routing` | Provider lookup failed | Show `routing.error`; guide user to check provider agentId |
+| `true` | — | All passed | Proceed to serviceParams inference → confirmation form |
+
+**Validation checks** (all fields optional — only provided fields are validated):
 
 | Field | Rule |
 |---|---|
@@ -56,13 +65,18 @@ Returns `{ ok, checks[], errors[] }`:
 | `deadline_open` | 10m ~ 180d |
 | `deadline_submit` | 1m ~ 180d |
 
-**Supplementary rules** (LLM-side, not in `draft validate`):
+**Routing output** (when `--provider` given and `ok: true`):
+- `routing.route` = `a2a` or `x402` — determines `--payment-mode` (escrow / x402)
+- `routing.providerName`, `routing.feeAmount`, `routing.feeTokenSymbol`, `routing.endpoint`
+- `routing.services[]` — when multiple services exist, LLM picks the best match by task description
+
+**Supplementary rules** (LLM-side, not in `prepare-create`):
 1. **Payment-method intercept**: user mentions escrow / x402 → "The payment method will be determined automatically based on the provider's capabilities."
 2. **Attachment reminder**: if description implies supplementary files → ask user whether to attach now or after creation.
 
-### 1.3 ASP Matching (Step 4.5 in CLI playbook)
+### 1.3 ASP Matching (no designated provider)
 
-After field collection + `draft validate` ok + `preflight --role buyer` ready:
+After `prepare-create` ok (without `--provider`):
 
 - **Designated provider**: `onchainos agent asp-match --task-desc "<description>" --provider-agent-id <agentId>` → extract top service → validate currency consistency + budget ≥ feeAmount.
 - **No designated provider**: `onchainos agent asp-match --task-desc "<description>"` → show numbered list → user picks → validate.
@@ -115,7 +129,7 @@ After success, inform the user of the `jobId`. ⚠️ Do NOT say "published succ
 
 ### 1.5 Error Handling
 
-**Pre-ASP-match errors** — caught by `draft validate` (§1.2). Show all `errors[]` to the user at once.
+**Pre-create errors** — caught by `prepare-create` (§1.2). Check `stage` field to identify which step failed.
 
 **Post-ASP-match errors** — caught by LLM after ASP selection:
 
