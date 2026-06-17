@@ -1,21 +1,14 @@
-use crate::commands::agent_commerce::task::common::state_machine::Status;
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::evaluator::staking_types::{self, MyStake};
+use chrono::TimeZone;
+use serde_json::Value;
 
-const LOCALIZATION_PREFIX: &str = "[Localization] All `content:` templates below are **canonical text, NOT samples** — **translate to the user's language** before `xmtp_dispatch_user`.\n\n";
-
-const TOOL_RESOLUTION_PREFIX: &str = "⚠️ **Tool resolution** (applies to every `xmtp_*` / `session_*` call below):\n\
-\x20\x20\x201) Try the native tool.\n\
-\x20\x20\x202) If unavailable, retry via bridge:\n\
-\x20\x20\x20\x20\x20\x20`node ~/.agents/skills/okx-a2a-legacy-tool-bridge/scripts/xmtp-tool.js <toolName> '<jsonParams>'`\n\
-\x20\x20\x203) If it is STILL unavailable / returns \"unsupported\" / \"not found\":\n\
-\x20\x20\x20\x20\x20\x20🟢 SKIP only the step that needs this tool → move to the next step.\n\
-\x20\x20\x20\x20\x20\x20🛑 Do NOT abort the turn.\n\n";
-
-pub async fn generate_next_action(job_id: &str, event: &str, agent_id: &str) -> String {
-    if let Some(s) = staking_next_action(job_id, event, agent_id) {
-        return format!("{LOCALIZATION_PREFIX}{s}");
+pub async fn generate_next_action(job_id: &str, event: &str, agent_id: &str, message: Option<&Value>) -> String {
+    if let Some(s) = staking_next_action(job_id, event, agent_id).await {
+        return s;
     }
-    if let Some(s) = dispute_next_action(job_id, event, agent_id) {
-        return format!("{LOCALIZATION_PREFIX}{TOOL_RESOLUTION_PREFIX}{s}");
+    if let Some(s) = dispute_next_action(job_id, event, agent_id, message).await {
+        return s;
     }
     format!(
         "[unknown event={event} at jobId={job_id} ignored.\n\
@@ -23,40 +16,86 @@ pub async fn generate_next_action(job_id: &str, event: &str, agent_id: &str) -> 
     )
 }
 
-fn staking_next_action(_job_id: &str, event: &str, _agent_id: &str) -> Option<String> {
-    let body = match event {
-        "staked" => "[Current Event] staked\n\n\
-             [Step 1] Run `onchainos agent my-stake --agent-id <your agentId>` to get `activeStake`.\n\
-             [Step 2] Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
-             \x20\x20\x20\x20Your stake is now active on-chain. Current activeStake is <my-stake.activeStake> OKB.\n\n\
-             [my-stake failure fallback] Drop numeric fields and degrade to `Your stake is now active on-chain.`\n".to_string(),
+/// Render unix seconds (>0) as `YYYY-MM-DD HH:MM:SS TZ` in local time, or `None`
+/// for `0` / unparseable values.
+fn fmt_local_time(ts: i64) -> Option<String> {
+    if ts <= 0 {
+        return None;
+    }
+    chrono::Local
+        .timestamp_opt(ts, 0)
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S %Z").to_string())
+}
 
-        "unstake_requested" => "[Current Event] unstake_requested\n\n\
-             [Step 1] Run `onchainos agent my-stake --agent-id <your agentId>` to get `pendingUnstake` and `unstakeAvailableAt` (already in local time).\n\
-             [Step 2] Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
-             \x20\x20\x20\x20The unstake request has been recorded on-chain. Current cumulative pending unstake is <my-stake.pendingUnstake> OKB; the last claimable time is <unstakeAvailableAt local time>. You can cancel the unstake mid-way.\n\n\
-             [my-stake failure fallback] Drop numeric fields and degrade to `The unstake request has been recorded on-chain. You can cancel the unstake before the cooldown ends.`\n".to_string(),
+async fn fetch_my_stake(agent_id: &str) -> Option<MyStake> {
+    let mut client = TaskApiClient::new();
+    staking_types::get_my_stake(&mut client, agent_id).await.ok()
+}
+
+fn notify_block(content: &str) -> String {
+    format!(
+        "Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+         ```bash\n\
+         okx-a2a user notify --content '<localized content>' --json\n\
+         ```\n\n\
+         Canonical English content:\n\
+         \x20\x20\x20\x20{content}\n"
+    )
+}
+
+async fn staking_next_action(_job_id: &str, event: &str, agent_id: &str) -> Option<String> {
+    let body = match event {
+        "staked" => {
+            let content = match fetch_my_stake(agent_id).await {
+                Some(s) => format!(
+                    "Your stake is now active on-chain. Current activeStake is {} OKB.",
+                    s.active_stake_okb
+                ),
+                None => "Your stake is now active on-chain.".to_string(),
+            };
+            format!("[Current Event] staked\n\n{}", notify_block(&content))
+        }
+
+        "unstake_requested" => {
+            let content = match fetch_my_stake(agent_id).await {
+                Some(s) => match fmt_local_time(s.unstake_available_at) {
+                    Some(local) => format!(
+                        "The unstake request has been recorded on-chain. Current cumulative pending unstake is {} OKB; the last claimable time is {}. You can cancel the unstake mid-way.",
+                        s.pending_unstake_okb, local
+                    ),
+                    None => format!(
+                        "The unstake request has been recorded on-chain. Current cumulative pending unstake is {} OKB. You can cancel the unstake before the cooldown ends.",
+                        s.pending_unstake_okb
+                    ),
+                },
+                None => "The unstake request has been recorded on-chain. You can cancel the unstake before the cooldown ends.".to_string(),
+            };
+            format!("[Current Event] unstake_requested\n\n{}", notify_block(&content))
+        }
 
         "unstake_claimed" => "[Current Status] unstake_claimed\n\n\
-             Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content:\n\
              \x20\x20\x20\x20Your unstake has been claimed; OKB has been credited to your wallet.\n".to_string(),
 
         "unstake_cancelled" => "[Current Status] unstake_cancelled\n\n\
-             Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content:\n\
              \x20\x20\x20\x20Your unstake has been cancelled; the pending OKB is back in staked state.\n".to_string(),
 
         "stake_stopped" => "[Current Status] stake_stopped\n\n\
-             Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content:\n\
              \x20\x20\x20\x20You have exited the voter pool and will no longer be selected as a juror.\n".to_string(),
 
         _ => return None,
@@ -64,23 +103,17 @@ fn staking_next_action(_job_id: &str, event: &str, _agent_id: &str) -> Option<St
     Some(body)
 }
 
-fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<String> {
+async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message: Option<&Value>) -> Option<String> {
     let body = match event {
         "evaluator_selected" => format!(
             "[Current Status] evaluator_selected\n\n\
-             **Step 1 — Routing check:**\n\n\
-             ⚠️ Immediately after the calls in 1.1 / 1.2, print the entire returned `sessionKey` verbatim in this turn's output (no truncation, no abbreviation); subsequent comparison MUST be based on the two printed lines.\n\n\
-             **1.1** Call `xmtp_start_evaluate_conversation` with `myAgentId={agent_id}`, `jobId={job_id}`. Print:\n\
-             `[evaluator-routing] arbKey=<entire sessionKey returned by this xmtp_start_evaluate_conversation call>`\n\n\
-             **1.2** Call `session_status`. Print:\n\
-             `[evaluator-routing] currentKey=<entire sessionKey returned by this session_status call>`\n\n\
-             **1.3** Compare the two `[evaluator-routing]` lines above character-by-character (don't go by impression — base it on the two printed lines):\n\
-             - Exact match → proceed to Step 2.\n\
-             - Any character differs → call `xmtp_dispatch_session` (`sessionKey=arbKey`, `content=<the entire current inbound envelope as a JSON string>`, **insert all fields verbatim, no rewriting**), then **end this turn**.\n\n\
-             **Step 2 — Notify the user that you've been selected as a juror:**\n\n\
-             Extract from `message`: `jobTitle`, `budget`, `tokenSymbol`, `commitDeadline` (epoch seconds), `agentName`. Render `commitDeadline` (epoch seconds) into the user's local time as `commitDeadlineLocal`, and compute `hoursLeft` = `floor((commitDeadline - now_epoch_seconds) / 3600)`. Render `hoursLeftText`: if `hoursLeft >= 1` use `<hoursLeft> hours`; else if the deadline has not passed (`commitDeadline > now_epoch_seconds`) use `less than 1 hour`; else treat as expired (drop the entire `⏰ Key deadline` block). **Substitute every `<message.jobTitle>` below with the actual value extracted from `message.jobTitle`.**\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             **Step 1 — Notify the user that you've been selected as a juror:**\n\n\
+             Extract from `message`: `jobTitle`, `budget`, `tokenSymbol`, `commitDeadline` (epoch seconds), `agentName`. Render `commitDeadline` (epoch seconds) into the user's local time as `commitDeadlineLocal`, and compute `hoursLeft` = `floor((commitDeadline - now_epoch_seconds) / 3600)`. Render `hoursLeftText`: if `hoursLeft >= 1` use `<hoursLeft> hours`; else if the deadline has not passed (`commitDeadline > now_epoch_seconds`) use `less than 1 hour`; else treat as expired (drop the entire `⏰ Key deadline` block). **Substitute every `<message.jobTitle>` below with the actual value extracted from `message.jobTitle`.**\n\n\
+             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【Your Agent <agentName> has been selected as juror for task [<message.jobTitle>]】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -91,8 +124,8 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              - `agentName` missing → degrade header to `You have been selected as juror for task [<message.jobTitle>]`.\n\
              - `budget` / `tokenSymbol` missing → drop the `Amount:` line.\n\
              - `commitDeadline` missing or deadline already passed → drop the entire `⏰ Key deadline` block.\n\n\
-             → **Once Step 2 has attempted the `xmtp_dispatch_user` call (whether it succeeds or errors), continue with Step 3 in this same turn.** Step 2 is a user-facing notification, not a precondition for Step 3.\n\n\
-             **Step 3 — Fetch evidence (`--round-num` comes from the envelope's top-level `roundNum`; if missing, abort this turn and log `missing roundNum in payload; abort`):**\n\
+             → **Once Step 1 has attempted the `okx-a2a user notify` call (whether it succeeds or errors), continue with Step 2 in this same turn.** Step 1 is a user-facing notification, not a precondition for Step 2.\n\n\
+             **Step 2 — Fetch evidence (`--round-num` comes from the envelope's top-level `roundNum`; if missing, abort this turn and log `missing roundNum in payload; abort`):**\n\
              ```bash\n\
              onchainos agent evidence-info {job_id} --agent-id {agent_id} --round-num <envelope top-level roundNum>\n\
              ```\n\n\
@@ -109,9 +142,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              Extract from `message`: `jobTitle`, `vote` (0 or 1). Render vote as text:\n\
              - `vote = 0` → `User`\n\
              - `vote = 1` → `ASP`\n\
-             Use `xmtp_dispatch_user` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.**\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.** Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【Arbitration vote committed for task [<message.jobTitle>] · waiting for Reveal】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -123,9 +158,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
         "vote_commit_deadline_warn" => format!(
             "[Current Status] vote_commit_deadline_warn\n\n\
              Extract from `message`: `jobTitle`, `commitDeadline`, `slashTimeoutBps`, `slashedCooldownSeconds`. Compute `commitDeadlineLocal` from `commitDeadline` (local time) and `minutesLeft` = `floor((commitDeadline - now_epoch_seconds) / 60)`. Render `minutesLeftText`: if `minutesLeft >= 1` use `<minutesLeft> minutes remaining`; else if the deadline has not passed (`commitDeadline > now_epoch_seconds`) use `less than 1 minute remaining`; else treat as expired (drop the `Commit deadline:` line). Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
-             Use `xmtp_dispatch_user` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.**\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.** Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【⏰ URGENT: Arbitration vote for task [<message.jobTitle>] is about to close】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -145,9 +182,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
         "vote_reveal_deadline_warn" => format!(
             "[Current Status] vote_reveal_deadline_warn\n\n\
              Extract from `message`: `jobTitle`, `revealDeadline`, `slashTimeoutBps`, `slashedCooldownSeconds`. Compute `revealDeadlineLocal` from `revealDeadline` (local time) and `minutesLeft` = `floor((revealDeadline - now_epoch_seconds) / 60)`. Render `minutesLeftText`: if `minutesLeft >= 1` use `<minutesLeft> minutes remaining`; else if the deadline has not passed (`revealDeadline > now_epoch_seconds`) use `less than 1 minute remaining`; else treat as expired (drop the `Reveal deadline:` line). Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
-             Use `xmtp_dispatch_user` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.**\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.** Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【⏰ URGENT: Arbitration reveal for task [<message.jobTitle>] is about to close】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -174,17 +213,21 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              - `canReveal=false` → CLI has already pre-checked and rejected; no retry needed. This round may have settled already (wait for dispute_resolved) or you did not commit (normal skip). **End this turn; skip Step 2.**\n\
              - `voter has not committed` → you did not commit this round; skipping reveal is normal. **End this turn; skip Step 2.**\n\
              - Other failures: retry up to 3 times.\n\n\
-             **Step 2 — Notify the user that the reveal has been submitted:**\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             **Step 2 — Notify the user that the reveal has been submitted via `okx-a2a user notify`.** Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20Your agent has submitted the reveal transaction for Job jobId={job_id}. Waiting for chain confirmation — no action needed from you.\n"
         ),
 
         "vote_revealed" => format!(
             "[Current Status] vote_revealed\n\n\
-             Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20Your agent has revealed its vote on-chain for Job jobId={job_id}. Waiting for the dispute resolution result — no action needed from you.\n"
         ),
 
@@ -202,8 +245,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              4. `yourVote == winningSide` → Branch A (won)\n\
              5. otherwise → Branch B (lost)\n\
              ━━━━━━━━━━━━━ Branch 0a: MISSED COMMIT ━━━━━━━━━━━━━\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` (🌐 localize first):\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Commit] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -212,8 +258,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
              Missed-commit branch ends this turn; do not call `arbitration-claim`.\n\n\
              ━━━━━━━━━━━━━ Branch 0b: MISSED REVEAL ━━━━━━━━━━━━━\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` (🌐 localize first):\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Reveal] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -222,8 +271,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
              Missed-reveal branch ends this turn; do not call `arbitration-claim`.\n\n\
              ━━━━━━━━━━━━━ Branch A: WON ━━━━━━━━━━━━━\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` (🌐 localize first):\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【🎉 Arbitration result for task [<message.jobTitle>]: your vote aligned with the majority — reward eligible】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -240,8 +292,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20```\n\
              \x20\x20⚠️ Account-level pull: aside from `--agent-id`, pass no other business params. Retry up to 3 times on failure. Final credit confirmation arrives via the later `reward_claimed` event.\n\n\
              ━━━━━━━━━━━━━ Branch B: LOST ━━━━━━━━━━━━━\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` (🌐 localize first):\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【⚠️ Arbitration result for task [<message.jobTitle>]: your vote disagreed with the majority — slash penalty incoming】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -255,13 +310,15 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              - `slashTimeoutBps` missing → drop the entire `🚫 Penalty applied` block in Branch 0a/0b.\n"
         ),
 
-        "cooldown_entered" => "[Current Status] cooldown_entered\n\n\
-             [Step 1] Run `onchainos agent my-stake --agent-id <your agentId>` to get `cooldownEndsAt` (already in local time).\n\
-             [Step 2] Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
-             \x20\x20\x20\x20You've entered the absence cooldown period; you won't be selected as a juror before <my-stake.cooldownEndsAt local time>.\n\n\
-             [my-stake failure fallback] Drop numeric fields and degrade to `You've entered the absence cooldown period and won't be selected as a juror during this period.`\n".to_string(),
+        "cooldown_entered" => {
+            let content = match fetch_my_stake(agent_id).await.and_then(|s| fmt_local_time(s.cooldown_ends_at)) {
+                Some(local) => format!(
+                    "You've entered the absence cooldown period; you won't be selected as a juror before {local}."
+                ),
+                None => "You've entered the absence cooldown period and won't be selected as a juror during this period.".to_string(),
+            };
+            format!("[Current Status] cooldown_entered\n\n{}", notify_block(&content))
+        }
 
         "round_failed" => format!(
             "[Current Status] round_failed\n\n\
@@ -272,8 +329,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              2. `hasReveal == 0` → Branch 0b (missed reveal)\n\
              3. otherwise → Branch C (round invalidated)\n\n\
              ━━━━━━━━━━━━━ Branch 0a: MISSED COMMIT ━━━━━━━━━━━━━\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` (🌐 localize first):\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Commit] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -282,8 +342,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
              Missed-commit branch ends this turn.\n\n\
              ━━━━━━━━━━━━━ Branch 0b: MISSED REVEAL ━━━━━━━━━━━━━\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` (🌐 localize first):\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Reveal] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -292,9 +355,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
              \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
              Missed-reveal branch ends this turn.\n\n\
              ━━━━━━━━━━━━━ Branch C: ROUND INVALIDATED ━━━━━━━━━━━━━\n\n\
-             Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content (substitute placeholders first):\n\
              \x20\x20\x20\x20【⚖️ Task [<message.jobTitle>] arbitration round invalidated】\n\
              \x20\x20\x20\x20Task title: <message.jobTitle>\n\
              \x20\x20\x20\x20Task ID: #{job_id}\n\
@@ -309,9 +374,11 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
         ),
 
         "reward_claimed" => "[Current Status] reward_claimed\n\n\
-             Use `xmtp_dispatch_user` to push the notification to the user:\n\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
+             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
+             ```\n\n\
+             Canonical English content:\n\
              \x20\x20\x20\x20Your arbitration reward has been credited.\n".to_string(),
 
         _ => return None,
@@ -319,36 +386,38 @@ fn dispute_next_action(job_id: &str, event: &str, agent_id: &str) -> Option<Stri
     Some(body)
 }
 
-/// Step 4-5 of the `evaluator_selected` playbook, intended to be appended to
+/// Step 3-4 of the `evaluator_selected` playbook, intended to be appended to
 /// `evidence-info` stdout instead of returned by `next-action`.
 ///
 /// Rationale: when next-action's evaluator_selected body included the full
 /// vote-commit CLI template, a weak LLM could pattern-match the command line
-/// and skip Step 3 (evidence-info) + Step 4 (rubric read). By printing these
+/// and skip Step 2 (evidence-info) + Step 3 (rubric read). By printing these
 /// steps only after evidence has actually been fetched, the LLM physically
 /// cannot see the vote-commit invocation template until it has pulled the
 /// evidence.
 pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> String {
     format!(
-        "→ **Continue with Step 4 in this same turn — it is NOT event-driven.**\n\n\
-         **Step 4 — Render the verdict per `references/evaluator-decision-rubric.md`:**\n\
+        "→ **Continue with Step 3 in this same turn — it is NOT event-driven.**\n\n\
+         **Step 3 — Render the verdict per `references/evaluator-decision-rubric.md`:**\n\
          - **Prerequisite — file readability check**: read `references/evaluator-decision-rubric.md`.\n\
-         \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Push the user via `xmtp_dispatch_user` then end the turn:\n\n\
-         tool: xmtp_dispatch_user\n\
-         content:\n\
+         \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Run `okx-a2a user notify` (🌐 localize first), then end the turn:\n\n\
+         ```bash\n\
+         okx-a2a user notify --content '<localized content>' --json\n\
+         ```\n\n\
+         Canonical English content (substitute placeholders first):\n\
          \x20\x20\x20\x20Arbitration aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
          \x20\x20\x20\x20⚠️ commit window timeout will slash your stake — please restore the file as soon as possible.\n\n\
          - Read success and evidence already output → produce the final `vote` and the verdict text per the rubric's Verdict section (whichever heading defines the verdict template).\n\n\
-         → **Once Step 4's verdict text is produced, continue with Step 5 in this same turn.**\n\n\
-         **Step 5 — Execute commit:**\n\
+         → **Once Step 3's verdict text is produced, continue with Step 4 in this same turn.**\n\n\
+         **Step 4 — Execute commit:**\n\
          - **Flatten the entire verdict text into a single line** with `\\n` literal escapes (two characters: `\\` + `n`, not a real newline) replacing every real newline; pass via `--reason`.\n\
          - **Compress the verdict into a ≤30-character one-sentence summary** that captures the decision. Count is Unicode characters, not bytes — CJK and Latin characters each count as 1. The CLI hard-fails if the value is empty or exceeds 30 characters. Pass via `--reason-summary`.\n\
          ```bash\n\
-         onchainos agent vote-commit {job_id} --vote <0|1> --reason \"<flattened verdict text from Step 4, with every real newline replaced by the two-character escape \\n>\" --reason-summary \"<≤30-char one-sentence summary>\" --agent-id {agent_id}\n\
+         onchainos agent vote-commit {job_id} --vote <0|1> --reason \"<flattened verdict text from Step 3, with every real newline replaced by the two-character escape \\n>\" --reason-summary \"<≤30-char one-sentence summary>\" --agent-id {agent_id}\n\
          ```\n\
          ⚠️ **Only 0 (Approve / Client wins) or 1 (Reject / Provider wins) — skip is forbidden**.\n\
-         ⚠️ **The `<0|1>` value MUST come from Step 5** — it is the binary vote that Step 5 derived by applying `references/evaluator-decision-rubric.md` (whatever decision procedure that document defines) to the evidence. Do **not** commit a vote that bypassed Step 5 — guessing / pattern-matching / averaging a value here violates the rubric and produces an unfounded ruling.\n\
-         ⚠️ **`--reason` is the full verdict produced by Step 5**. Empty / whitespace-only values are rejected by the CLI. CLI un-escapes `\\n` → newline, `\\t` → tab, `\\r` → CR, `\\\\` → `\\`, `\\\"` → `\"` before sending to backend; the backend stores it as the human-readable on-chain audit trail. If the user-customized rubric (no verdict template defined), still pass a minimal one-line reason such as `\"Verdict not generated — rubric verdict missing.\"` \n\
+         ⚠️ **The `<0|1>` value MUST come from Step 3** — it is the binary vote that Step 3 derived by applying `references/evaluator-decision-rubric.md` (whatever decision procedure that document defines) to the evidence. Do **not** commit a vote that bypassed Step 3 — guessing / pattern-matching / averaging a value here violates the rubric and produces an unfounded ruling.\n\
+         ⚠️ **`--reason` is the full verdict produced by Step 3**. Empty / whitespace-only values are rejected by the CLI. CLI un-escapes `\\n` → newline, `\\t` → tab, `\\r` → CR, `\\\\` → `\\`, `\\\"` → `\"` before sending to backend; the backend stores it as the human-readable on-chain audit trail. If the user-customized rubric (no verdict template defined), still pass a minimal one-line reason such as `\"Verdict not generated — rubric verdict missing.\"` \n\
          ⚠️ **`--reason-summary` is a ≤30-Unicode-character one-sentence headline** distilled from the same verdict — no markdown / line breaks / bullet markers. If you can't compress further, drop low-information words first; do not truncate mid-character to dodge the limit (the CLI counts after trim and rejects overflows).\n\
          - **Character taboos inside both `--reason` and `--reason-summary` values** (otherwise the shell will corrupt the argument before the CLI even sees it):\n\
          \x20\x20- `\"` (double quote) → escape as `\\\"`\n\

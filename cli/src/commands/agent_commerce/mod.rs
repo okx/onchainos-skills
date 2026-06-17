@@ -1391,7 +1391,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id).await
+                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id, parsed_message.as_ref()).await
                 }
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };
