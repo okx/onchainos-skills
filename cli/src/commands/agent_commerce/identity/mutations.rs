@@ -26,7 +26,6 @@ use super::args::{
     ActivateArgs, AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackSubmitArgs, PrecheckArgs,
     UpdateArgs, UploadArgs, XmtpSignArgs,
 };
-use super::validate;
 use super::models::{AgentCard, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_INDEX_NUM};
 use super::signing::{
     build_erc8004_overlay, load_agent_signing_session, load_session_cert, load_signing_seed,
@@ -385,13 +384,24 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     if !picture.is_empty() {
         card.insert("image".into(), json!(picture));
     }
-    if args.service.is_some() {
-        let services = parse_services(args.service.as_deref())?;
-        card.insert(
-            "services".into(),
-            serde_json::to_value(&services).context("failed to serialize services list")?,
-        );
-    }
+    // Service: backend treats absent `services` field as "clear all services",
+    // so we must always send the complete list. Fetch existing services first,
+    // then merge in any user-supplied changes.
+    let existing_raw = fetch_raw_services(agent_id, ctx).await?;
+    let existing: Vec<super::models::AgentService> = existing_raw
+        .iter()
+        .filter_map(raw_service_to_agent_service)
+        .collect();
+    let final_services = if args.service.is_some() {
+        let new_services = parse_services(args.service.as_deref())?;
+        merge_services(existing, new_services)
+    } else {
+        existing
+    };
+    card.insert(
+        "services".into(),
+        serde_json::to_value(&final_services).context("failed to serialize services list")?,
+    );
 
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
@@ -463,12 +473,12 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
 /// Unified activation — fully self-contained:
 ///   Step 0: GET agent info (role + name + description) → role guard
 ///   Step 1: POST agent-status (status=1)
-///   Step 2: if approvalStatus ∈ {1,5} → GET service-list → validate-listing → POST submit-approval
+///   Step 2: if approvalStatus ∈ {1,5} → POST submit-approval (no QA — listing QA
+///           runs only at register/update, never here)
 ///
 /// Return-structure contract (all branches):
 ///   blockType:1 + reason + agentRole   → not a provider; agent-status never called
-///   blockType:2 + reason + validation  → QA failed; agent-status already ran
-///   activate [+ validation + submitApproval] → normal path
+///   activate [+ submitApproval] → normal path
 async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
 
@@ -510,52 +520,7 @@ async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
         return Ok(json!({ "activate": activate_result }));
     }
 
-    // ── approvalStatus ∈ {1, 5}: QA then submit ──────────────────────────
-    // --force skips validate-listing entirely (used after user acknowledges
-    // a prior blockType:2 warning).
-    if args.force {
-        let submit_result = submit_approval_impl(
-            Some(agent_id),
-            args.preferred_language.as_deref(),
-            ctx,
-        )
-        .await?;
-        return Ok(json!({
-            "activate": activate_result,
-            "submitApproval": submit_result,
-        }));
-    }
-
-    // Normal path: fetch services, run validate-listing (pure local).
-    let raw_services = fetch_raw_services(agent_id, ctx).await?;
-    let service_objs: Vec<Value> = raw_services.iter().map(service_item_to_validate_obj).collect();
-    let service_json = if service_objs.is_empty() {
-        None
-    } else {
-        serde_json::to_string(&service_objs).ok()
-    };
-
-    let (name_str, desc_str) = match &agent_info {
-        Some(info) => (info.name.clone(), info.description.clone()),
-        None => (String::new(), String::new()),
-    };
-
-    let validation_result = validate::run_validation(
-        "provider",
-        if name_str.is_empty() { None } else { Some(name_str.as_str()) },
-        if desc_str.is_empty() { None } else { Some(desc_str.as_str()) },
-        service_json.as_deref(),
-    );
-    let validation_value = serde_json::to_value(&validation_result)?;
-
-    if !validation_result.pass {
-        return Ok(json!({
-            "blockType": 2,
-            "reason": "listing validation failed — fix findings before activating",
-            "validation": validation_value,
-        }));
-    }
-
+    // ── approvalStatus ∈ {1, 5}: submit for approval directly ────────────
     let submit_result = submit_approval_impl(
         Some(agent_id),
         args.preferred_language.as_deref(),
@@ -565,7 +530,6 @@ async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
 
     Ok(json!({
         "activate": activate_result,
-        "validation": validation_value,
         "submitApproval": submit_result,
     }))
 }
@@ -693,11 +657,12 @@ async fn fetch_raw_services(agent_id: &str, ctx: &Context) -> Result<Vec<Value>>
     Ok(services)
 }
 
-/// Convert a raw service-list item to the JSON object shape that
-/// `validate::parse_services_lenient` (and `AgentService` serde) expects:
-/// `{ "name", "servicedescription", "servicetype", "fee", "endpoint"? }`.
-fn service_item_to_validate_obj(svc: &Value) -> Value {
-    let get = |keys: &[&str]| -> String {
+/// Convert a raw service item from GET /agent/services into an `AgentService`.
+/// Returns `None` when the item has no usable service name (skip silently).
+fn raw_service_to_agent_service(svc: &Value) -> Option<super::models::AgentService> {
+    use super::models::AgentService;
+
+    let get_str = |keys: &[&str]| -> String {
         for key in keys {
             if let Some(s) = svc.get(*key).and_then(Value::as_str) {
                 let t = s.trim();
@@ -709,22 +674,63 @@ fn service_item_to_validate_obj(svc: &Value) -> Value {
         String::new()
     };
 
-    let name = get(&["serviceName", "ServiceName", "name"]);
-    let desc = get(&["serviceDescription", "ServiceDescription", "servicedescription"]);
-    let stype = get(&["serviceType", "ServiceType", "servicetype"]);
-    let fee = get(&["fee", "Fee"]);
-    let endpoint = get(&["endpoint", "Endpoint"]);
-
-    let mut obj = json!({
-        "name": name,
-        "servicedescription": desc,
-        "servicetype": stype,
-        "fee": fee,
-    });
-    if !endpoint.is_empty() {
-        obj["endpoint"] = json!(endpoint);
+    let service_name = get_str(&["serviceName", "ServiceName", "name"]);
+    if service_name.is_empty() {
+        return None;
     }
-    obj
+
+    // Service ID: try string keys first, then numeric (backend may return as u64).
+    let id = ["serviceId", "ServiceId", "id"]
+        .iter()
+        .find_map(|k| svc.get(*k).and_then(Value::as_str).map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            ["serviceId", "ServiceId", "id"]
+                .iter()
+                .find_map(|k| svc.get(*k).and_then(Value::as_u64).map(|n| n.to_string()))
+        });
+
+    let service_type = get_str(&["serviceType", "ServiceType", "servicetype"])
+        .to_ascii_uppercase();
+    let endpoint_str = get_str(&["endpoint", "Endpoint"]);
+    let endpoint = if endpoint_str.is_empty() || service_type == "A2A" {
+        None
+    } else {
+        Some(endpoint_str)
+    };
+
+    Some(AgentService {
+        id,
+        service_name,
+        service_description: get_str(&[
+            "serviceDescription",
+            "ServiceDescription",
+            "servicedescription",
+        ]),
+        fee: get_str(&["fee", "Fee", "feeAmount"]),
+        service_type,
+        endpoint,
+    })
+}
+
+/// Merge existing services with user-supplied updates:
+/// - updates with a matching existing ID → replace that entry
+/// - updates with no ID / unrecognized ID → append as new
+/// - existing services not referenced → kept unchanged
+fn merge_services(
+    mut existing: Vec<super::models::AgentService>,
+    updates: Vec<super::models::AgentService>,
+) -> Vec<super::models::AgentService> {
+    for update in updates {
+        if let Some(ref id) = update.id {
+            if let Some(pos) = existing.iter().position(|s| s.id.as_deref() == Some(id.as_str())) {
+                existing[pos] = update;
+                continue;
+            }
+        }
+        existing.push(update);
+    }
+    existing
 }
 
 async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {

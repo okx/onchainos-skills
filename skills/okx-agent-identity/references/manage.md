@@ -24,34 +24,17 @@ onchainos agent deactivate --agent-id <N>
 
 ## activate
 
-CLI is fully self-contained — fetches role, runs QA, submits approval internally.
-
 ```bash
 # internal — not shown to the user
 onchainos agent activate --agent-id <N> --preferred-language <BCP-47>
-# after blockType:2 + user confirms → add --force to skip QA
-onchainos agent activate --agent-id <N> --preferred-language <BCP-47> --force
 ```
-
 
 ### Response — match in order
 
 | Response shape | Action |
 |---|---|
 | `blockType: 1` + `agentRole` | Hard stop — not a provider. Emit (localized): agent #`<N>` is a `<roleLabel>`; only ASP (provider) identities support listing. |
-| `blockType: 2` + `validation` | QA warning. Render `validation.findings[]` inline as ⚠️, then present the two-choice menu below. |
 | `activate` + `submitApproval` | Submitted for review → Step 6. |
 | `activate.success: true` | Published → Step 6. |
 | `activate.approvalStatus: 2` | Already under review. Stop, no Step 6, no poll. |
 | `activate.success: false` (other) | Load `references/errors.md`. |
-
-#### blockType:2 — two-choice menu (render after findings)
-
-Render each finding as `⚠️ <field>: <issue> → <fix>`, then present exactly:
-
-> 1. Fix — update the flagged fields first, then re-activate
-> 2. Skip and activate anyway — submit as-is; review may not pass
-
-- **`1`** → guide the user to `update #<N>` for the flagged fields first, then re-run activate. **Remediation is update-only (⛔):** if the user proposes creating a new agent to bypass the findings, steer back — a new agent does not fix the flagged one and restarts review from zero; only hand off to create if the user explicitly insists after the steer.
-- **`2`** → re-run with `--force` (`activate --agent-id <N> --preferred-language <lang> --force`). **`--force` is mandatory** — omitting it repeats the blockType:2 loop. Proceed to `activate + submitApproval` branch.
-- Any other reply → re-display the two choices once; never auto-pick.

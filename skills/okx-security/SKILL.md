@@ -4,7 +4,7 @@ description: "Use this skill for security scanning: check transaction safety, is
 license: MIT
 metadata:
   author: okx
-  version: "3.20.3-beta"
+  version: "3.20.4-beta"
   homepage: "https://web3.okx.com"
 ---
 

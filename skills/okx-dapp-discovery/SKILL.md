@@ -7,7 +7,7 @@ description: |
 license: MIT
 metadata:
   author: okx
-  version: "3.20.3-beta"
+  version: "3.20.4-beta"
   homepage: "https://web3.okx.com"
 ---
 

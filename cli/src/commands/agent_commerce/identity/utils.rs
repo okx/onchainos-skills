@@ -201,7 +201,71 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
         other => bail!("invalid servicetype in --service: {other}"),
     }
 
+    // Fee is a PLAIN NUMBER only — USDT is the implicit, only currency. A
+    // currency token / symbol / any extra text is rejected (validate-listing
+    // surfaces the same rule as a P1 finding; create/update bypass validate so
+    // we enforce it here too). Empty A2A fee already returned above as allowed.
+    if !service.fee.is_empty() && !is_plain_number(&service.fee) {
+        bail!("invalid fee in --service: must be a plain number (USDT is the default currency)");
+    }
+
     Ok(service)
+}
+
+/// True when `s` is a plain decimal number: `^\d+(\.\d{1,6})?$` (up to 6
+/// fractional digits). No sign, no currency token, no whitespace. Shared by
+/// `normalize_service` (create/update) and `validate::check_fee` (QA) so both
+/// paths enforce the identical fee contract.
+pub(super) fn is_plain_number(s: &str) -> bool {
+    match s.split_once('.') {
+        None => !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
+        Some((int, frac)) => {
+            !int.is_empty()
+                && int.bytes().all(|b| b.is_ascii_digit())
+                && (1..=6).contains(&frac.len())
+                && frac.bytes().all(|b| b.is_ascii_digit())
+        }
+    }
+}
+
+/// East-Asian display width of `s`: every code point in a wide (full-width)
+/// range counts as 2 columns, everything else as 1. This is a faithful port of
+/// the Java backend's `displayLen` / `eaWidth` used for the service-description
+/// length gates (`AgentLlmReviewServiceImpl`), so the CLI's QA character counts
+/// match the backend's exactly (e.g. a CJK character is 2, an ASCII letter 1).
+///
+/// The wide ranges mirror the backend's `WIDE_CP_RANGES` table verbatim (Hangul
+/// Jamo, CJK radicals/ideographs + extensions, Hiragana/Katakana, Hangul
+/// syllables, CJK compatibility, full-width forms, and the CJK supplementary
+/// planes). Anything outside those ranges is half-width (1).
+pub(super) fn display_width(s: &str) -> usize {
+    /// (lo, hi) inclusive code-point ranges that render full-width (2 columns).
+    /// Verbatim mirror of the backend's `WIDE_CP_RANGES`.
+    const WIDE_CP_RANGES: &[(u32, u32)] = &[
+        (0x1100, 0x115F),   // Hangul Jamo
+        (0x2E80, 0x303E),   // CJK Radicals / Kangxi
+        (0x3041, 0x33FF),   // Hiragana / Katakana / etc.
+        (0x3400, 0x4DBF),   // CJK Ext-A
+        (0x4E00, 0x9FFF),   // CJK Unified Ideographs
+        (0xA960, 0xA97F),   // Hangul Jamo Ext-A
+        (0xAC00, 0xD7AF),   // Hangul Syllables
+        (0xD7B0, 0xD7FF),   // Hangul Jamo Ext-B
+        (0xF900, 0xFAFF),   // CJK Compat Ideographs
+        (0xFE10, 0xFE6F),   // Vertical / Compat Forms
+        (0xFF01, 0xFF60),   // Fullwidth Forms
+        (0xFFE0, 0xFFE6),   // Fullwidth Signs
+        (0x20000, 0x2FA1F), // CJK Ext B-F + Compat Supp
+    ];
+    s.chars()
+        .map(|c| {
+            let cp = c as u32;
+            if WIDE_CP_RANGES.iter().any(|&(lo, hi)| cp >= lo && cp <= hi) {
+                2
+            } else {
+                1
+            }
+        })
+        .sum()
 }
 
 pub(super) fn normalize_role(role: &str) -> Result<String> {
@@ -577,8 +641,7 @@ fn first_str<'a>(map: &'a serde_json::Map<String, Value>, keys: &[&str]) -> Opti
 /// Returns true when `fee` represents a zero amount ("0", "0.0", "0 USDT", etc.).
 /// The numeric part is the first whitespace-delimited token.
 fn is_zero_fee(fee: &str) -> bool {
-    fee.trim()
-        .split_whitespace()
+    fee.split_whitespace()
         .next()
         .and_then(|n| n.parse::<f64>().ok())
         .map(|v| v == 0.0)
