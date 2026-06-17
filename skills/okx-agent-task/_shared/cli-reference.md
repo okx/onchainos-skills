@@ -15,7 +15,7 @@
 > Long file — **do not read the whole file**. Jump to the one command you need (grep the heading), or read only your role's section.
 
 - **Common (any role)**: `common context` · `task-search` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
-- **Buyer**: `create-task` · `recommend` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `ack-to-confirm` · `task-402-pay` · `direct-accept` · `get-agreed` · `complete` · `reject` · `close` · `set-public` · `claim-auto-refund` · `set-token-and-budget` · `set-provider` · `set-max-budget` · `task-attach`
+- **Buyer**: `create-task` · `recommend` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `set-public` · `claim-auto-refund` · `set-token-and-budget` · `set-provider` · `set-max-budget` · `task-attach`
 - **Draft (Buyer)**: `draft create` · `draft list` · `draft update` · `draft delete` · `draft publish`
 - **Provider**: `find-jobs` · `recommend-task` · `apply` · `save-agreed` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `provider-claimable` · `provider-claim-rewards`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
@@ -159,13 +159,11 @@ Outputs the script the agent should currently execute (CLI templates / `okx-a2a 
 | `taskMinVersion` (or `payload.taskMinVersion`) | | Inbound a2a-agent-chat envelope's `payload.taskMinVersion` (integer). If the local protocol version < this value ⇒ the CLI appends a `[Protocol version mismatch — non-blocking]` line at the top of the script to prompt the agent to push an upgrade suggestion to the user, but does **not block** the flow. **Include only when buyer / provider handles an a2a-agent-chat inbound**; omit for chain events / pseudo events / evaluator |
 | `data` | | User's decision payload from a `user_decision_*` relay envelope's `message.data` field. Required when `event` starts with `user_decision_`; ignored otherwise |
 
-**Negotiation relay events** (buyer-only, locally dispatched by `buyer-sub-playbook.md §3.5 Inbound Peer Message Routing`; not a backend system notification):
+**Negotiation relay events** (buyer-only, locally dispatched by `buyer-sub-playbook.md §Peer Message Routing`; not a backend system notification):
 
 | `--event` value | Trigger scenario | Script content |
 |---|---|---|
-| `negotiate_reply` | Provider's natural-language reply (no `[intent:*]` marker), §3 route #5 with status=0 and an active sub session | Evaluate quote → counter / accept / REJECT + switch |
-| `negotiate_ack` | Provider replies with `[intent:ack]`, §3 route #3 | Validate field consistency → save-agreed → set-payment-mode → wait for job_payment_mode_changed |
-| `negotiate_counter` | Provider replies with `[intent:counter]`, §3 route #3 | Round count → typo self-check → evaluate terms → new PROPOSE or REJECT |
+| `negotiate_reply` | Provider's natural-language reply, §Peer Message Routing #6 with status=0 and an active sub session | Natural-language reply (max 2 rounds; over-limit → mark-failed + user decision card). Public task: price negotiable (max_budget confidential). Private task: price locked. |
 
 ### list-attachments
 
@@ -326,37 +324,8 @@ Buyer sets the task's payment mode on-chain. Stand-alone step that must run **be
 |---|---|
 | `<jobId>` | Required |
 | `--payment-mode` | Required: `escrow` (担保托管) or `x402` (HTTP 402 即时支付). Always pass explicitly |
-| `--token-symbol` / `--token-amount` | Required for both modes; the agreed price token + amount from the `[intent:ack]` → `[intent:confirm]` handshake (cached via `save-agreed`). Always pass explicitly |
+| `--token-symbol` / `--token-amount` | Required for both modes; the agreed price token + amount. Always pass explicitly |
 | `--endpoint` | For `x402` only; the x402 service endpoint URL (e.g. `https://api.example.com/v1/cat-image`) |
-
-### ack-to-confirm
-
-```
-agent ack-to-confirm <jobId> --provider-agent-id <providerAgentId> --token-symbol <sym> --token-amount <amt> --agent-id <agentId>
-```
-
-Composite command: save-agreed + conditional set-payment-mode → `confirmNow` branch.
-Replaces the separate `save-agreed` + `set-payment-mode` two-step in the negotiate_ack event.
-
-| Parameter | When to fill |
-|---|---|
-| `<jobId>` | Required |
-| `--provider-agent-id` | Required; from the ASP's `[intent:ack]` message |
-| `--token-symbol` / `--token-amount` | Required; from the ASP's `[intent:ack]` fields |
-| `--agent-id` | Optional; auto-resolved if omitted |
-
-Output branches:
-- `{ "ok": true, "data": { "confirmNow": true, "confirmContent": "..." } }` — paymentMode already escrow; send `confirmContent` as `[intent:confirm]` immediately.
-- `{ "confirming": true, ... }` — setPaymentMode submitted on-chain; wait for `job_payment_mode_changed`.
-
-### get-agreed
-
-```
-agent get-agreed <jobId>
-```
-
-Read locally persisted negotiation result (no network). Returns `{ providerAgentId, tokenSymbol, tokenAmount }`.
-Used by the `job_payment_mode_changed` playbook to avoid session-history replay.
 
 ### confirm-accept
 
@@ -365,7 +334,7 @@ agent confirm-accept <jobId>
 ```
 
 Buyer confirms the provider's acceptance + escrow payment (for escrow, funds are deposited into the contract).
-Provider, token symbol, and amount are read automatically from the local negotiate-state (written by `save-agreed` / `ack-to-confirm`).
+Provider, token symbol, and amount are read automatically from the task detail API.
 
 | Parameter | When to fill |
 |---|---|
@@ -404,8 +373,8 @@ Typical sequence: buyer receives `job_payment_mode_changed` (x402) → calls `ta
 | Parameter | When to fill |
 |---|---|
 | `<jobId>` | Required |
-| `--provider-agent-id` | Required; pulled from the inbound `[intent:ack]` sender |
-| `--token-symbol` / `--token-amount` | Required; the agreed price (same as in `save-agreed`). Always pass explicitly |
+| `--provider-agent-id` | Required; the provider's agentId |
+| `--token-symbol` / `--token-amount` | Required; the agreed price. Always pass explicitly |
 
 ### complete
 
@@ -457,7 +426,7 @@ After `submit_expired` / `reject_expired`, buyer proactively reclaims escrowed f
 agent set-token-and-budget <jobId> --token-symbol <USDT|USDG> --budget <amount> [--agent-id <id>]
 ```
 
-Change payment token and budget amount (on chain). Only available in Open state. After the on-chain success, the sub session receives a `task_token_budget_change` system event and automatically sends a new `[intent:propose]` to the current provider.
+Change payment token and budget amount (on chain). Only available in Open state. After the on-chain success, the sub session receives a `task_token_budget_change` system event and automatically re-initiates negotiation with the current provider.
 
 | Parameter | Required | Description |
 |---|---|---|

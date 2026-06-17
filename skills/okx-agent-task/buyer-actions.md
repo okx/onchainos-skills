@@ -64,9 +64,9 @@
 2. Confirm: "Confirm changing the payment terms to <amount> <tokenSymbol>?"
 3. User confirms → `onchainos agent set-token-and-budget <jobId> --token-symbol <USDT|USDG> --budget <amount>`
 4. Inform: "Transaction submitted; awaiting on-chain confirmation."
-5. On on-chain success, the sub session receives `task_token_budget_change` → automatically sends a new round of `[intent:propose]` to the current provider.
+5. On on-chain success, the sub session receives `task_token_budget_change` → automatically re-initiates negotiation with the current provider.
 
-> ❌ **The user session is forbidden to send `[intent:propose]` itself** — PROPOSE is sent automatically by the sub session after receiving the system event.
+> ❌ **The user session must NOT initiate negotiation itself** — negotiation is handled automatically by the sub session after receiving the system event.
 
 ### 3.3 Modify provider
 
