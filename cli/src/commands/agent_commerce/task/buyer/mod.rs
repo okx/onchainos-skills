@@ -441,6 +441,24 @@ pub enum DraftCommand {
     Publish {
         job_id: String,
     },
+    /// Pure local validation of task fields — no network calls.
+    /// Returns structured JSON with per-field pass/fail.
+    Validate {
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        budget: Option<f64>,
+        #[arg(long = "max-budget")]
+        max_budget: Option<f64>,
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long = "deadline-open")]
+        deadline_open: Option<String>,
+        #[arg(long = "deadline-submit")]
+        deadline_submit: Option<String>,
+    },
 }
 
 pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
@@ -501,6 +519,20 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
         }
         DraftCommand::Publish { job_id } => {
             draft::handle_draft_publish(&mut client, &job_id).await
+        }
+        DraftCommand::Validate {
+            description, title, budget, max_budget,
+            currency, deadline_open, deadline_submit,
+        } => {
+            draft::handle_validate_draft(
+                description.as_deref(),
+                title.as_deref(),
+                budget,
+                max_budget,
+                currency.as_deref(),
+                deadline_open.as_deref(),
+                deadline_submit.as_deref(),
+            )
         }
     }
 }

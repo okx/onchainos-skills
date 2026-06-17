@@ -1101,6 +1101,159 @@ pub async fn handle_my_agents(role: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+// ── preflight ───────────────────────────────────────────────────────
+
+pub async fn handle_preflight(role_raw: &str) -> Result<()> {
+    let role_num = match parse_role_filter(role_raw) {
+        Some(n) => n,
+        None => bail!(
+            "unrecognized --role value: {role_raw:?} (expected buyer / provider / evaluator, or 1 / 2 / 3)"
+        ),
+    };
+    let role_label = match role_num {
+        AGENT_ROLE_BUYER => "buyer",
+        AGENT_ROLE_PROVIDER => "provider",
+        AGENT_ROLE_EVALUATOR => "evaluator",
+        _ => "unknown",
+    };
+
+    // ── 1. Wallet ─────────────────────────────────────────────────
+    let wallet_ok;
+    let mut wallet_detail = serde_json::json!({});
+    match crate::wallet_store::load_wallets() {
+        Ok(Some(w)) => {
+            let account_id = crate::commands::agentic_wallet::account::resolve_active_account_id(&w).ok();
+            if let Some(ref id) = account_id {
+                let name = w.accounts.iter()
+                    .find(|a| a.account_id == *id)
+                    .map(|a| a.account_name.clone())
+                    .unwrap_or_default();
+                wallet_ok = true;
+                wallet_detail = serde_json::json!({
+                    "ok": true,
+                    "email": w.email,
+                    "accountId": id,
+                    "accountName": name,
+                });
+            } else {
+                wallet_ok = false;
+                wallet_detail = serde_json::json!({
+                    "ok": false,
+                    "hint": "wallet loaded but no active account; run `onchainos wallet login`",
+                });
+            }
+        }
+        _ => {
+            wallet_ok = false;
+            wallet_detail = serde_json::json!({
+                "ok": false,
+                "hint": "not logged in; run `onchainos wallet login`",
+            });
+        }
+    }
+
+    // ── 2. Identity ───────────────────────────────────────────────
+    let mut identity_detail;
+    if !wallet_ok {
+        identity_detail = serde_json::json!({
+            "ok": false,
+            "hint": "skipped — wallet not logged in",
+        });
+    } else {
+        let mut agents = fetch_my_agents().await;
+        agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(role_num));
+        if agents.is_empty() {
+            identity_detail = serde_json::json!({
+                "ok": false,
+                "role": role_label,
+                "hint": format!("no {role_label} agent found; run `onchainos agent register` with role={role_label}"),
+            });
+        } else {
+            let first = &agents[0];
+            identity_detail = serde_json::json!({
+                "ok": true,
+                "role": role_label,
+                "agentId": first.get("agentId").and_then(|v| v.as_str()).unwrap_or(""),
+                "name": first.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                "status": first.get("status"),
+            });
+        }
+    }
+
+    // ── 3. Communication (okx-a2a) ────────────────────────────────
+    let communication_detail;
+    if !wallet_ok {
+        communication_detail = serde_json::json!({
+            "ok": false,
+            "hint": "skipped — wallet not logged in",
+        });
+    } else {
+        let okx_a2a_found = std::process::Command::new("okx-a2a")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok();
+
+        if !okx_a2a_found {
+            communication_detail = serde_json::json!({
+                "ok": false,
+                "hint": "okx-a2a CLI not found; install via `npx @aspect-build/a2a-node` or load ensure-okx-a2a-communication-ready.md",
+            });
+        } else {
+            let status_out = std::process::Command::new("okx-a2a")
+                .arg("status")
+                .output();
+            match status_out {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let combined = format!("{stdout}{stderr}");
+                    let running = combined.contains("running");
+                    let stopped = combined.contains("stopped");
+                    if running {
+                        communication_detail = serde_json::json!({
+                            "ok": true,
+                            "state": "running",
+                        });
+                    } else if stopped {
+                        communication_detail = serde_json::json!({
+                            "ok": false,
+                            "state": "stopped",
+                            "hint": "okx-a2a is stopped; run `okx-a2a restart`",
+                        });
+                    } else {
+                        communication_detail = serde_json::json!({
+                            "ok": false,
+                            "state": "unknown",
+                            "raw": combined.trim(),
+                            "hint": "okx-a2a status returned unexpected output; run `okx-a2a restart`",
+                        });
+                    }
+                }
+                Err(e) => {
+                    communication_detail = serde_json::json!({
+                        "ok": false,
+                        "hint": format!("failed to run `okx-a2a status`: {e}"),
+                    });
+                }
+            }
+        }
+    }
+
+    let all_ok = wallet_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
+        && identity_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
+        && communication_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    crate::output::success(serde_json::json!({
+        "ready": all_ok,
+        "wallet": wallet_detail,
+        "identity": identity_detail,
+        "communication": communication_detail,
+    }));
+    Ok(())
+}
+
 /// Flatten the agent-list response into a flat `Vec` of agent JSON objects —
 /// **pure shape conversion, no filtering**. Single source of truth for handling
 /// both old and new response shapes; callers layer their own filters on top.

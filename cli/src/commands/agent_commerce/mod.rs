@@ -315,6 +315,14 @@ pub enum AgentCommand {
         #[arg(long)] role: Option<String>,
     },
 
+    /// Pre-flight readiness check: wallet login + agent identity + communication channel.
+    /// Pure read-only diagnostic — does not modify any state.
+    #[command(name = "preflight")]
+    Preflight {
+        /// Role to check identity for: buyer | provider | evaluator (also accepts 1/2/3)
+        #[arg(long)] role: String,
+    },
+
     /// Look up a single agent's profile by `agentId` (any owner, not limited
     /// to current account). Wrapper over `agent get --agent-ids` that flattens
     /// the `list[].agentList[]` nesting and returns the matched agent as a
@@ -1008,6 +1016,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::MyAgents { role } =>
             task::common::handle_my_agents(role.as_deref()).await,
+
+        AgentCommand::Preflight { role } =>
+            task::common::handle_preflight(&role).await,
 
         AgentCommand::Profile { agent_id } =>
             task::common::handle_profile(&agent_id).await,
