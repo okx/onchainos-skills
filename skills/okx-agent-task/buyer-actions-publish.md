@@ -178,7 +178,7 @@ The `jobId` is preserved — attachments from the draft phase carry over.
 
 Display as a `| Field | Value |` table with these rows:
 
-**Basic fields**: Title, Summary, Description, Currency, Budget, Max Budget, Acceptance Window, Delivery Window.
+**Basic fields**: Title, Summary, Description, Currency, Budget, Max Budget.
 **Service fields** (private task only): Provider, Service, Service ID, Service Price, Service Params, Payment Mode.
 **Public task**: Provider shows "Public — no designated provider", omit Service/ID/Price/Params/Payment Mode rows.
 If attachments present, add **Attachments** row.
