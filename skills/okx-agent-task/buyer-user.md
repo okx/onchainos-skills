@@ -41,11 +41,19 @@ One wallet can hold multiple roles.
 
 ## Pre-flight
 
-> See `_shared/preflight.md` for full details. Before any task flow starts, pass these three gates:
->
-> 1. **Wallet is logged in**: `onchainos wallet status` — if not, hand off to `okx-agentic-wallet`.
-> 2. **Agent exists for required role**: `onchainos agent my-agents --role <buyer|provider|evaluator>` → empty = `agent create`.
-> 3. **Communication channel**: **Run** [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md).
+Before any task flow starts, run one command to check all three gates at once:
+
+```bash
+onchainos agent preflight --role buyer
+```
+
+Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proceed. Otherwise fix the failing gate:
+
+| Gate | `ok: false` | Fix |
+|------|-------------|-----|
+| `wallet` | Not logged in | Hand off to `okx-agentic-wallet` (`onchainos wallet login`) |
+| `identity` | No buyer agent | `onchainos agent register` with role=buyer |
+| `communication` | okx-a2a not running | Run [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) |
 
 ---
 

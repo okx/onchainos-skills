@@ -22,21 +22,47 @@
 ### 1.1 Flow overview
 
 1. Collect task fields (description, budget, currency, deadlines, optional provider)
-2. ASP matching — `asp-match --task-desc` to find a provider + service
-3. serviceParams inference — LLM extracts service input from task description
-4. Confirmation form — includes task fields + ASP + service info
-5. `create-task` with `--provider --service-id --service-params --service-token-address --service-token-amount --payment-mode`
+2. **Validate fields** — `onchainos agent draft validate` (pure local, no network)
+3. ASP matching — `asp-match --task-desc` to find a provider + service
+4. serviceParams inference — LLM extracts service input from task description
+5. Confirmation form — includes task fields + ASP + service info
+6. `create-task` with `--provider --service-id --service-params --service-token-address --service-token-amount --payment-mode`
 
 ### 1.2 Validation (after field collection, before ASP match)
 
-1. **Token validation**: not USDT / USDG → "Only USDT and USDG are currently supported; please choose one.", do NOT silently substitute.
-2. **Description length**: `description` < 20 chars → "The more detailed the description, the more accurate the ASP matching. Could you add more specifics?"
-3. **Payment-method intercept**: user mentions escrow / x402 → "The payment method will be determined automatically based on the provider's capabilities."
-4. **Attachment reminder**: if description implies supplementary files → ask user whether to attach now or after creation.
+Run `draft validate` with the collected fields to check all rules in one shot:
+
+```bash
+onchainos agent draft validate \
+  --description "<desc>" --title "<title>" \
+  --budget <b> --max-budget <mb> --currency <token> \
+  --deadline-open <do> --deadline-submit <ds>
+```
+
+Returns `{ ok, checks[], errors[] }`:
+- `ok: true` → all fields valid, proceed to ASP matching.
+- `ok: false` → `errors[]` lists every failing field. Show all errors to the user at once; do NOT ask one-by-one.
+
+**Checks performed** (all fields optional — only provided fields are validated):
+
+| Field | Rule |
+|---|---|
+| `description` | 20 ~ 2000 chars |
+| `title` | 1 ~ 30 chars |
+| `currency` | USDT or USDG only; auto-normalizes variants (usdt/USDT0/USD₮0 → USDT) |
+| `budget` | > 0, ≤ 10M, ≤ 5 decimal places |
+| `max_budget` | same as budget |
+| `max_budget_vs_budget` | max_budget ≥ budget |
+| `deadline_open` | 10m ~ 180d |
+| `deadline_submit` | 1m ~ 180d |
+
+**Supplementary rules** (LLM-side, not in `draft validate`):
+1. **Payment-method intercept**: user mentions escrow / x402 → "The payment method will be determined automatically based on the provider's capabilities."
+2. **Attachment reminder**: if description implies supplementary files → ask user whether to attach now or after creation.
 
 ### 1.3 ASP Matching (Step 4.5 in CLI playbook)
 
-After field collection + validation + identity check + communication check:
+After field collection + `draft validate` ok + `preflight --role buyer` ready:
 
 - **Designated provider**: `onchainos agent asp-match --task-desc "<description>" --provider-agent-id <agentId>` → extract top service → validate currency consistency + budget ≥ feeAmount.
 - **No designated provider**: `onchainos agent asp-match --task-desc "<description>"` → show numbered list → user picks → validate.
@@ -89,14 +115,12 @@ After success, inform the user of the `jobId`. ⚠️ Do NOT say "published succ
 
 ### 1.5 Error Handling
 
+**Pre-ASP-match errors** — caught by `draft validate` (§1.2). Show all `errors[]` to the user at once.
+
+**Post-ASP-match errors** — caught by LLM after ASP selection:
+
 | Error | Response |
 |---|---|
-| Unsupported token / currency mismatch | "Only USDT and USDG supported; budget and max-budget must use the same token." |
-| Description < 20 chars | "Add more specifics for better ASP matching." |
-| Title > 30 chars | Agent auto re-summarizes. |
-| Max budget < budget / missing | "Max budget must be ≥ budget." |
-| Budget decimal > 5 / > 10M | Inform the limit. |
-| Deadline out of range | Inform range limits. |
 | ASP has no service | "This ASP has no registered services. Please choose another or remove the designation." |
 | Currency ≠ feeTokenSymbol | "Task token differs from service fee token. Please change the task token or choose another ASP." |
 | Max budget < feeAmount | "Task max budget is lower than the service price. Please increase the max budget." |
