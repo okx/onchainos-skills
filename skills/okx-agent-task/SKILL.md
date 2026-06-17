@@ -102,15 +102,10 @@ When dealing with integer values of any of the fields below, **look up the table
 **`_shared/`**:
 - [`cli-reference.md`](./_shared/cli-reference.md) — full CLI argument table
 - [`state-machine.md`](./_shared/state-machine.md) — 37 events + 8 statuses
-- [`payment-modes.md`](./_shared/payment-modes.md) — escrow / x402
-- [`entry-points.md`](./_shared/entry-points.md) — task entry types
 - [`exception-escalation.md`](./_shared/exception-escalation.md) — shared exception rules
 - [`preflight.md`](./_shared/preflight.md) — wallet + agent pre-flight
-- [`message-types.md`](./_shared/message-types.md) — XMTP envelope shapes
 - [`user-intent-routing.md`](./_shared/user-intent-routing.md) — user session free-form text routing
 
 **`references/`**:
 - [`evaluator-decision-rubric.md`](./references/evaluator-decision-rubric.md) — decision methodology
 - [`evaluator-staking.md`](./references/evaluator-staking.md) — staking flow
-- [`troubleshooting.md`](./references/troubleshooting.md) — error codes
-- [`incidents.md`](./references/incidents.md) — full real-incident case studies

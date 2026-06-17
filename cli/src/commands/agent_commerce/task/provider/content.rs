@@ -141,6 +141,17 @@ pub fn job_rejected_user_decision_prompt(short_id: &str) -> String {
     )
 }
 
+/// `Event::JobSubmitted` — notify the user (ASP's owner) that the deliverable
+/// is on-chain (deliver tx confirmed) and the buyer's review window has begun.
+/// Provider has no further peer-side action; this is a milestone status update
+/// only. Localize before sending.
+pub fn job_submitted_user_notify(job_id: &str) -> String {
+    format!(
+        "[Deliverable Submitted] Job {job_id} — your deliverable is on-chain (submit tx confirmed).\n\
+         \x20\x20Waiting for the buyer's review (approve or reject)."
+    )
+}
+
 /// `Event::JobCompleted` Step 2 — task-completed notice pushed to the user.
 pub fn job_completed_user_notify(job_id: &str) -> String {
     format!(
