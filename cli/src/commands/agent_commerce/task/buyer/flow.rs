@@ -399,6 +399,18 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 super::flow_negotiate::provider_conversation(&ctx)
             }
         }
+        Event::Other(ref s) if s == "provider_conversation_reject" => {
+            let gid = message
+                .and_then(|m| m.get("groupId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if gid.is_empty() {
+                format!("[Error] provider_conversation_reject requires `groupId` in --message. Call:\n\
+                         onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId>\"}}'\n")
+            } else {
+                super::flow_negotiate::provider_conversation_reject_cli(&ctx, gid)
+            }
+        }
         Event::Other(ref s) if s == "provider_conversation_pick" => {
             let dp_id = message
                 .and_then(|m| m.get("provider"))
@@ -579,15 +591,18 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 ),
                 "provider_pending" => format!(
                     "[User decision relay] source_event=`provider_pending`, user's verbatim reply: `{reply}`\n\n\
-                     The push was the pending-contact ASP list (`okx-a2a task requests` result). **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **Pick an ASP** — number (index) or 3-digit agentId. Map the index to agentId from the ASP list, then route through the designated-provider flow:\n\
+                     The push was a single-ASP accept/reject card. Extract `[asp: <agentId>]` and `[groupId: <gid>]` from the `--llm-content` block above. **Semantic mapping** — decide:\n\n\
+                     \x20\x20• **Accept** — typical intents: 1 / `accept` / `接受` / `yes` / `好` / `可以`. Run:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<picked_agentId>\"}}'\n\
+                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<asp agentId from llm-content>\"}}'\n\
                      \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20Follow the returned playbook verbatim (it runs designated-route → branch_a2a / branch_x402 / branch_error, same as publishing with a designated provider).\n\
-                     \x20\x20• **Skip all** — typical intents: `skip all` / `跳过` / `不选` / `skip` / `all skip`. Action: run `okx-a2a user notify --content '<skip_all_pending content>'`, then end the turn.\n\
-                     \x20\x20• **Reject a specific ASP** — typical intents: `reject` / `拒绝` / `换一个` (+ optional index or agentId). Map the user's reply to the ASP in the list above to get its `groupId`, then: `okx-a2a task reject --group-id <groupId> --json` → refresh list via `okx-a2a task requests --json` → if non-empty, re-push via `--source-event provider_pending`; if empty, enqueue `--source-event no_asp_found` A/B/C.\n\n\
-                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number to designate, or 「skip all」.\"\n"
+                     \x20\x20\x20\x20Follow the returned playbook verbatim.\n\
+                     \x20\x20• **Reject** — typical intents: 2 / `reject` / `拒绝` / `no` / `不` / `换一个` / `next`. Run:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId from llm-content>\"}}'\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20Follow the returned playbook (shows next ASP or close options if none remain).\n\n\
+                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"Please reply 1 (accept) or 2 (reject).\"\n"
                 ),
                 "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => format!(
                     "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
@@ -720,7 +735,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "provider_applied" | "job_accepted" | "deliverable_received" | "job_visibility_changed" |
         "job_submitted" |
         "designated_a2a" | "designated_x402" | "designated_error" |
-        "provider_conversation_pick" |
+        "provider_conversation_pick" | "provider_conversation_reject" |
         "job_rejected" | "job_disputed" | "attachment_added" | "provider_conversation"
     );
     // cli-mode short-circuit: applies to events whose body is self-contained

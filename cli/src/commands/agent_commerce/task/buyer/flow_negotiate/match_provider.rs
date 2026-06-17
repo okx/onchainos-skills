@@ -307,10 +307,21 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, dp_id: &str) -> 
     )
 }
 
-/// CLI-mode handler for `provider_conversation`. Sinks Steps 0–1 (idempotency
-/// check + ASP list fetch) to in-process Rust, eliminating 2 CLI calls.
-/// Fast paths (duplicate event, empty list) skip LLM work entirely.
+/// CLI-mode handler for `provider_conversation`. Fetches ASP list in-process,
+/// takes the first ASP, and pushes an accept/reject decision card to the user.
+/// Reject triggers `provider_conversation_reject` which auto-advances to the
+/// next ASP or pushes close options if none remain.
 pub(crate) fn provider_conversation_cli(ctx: &FlowContext<'_>) -> String {
+    provider_conversation_cli_inner(ctx, None)
+}
+
+/// Shared implementation for both initial `provider_conversation` and
+/// `provider_conversation_reject` (which passes pre-fetched items to skip
+/// the duplicate reject + re-fetch).
+pub(crate) fn provider_conversation_cli_inner(
+    ctx: &FlowContext<'_>,
+    prefetched_items: Option<Vec<serde_json::Value>>,
+) -> String {
     use crate::commands::agent_commerce::task::common::{okx_a2a, pending_v2};
 
     let job_id = ctx.job_id;
@@ -319,25 +330,54 @@ pub(crate) fn provider_conversation_cli(ctx: &FlowContext<'_>) -> String {
     let title = ctx.title_display;
     let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
 
-    // Step 0: idempotency — pending decision already queued?
-    if pending_v2::has_pending_for_job(job_id, "buyer") {
-        return format!(
-            "[provider_conversation] Duplicate event — pending decision already exists for job {short_id}. End turn.\n"
-        );
+    let is_after_reject = prefetched_items.is_some();
+
+    if !is_after_reject {
+        if pending_v2::has_pending_for_job(job_id, "buyer") {
+            return format!(
+                "[provider_conversation] Duplicate event — pending decision already exists for job {short_id}. End turn.\n"
+            );
+        }
     }
 
-    // Step 1: fetch ASP list in-process, filter to this job
-    let items: Vec<serde_json::Value> = match okx_a2a::task_requests() {
-        Ok(v) => v.into_iter()
-            .filter(|item| {
-                item.get("jobId").and_then(|v| v.as_str()) == Some(job_id)
-                    || !item.get("jobId").map_or(false, |v| v.is_string())
-            })
-            .collect(),
-        Err(e) => return format!("[provider_conversation] ERROR: task requests failed: {e}\n"),
+    let items: Vec<serde_json::Value> = match prefetched_items {
+        Some(v) => v,
+        None => match okx_a2a::task_requests() {
+            Ok(v) => v.into_iter()
+                .filter(|item| {
+                    item.get("jobId").and_then(|v| v.as_str()) == Some(job_id)
+                        || !item.get("jobId").map_or(false, |v| v.is_string())
+                })
+                .collect(),
+            Err(e) => return format!("[provider_conversation] ERROR: task requests failed: {e}\n"),
+        },
     };
 
     if items.is_empty() {
+        if is_after_reject {
+            let no_sellers = super::super::content::no_more_sellers_user_notify(job_id);
+            let cmd_no_asp = super::super::flow::pending_cmd(
+                job_id, agent_id, None,
+                &format!("[No ASP {short_id}] {title} next-step decision"),
+                "no_asp_found",
+            );
+            let l10n_prompt = super::super::flow::L10N_PROMPT;
+            let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
+            return format!(
+                "[provider_conversation_reject] All pending ASPs rejected; none remaining.\n\n\
+                 🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
+                 ```bash\n\
+                 {cmd_no_asp}\n\
+                 ```\n\
+                 {l10n_prompt}\n\
+                 `--user-content` template (canonical English — translate to user's language):\n\
+                 {no_sellers}\n\
+                 A. Specify an ASP — provide the ASP's agentId\n\
+                 B. Make the job public — let more ASPs discover it\n\
+                 C. Close the job — cancel and refund\n\n\
+                 {follow_playbook}\n"
+            );
+        }
         let content = super::super::content::pending_list_empty_user_notify();
         return format!(
             "[provider_conversation] No pending ASPs.\n\n\
@@ -351,50 +391,83 @@ pub(crate) fn provider_conversation_cli(ctx: &FlowContext<'_>) -> String {
         );
     }
 
-    // Pre-format ASP list: full context (with groupId) for LLM, user-facing (without) for card
-    let mut asp_context_lines = String::new();
-    let mut asp_user_lines = String::new();
-    for (i, item) in items.iter().enumerate() {
-        let aid = item.get("agentId").and_then(|v| v.as_str()).unwrap_or("?");
-        let gid = item.get("groupId").and_then(|v| v.as_str()).unwrap_or("?");
-        let name = item.get("name").and_then(|v| v.as_str())
-            .or_else(|| item.get("serviceName").and_then(|v| v.as_str()))
-            .unwrap_or("");
-        let credit = item.get("creditScore").and_then(|v| v.as_u64()).unwrap_or(0);
-        let completed = item.get("completedTaskCount").and_then(|v| v.as_u64()).unwrap_or(0);
-        let name_part = if name.is_empty() { String::new() } else { format!(" | name: {name}") };
-        asp_context_lines.push_str(&format!(
-            "{}. agentId: {aid} | groupId: {gid}{name_part} | credit: {credit} | completed: {completed}\n",
-            i + 1
-        ));
-        asp_user_lines.push_str(&format!(
-            "{}. agentId: {aid}{name_part} | credit: {credit} | completed: {completed}\n",
-            i + 1
-        ));
-    }
+    let first = &items[0];
+    let asp_agent_id = first.get("agentId").and_then(|v| v.as_str()).unwrap_or("?");
+    let group_id = first.get("groupId").and_then(|v| v.as_str()).unwrap_or("?");
+    let name = first.get("name").and_then(|v| v.as_str())
+        .or_else(|| first.get("serviceName").and_then(|v| v.as_str()))
+        .unwrap_or("");
+    let credit = first.get("creditScore").and_then(|v| v.as_u64()).unwrap_or(0);
+    let completed = first.get("completedTaskCount").and_then(|v| v.as_u64()).unwrap_or(0);
+    let remaining = items.len() - 1;
+
+    let card_content = super::super::content::provider_pending_single_user_card(
+        short_id, title, asp_agent_id, name, credit, completed,
+    );
 
     let cmd = super::super::flow::pending_cmd(
         job_id, agent_id, None,
-        &format!("[Pending ASP {short_id}] {title} ASP-contact decision"),
+        &format!("[ASP {short_id}] Accept provider?"),
         "provider_pending",
     );
     let l10n_prompt = super::super::flow::L10N_PROMPT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
 
     format!(
-        "[Trigger] ASP pending contact — {} ASP(s) found (pre-fetched)\n\
+        "[Trigger] ASP pending contact — showing first of {} ASP(s)\n\
          [Role] User (Buyer)\n\n\
-         🛑 Push the ASP decision card via `pending-decisions-v2 request`, then end turn.\n\n\
-         Pre-fetched ASP list (includes groupId for reject; do NOT expose groupId to user):\n{asp_context_lines}\n\
+         🛑 Push the accept/reject decision card via `pending-decisions-v2 request`, then end turn.\n\n\
+         ASP context (LLM-only; do NOT expose groupId to user):\n\
+         \x20\x20agentId: {asp_agent_id} | groupId: {group_id} | name: {name} | credit: {credit} | completed: {completed} | remaining after this: {remaining}\n\n\
          ```bash\n\
          {cmd}\n\
          ```\n\
          {l10n_prompt}\n\
-         `--user-content` template (canonical English — ASP details already embedded, just translate; do NOT include groupId):\n\
-         [Job {short_id}] The following ASPs have reached out. Pick one to designate as the provider:\n\
-         {asp_user_lines}\
-         Reply with the ASP's number to designate, or reply 「skip all」.\n\n\
+         `--user-content` template (canonical English — translate to user's language):\n\
+         {card_content}\n\n\
+         `--llm-content` block (keep English verbatim — consumed by user-session agent for routing):\n\
+         ```\n\
+         [USER_DECISION_REQUEST][source: provider_pending][job: {job_id}][role: buyer][agentId: {agent_id}]\n\
+         [asp: {asp_agent_id}][groupId: {group_id}][remaining: {remaining}]\n\n\
+         Step 1 — Card delivered. **END THE TURN NOW.**\n\
+         Step 2 — When the user replies, route by choice:\n\
+         \x20\x20• 1 / \"accept\" / \"接受\" / \"yes\" / \"好\"  → run:\n\
+         \x20\x20\x20\x20```bash\n\
+         \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"{asp_agent_id}\"}}'\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20Follow the returned playbook verbatim.\n\
+         \x20\x20• 2 / \"reject\" / \"拒绝\" / \"no\" / \"不\" / \"换一个\" / \"next\"  → run:\n\
+         \x20\x20\x20\x20```bash\n\
+         \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"{group_id}\"}}'\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20Follow the returned playbook (shows next ASP or close options).\n\
+         ```\n\n\
          {follow_playbook}\n",
         items.len(),
     )
+}
+
+/// CLI-mode handler for `provider_conversation_reject`. Rejects the current
+/// ASP (by groupId), re-fetches the list, and either shows the next ASP's
+/// accept/reject card or pushes close options if none remain.
+pub(crate) fn provider_conversation_reject_cli(ctx: &FlowContext<'_>, group_id: &str) -> String {
+    use crate::commands::agent_commerce::task::common::okx_a2a;
+
+    let job_id = ctx.job_id;
+
+    if let Err(e) = okx_a2a::task_reject(group_id) {
+        return format!("[provider_conversation_reject] ERROR: task reject failed: {e}\n");
+    }
+
+    let items: Vec<serde_json::Value> = match okx_a2a::task_requests() {
+        Ok(v) => v.into_iter()
+            .filter(|item| {
+                item.get("jobId").and_then(|v| v.as_str()) == Some(job_id)
+                    || !item.get("jobId").map_or(false, |v| v.is_string())
+            })
+            .collect(),
+        Err(e) => return format!("[provider_conversation_reject] ERROR: task requests failed: {e}\n"),
+    };
+
+    provider_conversation_cli_inner(ctx, Some(items))
 }
