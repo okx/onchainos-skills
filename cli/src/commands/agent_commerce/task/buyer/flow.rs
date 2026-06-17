@@ -586,7 +586,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Follow the returned playbook verbatim (it runs designated-route → branch_a2a / branch_x402 / branch_error, same as publishing with a designated provider).\n\
                      \x20\x20• **Skip all** — typical intents: `skip all` / `跳过` / `不选` / `skip` / `all skip`. Action: run `okx-a2a user notify --content '<skip_all_pending content>'`, then end the turn.\n\
-                     \x20\x20• **Reject current / negotiation failed** — typical intents: `reject` / `拒绝` / `换一个`. Action: `okx-a2a task reject --group-id <groupId> --agent-id <agentId>` → refresh list via `okx-a2a task requests` → if non-empty, re-push via `--source-event provider_pending`; if empty, enqueue `--source-event no_asp_found` A/B/C.\n\n\
+                     \x20\x20• **Reject a specific ASP** — typical intents: `reject` / `拒绝` / `换一个` (+ optional index or agentId). Map the user's reply to the ASP in the list above to get its `groupId`, then: `okx-a2a task reject --group-id <groupId> --json` → refresh list via `okx-a2a task requests --json` → if non-empty, re-push via `--source-event provider_pending`; if empty, enqueue `--source-event no_asp_found` A/B/C.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number to designate, or 「skip all」.\"\n"
                 ),
                 "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => format!(

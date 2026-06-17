@@ -326,9 +326,14 @@ pub(crate) fn provider_conversation_cli(ctx: &FlowContext<'_>) -> String {
         );
     }
 
-    // Step 1: fetch ASP list in-process
-    let items = match okx_a2a::task_requests() {
-        Ok(v) => v,
+    // Step 1: fetch ASP list in-process, filter to this job
+    let items: Vec<serde_json::Value> = match okx_a2a::task_requests() {
+        Ok(v) => v.into_iter()
+            .filter(|item| {
+                item.get("jobId").and_then(|v| v.as_str()) == Some(job_id)
+                    || !item.get("jobId").map_or(false, |v| v.is_string())
+            })
+            .collect(),
         Err(e) => return format!("[provider_conversation] ERROR: task requests failed: {e}\n"),
     };
 
@@ -346,17 +351,23 @@ pub(crate) fn provider_conversation_cli(ctx: &FlowContext<'_>) -> String {
         );
     }
 
-    // Pre-format ASP list so the LLM only translates, no JSON iteration
-    let mut asp_lines = String::new();
+    // Pre-format ASP list: full context (with groupId) for LLM, user-facing (without) for card
+    let mut asp_context_lines = String::new();
+    let mut asp_user_lines = String::new();
     for (i, item) in items.iter().enumerate() {
         let aid = item.get("agentId").and_then(|v| v.as_str()).unwrap_or("?");
+        let gid = item.get("groupId").and_then(|v| v.as_str()).unwrap_or("?");
         let name = item.get("name").and_then(|v| v.as_str())
             .or_else(|| item.get("serviceName").and_then(|v| v.as_str()))
             .unwrap_or("");
         let credit = item.get("creditScore").and_then(|v| v.as_u64()).unwrap_or(0);
         let completed = item.get("completedTaskCount").and_then(|v| v.as_u64()).unwrap_or(0);
         let name_part = if name.is_empty() { String::new() } else { format!(" | name: {name}") };
-        asp_lines.push_str(&format!(
+        asp_context_lines.push_str(&format!(
+            "{}. agentId: {aid} | groupId: {gid}{name_part} | credit: {credit} | completed: {completed}\n",
+            i + 1
+        ));
+        asp_user_lines.push_str(&format!(
             "{}. agentId: {aid}{name_part} | credit: {credit} | completed: {completed}\n",
             i + 1
         ));
@@ -374,14 +385,14 @@ pub(crate) fn provider_conversation_cli(ctx: &FlowContext<'_>) -> String {
         "[Trigger] ASP pending contact — {} ASP(s) found (pre-fetched)\n\
          [Role] User (Buyer)\n\n\
          🛑 Push the ASP decision card via `pending-decisions-v2 request`, then end turn.\n\n\
-         Pre-fetched ASP list:\n{asp_lines}\n\
+         Pre-fetched ASP list (includes groupId for reject; do NOT expose groupId to user):\n{asp_context_lines}\n\
          ```bash\n\
          {cmd}\n\
          ```\n\
          {l10n_prompt}\n\
-         `--user-content` template (canonical English — ASP details already embedded, just translate):\n\
+         `--user-content` template (canonical English — ASP details already embedded, just translate; do NOT include groupId):\n\
          [Job {short_id}] The following ASPs have reached out. Pick one to designate as the provider:\n\
-         {asp_lines}\
+         {asp_user_lines}\
          Reply with the ASP's number to designate, or reply 「skip all」.\n\n\
          {follow_playbook}\n",
         items.len(),
