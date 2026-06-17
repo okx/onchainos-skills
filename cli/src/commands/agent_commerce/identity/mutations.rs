@@ -473,7 +473,8 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
 /// Unified activation — fully self-contained:
 ///   Step 0: GET agent info (role + name + description) → role guard
 ///   Step 1: POST agent-status (status=1)
-///   Step 2: if approvalStatus ∈ {1,5} → GET service-list → validate-listing → POST submit-approval
+///   Step 2: if approvalStatus ∈ {1,5} → POST submit-approval (no QA — listing QA
+///           runs only at register/update, never here)
 ///
 /// Return-structure contract (all branches):
 ///   blockType:1 + reason + agentRole   → not a provider; agent-status never called
