@@ -5,11 +5,12 @@
 //! - `reset-asp`   — clear ASP + service fields
 //! - `user-reject` — buyer rejects current ASP
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::PaymentMode;
 use crate::commands::agent_commerce::task::signing;
 
 // ── asp-match ────────────────────────────────────────────────────────────
@@ -132,15 +133,28 @@ pub async fn handle_asp_match(
 
 // ── set-asp ──────────────────────────────────────────────────────────────
 
+/// Map service-type ("A2A" / "A2MCP") to the corresponding on-chain paymentMode.
+fn service_type_to_payment_mode(service_type: &str) -> Result<PaymentMode> {
+    match service_type.to_ascii_uppercase().as_str() {
+        "A2A" => Ok(PaymentMode::Escrow),
+        "A2MCP" => Ok(PaymentMode::X402),
+        _ => bail!(
+            "unsupported --service-type \"{service_type}\"; valid values: A2A, A2MCP"
+        ),
+    }
+}
+
 /// POST /priapi/v1/aieco/task/{jobId}/set/asp
 ///
-/// Body: `{providerAgentId, serviceId, serviceParams, serviceTokenAddress, serviceTokenAmount,
+/// Body: `{providerAgentId, serviceId, serviceType, serviceParams, serviceTokenAddress, serviceTokenAmount,
 ///         paymentTokenSymbol?, paymentTokenAmount?, paymentMostTokenAmount?}`.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_set_asp(
     client: &mut TaskApiClient,
     job_id: &str,
     provider_agent_id: &str,
     service_id: &str,
+    service_type: &str,
     service_params: &str,
     service_token_address: &str,
     service_token_amount: &str,
@@ -149,11 +163,58 @@ pub async fn handle_set_asp(
     payment_most_token_amount: Option<&str>,
     explicit_agent_id: Option<&str>,
 ) -> Result<()> {
-    let agent_id = resolve_agent(client, job_id, explicit_agent_id).await?;
+    let desired_mode = service_type_to_payment_mode(service_type)?;
 
+    let (account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_task(client, job_id, explicit_agent_id).await?;
+    let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
+    let current_mode = PaymentMode::from_int(
+        task_resp["paymentMode"].as_i64().unwrap_or(0) as i32,
+    );
+
+    // Step 1: sync paymentMode on-chain if it does not match the service_type.
+    if current_mode != desired_mode {
+        let resp = client.post_with_identity(
+            &client.endpoint(job_id, "setPaymentMode"),
+            &serde_json::json!({ "paymentMode": desired_mode.as_int() }),
+            &agent_id,
+        ).await?;
+        let tx_hash = signing::sign_uop_and_broadcast(
+            client,
+            &resp["uopData"],
+            &account_id,
+            &address,
+            job_id,
+            signing::extract_biz_type(&resp),
+            &agent_id,
+            None,
+        ).await?;
+        audit::log(
+            "cli",
+            "buyer/set_asp_payment_mode_sync",
+            true,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("from={}", current_mode.as_str()),
+                format!("to={}", desired_mode.as_str()),
+                format!("txHash={tx_hash}"),
+            ]),
+            None,
+        );
+        println!(
+            "✓ Payment mode synced on-chain: {} → {} (txHash {tx_hash})",
+            current_mode.as_str(),
+            desired_mode.as_str(),
+        );
+    }
+
+    // Step 2: POST set/asp (off-chain).
     let mut body = serde_json::json!({
         "providerAgentId": provider_agent_id,
         "serviceId": service_id,
+        "serviceType": service_type,
         "serviceParams": service_params,
         "serviceTokenAddress": service_token_address,
         "serviceTokenAmount": service_token_amount,
@@ -188,6 +249,7 @@ pub async fn handle_set_asp(
             format!("agentId={agent_id}"),
             format!("providerAgentId={provider_agent_id}"),
             format!("serviceId={service_id}"),
+            format!("serviceType={service_type}"),
             format!("serviceTokenAmount={service_token_amount}"),
         ]),
         None,
@@ -196,6 +258,7 @@ pub async fn handle_set_asp(
     println!("✓ ASP and service updated (off-chain). Waiting for job_created event.");
     println!("  providerAgentId: {provider_agent_id}");
     println!("  serviceId: {service_id}");
+    println!("  serviceType: {service_type}");
     println!("  serviceTokenAmount: {service_token_amount}");
     Ok(())
 }
@@ -341,19 +404,21 @@ mod tests {
             "test", "set-asp", "job-abc",
             "--provider-agent-id", "prov-1",
             "--service-id", "svc-99",
+            "--service-type", "A2MCP",
             "--service-params", "{\"query\":\"BTC price\"}",
             "--service-token-address", "0xUSDT",
             "--service-token-amount", "10.5",
         ]);
         match cli.cmd {
             super::super::TaskCommand::SetAsp {
-                job_id, provider_agent_id, service_id, service_params,
+                job_id, provider_agent_id, service_id, service_type, service_params,
                 service_token_address, service_token_amount,
                 payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id,
             } => {
                 assert_eq!(job_id, "job-abc");
                 assert_eq!(provider_agent_id, "prov-1");
                 assert_eq!(service_id, "svc-99");
+                assert_eq!(service_type, "A2MCP");
                 assert_eq!(service_params, "{\"query\":\"BTC price\"}");
                 assert_eq!(service_token_address, "0xUSDT");
                 assert_eq!(service_token_amount, "10.5");
@@ -372,6 +437,7 @@ mod tests {
             "test", "set-asp", "job-abc",
             "--provider-agent-id", "prov-1",
             "--service-id", "svc-1",
+            "--service-type", "A2A",
             "--service-params", "none",
             "--service-token-address", "0xAddr",
             "--service-token-amount", "5",
@@ -381,8 +447,9 @@ mod tests {
         ]);
         match cli.cmd {
             super::super::TaskCommand::SetAsp {
-                payment_token_symbol, payment_token_amount, payment_most_token_amount, ..
+                service_type, payment_token_symbol, payment_token_amount, payment_most_token_amount, ..
             } => {
+                assert_eq!(service_type, "A2A");
                 assert_eq!(payment_token_symbol.as_deref(), Some("USDT"));
                 assert_eq!(payment_token_amount.as_deref(), Some("5"));
                 assert_eq!(payment_most_token_amount.as_deref(), Some("10"));
@@ -394,6 +461,18 @@ mod tests {
     #[test]
     fn cli_set_asp_missing_required_fails() {
         assert!(TestCli::try_parse_from(["test", "set-asp", "job-1"]).is_err());
+    }
+
+    #[test]
+    fn cli_set_asp_missing_service_type_fails() {
+        assert!(TestCli::try_parse_from([
+            "test", "set-asp", "job-abc",
+            "--provider-agent-id", "prov-1",
+            "--service-id", "svc-1",
+            "--service-params", "none",
+            "--service-token-address", "0xAddr",
+            "--service-token-amount", "5",
+        ]).is_err());
     }
 
     // ── reset-asp ───────────────────────────────────────────────────

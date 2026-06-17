@@ -64,7 +64,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
          Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — When the user actually replies (next turn), route by choice:\n\
          \x20\x20• 1 / \"list\" / \"asp-match\" / \"浏览\" / \"推荐\"   → run `onchainos agent asp-match --job-id {job_id}` to fetch the ASP-match list, then re-prompt the user to pick one.\n\
-         \x20\x20• 2 / \"designate\" / \"specify\" / \"指定\"           → run `onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId>` to get service info, then `onchainos agent set-asp {job_id} --provider-agent-id <agentId> ...`.\n\
+         \x20\x20• 2 / \"designate\" / \"specify\" / \"指定\"           → run `onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId>` to get service info, then `onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '<JSON>' --service-token-address <feeToken> --service-token-amount <feeAmount>`.\n\
          {option3_llm_line}\x20\x20• {close_num} / \"close\" / \"cancel\" / \"关闭\"                  → run `onchainos agent close {job_id} --agent-id {agent_id}` then END TURN.\n\
          ```\n\n\
          → After `decision-request` returns, **END THIS TURN**. Do NOT call any other tool in this turn.\n"

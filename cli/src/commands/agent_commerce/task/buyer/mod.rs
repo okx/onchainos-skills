@@ -114,6 +114,8 @@ pub enum TaskCommand {
         provider_agent_id: String,
         #[arg(long = "service-id")]
         service_id: String,
+        #[arg(long = "service-type")]
+        service_type: String,
         #[arg(long = "service-params")]
         service_params: String,
         #[arg(long = "service-token-address")]
@@ -296,8 +298,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             }).await,
         TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } =>
             asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), page, agent_id.as_deref()).await,
-        TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
-            asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), payment_token_amount.as_deref(), payment_most_token_amount.as_deref(), agent_id.as_deref()).await,
+        TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
+            asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), payment_token_amount.as_deref(), payment_most_token_amount.as_deref(), agent_id.as_deref()).await,
         TaskCommand::ResetAsp { job_id, agent_id } =>
             asp_ops::handle_reset_asp(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::UserReject { job_id, agent_id } =>

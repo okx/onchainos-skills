@@ -73,13 +73,14 @@
 > **Scenario**: seller rejected / user wants to switch to a different ASP. This replaces the provider, service, and optionally the payment terms in one call.
 
 1. Parse the user's intent (the new providerAgentId).
-2. Fetch service info: `onchainos agent asp-match --job-id <jobId> --provider-agent-id <providerAgentId>` → extract `serviceId`, `serviceParams`, `feeToken` (= serviceTokenAddress), `feeAmount` (= serviceTokenAmount), `feeTokenSymbol`.
+2. Fetch service info: `onchainos agent asp-match --job-id <jobId> --provider-agent-id <providerAgentId>` → extract `serviceId`, `serviceType`, `serviceParams`, `feeToken` (= serviceTokenAddress), `feeAmount` (= serviceTokenAmount), `feeTokenSymbol`.
 3. Confirm: "Confirm switching to ASP <providerAgentId>, service <serviceName>, fee <feeAmount> <feeTokenSymbol>?"
 4. User confirms → run:
    ```bash
    onchainos agent set-asp <jobId> \
      --provider-agent-id <providerAgentId> \
      --service-id <serviceId> \
+     --service-type <serviceType> \
      --service-params '<serviceParams JSON>' \
      --service-token-address <feeToken> \
      --service-token-amount <feeAmount> \

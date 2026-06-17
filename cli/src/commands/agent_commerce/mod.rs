@@ -118,6 +118,7 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long = "provider-agent-id")] provider_agent_id: String,
         #[arg(long = "service-id")] service_id: String,
+        #[arg(long = "service-type")] service_type: String,
         #[arg(long = "service-params")] service_params: String,
         #[arg(long = "service-token-address")] service_token_address: String,
         #[arg(long = "service-token-amount")] service_token_amount: String,
@@ -885,8 +886,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } =>
             task::buyer::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id }, ctx).await,
 
-        AgentCommand::SetAsp { job_id, provider_agent_id, service_id, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
-            task::buyer::run_task(T::SetAsp { job_id, provider_agent_id, service_id, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id }, ctx).await,
+        AgentCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
+            task::buyer::run_task(T::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id }, ctx).await,
 
         AgentCommand::ResetAsp { job_id, agent_id } =>
             task::buyer::run_task(T::ResetAsp { job_id, agent_id }, ctx).await,
