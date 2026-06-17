@@ -149,7 +149,7 @@ pub struct PreFetchedTaskContext {
     pub service_id: Option<String>,
     pub service_token_address: Option<String>,
     pub service_token_amount: Option<String>,
-    pub service_params: Option<serde_json::Value>,
+    pub service_params: Option<String>,
 }
 
 impl PreFetchedTaskContext {
@@ -170,7 +170,7 @@ impl PreFetchedTaskContext {
             service_id: v["serviceId"].as_str().map(String::from),
             service_token_address: v["serviceTokenAddress"].as_str().map(String::from),
             service_token_amount: v["serviceTokenAmount"].as_str().map(String::from),
-            service_params: v.get("serviceParams").filter(|x| !x.is_null()).cloned(),
+            service_params: v["serviceParams"].as_str().map(String::from),
         }
     }
 

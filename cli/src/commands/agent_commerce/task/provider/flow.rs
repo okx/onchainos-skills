@@ -66,10 +66,7 @@ pub async fn generate_next_action(
                     "serviceId" => p.service_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceId: {v}\n")),
                     "serviceTokenAddress" => p.service_token_address.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAddress: {v}\n")),
                     "serviceTokenAmount" => p.service_token_amount.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAmount: {v}\n")),
-                    "serviceParams" => p.service_params.as_ref().filter(|v| !v.is_null()).map(|v| {
-                        let compact = serde_json::to_string(v).unwrap_or_else(|_| "<unserializable>".to_string());
-                        format!("\x20\x20- serviceParams: {compact}\n")
-                    }),
+                    "serviceParams" => p.service_params.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceParams: {v}\n")),
                     _ => None,
                 };
                 if let Some(l) = line { out.push_str(&l); any = true; }
@@ -178,7 +175,7 @@ pub async fn generate_next_action(
             let user_notify = super::content::job_accepted_user_notify(job_id, agent_id);
             let deliver_text = super::content::deliver_text_to_buyer(job_id);
             let deliver_file = super::content::deliver_file_to_buyer(job_id);
-            let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol"]);
+            let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol", "serviceParams"]);
             format!(
             "[Current state] job_accepted (User Agent has confirmed the apply)\n\
              [Role] ASP (Agent Service Provider)\n\n\
