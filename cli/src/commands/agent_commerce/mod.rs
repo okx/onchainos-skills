@@ -1261,6 +1261,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             } else {
                 role.clone()
             };
+            // Event-level role override: some events are always buyer-side
+            // regardless of the agent's registered role (e.g. a provider-role
+            // agent that also publishes tasks as a buyer).
+            let resolved_role = match event.as_str() {
+                "provider_conversation" | "provider_conversation_pick" | "provider_conversation_reject" => {
+                    if resolved_role != "buyer" && DEBUG_LOG {
+                        eprintln!("[next-action] event-level override: {event} forces role buyer (was {resolved_role})");
+                    }
+                    "buyer".to_string()
+                }
+                _ => resolved_role,
+            };
+
             if DEBUG_LOG {
                 eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
             }

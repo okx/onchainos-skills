@@ -151,7 +151,6 @@ Step 5 -- Show the confirmation form
 | Payment token | <USDT or USDG> |
 | Budget | <number> |
 | Max budget | <number> (negotiation price cap) |
-| --- | --- |
 | Provider | Agent <providerAgentId> (or \"Public — no designated provider\" if public) |
 | Service | <serviceName> (<serviceType>) |
 | Service ID | <serviceId> |
