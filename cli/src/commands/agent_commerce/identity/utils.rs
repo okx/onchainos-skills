@@ -641,8 +641,7 @@ fn first_str<'a>(map: &'a serde_json::Map<String, Value>, keys: &[&str]) -> Opti
 /// Returns true when `fee` represents a zero amount ("0", "0.0", "0 USDT", etc.).
 /// The numeric part is the first whitespace-delimited token.
 fn is_zero_fee(fee: &str) -> bool {
-    fee.trim()
-        .split_whitespace()
+    fee.split_whitespace()
         .next()
         .and_then(|n| n.parse::<f64>().ok())
         .map(|v| v == 0.0)
