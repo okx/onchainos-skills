@@ -1103,7 +1103,7 @@ pub async fn handle_my_agents(role: Option<&str>) -> Result<()> {
 
 // ── preflight ───────────────────────────────────────────────────────
 
-pub async fn handle_preflight(role_raw: &str) -> Result<()> {
+pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value> {
     let role_num = match parse_role_filter(role_raw) {
         Some(n) => n,
         None => bail!(
@@ -1119,7 +1119,7 @@ pub async fn handle_preflight(role_raw: &str) -> Result<()> {
 
     // ── 1. Wallet ─────────────────────────────────────────────────
     let wallet_ok;
-    let mut wallet_detail = serde_json::json!({});
+    let wallet_detail;
     match crate::wallet_store::load_wallets() {
         Ok(Some(w)) => {
             let account_id = crate::commands::agentic_wallet::account::resolve_active_account_id(&w).ok();
@@ -1153,7 +1153,7 @@ pub async fn handle_preflight(role_raw: &str) -> Result<()> {
     }
 
     // ── 2. Identity ───────────────────────────────────────────────
-    let mut identity_detail;
+    let identity_detail;
     if !wallet_ok {
         identity_detail = serde_json::json!({
             "ok": false,
@@ -1245,12 +1245,89 @@ pub async fn handle_preflight(role_raw: &str) -> Result<()> {
         && identity_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
         && communication_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
 
-    crate::output::success(serde_json::json!({
+    Ok(serde_json::json!({
         "ready": all_ok,
         "wallet": wallet_detail,
         "identity": identity_detail,
         "communication": communication_detail,
-    }));
+    }))
+}
+
+pub async fn handle_preflight(role_raw: &str) -> Result<()> {
+    let result = preflight_inner(role_raw).await?;
+    crate::output::success(result);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_prepare_create(
+    description: Option<&str>,
+    title: Option<&str>,
+    budget: Option<f64>,
+    max_budget: Option<f64>,
+    currency: Option<&str>,
+    deadline_open: Option<&str>,
+    deadline_submit: Option<&str>,
+    provider: Option<&str>,
+) -> Result<()> {
+    use super::buyer::draft::validate_draft_fields;
+
+    // ── 1. Validate fields (local, instant) ──────────────────────
+    let validation = validate_draft_fields(
+        description, title, budget, max_budget, currency,
+        deadline_open, deadline_submit,
+    );
+    let v_ok = validation.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !v_ok {
+        crate::output::success(serde_json::json!({
+            "ok": false,
+            "stage": "validation",
+            "validation": validation,
+        }));
+        return Ok(());
+    }
+
+    // ── 2. Preflight (wallet + identity + communication) ─────────
+    let preflight = preflight_inner("buyer").await?;
+    let pf_ok = preflight.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !pf_ok {
+        crate::output::success(serde_json::json!({
+            "ok": false,
+            "stage": "preflight",
+            "validation": validation,
+            "preflight": preflight,
+        }));
+        return Ok(());
+    }
+
+    // ── 3. Routing (designated-route, only when --provider given) ─
+    let routing = if let Some(pid) = provider.filter(|s| !s.is_empty()) {
+        match designated_route_inner(pid, None).await {
+            Ok(r) => Some(r),
+            Err(e) => {
+                crate::output::success(serde_json::json!({
+                    "ok": false,
+                    "stage": "routing",
+                    "validation": validation,
+                    "preflight": preflight,
+                    "routing": { "error": format!("{e:#}") },
+                }));
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut result = serde_json::json!({
+        "ok": true,
+        "validation": validation,
+        "preflight": preflight,
+    });
+    if let Some(r) = routing {
+        result["routing"] = r;
+    }
+    crate::output::success(result);
     Ok(())
 }
 

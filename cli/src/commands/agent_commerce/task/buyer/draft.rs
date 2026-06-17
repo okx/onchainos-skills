@@ -181,7 +181,7 @@ fn validate_draft_for_publish(detail: &serde_json::Value) -> Result<()> {
 // ─── 0. validate-draft (pure local, no network) ───────────────────────
 
 #[allow(clippy::too_many_arguments)]
-fn validate_draft_fields(
+pub(crate) fn validate_draft_fields(
     description: Option<&str>,
     title: Option<&str>,
     budget: Option<f64>,

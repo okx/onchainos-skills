@@ -323,6 +323,28 @@ pub enum AgentCommand {
         #[arg(long)] role: String,
     },
 
+    /// Prepare-create: validate fields + preflight + designated-route in one call.
+    /// Returns structured JSON for the confirmation form. Does NOT create the task.
+    #[command(name = "prepare-create")]
+    PrepareCreate {
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        budget: Option<f64>,
+        #[arg(long = "max-budget")]
+        max_budget: Option<f64>,
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long = "deadline-open")]
+        deadline_open: Option<String>,
+        #[arg(long = "deadline-submit")]
+        deadline_submit: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
     /// Look up a single agent's profile by `agentId` (any owner, not limited
     /// to current account). Wrapper over `agent get --agent-ids` that flattens
     /// the `list[].agentList[]` nesting and returns the matched agent as a
@@ -1008,6 +1030,16 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::Preflight { role } =>
             task::common::handle_preflight(&role).await,
+
+        AgentCommand::PrepareCreate {
+            description, title, budget, max_budget,
+            currency, deadline_open, deadline_submit, provider,
+        } => task::common::handle_prepare_create(
+            description.as_deref(), title.as_deref(),
+            budget, max_budget,
+            currency.as_deref(), deadline_open.as_deref(), deadline_submit.as_deref(),
+            provider.as_deref(),
+        ).await,
 
         AgentCommand::Profile { agent_id } =>
             task::common::handle_profile(&agent_id).await,

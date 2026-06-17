@@ -420,6 +420,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::MarkFailed { .. } => "mark-failed".into(),
         AgentCommand::MyAgents { .. } => "my-agents".into(),
         AgentCommand::Preflight { .. } => "preflight".into(),
+        AgentCommand::PrepareCreate { .. } => "prepare-create".into(),
         AgentCommand::ActiveTasks { .. } => "active-tasks".into(),
         AgentCommand::Profile { .. } => "profile".into(),
         AgentCommand::PendingDecisionsV2(_) => "pending-decisions-v2".into(),
