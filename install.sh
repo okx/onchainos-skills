@@ -129,10 +129,44 @@ semver_gt() {
 
 # ── GitHub API helpers ───────────────────────────────────────
 
-# Fetch latest stable version from GitHub releases API.
+# Call the GitHub API. Honors $GITHUB_TOKEN when set (raises the rate limit
+# from 60/hr to 5000/hr). Only used as a fallback — the primary version-lookup
+# paths below avoid api.github.com entirely.
+#
+# The token is passed via a curl config read from stdin (-K -) rather than on
+# the command line, so it never appears in the process list / argv.
+gh_api() {
+  if [ -n "$GITHUB_TOKEN" ]; then
+    printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" \
+      | curl -sSL --max-time 10 -K - "$1" 2>/dev/null
+  else
+    curl -sSL --max-time 10 "$1" 2>/dev/null
+  fi
+}
+
+# Fetch latest stable version.
+# Primary path follows the /releases/latest redirect, which is served by the
+# github.com website backend and does NOT count against the 60/hr unauthenticated
+# API limit (only needs curl). Falls back to the releases API if the redirect
+# fails or does not land on a /releases/tag/v<semver> URL.
 get_latest_stable_version() {
-  response=$(curl -sSL --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null) || true
-  ver=$(echo "$response" | grep -o '"tag_name": *"v[^"]*"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/')
+  ver=""
+  # %{url_effective} is printed even on HTTP errors, so check curl's exit code
+  # AND require the final URL to be a tag page before trusting it — otherwise a
+  # failed request would yield the bare /releases/latest URL and skip fallback.
+  effective_url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+    --max-time 10 "https://github.com/${REPO}/releases/latest" 2>/dev/null) || effective_url=""
+  case "$effective_url" in
+    */releases/tag/v[0-9]*)
+      ver=$(echo "$effective_url" | sed 's|.*/releases/tag/v||' | tr -d '\r\n')
+      ;;
+  esac
+
+  if [ -z "$ver" ]; then
+    response=$(gh_api "https://api.github.com/repos/${REPO}/releases/latest") || true
+    ver=$(echo "$response" | grep -o '"tag_name": *"v[^"]*"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/')
+  fi
+
   if [ -z "$ver" ]; then
     echo "Error: could not fetch latest version from GitHub." >&2
     echo "Check your network connection or install manually from https://github.com/${REPO}" >&2
@@ -141,11 +175,28 @@ get_latest_stable_version() {
   echo "$ver"
 }
 
-# Fetch latest version including betas from tags API.
-# Iterates all tags and returns the highest by semver (could be stable or beta).
+# Fetch latest version including betas.
+# Primary path lists tags via git smart-http (git ls-remote), which does NOT
+# count against the API limit. Falls back to the tags API if git is unavailable
+# or fails. Iterates all tags and returns the highest by semver using semver_gt
+# (which correctly orders pre-releases below their base version — unlike
+# `sort -V`, which would rank v2.0.0-beta.1 ABOVE v2.0.0).
 get_latest_version_with_beta() {
-  response=$(curl -sSL --max-time 10 "https://api.github.com/repos/${REPO}/tags?per_page=100" 2>/dev/null) || true
-  versions=$(echo "$response" | grep -o '"name": *"v[^"]*"' | sed 's/.*"v\([^"]*\)".*/\1/')
+  versions=""
+  if command -v git >/dev/null 2>&1; then
+    # Strip peeled-tag refs (^{}), keep v-prefixed semver tags, dedupe.
+    # GIT_HTTP_LOW_SPEED_* aborts a stalled transfer (proxy/firewall) so the
+    # API fallback can run; GIT_TERMINAL_PROMPT=0 prevents a hang on auth prompt.
+    versions=$(GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=15 \
+      git ls-remote --tags "https://github.com/${REPO}.git" 2>/dev/null \
+      | awk -F'/' '{print $NF}' | sed 's/\^{}//' \
+      | grep -E '^v[0-9]' | sed 's/^v//' | sort -u)
+  fi
+
+  if [ -z "$versions" ]; then
+    response=$(gh_api "https://api.github.com/repos/${REPO}/tags?per_page=100") || true
+    versions=$(echo "$response" | grep -o '"name": *"v[^"]*"' | sed 's/.*"v\([^"]*\)".*/\1/')
+  fi
 
   if [ -z "$versions" ]; then
     echo "Error: could not fetch tags from GitHub." >&2

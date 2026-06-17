@@ -100,18 +100,34 @@ fn semver_gt(a: &str, b: &str) -> bool {
 
 // ── GitHub API ──────────────────────────────────────────────────────────
 
+// Both lookups below avoid api.github.com on the primary path (the 60/hr
+// unauthenticated limit) and only fall back to it — honoring $GITHUB_TOKEN —
+// when the primary path fails. This mirrors the install.sh / install.ps1 logic.
+
+/// Fetch the latest stable version.
+///
+/// Primary path follows the `releases/latest` redirect, served by the
+/// github.com website backend, which does NOT count against the api.github.com
+/// rate limit. Falls back to the releases API if the redirect can't be resolved
+/// to a `/releases/tag/v<semver>` page.
 async fn get_latest_stable(client: &Client) -> Result<String> {
+    if let Some(ver) = latest_stable_via_redirect(client).await {
+        return Ok(ver);
+    }
+
     let url = format!("https://api.github.com/repos/{}/releases/latest", REPO);
-    let resp: Value = client
-        .get(&url)
-        .header("User-Agent", "onchainos-cli")
-        .timeout(Duration::from_secs(10))
-        .send()
-        .await
-        .context("failed to fetch latest release from GitHub")?
-        .json()
-        .await
-        .context("failed to parse GitHub release response")?;
+    let resp: Value = with_github_token(
+        client
+            .get(&url)
+            .header("User-Agent", "onchainos-cli")
+            .timeout(Duration::from_secs(10)),
+    )
+    .send()
+    .await
+    .context("failed to fetch latest release from GitHub")?
+    .json()
+    .await
+    .context("failed to parse GitHub release response")?;
 
     resp["tag_name"]
         .as_str()
@@ -119,39 +135,135 @@ async fn get_latest_stable(client: &Client) -> Result<String> {
         .context("missing tag_name in GitHub release response")
 }
 
-async fn get_latest_with_beta(client: &Client) -> Result<String> {
-    let url = format!("https://api.github.com/repos/{}/tags?per_page=100", REPO);
-    let resp: Value = client
-        .get(&url)
+/// HEAD the `releases/latest` URL and read the final (post-redirect) URL.
+/// Returns `None` — so the caller falls back to the API — on any network error
+/// or if the final URL is not a `/releases/tag/v<semver>` page.
+async fn latest_stable_via_redirect(client: &Client) -> Option<String> {
+    let url = format!("https://github.com/{}/releases/latest", REPO);
+    let resp = client
+        .head(&url)
         .header("User-Agent", "onchainos-cli")
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .context("failed to fetch tags from GitHub")?
-        .json()
-        .await
-        .context("failed to parse GitHub tags response")?;
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    parse_release_tag_url(resp.url().as_str())
+}
+
+/// Fetch the latest version including betas.
+///
+/// Primary path lists tags via `git ls-remote` (git smart-http), which does NOT
+/// count against the api.github.com rate limit. Falls back to the tags API if
+/// git is unavailable or fails. Returns the highest by semver (pre-releases rank
+/// below their base version).
+async fn get_latest_with_beta(client: &Client) -> Result<String> {
+    let mut versions = ls_remote_tag_versions();
+    if versions.is_empty() {
+        versions = api_tag_versions(client).await?;
+    }
+    highest_version(versions).context("no valid versions found in GitHub tags")
+}
+
+/// List tag versions via `git ls-remote`. Returns an empty Vec if git is
+/// unavailable or the call fails, so the caller can fall back to the API.
+fn ls_remote_tag_versions() -> Vec<String> {
+    let url = format!("https://github.com/{}.git", REPO);
+    // GIT_HTTP_LOW_SPEED_* aborts a stalled transfer (proxy/firewall) so the API
+    // fallback can run; GIT_TERMINAL_PROMPT=0 prevents a hang on an auth prompt.
+    let output = Command::new("git")
+        .args(["ls-remote", "--tags", &url])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
+        .env("GIT_HTTP_LOW_SPEED_TIME", "15")
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            parse_ls_remote_versions(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Fetch tag names from the tags API (fallback path), honoring `$GITHUB_TOKEN`.
+async fn api_tag_versions(client: &Client) -> Result<Vec<String>> {
+    let url = format!("https://api.github.com/repos/{}/tags?per_page=100", REPO);
+    let resp: Value = with_github_token(
+        client
+            .get(&url)
+            .header("User-Agent", "onchainos-cli")
+            .timeout(Duration::from_secs(10)),
+    )
+    .send()
+    .await
+    .context("failed to fetch tags from GitHub")?
+    .json()
+    .await
+    .context("failed to parse GitHub tags response")?;
 
     let tags = resp.as_array().context("expected array from tags API")?;
-    let mut best: Option<String> = None;
+    Ok(tags
+        .iter()
+        .filter_map(|tag| tag["name"].as_str())
+        .map(|name| name.trim_start_matches('v'))
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .collect())
+}
 
-    for tag in tags {
-        let name = tag["name"]
-            .as_str()
-            .unwrap_or("")
-            .trim_start_matches('v')
-            .to_string();
-        if name.is_empty() {
-            continue;
-        }
-        match &best {
-            None => best = Some(name),
-            Some(b) if semver_gt(&name, b) => best = Some(name),
-            _ => {}
-        }
+/// Parse a version from a resolved `releases/latest` redirect URL. Returns the
+/// bare semver (no `v` prefix) only when the URL is a `/releases/tag/v<digit>…`
+/// page, otherwise `None` (e.g. it stayed on `/releases/latest` or points at a
+/// non-semver tag like `nightly`).
+fn parse_release_tag_url(final_url: &str) -> Option<String> {
+    let after = final_url.split("/releases/tag/v").nth(1)?;
+    let ver: String = after
+        .chars()
+        .take_while(|c| !matches!(c, '/' | '?' | '#'))
+        .collect();
+    let ver = ver.trim();
+    if ver.starts_with(|c: char| c.is_ascii_digit()) {
+        Some(ver.to_string())
+    } else {
+        None
     }
+}
 
-    best.context("no valid versions found in GitHub tags")
+/// Parse `git ls-remote --tags` stdout into a deduped list of `v`-prefixed
+/// semver tags (with the `v` stripped). Drops peeled-tag refs (`^{}`) and any
+/// ref that isn't a `v<digit>…` tag (branches, non-semver tags).
+fn parse_ls_remote_versions(stdout: &str) -> Vec<String> {
+    let mut versions: Vec<String> = stdout
+        .lines()
+        .filter_map(|line| line.rsplit('/').next())
+        .map(|r| r.trim_end_matches("^{}"))
+        .filter_map(|r| r.strip_prefix('v'))
+        .filter(|v| v.starts_with(|c: char| c.is_ascii_digit()))
+        .map(str::to_string)
+        .collect();
+    versions.sort();
+    versions.dedup();
+    versions
+}
+
+/// Return the highest version by semver (pre-releases rank below their base).
+fn highest_version(versions: Vec<String>) -> Option<String> {
+    versions
+        .into_iter()
+        .reduce(|best, v| if semver_gt(&v, &best) { v } else { best })
+}
+
+/// Attach an `Authorization: Bearer` header when `$GITHUB_TOKEN` is set, raising
+/// the api.github.com rate limit from 60/hr to 5000/hr. Used only on the API
+/// fallback paths — the primary paths above avoid api.github.com entirely. The
+/// token lives only in the request header, never in a process argument list.
+fn with_github_token(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match std::env::var("GITHUB_TOKEN") {
+        Ok(token) if !token.is_empty() => req.bearer_auth(token),
+        _ => req,
+    }
 }
 
 // ── Platform detection ──────────────────────────────────────────────────
@@ -483,7 +595,10 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{discover_skill_paths_in, remote_is_trusted_okx, semver_gt};
+    use super::{
+        discover_skill_paths_in, highest_version, parse_ls_remote_versions, parse_release_tag_url,
+        remote_is_trusted_okx, semver_gt,
+    };
     use std::path::Path;
     use std::process::Command;
     use tempfile::TempDir;
@@ -590,5 +705,62 @@ mod tests {
     fn equal_versions_not_gt() {
         assert!(!semver_gt("2.0.0", "2.0.0"));
         assert!(!semver_gt("2.0.0-beta.0", "2.0.0-beta.0"));
+    }
+
+    #[test]
+    fn parse_release_tag_url_extracts_stable_and_beta() {
+        let base = "https://github.com/okx/onchainos-skills/releases/tag";
+        assert_eq!(
+            parse_release_tag_url(&format!("{base}/v3.3.8")).as_deref(),
+            Some("3.3.8")
+        );
+        assert_eq!(
+            parse_release_tag_url(&format!("{base}/v3.4.0-beta.1")).as_deref(),
+            Some("3.4.0-beta.1")
+        );
+    }
+
+    #[test]
+    fn parse_release_tag_url_rejects_non_tag_pages() {
+        // No redirect happened — still on /releases/latest → force API fallback.
+        assert_eq!(
+            parse_release_tag_url("https://github.com/okx/onchainos-skills/releases/latest"),
+            None
+        );
+        // Non-semver tag (e.g. a named release) is not a version we can use.
+        assert_eq!(
+            parse_release_tag_url("https://github.com/okx/onchainos-skills/releases/tag/nightly"),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_ls_remote_versions_strips_peeled_and_v_prefix() {
+        let stdout = "\
+abc123\trefs/tags/v3.3.8
+def456\trefs/tags/v3.3.8^{}
+aaa111\trefs/tags/v3.4.0-beta.1
+bbb222\trefs/tags/not-a-version
+ccc333\trefs/heads/main
+";
+        // v3.3.8 + its peeled ref dedupe to one; non-v / branch refs are dropped.
+        assert_eq!(
+            parse_ls_remote_versions(stdout),
+            vec!["3.3.8".to_string(), "3.4.0-beta.1".to_string()]
+        );
+    }
+
+    #[test]
+    fn highest_version_picks_max_semver() {
+        assert_eq!(
+            highest_version(vec!["3.3.8".into(), "3.4.0-beta.1".into(), "3.3.9".into()]).as_deref(),
+            Some("3.4.0-beta.1")
+        );
+        // A stable release outranks its own pre-release.
+        assert_eq!(
+            highest_version(vec!["3.4.0-beta.1".into(), "3.4.0".into()]).as_deref(),
+            Some("3.4.0")
+        );
+        assert_eq!(highest_version(vec![]), None);
     }
 }
