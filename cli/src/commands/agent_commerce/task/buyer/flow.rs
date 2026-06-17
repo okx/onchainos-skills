@@ -107,7 +107,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Created => vec![
             next_action("job_created"),
             ref_header,
-            format!("  onchainos agent recommend {job_id} --agent-id <agentId>  # View recommended providers"),
+            format!("  onchainos agent asp-match --job-id {job_id} --agent-id <agentId>  # Search matching ASPs"),
             format!("  onchainos agent ack-to-confirm {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt> --agent-id <agentId>  # Composite: save-agreed + set-payment-mode + confirmNow branch"),
             format!("  onchainos agent get-agreed {job_id}  # Read locally persisted negotiation result"),
             format!("  onchainos agent set-payment-mode {job_id} --payment-mode <escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # Set payment mode (standalone)"),
@@ -280,11 +280,11 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
          \x20\x206b) ❌ **Do NOT confuse the counterpart's `role` with your own**: when you call `agent profile` / `agent get` on the **provider's** agentId (e.g. online-status check, provider validation), the `role` field in the response belongs to **that agent**, NOT to you. You are **always the buyer** (`--role buyer`) throughout the buyer playbook. Only read the specific field the playbook asks for (e.g. `onlineStatus`); ignore the provider's `role`. 🔴 Real incident: buyer sub called `agent get --agent-ids 802` to check provider info, saw `role: 1` in the response, mistakenly treated it as its own role, passed `--role provider` to `next-action`, and the task got stuck.\n\
          \x20\x207) ❌ **No technical jargon in user-visible content**: the content of `xmtp_dispatch_user` and the userContent of `xmtp_prompt_user` are shown directly to the user, **do NOT write** tool names (`xmtp_*`) / event names (`provider_applied`/`job_*`/`dispute_resolved` etc.) / status names (English enums like `open`/`accepted`/`disputed`) / CLI flags (`--*`) / skill names (`okx-agent-identity` / `§Feedback Submit` etc.) / status field names (`jobStatus`/`paymentMode` etc.) — always use **natural expressions in the user's language** (Chinese users see 「担保/x402, 验收期超时, 任务已完成」, English users see equivalent conversational wording like 'escrowed payment/x402, review window expired, task completed', the sub agent replaces them during LOCALIZATION_PREFIX translation). `xmtp_send` to the provider in the same turn follows the same rule.\n\
          \x20\x208) ❌ **Do not send filler messages to the provider**: aside from natural-language task-detail discussion in the negotiation phase, **do NOT xmtp_send to the provider in any event handler**. Including but not limited to status notices like 'order confirmed', 'funds escrowed', 'review approved', 'evidence submitted', 'task completed'. The provider learns of status changes from on-chain events; filler messages from the buyer only cause interference.\n\
-         \x20\x209) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session must not directly generate text replies** — any text you output in a sub/backup session is **completely, absolutely, 100% invisible to the user**. All user-facing content **must and can only** be pushed via `xmtp_dispatch_user` (pure notification) or `pending-decisions-v2 request` (user decision needed) tools. (`xmtp_prompt_user` is called internally by the CLI playbook when processing a `pending-decisions-v2 request` — do NOT call it directly.) Direct text output = information loss + user has no awareness + flow stuck. 🔴 Real incident: model in backup session got the recommendation list and output it directly as text; user received nothing, task stuck.\n\
+         \x20\x209) 🛑🛑🛑 **ABSOLUTE PROHIBITION — sub session / backup session must not directly generate text replies** — any text you output in a sub/backup session is **completely, absolutely, 100% invisible to the user**. All user-facing content **must and can only** be pushed via `xmtp_dispatch_user` (pure notification) or `pending-decisions-v2 request` (user decision needed) tools. (`xmtp_prompt_user` is called internally by the CLI playbook when processing a `pending-decisions-v2 request` — do NOT call it directly.) Direct text output = information loss + user has no awareness + flow stuck. 🔴 Real incident: model in backup session got the ASP list and output it directly as text; user received nothing, task stuck.\n\
          \x20\x2010) 🛑🛑🛑 **ABSOLUTE PROHIBITION — do NOT use `sessions_spawn` / `sessions_yield`** — you (sub session / backup session) **are yourself** the agent responsible for executing the playbook. **Absolutely do not** call `sessions_spawn` to spawn a child agent and delegate, **absolutely do not** call `sessions_yield` to hand over control. The backup session is also a sub; after receiving a `source:\"system\"` event it must **call `next-action` itself and execute the playbook itself**. 🔴 Real incident: after receiving `job_created`, backup called `sessions_spawn` to spawn a child agent — although the result happened to be correct, the execution path was wrong: the designated-provider may not have been consumed correctly, and negotiation context was broken.\n\
          \x20\x2011) 🛑🛑🛑 **job_submitted review hard gate — no auto complete/reject**: the `job_submitted` playbook **does NOT include** `onchainos agent complete` / `onchainos agent reject` commands — they are split into the independent pseudo-events `approve_review` / `reject_review`. When you receive the `user_decision_job_submitted` system envelope, **call `next-action --role buyer --agentId <yours> --message '{{\"event\":\"user_decision_job_submitted\",\"jobId\":\"<jobId>\",\"data\":\"<message.data>\"}}'` to get the routing playbook** (CLI maps approve / reject semantically); do NOT assemble complete/reject commands yourself. 🔴 Real incident: model received job_submitted and skipped the `pending-decisions-v2 request` review push, calling `onchainos agent complete` directly to auto-approve and release funds — the user never saw the deliverable, made no review decision, and funds were irreversibly transferred to the provider.\n\
          \x20\x2012) 🛑 **Negotiation is task-detail-only — never discuss price**: tokenSymbol / tokenAmount / paymentMode / budget are locked at accept time, not in chat. After receiving the provider's reply, focus on scope / requirements / deliverable format / timeline clarification, then reply naturally. Do NOT quote / counter-quote / mention budget / max_budget.\n\
-         \x20\x2013) 🛑🛑🛑 **ABSOLUTE PROHIBITION — when receiving a `user_decision_*` system envelope, you must execute in place, never forward**: a system envelope with `event:\"user_decision_<source>\"` (e.g. `user_decision_recommend_pick` / `user_decision_job_submitted`) is **a user decision relayed from the user-session for you to execute**. The pending-decisions-v2 queue entry was already cleared by `resolve` in the user-session — no manual remove needed.\n\
+         \x20\x2013) 🛑🛑🛑 **ABSOLUTE PROHIBITION — when receiving a `user_decision_*` system envelope, you must execute in place, never forward**: a system envelope with `event:\"user_decision_<source>\"` (e.g. `user_decision_asp_match_pick` / `user_decision_job_submitted`) is **a user decision relayed from the user-session for you to execute**. The pending-decisions-v2 queue entry was already cleared by `resolve` in the user-session — no manual remove needed.\n\
          \x20\x20\x20\x20Routing: call `next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"user_decision_<source>\",\"jobId\":\"{job_id}\",\"data\":\"<message.data verbatim>\"}}'`. The CLI returns a routing playbook that maps the user's reply semantically (LLM-based; pick ASP / approve / reject / specify / public / close / accept / reject / retry / dismiss / new-instruction / etc.). Follow the playbook verbatim.\n\
          \x20\x20\x20\x20**Absolutely do not** call `xmtp_dispatch_session` to forward the envelope to any session (including yourself) — you are the final receiver, forwarding = infinite loop. 🔴 Real incident: backup session (Minimax) received a user-decision relay and did not execute next-action, but instead called `xmtp_dispatch_session` to forward the same message to itself (its own backup sessionKey shape `agent:main:okx-a2a:group:okx-xmtp:backup:<jobId>`), forming an infinite loop and the task got stuck.\n\
          \x20\x20\x20\x20**Absolutely do not** call `pending-decisions-v2 resolve` / `pick` / `cancel` / `list` in a sub/backup session — these are user-session-only (the user-session already called resolve to produce the envelope you just received). See buyer-sub-playbook.md Critical Prohibitions.\n\
@@ -292,7 +292,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
          \x20\x2015) ⚡ **Zero-narration rule**: EVERY response MUST contain ≥1 tool_use block AND ≤2 lines of non-tool text. ✅ Allowed: `// decision: X` (single-line reasoning anchor, ≤30 tokens). ❌ Forbidden: narrating what you are about to do, recapping state, explaining rules, describing wait conditions. The tool call IS the action; no surrounding prose is needed.\n\n\
          If you don't remember the negotiation details for this task (paymentMode / token / provider agentId / price),\n\
          first run `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` to load the context.\n\
-         ⚠️ The `[Next Actions]` section in the `common context` output is a **status-level reference menu**, not your to-do list for this event. Only execute the steps in the playbook below — do NOT call CLIs from `[Next Actions]` (e.g. `recommend` / `set-public` / `close`) unless the playbook explicitly instructs you to.\n\n"
+         ⚠️ The `[Next Actions]` section in the `common context` output is a **status-level reference menu**, not your to-do list for this event. Only execute the steps in the playbook below — do NOT call CLIs from `[Next Actions]` (e.g. `asp-match` / `set-public` / `close`) unless the playbook explicitly instructs you to.\n\n"
     );
 
     let preamble_medium = "\
@@ -364,7 +364,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
             match &event {
                 Event::JobCreated => "xmtp_start_conversation (create group) → xmtp_send (send negotiation message)",
                 Event::ProviderApplied => "in-process branch by over_most_budget: confirm-accept (within budget) OR reject-apply + 4-option card (over budget)",
-                Event::ProviderReject => "in-process POST /reset/asp → playbook tells agent to localize + run okx-a2a user decision-request (4-option card)",
+                Event::JobProviderReject => "in-process POST /reset/asp → playbook tells agent to localize + run okx-a2a user decision-request (4-option card)",
                 Event::JobAccepted => "xmtp_dispatch_user (notify accept success)",
                 Event::JobSubmitted => "pending-decisions-v2 request (forward deliverable, request review decision)",
                 Event::JobRejected => "xmtp_dispatch_user (notify rejection on-chain) → wait for provider decision",
@@ -435,7 +435,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 .unwrap_or(1);
             super::flow_lifecycle::provider_applied(&ctx, over_most_budget, visibility).await
         }
-        Event::ProviderReject => {
+        Event::JobProviderReject => {
             let visibility = message
                 .and_then(|m| m.get("visibility"))
                 .and_then(|v| v.as_i64())
@@ -521,22 +521,40 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      ⚠️ Do NOT execute any on-chain action that wasn't part of the original failed command — the user reply only authorizes retry/edit of the failed step, not unrelated new actions.\n\
                      ⚠️ If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event cli_failed`. **`--user-content` and `--list-label` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
                 ),
-                "recommend_pick" => format!(
-                    "[User decision relay] source_event=`recommend_pick`, user's verbatim reply: `{reply}`\n\n\
-                     The push was the recommended-ASP list. **Semantic mapping** — decide what the user means:\n\n\
-                     \x20\x20• **Pick an ASP** — user gave an index (1/2/3/...) or a 3-digit agentId (e.g. `864`). Map index → agentId from the recommend list shown in the source-scene; the user picked agentId=`<X>`. Action: call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_created\",\"jobId\":\"{job_id}\",\"provider\":\"<X>\"}}'` and follow the returned playbook (xmtp_start_conversation + xmtp_send a natural-language inquiry about task details — see match_provider.rs Branch A).\n\
-                     \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent recommend {job_id} --next-page`. If results → the CLI writes a new card file (path printed as `Card file: <path>`); re-push the same recommend_pick decision (`pending-decisions-v2 request --source-event recommend_pick --user-content-file \"<card file path>\"`; --list-label `[Recommend <shortJobId>] <task title> ASP-pick decision`). **`--list-label` must be localized to the user's language**. If the user's language is not English, read the card file, translate field labels + footer, and pass via `--user-content` instead. If empty → enqueue the no-ASP next-step decision:\n\
+                "asp_match_pick" => format!(
+                    "[User decision relay] source_event=`asp_match_pick`, user's verbatim reply: `{reply}`\n\n\
+                     The push was the ASP-match list. **Semantic mapping** — decide what the user means:\n\n\
+                     \x20\x20• **Pick an ASP** — user gave an index (1/2/3/...) or a 3-digit agentId (e.g. `864`). Map index → agentId from the asp-match list shown in the source-scene; the user picked agentId=`<X>`. Action (set-asp flow):\n\
+                     \x20\x20\x20\x201. From the asp-match list, extract the picked ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`.\n\
+                     \x20\x20\x20\x202. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
+                     \x20\x20\x20\x20You selected Agent <X> — <serviceName>.\n\
+                     \x20\x20\x20\x20Service: <serviceDescription>\n\
+                     \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Please describe the input for this service (serviceParams):\n\
+                     \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<X> serviceId=<sid> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
+                     \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
+                     \x20\x20\x20\x203. If `serviceDescription` is empty (the service needs no input), skip the decision and call `set-asp` directly:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <X> --service-id <sid> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <X>. Waiting for ASP to accept.\" End the turn.\n\
+                     \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent asp-match --job-id {job_id} --next-page`. If results → the CLI writes a new card file (path printed as `Card file: <path>`); re-push the same asp_match_pick decision (`pending-decisions-v2 request --source-event asp_match_pick --user-content-file \"<card file path>\"`; --list-label `[ASP <shortJobId>] <task title> ASP-pick decision`). **`--list-label` must be localized to the user's language**. If the user's language is not English, read the card file, translate field labels + footer, and pass via `--user-content` instead. If empty → enqueue the no-ASP next-step decision:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] <task title> next-step decision\" --source-event no_asp_found\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
-                     \x20\x20\x20\x20[Job <shortJobId> — you are the User Agent] All recommended ASPs have been tried; no match found. Choose next step:\n\
+                     \x20\x20\x20\x20[Job <shortJobId> — you are the User Agent] All matched ASPs have been tried; no match found. Choose next step:\n\
                      \x20\x20\x20\x20A. Specify an ASP — provide the ASP's agentId\n\
                      \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
                      \x20\x20\x20\x20C. Close the job — cancel and refund\n\
                      \x20\x20• **Make public** — typical intents: B / 选B / `public` / `公开` / `公开任务`. Action: `onchainos agent set-public {job_id}`.\n\
                      \x20\x20• **Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
-                     ⚠️ If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event recommend_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or see more recommendations, list the task publicly, or cancel.\"\n"
+                     ⚠️ If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event asp_match_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or see more ASPs, list the task publicly, or cancel.\"\n"
                 ),
                 "provider_pending" => format!(
                     "[User decision relay] source_event=`provider_pending`, user's verbatim reply: `{reply}`\n\n\
@@ -549,7 +567,33 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => format!(
                     "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
                      The push was an A/B/C choice (designated agent not a provider / no ASP available / designated provider offline / x402 endpoint invalid / quote over budget). **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **A — Specify another ASP** — typical intents: A / 选A / `specify` / `指定`, **with a 3-digit agentId in the reply** (e.g. `A 864` / `指定 864` / just `864`). Action: extract the 3-digit agentId, then call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_created\",\"jobId\":\"{job_id}\",\"provider\":\"<agentId>\"}}'` and follow the returned playbook.\n\
+                     \x20\x20• **A — Specify another ASP** — typical intents: A / 选A / `specify` / `指定`, **with a 3-digit agentId in the reply** (e.g. `A 864` / `指定 864` / just `864`). Action (switch-asp flow):\n\
+                     \x20\x20\x20\x201. Reject current ASP (safe even if none active):\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent user-reject {job_id}\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x202. Fetch the new ASP's service info:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services for this ASP, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event {source}`.\n\
+                     \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
+                     \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
+                     \x20\x20\x20\x20Service: <serviceDescription>\n\
+                     \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Please describe the input for this service (serviceParams):\n\
+                     \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
+                     \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
+                     \x20\x20\x20\x205. If `serviceDescription` is empty, skip the decision and call `set-asp` directly:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n\
                      \x20\x20\x20\x20⚠️ If user said A / specify but **did NOT include an agentId** (e.g. just `A`, `选A`, `换一个 ASP`): re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event {source}`; `--user-content` and `--list-label` must be localized to the user's language; `--user-content` must ask for the agentId (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
                      \x20\x20• **B — Make public** — typical intents: B / 选B / `public` / `公开`. Action: `onchainos agent set-public {job_id}`.\n\
                      \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
@@ -557,19 +601,58 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 ),
                 "negotiate_over_budget" => format!(
                     "[User decision relay] source_event=`negotiate_over_budget`, user's verbatim reply: `{reply}`\n\n\
-                     The push was during negotiation when the ASP's quote exceeded max_budget — different A/B/C from the designated-flow `over_budget` (this one offers `view recommendations` not `make public`). **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **A — View recommendations** — typical intents: A / 选A / `推荐` / `recommend` / `列表` / `list` / `看看有谁`. Action: `onchainos agent recommend {job_id} --agent-id {agent_id}` — the CLI writes a card file (path printed as `Card file: <path>`); push the resulting list via `pending-decisions-v2 request --source-event recommend_pick --user-content-file \"<card file path>\"`. If the user's language is not English, read the card file, translate field labels + footer, and pass via `--user-content` instead.\n\
-                     \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId in the reply** (e.g. `B 864` / `指定 864` / `换 864`). Action: extract agentId → `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_created\",\"jobId\":\"{job_id}\",\"provider\":\"<agentId>\"}}'` and follow the returned playbook.\n\
+                     The push was during negotiation when the ASP's quote exceeded max_budget — different A/B/C from the designated-flow `over_budget` (this one offers `view ASP list` not `make public`). **Semantic mapping** — decide:\n\n\
+                     \x20\x20• **A — View ASP list** — typical intents: A / 选A / `推荐` / `recommend` / `列表` / `list` / `看看有谁`. Action: `onchainos agent asp-match --job-id {job_id}` — the CLI writes a card file (path printed as `Card file: <path>`); push the resulting list via `pending-decisions-v2 request --source-event asp_match_pick --user-content-file \"<card file path>\"`. If the user's language is not English, read the card file, translate field labels + footer, and pass via `--user-content` instead.\n\
+                     \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId in the reply** (e.g. `B 864` / `指定 864` / `换 864`). Action (switch-asp flow):\n\
+                     \x20\x20\x20\x201. Reject current ASP (safe even if none active):\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent user-reject {job_id}\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x202. Fetch the new ASP's service info:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`.\n\
+                     \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
+                     \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
+                     \x20\x20\x20\x20Service: <serviceDescription>\n\
+                     \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Please describe the input for this service (serviceParams):\n\
+                     \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
+                     \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
+                     \x20\x20\x20\x205. If `serviceDescription` is empty, skip the decision and call `set-asp` directly:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n\
                      \x20\x20\x20\x20⚠️ If user said B / specify **without** an agentId: re-ask via `pending-decisions-v2 request --source-event negotiate_over_budget` asking for the agentId; **`--user-content` and `--list-label` must be localized to the user's language** (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
                      \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
-                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=view recommendations  B=specify another ASP (include the agentId)  C=close the job\".\n"
+                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=view ASP list  B=specify another ASP (include the agentId)  C=close the job\".\n"
                 ),
                 "x402_price_mismatch" => format!(
                     "[User decision relay] source_event=`x402_price_mismatch`, user's verbatim reply: `{reply}`\n\n\
                      The push was an Accept/Reject choice (x402 endpoint price differs from the registered fee). **Semantic mapping** — decide:\n\n\
                      \x20\x20• **Accept** — typical intents: A / 选A / `accept` / `接受` / `同意` / `agree` / yes / OK. Action: continue with the x402 flow at DX-Step 3 (budget check + set-payment-mode). Call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_created\",\"jobId\":\"{job_id}\",\"provider\":\"<designated agentId>\"}}'` to re-enter the designated flow at DX-Step 3.\n\
-                     \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`. Action: `onchainos agent mark-failed {job_id} --provider <designated agentId>` then `onchainos agent recommend {job_id} --agent-id {agent_id}` to fetch alternatives; if list non-empty → the CLI writes a card file (path in stdout); push via `--source-event recommend_pick --user-content-file \"<card file path>\"` (translate field labels if non-English); if empty → push via `--source-event no_asp_found`.\n\n\
+                     \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`. Action: `onchainos agent mark-failed {job_id} --provider <designated agentId>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → the CLI writes a card file (path in stdout); push via `--source-event asp_match_pick --user-content-file \"<card file path>\"` (translate field labels if non-English); if empty → push via `--source-event no_asp_found`.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event x402_price_mismatch`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=accept this price  B=reject and switch ASP\".\n"
+                ),
+                "set_asp_params" => format!(
+                    "[User decision relay] source_event=`set_asp_params`, user's verbatim reply: `{reply}`\n\n\
+                     The user was asked for serviceParams after selecting an ASP (via the set-asp flow). Their reply IS the serviceParams value.\n\n\
+                     Action:\n\
+                     1. From your conversation context, retrieve the service info in the `[SERVICE_CONTEXT]` block you included when enqueuing this decision: `providerAgentId`, `serviceId`, `serviceTokenAddress`, `serviceTokenAmount`.\n\
+                     2. Call:\n\
+                     ```bash\n\
+                     onchainos agent set-asp {job_id} --provider-agent-id <providerAgentId> --service-id <serviceId> --service-params '<verbatim reply from user>' --service-token-address <serviceTokenAddress> --service-token-amount <serviceTokenAmount>\n\
+                     ```\n\
+                     3. On success → notify user (🌐 localize per user's language): \"ASP set to Agent <providerAgentId>. Waiting for ASP to accept the task.\"\n\
+                     4. On failure → relay the error to the user and re-ask via `pending-decisions-v2 request` with `--source-event set_asp_params`.\n\
+                     5. End the turn.\n"
                 ),
                 _ => format!(
                     "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n\n\
@@ -598,11 +681,12 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "reward_claimed" | "dispute_resolved" |
         "staked" | "unstake_requested" | "unstake_claimed" | "unstake_cancelled" | "stake_stopped" | "dispute_approved" |
         "user_decision_job_submitted" | "user_decision_review_deadline_warn" |
-        "user_decision_recommend_pick" | "user_decision_provider_pending" |
+        "user_decision_asp_match_pick" | "user_decision_provider_pending" |
         "user_decision_no_asp_found" | "user_decision_not_provider" |
         "user_decision_provider_offline" | "user_decision_x402_invalid" |
         "user_decision_over_budget" |
-        "user_decision_negotiate_over_budget" | "user_decision_x402_price_mismatch"
+        "user_decision_negotiate_over_budget" | "user_decision_x402_price_mismatch" |
+        "user_decision_set_asp_params"
     );
     let use_negotiate_preamble = matches!(event_str,
         "negotiate_reply" | "negotiate_counter"
@@ -619,7 +703,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     // session_status / sessions_spawn / pending-decisions-v2 request). Two
     // shapes qualify:
     //   1. `_cli` handlers that executed session_status / user_notify /
-    //      recommend in-process — body is a self-contained 2-step playbook.
+    //      asp-match in-process — body is a self-contained 2-step playbook.
     //   2. Terminal / notification-only events (e.g. `review_expired`) whose
     //      body is a single xmtp_dispatch_user + end-turn — the body already
     //      embeds L10N_DISPATCH_SHORT translation hints.

@@ -1,6 +1,6 @@
 //! Negotiation state management.
 //!
-//! Locally persisted recommendation list + the current negotiation index;
+//! Locally persisted ASP-match list + the current negotiation index;
 //! used by the agent when iterating providers.
 //!
 //! State file: `~/.onchainos/task/{jobId}/negotiate-state.json`.
@@ -101,7 +101,7 @@ fn state_path(job_id: &str) -> Result<std::path::PathBuf> {
 
 // ─── Public functions ────────────────────────────────────────────────────────
 
-/// Save the recommendation list; index resets to 0.
+/// Save the ASP-match list; index resets to 0.
 ///
 /// `page` is the current page (0-based). `failed_providers` is merged from any prior state.
 pub fn save(job_id: &str, providers: Vec<ProviderInfo>, page: usize) -> Result<()> {
@@ -131,7 +131,7 @@ pub fn save(job_id: &str, providers: Vec<ProviderInfo>, page: usize) -> Result<(
 pub fn load(job_id: &str) -> Result<NegotiateState> {
     let path = state_path(job_id)?;
     if !path.exists() {
-        bail!("Negotiation state not found; run `onchainos agent recommend {job_id}` first");
+        bail!("Negotiation state not found; run `onchainos agent asp-match --job-id {job_id}` first");
     }
     let raw = std::fs::read_to_string(&path)?;
     let state: NegotiateState = serde_json::from_str(&raw)?;
@@ -301,7 +301,7 @@ pub fn get_agreed_json(job_id: &str) -> Result<Option<serde_json::Value>> {
     })))
 }
 
-/// Save the designated provider (specified via `create-task --provider`; on `job_created` we skip `recommend`).
+/// Save the designated provider (specified via `create-task --provider`; on `job_created` we skip `asp-match`).
 pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result<()> {
     save_designated_provider_with_endpoint(job_id, provider_agent_id, None)
 }
@@ -364,7 +364,7 @@ pub fn clear_designated_provider(job_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Mark a provider as failed negotiation (filtered out of subsequent `recommend` displays).
+/// Mark a provider as failed negotiation (filtered out of subsequent `asp-match` displays).
 pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
     let mut state = match load(job_id) {
         Ok(s) => s,

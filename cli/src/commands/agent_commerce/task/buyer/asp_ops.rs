@@ -134,27 +134,44 @@ pub async fn handle_asp_match(
 
 /// POST /priapi/v1/aieco/task/{jobId}/set/asp
 ///
-/// Body: `{serviceId, serviceParams, servicePrice}`.
-/// Does NOT carry tokenSymbol/tokenAmount — switching ASP does not change the
-/// task's payment token or budget.
+/// Body: `{providerAgentId, serviceId, serviceParams, serviceTokenAddress, serviceTokenAmount,
+///         paymentTokenSymbol?, paymentTokenAmount?, paymentMostTokenAmount?}`.
 pub async fn handle_set_asp(
     client: &mut TaskApiClient,
     job_id: &str,
+    provider_agent_id: &str,
     service_id: &str,
     service_params: &str,
-    service_price: &str,
+    service_token_address: &str,
+    service_token_amount: &str,
+    payment_token_symbol: Option<&str>,
+    payment_token_amount: Option<&str>,
+    payment_most_token_amount: Option<&str>,
     explicit_agent_id: Option<&str>,
 ) -> Result<()> {
     let agent_id = resolve_agent(client, job_id, explicit_agent_id).await?;
 
+    let mut body = serde_json::json!({
+        "providerAgentId": provider_agent_id,
+        "serviceId": service_id,
+        "serviceParams": service_params,
+        "serviceTokenAddress": service_token_address,
+        "serviceTokenAmount": service_token_amount,
+    });
+    if let Some(s) = payment_token_symbol {
+        body["paymentTokenSymbol"] = serde_json::Value::String(s.to_string());
+    }
+    if let Some(a) = payment_token_amount {
+        body["paymentTokenAmount"] = serde_json::Value::String(a.to_string());
+    }
+    if let Some(m) = payment_most_token_amount {
+        body["paymentMostTokenAmount"] = serde_json::Value::String(m.to_string());
+    }
+
     client
         .post_with_identity(
             &client.endpoint(job_id, "set/asp"),
-            &serde_json::json!({
-                "serviceId": service_id,
-                "serviceParams": service_params,
-                "servicePrice": service_price,
-            }),
+            &body,
             &agent_id,
         )
         .await?;
@@ -167,15 +184,17 @@ pub async fn handle_set_asp(
         Some(vec![
             format!("jobId={job_id}"),
             format!("agentId={agent_id}"),
+            format!("providerAgentId={provider_agent_id}"),
             format!("serviceId={service_id}"),
-            format!("servicePrice={service_price}"),
+            format!("serviceTokenAmount={service_token_amount}"),
         ]),
         None,
     );
 
     println!("✓ ASP and service updated (off-chain). Backend will trigger job_asp_selected.");
+    println!("  providerAgentId: {provider_agent_id}");
     println!("  serviceId: {service_id}");
-    println!("  servicePrice: {service_price}");
+    println!("  serviceTokenAmount: {service_token_amount}");
     Ok(())
 }
 

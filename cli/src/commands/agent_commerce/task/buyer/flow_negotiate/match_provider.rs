@@ -1,12 +1,11 @@
 //! Event handlers for job_created, switch_provider, and provider_conversation.
 
 use super::super::flow::FlowContext;
-use crate::commands::agent_commerce::task::common::okx_a2a;
 
 // --- Event handler functions ------------------------------------------------
 
 pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
-    // No designated provider → recommend flow; designated → route_only flow.
+    // No designated provider → asp-match flow; designated → route_only flow.
     let has_designated = super::super::negotiate::get_designated_provider(ctx.job_id)
         .ok()
         .flatten()
@@ -18,82 +17,37 @@ pub(crate) fn job_created(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(crate) async fn job_created_cli(ctx: &FlowContext<'_>) -> String {
-    // No designated provider → recommend flow; designated → route_only flow.
+    // No designated provider → asp-match flow; designated → route_only flow.
     let has_designated = super::super::negotiate::get_designated_provider(ctx.job_id)
         .ok()
         .flatten()
         .is_some();
     if !has_designated {
-        return job_created_non_designated_provider_cli(ctx).await;
+        return job_created_non_designated_provider_cli(ctx);
     }
     job_created_with_designated_provider_cli(ctx).await
 }
 
-async fn job_created_non_designated_provider_cli(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let short_id = ctx.short_id;
+fn job_created_non_designated_provider_cli(ctx: &FlowContext<'_>) -> String {
     let title = ctx.title_display;
+    let short_id = ctx.short_id;
     let notify_tpl = super::super::content::job_created_non_designated_user_notify();
-    let list_label = format!("[Recommend {short_id}] {title} ASP-pick decision");
 
-    // Pre-fetch sessionKey (so the LLM can paste it into the bash below
-    // without calling session_status itself).
-    let session_key = match okx_a2a::session_status() {
-        Ok(Some(v)) => v,
-        Ok(None) => return "[job_created_cli] ERROR: okx-a2a session status returned no sessionKey\n".to_string(),
-        Err(e) => return format!("[job_created_cli] ERROR: okx-a2a session status failed: {e}\n"),
-    };
-
-    // Pre-fetch recommendations in-process (skips the `onchainos agent
-    // recommend` round-trip).
-    let cards_path_result = {
-        use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-        let mut client = TaskApiClient::new();
-        super::super::recommend::handle_recommend(
-            &mut client,
-            job_id,
-            agent_id,
-            0,
-            super::super::recommend::EmitDecisionOpts::default(),
-        )
-        .await
-    };
-    let cards_path = match cards_path_result {
-        Ok(Some(path)) => path,
-        Ok(None) => return "[job_created_cli] ERROR: recommend returned no visible providers (empty / all failed)\n".to_string(),
-        Err(e) => return format!("[job_created_cli] ERROR: recommend failed: {e}\n"),
-    };
-
-    // Fill the static placeholders in the notify template so the LLM only
-    // has to translate (no placeholder bookkeeping).
     let notify_filled = notify_tpl
         .replace("<title>", title)
         .replace("<short_jobId>", short_id);
 
-    // 3-action playbook: notify user (LLM translates + dispatches) → read
-    // card + translate → enqueue decision. session_status / recommend
-    // already ran in Rust.
     format!(
-        "[Trigger] job_created (on-chain, status: pending acceptance)\n\
+        "[Trigger] job_created (on-chain, public task — no designated provider)\n\
          [Role] User (Buyer)\n\n\
-         🛑 Execute the 3 actions below verbatim, in order. Do NOT add steps, do NOT branch. End the turn after Action 3.\n\n\
+         🛑 Execute the 1 action below, then end the turn. The task is public; ASPs will discover it and reach out via `provider_conversation`.\n\n\
          **Action 1 — Notify the user that the job is on-chain.** Translate the canonical English notification below to the user's chat language (per [Localization] rules), then dispatch it:\n\
          Canonical content (`<title>` and `<short_jobId>` already filled in):\n\
          \x20\x20{notify_filled}\n\
          ```bash\n\
          okx-a2a user notify --content '<your translated content>' --json\n\
          ```\n\n\
-         **Action 2 — Read the card file and translate ONCE to the user's chat language.**\n\
-         Use `Read` on `{cards_path}`. Translate the card body to the user's chat language; \
-         preserve every data value (jobId hex, AgentID digits, fee amounts, symbols), every field label \
-         layout, every line break. Do NOT paraphrase, do NOT add extra commentary. Translate the reply-hint \
-         footer (\"Please choose: reply with an index to pick an ASP; or see more / list publicly / cancel\") \
-         to the user's language too. Save the translated string as `<LOCALIZED_CARD>`.\n\n\
-         **Action 3 — Enqueue the pre-localized card as the user-pick decision:**\n\
-         ```bash\n\
-         onchainos agent pending-decisions-v2 request --sub-key \"{session_key}\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<LOCALIZED_CARD>\" --list-label \"{list_label}\" --source-event recommend_pick\n\
-         ```\n"
+         🛑 End the turn after notifying. Do NOT call `asp-match` — public tasks wait for ASPs to apply.\n"
     )
 }
 
@@ -155,61 +109,29 @@ async fn job_created_with_designated_provider_cli(ctx: &FlowContext<'_>) -> Stri
     format!("{notify_prelude}{branch_playbook}")
 }
 
-/// job_created flow when no provider is designated.
+/// job_created flow when no provider is designated (public task).
 ///
-/// Five linear actions, no branches. Action 4 (sub-side translation) is
-/// required because OpenClaw runtime does not auto-translate
-/// `xmtp_prompt_user.userContent` at render time, so the sub session must
-/// pre-localize the canonical English card before enqueueing it.
-///
-/// NOTE on the choice of Action 5: we deliberately call
-/// `pending-decisions-v2 request` directly instead of
-/// `recommend --emit-decision --user-content`. The `--emit-decision` path
-/// re-hits the `/match` API and rewrites the card file even when the sub
-/// already has a localized body to enqueue — wasted ~13s on the second turn.
-/// `pending-decisions-v2 request` does exactly the enqueue step we want
-/// without re-fetching anything. The `recommend --emit-decision` entry is
-/// kept (and remains useful once OpenClaw P0-D ships and Action 4 can go
-/// away — then a single `recommend --emit-decision` round-trip will cover
-/// fetch + enqueue without any pre-localization).
+/// Notify user → end turn. ASPs discover the public task and reach out
+/// via `provider_conversation`.
 fn job_created_non_designated_provider(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
+    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let short_id = ctx.short_id;
     let title = ctx.title_display;
     let notify_tpl = super::super::content::job_created_non_designated_user_notify();
-    let list_label = format!("[Recommend {short_id}] {title} ASP-pick decision");
     format!(
-        "[Trigger] job_created (on-chain, status: pending acceptance)\n\
+        "[Trigger] job_created (on-chain, public task — no designated provider)\n\
          [Role] User (Buyer)\n\n\
-         🛑 You are inside a sub/backup session. Execute the 5 actions below verbatim, in order. \
-         Do NOT add steps, do NOT branch. End the turn after Action 5.\n\n\
-         **Action 1 — Grab this session's sessionKey (once, reuse below):**\n\
-         tool: `session_status` (no args). Save the returned `sessionKey` as `<SUB_KEY>`.\n\n\
-         **Action 2 — Notify the user the job is on-chain** (translate template body to the user's language before sending):\n\
+         🛑 You are inside a sub/backup session. Execute the 2 actions below, then end the turn.\n\
+         The task is public; ASPs will discover it and reach out via `provider_conversation`.\n\n\
+         **Action 1 — Notify the user the job is on-chain** (translate template body to the user's language before sending):\n\
          tool: `xmtp_dispatch_user`\n\
          content (canonical English template — translate before passing): {notify_tpl}\n\
-         Fill: `<title>` = {title} | `<short_jobId>` = {short_id}\n\n\
-         **Action 3 — Fetch recommendations (writes the canonical English card file):**\n\
-         ```bash\n\
-         onchainos agent recommend {job_id} --agent-id {agent_id}\n\
-         ```\n\
-         Extract the path printed as `Card file: <path>` for Action 4.\n\n\
-         **Action 4 — Read the card file and translate ONCE to the user's language.**\n\
-         Use `Read` on the path from Action 3. Translate the card body to the user's chat language; \
-         preserve every data value (jobId hex, AgentID digits, fee amounts, symbols), every field label \
-         layout, every line break. Do NOT paraphrase, do NOT add extra commentary. Keep the reply-hint \
-         footer (\"Please choose: reply with an index to pick an ASP; or see more / list publicly / cancel\") \
-         localized to the user's language too. Save the translated string as `<LOCALIZED_CARD>`.\n\n\
-         **Action 5 — Enqueue the pre-localized card as the user-pick decision** (pass the translated body directly; do NOT re-call `recommend` — it would re-hit /match and waste ~13s):\n\
-         ```bash\n\
-         onchainos agent pending-decisions-v2 request --sub-key \"<SUB_KEY>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<LOCALIZED_CARD>\" --list-label \"{list_label}\" --source-event recommend_pick\n\
-         ```\n\
-         The CLI enqueues the card and emits the standard `xmtp_prompt_user` playbook. Execute that emitted playbook verbatim → end turn.\n\n\
-         🛑 Forbidden in this scene: `xmtp_start_conversation` (no peer chosen yet), \
-         `set-payment-mode` / `confirm-accept` / `apply` / `complete` / `reject` (no ASP picked yet), \
-         `recommend ... --emit-decision` (Action 5 already enqueues via the lightweight path — calling --emit-decision here would re-fetch /match and double-write the card file, wasting ~13s on this turn), \
-         `Write /tmp/...` (no need to save the translation to disk — pass it directly via `--user-content`).\n"
+         Fill: `<title>` = {title} | `<short_jobId>` = {short_id}\n\
+         {l10n_short}\n\n\
+         **Action 2 — End the turn.**\n\
+         Do NOT call `asp-match` — public tasks wait for ASPs to apply.\n\n\
+         🛑 Forbidden: `asp-match`, `xmtp_start_conversation`, `set-payment-mode`, \
+         `confirm-accept`, `apply`, `complete`, `reject`.\n"
     )
 }
 

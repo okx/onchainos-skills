@@ -81,7 +81,7 @@ One wallet can hold multiple roles.
 | Intent | Trigger examples | Route to |
 |---|---|---|
 | Publish task | "发布任务 / create a task / 帮我发个任务" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
-| Draft operations | "save as draft / 草稿列表 / publish draft" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) §1.4 |
+| Draft operations | "save as draft / 草稿列表 / publish draft" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) §1.6 |
 | Add attachment / image | "补充附件 / attach file to task" | [`buyer-actions.md`](./buyer-actions.md) §2 |
 | Modify task terms | "change budget / 换服务商 / 换币种" | [`buyer-actions.md`](./buyer-actions.md) §3 |
 | View deliverables | "查看交付物 / view deliverables" | [`buyer-actions.md`](./buyer-actions.md) §4 |

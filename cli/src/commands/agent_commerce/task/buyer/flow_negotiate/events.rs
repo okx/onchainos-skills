@@ -23,7 +23,7 @@ pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>) -> String {
      content:\n\
      \x20\x20- visibility=0 -> {visibility_public}\n\
      \x20\x20- visibility=1 -> {visibility_private}\n\n\
-     ⚠️ After switching to public, do **NOT** request the recommended ASP list (recommend); the user just waits for ASPs to reach out.\n\
+     ⚠️ After switching to public, do **NOT** request the ASP list (asp-match); the user just waits for ASPs to reach out.\n\
      -> **end this turn**.\n"
     )
 }
@@ -117,7 +117,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
      \x20\x20❌ `save-agreed` / `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
      [Your next action]\n\n\
      **xmtp_send a single natural-language reply** focused on task details. Keep it concise (capability check, scope clarification, deliverable expectations, timeline). End the turn after sending.\n\n\
-     ⏱ **5-minute timeout**: if the ASP does not reply within 5 minutes, run `onchainos agent mark-failed {job_id} --provider <ASP agentId>` then `onchainos agent recommend {job_id} --agent-id {agent_id}` to switch. Do NOT call `xmtp_delete_conversation` — just ignore further messages from that ASP.\n"
+     ⏱ **5-minute timeout**: if the ASP does not reply within 5 minutes, run `onchainos agent mark-failed {job_id} --provider <ASP agentId>` then `onchainos agent asp-match --job-id {job_id}` to switch. Do NOT call `xmtp_delete_conversation` — just ignore further messages from that ASP.\n"
     )
 }
 
@@ -166,7 +166,7 @@ pub(crate) fn negotiate_reply_cli(ctx: &FlowContext<'_>) -> String {
          \x20\x20--message '<natural-language reply, task details only — no price talk>' \\\n\
          \x20\x20--json\n\
          ```\n\n\
-         ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, run `onchainos agent mark-failed {job_id} --provider <ASP agentId>` then `onchainos agent recommend {job_id} --agent-id {agent_id}` to switch.\n"
+         ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, run `onchainos agent mark-failed {job_id} --provider <ASP agentId>` then `onchainos agent asp-match --job-id {job_id}` to switch.\n"
     )
 }
 
@@ -187,7 +187,7 @@ pub(crate) fn negotiate_counter(ctx: &FlowContext<'_>) -> String {
     negotiate_reply(ctx)
 }
 
-/// `Event::ProviderReject` — ASP declined to take this job on-chain (status remains `created`).
+/// `Event::JobProviderReject` — ASP declined via `asp/reject` API (status remains `created`).
 /// Buyer-side reaction:
 ///   Step 0 (in-process): POST `/priapi/v1/aieco/task/{jobId}/reset/asp` to clear the rejected
 ///                        ASP binding on the task record (no request body).
@@ -227,7 +227,7 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
 
     if let Err(e) = reset_result {
         return format!(
-            "[provider_reject] ❌ POST /priapi/v1/aieco/task/{job_id}/reset/asp failed in-process: {e}\n\n\
+            "[job_provider_reject] ❌ POST /priapi/v1/aieco/task/{job_id}/reset/asp failed in-process: {e}\n\n\
              Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
         );
     }
@@ -246,16 +246,16 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
      ```\n\
      ASP declined to take this task (jobId: {job_id}).\n\n\
      What would you like to do next?\n\
-     1. Browse the recommended ASP list\n\
+     1. Browse the ASP list\n\
      2. Designate a specific ASP by agentId\n\
      {option3_user_line}{close_num}. Close the task\n\
      ```\n\n\
      **`--llm-content` block (keep English; copy verbatim — do NOT translate):**\n\
      ```\n\
-     [USER_DECISION_REQUEST][source: provider_reject][job: {job_id}][role: buyer][agentId: {agent_id}]\n\n\
+     [USER_DECISION_REQUEST][source: job_provider_reject][job: {job_id}][role: buyer][agentId: {agent_id}]\n\n\
      Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
      Step 2 — When the user actually replies (next turn), route by choice:\n\
-     \x20\x20• 1 / \"list\" / \"recommend\" / \"浏览\" / \"推荐\"   → **TBD (implementation pending)**: fetch the recommended-ASP list and re-prompt the user to pick one.\n\
+     \x20\x20• 1 / \"list\" / \"asp-match\" / \"浏览\" / \"推荐\"   → **TBD (implementation pending)**: fetch the ASP-match list and re-prompt the user to pick one.\n\
      \x20\x20• 2 / \"designate\" / \"specify\" / \"指定\"           → **TBD (implementation pending)**: once an `agentId` is collected, run `onchainos agent set-provider {job_id} --provider-agent-id <agentId> --agent-id {agent_id}`.\n\
      {option3_llm_line}\x20\x20• {close_num} / \"close\" / \"cancel\" / \"关闭\"                  → run `onchainos agent close {job_id} --agent-id {agent_id}` then END TURN.\n\
      ```\n\n\

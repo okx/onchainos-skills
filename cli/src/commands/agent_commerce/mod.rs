@@ -75,7 +75,7 @@ pub enum AgentCommand {
         #[arg(long = "deadline-open")]  deadline_open: String,
         #[arg(long = "deadline-submit")] deadline_submit: String,
         #[arg(long)] title: Option<String>,
-        /// Specified provider agentId (skip recommend, negotiate directly with this provider or x402 accept)
+        /// Specified provider agentId (skip asp-match, negotiate directly with this provider or x402 accept)
         #[arg(long)] provider: Option<String>,
         /// Designated service endpoint (persisted for multi-service providers)
         #[arg(long)] endpoint: Option<String>,
@@ -91,6 +91,8 @@ pub enum AgentCommand {
         #[arg(long = "service-token-address")] service_token_address: Option<String>,
         /// Service price (from asp/match feeAmount)
         #[arg(long = "service-token-amount")] service_token_amount: Option<String>,
+        /// Task visibility: 1 = private (requires --provider), 0 = public
+        #[arg(long, default_value = "1")] visibility: i32,
         /// Accepted for compatibility but ignored — buyer identity is auto-resolved.
         #[arg(long = "agentId", alias = "agent-id", hide = true)]
         _agent_id: Option<String>,
@@ -115,9 +117,14 @@ pub enum AgentCommand {
     #[command(name = "set-asp")]
     SetAsp {
         job_id: String,
+        #[arg(long = "provider-agent-id")] provider_agent_id: String,
         #[arg(long = "service-id")] service_id: String,
         #[arg(long = "service-params")] service_params: String,
-        #[arg(long = "service-price")] service_price: String,
+        #[arg(long = "service-token-address")] service_token_address: String,
+        #[arg(long = "service-token-amount")] service_token_amount: String,
+        #[arg(long = "payment-token-symbol")] payment_token_symbol: Option<String>,
+        #[arg(long = "payment-token-amount")] payment_token_amount: Option<String>,
+        #[arg(long = "payment-most-token-amount")] payment_most_token_amount: Option<String>,
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
@@ -135,36 +142,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
-    /// Get recommended providers for a task
-    Recommend {
-        job_id: String,
-        #[arg(long = "agent-id")] agent_id: Option<String>,
-        #[arg(long)] next: bool,
-        #[arg(long)] current: bool,
-        #[arg(long)] page: Option<usize>,
-        #[arg(long = "next-page")] next_page: bool,
-        /// Enqueue the recommendation card as a `pending-decisions-v2`
-        /// `recommend_pick` decision and emit the standard "push card via
-        /// xmtp_prompt_user" playbook. Requires `--sub-key`. By default the
-        /// CLI reuses the canonical English card written to
-        /// `~/.onchainos/task/<jobId>/recommend-cards.txt`; pass
-        /// `--user-content "<localized text>"` to enqueue a sub-prepared
-        /// (e.g. translated) version instead.
-        #[arg(long = "emit-decision")] emit_decision: bool,
-        /// Full XMTP sessionKey (from `session_status`). Required with
-        /// `--emit-decision`.
-        #[arg(long = "sub-key")] sub_key: Option<String>,
-        /// Task title for the decision label (optional). Defaults to
-        /// `<title>` placeholder.
-        #[arg(long = "job-title")] job_title: Option<String>,
-        /// Pre-localized card body to enqueue instead of the auto-written
-        /// canonical English card file. Use when the sub session needs to
-        /// translate fields the user-session runtime cannot localize at
-        /// render time.
-        #[arg(long = "user-content")] user_content: Option<String>,
-    },
-
-    /// Mark a provider as failed negotiation (excluded from future recommend lists)
+    /// Mark a provider as failed negotiation (excluded from future asp-match lists)
     #[command(name = "mark-failed")]
     MarkFailed {
         job_id: String,
@@ -937,30 +915,27 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
             deadline_open, deadline_submit, title, provider, endpoint, attachments, payment_mode,
-            service_id, service_params, service_token_address, service_token_amount,
+            service_id, service_params, service_token_address, service_token_amount, visibility,
             _agent_id: _,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
                 deadline_open, deadline_submit, title, provider, endpoint, attachments, payment_mode,
-                service_id, service_params, service_token_address, service_token_amount,
+                service_id, service_params, service_token_address, service_token_amount, visibility,
             }, ctx,
         ).await,
 
         AgentCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } =>
             task::buyer::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id }, ctx).await,
 
-        AgentCommand::SetAsp { job_id, service_id, service_params, service_price, agent_id } =>
-            task::buyer::run_task(T::SetAsp { job_id, service_id, service_params, service_price, agent_id }, ctx).await,
+        AgentCommand::SetAsp { job_id, provider_agent_id, service_id, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
+            task::buyer::run_task(T::SetAsp { job_id, provider_agent_id, service_id, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id }, ctx).await,
 
         AgentCommand::ResetAsp { job_id, agent_id } =>
             task::buyer::run_task(T::ResetAsp { job_id, agent_id }, ctx).await,
 
         AgentCommand::UserReject { job_id, agent_id } =>
             task::buyer::run_task(T::UserReject { job_id, agent_id }, ctx).await,
-
-        AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } =>
-            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content }, ctx).await,
 
         AgentCommand::MarkFailed { job_id, provider_agent_id } =>
             task::buyer::run_task(T::MarkFailed { job_id, provider_agent_id }, ctx).await,
@@ -1561,12 +1536,13 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // (they have a valid jobId and their handlers currently run `common context` as Step 0/1).
     const PREFETCH_ONLY_EVENTS: &[&str] = &[
         "deliverable_received",
+        "job_provider_reject",
     ];
 
     // Events that skip both freshness validation AND pre-fetching (no jobId yet, or irrelevant).
     const SKIP_ALL_EVENTS: &[&str] = &[
         "create_task", "switch_provider",
-        "approve_review", "reject_review", "attachment_added", "close", "set_public",
+        "approve_review", "reject_review", "attachment_added", "buyer_attachment_received", "close", "set_public", "job_user_reject",
         "dispute_raise", "agree_refund",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
         "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",

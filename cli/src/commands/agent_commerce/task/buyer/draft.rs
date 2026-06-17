@@ -630,11 +630,7 @@ pub async fn handle_draft_publish(
     // See create.rs: skip the "Next: wait ..." hint in CLI mode to avoid the
     // passive phrasing suppressing the [Watch] block that follows.
     if !super::content::is_cli_mode() {
-        if provider_id.is_some() {
-            println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
-        } else {
-            println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
-        }
+        println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
     }
     if super::content::is_cli_mode() {
         println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");

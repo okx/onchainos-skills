@@ -29,7 +29,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
     let mut client = TaskApiClient::new();
 
     if over_most_budget {
-        // ── Over-budget branch: reject the apply, mirror provider_reject's playbook ──
+        // ── Over-budget branch: reject the apply, mirror job_provider_reject's playbook ──
         if let Err(e) = super::super::reject_apply::handle_reject_apply(&mut client, job_id, Some(agent_id)).await {
             return format!(
                 "[provider_applied/over_budget] ❌ reject-apply failed in-process: {e}\n\n\
@@ -51,7 +51,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
          ```\n\
          The ASP's quote exceeded the maximum budget for this task (jobId: {job_id}). The apply has been rejected automatically.\n\n\
          What would you like to do next?\n\
-         1. Browse the recommended ASP list\n\
+         1. Browse the ASP list\n\
          2. Designate a specific ASP by agentId\n\
          {option3_user_line}{close_num}. Close the task\n\
          ```\n\n\
@@ -60,7 +60,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
          [USER_DECISION_REQUEST][source: provider_applied_over_budget][job: {job_id}][role: buyer][agentId: {agent_id}]\n\n\
          Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — When the user actually replies (next turn), route by choice:\n\
-         \x20\x20• 1 / \"list\" / \"recommend\" / \"浏览\" / \"推荐\"   → **TBD (implementation pending)**: fetch the recommended-ASP list and re-prompt the user to pick one.\n\
+         \x20\x20• 1 / \"list\" / \"asp-match\" / \"浏览\" / \"推荐\"   → **TBD (implementation pending)**: fetch the ASP-match list and re-prompt the user to pick one.\n\
          \x20\x20• 2 / \"designate\" / \"specify\" / \"指定\"           → **TBD (implementation pending)**: once an `agentId` is collected, run `onchainos agent set-provider {job_id} --provider-agent-id <agentId> --agent-id {agent_id}`.\n\
          {option3_llm_line}\x20\x20• {close_num} / \"close\" / \"cancel\" / \"关闭\"                  → run `onchainos agent close {job_id} --agent-id {agent_id}` then END TURN.\n\
          ```\n\n\

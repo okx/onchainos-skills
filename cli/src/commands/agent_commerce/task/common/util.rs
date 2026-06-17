@@ -131,7 +131,7 @@ pub struct X402ServiceParams {
     pub fee_token_symbol: String,
 }
 
-/// Resolve x402 service params: CLI flag > recommend cache > identity service-list API > error.
+/// Resolve x402 service params: CLI flag > negotiate cache > identity service-list API > error.
 pub async fn resolve_x402_params(
     job_id: &str,
     provider_agent_id: Option<&str>,
@@ -153,7 +153,7 @@ pub async fn resolve_x402_params(
         });
     }
 
-    // Tier 2: recommend cache.
+    // Tier 2: negotiate cache.
     let mut cached_provider_agent_id = String::new();
     match crate::commands::agent_commerce::task::buyer::negotiate::current(job_id) {
         Ok(Some(pi)) => {
@@ -161,7 +161,7 @@ pub async fn resolve_x402_params(
             if let Some(svc) = pi.services.first() {
                 if !svc.endpoint.is_empty() && svc.fee_amount > 0.0 && !svc.fee_token_symbol.is_empty() {
                     if DEBUG_LOG {
-                        eprintln!("ℹ x402: using recommend cache endpoint={}, token={}, amount={}",
+                        eprintln!("ℹ x402: using negotiate cache endpoint={}, token={}, amount={}",
                             svc.endpoint, svc.fee_token_symbol, svc.fee_amount);
                     }
                     return Ok(X402ServiceParams {
@@ -176,17 +176,17 @@ pub async fn resolve_x402_params(
                 }
             }
             if DEBUG_LOG {
-                eprintln!("⚠ x402: recommend cache services empty or fields missing, falling back to service-list API");
+                eprintln!("⚠ x402: negotiate cache services empty or fields missing, falling back to service-list API");
             }
         }
         Ok(None) => {
             if DEBUG_LOG {
-                eprintln!("⚠ x402: recommend cache has no current provider, falling back to service-list API");
+                eprintln!("⚠ x402: negotiate cache has no current provider, falling back to service-list API");
             }
         }
         Err(e) => {
             if DEBUG_LOG {
-                eprintln!("⚠ x402: failed to read recommend cache ({e}), falling back to service-list API");
+                eprintln!("⚠ x402: failed to read negotiate cache ({e}), falling back to service-list API");
             }
         }
     }
@@ -197,7 +197,7 @@ pub async fn resolve_x402_params(
         .map(|s| s.to_string())
         .unwrap_or(cached_provider_agent_id);
     if resolved_id.is_empty() {
-        anyhow::bail!("unable to determine provider agentId: recommend cache is empty and --provider-agent-id was not provided");
+        anyhow::bail!("unable to determine provider agentId: negotiate cache is empty and --provider-agent-id was not provided");
     }
     let params = fetch_x402_service_from_identity(&resolved_id).await?;
     Ok(X402ServiceParams {

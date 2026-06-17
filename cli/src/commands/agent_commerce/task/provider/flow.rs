@@ -182,6 +182,11 @@ pub async fn generate_next_action(
             format!(
             "[Current state] job_accepted (User Agent has confirmed the apply)\n\
              [Role] ASP (Agent Service Provider)\n\n\
+             **[P2P inbound interception]** If the message that triggered this turn contains `[intent:attachment]` (the User Agent is forwarding a task attachment mid-execution), **stop** — do NOT run the steps below. Instead call:\n\
+             ```bash\n\
+             onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"buyer_attachment_received\",\"jobId\":\"{job_id}\"}}'\n\
+             ```\n\
+             Execute the returned download playbook, then end the turn. Do NOT reply with `[intent:ack]`.\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
              {task_fields}\n\
              **Step 1 — Notify the user (apply accepted) via `okx-a2a user notify`**:\n\n\
@@ -756,6 +761,7 @@ pub async fn generate_next_action(
              \x20\x20\x20\x20- If the other side just sends natural-language follow-up (e.g. \"can you reconsider 0.5 USDT?\") after your reject, you may reply naturally and continue Step 3 first-round negotiation; the prior [intent:reject] does NOT mean ignore them forever.\n\
              \x20\x20\x20\x20- The thread is only **truly dead** when BOTH sides have sent [intent:reject] AND no follow-up arrives, OR when the chain emits `job_closed` / `job_expired`.\n\n\
              **The inbound you received in the same turn determines what you can do**:\n\
+             \x20\x20• `[intent:attachment]` → **this is NOT a negotiation message**; the User Agent is forwarding a task attachment (reference material). Call `next-action` with `event=buyer_attachment_received` to get the download playbook: `onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"buyer_attachment_received\",\"jobId\":\"{job_id}\"}}'`. Do NOT reply with `[intent:ack]` or any negotiation marker; do NOT treat as a quote or proposal.\n\
              \x20\x20• Free-form inquiry (no `[intent:propose]` literal — even if it lists budget / payment) → Step 3 text negotiation only; **do NOT `[intent:ack]`**, **do NOT apply**.\n\
              \x20\x20• `[intent:propose]` literal marker present → Step 3.5 — reply with `[intent:ack]` / `[intent:counter]` / `[intent:reject]`; **do NOT apply**.\n\
              \x20\x20• User Agent's `[intent:confirm]` → verify fields match, then go to Step 4 to run `apply` directly. ❌ Do NOT `okx-a2a session send` anything in response — no `[intent:ack]`, no `[intent:confirm_ack]`, no thanks / acknowledgement filler. The handshake ENDS at `[intent:confirm]` (asymmetric — only PROPOSE→ACK is paired; CONFIRM is consumed silently).\n\
@@ -1115,6 +1121,47 @@ pub async fn generate_next_action(
             event = event.as_str()
         ),
 
+        // ─── Buyer attachment received — download + save, no reply ─────
+        Event::BuyerAttachmentReceived => {
+            let l10n_short = super::content::L10N_DISPATCH_SHORT;
+            let att_notify = super::content::buyer_attachment_received_user_notify(job_id);
+            format!(
+            "[Trigger] buyer_attachment_received (User Agent forwarded an attachment via `[intent:attachment]`)\n\
+             [Role] ASP (Agent Service Provider)\n\n\
+             🛑 **This is a file-download event, NOT a negotiation message.** Do NOT reply with `[intent:ack]` or any negotiation marker.\n\n\
+             [Your next actions (strict order)]\n\n\
+             **Step 1 — Parse the attachment fields from the inbound message:**\n\
+             Extract all 6 decryption-metadata fields from the `[intent:attachment]` message:\n\
+             \x20\x20- `fileKey` (FULL value)\n\
+             \x20\x20- `digest` (FULL hex string)\n\
+             \x20\x20- `salt` (FULL base64 string)\n\
+             \x20\x20- `nonce` (FULL base64 string)\n\
+             \x20\x20- `secret` (FULL base64 string, can be 100+ chars)\n\
+             \x20\x20- `filename`\n\
+             All 6 fields are REQUIRED for decryption. If any field is missing, log the error and end the turn.\n\n\
+             **Step 2 — Download the file:**\n\
+             Call `xmtp_file_download`:\n\
+             \x20\x20- fileKey: <from message>\n\
+             \x20\x20- digest: <from message>\n\
+             \x20\x20- salt: <from message>\n\
+             \x20\x20- nonce: <from message>\n\
+             \x20\x20- secret: <from message>\n\
+             \x20\x20- agentId: {agent_id}\n\
+             \x20\x20- filename: <from message>\n\
+             ⚠️ Before calling, print: `[provider-xmtp] xmtp_file_download: fileKey=<fileKey>, agentId={agent_id}`\n\
+             ⚠️ After calling, print: `[provider-xmtp] xmtp_file_download result: localPath=<returned local path>`\n\n\
+             On success, record the localPath.\n\
+             On failure → log the error; do NOT block negotiation or task execution.\n\n\
+             **Step 3 — Notify the user:**\n\
+             Call xmtp_dispatch_user:\n\
+             \x20\x20content: {att_notify}\n\
+             {l10n_short}\n\n\
+             **Step 4 — Silent acknowledgement (do NOT reply to the User Agent):**\n\
+             ❌ Do NOT call `xmtp_send` — attachments are supplementary reference materials; no protocol reply is needed.\n\
+             ❌ Do NOT treat this as a negotiation turn — do NOT send `[intent:ack]` / `[intent:counter]` / any natural-language reply.\n\n\
+             → **End this turn.** Continue negotiation or task execution when the next message arrives.\n")
+        }
+
         // ─── Staking / reward / slash lifecycle tx receipts — irrelevant when provider is not an evaluator ─────
         Event::Staked
         | Event::UnstakeRequested
@@ -1233,24 +1280,24 @@ pub async fn generate_next_action(
             }
         }
 
-        // provider_reject: off-chain receipt confirming this ASP's own asp-reject;
+        // job_provider_reject: off-chain receipt confirming this ASP's own asp-reject;
         // no provider-side action needed (the buyer side handles the re-route).
-        Event::ProviderReject => format!("[System notification] provider_reject (your decline was registered; no further action).\n"),
-        // job_user_reject: buyer refused to fund / confirm-accept after the provider applied;
-        // notify the user (the ASP's owner) and end the turn. Terminal for this round.
+        Event::JobProviderReject => format!("[System notification] job_provider_reject (your decline was registered; no further action).\n"),
         Event::JobUserReject => {
             let user_notify = super::content::job_user_reject_notify(job_id);
+            let l10n = super::content::L10N_DISPATCH_SHORT;
             format!(
-            "[Current state] job_user_reject (buyer declined to fund / confirm-accept)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
-             **Notify the user, then end the turn** (🌐 translate template to user's language first):\n\
-             {user_notify}\n\n\
-             ```bash\n\
-             okx-a2a user notify --content \"<translated text>\"\n\
-             ```\n\
-             ❌ Do NOT okx-a2a session send the buyer. ❌ Do NOT retry apply.\n"
+                "[Current state] job_user_reject (buyer declined to fund / confirm-accept)\n\
+                 [Role] ASP (Agent Service Provider)\n\n\
+                 **Notify the user, then end the turn** (🌐 translate template to user's language first):\n\
+                 {user_notify}\n\
+                 {l10n}\n\n\
+                 ```bash\n\
+                 okx-a2a user notify --content \"<translated text>\"\n\
+                 ```\n\
+                 ❌ Do NOT okx-a2a session send the buyer. ❌ Do NOT retry apply.\n"
             )
-        },
+        }
         Event::Other(ref other) => format!("[Unknown state] {other}\n"),
     };
     // Three mutually exclusive shapes:

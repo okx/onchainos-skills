@@ -190,14 +190,15 @@ pub enum Event {
     JobCreated,
     /// Provider apply on-chain (status remains created; pass-through event; notifies the provider that just applied).
     ProviderApplied,
-    /// Provider declined a buyer-designated assignment (off-chain; notifies the buyer that re-routing is needed).
-    ProviderReject,
+    /// ASP declined a buyer-designated assignment via `asp/reject` API (off-chain;
+    /// notifies the buyer to re-route to another ASP or fall back to public).
+    JobProviderReject,
+    /// Buyer rejected the current ASP via `user/reject` API (off-chain;
+    /// notifies the ASP that they are no longer needed for this task).
+    JobUserReject,
     /// Buyer designated a specific ASP for the task (private-task path; status remains created;
     /// notifies the chosen provider that they have been selected and should start negotiation).
     JobAspSelected,
-    /// Buyer refused to fund / pay after the provider applied (off-chain; notifies the
-    /// provider that the buyer declined payment so this designation is over).
-    JobUserReject,
     /// Buyer confirm-accept on-chain (status enters accepted; notifies provider).
     JobAccepted,
     /// Provider deliver on-chain (status enters submitted; notifies buyer to review).
@@ -301,10 +302,13 @@ pub enum Event {
     /// (without waiting for the on-chain task_provider_change confirmation).
     SwitchProvider,
 
-    // ── Attachment relay event (buyer-local dispatch, no status change) ─
+    // ── Attachment relay events (local dispatch, no status change) ──────
     /// User session dispatched `[ATTACHMENT_ADDED]`; sub session uploads + forwards the file to the provider.
     /// Can fire in Created (with active sub session) or Accepted — multi-status, so freshness check is skipped.
     AttachmentAdded,
+    /// Provider receives `[intent:attachment]` from the buyer; downloads + saves the file locally.
+    /// Can fire in Created (negotiation phase) or Accepted (mid-task) — multi-status.
+    BuyerAttachmentReceived,
 
     // ── Deliverable relay event (buyer-local dispatch, no status change) ─
     /// Buyer receives provider's `[intent:deliver]` P2P message; downloads + saves the deliverable
@@ -342,9 +346,9 @@ impl Event {
             // Main task flow
             "job_created"               => Event::JobCreated,
             "provider_applied"          => Event::ProviderApplied,
-            "provider_reject"           => Event::ProviderReject,
-            "job_asp_selected"          => Event::JobAspSelected,
+            "job_provider_reject"       => Event::JobProviderReject,
             "job_user_reject"           => Event::JobUserReject,
+            "job_asp_selected"          => Event::JobAspSelected,
             "job_accepted"              => Event::JobAccepted,
             "job_submitted"             => Event::JobSubmitted,
             "job_completed"             => Event::JobCompleted,
@@ -389,8 +393,9 @@ impl Event {
             "task_provider_change"      => Event::TaskProviderChange,
             // User-session pseudo events
             "switch_provider"           => Event::SwitchProvider,
-            // Attachment relay (buyer-local dispatch)
+            // Attachment relay (local dispatch)
             "attachment_added"          => Event::AttachmentAdded,
+            "buyer_attachment_received" => Event::BuyerAttachmentReceived,
             // Deliverable relay (buyer-local dispatch)
             "deliverable_received"      => Event::DeliverableReceived,
             // Negotiation relay (buyer-local dispatch)
@@ -407,9 +412,9 @@ impl Event {
         match self {
             Event::JobCreated             => "job_created",
             Event::ProviderApplied        => "provider_applied",
-            Event::ProviderReject         => "provider_reject",
-            Event::JobAspSelected         => "job_asp_selected",
+            Event::JobProviderReject       => "job_provider_reject",
             Event::JobUserReject          => "job_user_reject",
+            Event::JobAspSelected         => "job_asp_selected",
             Event::JobAccepted            => "job_accepted",
             Event::JobSubmitted           => "job_submitted",
             Event::JobCompleted           => "job_completed",
@@ -447,6 +452,7 @@ impl Event {
             Event::TaskProviderChange    => "task_provider_change",
             Event::SwitchProvider         => "switch_provider",
             Event::AttachmentAdded        => "attachment_added",
+            Event::BuyerAttachmentReceived => "buyer_attachment_received",
             Event::DeliverableReceived    => "deliverable_received",
             Event::NegotiateReply         => "negotiate_reply",
             Event::NegotiateAck           => "negotiate_ack",
@@ -467,7 +473,7 @@ impl Event {
             Event::JobAutoCompleted   => "auto-complete failed",
             Event::RewardClaimed      => "reward claim failed",
             Event::DisputeApproved    => "dispute initiation failed",
-            Event::ProviderReject     => "asp reject apply failed",
+            Event::JobProviderReject   => "asp reject failed",
             Event::Staked             => "staking failed",
             Event::UnstakeRequested   => "unstake failed",
             Event::UnstakeClaimed     => "unstake claim failed",
@@ -491,7 +497,7 @@ pub fn status_when_event(e: &Event) -> Status {
     match e {
         // Main flow
         Event::JobCreated | Event::ProviderApplied | Event::JobAspSelected
-        | Event::ProviderReject | Event::JobUserReject
+        | Event::JobProviderReject | Event::JobUserReject
         | Event::TaskTokenBudgetChange | Event::TaskProviderChange
         | Event::SwitchProvider
         | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,
@@ -533,6 +539,9 @@ pub fn status_when_event(e: &Event) -> Status {
         // attachment_added is dispatched by the user session; can fire at Created or Accepted —
         // multi-status, so freshness check is skipped via PSEUDO_EVENTS; placeholder here.
         Event::AttachmentAdded                                                  => Status::Other("attachment".to_string()),
+        // buyer_attachment_received fires on the provider when it receives [intent:attachment];
+        // can occur in Created (negotiation) or Accepted (mid-task) — multi-status placeholder.
+        Event::BuyerAttachmentReceived                                          => Status::Other("attachment".to_string()),
         // wake-up is a pass-through event; the real status lives in envelope.message.jobStatus.
         // Return a placeholder status here — agents must not drive next-action with wakeup_notify.
         Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),

@@ -97,6 +97,9 @@ pub fn job_asp_selected_rejected_notify(job_id: &str, reason: &str) -> String {
     )
 }
 
+pub(super) const L10N_DISPATCH_SHORT: &str = "\
+🌐🛑 **MUST translate** the content below to the user's language before passing to `xmtp_dispatch_user` (rule 5: non-English → faithful translation; rule 4: English → verbatim). Sending English content to a Chinese user is a violation.";
+
 /// `Event::JobAccepted` Step 1 — job-accepted notice pushed to the user.
 ///
 /// Each line is prefixed with 4 spaces of indentation to align with other step
@@ -303,5 +306,15 @@ pub fn deliver_file_to_buyer(job_id: &str) -> String {
          filename: <filename returned from A-Step 1>\n\
          [intent:deliver]"
     )
+}
+
+/// `Event::JobUserReject` — the buyer rejected this ASP; notify the provider's user.
+pub fn job_user_reject_user_notify(job_id: &str) -> String {
+    format!("[Job `{job_id}`] The buyer has selected a different provider for this task. No further action is needed on your side.")
+}
+
+/// Buyer attachment received — notify the provider's user.
+pub fn buyer_attachment_received_user_notify(job_id: &str) -> String {
+    format!("[Job `{job_id}`] The buyer sent an attachment (reference material for this task). File downloaded and saved locally.")
 }
 

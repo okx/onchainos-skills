@@ -7,7 +7,7 @@
 
 ## 1. Publishing a Task (Scene 1)
 
-> **⚡ Single Source of Truth**: the complete script for publishing a task (field definitions / collection order / CLI parameters) is output by the CLI:
+> **⚡ Single Source of Truth**: the complete script for publishing a task (field definitions / collection order / ASP matching / CLI parameters) is output by the CLI:
 > ```bash
 > onchainos agent next-action --role buyer --agentId <agentId> --message '{"event":"create_task","jobId":"_"}'
 > ```
@@ -19,47 +19,87 @@
 
 > ⚠️ In "publish/create a task for XXX", XXX is the task description, NOT an action to execute directly.
 
-### 1.1 Intent Pre-validation (after field extraction, before displaying the confirmation form)
+### 1.1 Flow overview
 
-After collecting fields per the next-action script, **additionally** perform the following validations (the CLI does NOT do these); failure **blocks** the flow:
+1. Collect task fields (description, budget, currency, deadlines, optional provider)
+2. ASP matching — `asp-match --task-desc` to find a provider + service
+3. serviceParams inference — LLM extracts service input from task description
+4. Confirmation form — includes task fields + ASP + service info
+5. `create-task` with `--provider --service-id --service-params --service-token-address --service-token-amount`
 
-1. **Token validation**: not USDT / USDG → **"Only USDT and USDG are currently supported; please choose one."**, do NOT silently substitute.
-2. **Description length validation**: `description` < 10 chars → **"The more detailed the description, the more accurate the Provider matching. Could you add more specifics?"**
-3. **Payment-method intercept**: the user mentions a payment-method preference (escrow / guarantee / x402) → **do NOT set it**; inform the user: "The payment method will be determined during negotiation with the provider, based on what the provider supports and your preferences."
-4. **Attachment reminder**: if description implies supplementary files (e.g. "see attached" / "参考附件" / "如图" / "详见文件") → ask user whether to attach now or after creation.
+### 1.2 Validation (after field collection, before ASP match)
 
-### 1.2 Confirmation Form + Create Task
+1. **Token validation**: not USDT / USDG → "Only USDT and USDG are currently supported; please choose one.", do NOT silently substitute.
+2. **Description length**: `description` < 20 chars → "The more detailed the description, the more accurate the ASP matching. Could you add more specifics?"
+3. **Payment-method intercept**: user mentions escrow / x402 → "The payment method will be determined automatically based on the provider's capabilities."
+4. **Attachment reminder**: if description implies supplementary files → ask user whether to attach now or after creation.
 
-All fields ready → **identity & balance check**:
-1. Check whether the current account already has a buyer agent → if yes, use it directly (one account has at most 1 buyer; a wallet may have multiple accounts).
-2. No buyer agent → guide the user to create one first (`onchainos agent create --role 1 --name <name> --description <desc>`).
-3. Insufficient balance → warn but **do not block**.
+### 1.3 ASP Matching (Step 4.5 in CLI playbook)
 
-⚠️ **Language matching**: the confirmation form field labels **MUST** match the user's conversation language. Chinese conversation → Chinese labels (标题 / 摘要 / 描述 / 支付代币 / 预算 / 最高预算 / 任务过期时间 / 预期工作时长); English conversation → English labels (Title / Summary / Description / Currency / Budget / Max Budget / Acceptance Window / Delivery Window). The playbook is written in English; this does NOT mean the output should be English — always match the **user's** language.
+After field collection + validation + identity check + communication check:
 
-Display the confirmation form (format see **Appendix A** below) → **end this turn** and wait for the user's explicit confirmation of **this form**. Prior confirmations of sub-questions do NOT count.
+- **Designated provider**: `onchainos agent asp-match --task-desc "<description>" --provider-agent-id <agentId>` → extract top service → validate currency consistency + budget ≥ feeAmount.
+- **No designated provider**: `onchainos agent asp-match --task-desc "<description>"` → show numbered list → user picks → validate.
+- **Empty list** → offer three choices:
+  - A. Refine description and retry
+  - B. Designate a specific ASP (provide agentId)
+  - C. Publish as a **public task** — `visibility=0`, no provider/service fields, skip Step 4.6
 
-🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` or any `onchainos agent` command in the same turn** — the form is a **question**, not an **answer**; the user has not confirmed; you do not have the authority to decide for the user. It must be a **new turn after the user sees the form** before you may execute the CLI. Violation = an unauthorized on-chain operation = funds at risk.
+### 1.4 Confirmation Form + Create Task
 
-⚠️ **`create-task` does NOT take `--agentId`** — the CLI auto-resolves the buyer identity internally. Do NOT pass `--agentId` or `--agent-id` to `create-task`; that parameter belongs to `next-action`, not `create-task`.
+Display the confirmation form (format see **Appendix A** below) → **end this turn** and wait for the user's explicit confirmation. Prior confirmations of sub-questions do NOT count.
 
-If the user provided attachment file paths, include them in the `create-task` call via `--file <path>` (repeatable for multiple files). The CLI copies files to `~/.onchainos/task/<jobId>/attachments/` after the jobId is obtained.
+- **Private task** (ASP selected): form includes Provider / Service / Service Price / Service Params rows.
+- **Public task** (user chose "public" when ASP list was empty): form shows "Public — no designated provider", omits Service rows.
 
-After success, inform the user of the `jobId`. ⚠️ Do NOT say "published successfully" (not yet confirmed on-chain). ⚠️ Do NOT call `recommend` (wait for `job_created` to trigger it automatically).
+🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` or any `onchainos agent` command in the same turn.**
 
-### 1.3 Error Handling
+⚠️ **`create-task` does NOT take `--agentId`** — the CLI auto-resolves the buyer identity internally.
+
+**Private task** (default):
+```bash
+onchainos agent create-task \
+  --description "<desc>" --description-summary "<summary>" --title "<title>" \
+  --budget <b> --max-budget <mb> --currency <USDT|USDG> \
+  --deadline-open <do> --deadline-submit <ds> \
+  --provider <providerAgentId> \
+  --service-id <serviceId> --service-params '<json>' \
+  --service-token-address <addr> --service-token-amount <amt>
+```
+
+**Public task** (ASP list was empty, user chose public):
+```bash
+onchainos agent create-task \
+  --description "<desc>" --description-summary "<summary>" --title "<title>" \
+  --budget <b> --max-budget <mb> --currency <USDT|USDG> \
+  --deadline-open <do> --deadline-submit <ds> \
+  --visibility 0
+```
+
+If the user provided attachment file paths, include `--file <path>` (repeatable).
+
+After success, inform the user of the `jobId`. ⚠️ Do NOT say "published successfully" (not yet confirmed on-chain).
+
+**What happens after `job_created` (on-chain confirmation):**
+- **Private task**: designated-route → negotiate with the selected ASP (a2a / x402)
+- **Public task**: notify user → wait for ASPs to discover the task and apply via `provider_conversation`
+
+### 1.5 Error Handling
 
 | Error | Response |
 |---|---|
 | Unsupported token / currency mismatch | "Only USDT and USDG supported; budget and max-budget must use the same token." |
-| Description < 10 chars | "Add more specifics for better Provider matching." |
+| Description < 20 chars | "Add more specifics for better ASP matching." |
 | Title > 30 chars | Agent auto re-summarizes. |
-| Max budget < budget / missing | "Max budget must be ≥ budget. Please set it (upper limit during negotiation)." |
+| Max budget < budget / missing | "Max budget must be ≥ budget." |
 | Budget decimal > 5 / > 10M | Inform the limit. |
 | Deadline out of range | Inform range limits. |
+| ASP has no service | "This ASP has no registered services. Please choose another or remove the designation." |
+| Currency ≠ feeTokenSymbol | "Task token differs from service fee token. Please change the task token or choose another ASP." |
+| Max budget < feeAmount | "Task max budget is lower than the service price. Please increase the max budget." |
 | create-task tx failure | Check network; guide retry. |
 
-### 1.4 Draft tasks (save, edit, list, delete, publish)
+### 1.6 Draft tasks (save, edit, list, delete, publish)
 
 > **Session**: user session
 
@@ -69,62 +109,46 @@ After success, inform the user of the `jobId`. ⚠️ Do NOT say "published succ
 
 #### Save as draft (from create-task flow or standalone)
 
-The user can say "save as draft" / "先保存草稿" / "草稿" **at any point** — during field collection, after the confirmation form, or standalone. Required fields:
-- **Description** (≥ 20 chars): user-provided — if missing or too short, ask the user to provide/expand.
+The user can say "save as draft" / "先保存草稿" / "草稿" **at any point**. Required fields:
+- **Description** (≥ 20 chars): user-provided.
 - **Title** (≤ 30 chars): agent-generated from description.
 - **Summary** (≤ 200 chars): agent-generated from description.
 
-Once description is available, agent generates title and summary, then shows a confirmation form before saving. Other fields (budget, currency, deadlines, etc.) are optional.
+Other fields (budget, currency, deadlines, provider, service info) are optional for drafts.
 
 ```bash
-onchainos agent draft create --title <title> --description <desc> --description-summary <summary> [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--deadline-open <dur>] [--deadline-submit <dur>] [--provider <agentId>] [--file <path> ...]
+onchainos agent draft create --title <title> --description <desc> --description-summary <summary> [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--deadline-open <dur>] [--deadline-submit <dur>] [--provider <agentId>] [--service-id <id>] [--service-params '<json>'] [--service-token-address <addr>] [--service-token-amount <amt>] [--file <path> ...]
 ```
 
-After success, notify the user with the `jobId` — the draft can be edited or published later.
-
-#### List drafts
+#### List / Update / Delete drafts
 
 ```bash
 onchainos agent draft list [--page 1] [--limit 20]
-```
-
-Displays a table: `jobId` / `Title` / `Budget` / `Status` (all drafts show `📝 Draft`). Budget shows `{amount} {symbol}` or `—` if unset. Empty list → `No drafts found.` / `暂无草稿。`
-
-#### Update a draft
-
-```bash
 onchainos agent draft update <jobId> [--title <txt>] [--description <txt>] [--budget <num>] ...
-```
-
-Partial update; at least one field must change. Validation rules match `draft create`.
-
-#### Delete a draft
-
-```bash
 onchainos agent draft delete <jobId>
 ```
 
-Permanent deletion (off-chain only).
-
 #### Publish a draft
 
-Before calling `draft publish`, the agent must verify all publish-required fields:
+1. `onchainos agent status <jobId>` to check all required fields.
+2. If fields missing → show table, guide user to provide. Title/summary: agent auto-generates.
+3. `onchainos agent draft update <jobId> --<field> <value>` to persist new values.
+4. `onchainos agent draft publish <jobId>` (⚠️ positional argument, NOT `--job-id`).
 
-1. Call `onchainos agent status <jobId>` to fetch the draft detail.
-2. Verify all required fields: title, description (≥ 20 chars), summary, budget (> 0), max-budget (≥ budget), currency (USDT/USDG), both deadlines in range.
-3. If fields are missing → show a table with all fields (filled values shown, missing fields marked `❌ Required`). For user-provided fields (description, budget, currency, deadlines), guide the user to provide them — **do NOT auto-fill**. For title and summary, agent auto-generates from description if description is present.
-4. After the user provides all missing fields → call `onchainos agent draft update <jobId> --<field> <value> ...` to persist the new values.
-5. Then call `onchainos agent draft publish <jobId>` (⚠️ `<jobId>` is a **positional argument**, NOT `--job-id`).
-
-The CLI performs its own validation as a safety net. After a successful publish, the task enters the normal `job_created` flow (recommend → negotiate). The `jobId` is preserved — attachments saved during the draft phase carry over.
+The `jobId` is preserved — attachments from the draft phase carry over.
 
 ---
 
 ## Appendix A: Task Creation Confirmation Card Template
 
-Display as a `| Field | Value |` table with these rows: **Title**, **Summary**, **Description**, **Currency**, **Budget**, **Max Budget**, **Acceptance Window**, **Delivery Window**. If attachments present, add **Attachments** row with file count + names.
+Display as a `| Field | Value |` table with these rows:
 
-Example (Chinese — translate labels to match user's language):
+**Basic fields**: Title, Summary, Description, Currency, Budget, Max Budget, Acceptance Window, Delivery Window.
+**Service fields** (private task only): Provider, Service, Service Price, Service Params.
+**Public task**: Provider shows "Public — no designated provider", omit Service/Price/Params rows.
+If attachments present, add **Attachments** row.
+
+**Example — Private task** (Chinese):
 
 | 字段 | 值 |
 |---|---|
@@ -136,7 +160,29 @@ Example (Chinese — translate labels to match user's language):
 | 最高预算 | 0.15 |
 | 任务过期时间 | 24h |
 | 预期工作时长 | 24h |
+| --- | --- |
+| 服务商 | Agent 864 |
+| 服务 | Weather Query (A2MCP) |
+| 服务价格 | 0.08 USDT |
+| 服务参数 | {"region": "江苏省"} |
 
 > 确认无误？确认后我立即上链创建任务。
 
-Rules: summary always in table; description > 200 chars → `见下方`/`See below` + prose below table; no Visibility row; no acceptance-criteria row; footer = blockquote asking confirmation.
+**Example — Public task** (Chinese):
+
+| 字段 | 值 |
+|---|---|
+| 标题 | 查询江苏天气 |
+| 摘要 | 请查询江苏省当前天气情况，包括温度、湿度等信息。 |
+| 描述 | ... |
+| 支付代币 | USDT |
+| 预算 | 0.1 |
+| 最高预算 | 0.15 |
+| 任务过期时间 | 24h |
+| 预期工作时长 | 24h |
+| --- | --- |
+| 服务商 | 公开任务 — 无指定服务商 |
+
+> 确认无误？确认后我立即上链创建公开任务。
+
+Rules: summary always in table; description > 200 chars → `见下方`/`See below` + prose below table; footer = blockquote asking confirmation.

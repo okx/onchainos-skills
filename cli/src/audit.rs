@@ -360,7 +360,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
 
         // Task (buyer)
         AgentCommand::CreateTask { .. } => "create-task".into(),
-        AgentCommand::Recommend { .. } => "recommend".into(),
         AgentCommand::Status { .. } => "status".into(),
         AgentCommand::Tasks { .. } => "tasks".into(),
         AgentCommand::SetPaymentMode { .. } => "set-payment-mode".into(),

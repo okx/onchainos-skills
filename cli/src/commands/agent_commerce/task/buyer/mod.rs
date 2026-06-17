@@ -2,7 +2,7 @@
 //!
 //! Files split by user action:
 //! - `create.rs`       — publish task (scene 1)
-//! - `recommend.rs`    — fetch recommended providers (scene 1)
+//! - `asp_ops.rs`      — ASP match + set-asp (scene 1)
 //! - `negotiate.rs`    — negotiation (scene 2, agent sub session)
 //! - `accept.rs`       — confirm accept + fund (scene 3)
 //! - `complete.rs`     — confirm completion (scene 5)
@@ -28,7 +28,6 @@ mod flow_lifecycle;
 mod flow_negotiate;
 pub(crate) mod negotiate;
 mod query;
-mod recommend;
 mod reject;
 mod reject_apply;
 mod set_terms;
@@ -62,7 +61,7 @@ pub enum TaskCommand {
         deadline_submit: String,
         #[arg(long)]
         title: Option<String>,
-        /// Designated provider agentId (skip recommend; negotiate or x402-accept with this provider directly).
+        /// Designated provider agentId (skip asp-match; negotiate or x402-accept with this provider directly).
         #[arg(long)]
         provider: Option<String>,
         /// Local file paths to attach to the task after creation.
@@ -86,6 +85,9 @@ pub enum TaskCommand {
         /// Service price (from asp/match feeAmount)
         #[arg(long = "service-token-amount")]
         service_token_amount: Option<String>,
+        /// Task visibility: 1 = private (requires --provider), 0 = public
+        #[arg(long, default_value = "1")]
+        visibility: i32,
     },
     /// Search matching ASPs (pre-publish or post-publish)
     AspMatch {
@@ -108,12 +110,22 @@ pub enum TaskCommand {
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     SetAsp {
         job_id: String,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
         #[arg(long = "service-id")]
         service_id: String,
         #[arg(long = "service-params")]
         service_params: String,
-        #[arg(long = "service-price")]
-        service_price: String,
+        #[arg(long = "service-token-address")]
+        service_token_address: String,
+        #[arg(long = "service-token-amount")]
+        service_token_amount: String,
+        #[arg(long = "payment-token-symbol")]
+        payment_token_symbol: Option<String>,
+        #[arg(long = "payment-token-amount")]
+        payment_token_amount: Option<String>,
+        #[arg(long = "payment-most-token-amount")]
+        payment_most_token_amount: Option<String>,
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
@@ -129,42 +141,7 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Get recommended providers for a task
-    Recommend {
-        job_id: String,
-        /// Agent identity (agenticId header)
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-        /// Show next provider (advance index) from cached list
-        #[arg(long)]
-        next: bool,
-        /// Show current provider from cached list
-        #[arg(long)]
-        current: bool,
-        /// Specify page number (0-based)
-        #[arg(long)]
-        page: Option<usize>,
-        /// Advance to next page
-        #[arg(long = "next-page")]
-        next_page: bool,
-        /// Emit a pending-decisions-v2 recommend_pick decision after fetching
-        /// the list. Requires `--sub-key`. By default uses the auto-written
-        /// canonical English card; pass `--user-content` to override with a
-        /// sub-localized version.
-        #[arg(long = "emit-decision")]
-        emit_decision: bool,
-        /// Full XMTP sessionKey (from `session_status`). Required with `--emit-decision`.
-        #[arg(long = "sub-key")]
-        sub_key: Option<String>,
-        /// Task title used in the decision list label (defaults to `<title>`).
-        #[arg(long = "job-title")]
-        job_title: Option<String>,
-        /// Pre-localized card body to enqueue instead of the auto-written
-        /// canonical English card file.
-        #[arg(long = "user-content")]
-        user_content: Option<String>,
-    },
-    /// Mark a provider as failed negotiation (excluded from future recommend lists)
+    /// Mark a provider as failed negotiation (excluded from future asp-match lists)
     MarkFailed {
         job_id: String,
         #[arg(long = "provider")]
@@ -181,7 +158,7 @@ pub enum TaskCommand {
         token_symbol: Option<String>,
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
-        /// x402 service endpoint URL (when omitted, fetched from the recommend cache or service-list API).
+        /// x402 service endpoint URL (when omitted, fetched from the negotiate cache or service-list API).
         #[arg(long)]
         endpoint: Option<String>,
     },
@@ -362,45 +339,20 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount, visibility } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
                 deadline_open, deadline_submit, title, provider, attachments, endpoint, payment_mode,
-                service_id, service_params, service_token_address, service_token_amount,
+                service_id, service_params, service_token_address, service_token_amount, visibility,
             }).await,
         TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } =>
             asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), page, agent_id.as_deref()).await,
-        TaskCommand::SetAsp { job_id, service_id, service_params, service_price, agent_id } =>
-            asp_ops::handle_set_asp(&mut client, &job_id, &service_id, &service_params, &service_price, agent_id.as_deref()).await,
+        TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
+            asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), payment_token_amount.as_deref(), payment_most_token_amount.as_deref(), agent_id.as_deref()).await,
         TaskCommand::ResetAsp { job_id, agent_id } =>
             asp_ops::handle_reset_asp(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::UserReject { job_id, agent_id } =>
             asp_ops::handle_user_reject(&mut client, &job_id, agent_id.as_deref()).await,
-        TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } => {
-            if next {
-                recommend::handle_recommend_next(&job_id)
-            } else if current {
-                recommend::handle_recommend_current(&job_id)
-            } else if next_page {
-                recommend::handle_recommend_next_page(&mut client, &job_id).await
-            } else {
-                let p = page.unwrap_or(0);
-                recommend::handle_recommend(
-                    &mut client,
-                    &job_id,
-                    agent_id.as_deref().unwrap_or(""),
-                    p,
-                    recommend::EmitDecisionOpts {
-                        enabled: emit_decision,
-                        sub_key,
-                        job_title,
-                        user_content,
-                    },
-                )
-                .await
-                .map(|_| ())
-            }
-        }
         TaskCommand::MarkFailed { job_id, provider_agent_id } => {
             negotiate::mark_failed(&job_id, &provider_agent_id)
         }

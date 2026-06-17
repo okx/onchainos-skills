@@ -163,7 +163,7 @@ pub(crate) fn negotiate_section_step2_onwards(
              ⚠️ When negotiation fails (timeout / no agreement reachable on task details), the sub session runs `{fallback_cmd}` to switch. Do NOT call `xmtp_delete_conversation` when switching.\n\n\
              [Subsequent events]\n\
              - escrow → ASP independently submits apply → provider_applied → confirm-accept / reject-apply → job_accepted\n\
-             - x402  → recommend auto-routing → set-payment-mode → job_payment_mode_changed → task-402-pay → job_accepted → complete\n")
+             - x402  → asp-match auto-routing → set-payment-mode → job_payment_mode_changed → task-402-pay → job_accepted → complete\n")
 }
 
 /// Designated-provider B-Step negotiation protocol (three-step handshake + group creation + first inquiry + end turn).
@@ -172,7 +172,7 @@ pub(crate) fn negotiate_section_step2_onwards(
 pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, title_display: &str) -> String {
     let _ = (short_id, title_display);
     let attachment_file = super::super::content::attachment_file_to_seller(job_id);
-    let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent recommend {job_id} --agent-id {agent_id}");
+    let fallback_cmd = format!("onchainos agent mark-failed {job_id} --provider {dp_id} && onchainos agent asp-match --job-id {job_id}");
     let pre_inquiry = negotiate_section_pre_inquiry(job_id, agent_id, dp_id);
     let step2 = negotiate_section_step2_onwards(job_id, agent_id, &attachment_file, &fallback_cmd, false);
     format!("{HANDSHAKE_RULES_A2A}\n\n{pre_inquiry}\n\n{step2}")

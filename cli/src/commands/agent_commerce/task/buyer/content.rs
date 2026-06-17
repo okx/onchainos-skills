@@ -35,11 +35,11 @@ pub use crate::commands::agent_commerce::task::common::config::is_cli_mode;
 
 /// `Event::JobCreated` Step 0 — user notification (no designated provider).
 pub fn job_created_non_designated_user_notify() -> &'static str {
-    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. Auto-querying recommended ASPs."
+    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain (public). Waiting for ASPs to discover and apply."
 }
 
 /// `Event::JobCreated` Step 0 — user notification (with designated provider).
-/// Used both for first-time creation and re-entry (recommend_pick / no_asp_found designate).
+/// Used both for first-time creation and re-entry (asp_match_pick / no_asp_found designate).
 pub fn job_created_designated_user_notify() -> &'static str {
     "[Connecting ASP]【<title>】(<short_jobId>) — connecting to the designated ASP (<provider_agentId>)."
 }
@@ -252,7 +252,7 @@ pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
 pub fn over_budget_user_prompt(short_id: &str) -> String {
     format!(
         "[Job {short_id} — you are the User Agent] The ASP's quote exceeds the maximum budget; negotiation terminated. Choose next step:\n\
-         A. View recommended ASP list\n\
+         A. View ASP list\n\
          B. Designate another ASP — provide the agentId\n\
          C. Close the job"
     )
@@ -377,7 +377,7 @@ pub fn attachment_file_to_seller(job_id: &str) -> String {
          nonce: <nonce — FULL base64 string, no truncation>\n\
          secret: <secret — FULL base64 string, no truncation (can be 100+ chars)>\n\
          filename: <filename from xmtp_file_upload>\n\
-         description: <brief one-line description of the attachment>\n\
+         description: This is an attachment/reference material for the task. The ASP should download it for task execution.\n\
          [intent:attachment]"
     )
 }
@@ -427,10 +427,10 @@ pub fn complete_failed_user_notify(job_id: &str) -> String {
 
 // ── create_task notification ─────────────────────────────────────
 
-/// create_task success — no designated provider.
+/// create_task success — no designated provider (public task).
 pub fn create_task_public_user_notify() -> String {
-    "Job submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
-     Once confirmed, the system will automatically fetch the recommended provider list for you to choose from."
+    "Job submitted (public); jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
+     Once confirmed, ASPs will be able to discover and apply for this task."
         .to_string()
 }
 
@@ -461,10 +461,10 @@ pub fn draft_deleted_user_notify() -> String {
         .to_string()
 }
 
-/// Draft publish success — no designated provider (same downstream flow as create-task).
+/// Draft publish success — no designated provider (public task).
 pub fn draft_publish_public_user_notify() -> String {
-    "Draft published; jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
-     Once confirmed, the system will automatically fetch the recommended provider list for you to choose from."
+    "Draft published (public); jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
+     Once confirmed, ASPs will be able to discover and apply for this task."
         .to_string()
 }
 
@@ -494,7 +494,7 @@ pub fn pending_list_empty_user_notify() -> String {
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
     format!(
         "[⚠️ Operation Failed] Job `{job_id}`\n\
-         - Action: <e.g. recommend providers / submit review / pay via x402>\n\
+         - Action: <e.g. match providers / submit review / pay via x402>\n\
          - Error: <one-sentence summary of stderr / error field>\n\
          - Current status: <describe in plain language, e.g. waiting for provider / under review / payment pending>\n\
          \n\

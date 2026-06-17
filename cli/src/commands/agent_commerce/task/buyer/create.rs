@@ -50,6 +50,7 @@ pub struct CreateTaskParams {
     pub service_params: Option<String>,
     pub service_token_address: Option<String>,
     pub service_token_amount: Option<String>,
+    pub visibility: i32,
 }
 
 struct ValidatedParams {
@@ -111,6 +112,10 @@ impl CreateTaskParams {
             Some(s) => s.clone(),
             None => self.description.chars().take(MAX_SUMMARY_CHARS).collect(),
         };
+
+        if self.visibility == 1 && self.provider.is_none() {
+            bail!("visibility=1 (private) requires --provider; either set a provider or use --visibility 0 (public)");
+        }
 
         if let Some(ref files) = self.attachments {
             for f in files {
@@ -245,7 +250,7 @@ pub async fn handle_create(
             Some("x402") => PaymentMode::X402.as_int(),
             Some(other) => bail!("unsupported --payment-mode \"{other}\"; valid values: escrow, x402"),
         },
-        "visibility":         1
+        "visibility":         params.visibility
     });
     if let Some(ref provider_id) = params.provider {
         body["providerAgentId"] = serde_json::json!(provider_id);
@@ -325,7 +330,7 @@ pub async fn handle_create(
         if params.provider.is_some() {
             println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
         } else {
-            println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
+            println!("Next: wait for the on-chain confirmation; the task is public — ASPs will discover it and apply.");
         }
     }
     if super::content::is_cli_mode() {

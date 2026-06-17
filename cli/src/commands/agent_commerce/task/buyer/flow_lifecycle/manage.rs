@@ -75,51 +75,125 @@ All post-creation negotiation, notifications, and review depend on the messaging
 3. After it finishes, proceed to Step 5
 
 ================================================
-Step 5 -- Show the confirmation form (format per `skills/okx-agent-task/buyer-actions-publish.md` Appendix A)
+Step 4.5 -- ASP matching (after communication check, before confirmation form)
+================================================
+
+🛑 This step runs AFTER Step 4 (communication check) and BEFORE Step 5 (confirmation form).
+
+**Branch by whether the user designated a provider:**
+
+**A. User designated a provider** (`--provider` is set):
+
+```bash
+onchainos agent asp-match --task-desc \"<description>\" --provider-agent-id <agentId>
+```
+
+Handle the result:
+- Empty (ASP has no service) → tell the user: \"This ASP has no registered services. Please choose another ASP or remove the designation.\" → wait for the user to decide.
+- Non-empty → extract the top service from the output:
+  - `serviceId`, `serviceName`, `serviceDescription`, `serviceType`
+  - `feeAmount` (→ `serviceTokenAmount`), `feeToken` (→ `serviceTokenAddress`), `feeTokenSymbol`
+  - `endpoint` (if A2MCP)
+
+**Validation (designated):**
+1. Currency consistency: task `currency` must match `feeTokenSymbol`. Mismatch → \"Task payment token ({currency}) differs from the service fee token ({feeTokenSymbol}). Please change the task token or choose another ASP.\"
+2. Budget check: `max-budget` ≥ `feeAmount`. Fail → \"Task max budget ({max-budget}) is lower than the service price ({feeAmount} {feeTokenSymbol}). Please increase the max budget.\"
+
+**B. User did NOT designate a provider:**
+
+```bash
+onchainos agent asp-match --task-desc \"<description>\"
+```
+
+Format the output as a numbered list for the user:
+```
+Matched ASPs:
+1. Agent <id> — security: X | feedback: Y | sold: Z
+   Service: <name> (<type>) — <feeAmount> <feeTokenSymbol>
+   「<serviceDescription>」
+2. ...
+
+Reply with a number to pick an ASP, or \"more\" for the next page.
+```
+
+→ **End this turn** and wait for the user's reply.
+
+**User reply routing:**
+- Number → select that ASP; extract its service fields; run the same validation as Branch A (currency + budget). Pass → continue to Step 4.6. Fail → show the error and wait.
+- \"more\" / \"下一页\" / \"next\" → `onchainos agent asp-match --task-desc \"<description>\" --page <next_page>`. Show results again.
+- Empty list → offer three choices:
+  A. Refine description and retry ASP matching
+  B. Designate a specific ASP (provide agentId)
+  C. Publish as a **public task** (visible to all ASPs, no pre-selected provider)
+  → If user picks C → skip Step 4.6, set `visibility=0`, go to Step 5 with public-task form (no service rows).
+
+================================================
+Step 4.6 -- serviceParams inference
+================================================
+
+Using the selected service's `serviceDescription` + `serviceName` + the user's task `description`, infer a `serviceParams` JSON string.
+
+Rules:
+- Identify what input the service expects from its description
+- Extract matching values from the user's task description
+- Output a JSON object (e.g. `{\"contractAddress\": \"0x1234...\", \"chain\": \"ETH\"}`)
+- If nothing can be inferred → use empty string `\"\"`, do not block the flow
+
+Do NOT ask the user for serviceParams — infer silently and show it in the confirmation form (Step 5). The user can correct it there.
+
+================================================
+Step 5 -- Show the confirmation form
 ================================================
 
 | Field | Value |
 |---|---|
 | Title | <short title, <=30 chars> |
 | Summary | <brief summary of the task, <=200 chars> |
-| Description | <full content> (if <=200 chars, put it in the table; if >200, write `see below` in the table and render the full content as prose below) |
+| Description | <full content> (if <=200 chars, put it in the table; if >200, write `see below` and render full content below) |
 | Payment token | <USDT or USDG> |
 | Budget | <number> |
 | Max budget | <number> (negotiation price cap) |
-| Acceptance window | <Nh> (auto-closes after N hours if no ASP accepts) |
-| Delivery window | <Nh> (deliverable must be submitted within N hours of acceptance) |
-| Designated provider | <agentId> if the user explicitly designated one; otherwise write exactly **Not designated**. Do NOT append any explanation such as \"(public task)\" — \"no designated provider\" ≠ \"public task\"; visibility is a separate field. |
+| Acceptance window | <Nh> |
+| Delivery window | <Nh> |
+| --- | --- |
+| Provider | Agent <providerAgentId> (or \"Public — no designated provider\" if public) |
+| Service | <serviceName> (<serviceType>) |
+| Service price | <feeAmount> <feeTokenSymbol> |
+| Service params | <serviceParams readable display, or \"None\"> |
 
-🚫 **The form MUST contain ONLY the fields listed above.** Do NOT add a Visibility / 可见性 row — visibility is not set at creation time.
+⚠️ **Public task**: if user chose \"public\" in Step 4.5, omit the Service / Service price / Service params rows. Show Provider row as \"Public — no designated provider\".
 
 > Confirm and publish? Or save as draft?
 
 ⚠️ Use Chinese field labels for Chinese conversations, English labels for English conversations.
 
-→ **End this turn**; after showing the form you MUST stop and wait for the user's reply.
-🛑 The user's earlier confirmation on a sub-question (e.g. token confirmation) does NOT count as confirming the form; you must wait for a new reply after the form is shown.
+→ **End this turn**; wait for the user's reply.
+🛑 Earlier sub-question confirmations (e.g. token confirmation) do NOT count as confirming the form.
 
 ================================================
 Step 5.5 -- Route by user decision (🛑 must NOT be in the same turn as Step 5)
 ================================================
 
 🛑🛑🛑 You MUST show the confirmation form (Step 5) AND wait for the user's reply before entering this step.
-NEVER skip directly to Step 6 (create-task) or Step 6-D (draft) — the user must explicitly choose.
+NEVER skip directly to Step 6 or Step 6-D.
 🔴 Real incident: an agent auto-filled all fields from the user's description, skipped the confirmation form, and called `create-task` directly — the task was published on-chain with terms the user never agreed to.
 
 After the user replies, determine which path to take:
 
-- **User confirms / says publish / approves** → go to Step 6 (publish on-chain immediately)
-- **User says \"save as draft\" / \"save draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D (save draft)
-- **User asks to edit a field** → update the field, show the form again (return to Step 5)
-- **Ambiguous reply** (e.g. \"OK\" without context, or unrelated text) → ask the user to clarify: publish on-chain now, or save as draft?
+- **User confirms / says publish / approves** → go to Step 6
+- **User says \"save as draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D
+- **User asks to edit a basic field** (description/budget/currency/deadlines) → update the field, re-run Step 4.5 validation (currency + budget check against the selected service) if currency or max-budget changed, show the form again (return to Step 5)
+- **User asks to change the ASP** (\"换个服务商\" / \"change ASP\" / \"other provider\") → go back to Step 4.5 Branch B (show the full asp-match list)
+- **User asks to modify serviceParams** → update serviceParams, show the form again (return to Step 5)
+- **Ambiguous reply** → ask: publish on-chain now, or save as draft?
 
 ================================================
 Step 6 -- ✅ DEFAULT Publish path: call create-task CLI (on-chain immediately)
 ================================================
 🟢 **This is the default path** — when the user confirms the form (or says \"publish\" / \"发布\"), use `create-task` below.
-❌ Do NOT call `draft create` here — `draft create` is only for Step 6-D when the user explicitly asks for a draft.
+❌ Do NOT call `draft create` here.
 
+**Private task (default — ASP selected in Step 4.5):**
 ```bash
 onchainos agent create-task \\
   --description \"<description>\" \\
@@ -128,14 +202,29 @@ onchainos agent create-task \\
   --budget <budget> --max-budget <max_budget> \\
   --currency <USDT|USDG> \\
   --deadline-open <deadline_open> --deadline-submit <deadline_submit> \\
-  [--provider <provider agentId>]
+  --provider <providerAgentId> \\
+  --service-id <serviceId> \\
+  --service-params '<serviceParams JSON>' \\
+  --service-token-address <feeToken> \\
+  --service-token-amount <feeAmount>
 ```
 
-🛑 `--provider <agentId>`: when the confirmation form includes a designated provider (指定服务商), you **MUST** pass `--provider`. Omitting it = the designated provider info is lost = job_created falls back to the recommend flow instead of routing directly to the specified provider.
+**Public task (user chose \"public\" in Step 4.5 when ASP list was empty):**
+```bash
+onchainos agent create-task \\
+  --description \"<description>\" \\
+  --description-summary \"<summary>\" \\
+  --title \"<title>\" \\
+  --budget <budget> --max-budget <max_budget> \\
+  --currency <USDT|USDG> \\
+  --deadline-open <deadline_open> --deadline-submit <deadline_submit> \\
+  --visibility 0
+```
+⚠️ Public tasks: NO `--provider` / `--service-*` flags. `--visibility 0` is required.
 
-🚫 **create-task only accepts the flags above. There is no --content / --period / --visibility / --amount / --token / --payment-mode flag.** When `--provider` is passed, the CLI automatically sets visibility=1 (PRIVATE) and providerAgentId; no extra flags needed.
-⚠️ **Payment mode is not set at creation** -- paymentMode is decided downstream: the A2A negotiation path is always escrow; if a provider is designated and has an endpoint, x402 is used. If the user mentions a preferred payment mode at publication, **do not pass --payment-mode**; tell them: \"The payment mode will be determined automatically when negotiating with the provider.\"
-🛑 **Error handling**: if the CLI returns a validation error (e.g. \"description is too short\"), relay the error message to the user and ask them to fix it. **Do NOT auto-modify, expand, or rewrite the user's content** — the user must provide the corrected value themselves. After the user provides the fix, return to Step 5 to show the updated confirmation form.
+🛑 Private tasks: `--provider` and `--service-*` flags are **all required**. Omitting `--visibility` defaults to 1 (PRIVATE).
+⚠️ **Payment mode is not set at creation** — paymentMode is decided downstream.
+🛑 **Error handling**: if the CLI returns a validation error, relay it to the user. **Do NOT auto-modify the user's content.** After the user fixes, return to Step 5.
 
 ================================================
 Step 6.5 -- Save attachments (only if the user included files with the task request)
@@ -161,8 +250,8 @@ If the user's message did NOT include any files, skip this step entirely.
 After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you are already in the user session):\n\
 ".to_string()
     + &format!("\
-- No --provider → \"{create_public}\"\n\
-- With --provider → \"{create_designated}\"\n\
+- Private task (has provider): \"{create_designated}\"\n\
+- Public task (no provider): \"{create_public}\"\n\
 ⚠️ If the CLI output contains a `⚠️ Insufficient ... balance` warning line, append it to the message above.\n\
 🌐 Localize to the user's language.\n\n\
 ===============================================================\n\
@@ -170,9 +259,8 @@ After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you 
 ===============================================================\n\
 ✅ **Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, run the emitted `okx-a2a user watch ...` command before ending the turn. Read `skills/okx-task-watch/SKILL.md` first if you haven't in this session.\n\
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.\n\
-❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification; it is not part of this turn.\n\
 ❌ **Do not call any other onchainos agent commands** (except `task-attach` in Step 6.5 and `okx-a2a user watch` above) -- all further actions are driven by on-chain events.\n\
-❌ **Do not describe the subsequent flow** (negotiation / bargaining / direct payment / x402) in the notification — at this point the payment path (escrow negotiation vs x402 direct payment) has NOT been determined yet (it depends on the provider's service-list, which is queried in the `job_created` event handler, not here). Saying \"I'll negotiate for you\" or \"the price will be X\" is potentially inaccurate and misleading.\n\
+❌ **Do not describe the subsequent flow** (negotiation / payment) in the notification — the payment path is determined downstream, not here.\n\
 ===============================================================\n\n\
 ================================================\n\
 Step 6-D -- Draft path: save as draft (off-chain)\n\
@@ -191,8 +279,12 @@ Once description is ready, generate title and summary from it, then show a draft
 | Max budget | <value or \"—\"> |\n\
 | Currency | <value or \"—\"> |\n\
 | Acceptance window | <value or \"—\"> |\n\
-| Delivery window | <value or \"—\"> |\n\n\
-> Save as draft? Other fields (marked —) are optional and can be added later.\n\n\
+| Delivery window | <value or \"—\"> |\n\
+| Provider | <Agent agentId or \"—\"> |\n\
+| Service | <serviceName or \"—\"> |\n\
+| Service price | <feeAmount feeTokenSymbol or \"—\"> |\n\
+| Service params | <serviceParams or \"—\"> |\n\n\
+> Save as draft? Fields marked — are optional and can be added later.\n\n\
 ⚠️ Use Chinese field labels for Chinese conversations, English labels for English conversations.\n\
 🛑 **Description**: must come from the user — do NOT auto-generate or invent content. You may consolidate the user's words, but the substance must be theirs.\n\
 🛑 **Title & Summary**: agent-generated from the user's description. Must count chars after generating — shorten title if >30, summary if >200.\n\
@@ -207,7 +299,9 @@ onchainos agent draft create \\\\\n\
   [--budget <budget>] [--max-budget <max_budget>] \\\\\n\
   [--currency <USDT|USDG>] \\\\\n\
   [--deadline-open <deadline_open>] [--deadline-submit <deadline_submit>] \\\\\n\
-  [--provider <provider agentId>]\n\
+  [--provider <provider agentId>] \\\\\n\
+  [--service-id <serviceId>] [--service-params '<serviceParams>'] \\\\\n\
+  [--service-token-address <feeToken>] [--service-token-amount <feeAmount>]\n\
 ```\n\n\
 🛑 **Error handling**: if the CLI returns a validation error (e.g. \"description is too short\"), relay the error message to the user and ask them to fix it. **Do NOT auto-modify, expand, or rewrite the user's content** — the user must provide the corrected value themselves.\n\
 ⚠️ If the user included file(s), save them after draft creation:\n\
@@ -219,8 +313,8 @@ After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you 
 🌐 Localize to the user's language.\n\n\
 → **End this turn.**\n\
 ===============================================================\n",
-        create_public = super::super::content::create_task_public_user_notify(),
         create_designated = super::super::content::create_task_designated_user_notify(),
+        create_public = super::super::content::create_task_public_user_notify(),
         draft_saved = super::super::content::draft_saved_user_notify(),
     )
 }
@@ -300,7 +394,6 @@ After success, tell the user directly (do NOT call `xmtp_dispatch_user` — you 
 ===============================================================
 ✅ **Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, run the emitted `okx-a2a user watch ...` command before ending the turn. Read `okx-task-watch/SKILL.md` first if you haven't in this session.
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- draft publish only submits the transaction; it is not yet confirmed on-chain.
-❌ **Do not call `recommend`** -- the recommended provider list is auto-triggered by the backup session upon receiving the `job_created` system notification.
 ❌ **Do not call any other onchainos agent commands** (except `okx-a2a user watch` above) -- all further actions are driven by on-chain events.
 ===============================================================\n",
         publish_public = super::super::content::draft_publish_public_user_notify(),
