@@ -83,6 +83,39 @@ pub(super) fn pending_cmd_file(job_id: &str, agent_id: &str, to_agent_id: Option
     format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id}{to_flag} --user-content-file \"<card file path from Step 1 output>\" --list-label \"{list_label}\" --source-event {source_event}")
 }
 
+/// Shared switch-asp routing text for user_decision_* handlers.
+/// Covers: user-reject → asp-match → service extraction → set-asp (or set_asp_params decision).
+fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> String {
+    format!("\
+                     \x20\x20\x20\x201. Reject current ASP (safe even if none active):\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent user-reject {job_id}\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x202. Fetch the new ASP's service info:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event {source_event}`.\n\
+                     \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
+                     \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
+                     \x20\x20\x20\x20Service: <serviceDescription>\n\
+                     \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Please describe the input for this service (serviceParams):\n\
+                     \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
+                     \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
+                     \x20\x20\x20\x205. If `serviceDescription` is empty, skip the decision and call `set-asp` directly:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n\
+                     \x20\x20\x20\x20⚠️ If user said specify but **did NOT include an agentId**: re-ask via `pending-decisions-v2 request --source-event {source_event}` asking for the agentId; **`--user-content` and `--list-label` must be localized to the user's language** (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n")
+}
+
 /// Shared context parameter pack across all event handler functions.
 pub(super) struct FlowContext<'a> {
     pub job_id: &'a str,
@@ -674,6 +707,18 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=view ASP list  B=specify another ASP (include the agentId)  C=close the job\".\n"
                 ),
+                "apply_over_budget" => {
+                    let switch_asp = switch_asp_routing(job_id, agent_id, "apply_over_budget");
+                    format!(
+                    "[User decision relay] source_event=`apply_over_budget`, user's verbatim reply: `{reply}`\n\n\
+                     ASP applied but quote exceeded max budget; apply auto-rejected. Options: A=browse / B=designate / (C=make public if private) / last=close. **Semantic mapping**:\n\n\
+                     \x20\x20• **A — Browse ASP list** — typical intents: A / 选A / `推荐` / `列表` / `list` / `浏览`. Action: `onchainos agent asp-match --job-id {job_id}` — push the card file via `pending-decisions-v2 request --source-event asp_match_pick --user-content-file \"<card file path>\"`. If non-English, translate field labels + footer and pass via `--user-content` instead.\n\
+                     \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId** (e.g. `B 864` / `指定 864`). Action (switch-asp flow):\n\
+                     {switch_asp}\
+                     \x20\x20• **C — Make public** — typical intents: C / 选C / `public` / `公开`. Action: `onchainos agent set-public {job_id}`. (Harmless no-op if already public.)\n\
+                     \x20\x20• **Close** (last option, C or D) — typical intents: `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event apply_over_budget`. **`--user-content` and `--list-label` must be localized**.\n"
+                )},
                 "x402_price_mismatch" => format!(
                     "[User decision relay] source_event=`x402_price_mismatch`, user's verbatim reply: `{reply}`\n\n\
                      The push was an Accept/Reject choice (x402 endpoint price differs from the registered fee). **Semantic mapping** — decide:\n\n\
@@ -724,7 +769,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "user_decision_no_asp_found" | "user_decision_not_provider" |
         "user_decision_provider_offline" | "user_decision_x402_invalid" |
         "user_decision_over_budget" |
-        "user_decision_negotiate_over_budget" | "user_decision_x402_price_mismatch" |
+        "user_decision_negotiate_over_budget" | "user_decision_apply_over_budget" |
+        "user_decision_x402_price_mismatch" |
         "user_decision_set_asp_params"
     );
     let use_negotiate_preamble = matches!(event_str,
