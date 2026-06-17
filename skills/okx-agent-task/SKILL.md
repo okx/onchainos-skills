@@ -4,7 +4,7 @@ description: "MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:
 license: Apache-2.0
 metadata:
   author: okx
-  version: "3.20.1-beta"
+  version: "3.20.4-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -27,16 +27,6 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 | User Intent Routing | User-session free-form text |
 | Communication Boundary | Every a2a-agent-chat |
 | Additional Resources | On demand |
-
-## OKX A2A Runtime Bridge
-
-This skill still names legacy OpenClaw A2A tools such as `xmtp_send`, `xmtp_start_conversation` `xmtp_start_evaluate_conversation`, `xmtp_prompt_user`, `xmtp_dispatch_user`, `xmtp_dispatch_session`, `xmtp_get_conversation_history`, `xmtp_sessions_query`, and `session_status`.
-
-When a playbook step needs one of those tools, first load [`okx-agent-chat/references/okx-a2a-legacy-tool-bridge/SKILL.md`](../okx-agent-chat/references/okx-a2a-legacy-tool-bridge/SKILL.md). That bridge owns the runtime check:
-
-- If the current environment exposes the native `xmtp_*` / `session_status` tools, use the native tools.
-- If those tools are absent, unavailable, or return "unknown tool" / "not found", use the bridge with the same legacy parameter names.
-- Do not duplicate the mapping table in this file. Load the bridge's `references/tool-mapping.md` only when exact CLI argument mapping is needed.
 
 ## Roles
 

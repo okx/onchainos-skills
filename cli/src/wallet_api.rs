@@ -1321,10 +1321,9 @@ impl WalletApiClient {
         if let Some(loc) = locale {
             body["locale"] = serde_json::Value::String(loc.to_string());
         }
-        // camelCase wire key — lowercase `syslocale` is ignored by the backend.
-        if let Some(sl) = sys_locale {
-            body["sysLocale"] = serde_json::Value::String(sl.to_string());
-        }
+        // camelCase key (backend ignores lowercase `syslocale`); falls back to NOT_FOUND.
+        body["sysLocale"] =
+            serde_json::Value::String(sys_locale.unwrap_or("NOT_FOUND").to_string());
         let data = self
             .post_public("/priapi/v5/wallet/agentic/auth/init", &body)
             .await?;
@@ -1399,10 +1398,9 @@ impl WalletApiClient {
             "sign": sign,
             "locale": locale,
         });
-        // camelCase wire key; sysLocale is NOT part of the AK signed string (Q3).
-        if let Some(sl) = sys_locale {
-            body["sysLocale"] = serde_json::Value::String(sl.to_string());
-        }
+        // camelCase key; NOT in the AK signed string (Q3); falls back to NOT_FOUND.
+        body["sysLocale"] =
+            serde_json::Value::String(sys_locale.unwrap_or("NOT_FOUND").to_string());
         let data = self
             .post_public("/priapi/v5/wallet/agentic/auth/ak/verify", &body)
             .await?;

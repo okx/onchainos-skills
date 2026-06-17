@@ -21,11 +21,10 @@ use uuid::Uuid;
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::Context;
 use crate::output;
-use crate::wallet_api::WalletApiClient;
 
 use super::args::{
-    AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackSubmitArgs, SubmitApprovalArgs, UpdateArgs,
-    UploadArgs, XmtpSignArgs,
+    ActivateArgs, AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackSubmitArgs, PrecheckArgs,
+    UpdateArgs, UploadArgs, XmtpSignArgs,
 };
 use super::models::{AgentCard, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_INDEX_NUM};
 use super::signing::{
@@ -34,31 +33,36 @@ use super::signing::{
 };
 use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
-    ensure_provider_has_service, identity_ws_url, normalize_bcp47, normalize_role,
-    normalize_singleton_object, parse_agent_unsigned, parse_services, parse_stars_arg,
-    reconstruct_post_url_for_log, redact_token_for_debug, require_non_empty, trim_or_empty,
-    wallet_client,
+    build_precheck, collect_owned_agents, ensure_provider_has_service, identity_ws_url,
+    normalize_bcp47, normalize_role, normalize_singleton_object, parse_agent_unsigned,
+    parse_services, parse_stars_arg, reconstruct_post_url_for_log, redact_token_for_debug,
+    require_non_empty, trim_or_empty, wallet_client,
 };
 
 const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Per-page size for the post-broadcast agent-list pagination loop. 100 is
-/// well above any real wallet's agent count and minimizes round trips; the
-/// loop relies on the response's `total` to know when to stop.
-const AGENT_LIST_PAGE_SIZE: usize = 100;
-/// Safety cap so a buggy `total` cannot trap us in an infinite paging loop
-/// — 100 × 20 = 2 000 agents, ample headroom over real-world counts.
-const AGENT_LIST_MAX_PAGES: usize = 20;
 
 // ─── Public command entry points ──────────────────────────────────────────
+
+fn scrub_body_for_log(body: &serde_json::Value) -> serde_json::Value {
+    let mut b = body.clone();
+    if let Some(obj) = b.as_object_mut() {
+        for k in &["sessionCert", "sessionSignature"] {
+            if obj.contains_key(*k) {
+                obj.insert((*k).to_string(), serde_json::json!("<redacted>"));
+            }
+        }
+    }
+    b
+}
 
 pub async fn create(args: CreateArgs, ctx: &Context) -> Result<()> {
     output::success(create_impl(&args, ctx).await?);
     Ok(())
 }
 
-pub async fn consent(args: ConsentArgs, ctx: &Context) -> Result<()> {
-    output::success(consent_impl(&args, ctx).await?);
+pub async fn precheck(args: PrecheckArgs, ctx: &Context) -> Result<()> {
+    output::success(precheck_impl(&args, ctx).await?);
     Ok(())
 }
 
@@ -67,18 +71,13 @@ pub async fn update(args: UpdateArgs, ctx: &Context) -> Result<()> {
     Ok(())
 }
 
-pub async fn activate(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
+pub async fn activate(args: ActivateArgs, ctx: &Context) -> Result<()> {
     output::success(activate_impl(&args, ctx).await?);
     Ok(())
 }
 
 pub async fn deactivate(args: AgentStatusArgs, ctx: &Context) -> Result<()> {
     output::success(deactivate_impl(&args, ctx).await?);
-    Ok(())
-}
-
-pub async fn submit_approval(args: SubmitApprovalArgs, ctx: &Context) -> Result<()> {
-    output::success(submit_approval_impl(&args, ctx).await?);
     Ok(())
 }
 
@@ -102,17 +101,16 @@ pub async fn xmtp_sign(args: XmtpSignArgs, ctx: &Context) -> Result<()> {
 async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    // --address 已从 CLI 去掉；广播走默认 XLayer 地址（当前选中账号）。
+    // --address removed from CLI; broadcast uses the default XLayer address (current account).
     let signing_session = load_agent_signing_session(None)?;
     let from_addr = signing_session.addr_info.address.clone();
     let key_uuid = Uuid::new_v4().to_string();
     let session_signature = sign_key_uuid(&key_uuid, &signing_session.signing_seed)?;
     let normalized_role = normalize_role(require_non_empty(args.role.as_deref(), "--role")?)?;
-    // Description 必填规则按 role 分支：
-    //   - provider（卖家）：被搜索 / 匹配的核心字段 → 必填。
-    //   - requester（买家）/ evaluator（验证者）：选填；未填则上链
-    //     `ProfileDescription: ""`（与 picture 一致），skill 端渲染为
-    //     `未填 / (not set)`，详见 role-requester.md / role-evaluator.md。
+    // Description requirements differ by role:
+    //   - provider: core searchable field → required.
+    //   - requester / evaluator: optional; omitted = on-chain ProfileDescription:"",
+    //     rendered by the skill as "(not set)". See references/register.md.
     let profile_description = if normalized_role == "provider" {
         require_non_empty(args.description.as_deref(), "--description")?.to_string()
     } else {
@@ -143,7 +141,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
-        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string())
+        serde_json::to_string(&scrub_body_for_log(&body)).unwrap_or_else(|_| "<serialize failed>".to_string())
     );
     let response = client
         .post_authed(
@@ -158,9 +156,9 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
             .unwrap_or_else(|_| "<serialize failed>".to_string())
     );
     let unsigned = parse_agent_unsigned(response)?;
-    // erc8004Msg 三个字段：communicationAddress 由后端 pre-transaction 返回；
-    // role / keyUuid 是本次 create 客户端持有的值。sessionSignature 已不再
-    // 进 erc8004Msg（保留在请求体里）。
+    // erc8004Msg fields: communicationAddress comes from the pre-transaction response;
+    // role / keyUuid are held by the client for this create. sessionSignature is no
+    // longer included in erc8004Msg (it stays in the request body).
     let communication_address = unsigned
         .extra_data
         .get("communicationAddress")
@@ -173,10 +171,10 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         ("keyUuid", &key_uuid),
     ]);
 
-    // 广播前先建立 wallet-agentic-identity 订阅；任何环节失败都降级，不阻断后续广播。
-    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com:8443/ws/v5/private），
-    // OKX_AGENTIC_WS_URL 环境变量可整 URL 覆盖（dev / pre / debug 用）。
-    // push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
+    // Open the wallet-agentic-identity subscription before broadcast; any failure
+    // degrades gracefully and does not block the broadcast.
+    // identity_ws_url() defaults to WS_URL_PROD; override with OKX_AGENTIC_WS_URL.
+    // push-platform login uses the wallet address as the "token" value (not a JWT).
     let subscription =
         match open_identity_subscription(&from_addr, &identity_ws_url()).await {
         Ok(s) => Some(s),
@@ -197,8 +195,8 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     .await?;
 
     let push = wait_for_identity_push(subscription, &tx_hash).await;
-    let agent_list = fetch_agent_list(&mut client, &access_token).await;
-    Ok(assemble_identity_envelope(tx_hash, push, agent_list))
+    let new_agent_id = extract_agent_id_from_push(push.as_ref());
+    Ok(assemble_identity_envelope(tx_hash, push, new_agent_id))
 }
 
 // ─── `agent consent` ──────────────────────────────────────────────────────
@@ -278,6 +276,82 @@ async fn consent_impl(args: &ConsentArgs, ctx: &Context) -> Result<Value> {
     }))
 }
 
+// ─── `agent precheck` (unified registration entry) ─────────────────────────
+//
+// Folds first-time consent + per-wallet uniqueness into ONE command (see the
+// registration flow diagram). `--role` is REQUIRED; `--consent-key` optional.
+// Flow: fetch agent list → if the wallet HAS agents (⇒ already consented),
+// return the uniqueness verdict; if it has NO agents, run the consent gate
+// first. Always returns `{ canCreate, role, reason?, consent?, existingSameRole,
+// providerCount }`:
+//   • has agents          → build_precheck verdict (reason when false)
+//   • no agents + key      → submit agreement → canCreate:true verdict
+//   • no agents + agreed   → canCreate:true verdict
+//   • no agents + !agreed  → { canCreate:false, role, reason, consent:{key,terms} }
+// A present `--consent-key` submits the agreement (agreed=true). Decline is
+// skill-side (show terms, user declines → terminate; user agrees → re-invoke
+// with `--consent-key`).
+
+/// Fetch the JWT-scoped agent list for the current wallet (chainIndex only),
+/// single page — used by precheck for uniqueness scanning.
+async fn fetch_wallet_agents(ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+    let data = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/agent-list",
+            &access_token,
+            &[("chainIndex", XLAYER_CHAIN_INDEX)],
+        )
+        .await
+        .map_err(format_api_error)?;
+    Ok(normalize_singleton_object(data))
+}
+
+async fn precheck_impl(args: &PrecheckArgs, ctx: &Context) -> Result<Value> {
+    // `--role` is required (same handling as `agent create`): missing → bail
+    // `missing required parameter`, unrecognized → `invalid value for --role`.
+    let role_key = normalize_role(require_non_empty(args.role.as_deref(), "--role")?)?;
+    // Current signing wallet → scopes uniqueness to this XLayer address.
+    let from_addr = load_agent_signing_session(None)?.addr_info.address;
+
+    // Fetch the wallet's agent list to determine whether any agents exist.
+    let agents = fetch_wallet_agents(ctx).await?;
+    let has_agents = !collect_owned_agents(&agents, &from_addr).is_empty();
+
+    // Consent gate — ONLY on the no-agents branch (a non-empty agent list proves
+    // consent was already given). `--consent-key` present → submit the agreement;
+    // absent → check consent status, returning terms (canCreate:false) if not yet
+    // accepted so the skill can run the blocking legal-confirmation step.
+    if !has_agents {
+        if args.consent_key.as_deref().map(|k| !k.trim().is_empty()).unwrap_or(false) {
+            consent_impl(
+                &ConsentArgs { consent_key: args.consent_key.clone(), agreed: Some(true) },
+                ctx,
+            )
+            .await?; // submit consent (agreed=true)
+        } else {
+            let c = consent_impl(&ConsentArgs { consent_key: None, agreed: None }, ctx).await?; // query consent status
+            if c.get("required").and_then(Value::as_bool).unwrap_or(false) {
+                // Legal terms not yet accepted → block with terms; skill confirms with the
+                // user, then re-invokes carrying `--consent-key`.
+                return Ok(json!({
+                    "canCreate": false,
+                    "role": role_key,
+                    "reason": "You must accept the legal terms before registering an Agent.",
+                    "consent": c.get("consent").cloned().unwrap_or(Value::Null),
+                }));
+            }
+        }
+    }
+
+    // Check whether an agent with the same role already exists → canCreate (build_precheck handles the empty list
+    // too: a brand-new wallet yields canCreate:true; reason is added when false).
+    // The verdict carries `existingSameRole` (the same-role agents the skill lists
+    // for the provider update-vs-new choice) — no separate full agentList needed.
+    Ok(build_precheck(&agents, &from_addr, &role_key))
+}
+
 // ─── `agent update` ───────────────────────────────────────────────────────
 
 async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
@@ -286,15 +360,16 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
     let signing_session = load_agent_signing_session(None)?;
 
-    // 产品规范：update 不允许修改 role / CommunicationAddress，所以都不写进
-    // cardJson。其它字段只写用户本次传进来的——没传就不带；是否保留旧值由
-    // 服务端决定。CLI 不再预先 GET /agent/agent-list 回填，那一步由上层 skill
-    // 按需指引用户完成。
+    // Per spec: update may not change role or CommunicationAddress — they are
+    // excluded from cardJson. Only fields provided by the user this call are
+    // written; the server decides whether to retain previous values for omitted
+    // fields. The CLI does not pre-fetch /agent/agent-list for back-fill; the
+    // skill guides the user to supply any needed current values.
     //
-    // agentId 放进 cardJson（后端按 cardJson.AgentId 识别目标），请求体顶层
-    // 不带。AgentId 保持 PascalCase 不在本次 spec 改名范围；name / image /
-    // services 走新 lowercase schema；ProfileDescription 亦未在 spec 中点名，
-    // 故保留原 PascalCase。
+    // agentId goes inside cardJson (the backend identifies the target via
+    // cardJson.AgentId), not at the request body top level. AgentId stays
+    // PascalCase; name / image / services use the new lowercase schema;
+    // ProfileDescription is also kept PascalCase as it was not renamed in spec.
     let mut card = serde_json::Map::new();
     card.insert("AgentId".into(), json!(agent_id));
     let name = trim_or_empty(args.name.as_deref());
@@ -309,13 +384,24 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     if !picture.is_empty() {
         card.insert("image".into(), json!(picture));
     }
-    if args.service.is_some() {
-        let services = parse_services(args.service.as_deref())?;
-        card.insert(
-            "services".into(),
-            serde_json::to_value(&services).context("failed to serialize services list")?,
-        );
-    }
+    // Service: backend treats absent `services` field as "clear all services",
+    // so we must always send the complete list. Fetch existing services first,
+    // then merge in any user-supplied changes.
+    let existing_raw = fetch_raw_services(agent_id, ctx).await?;
+    let existing: Vec<super::models::AgentService> = existing_raw
+        .iter()
+        .filter_map(raw_service_to_agent_service)
+        .collect();
+    let final_services = if args.service.is_some() {
+        let new_services = parse_services(args.service.as_deref())?;
+        merge_services(existing, new_services)
+    } else {
+        existing
+    };
+    card.insert(
+        "services".into(),
+        serde_json::to_value(&final_services).context("failed to serialize services list")?,
+    );
 
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
@@ -331,7 +417,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
-        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+        serde_json::to_string(&scrub_body_for_log(&body)).unwrap_or_else(|_| "<serialize failed>".to_string()),
     );
     let update_result = client
         .post_authed(
@@ -350,14 +436,14 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     }
     let response = update_result?;
     let unsigned = parse_agent_unsigned(response)?;
-    // 产品规范：update 客户端没有 erc8004Msg 子字段（communicationAddress 不可
-    // 修改，role / keyUuid / sessionSignature 也不在 update 请求体里），所以
-    // 整个 erc8004Msg 不写入广播 extraData。
+    // Per spec: update has no erc8004Msg sub-fields (communicationAddress is
+    // immutable; role / keyUuid / sessionSignature are absent from the update
+    // body), so erc8004Msg is omitted from the broadcast extraData entirely.
 
-    // 广播前先建立 wallet-agentic-identity 订阅；任何环节失败都降级，不阻断后续广播。
-    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com:8443/ws/v5/private），
-    // OKX_AGENTIC_WS_URL 环境变量可整 URL 覆盖（dev / pre / debug 用）。
-    // push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
+    // Open the wallet-agentic-identity subscription before broadcast; any failure
+    // degrades gracefully and does not block the broadcast.
+    // identity_ws_url() defaults to WS_URL_PROD; override with OKX_AGENTIC_WS_URL.
+    // push-platform login uses the wallet address as the "token" value (not a JWT).
     let subscription = match open_identity_subscription(
         &signing_session.addr_info.address,
         &identity_ws_url(),
@@ -378,24 +464,285 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
             .await?;
 
     let push = wait_for_identity_push(subscription, &tx_hash).await;
-    let agent_list = fetch_agent_list(&mut client, &access_token).await;
-    Ok(assemble_identity_envelope(tx_hash, push, agent_list))
+    let new_agent_id = extract_agent_id_from_push(push.as_ref());
+    Ok(assemble_identity_envelope(tx_hash, push, new_agent_id))
 }
 
 // ─── `agent activate` / `agent deactivate` ────────────────────────────────
 
-async fn activate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
-    agent_status_impl(args, 1, ctx).await
+/// Unified activation — fully self-contained:
+///   Step 0: GET agent info (role + name + description) → role guard
+///   Step 1: POST agent-status (status=1)
+///   Step 2: if approvalStatus ∈ {1,5} → POST submit-approval (no QA — listing QA
+///           runs only at register/update, never here)
+///
+/// Return-structure contract (all branches):
+///   blockType:1 + reason + agentRole   → not a provider; agent-status never called
+///   activate [+ submitApproval] → normal path
+async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+
+    // ── Step 0: fetch agent info + role guard ─────────────────────────────
+    let agent_info = fetch_agent_info_by_id(agent_id, ctx).await?;
+    if agent_info.is_none() {
+        bail!("agent {} not found or not accessible", agent_id);
+    }
+    if let Some(ref info) = agent_info {
+        if info.role != "provider" {
+            return Ok(json!({
+                "blockType": 1,
+                "reason": "only provider agents can be listed; requester and evaluator roles are not supported.",
+                "agentRole": info.role,
+            }));
+        }
+    }
+
+    // ── Step 1: agent-status (status=1) ──────────────────────────────────
+    // Backend returns a single-element array; normalize to object so field
+    // access (approvalStatus) works correctly on the next step.
+    let activate_result = normalize_singleton_object(
+        agent_status_impl(Some(agent_id), 1, ctx).await?,
+    );
+
+    // ── Step 2: QA + submit — only when approvalStatus ∈ {1, 5} ──────────
+    // approvalStatus 1 = initial listing QA required
+    // approvalStatus 5 = re-listing QA required (treat same as 1 per manage.md)
+    let needs_approval = activate_result
+        .get("approvalStatus")
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+        })
+        .map(|s| s == 1 || s == 5)
+        .unwrap_or(false);
+
+    if !needs_approval {
+        return Ok(json!({ "activate": activate_result }));
+    }
+
+    // ── approvalStatus ∈ {1, 5}: submit for approval directly ────────────
+    let submit_result = submit_approval_impl(
+        Some(agent_id),
+        args.preferred_language.as_deref(),
+        ctx,
+    )
+    .await?;
+
+    Ok(json!({
+        "activate": activate_result,
+        "submitApproval": submit_result,
+    }))
+}
+
+// ─── Activate helpers ─────────────────────────────────────────────────────────
+
+struct AgentInfo {
+    role: String,
+    name: String,
+    description: String,
+}
+
+/// Fetch role + name + description for a single agent.
+/// Returns `None` when the agent is not found or the response shape is unexpected.
+/// Network / auth failures propagate as `Err`.
+async fn fetch_agent_info_by_id(agent_id: &str, ctx: &Context) -> Result<Option<AgentInfo>> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    eprintln!("[agent-identity] activate info-fetch: agent-id={}", agent_id);
+
+    let raw = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/agent-list",
+            &access_token,
+            &[
+                ("chainIndex", XLAYER_CHAIN_INDEX),
+                ("agentIdList", agent_id),
+            ],
+        )
+        .await
+        .map_err(format_api_error)?;
+
+    eprintln!(
+        "[agent-identity] activate info-fetch response: {}",
+        serde_json::to_string(&raw).unwrap_or_else(|_| "<serialize failed>".to_string())
+    );
+
+    let normalized = normalize_singleton_object(raw);
+    let items = match normalized.get("list").and_then(Value::as_array) {
+        Some(a) => a.clone(),
+        None => return Ok(None),
+    };
+
+    for item in &items {
+        if let Some(info) = parse_agent_info_row(item) {
+            return Ok(Some(info));
+        }
+        if let Some(rows) = item.get("agentList").and_then(Value::as_array) {
+            for row in rows {
+                if let Some(info) = parse_agent_info_row(row) {
+                    return Ok(Some(info));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Extract `AgentInfo` from a single agent row. Returns `None` when the role
+/// field is absent or unrecognized.
+fn parse_agent_info_row(row: &Value) -> Option<AgentInfo> {
+    let raw_role = match row.get("role")? {
+        Value::String(s) if !s.trim().is_empty() => s.trim().to_string(),
+        Value::Number(n) => n.to_string(),
+        _ => return None,
+    };
+    let role = normalize_role(&raw_role).ok()?;
+
+    let name = row
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+
+    let description = ["description", "profileDescription"]
+        .iter()
+        .find_map(|k| row.get(*k).and_then(Value::as_str).map(str::trim))
+        .unwrap_or("")
+        .to_string();
+
+    Some(AgentInfo { role, name, description })
+}
+
+/// Fetch the raw service items for an agent from GET /agent/services.
+/// Tolerates both response shapes:
+///   • live backend: array of `{ agentInfo, list:[service…] }` wrappers
+///   • legacy: single object with a flat `services` array
+async fn fetch_raw_services(agent_id: &str, ctx: &Context) -> Result<Vec<Value>> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    eprintln!(
+        "[agent-identity] activate service-fetch: agent-id={}",
+        agent_id
+    );
+
+    let raw = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/services",
+            &access_token,
+            &[("agentId", agent_id)],
+        )
+        .await
+        .map_err(format_api_error)?;
+
+    eprintln!(
+        "[agent-identity] activate service-fetch response: {}",
+        serde_json::to_string(&raw).unwrap_or_else(|_| "<serialize failed>".to_string())
+    );
+
+    let mut services: Vec<Value> = Vec::new();
+    if let Some(wrappers) = raw.as_array() {
+        // Live backend shape: array of wrappers each carrying list:[…]
+        for wrapper in wrappers {
+            if let Some(items) = wrapper.get("list").and_then(Value::as_array) {
+                services.extend(items.iter().cloned());
+            }
+        }
+    } else if let Some(items) = raw.get("services").and_then(Value::as_array) {
+        // Legacy shape: { services:[…] }
+        services.extend(items.iter().cloned());
+    }
+    Ok(services)
+}
+
+/// Convert a raw service item from GET /agent/services into an `AgentService`.
+/// Returns `None` when the item has no usable service name (skip silently).
+fn raw_service_to_agent_service(svc: &Value) -> Option<super::models::AgentService> {
+    use super::models::AgentService;
+
+    let get_str = |keys: &[&str]| -> String {
+        for key in keys {
+            if let Some(s) = svc.get(*key).and_then(Value::as_str) {
+                let t = s.trim();
+                if !t.is_empty() {
+                    return t.to_string();
+                }
+            }
+        }
+        String::new()
+    };
+
+    let service_name = get_str(&["serviceName", "ServiceName", "name"]);
+    if service_name.is_empty() {
+        return None;
+    }
+
+    // Service ID: try string keys first, then numeric (backend may return as u64).
+    let id = ["serviceId", "ServiceId", "id"]
+        .iter()
+        .find_map(|k| svc.get(*k).and_then(Value::as_str).map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            ["serviceId", "ServiceId", "id"]
+                .iter()
+                .find_map(|k| svc.get(*k).and_then(Value::as_u64).map(|n| n.to_string()))
+        });
+
+    let service_type = get_str(&["serviceType", "ServiceType", "servicetype"])
+        .to_ascii_uppercase();
+    let endpoint_str = get_str(&["endpoint", "Endpoint"]);
+    let endpoint = if endpoint_str.is_empty() || service_type == "A2A" {
+        None
+    } else {
+        Some(endpoint_str)
+    };
+
+    Some(AgentService {
+        id,
+        service_name,
+        service_description: get_str(&[
+            "serviceDescription",
+            "ServiceDescription",
+            "servicedescription",
+        ]),
+        fee: get_str(&["fee", "Fee", "feeAmount"]),
+        service_type,
+        endpoint,
+    })
+}
+
+/// Merge existing services with user-supplied updates:
+/// - updates with a matching existing ID → replace that entry
+/// - updates with no ID / unrecognized ID → append as new
+/// - existing services not referenced → kept unchanged
+fn merge_services(
+    mut existing: Vec<super::models::AgentService>,
+    updates: Vec<super::models::AgentService>,
+) -> Vec<super::models::AgentService> {
+    for update in updates {
+        if let Some(ref id) = update.id {
+            if let Some(pos) = existing.iter().position(|s| s.id.as_deref() == Some(id.as_str())) {
+                existing[pos] = update;
+                continue;
+            }
+        }
+        existing.push(update);
+    }
+    existing
 }
 
 async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {
-    agent_status_impl(args, 2, ctx).await
+    Ok(normalize_singleton_object(
+        agent_status_impl(args.agent_id.as_deref(), 2, ctx).await?,
+    ))
 }
 
-async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -> Result<Value> {
+async fn agent_status_impl(agent_id_opt: Option<&str>, status: u32, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let agent_id = require_non_empty(agent_id_opt, "--agent-id")?;
     let body = json!({
         "agentId": agent_id,
         "chainIndex": XLAYER_CHAIN_INDEX,
@@ -430,15 +777,19 @@ async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -
     result.map_err(format_api_error)
 }
 
-async fn submit_approval_impl(args: &SubmitApprovalArgs, ctx: &Context) -> Result<Value> {
+async fn submit_approval_impl(
+    agent_id_opt: Option<&str>,
+    preferred_language_opt: Option<&str>,
+    ctx: &Context,
+) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let agent_id = require_non_empty(agent_id_opt, "--agent-id")?;
     let mut body = json!({
         "agentId": agent_id,
         "chainIndex": XLAYER_CHAIN_INDEX,
     });
-    if let Some(lang) = normalize_bcp47(args.preferred_language.as_deref()) {
+    if let Some(lang) = normalize_bcp47(preferred_language_opt) {
         body["preferredLanguage"] = Value::String(lang);
     }
 
@@ -545,7 +896,7 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
 async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    // --agent-id / --creator-id / --score 必填；--description / --task-id 选填。
+    // --agent-id / --creator-id / --score required; --description / --task-id optional.
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string();
     let creator_id = require_non_empty(args.creator_id.as_deref(), "--creator-id")?.to_string();
     // --score is 0.00–5.00 stars (up to 2 decimal places, step 0.01); the
@@ -564,14 +915,13 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     let task_id = trim_or_empty(args.task_id.as_deref());
     let signing_session = load_agent_signing_session(None)?;
 
-    // 请求体：create-comment 需要 chainIndex + sessionCert + feedBackAgentId +
-    // comment（fromAddr 已不再带）。feedBackAgentId 是评价发起方的 agent id，与
-    // 广播 extraData.erc8004Msg.feedBackAgentId 同源（均来自 --creator-id），
-    // 但在请求体里放在顶层（和 chainIndex 同级），不进 comment 子对象。taskId 选填，
-    // 有值时同样放顶层（与广播 extraData.erc8004Msg.taskId 同源，均来自 --task-id），
-    // 为空则不写入。本地 XLayer 地址解析仍然要做，结果只给下一步广播用。
-    // 注意：comment 子对象里的 "comment" 字段就是原来的 feedbackDesc，
-    // 与外层 body.comment（序列化后的 JSON 字符串）同名但是不同层级，别混淆。
+    // Request body: create-comment requires chainIndex + sessionCert +
+    // feedBackAgentId + comment (fromAddr no longer included). feedBackAgentId
+    // is the reviewer's agent id — same source as extraData.erc8004Msg.feedBackAgentId
+    // (both from --creator-id) but placed at the top level of the body, not inside
+    // the comment sub-object. Note: the "comment" field inside the comment sub-object
+    // is the feedback text (feedbackDesc), sharing its name with the outer body.comment
+    // (a serialized JSON string) but at a different nesting level.
     let comment = json!({
         "agentid": agent_id,
         "value": score.to_string(),
@@ -595,7 +945,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
-        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+        serde_json::to_string(&scrub_body_for_log(&body)).unwrap_or_else(|_| "<serialize failed>".to_string()),
     );
 
     let result = client
@@ -617,13 +967,13 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
 
     let response = result?;
     let unsigned = parse_agent_unsigned(response)?;
-    // erc8004Msg：feedBackAgentId 必填（来自 --creator-id），taskId 选填。空值
-    // 由 build_erc8004_overlay 过滤，所以 taskId 空串不会写进 erc8004Msg。
+    // erc8004Msg: feedBackAgentId is required (from --creator-id); taskId is optional.
+    // Empty values are filtered by build_erc8004_overlay, so an empty taskId is omitted.
     let overlay = build_erc8004_overlay(&[
         ("taskId", &task_id),
         ("feedBackAgentId", &creator_id),
     ]);
-    // --address 已从 CLI 去掉；广播走默认 XLayer 地址（当前选中账号）。
+    // --address removed from CLI; broadcast uses the default XLayer address (current account).
     let tx_hash = sign_and_broadcast_agent_transaction(
         &access_token,
         &unsigned,
@@ -636,9 +986,9 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
 
 // ─── `agent xmtp-sign` ────────────────────────────────────────────────────
 
-/// `onchainos agent xmtp-sign`：用本地 signing_seed 对 keyUuid 现场签一次，
-/// 连同 CLI 传入的 message + 本地 sessionCert 一起 POST 到后端的 sign-msg 接口，
-/// 后端返回 signature 后透传给用户。不走广播。
+/// `onchainos agent xmtp-sign`: sign keyUuid on the fly with the local signing_seed,
+/// then POST message + sessionCert to the backend sign-msg endpoint and return the
+/// resulting signature. No broadcast.
 async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
@@ -669,7 +1019,7 @@ async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
-        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+        serde_json::to_string(&scrub_body_for_log(&body)).unwrap_or_else(|_| "<serialize failed>".to_string()),
     );
 
     let result = client
@@ -710,7 +1060,7 @@ async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
 
 /// Drain the WS subscription waiting for the matching push. Any failure
 /// (including timeout) collapses to `None`; the surrounding command then
-/// emits `txHash` + `agentList` only.
+/// emits `txHash` + `newAgentId` only.
 async fn wait_for_identity_push(
     subscription: Option<IdentitySubscription>,
     tx_hash: &str,
@@ -725,147 +1075,37 @@ async fn wait_for_identity_push(
     }
 }
 
-/// Best-effort fetch of the caller's full XLayer agent list (struct C).
-/// Pages through `/agent/agent-list?chainIndex=196` with `pageSize=100`
-/// until `total` is satisfied or `AGENT_LIST_MAX_PAGES` is hit. Returns
-/// `{ total, list: [...] }`. Note the backend's actual response shape
-/// uses the field name `list` (not `items` — earlier docs claimed
-/// `items`; that was a pre-existing doc bug confirmed empirically on
-/// 2026-05-10).
-///
-/// Failure modes that short-circuit to `None` so the envelope omits the
-/// field rather than emit a misleading partial:
-///   - any HTTP error from the client during pagination
-///   - page 1 missing or non-numeric `total` field (response shape
-///     anomaly — cannot trust the dataset)
-///   - any page missing or non-array `list` field (same)
-///
-/// An empty `list` on any page stops pagination gracefully and returns
-/// the aggregated results so far (does not abort to `None`). The
-/// legitimate empty case (`total == 0` and page 1 returned `list: []`)
-/// returns `Some({total: 0, list: []})`.
-async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> Option<Value> {
-    let mut all_items: Vec<Value> = Vec::new();
-    let mut total: u64 = 0;
-    let mut all_agent_count: u64 = 0;
-    let mut page: usize = 1;
 
-    while page <= AGENT_LIST_MAX_PAGES {
-        let page_str = page.to_string();
-        let page_size_str = AGENT_LIST_PAGE_SIZE.to_string();
-        let raw = match client
-            .get_authed(
-                "/priapi/v5/wallet/agentic/agent/agent-list",
-                access_token,
-                &[
-                    ("chainIndex", XLAYER_CHAIN_INDEX),
-                    ("page", &page_str),
-                    ("pageSize", &page_size_str),
-                ],
-            )
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("[agent-identity] agent-list page {page} fetch failed: {e:#}");
-                return None;
-            }
-        };
-
-        // Keep the raw response for debug logging on shape-mismatch aborts.
-        // Without this, the abort logs only say "shape wrong" with no clue
-        // what the backend actually returned — see the post-mortem on the
-        // 2026-05-10 test where the abort fired but the actual response shape
-        // was unknown.
-        let raw_repr = raw.to_string();
-        let normalized = normalize_singleton_object(raw);
-
-        // Page 1: total must be present and numeric. Missing/wrong-shape => abort.
-        if page == 1 {
-            total = match normalized.get("total").and_then(Value::as_u64) {
-                Some(t) => t,
-                None => {
-                    eprintln!(
-                        "[agent-identity] agent-list page 1 missing or non-numeric `total` field — abort. raw={raw_repr} normalized={normalized}"
-                    );
-                    return None;
-                }
-            };
-        }
-
-        // `list` must be an array on every page. Missing/wrong-shape => abort.
-        // Backend uses the field name `list` (not `items`); see the doc
-        // comment above this function.
-        let page_items: Vec<Value> = match normalized.get("list").and_then(Value::as_array) {
-            Some(arr) => arr.clone(),
-            None => {
-                eprintln!(
-                    "[agent-identity] agent-list page {page} missing or non-array `list` field — abort. raw={raw_repr} normalized={normalized}"
-                );
-                return None;
-            }
-        };
-        let page_count = page_items.len();
-
-        // Count agents in this page: each group carries agentList[].
-        let page_agent_count: u64 = page_items
-            .iter()
-            .filter_map(|item| item.get("agentList").and_then(Value::as_array))
-            .map(|a| a.len() as u64)
-            .sum();
-        all_agent_count += page_agent_count;
-        all_items.extend(page_items);
-
-        // Done: accumulated agent count satisfies backend's reported total.
-        // Also covers the empty case: total == 0, page 1 list == [], 0 >= 0.
-        if all_agent_count >= total {
-            break;
-        }
-
-        // list == [] means the backend has no more data; stop paging.
-        // total may be stale — treat an empty page as end-of-data rather
-        // than an error so we don't keep incrementing page indefinitely.
-        if page_count == 0 {
-            eprintln!(
-                "[agent-identity] agent-list page {page} returned empty list (total={} agents_accumulated={}) — stopping",
-                total,
-                all_agent_count,
-            );
-            break;
-        }
-
-        page += 1;
-        if page > AGENT_LIST_MAX_PAGES {
-            eprintln!(
-                "[agent-identity] agent-list paging hit safety cap of {} pages × {} ({} agents accumulated, backend total={})",
-                AGENT_LIST_MAX_PAGES,
-                AGENT_LIST_PAGE_SIZE,
-                all_agent_count,
-                total,
-            );
-        }
-    }
-
-    Some(json!({
-        "total": total,
-        "list": all_items,
-    }))
-}
-
-/// Assemble the `{ txHash, agent?, agentList? }` envelope. `agent` and
-/// `agentList` are independent best-effort segments; either may be
-/// missing without affecting the other.
+/// Assemble the `{ txHash, agent?, newAgentId }` envelope.
+/// `agent` is present only when the WS push arrived in time.
+/// `newAgentId` is always present (string id or JSON `null`).
 fn assemble_identity_envelope(
     tx_hash: String,
     push: Option<Value>,
-    agent_list: Option<Value>,
+    new_agent_id: Option<String>,
 ) -> Value {
     let mut out = json!({ "txHash": tx_hash });
     if let Some(p) = push {
         out["agent"] = p;
     }
-    if let Some(list) = agent_list {
-        out["agentList"] = list;
-    }
+    out["newAgentId"] = match new_agent_id {
+        Some(id) => Value::String(id),
+        None => Value::Null,
+    };
     out
 }
+
+/// Extract `agentId` from a WS push payload. Returns `None` when the push
+/// is absent or does not carry a usable id.
+fn extract_agent_id_from_push(push: Option<&Value>) -> Option<String> {
+    let p = push?;
+    match p.get("agentId")? {
+        Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/mutations_tests.rs"]
+mod tests;

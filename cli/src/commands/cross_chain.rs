@@ -8,12 +8,15 @@
 //!   3. /swap → wallet contract-call broadcast → fromTxHash
 //!   4. /status by hash → SUCCESS / PENDING / NOT_FOUND
 
+use std::collections::HashSet;
+
 use anyhow::{bail, Result};
 use clap::Subcommand;
 use serde_json::{json, Value};
 
 use super::Context;
 use crate::client::ApiClient;
+use crate::commands::common::wait_tx_onchain;
 use crate::output;
 
 // ── /api/v6/dex/cross-chain HTTP layer ─────────────────────────────────────
@@ -127,6 +130,311 @@ pub async fn fetch_quote(
         params.push(("denyBridge", id));
     }
     client.get(&format!("{V6_PREFIX}/quote"), &params).await
+}
+
+// ── No-direct-route transit fallback ───────────────────────────────────────
+//
+// When `/quote` reports no route (bails 82000/82104, or returns an empty
+// routerList), the CLI silently probes common transit assets — intersected
+// with the server's bridgeable set for the pair — and returns a structured
+// `fallback` object so the agent never runs the discovery loop itself.
+// `outcome` is one of: transit_available | no_path | env_unavailable.
+
+/// Transit assets probed in preference order (resolved on the source chain,
+/// then intersected with the bridgeable set). Native is appended separately.
+const TRANSIT_PREFERENCE: &[&str] = &["usdc", "usdt", "dai"];
+
+#[derive(Clone)]
+struct TransitProbe {
+    /// Display label (e.g. "USDC", "NATIVE").
+    symbol: String,
+    /// Call-ready source-chain address (as resolved; EVM already lowercase).
+    /// Used as leg-2's `fromTokenAddress` and for the bridgeable intersection.
+    address: String,
+    /// Call-ready destination-chain address for the SAME asset. Stablecoins
+    /// have different contracts per chain, so leg-2's `toTokenAddress` MUST use
+    /// this — not `address`, which only resolves on the source chain.
+    dest_address: String,
+}
+
+/// Parse an `API error (code=NNNNN): msg` envelope into `(code, msg)`.
+/// Format is produced by `client.rs::unwrap_envelope`; keep in sync.
+fn parse_api_error(s: &str) -> Option<(String, String)> {
+    let code_at = s.find("code=")? + "code=".len();
+    let rest = &s[code_at..];
+    let close = rest.find(')')?;
+    let code = rest[..close].trim().to_string();
+    let msg = rest[close + 1..].trim_start_matches(':').trim().to_string();
+    Some((code, msg))
+}
+
+/// Best human message from an API error (envelope `msg`, else the raw text).
+fn api_error_msg(e: &anyhow::Error) -> String {
+    let s = e.to_string();
+    parse_api_error(&s).map(|(_, m)| m).unwrap_or(s)
+}
+
+/// True when a quote Result means "no available route" (vs a hard error that
+/// should propagate): empty routerList (code=0), or a bail with 82000 / 82104.
+fn is_no_route(res: &Result<Value>) -> bool {
+    match res {
+        Ok(data) => unwrap_data_array(data)["routerList"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(true),
+        Err(e) => parse_api_error(&e.to_string())
+            .map(|(c, _)| c == "82000" || c == "82104")
+            .unwrap_or(false),
+    }
+}
+
+/// Lowercased source-chain token addresses from a `supported/tokens` payload.
+fn bridgeable_source_addresses(tokens: &Value, from_idx: &str) -> HashSet<String> {
+    tokens
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter(|t| t["chainIndex"].as_str() == Some(from_idx))
+                .filter_map(|t| t["tokenContractAddress"].as_str())
+                .map(|a| a.to_lowercase())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Build the transit candidate set: preference stables + native, deduped, and
+/// (when known) intersected with `bridgeable`. Each candidate is resolved on
+/// BOTH the source (`from_idx`) and destination (`to_idx`) chains; a stable is
+/// kept only when it resolves on both, since leg-2 needs the dest-chain address
+/// for `toTokenAddress` (stablecoin contracts differ per chain).
+fn build_transit_candidates(
+    from_idx: &str,
+    to_idx: &str,
+    bridgeable: &HashSet<String>,
+) -> Vec<TransitProbe> {
+    let mut raw: Vec<TransitProbe> = TRANSIT_PREFERENCE
+        .iter()
+        .filter_map(|sym| {
+            let src = crate::token_alias::resolve_and_validate(from_idx, sym, "transit").ok()?;
+            let dest = crate::token_alias::resolve_and_validate(to_idx, sym, "transit").ok()?;
+            Some(TransitProbe {
+                symbol: sym.to_uppercase(),
+                address: src,
+                dest_address: dest,
+            })
+        })
+        .collect();
+    raw.push(TransitProbe {
+        symbol: "NATIVE".to_string(),
+        address: crate::chains::native_token_address(from_idx).to_string(),
+        dest_address: crate::chains::native_token_address(to_idx).to_string(),
+    });
+
+    let mut seen: HashSet<String> = HashSet::new();
+    raw.into_iter()
+        .filter(|c| seen.insert(c.address.to_lowercase()))
+        .filter(|c| bridgeable.is_empty() || bridgeable.contains(&c.address.to_lowercase()))
+        .collect()
+}
+
+/// Build one display-ready transit option from a successful transit bridge
+/// quote (amounts stay raw + carry decimals so the agent formats them exactly
+/// like the main quote table).
+fn build_transit_option(symbol: &str, bridge_quote: &Value) -> Option<Value> {
+    let obj = unwrap_data_array(bridge_quote);
+    let route = obj["routerList"].as_array()?.first()?;
+    Some(json!({
+        "transitToken": symbol,
+        "bridgeName": route["bridgeName"],
+        "bridgeId": route["bridgeId"],
+        "toTokenAmount": route["toTokenAmount"],
+        "minimumReceived": route["minimumReceived"],
+        "crossChainFee": route["crossChainFee"],
+        "crossChainFeeTokenAddress": route["crossChainFeeTokenAddress"],
+        "otherNativeFee": route["otherNativeFee"],
+        "estimateTime": route["estimateTime"],
+        "toTokenDecimals": obj["toToken"]["decimals"],
+    }))
+}
+
+/// relay / mayan / butterswap bundle a from-swap leg into the bridge tx, which
+/// is MEV-exposed — these always require MEV protection regardless of trade
+/// size. Other bridges fall back to the caller's flag / size threshold.
+fn bridge_forces_mev(bridge_name: &str) -> bool {
+    let n = bridge_name.to_lowercase();
+    n.contains("relay") || n.contains("mayan") || n.contains("butterswap")
+}
+
+/// Raw (base-unit) balance for `address` from an `all-token-balances`
+/// `tokenAssets[]` payload — case-insensitive on the contract address; "0"
+/// when the token is absent.
+fn raw_balance_for<'a>(assets: &'a Value, address: &str) -> &'a str {
+    assets
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|a| {
+            a["tokenContractAddress"]
+                .as_str()
+                .map(|s| s.eq_ignore_ascii_case(address))
+                .unwrap_or(false)
+        })
+        .and_then(|a| a["rawBalance"].as_str())
+        .unwrap_or("0")
+}
+
+/// Pre-quote balance gate for `execute`: halts before any quote / broadcast
+/// when the wallet can't cover the trade (or has no gas). Degrades gracefully —
+/// a failed or unexpectedly-shaped balance lookup returns None (proceed; the
+/// broadcast-time check still guards). Returns Some((block_code, message)) when
+/// the trade must be halted.
+async fn execute_balance_block(
+    client: &mut ApiClient,
+    from_idx: &str,
+    wallet: &str,
+    from_token: &str,
+    native_addr: &str,
+    raw_amount: &str,
+    is_from_native: bool,
+) -> Option<(&'static str, String)> {
+    let balances =
+        crate::commands::portfolio::fetch_all_balances(client, wallet, from_idx, None, None)
+            .await
+            .ok()?;
+    let unwrapped = unwrap_data_array(&balances);
+    if !unwrapped["tokenAssets"].is_array() {
+        return None; // unexpected shape → don't block
+    }
+    let assets = unwrapped["tokenAssets"].clone();
+
+    let token_raw = raw_balance_for(&assets, from_token);
+    // Borrowed as a base-unit `balance < amount` comparison.
+    if crate::commands::swap::is_allowance_insufficient(token_raw, raw_amount) {
+        return Some((
+            "insufficient_balance",
+            "Source token balance is less than the amount you want to bridge.".to_string(),
+        ));
+    }
+
+    if !is_from_native {
+        let mut native_raw = raw_balance_for(&assets, native_addr);
+        if native_raw == "0" {
+            native_raw = raw_balance_for(&assets, "");
+        }
+        if native_raw == "0" || native_raw.is_empty() {
+            return Some((
+                "insufficient_gas",
+                "Source-chain native (gas) balance is zero — deposit native token for gas before bridging."
+                    .to_string(),
+            ));
+        }
+    }
+    None
+}
+
+/// Classify a dead end (no transit succeeded) from the collected error msgs:
+/// all msgs empty/"unknown error" → env_unavailable; otherwise → no_path.
+fn classify_dead_end(errors: &[String]) -> (&'static str, String) {
+    let informative: Vec<&String> = errors
+        .iter()
+        .filter(|m| {
+            let t = m.trim();
+            !t.is_empty() && t != "unknown error"
+        })
+        .collect();
+    if informative.is_empty() {
+        (
+            "env_unavailable",
+            "Bridge service appears unavailable for this chain pair on this environment — \
+the pair is in the routing config but quote returns no reason across the direct route and \
+every transit token. Typically a server-side / adapter issue, not your token or amount. \
+Retry later or escalate to OKX support."
+                .to_string(),
+        )
+    } else {
+        ("no_path", informative[0].clone())
+    }
+}
+
+/// Probe one transit asset: leg-1 source→transit swap (skipped when the source
+/// token already IS the transit), then leg-2 transit cross-chain bridge quote.
+async fn probe_transit(
+    client: &mut ApiClient,
+    from_idx: &str,
+    to_idx: &str,
+    from_token: &str,
+    cand: &TransitProbe,
+    raw_amount: &str,
+    slippage: &str,
+) -> std::result::Result<Value, String> {
+    let transit_amount = if from_token.eq_ignore_ascii_case(&cand.address) {
+        raw_amount.to_string()
+    } else {
+        let swap_q = crate::commands::swap::fetch_quote(
+            client, from_idx, from_token, &cand.address, raw_amount, "",
+        )
+        .await
+        .map_err(|e| api_error_msg(&e))?;
+        unwrap_data_array(&swap_q)["toTokenAmount"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| "source→transit swap returned no amount".to_string())?
+    };
+    let bridge_q = fetch_quote(
+        client, from_idx, to_idx, &cand.address, &cand.dest_address, &transit_amount, slippage,
+        None, false, None, None, None, None, None,
+    )
+    .await
+    .map_err(|e| api_error_msg(&e))?;
+    build_transit_option(&cand.symbol, &bridge_q)
+        .ok_or_else(|| "transit bridge quote returned no route".to_string())
+}
+
+/// Discover an indirect path when no direct route exists. Never errors —
+/// failures collapse to a no_path / env_unavailable outcome.
+async fn discover_transit_fallback(
+    client: &mut ApiClient,
+    from_idx: &str,
+    to_idx: &str,
+    from_token: &str,
+    raw_amount: &str,
+    slippage: &str,
+) -> Value {
+    let bridgeable = fetch_supported_tokens(client, Some(from_idx), Some(to_idx))
+        .await
+        .ok()
+        .map(|v| bridgeable_source_addresses(&v, from_idx))
+        .unwrap_or_default();
+
+    let candidates = build_transit_candidates(from_idx, to_idx, &bridgeable);
+    if candidates.is_empty() {
+        return json!({
+            "outcome": "no_path",
+            "transitOptions": [],
+            "message": "No common transit token (USDC / USDT / DAI / native) is bridgeable from this source chain.",
+        });
+    }
+
+    // Probe candidates SEQUENTIALLY (mirrors the original transit-discovery
+    // loop). The backend rate-limits the quote endpoint, so a concurrent burst
+    // risks throttling; this is a rare fallback path where the extra latency is
+    // an acceptable trade for staying within limits.
+    let mut options = Vec::new();
+    let mut errors = Vec::new();
+    for cand in candidates {
+        match probe_transit(client, from_idx, to_idx, from_token, &cand, raw_amount, slippage).await
+        {
+            Ok(opt) => options.push(opt),
+            Err(msg) => errors.push(msg),
+        }
+    }
+
+    if options.is_empty() {
+        let (outcome, message) = classify_dead_end(&errors);
+        json!({ "outcome": outcome, "transitOptions": [], "message": message })
+    } else {
+        json!({ "outcome": "transit_available", "transitOptions": options })
+    }
 }
 
 /// `approve_amount` is the raw on-chain amount (smallest token unit, e.g.
@@ -304,8 +612,10 @@ pub enum CrossChainCommand {
     ///   - --to-chain only → bridges able to reach that destination
     ///   - both → bridges that connect this specific chain pair
     Bridges {
+        /// Source chain filter (name or chainIndex). Optional — see the combinations above.
         #[arg(long)]
         from_chain: Option<String>,
+        /// Destination chain filter (name or chainIndex). Optional — see the combinations above.
         #[arg(long)]
         to_chain: Option<String>,
     },
@@ -316,8 +626,10 @@ pub enum CrossChainCommand {
     ///   - --to-chain only → from-tokens that can reach that destination
     ///   - both → from-tokens that route from --from-chain to --to-chain
     Tokens {
+        /// Source chain filter (name or chainIndex). Optional — see the combinations above.
         #[arg(long)]
         from_chain: Option<String>,
+        /// Destination chain filter (name or chainIndex). Optional — see the combinations above.
         #[arg(long)]
         to_chain: Option<String>,
     },
@@ -376,12 +688,16 @@ pub enum CrossChainCommand {
     /// `--readable-amount` (human-readable decimal, CLI fetches token
     /// decimals and converts) is required. They are mutually exclusive.
     Approve {
+        /// Source chain (name or chainIndex).
         #[arg(long)]
         chain: String,
+        /// Token contract address to approve.
         #[arg(long)]
         token: String,
+        /// User wallet address (token owner granting the allowance).
         #[arg(long)]
         wallet: String,
+        /// Bridge id (openApiCode) from `bridges` or `quote.routerList[]` — the router that receives the allowance.
         #[arg(long)]
         bridge_id: String,
         /// Approve amount in **smallest token unit** (raw integer, e.g. "500000"
@@ -402,21 +718,28 @@ pub enum CrossChainCommand {
 
     /// Get unsigned cross-chain swap tx (calldata only, does NOT broadcast)
     Swap {
+        /// Source token address or alias.
         #[arg(long)]
         from: String,
+        /// Destination token address or alias.
         #[arg(long)]
         to: String,
+        /// Source chain (e.g. ethereum, arbitrum).
         #[arg(long)]
         from_chain: String,
+        /// Destination chain (e.g. optimism, base).
         #[arg(long)]
         to_chain: String,
+        /// Human-readable amount (e.g. "1.5"). CLI fetches token decimals. Mutually exclusive with --amount.
         #[arg(long, conflicts_with = "amount")]
         readable_amount: Option<String>,
+        /// Raw amount in minimal units. Mutually exclusive with --readable-amount.
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
         /// Slippage tolerance as **decimal**, range (0, 1] (e.g. 0.01 = 1%, 0.5 = 50%). Default "0.01".
         #[arg(long, default_value = "0.01")]
         slippage: String,
+        /// User wallet address (sender).
         #[arg(long)]
         wallet: String,
         /// Receive address on destination chain (required for heterogeneous chain pairs)
@@ -438,23 +761,31 @@ pub enum CrossChainCommand {
 
     /// Execute cross-chain. Three modes: default / --confirm-approve / --skip-approve.
     Execute {
+        /// Source token address or alias.
         #[arg(long)]
         from: String,
+        /// Destination token address or alias.
         #[arg(long)]
         to: String,
+        /// Source chain (e.g. ethereum, arbitrum).
         #[arg(long)]
         from_chain: String,
+        /// Destination chain (e.g. optimism, base).
         #[arg(long)]
         to_chain: String,
+        /// Human-readable amount (e.g. "1.5"). CLI fetches token decimals. Mutually exclusive with --amount.
         #[arg(long, conflicts_with = "amount")]
         readable_amount: Option<String>,
+        /// Raw amount in minimal units. Mutually exclusive with --readable-amount.
         #[arg(long, conflicts_with = "readable_amount")]
         amount: Option<String>,
         /// Slippage tolerance as **decimal**, range (0, 1] (e.g. 0.01 = 1%, 0.5 = 50%). Default "0.01".
         #[arg(long, default_value = "0.01")]
         slippage: String,
+        /// User wallet address (sender + signer).
         #[arg(long)]
         wallet: String,
+        /// Destination receive address. Server requires it for heterogeneous (EVM ⇌ non-EVM) bridges (else 82202); family must match --to-chain. A non-sender address needs explicit user confirmation.
         #[arg(long)]
         receive_address: Option<String>,
         /// Pin a specific bridge id (from quote.routerList[].bridgeId).
@@ -598,25 +929,40 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
                 &from_idx,
             )
             .await?;
-            output::success(
-                fetch_quote(
+            let quote_res = fetch_quote(
+                &mut client,
+                &from_idx,
+                &to_idx,
+                &from_token,
+                &to_token,
+                &raw_amount,
+                &slippage,
+                wallet.as_deref(),
+                check_approve,
+                bridge_id.as_deref(),
+                sort.as_deref(),
+                allow_bridges.as_deref(),
+                deny_bridges.as_deref(),
+                receive_address.as_deref(),
+            )
+            .await;
+            if is_no_route(&quote_res) {
+                let fallback = discover_transit_fallback(
                     &mut client,
                     &from_idx,
                     &to_idx,
                     &from_token,
-                    &to_token,
                     &raw_amount,
                     &slippage,
-                    wallet.as_deref(),
-                    check_approve,
-                    bridge_id.as_deref(),
-                    sort.as_deref(),
-                    allow_bridges.as_deref(),
-                    deny_bridges.as_deref(),
-                    receive_address.as_deref(),
                 )
-                .await?,
-            );
+                .await;
+                // Wrap in an array to match the happy-path `data` shape
+                // (`[{ routerList, ... }]`) so `data[0].routerList` stays valid
+                // (empty) for scripts instead of becoming an object.
+                output::success(json!([{ "routerList": [], "fallback": fallback }]));
+            } else {
+                output::success(quote_res?);
+            }
         }
 
         CrossChainCommand::Approve {
@@ -927,8 +1273,26 @@ async fn cmd_execute(
     let native_addr = crate::chains::native_token_address(&from_idx);
     let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
 
+    // ── Step 0: Balance gate ───────────────────────────────────────────────
+    // Halt before quoting/broadcasting when the wallet can't cover the trade
+    // (or gas). Degrades to proceed on lookup failure.
+    if let Some((block, message)) = execute_balance_block(
+        client,
+        &from_idx,
+        wallet,
+        &from_token,
+        native_addr,
+        &raw_amount,
+        is_from_native,
+    )
+    .await
+    {
+        output::success(json!({ "action": "blocked", "block": block, "message": message }));
+        return Ok(());
+    }
+
     // ── Step 1: Quote ──────────────────────────────────────────────────────
-    let quote_data = fetch_quote(
+    let quote_res = fetch_quote(
         client,
         &from_idx,
         &to_idx,
@@ -944,7 +1308,17 @@ async fn cmd_execute(
         deny_bridges,
         receive_address,
     )
-    .await?;
+    .await;
+    // No direct route → surface the same transit-fallback structure instead of
+    // broadcasting (an indirect path needs separate per-step user consent).
+    if is_no_route(&quote_res) {
+        let fallback =
+            discover_transit_fallback(client, &from_idx, &to_idx, &from_token, &raw_amount, slippage)
+                .await;
+        output::success(json!({ "action": "fallback", "routerList": [], "fallback": fallback }));
+        return Ok(());
+    }
+    let quote_data = quote_res?;
     let quote_obj = unwrap_data_array(&quote_data);
     let router_list = quote_obj["routerList"]
         .as_array()
@@ -971,22 +1345,89 @@ async fn cmd_execute(
     let needs_approve_branch = family == "evm" && !is_from_native && need_approve && !skip_approve;
 
     if needs_approve_branch && !confirm_approve {
-        // Default mode: surface action=approve-required and stop.
-        output::success(json!({
-            "action": "approve-required",
-            "tokenAddress": from_token,
-            "tokenSymbol": route["fromToken"]["tokenSymbol"],
-            "approveAmount": raw_amount,
-            "readableAmount": readable_amount.unwrap_or(""),
-            "bridgeId": resolved_bridge_id,
-            "bridgeName": route["bridgeName"],
-            "needCancelApprove": need_cancel_approve,
-            "estimateTime": route["estimateTime"],
-            "minimumReceived": route["minimumReceived"],
-            "toTokenAmount": route["toTokenAmount"],
-            "crossChainFee": route["crossChainFee"],
-        }));
-        return Ok(());
+        // Default mode (NEW, spec §1.3 / Appendix A): one-shot approve+wait.
+        // Runs the revoke (if `needCancelApprove`) and approve legs inline,
+        // each followed by `wait_tx_onchain`, then falls through to the swap
+        // step below. The new output schema (spec §2.2 — emitted in Step 4)
+        // is uniquely identified by the presence of `nextSteps`.
+
+        // 3a. Revoke if needed (USDT pattern). Mirrors the --confirm-approve
+        // branch's `fetch_approve_tx(amount=0)` → broadcast pattern, then
+        // additionally waits for the revoke tx to confirm before approving.
+        // Lenient on `tx` shape (parity with --confirm-approve revoke leg):
+        // if the server returns a non-object `tx` we silently skip the revoke
+        // broadcast; strictness only kicks in for the approve leg.
+        if need_cancel_approve {
+            let revoke_data = fetch_approve_tx(
+                client,
+                &from_idx,
+                &from_token,
+                wallet,
+                &resolved_bridge_id,
+                "0",
+                false,
+            )
+            .await?;
+            let revoke_obj = unwrap_data_array(&revoke_data);
+            if let Some(revoke_tx_obj) = revoke_obj["tx"].as_object() {
+                let revoke_calldata = revoke_tx_obj
+                    .get("data")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("missing tx.data in revoke approve-tx"))?;
+                let revoke_gas_limit = revoke_tx_obj.get("gasLimit").and_then(|v| v.as_str());
+                let revoke_result = wallet_contract_call(
+                    &from_token,
+                    &from_idx,
+                    "0",
+                    Some(revoke_calldata),
+                    revoke_gas_limit,
+                    false,
+                    force,
+                )
+                .await?;
+                let revoke_hash = extract_tx_hash(&revoke_result)?;
+                wait_tx_onchain(client, &revoke_hash, &from_idx).await?;
+            }
+        }
+
+        // 3b. Approve. Server returns the ready-built tx; broadcast via
+        // wallet_contract_call, then wait for it to confirm before swapping.
+        let approve_data = fetch_approve_tx(
+            client,
+            &from_idx,
+            &from_token,
+            wallet,
+            &resolved_bridge_id,
+            &raw_amount,
+            false,
+        )
+        .await?;
+        let approve_obj = unwrap_data_array(&approve_data);
+        let tx_obj = approve_obj["tx"]
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("/approve-tx returned null tx — sanity check failed"))?;
+        let approve_calldata = tx_obj
+            .get("data")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("missing tx.data in approve-tx response"))?;
+        let approve_gas_limit = tx_obj.get("gasLimit").and_then(|v| v.as_str());
+        let result = wallet_contract_call(
+            &from_token,
+            &from_idx,
+            "0",
+            Some(approve_calldata),
+            approve_gas_limit,
+            false,
+            force,
+        )
+        .await?;
+        let (a_tx_hash, a_order_id) = extract_tx_hash_and_order_id(&result)?;
+        wait_tx_onchain(client, &a_tx_hash, &from_idx).await?;
+        approve_tx_hash = Some(a_tx_hash);
+        if !a_order_id.is_empty() {
+            approve_order_id = Some(a_order_id);
+        }
+        // Fall through to Step 3 (swap) below — do NOT return here.
     }
 
     if needs_approve_branch && confirm_approve {
@@ -1108,6 +1549,10 @@ async fn cmd_execute(
     let tx_value = tx["value"].as_str().unwrap_or("0");
     let tx_gas_limit = tx["gasLimit"].as_str();
 
+    // relay / mayan / butterswap embed a from-swap leg → MEV-mandatory.
+    // Otherwise honor the caller's flag (size-threshold judgment is agent-side).
+    let mev_protection = mev_protection || bridge_forces_mev(route["bridgeName"].as_str().unwrap_or(""));
+
     let result = wallet_contract_call(
         tx_to,
         &from_idx,
@@ -1121,6 +1566,24 @@ async fn cmd_execute(
     let (swap_tx_hash, swap_order_id) = extract_tx_hash_and_order_id(&result)?;
 
     // ── Step 4: Output ────────────────────────────────────────────────────
+    // Two shapes deliberately diverge (spec §2.3 M1):
+    //   - Default (one-shot) path: NEW schema with `nextSteps` /
+    //     `fromChainIndex` / `bridgeName`. Built via `build_execute_data`.
+    //   - `--skip-approve` path: existing schema (untouched per PRD).
+    if !skip_approve {
+        let out = build_execute_data(
+            route,
+            &resolved_bridge_id,
+            &from_idx,
+            &swap_tx_hash,
+            &swap_order_id,
+            approve_tx_hash.as_deref(),
+            approve_order_id.as_deref(),
+        );
+        output::success(out);
+        return Ok(());
+    }
+
     let router = &swap_obj["router"];
     let mut out = json!({
         "action": "execute",
@@ -1285,11 +1748,262 @@ fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
     Ok((tx_hash, order_id))
 }
 
+/// Build ready-to-paste `onchainos cross-chain status` command so callers can
+/// poll bridge status without string surgery. Mirrors `swap::next_steps_for_swap`.
+fn next_steps_for_bridge(bridge_id: &str, from_chain_index: &str, from_tx_hash: &str) -> Value {
+    let mut steps = serde_json::Map::new();
+    steps.insert(
+        "checkBridgeStatus".to_string(),
+        json!(format!(
+            "onchainos cross-chain status --tx-hash {} --bridge-id {} --from-chain {}",
+            from_tx_hash, bridge_id, from_chain_index
+        )),
+    );
+    Value::Object(steps)
+}
+
+/// Assemble the default-path `data` payload (spec §2.2) emitted by the
+/// one-shot `cross-chain execute` flow.
+///
+/// Pure: takes the route from `/quote` and the final swap tx info plus the
+/// optional approval-leg artifacts; returns the `Value` ready to hand to
+/// `output::success`. Factored out so the schema (`action`/`nextSteps`/
+/// approval-conditional fields) is unit-testable without standing up the
+/// full async network stack.
+fn build_execute_data(
+    route: &Value,
+    resolved_bridge_id: &str,
+    from_chain_index: &str,
+    from_tx_hash: &str,
+    swap_order_id: &str,
+    approve_tx_hash: Option<&str>,
+    approve_order_id: Option<&str>,
+) -> Value {
+    let next_steps = next_steps_for_bridge(resolved_bridge_id, from_chain_index, from_tx_hash);
+    let mut out = json!({
+        "action": "execute",
+        "fromTxHash": from_tx_hash,
+        "bridgeId": resolved_bridge_id,
+        "bridgeName": route["bridgeName"],
+        "fromChainIndex": from_chain_index,
+        "minimumReceived": route["minimumReceived"],
+        "toTokenAmount": route["toTokenAmount"],
+        "crossChainFee": route["crossChainFee"],
+        "estimateTime": route["estimateTime"],
+        "nextSteps": next_steps,
+    });
+    if !swap_order_id.is_empty() {
+        out["swapOrderId"] = json!(swap_order_id);
+    }
+    if let Some(hash) = approve_tx_hash {
+        out["approveTxHash"] = json!(hash);
+    }
+    if let Some(oid) = approve_order_id {
+        out["approveOrderId"] = json!(oid);
+    }
+    out
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── transit fallback ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_api_error_extracts_code_and_msg() {
+        assert_eq!(
+            parse_api_error("API error (code=82000): Insufficient liquidity"),
+            Some(("82000".to_string(), "Insufficient liquidity".to_string()))
+        );
+        // empty msg → empty string (classifier treats it as non-informative)
+        assert_eq!(
+            parse_api_error("API error (code=82000): "),
+            Some(("82000".to_string(), String::new()))
+        );
+        assert_eq!(parse_api_error("some other error"), None);
+    }
+
+    #[test]
+    fn is_no_route_true_for_82000_82104_and_empty_router_list() {
+        let err82000: Result<Value> = Err(anyhow::anyhow!("API error (code=82000): no liquidity"));
+        let err82104: Result<Value> = Err(anyhow::anyhow!("API error (code=82104): token"));
+        assert!(is_no_route(&err82000));
+        assert!(is_no_route(&err82104));
+        // empty routerList (code=0 success body)
+        let empty: Result<Value> = Ok(json!([{ "routerList": [] }]));
+        assert!(is_no_route(&empty));
+    }
+
+    #[test]
+    fn is_no_route_false_for_routes_and_unrelated_errors() {
+        let with_route: Result<Value> = Ok(json!([{ "routerList": [{ "bridgeId": 1 }] }]));
+        assert!(!is_no_route(&with_route));
+        // a hard error that should propagate, not trigger fallback
+        let auth_err: Result<Value> = Err(anyhow::anyhow!("API error (code=50114): not logged in"));
+        assert!(!is_no_route(&auth_err));
+    }
+
+    #[test]
+    fn bridgeable_source_addresses_filters_by_chain_and_lowercases() {
+        let tokens = json!([
+            { "chainIndex": "1", "tokenContractAddress": "0xAAA" },
+            { "chainIndex": "1", "tokenContractAddress": "0xbbb" },
+            { "chainIndex": "1088", "tokenContractAddress": "0xCCC" }
+        ]);
+        let set = bridgeable_source_addresses(&tokens, "1");
+        assert!(set.contains("0xaaa"));
+        assert!(set.contains("0xbbb"));
+        assert!(!set.contains("0xccc")); // wrong chain dropped
+    }
+
+    #[test]
+    fn build_transit_candidates_intersects_bridgeable_when_known() {
+        // empty bridgeable set → no intersection filter (probe-all fallback)
+        let all = build_transit_candidates("1", "42161", &HashSet::new());
+        assert!(!all.is_empty());
+        // restrict to a single known-bridgeable address → only matching candidate kept
+        let only = all[0].address.to_lowercase();
+        let set: HashSet<String> = [only.clone()].into_iter().collect();
+        let filtered = build_transit_candidates("1", "42161", &set);
+        assert!(filtered.iter().all(|c| c.address.to_lowercase() == only));
+    }
+
+    #[test]
+    fn build_transit_candidates_resolves_dest_address_per_chain() {
+        // Regression for the transit leg-2 toTokenAddress bug: a stablecoin's
+        // dest address MUST be resolved on `to_idx`, not reused from the source
+        // chain. USDC on Ethereum (1) and Arbitrum (42161) have different CAs.
+        let cands = build_transit_candidates("1", "42161", &HashSet::new());
+        let usdc = cands
+            .iter()
+            .find(|c| c.symbol == "USDC")
+            .expect("USDC candidate");
+        assert_eq!(usdc.address, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"); // ETH USDC
+        assert_eq!(usdc.dest_address, "0xaf88d065e77c8cc2239327c5edb3a432268e5831"); // ARB USDC
+        assert_ne!(usdc.address, usdc.dest_address);
+    }
+
+    #[test]
+    fn build_transit_candidates_drops_stable_absent_on_dest() {
+        // DAI exists on Ethereum but not in the Arbitrum alias map, so it cannot
+        // serve as transit into Arbitrum and must be dropped (no wrong-address
+        // probe). NATIVE always survives (shared sentinel address).
+        let cands = build_transit_candidates("1", "42161", &HashSet::new());
+        assert!(cands.iter().all(|c| c.symbol != "DAI"));
+        assert!(cands.iter().any(|c| c.symbol == "NATIVE"));
+    }
+
+    #[test]
+    fn build_transit_candidates_resolves_usdt_dest_address() {
+        // Not just USDC: every stable must get its dest-chain address. USDT on
+        // Ethereum (0xdac1…) and Arbitrum (0xfd08…) differ.
+        let cands = build_transit_candidates("1", "42161", &HashSet::new());
+        let usdt = cands
+            .iter()
+            .find(|c| c.symbol == "USDT")
+            .expect("USDT candidate");
+        assert_eq!(usdt.address, "0xdac17f958d2ee523a2206206994597c13d831ec7"); // ETH USDT
+        assert_eq!(usdt.dest_address, "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9"); // ARB USDT
+        assert_ne!(usdt.address, usdt.dest_address);
+    }
+
+    #[test]
+    fn build_transit_candidates_resolves_dest_across_vm_families() {
+        // Solana source → EVM dest: the trickiest case. Source addresses are
+        // base58, dest addresses are 0x — leg-2's toTokenAddress must be the
+        // EVM-side address, never the base58 source one.
+        let cands = build_transit_candidates("501", "1", &HashSet::new());
+        let usdc = cands
+            .iter()
+            .find(|c| c.symbol == "USDC")
+            .expect("USDC candidate");
+        assert_eq!(usdc.address, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"); // SOL USDC
+        assert_eq!(usdc.dest_address, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"); // ETH USDC
+        // NATIVE too: SOL sentinel source, EVM sentinel dest.
+        let native = cands
+            .iter()
+            .find(|c| c.symbol == "NATIVE")
+            .expect("NATIVE candidate");
+        assert_eq!(native.address, "11111111111111111111111111111111");
+        assert_eq!(native.dest_address, "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    }
+
+    #[test]
+    fn build_transit_candidates_intersection_keys_on_source_address() {
+        // Regression guard: the bridgeable intersection must filter on the
+        // SOURCE address, not the dest. A set holding only the dest USDC address
+        // (Arbitrum) must NOT keep the ETH→ARB USDC candidate (whose source is
+        // the Ethereum USDC address).
+        let dest_only: HashSet<String> =
+            ["0xaf88d065e77c8cc2239327c5edb3a432268e5831".to_string()] // ARB USDC (dest)
+                .into_iter()
+                .collect();
+        let cands = build_transit_candidates("1", "42161", &dest_only);
+        assert!(
+            cands.iter().all(|c| c.symbol != "USDC"),
+            "USDC must be dropped — its SOURCE address is not in the bridgeable set"
+        );
+    }
+
+    #[test]
+    fn build_transit_option_maps_first_route() {
+        let bridge_quote = json!([{
+            "toToken": { "decimals": 6 },
+            "routerList": [{
+                "bridgeName": "ACROSS V3",
+                "bridgeId": 636,
+                "toTokenAmount": "999533",
+                "minimumReceived": "999533",
+                "crossChainFee": "466",
+                "crossChainFeeTokenAddress": "0xaf88",
+                "otherNativeFee": "0",
+                "estimateTime": "43"
+            }]
+        }]);
+        let opt = build_transit_option("USDC", &bridge_quote).expect("option");
+        assert_eq!(opt["transitToken"], json!("USDC"));
+        assert_eq!(opt["bridgeName"], json!("ACROSS V3"));
+        assert_eq!(opt["toTokenAmount"], json!("999533"));
+        assert_eq!(opt["toTokenDecimals"], json!(6));
+    }
+
+    #[test]
+    fn build_transit_option_none_when_no_route() {
+        assert!(build_transit_option("USDC", &json!([{ "routerList": [] }])).is_none());
+    }
+
+    #[test]
+    fn raw_balance_for_matches_case_insensitive_and_defaults_zero() {
+        let assets = json!([
+            { "tokenContractAddress": "0xAaA", "rawBalance": "100" },
+            { "tokenContractAddress": "0xbbb", "rawBalance": "200" }
+        ]);
+        assert_eq!(raw_balance_for(&assets, "0xaaa"), "100");
+        assert_eq!(raw_balance_for(&assets, "0xBBB"), "200");
+        assert_eq!(raw_balance_for(&assets, "0xccc"), "0"); // absent → "0"
+    }
+
+    #[test]
+    fn bridge_forces_mev_matches_from_swap_bridges() {
+        assert!(bridge_forces_mev("RELAY"));
+        assert!(bridge_forces_mev("Mayan Swift"));
+        assert!(bridge_forces_mev("butterswap"));
+        assert!(!bridge_forces_mev("ACROSS V3"));
+        assert!(!bridge_forces_mev("STARGATE V2 TAXI MODE"));
+    }
+
+    #[test]
+    fn classify_dead_end_distinguishes_no_path_from_env_unavailable() {
+        let (outcome, msg) = classify_dead_end(&["Insufficient liquidity".to_string()]);
+        assert_eq!(outcome, "no_path");
+        assert_eq!(msg, "Insufficient liquidity");
+
+        let (outcome, _) = classify_dead_end(&["".to_string(), "unknown error".to_string()]);
+        assert_eq!(outcome, "env_unavailable");
+    }
 
     // ── is_canonical_zero_str ──────────────────────────────────────────
 
@@ -1441,5 +2155,126 @@ mod tests {
     fn unwrap_data_array_empty_returns_null() {
         let v = json!([]);
         assert_eq!(unwrap_data_array(&v), Value::Null);
+    }
+
+    // ── next_steps_for_bridge ───────────────────────────────────────────────
+
+    #[test]
+    fn next_steps_for_bridge_emits_check_bridge_status_command() {
+        let steps = next_steps_for_bridge("199", "1", "0xabc");
+        let obj = steps.as_object().expect("nextSteps must be a JSON object");
+        let cmd = obj
+            .get("checkBridgeStatus")
+            .and_then(|v| v.as_str())
+            .expect("checkBridgeStatus must be a string");
+        assert_eq!(
+            cmd,
+            "onchainos cross-chain status --tx-hash 0xabc --bridge-id 199 --from-chain 1"
+        );
+    }
+
+    // ── build_execute_data (default-path output schema, spec §2.2) ──────────
+
+    fn sample_route() -> Value {
+        json!({
+            "bridgeId": 199,
+            "bridgeName": "Across",
+            "needApprove": true,
+            "needCancelApprove": false,
+            "estimateTime": "30",
+            "minimumReceived": "0.99",
+            "toTokenAmount": "1.00",
+            "crossChainFee": "0.01",
+            "fromToken": { "tokenSymbol": "USDC" },
+        })
+    }
+
+    #[test]
+    fn build_execute_data_default_path_carries_action_and_next_steps() {
+        // Spec §2.2: default path emits action="execute" with nextSteps.checkBridgeStatus
+        // and fromChainIndex/bridgeName — uniquely identifying the one-shot shape.
+        let out = build_execute_data(
+            &sample_route(),
+            "199",
+            "1",
+            "0xfromhash",
+            "swap-oid-42",
+            None,
+            None,
+        );
+        assert_eq!(out["action"], json!("execute"));
+        assert_eq!(out["fromTxHash"], json!("0xfromhash"));
+        assert_eq!(out["fromChainIndex"], json!("1"));
+        assert_eq!(out["bridgeId"], json!("199"));
+        assert_eq!(out["bridgeName"], json!("Across"));
+        assert_eq!(out["swapOrderId"], json!("swap-oid-42"));
+        assert_eq!(out["minimumReceived"], json!("0.99"));
+        assert_eq!(out["toTokenAmount"], json!("1.00"));
+        assert_eq!(out["crossChainFee"], json!("0.01"));
+        assert_eq!(out["estimateTime"], json!("30"));
+        let next = out
+            .get("nextSteps")
+            .and_then(|v| v.as_object())
+            .expect("nextSteps must be a JSON object");
+        let cmd = next
+            .get("checkBridgeStatus")
+            .and_then(|v| v.as_str())
+            .expect("checkBridgeStatus must be a string");
+        assert_eq!(
+            cmd,
+            "onchainos cross-chain status --tx-hash 0xfromhash --bridge-id 199 --from-chain 1"
+        );
+    }
+
+    #[test]
+    fn build_execute_data_omits_approve_fields_when_no_approval_performed() {
+        // Spec §2.2: `approveTxHash` / `approveOrderId` MUST be absent when no
+        // approval ran (e.g. allowance sufficient, Solana source chain, native token).
+        let out = build_execute_data(
+            &sample_route(),
+            "199",
+            "1",
+            "0xfromhash",
+            "swap-oid",
+            None,
+            None,
+        );
+        let obj = out.as_object().expect("data must be a JSON object");
+        assert!(
+            !obj.contains_key("approveTxHash"),
+            "approveTxHash must be omitted when no approval performed, got: {out}"
+        );
+        assert!(
+            !obj.contains_key("approveOrderId"),
+            "approveOrderId must be omitted when no approval performed, got: {out}"
+        );
+    }
+
+    #[test]
+    fn build_execute_data_includes_approve_fields_when_approval_performed() {
+        // Spec §2.2: `approveTxHash` / `approveOrderId` present iff approval ran
+        // (and the broadcast returned a non-empty order id).
+        let out = build_execute_data(
+            &sample_route(),
+            "199",
+            "1",
+            "0xfromhash",
+            "swap-oid",
+            Some("0xapprovehash"),
+            Some("approve-oid-7"),
+        );
+        assert_eq!(out["approveTxHash"], json!("0xapprovehash"));
+        assert_eq!(out["approveOrderId"], json!("approve-oid-7"));
+    }
+
+    #[test]
+    fn build_execute_data_omits_swap_order_id_when_empty() {
+        // Mirrors the pre-existing `--skip-approve` convention: do not pollute
+        // output with an empty `swapOrderId` (only Gas Station paths set it).
+        let out = build_execute_data(&sample_route(), "199", "1", "0xfromhash", "", None, None);
+        assert!(
+            !out.as_object().unwrap().contains_key("swapOrderId"),
+            "swapOrderId must be omitted when empty, got: {out}"
+        );
     }
 }

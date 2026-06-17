@@ -2,13 +2,15 @@
 
 **Mandatory communication-init flow** — ensures OKX A2A communication is ready for the current runtime. Designed to be **auto-triggered by the LLM itself**, without waiting for the user to ask.
 
-Runtime families:
+Runtime readiness is owned by the `okx-a2a` CLI:
 
-- **OpenClaw**: uses the OpenClaw OKX A2A plugin and native `xmtp_*` tools.
-- **Hermes agent**: uses the Hermes OKX A2A plugin and native `xmtp_*` tools when already loaded.
-- **Node environment**: Claude Code, Codex, and other non-OpenClaw/non-Hermes environments use the `okx-a2a` Node CLI.
+- `okx-a2a setup --help` is the lightweight capability check. If the installed CLI does not support `setup`, install the latest stable `@okxweb3/a2a-node` package.
+- `okx-a2a setup --json` owns runtime/plugin setup. It detects OpenClaw / Hermes / Node, installs missing OpenClaw or Hermes OKX A2A plugins from npm when needed, and ensures the local `@okxweb3/a2a-node` package is set up.
+- `okx-a2a switch-runtime --json` detects the current caller runtime, switches the AI provider/runtime wiring, and returns the machine-readable runtime readiness result.
+- `okx-a2a agent refresh --json` refreshes local agent communication identities. It is the CLI replacement for the legacy/native `xmtp_refresh_agents` tool.
+- `okx-a2a update` is **not** part of this auto-triggered readiness flow. It is reserved for user-initiated manual package version updates.
 
-This file owns the **model-visible native-tool check** and the branch router. If native communication tooling is absent, deterministic runtime detection is owned by [`scripts/detect-okx-a2a-runtime.sh`](scripts/detect-okx-a2a-runtime.sh). OpenClaw and Hermes still route to their established branch files; Node uses the scripted readiness flow in [`scripts/ensure-okx-a2a-ready.sh`](scripts/ensure-okx-a2a-ready.sh).
+This file owns the LLM-visible execution contract and JSON interpretation. Runtime/plugin detection must not be duplicated in markdown or shell snippets; it is handled inside `okx-a2a setup --json` and `okx-a2a switch-runtime --json`.
 
 ## When To Run (Auto-Trigger Contract)
 
@@ -23,115 +25,198 @@ The LLM **must** invoke this flow **on its own**, immediately after any of the f
 
 **Recognition cues** (Chinese / English) that should trigger this hook after the upstream action returns: `创建 agent`, `注册 agent`, `更新 agent`, `修改 agent 信息`, `注销 agent`, `停用 agent`, `agent 列表变更`, `agent registered`, `agent created`, `agent updated`, `agent deactivated`, `agent list changed`.
 
-The flow is safe to invoke unconditionally. It first checks whether communication is already ready in the current toolset. If native communication tooling is absent, it delegates runtime detection to the detector script, then routes to exactly one runtime branch.
+The flow is safe to invoke unconditionally. It first verifies Node.js is installed and satisfies the minimum supported version, then bootstraps the `okx-a2a` CLI if missing, verifies the installed CLI supports `setup`, uses `setup --json` for runtime/plugin setup, `switch-runtime --json` for runtime readiness, and `agent refresh --json` for agent communication identity refresh.
 
 ## Execution Flow
 
-### Step 0: Toolset Self-Check
+### Step 0: Check Node.js Version
 
-<MUST>
-Inspect the LLM's current toolset before running any shell command. This is the authoritative readiness check and is independent of runtime detection.
-</MUST>
-
-- **`xmtp_refresh_agents` is present** -> call it directly (no arguments unless its schema requires them). If it succeeds, surface only user-relevant output and end the flow.
-- **`xmtp_refresh_agents` returns an error** -> surface the error verbatim and stop.
-- **`xmtp_refresh_agents` is absent** -> continue to Step 1.
-
-Do not run shell runtime detection, installation checks, or gateway health checks when the native tool is already present.
-
-### Step 1: Scripted Runtime Detection
-
-<MUST>
-When Step 0 does not find `xmtp_refresh_agents`, run the detector script. Do not paste runtime-detection shell into the prompt or ask the model/user to self-report whether the runtime is OpenClaw, Hermes, Claude, or Codex.
-</MUST>
-
-Run from the installed skills root (the directory that contains `skills/`). If the current working directory is elsewhere, first `cd` to that installed root or resolve the script path relative to this markdown file:
+Run:
 
 ```bash
-sh skills/okx-agent-chat/scripts/detect-okx-a2a-runtime.sh --format json
+node --version
 ```
 
-The detector returns JSON with `runtime` set to `node`, `openclaw`, or `hermes`. Stdout is JSON only. Do not pipe, grep, truncate, or rewrite the command.
+Requirement:
 
-### Step 2: Branch Routing
+- Node.js `>= 22.14.0`
 
-Based on the detector JSON, continue with exactly one branch:
+If `node` is missing, stop and tell the user Node.js and npm are required to bootstrap OKX A2A communication.
 
-| `runtime` | Required behavior |
+If the installed Node.js version is below `22.14.0`, stop and tell the user:
+
+> Node.js must be upgraded to `>= 22.14.0` before OKX A2A communication can be prepared.
+
+Do not proceed to any later step when Node.js is missing or below the minimum version.
+
+### Step 1: Bootstrap `okx-a2a` If Missing
+
+Run from the installed skills root, or resolve commands normally from the current shell:
+
+```bash
+command -v okx-a2a >/dev/null 2>&1
+```
+
+If `okx-a2a` exists, continue to Step 2.
+
+If `okx-a2a` is missing, bootstrap the Node CLI package:
+
+```bash
+npm install -g @okxweb3/a2a-node@latest
+```
+
+Then check again:
+
+```bash
+command -v okx-a2a >/dev/null 2>&1
+```
+
+If `okx-a2a` is still missing, stop and tell the user:
+
+> `okx-a2a` was installed, but the global npm bin directory is not on `PATH`.
+
+If `npm` is missing, stop and tell the user that npm is required to bootstrap OKX A2A communication.
+
+### Step 2: Ensure `setup` Is Supported
+
+Run:
+
+```bash
+okx-a2a setup --help >/dev/null 2>&1
+```
+
+If this succeeds, continue to Step 3.
+
+If this fails, the installed `@okxweb3/a2a-node` is too old for this flow. Install the latest stable package:
+
+```bash
+npm install -g @okxweb3/a2a-node@latest
+```
+
+Then re-check:
+
+```bash
+okx-a2a setup --help >/dev/null 2>&1
+```
+
+If `setup` is still unsupported, stop and tell the user:
+
+> `okx-a2a` is installed, but it does not support `setup`. Please check the global npm installation and PATH.
+
+Do **not** run `okx-a2a update` from this auto-triggered flow. `setup` replaces it for runtime/plugin detection and installation. `update` is reserved for user-initiated manual package version updates.
+
+### Step 3: Setup Runtime And Plugins
+
+Run:
+
+```bash
+okx-a2a setup --json
+```
+
+This command owns runtime/plugin detection and setup:
+
+- For OpenClaw, it detects whether the OKX A2A OpenClaw plugin is installed and configured; if missing, it installs the plugin from npm, applies required runtime config, and may restart the OpenClaw gateway once.
+- For Hermes, it detects whether the OKX A2A Hermes plugin is installed; if missing, it pulls the plugin package from npm, installs it into the Hermes user plugins directory, and may restart the Hermes gateway once.
+- For Node, it ensures the local `@okxweb3/a2a-node` setup is present.
+
+Stdout must be JSON. Do not pipe, grep, truncate, or rewrite the command.
+
+Use the `setup --json` output as the source of truth:
+
+| JSON state | Required behavior |
 |---|---|
-| `openclaw` | Read [references/comm-init/openclaw.md](references/comm-init/openclaw.md) and follow that established OpenClaw flow. |
-| `hermes` | Read [references/comm-init/hermes.md](references/comm-init/hermes.md) and follow that established Hermes flow. |
-| `node` | Continue to Step 3 below and run the Node scripted readiness flow. |
+| `ok: true` | Runtime/plugin setup is ready. Surface `userMessage` only if it is user-relevant, then continue to Step 4. |
+| `state: "needs_user_action"` or `state: "blocked"` | Show `userMessage` and stop. The environment needs user/admin action. |
+| `state: "failed"` | Show `userMessage` and the relevant `detail`; stop. Do not invent a manual recovery. |
 
-<MUST>
-For OpenClaw and Hermes, read exactly the matching branch file and do not run the Node readiness script. For Node, do not read the legacy Node reference; use the scripted flow below.
-</MUST>
+If `setup --json` fails because the first-time OpenClaw or Hermes gateway restart failed, treat the setup as failed even if the plugin installation itself completed. Surface the exact error/output to the user and stop. Do not run `okx-a2a switch-runtime --json` or `okx-a2a agent refresh --json` after a gateway restart failure.
 
-If detector JSON has `ok: false`, show `userMessage` and stop.
+If `setup --json` exits non-zero or prints invalid JSON, show the command error/output and stop. The AI should handle the setup failure at this point by reporting the failure and any CLI-provided next action; it must not continue to later readiness steps.
 
-### Step 3: Node Scripted Readiness
+### Step 4: Switch Runtime
 
-Run from the installed skills root:
+Run:
 
 ```bash
-sh skills/okx-agent-chat/scripts/ensure-okx-a2a-ready.sh --format json --runtime node
+okx-a2a switch-runtime --json
 ```
 
-The Node script handles Node.js checks, optional `@okxweb3/a2a-node` refresh, AI provider setup, daemon start/restart, and `okx-a2a agent refresh`.
+This command owns runtime detection and provider/runtime switching.
 
-Stdout is JSON only. Do not pipe, grep, truncate, or rewrite the command.
+Stdout must be JSON. Do not pipe, grep, truncate, or rewrite the command.
 
-### Step 4: Interpret Node JSON
+### Step 5: Interpret `switch-runtime --json`
 
-Use the Node script output as the source of truth:
+Use the `switch-runtime --json` output as the source of truth:
+
+| JSON state | Required behavior |
+|---|---|
+| `ok: true` | Runtime/provider wiring is ready. Surface `userMessage` only if it is user-relevant, then continue to Step 6. |
+| `state: "needs_user_choice"` | Ask the user to choose one value from `providers`. After they choose, rerun the command indicated by `nextCommand`, or rerun `okx-a2a switch-runtime --json` with the supported provider selection option if the CLI prints one. |
+| `state: "blocked"` | Show `userMessage` and stop. The environment needs user/admin action. |
+| `state: "failed"` | Show `userMessage` and the relevant `detail`; stop. Do not invent a manual recovery. |
+
+If `switch-runtime --json` exits non-zero or prints invalid JSON, show the command error/output and stop.
+
+### Step 6: Refresh Agent Communication Identities
+
+Run:
+
+```bash
+okx-a2a agent refresh --json
+```
+
+This command is the CLI replacement for legacy/native `xmtp_refresh_agents`.
+
+Stdout must be JSON. Do not pipe, grep, truncate, or rewrite the command. If it exits non-zero or prints invalid JSON, show the command error/output and stop.
+
+Use the refresh output as the source of truth:
 
 | JSON state | Required behavior |
 |---|---|
 | `ok: true` | Communication is ready. Surface `userMessage` only if it is user-relevant, then continue the upstream flow. |
-| `state: "needs_user_choice"` | Ask the user to choose one value from `providers`. After they choose, rerun the script with `--format json --runtime node --provider <choice>`. |
-| `state: "blocked"` | Show `userMessage` and stop. The environment needs user/admin action. |
+| `ok: false` or `state: "blocked"` | Show `userMessage` and stop. |
 | `state: "failed"` | Show `userMessage` and the relevant `detail`; stop. Do not invent a manual recovery. |
 
-If either script file is missing, the skill installation is incomplete. Tell the user to rerun the onchainos setup/skill install, then stop.
+## JSON Contract
 
-## Detector Script Contract
-
-Example detector success:
+Example setup success:
 
 ```json
 {
   "ok": true,
-  "runtime": "node",
-  "reason": "",
-  "userMessage": ""
+  "runtime": "openclaw",
+  "state": "ready",
+  "action": "setup_verified",
+  "installed": [],
+  "userMessage": "OKX A2A runtime setup is ready."
 }
 ```
 
-## Node Script Contract
-
-Example success:
+Example switch-runtime success:
 
 ```json
 {
   "ok": true,
   "runtime": "node",
   "state": "ready",
-  "action": "refreshed",
+  "action": "switched",
   "reason": "",
-  "userMessage": "OKX A2A communication is ready."
+  "userMessage": "OKX A2A runtime is ready."
 }
 ```
 
-Example user-choice result:
+Example refresh success:
 
 ```json
 {
-  "ok": false,
-  "runtime": "node",
-  "state": "needs_user_choice",
-  "reason": "ambiguous_ai_provider",
-  "providers": ["codex", "claude"],
-  "nextCommand": "sh skills/okx-agent-chat/scripts/ensure-okx-a2a-ready.sh --format json --runtime node --provider <provider>"
+  "ok": true,
+  "payload": {
+    "added": [],
+    "removed": [],
+    "activeClients": 2
+  },
+  "userMessage": "OKX A2A communication is ready."
 }
 ```
 
@@ -142,18 +227,26 @@ Example blocked result:
   "ok": false,
   "runtime": "node",
   "state": "blocked",
-  "reason": "node_version_too_old",
-  "required": ">=22.0.0",
-  "current": "v20.11.0"
+  "action": "none",
+  "reason": "okx_a2a_not_on_path",
+  "userMessage": "okx-a2a was installed, but the global npm bin directory is not on PATH."
 }
 ```
 
-## Edge Cases (Routing)
+## Edge Cases
 
 | Scenario | Behavior |
 |---|---|
-| Tool `xmtp_refresh_agents` is present | Step 0 calls it immediately and ends without shell runtime detection. |
-| `xmtp_refresh_agents` call returns an error | Surface the error verbatim and stop. |
-| Runtime signals conflict | The detector owns runtime priority: Hermes specific signal, then OpenClaw env hints, then OpenClaw PPID fallback, then Node. |
-| PPID walk reaches PID 0/1, an empty PID, or 8 levels without finding OpenClaw | The detector falls back to Node. |
-| Optional Node package refresh fails while an existing binary works | Continue to Node capability/status checks; do not fail solely on the advisory package version. |
+| `node` is missing | Stop and tell the user Node.js and npm are required. |
+| Node.js version is below `22.14.0` | Stop and tell the user Node.js must be upgraded to `>= 22.14.0`. Do not proceed. |
+| `okx-a2a` is missing | Bootstrap with `npm install -g @okxweb3/a2a-node@latest`, then re-check PATH. |
+| `npm` is missing | Stop and tell the user npm is required. |
+| `okx-a2a` exists but `setup` is unsupported | Install latest version `@okxweb3/a2a-node`, then re-check `okx-a2a setup --help`. |
+| `setup` remains unsupported after install | Tell the user the global npm install or PATH is inconsistent and stop. |
+| `okx-a2a setup --json` installs a missing OpenClaw/Hermes plugin | Continue to `okx-a2a switch-runtime --json` after setup returns `ok: true`. |
+| `okx-a2a setup --json` is blocked or fails | Surface the setup output and stop. |
+| `okx-a2a switch-runtime --json` succeeds | Continue to `okx-a2a agent refresh --json`; communication readiness is decided by refresh. |
+| `okx-a2a agent refresh --json` fails | Surface the error and stop. |
+| Current runtime is OpenClaw / Hermes Gateway | Do not run manual restart/install commands from markdown. `okx-a2a setup --json` owns plugin setup behavior. |
+| Runtime signals conflict | Do not resolve in markdown. `okx-a2a setup --json` and `okx-a2a switch-runtime --json` own runtime detection. |
+| Legacy `ensure-okx-a2a-ready.sh` exists in this skill directory | It is a compatibility wrapper only; this markdown flow calls `okx-a2a` directly. |
