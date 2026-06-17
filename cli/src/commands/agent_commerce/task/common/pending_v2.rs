@@ -414,8 +414,8 @@ pub enum PendingDecisionsV2Command {
     /// (user-session, CLI-driver bypass) Resolve a decision without consulting
     /// the queue file — caller passes every routing field explicitly so the
     /// envelope can be built and dispatched. Pairs with `request`'s
-    /// OKX_A2A_IS_CLI=1 bypass; used when a non-MCP CLI loop owns turn-taking
-    /// and never persists queue state to disk.
+    /// OKX_A2A_IS_CLI=1 bypass; used when a CLI driver loop (Claude Code / Codex)
+    /// owns turn-taking and never persists queue state to disk.
     #[command(name = "resolve-with-sessionkey")]
     ResolveWithSessionkey {
         #[arg(long = "user-reply")]
@@ -433,11 +433,12 @@ pub enum PendingDecisionsV2Command {
         source_event: String,
     },
 
-    /// (user-session, MCP variant of resolve-with-sessionkey) Same envelope
-    /// construction as `resolve-with-sessionkey`, but emits a playbook that
-    /// dispatches via the MCP `xmtp_dispatch_session` tool instead of the
-    /// `okx-a2a session send` CLI subprocess. Pairs with `playbook_push_prompt_user`
-    /// (the MCP push variant), so an MCP push → MCP relay round-trip stays consistent.
+    /// (user-session, queue-backed variant of resolve-with-sessionkey) Same envelope
+    /// construction as `resolve-with-sessionkey`, but also removes the matching entry
+    /// from the persisted queue and emits a playbook keyed to `resolve-prompt` so
+    /// the LLM doesn't accidentally retry against another resolver. Pairs with
+    /// `playbook_push_prompt_user` (the queue-mode push variant), so a queue-mode
+    /// push → queue-mode relay round-trip stays consistent.
     #[command(name = "resolve-prompt")]
     ResolvePrompt {
         #[arg(long = "user-reply")]
@@ -533,9 +534,9 @@ fn handle_request(
     llm_content: Option<String>,
     source_event: Option<String>,
 ) -> Result<()> {
-    // CLI mode: the driver (a non-MCP CLI loop) owns turn-taking and doesn't need
+    // CLI mode: the driver (Claude Code / Codex) owns turn-taking and doesn't need
     // queue routing. Bypass the queue file entirely — build an ad-hoc entry and
-    // emit playbook_push so the LLM calls xmtp_prompt_user immediately.
+    // run `okx-a2a user decision-request` in-process immediately.
     let cli_mode_env = std::env::var("OKX_A2A_IS_CLI").unwrap_or_default();
     let cli_mode = cli_mode_env == "1";
     trace_log(&format!(
@@ -568,7 +569,7 @@ fn handle_request(
         return Ok(());
     }
 
-    // Non-CLI mode: emit the MCP `xmtp_prompt_user` playbook via playbook_push_prompt_user.
+    // Non-CLI mode: emit the bash `okx-a2a user decision-request` playbook via playbook_push_prompt_user.
     // Persist the entry to the queue file as Status::Queued, keyed by
     // (jobId, role, agentId, toAgentId?) (same key overwrites in place, preserving
     // created_at). At resolve time, `handle_resolve_prompt` looks up by the same
@@ -611,7 +612,7 @@ fn handle_request(
 
     // Unreachable: the early-returns above cover every path. Keeping the
     // historical Active/Queued queue-routing branch behind #[allow(unreachable_code)]
-    // until the v2-legacy MCP-host code path is fully retired.
+    // until the v2-legacy code path is fully retired.
     let to_ref = to_agent_id.as_deref();
 
     let _lock = acquire_lock()?;
@@ -740,11 +741,12 @@ fn handle_resolve_with_sessionkey(
     Ok(())
 }
 
-/// MCP variant of `handle_resolve_with_sessionkey`. Builds the same
+/// Queue-backed variant of `handle_resolve_with_sessionkey`. Builds the same
 /// system-shaped relay envelope from the caller-supplied routing fields, but
-/// emits `playbook_relay_only_prompt` (MCP `xmtp_dispatch_session` tool call)
-/// instead of `playbook_relay_only_cli` (`okx-a2a session send` bash). Pairs
-/// with `playbook_push_prompt_user` so an MCP push lands an MCP relay.
+/// emits `playbook_relay_only_prompt` (keyed to `resolve-prompt` so the LLM
+/// doesn't retry against another resolver) and best-effort removes the matching
+/// queue entry. Pairs with `playbook_push_prompt_user` so a queue-mode push
+/// lands a queue-mode relay.
 fn handle_resolve_prompt(
     user_reply: String,
     job_id: String,
@@ -759,7 +761,7 @@ fn handle_resolve_prompt(
     ));
     let relay_event = format!("user_decision_{}", source_event);
     let description = format!(
-        "User-decision relay envelope (MCP prompt mode). Call `onchainos agent next-action \
+        "User-decision relay envelope (queue-backed prompt mode). Call `onchainos agent next-action \
          --role {role} --agentId {agent} \
          --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"}}'` \
          to fetch the routing playbook; follow it. \
@@ -1278,8 +1280,8 @@ fn strip_label_prefix(label: &str) -> &str {
 ///
 /// The "follow the playbook the CLI returns" line is hardened here vs. the previous
 /// hand-written copies: it spells out the three possible stdout shapes
-/// (`xmtp_prompt_user` / `xmtp_dispatch_user` / end-turn) and explicitly warns that
-/// stdout IS the next-action playbook (not log output). Without this, smaller models
+/// (`okx-a2a user decision-request` / `okx-a2a user notify` / end-turn) and explicitly
+/// warns that stdout IS the next-action playbook (not log output). Without this, smaller models
 /// tend to stop after the bash call — the user-facing tool invocation never happens,
 /// the card never surfaces, the flow stalls (24h auto-refund / mistaken auto-decline).
 ///
@@ -1325,7 +1327,7 @@ pub fn request_command_block(
          \x20\x20--list-label \"{label}\" \\\n\
          \x20\x20--source-event {source_event}\n\
          ```\n\n\
-         **(3) Read step (2)'s stdout and follow it verbatim.** 🛑 The printed text IS your next-action playbook (it self-describes: tells you which xmtp tool to call with which args, or to end the turn) — it is NOT a success-confirmation receipt. Skipping (3) = card never reaches the user → flow stalls → 24h auto-refund / mistaken auto-decline. Do NOT hand-craft `llmContent` or call `xmtp_dispatch_session` yourself — that path is owned by `pending-decisions-v2` now.\n",
+         **(3) Read step (2)'s stdout and follow it verbatim.** 🛑 The printed text IS your next-action playbook (it self-describes: tells you which `okx-a2a` command to run with which args, or to end the turn) — it is NOT a success-confirmation receipt. Skipping (3) = card never reaches the user → flow stalls → 24h auto-refund / mistaken auto-decline. Do NOT hand-craft `--llm-content` or call `okx-a2a session send` yourself — that path is owned by `pending-decisions-v2` now.\n",
         job_id = job_id,
         role = role,
         agent_id = agent_id,
@@ -1361,7 +1363,7 @@ fn resolve_llm_content(entry: &PendingEntry) -> String {
     };
     format!(
         "[USER_DECISION_REQUEST][job: {}][role: {}][agent: {}]{}\n\n\
-         Step 1 — Card was just delivered via `xmtp_prompt_user`. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
+         Step 1 — Card was just delivered via `okx-a2a user decision-request`. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — When the user actually replies (next turn):\n\
          \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
          \x20\x20\x20\x20· else → run `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording — no interpretation, no translation>\"` exactly once, then follow the relay playbook it returns.",
@@ -1375,13 +1377,18 @@ fn resolve_llm_content(entry: &PendingEntry) -> String {
 
 fn playbook_push(entry: &PendingEntry) -> String {
     let llm_content = resolve_llm_content(entry);
+    let llm_content_q = llm_content.replace('\'', "'\\''");
+    let user_content_q = entry.user_content.replace('\'', "'\\''");
     format!(
-        "Now call xmtp_prompt_user with the EXACT arguments below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the tool returns 'sent'.\n\n\
-         tool: xmtp_prompt_user\n\
-         llmContent:\n{}\n\
-         userContent:\n{}\n",
-        indent(&llm_content, "  "),
-        indent(&entry.user_content, "  "),
+        "Now run the EXACT command below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the command returns.\n\n\
+         ```bash\n\
+         okx-a2a user decision-request \\\n\
+         \x20\x20--user-content '{user_content}' \\\n\
+         \x20\x20--llm-content '{llm_content}' \\\n\
+         \x20\x20--json\n\
+         ```\n",
+        user_content = user_content_q,
+        llm_content = llm_content_q,
     )
 }
 
@@ -1468,27 +1475,32 @@ fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
     )
 }
 
-/// Default (non-CLI) variant of `playbook_push`. Same MCP `xmtp_prompt_user`
-/// tool invocation shape as `playbook_push`; the only difference is the
-/// embedded llmContent comes from `resolve_llm_content_prompt_user` (with
+/// Default (non-CLI) variant of `playbook_push`. Same `okx-a2a user decision-request`
+/// bash invocation shape as `playbook_push`; the only difference is the
+/// embedded llm-content comes from `resolve_llm_content_prompt_user` (with
 /// multi-decision disambiguation). Used by `handle_request` when
 /// `OKX_A2A_IS_CLI` is NOT set.
 fn playbook_push_prompt_user(entry: &PendingEntry) -> String {
     let llm_content = resolve_llm_content_prompt_user(entry);
+    let llm_content_q = llm_content.replace('\'', "'\\''");
+    let user_content_q = entry.user_content.replace('\'', "'\\''");
     format!(
-        "Now call xmtp_prompt_user with the EXACT arguments below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the tool returns 'sent'.\n\n\
-         tool: xmtp_prompt_user\n\
-         llmContent:\n{}\n\
-         userContent:\n{}\n",
-        indent(&llm_content, "  "),
-        indent(&entry.user_content, "  "),
+        "Now run the EXACT command below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the command returns.\n\n\
+         ```bash\n\
+         okx-a2a user decision-request \\\n\
+         \x20\x20--user-content '{user_content}' \\\n\
+         \x20\x20--llm-content '{llm_content}' \\\n\
+         \x20\x20--json\n\
+         ```\n",
+        user_content = user_content_q,
+        llm_content = llm_content_q,
     )
 }
 
 fn playbook_wait(position: usize) -> String {
     format!(
         "The user is currently answering a prior decision. Your decision is queued (position {}).\n\n\
-         Do NOT call any xmtp tool. End the turn now. The CLI will auto-render your prompt when it becomes active.\n",
+         Do NOT call any `okx-a2a` user / session command. End the turn now. The CLI will auto-render your prompt when it becomes active.\n",
         position
     )
 }
@@ -1515,7 +1527,7 @@ fn playbook_wait_with_reprompt(
 ) -> String {
     let total_pending = queued_position + 1;
     // Canonical English notification. The user-session LLM translates the entire
-    // body to match the user's language before xmtp_dispatch_user. We do NOT
+    // body to match the user's language before `okx-a2a user notify`. We do NOT
     // embed the active card content here — the user is already partway through
     // answering it; re-surfacing the full card would be noisy. The user can
     // ask for the decision list to switch focus.
@@ -1540,22 +1552,14 @@ fn playbook_wait_with_reprompt(
          \x20\x20• Hex jobIds (`0x...`) and numeric agent IDs (the digits after `Agent #`).\n\
          \x20\x20• The sub-provided `<title>` field (may already be in user's language).\n\
          Everything else — `Decision`, the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`), the role token (`User` / `ASP` / `Evaluator`), surrounding prose, AND quoted user-facing keywords like `\"decision list\"` — gets translated to a natural localized form (skill routing accepts both English and translated keywords). No mixed-language content.\n\n\
-         **Step 2 — Call `xmtp_dispatch_user` with the localized content from Step 1**:\n\
-         \x20\x20tool: xmtp_dispatch_user\n\
-         \x20\x20arguments:\n\
-         \x20\x20\x20\x20content: <the localized Step 1 output>\n\n\
-         End the turn after the tool returns. Do NOT call any other tool first or after.\n",
+         **Step 2 — Run `okx-a2a user notify` with the localized content from Step 1**:\n\
+         ```bash\n\
+         okx-a2a user notify --content '<the localized Step 1 output>' --json\n\
+         ```\n\n\
+         End the turn after the command returns. Do NOT call any other tool first or after.\n",
         pos = queued_position,
         body = dispatch_content,
     )
-}
-
-/// Format the `toAgentId: <X>` line for the MCP playbook only when present.
-fn fmt_to_agent_line_mcp(to_agent_id: Option<&str>) -> String {
-    match to_agent_id {
-        Some(t) => format!("toAgentId: {t}\n         "),
-        None => String::new(),
-    }
 }
 
 /// Format the `--to-agent-id '<X>' \` bash flag only when present.
@@ -1567,41 +1571,51 @@ fn fmt_to_agent_flag_bash(to_agent_id: Option<&str>) -> String {
 }
 
 fn playbook_relay_only(job_id: &str, to_agent_id: Option<&str>, relay_content: &str) -> String {
+    let job_id_q = job_id.replace('\'', "'\\''");
+    let relay_content_q = relay_content.replace('\'', "'\\''");
     format!(
         "Relay the user's decision to the just-resolved sub session, then end the turn.\n\n\
-         tool: xmtp_dispatch_session\n\
-         jobId: {job}\n\
-         {to_line}content: {content}\n\n\
-         ⚠️ Call `xmtp_dispatch_session` **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
+         ```bash\n\
+         okx-a2a session send \\\n\
+         \x20\x20--job-id '{job}' \\\n\
+         \x20\x20{to_flag}--content '{content}' \\\n\
+         \x20\x20--no-wait --json\n\
+         ```\n\n\
+         ⚠️ Run this command **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
          🛑 User reply consumed — do NOT reuse it for future cards; wait for a fresh user message.\n",
-        job = job_id,
-        to_line = fmt_to_agent_line_mcp(to_agent_id),
-        content = relay_content,
+        job = job_id_q,
+        to_flag = fmt_to_agent_flag_bash(to_agent_id),
+        content = relay_content_q,
     )
 }
 
-/// MCP variant of `playbook_relay_only_cli` — same `xmtp_dispatch_session` tool
-/// invocation as `playbook_relay_only`, just with the CONSUMPTION MARKER's
+/// Queue-backed variant of `playbook_relay_only_cli` — same `okx-a2a session send`
+/// bash invocation as `playbook_relay_only`, just with the CONSUMPTION MARKER's
 /// command name pinned to `resolve-prompt` so the LLM doesn't accidentally
 /// retry against another resolver. Pairs with `handle_resolve_prompt` /
-/// `playbook_push_prompt_user` for the MCP push → MCP relay round-trip.
+/// `playbook_push_prompt_user` for the queue-mode push → queue-mode relay round-trip.
 fn playbook_relay_only_prompt(job_id: &str, to_agent_id: Option<&str>, relay_content: &str) -> String {
+    let job_id_q = job_id.replace('\'', "'\\''");
+    let relay_content_q = relay_content.replace('\'', "'\\''");
     format!(
         "Relay the user's decision to the just-resolved sub session, then end the turn.\n\n\
-         tool: xmtp_dispatch_session\n\
-         jobId: {job}\n\
-         {to_line}content: {content}\n\n\
-         ⚠️ Call `xmtp_dispatch_session` **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
+         ```bash\n\
+         okx-a2a session send \\\n\
+         \x20\x20--job-id '{job}' \\\n\
+         \x20\x20{to_flag}--content '{content}' \\\n\
+         \x20\x20--no-wait --json\n\
+         ```\n\n\
+         ⚠️ Run this command **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
          🛑 User reply consumed — do NOT reuse it (no `resolve-prompt` retry, no future-card reference); wait for a fresh user message.\n",
-        job = job_id,
-        to_line = fmt_to_agent_line_mcp(to_agent_id),
-        content = relay_content,
+        job = job_id_q,
+        to_flag = fmt_to_agent_flag_bash(to_agent_id),
+        content = relay_content_q,
     )
 }
 
 /// CLI-driver variant of `playbook_relay_only`. Uses the `okx-a2a session send`
-/// CLI subprocess instead of the MCP-only `xmtp_dispatch_session` tool, since
-/// CLI mode runs outside of an MCP host. Same semantics: relay once, then end.
+/// CLI subprocess (single-active in-process flow; no queue persistence).
+/// Same semantics as `playbook_relay_only`: relay once, then end.
 fn playbook_relay_only_cli(job_id: &str, to_agent_id: Option<&str>, relay_content: &str) -> String {
     // Single-quote the bash args; only `'` itself needs escaping via the canonical `'\''` trick.
     let job_id_q = job_id.replace('\'', "'\\''");
@@ -1640,25 +1654,26 @@ fn playbook_relay_and_advance(
     q: &Queue,
 ) -> String {
     let list_view = render_list_markdown(q);
-    let to_line = match resolved_to_agent_id {
-        Some(t) => format!("\x20\x20toAgentId: {t}\n"),
-        None => String::new(),
-    };
+    let job_id_q = resolved_job_id.replace('\'', "'\\''");
+    let relay_content_q = relay_content.replace('\'', "'\\''");
+    let to_flag = fmt_to_agent_flag_bash(resolved_to_agent_id);
     format!(
         "4 steps (Steps 1-3 in this turn, Step 4 in the future turn).\n\
          🛑 **STRICTLY ORDERED — execute Step 1 → 2 → 3 sequentially in this turn; do NOT skip any step.**\n\n\
-         **Step 1** — Forward the user's reply to the just-resolved sub session. Call `xmtp_dispatch_session` exactly once.\n\
-         \x20\x20tool: xmtp_dispatch_session\n\
-         \x20\x20jobId: {job}\n\
-         {to_line}\
-         \x20\x20content: {content}\n\n\
+         **Step 1** — Forward the user's reply to the just-resolved sub session. Run the command below **exactly once**.\n\
+         ```bash\n\
+         okx-a2a session send \\\n\
+         \x20\x20--job-id '{job}' \\\n\
+         \x20\x20{to_flag}--content '{content}' \\\n\
+         \x20\x20--no-wait --json\n\
+         ```\n\n\
          **Step 2** — Translate the [Source content] below to the user's language per [Translation rules]. Prepend a transition line `✓ Previous decision handled. Here's the next pending one:` (also translated) to the top of the translated output.\n\n\
          **Step 3** — Render Step 2's output to the user as your assistant response. The user's reply just dispatched in Step 1 is **already consumed** — it is NOT the answer to the next card.\n\n\
          **Step 4** — (Future turn) Apply [Future-turn user-reply routing] below when the user replies.\n\n\
          {list}",
-        job = resolved_job_id,
-        to_line = to_line,
-        content = relay_content,
+        job = job_id_q,
+        to_flag = to_flag,
+        content = relay_content_q,
         list = list_view,
     )
 }
@@ -1673,7 +1688,7 @@ fn playbook_render(entry: &PendingEntry) -> String {
         "Render the selected decision card to the user as your assistant response (text rendering only — do NOT call any tool). End the turn after rendering.\n\n\
          **User-visible text** (render this verbatim as your assistant response; 🌐 translate per [Localization] rules if the user's language is not English; keep `jobId` / data values intact):\n\
          \"\"\"\n{}\"\"\"\n\n\
-         **LLM context** (this is for YOUR own routing reasoning — **do NOT show / paraphrase / leak this block to the user**; it is the same instruction the sub would have embedded in `xmtp_prompt_user`'s `llmContent` if this card had been freshly pushed):\n\
+         **LLM context** (this is for YOUR own routing reasoning — **do NOT show / paraphrase / leak this block to the user**; it is the same instruction the sub would have embedded in `okx-a2a user decision-request --llm-content` if this card had been freshly pushed):\n\
          \"\"\"\n{}\n\"\"\"\n\n\
          On the user's next reply, follow the LLM context above (decision tree + pre-filled `resolve-prompt` command).\n",
         entry.user_content,
@@ -1728,13 +1743,13 @@ fn playbook_error_no_active() -> String {
     // and returns a stale_relist playbook instead.
     "The pending-decisions queue is empty — there is no decision to resolve. \
      The user's reply is just a normal chat message; handle it as such.\n\
-     Do NOT call any xmtp tool. End the turn now.\n"
+     Do NOT call any `okx-a2a` user / session command. End the turn now.\n"
         .to_string()
 }
 
 fn playbook_error(msg: &str) -> String {
     format!(
-        "Cannot proceed: {}\nDo NOT call any xmtp tool. End the turn.\n",
+        "Cannot proceed: {}\nDo NOT call any `okx-a2a` user / session command. End the turn.\n",
         msg
     )
 }

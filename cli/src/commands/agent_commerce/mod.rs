@@ -1235,8 +1235,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                             );
                         }
                         task::common::version_notice::mark_shown();
-                        Some("Before executing the scene below, call `xmtp_dispatch_user` to notify the user (recommend upgrade but do **not** halt the flow). The `content:` template below is a sample — translate it to the user's language before sending:\n\
-                             content: Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.\n\
+                        Some("Before executing the scene below, run `okx-a2a user notify` to notify the user (recommend upgrade but do **not** halt the flow). The `--content` template below is a sample — translate it to the user's language before sending:\n\
+                             ```bash\n\
+                             okx-a2a user notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.' --json\n\
+                             ```\n\
                              Then proceed to the scene below normally.\n\n".to_string())
                     } else {
                         if DEBUG_LOG {
@@ -1271,8 +1273,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 };
                 println!(
                     "【交易失败】{label}（code={code}）\n\n\
-                     调用 `xmtp_dispatch_user` 通知用户：\n\
-                     content: [{label}]{title_part}（{job_id}）交易执行失败（code={code}）。\n\
+                     运行 `okx-a2a user notify` 通知用户：\n\
+                     ```bash\n\
+                     okx-a2a user notify --content '[{label}]{title_part}（{job_id}）交易执行失败（code={code}）。' --json\n\
+                     ```\n\
                      → 结束 turn。"
                 );
                 return Ok(());
@@ -1625,7 +1629,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
          **必须做**（二选一）：\n\
          1. 如果当前 inbound 是 **P2P 消息**（a2a-agent-chat）→ 你很可能用错了 event。回到 buyer-sub-playbook.md / provider.md §3 Inbound Message Routing 重新匹配正确的事件（例如 `[intent:deliver]` → `deliverable_received`，自然语言报价 → `negotiate_reply`，`[intent:ack]` → `negotiate_ack`）。这些伪事件不受 freshness 限制。\n\
          2. 如果当前 inbound 是 **system event** → 重调 next-action，并在 `--message` JSON 里把 `event` 字段改成 `{actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
-         **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 xmtp_dispatch_user 推用户。\n",
+         **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 `okx-a2a user notify` 推用户。\n",
         expected_str = expected.as_str(),
     )), prefetched)
 }
