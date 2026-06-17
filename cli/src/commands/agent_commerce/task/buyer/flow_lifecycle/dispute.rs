@@ -18,7 +18,7 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
      **Step 1 — Notify the user the rejection is confirmed via `okx-a2a user notify`:**\n\
      🌐 **Localize first** — translate the canonical English content below into the user's language (preserve jobId hex, amounts, symbols verbatim).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content:\n\
      {rejected_notify}\n\n\
@@ -100,7 +100,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      **Step 4 — Notify the user via `okx-a2a user notify` (after upload returns):**\n\n\
      🌐 **Localize first** — translate the canonical English content below into the user's language (preserve jobId / title verbatim).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content:\n\
      \x20\x20\x20\x20[Dispute opened] Arbitration for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the arbiter's verdict.\n\n\
@@ -186,7 +186,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      **Step 3 — Notify the user with a SINGLE consolidated message:**\n\
      🌐 **Localize first** — translate the canonical English content below into the user's language (preserve score / title / amounts / description verbatim).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
      ▸ Arbitration outcome (always included):\n\

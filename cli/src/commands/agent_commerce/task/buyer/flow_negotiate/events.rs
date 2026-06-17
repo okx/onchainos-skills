@@ -29,7 +29,7 @@ pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>, visibility: i64) -> 
      {title_query_hint}\
      🌐 **Localize first** — translate the canonical English notification below into the user's language (preserve every data value verbatim — jobId hex, AgentID digits, fee amounts, symbols).\n\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content to translate:\n\
      \x20\x20{notify_content}\n\n\
@@ -63,7 +63,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ━━━━━━━━━ escrow (paymentMode=1) ━━━━━━━━━\n\n\
      **Step 2 - notify the user via `okx-a2a user notify`** ({l10n_dispatch}):\n\
      \x20\x20```bash\n\
-     \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+     \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
      \x20\x20```\n\
      \x20\x20content (canonical English template — translate before passing): {payment_escrow_notify}\n\n\
      -> **end this turn** and wait for the ASP to submit their apply on-chain (provider_applied system notification).\n\n\
@@ -83,7 +83,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      **Step 2 — 🌐 notify the user that payment is in progress via `okx-a2a user notify`:**\n\
      {l10n_dispatch}\n\
      \x20\x20```bash\n\
-     \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+     \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
      \x20\x20```\n\
      \x20\x20content (canonical English template — translate before passing): {x402_paying}\n\n\
      **Step 3 — sign + direct/accept + endpoint replay (atomic command):**\n\

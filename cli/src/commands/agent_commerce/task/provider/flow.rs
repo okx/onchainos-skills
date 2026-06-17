@@ -889,7 +889,7 @@ pub async fn generate_next_action(
              **Step 3 — Notify the user:**\n\
              Run `okx-a2a user notify`:\n\
              \x20\x20```bash\n\
-             \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+             \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
              \x20\x20```\n\
              \x20\x20content (canonical English template — translate before passing): {att_notify}\n\
              {l10n_short}\n\n\

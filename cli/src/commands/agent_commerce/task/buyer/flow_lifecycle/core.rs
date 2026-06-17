@@ -101,7 +101,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      Notify the user that accept succeeded via `okx-a2a user notify`:\n\
      🌐 **Localize first** — translate the canonical English content below.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content:\n\
      {accepted_escrow_notify}\n\n\
@@ -129,7 +129,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      notify the user via `okx-a2a user notify` and provide a retry command:\n\
      🌐 **Localize first** — translate the canonical English content below.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\
      Canonical English content: {complete_failed}\n\
      → **End this turn** and wait for user retry or a wakeup_notify event.\n\n\
@@ -138,7 +138,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      **B-Step 2 -- Notify the user of replay failure via `okx-a2a user notify`:**\n\
      🌐 **Localize first** — translate the canonical English content below.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\
      Canonical English content:\n\
      {accepted_x402_fail}\n\n\
@@ -220,7 +220,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      For file type only, add `--file-key \"<fileKey>\"`. Record savedPath from output.\n\n\
      **Step 3 — Notify user** (🌐 translate to user's language; keep data values verbatim)\n\
      ```bash\n\
-     okx-a2a user notify --content '<translated content>' --json\n\
+     okx-a2a user notify --content '<translated content>'\n\
      ```\n\
      Canonical content:\n\
      \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
@@ -391,7 +391,7 @@ pub(crate) fn deliverable_received_cli(
          \x20\x20\n\
          \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\n\
          ```bash\n\
-         okx-a2a user notify --content '<your translated content>' --json\n\
+         okx-a2a user notify --content '<your translated content>'\n\
          ```\n\n\
          **End this turn** after notifying. Wait for `job_submitted`.\n\
          When it arrives, call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
@@ -692,7 +692,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      **B-Step 2 — Notify the user with a SINGLE consolidated message via `okx-a2a user notify`:**\n\
      🌐 **Localize first** — translate the canonical English content below into the user's language (preserve every data value verbatim — jobId hex, paths, URLs, score, comment).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
      ▸ Deliverable received notice (always included; pick the sub-template that matches `deliverableType`):\n\n\
@@ -822,7 +822,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ⚠️ txHash: find the txHash (format 0x...) from the earlier `onchainos agent complete` CLI output in this sub session context. If not in context (e.g. auto-complete scenarios), omit the on-chain receipt line.\n\
      🌐 **Localize first** — translate the canonical English content below into the user's language (preserve txHash / score / amounts / title verbatim).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
      ▸ Completion notice (always included):\n\
@@ -852,7 +852,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      🛑🛑🛑 You are in a **sub session (backup)**. Any text you output here is invisible to the user. The ONLY way to reach the user is `okx-a2a user notify`.\n\
      🌐 **Localize first** — translate the canonical English content below into the user's language (preserve score / amounts / title verbatim).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
      ▸ Completion notice (always included):\n\

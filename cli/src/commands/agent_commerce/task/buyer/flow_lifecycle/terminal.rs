@@ -15,7 +15,7 @@ pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
      **Step 1 — Notify the user the refund completed via `okx-a2a user notify`:**\n\
      🌐 **Localize first** — translate the canonical English content below into the user's language.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content:\n\
      {refunded_notify}\n\n\
@@ -45,7 +45,7 @@ pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
      **Step 1 — Notify the user the refund has arrived via `okx-a2a user notify`:**\n\
      🌐 **Localize first** — translate the canonical English content below into the user's language.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content:\n\
      {auto_refunded_notify}\n\n\
@@ -70,7 +70,7 @@ pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
      **Step 1 — Notify the user the task expired via `okx-a2a user notify`:**\n\
      🌐 **Localize first** — translate the canonical English content below.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content: {expired_notify}\n\n\
      This task reached a terminal state; the flow ends.\n\n\
@@ -96,7 +96,7 @@ pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
      **Step 1 — Notify the user via `okx-a2a user notify`:**\n\
      🌐 **Localize first** — translate the canonical English content below.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content: {closed_notify}\n\n\
      **Terminal wrap-up (keep the sub session):**\n\
@@ -127,7 +127,7 @@ pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
              **Notify the user via `okx-a2a user notify`:**\n\
              🌐 **Localize first** — translate the canonical English content below.\n\
              ```bash\n\
-             okx-a2a user notify --content '<your translated content>' --json\n\
+             okx-a2a user notify --content '<your translated content>'\n\
              ```\n\
              Canonical English content: \"{submit_expired}\"\n"
         ),
@@ -151,7 +151,7 @@ pub(crate) async fn reject_expired(ctx: &FlowContext<'_>) -> String {
              **Notify the user via `okx-a2a user notify`:**\n\
              🌐 **Localize first** — translate the canonical English content below.\n\
              ```bash\n\
-             okx-a2a user notify --content '<your translated content>' --json\n\
+             okx-a2a user notify --content '<your translated content>'\n\
              ```\n\
              Canonical English content: \"{reject_expired}\"\n"
         ),
@@ -201,7 +201,7 @@ pub(crate) fn review_expired(ctx: &FlowContext<'_>) -> String {
      **Step 1 — Notify the user via `okx-a2a user notify`:**\n\
      🌐 **Localize first** — translate the canonical English content below.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content:\n\
      {review_expired}\n\n\
@@ -267,7 +267,7 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
      **Step 3 — Notify the user with a SINGLE consolidated message:**\n\
      🌐 **Localize first** — translate the canonical English content below into the user's language (preserve score / title / amounts / description verbatim).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
      ▸ Auto-completion notice (always included):\n\
@@ -306,7 +306,7 @@ pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
              **Notify the user the task was closed via `okx-a2a user notify`:**\n\
              🌐 **Localize first** — translate the canonical English content below.\n\
              ```bash\n\
-             okx-a2a user notify --content '<your translated content>' --json\n\
+             okx-a2a user notify --content '<your translated content>'\n\
              ```\n\
              Canonical English content: \"{close_notify}\"\n"
         ),
@@ -331,7 +331,7 @@ pub(crate) async fn set_public(ctx: &FlowContext<'_>) -> String {
              **Notify the user the task is now public via `okx-a2a user notify`:**\n\
              🌐 **Localize first** — translate the canonical English content below.\n\
              ```bash\n\
-             okx-a2a user notify --content '<your translated content>' --json\n\
+             okx-a2a user notify --content '<your translated content>'\n\
              ```\n\
              Canonical English content: \"{set_public_notify}\"\n"
         ),
@@ -376,7 +376,7 @@ pub(crate) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
      **Step 1 — Notify the user the reward has arrived via `okx-a2a user notify`:**\n\
      🌐 **Localize first** — translate the canonical English content below.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
+     okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content: {reward_claimed}\n\n\
      [OUTPUT_TEMPLATE]\n\
@@ -409,7 +409,7 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent pending-decisions-v2 list --format json\n\
      ```\n\
-     - The returned `entries` already contains an entry with `job_id={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead send the resume notification via `okx-a2a user notify --content '<localized {wakeup_resume}>' --json` (🌐 localize per [Localization] rules) and end the turn.\n\
+     - The returned `entries` already contains an entry with `job_id={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead send the resume notification via `okx-a2a user notify --content '<localized {wakeup_resume}>'` (🌐 localize per [Localization] rules) and end the turn.\n\
      - No matching entry → run the Step 2 playbook normally; the `pending-decisions-v2 request` call handles the prompt.\n\n\
      ⚠️ **Do not** send the ASP \"I'm back online\" or similar small talk — they do not care about your connection state.\n\
      ⚠️ If the Step 2 playbook is passive (e.g. status=accepted waiting for ASP delivery), just emit a \"task resumed\" notification and end the turn; do not proactively run business actions.\n"

@@ -45,7 +45,7 @@ fn job_created_non_designated_provider_cli(ctx: &FlowContext<'_>) -> String {
          Canonical content (`<title>` and `<short_jobId>` already filled in):\n\
          \x20\x20{notify_filled}\n\
          ```bash\n\
-         okx-a2a user notify --content '<your translated content>' --json\n\
+         okx-a2a user notify --content '<your translated content>'\n\
          ```\n\n\
          🛑 End the turn after notifying. Do NOT call `asp-match` — public tasks wait for ASPs to apply.\n"
     )
@@ -77,7 +77,7 @@ async fn job_created_with_designated_provider_cli(ctx: &FlowContext<'_>) -> Stri
          Canonical content (placeholders already filled in):\n\
          \x20\x20{notify_filled}\n\
          ```bash\n\
-         okx-a2a user notify --content '<your translated content>' --json\n\
+         okx-a2a user notify --content '<your translated content>'\n\
          ```\n\n\
          After Action 0 completes, follow the branch-specific playbook below:\n\n---\n\n"
     );
@@ -125,7 +125,7 @@ fn job_created_non_designated_provider(ctx: &FlowContext<'_>) -> String {
          The task is public; ASPs will discover it and reach out via `provider_conversation`.\n\n\
          **Action 1 — Notify the user the job is on-chain** (translate template body to the user's language before sending):\n\
          ```bash\n\
-         okx-a2a user notify --content '<translated content from the template below>' --json\n\
+         okx-a2a user notify --content '<translated content from the template below>'\n\
          ```\n\
          content (canonical English template — translate before passing): {notify_tpl}\n\
          Fill: `<title>` = {title} | `<short_jobId>` = {short_id}\n\
@@ -177,7 +177,7 @@ fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
          **Step 0 - notify the user session + continue execution in the current sub/backup session:**\n\
          Run `okx-a2a user notify` to tell the user the job is on-chain:\n\
          \x20\x20```bash\n\
-         \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+         \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
          \x20\x20```\n\
          \x20\x20content (canonical English template — translate before passing): {notify_tpl}\n\
          {fill}\n\
@@ -222,7 +222,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      Run `okx-a2a task requests --json`. The returned `items` array contains per-ASP entries — capture `groupId` / `agentId` / `name` / `serviceName` / `creditScore` / `completedTaskCount` for each entry (`groupId` is required later for Branch C reject; the others are for rendering).\n\n\
      If the returned `items` array is empty -> run `okx-a2a user notify`:\n\
      \x20\x20```bash\n\
-     \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+     \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
      \x20\x20```\n\
      \x20\x20content (canonical English template — translate before passing): {pending_empty}\n\
      {l10n_short}\n\
@@ -267,7 +267,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      ━━━━━━━━━ Branch B: verbatim contains `skip all` / `跳过` / `不选` → skip all pending ASPs ━━━━━━━━━\n\n\
      End the flow — run `okx-a2a user notify`:\n\
      \x20\x20```bash\n\
-     \x20\x20okx-a2a user notify --content '<translated content from the template below>' --json\n\
+     \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
      \x20\x20```\n\
      \x20\x20content (canonical English template — translate before passing): {skip_all}\n\
      {l10n_short}\n\n\

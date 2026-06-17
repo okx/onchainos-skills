@@ -1554,7 +1554,7 @@ fn playbook_wait_with_reprompt(
          Everything else — `Decision`, the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`), the role token (`User` / `ASP` / `Evaluator`), surrounding prose, AND quoted user-facing keywords like `\"decision list\"` — gets translated to a natural localized form (skill routing accepts both English and translated keywords). No mixed-language content.\n\n\
          **Step 2 — Run `okx-a2a user notify` with the localized content from Step 1**:\n\
          ```bash\n\
-         okx-a2a user notify --content '<the localized Step 1 output>' --json\n\
+         okx-a2a user notify --content '<the localized Step 1 output>'\n\
          ```\n\n\
          End the turn after the command returns. Do NOT call any other tool first or after.\n",
         pos = queued_position,

@@ -1210,7 +1210,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         task::common::version_notice::mark_shown();
                         Some("Before executing the scene below, run `okx-a2a user notify` to notify the user (recommend upgrade but do **not** halt the flow). The `--content` template below is a sample — translate it to the user's language before sending:\n\
                              ```bash\n\
-                             okx-a2a user notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.' --json\n\
+                             okx-a2a user notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.'\n\
                              ```\n\
                              Then proceed to the scene below normally.\n\n".to_string())
                     } else {
@@ -1248,7 +1248,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     "【交易失败】{label}（code={code}）\n\n\
                      运行 `okx-a2a user notify` 通知用户：\n\
                      ```bash\n\
-                     okx-a2a user notify --content '[{label}]{title_part}（{job_id}）交易执行失败（code={code}）。' --json\n\
+                     okx-a2a user notify --content '[{label}]{title_part}（{job_id}）交易执行失败（code={code}）。'\n\
                      ```\n\
                      → 结束 turn。"
                 );
