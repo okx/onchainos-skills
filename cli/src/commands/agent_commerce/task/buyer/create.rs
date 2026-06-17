@@ -211,10 +211,7 @@ pub async fn handle_create(
             if DEBUG_LOG {
                 eprintln!("[task-create] ⚠ balance warning: {e}");
             }
-            Some(format!(
-                "⚠️ Insufficient {} balance on XLayer (need {} {}). Task created, but payment may fail later — please top up via swap.",
-                validated.currency, params.budget, validated.currency,
-            ))
+            Some(format!("⚠️ {e}"))
         }
         Ok(()) => None,
     };

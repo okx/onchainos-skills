@@ -272,9 +272,7 @@ pub async fn handle_draft_create(
                 if DEBUG_LOG {
                     eprintln!("[draft-create] ⚠ balance warning: {e}");
                 }
-                Some(format!(
-                    "⚠️ Insufficient {c} balance on XLayer (need {b} {c}). Draft saved, but payment may fail when publishing — please top up via swap."
-                ))
+                Some(format!("⚠️ {e}"))
             }
             Ok(()) => None,
         }
@@ -594,11 +592,7 @@ pub async fn handle_draft_publish(
         .unwrap_or("0")
         .parse().unwrap_or(0.0);
     if !token_sym.is_empty() && token_amount > 0.0 {
-        common::ensure_sufficient_balance(token_amount, token_sym).await
-            .map_err(|e| anyhow::anyhow!(
-                "Insufficient {token_sym} balance on XLayer (need {token_amount} {token_sym}): {e}. \
-                 Please top up via swap before publishing."
-            ))?;
+        common::ensure_sufficient_balance(token_amount, token_sym).await?;
     }
 
     // ── Publish API → uopData ────────────────────────────────────

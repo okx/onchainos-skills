@@ -60,7 +60,7 @@ Step 3 -- Identity & balance check
 1. `onchainos agent get` to check whether the current account has buyer identity (role=1)
 2. Has buyer → tell the user which account is being used
 3. No buyer → guide registration via `onchainos agent register`
-4. Insufficient balance → warn but do not block creation
+4. Insufficient balance → warn but do not block creation. The CLI will output a structured funding guide (swap / bridge / send) — relay it to the user
 
 ================================================
 Step 4 -- 🛑 Communication availability check (must not be skipped)
