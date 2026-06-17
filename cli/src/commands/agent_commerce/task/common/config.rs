@@ -13,11 +13,11 @@
 /// Whether terminal task states (`completed` / `refunded` / `close` / `dispute_resolved`) keep the
 /// sub session history.
 ///
-/// - `true` = **keep** — each terminal arm emits "**do not call `xmtp_delete_conversation`** —
+/// - `true` = **keep** — each terminal arm emits "**do not call `okx-a2a session delete`** —
 ///   keep the conversation history for post-mortem review".
 ///   Use case: agent debugging / customer support / early-product need to replay the full task message log.
 /// - `false` (default) = **release** — each terminal arm emits "task is in a terminal state, you may call
-///   `xmtp_delete_conversation` to release conversation resources".
+///   `okx-a2a session delete` to release conversation resources".
 ///   Use case: large-scale production where too many sessions burden the frontend / IM bridge and need active cleanup.
 ///
 /// Precedence: runtime `ONCHAINOS_KEEP_SESSION` env > compile-time `ONCHAINOS_KEEP_SESSION` > hardcoded default.
@@ -58,7 +58,7 @@ pub fn is_cli_mode() -> bool {
 /// Task protocol version number — a single value used in both directions: it is both
 /// "the version I am currently on" and "the minimum version I require the peer to be on".
 ///
-/// - **Sender**: every `xmtp_send` puts this value into `payload.taskMinVersion`.
+/// - **Sender**: every `okx-a2a xmtp-send` puts this value into `payload.taskMinVersion`.
 /// - **Receiver**: next-action reads peer's value via `--peerTaskMinVersion`;
 ///   if `local TASK_MIN_VERSION < peer.taskMinVersion` then the local side is stale and
 ///   the version_mismatch script is emitted, prompting the user to run `onchainos upgrade`.

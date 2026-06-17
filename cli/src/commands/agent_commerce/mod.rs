@@ -167,7 +167,7 @@ pub enum AgentCommand {
     /// Aggregated non-terminal tasks across **all agents under the current
     /// active account**, with `myRole` / `counterpartyAgentId` annotations so
     /// the user-session can route ad-hoc user instructions to the correct sub
-    /// session (via `xmtp_sessions_query` → `xmtp_dispatch_session`).
+    /// session (via `okx-a2a session query` → `okx-a2a session send --no-wait`).
     /// Status filter: includes 0 created / 1 accepted / 2 submitted / 3 refused
     /// / 4 disputed by default; pass `--include-terminal` to also list 5-9.
     #[command(name = "active-tasks")]
@@ -403,9 +403,9 @@ pub enum AgentCommand {
     },
 
     /// Provider cold-start: contact the buyer in one shot.
-    /// Combines `xmtp_start_conversation` (group + session create) + `xmtp_send`
+    /// Combines `okx-a2a session create` (group + session create) + `okx-a2a xmtp-send`
     /// (the canonical self-intro / interest opener) so the LLM only runs ONE
-    /// command instead of chaining two MCP tool calls. Opener content is fixed;
+    /// command instead of chaining two CLI calls. Opener content is fixed;
     /// no customization flag.
     #[command(name = "contact-buyer")]
     ContactBuyer {
@@ -851,7 +851,7 @@ pub enum AgentCommand {
     },
 
     /// Terminal-state session cleanup: cancel pending decisions + output
-    /// xmtp_delete_conversation instructions. Replaces the multi-step
+    /// `okx-a2a session delete` instructions. Replaces the multi-step
     /// manual cleanup in terminal playbooks.
     #[command(name = "session-cleanup")]
     SessionCleanup {

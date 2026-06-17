@@ -92,7 +92,7 @@ pub enum ProviderCommand {
     },
     /// Provider cold-start: create the group with the buyer + send the
     /// self-intro/interest opener in one shot. Replaces the old two-step
-    /// (`xmtp_start_conversation` + `xmtp_send` opener) MCP playbook.
+    /// (`okx-a2a session create` + `okx-a2a xmtp-send` opener) CLI playbook.
     /// The opener content is the canonical template — no customization
     /// flag to keep negotiations consistent and prevent LLM injection of
     /// price / work content / fabricated `[intent:*]` literals.

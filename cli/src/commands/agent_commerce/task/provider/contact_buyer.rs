@@ -9,9 +9,9 @@
 //!   2. okx-a2a session create   (creates the group + records the sessionKey)
 //!   3. okx-a2a session send     (the first message to the buyer)
 //!
-//! Replaces the old two-step playbook (xmtp_start_conversation + xmtp_send)
+//! Replaces the old two-step playbook (`okx-a2a session create` + `okx-a2a xmtp-send`)
 //! that the LLM had to chain manually — fewer turns, no sessionKey passing
-//! between MCP calls, idempotent on the same jobId (`session create` is
+//! between CLI calls, idempotent on the same jobId (`session create` is
 //! idempotent in okx-a2a's SessionStore).
 //!
 //! Opener content is the canonical template (self-intro + interest + ask the
