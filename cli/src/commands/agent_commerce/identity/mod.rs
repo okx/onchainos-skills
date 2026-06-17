@@ -10,7 +10,7 @@
 //! - `signing`   — signing seed + Erc8004Payload + broadcast
 //! - `queries`   — read-side commands (get / search / service-list /
 //!   feedback-list) plus update's pre-fetch
-//! - `mutations` — write-side commands (create / update / activate /
+//! - `mutations` — write-side commands (precheck / create / update / activate /
 //!   deactivate / upload / feedback-submit / xmtp-sign)
 //!
 //! Dependency direction: `models` ← `utils` ← `signing` ← `queries` /
@@ -23,19 +23,22 @@ mod queries;
 mod signing;
 mod socket;
 mod utils;
+mod validate;
 
 // CLI `Args` structs — kept at the module root for `identity::CreateArgs`.
 pub use args::{
-    AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackListArgs, FeedbackSubmitArgs, GetArgs,
-    GetByAddressArgs, SearchArgs, ServiceListArgs, SubmitApprovalArgs, UpdateArgs, UploadArgs,
-    XmtpSignArgs,
+    ActivateArgs, AgentStatusArgs, CreateArgs, FeedbackListArgs, FeedbackSubmitArgs,
+    GetArgs, GetByAddressArgs, PrecheckArgs, SearchArgs, ServiceListArgs, UpdateArgs, UploadArgs,
+    ValidateListingArgs, XmtpSignArgs,
 };
+
+// Pure-local validator — hidden CLI entry point used by the skill during QA.
+pub use validate::validate_listing;
 
 // Read-side commands.
 pub use queries::{feedback_list, get, get_by_address, search, service_list};
 
 // Write-side commands.
 pub use mutations::{
-    activate, consent, create, deactivate, feedback_submit, submit_approval, update, upload,
-    xmtp_sign,
+    activate, create, deactivate, feedback_submit, precheck, update, upload, xmtp_sign,
 };

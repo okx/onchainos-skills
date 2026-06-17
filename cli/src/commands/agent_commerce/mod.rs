@@ -16,23 +16,22 @@ pub enum AgentCommand {
     /// Register a new Agent identity
     Create(identity::CreateArgs),
 
-    /// First-time-creation terms consent (legal module). Two-step: step 1 (no
-    /// flags) fetches the terms; step 2 (`--consent-key` + `--agreed`)
-    /// finalizes the decision. Must run BEFORE `create` for new users.
-    Consent(identity::ConsentArgs),
-
     /// Update Agent identity and services
     Update(identity::UpdateArgs),
 
     /// Query your Agents / agent details
     Get(identity::GetArgs),
 
+    /// Unified registration entry (role required, consentKey optional): first-time consent + per-wallet uniqueness verdict
+    #[command(name = "pre-check")]
+    Precheck(identity::PrecheckArgs),
+
     /// Reverse-lookup an Agent by communication address + chainIndex (hidden, internal).
     #[command(name = "get-by-address", hide = true)]
     GetByAddress(identity::GetByAddressArgs),
 
-    /// Activate an Agent
-    Activate(identity::AgentStatusArgs),
+    /// Activate an Agent (runs validate-listing + agent-status + submit-approval)
+    Activate(identity::ActivateArgs),
 
     /// Deactivate an Agent
     Deactivate(identity::AgentStatusArgs),
@@ -59,9 +58,9 @@ pub enum AgentCommand {
     #[command(name = "xmtp-sign")]
     XmtpSign(identity::XmtpSignArgs),
 
-    /// Submit an Agent for marketplace listing review (called after activate returns approvalStatus=1)
-    #[command(name = "submit-approval")]
-    SubmitApproval(identity::SubmitApprovalArgs),
+    /// Validate an Agent listing's fields against marketplace rules (pure-local, no network)
+    #[command(name = "validate-listing", hide = true)]
+    ValidateListing(identity::ValidateListingArgs),
 
     // ── Task system (Client) ────────────────────────────────────────────────
     /// Create a new task (Client)
@@ -855,9 +854,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     match cmd {
         // ── Identity ────────────────────────────────────────────────
         AgentCommand::Create(args) => identity::create(args, ctx).await,
-        AgentCommand::Consent(args) => identity::consent(args, ctx).await,
         AgentCommand::Update(args) => identity::update(args, ctx).await,
         AgentCommand::Get(args) => identity::get(args, ctx).await,
+        AgentCommand::Precheck(args) => identity::precheck(args, ctx).await,
         AgentCommand::GetByAddress(args) => identity::get_by_address(args, ctx).await,
         AgentCommand::Activate(args) => identity::activate(args, ctx).await,
         AgentCommand::Deactivate(args) => identity::deactivate(args, ctx).await,
@@ -867,7 +866,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::FeedbackSubmit(args) => identity::feedback_submit(args, ctx).await,
         AgentCommand::FeedbackList(args) => identity::feedback_list(args, ctx).await,
         AgentCommand::XmtpSign(args) => identity::xmtp_sign(args, ctx).await,
-        AgentCommand::SubmitApproval(args) => identity::submit_approval(args, ctx).await,
+        AgentCommand::ValidateListing(args) => identity::validate_listing(args, ctx).await,
 
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {

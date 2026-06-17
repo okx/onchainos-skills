@@ -362,4 +362,27 @@ mod tests {
         // finds nothing, then SUPPORTED_CHAIN_INDICES covers "1952".
         assert!(ensure_supported_chain("1952", "xlayer_test").is_ok());
     }
+
+    #[test]
+    fn resolve_chain_maps_xlayer_test_alias_to_1952() {
+        // Regression: the `xlayer_test` alias must resolve to 1952 so the
+        // documented `--chain xlayer_test` works offline. Without it the input
+        // falls through to itself and ensure_supported_chain rejects it.
+        assert_eq!(resolve_chain("xlayer_test"), "1952");
+        assert_eq!(resolve_chain("XLAYER_TEST"), "1952"); // case-insensitive
+        // And the resolved index must pass the supported-chain gate offline.
+        assert!(ensure_supported_chain(&resolve_chain("xlayer_test"), "xlayer_test").is_ok());
+    }
+
+    #[test]
+    fn xlayer_testnet_display_and_symbol_resolved() {
+        assert_eq!(chain_display_name("1952"), "X Layer Testnet");
+        assert_eq!(native_token_symbol("1952"), "OKB");
+    }
+
+    #[test]
+    fn resolve_chains_handles_xlayer_test_in_list() {
+        // The comma-separated resolver must also honor the alias.
+        assert_eq!(resolve_chains("ethereum,xlayer_test,arbitrum"), "1,1952,42161");
+    }
 }
