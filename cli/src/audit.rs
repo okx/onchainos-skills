@@ -328,7 +328,6 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Competition { command } => format!("competition {}", competition_sub(command)),
-        Commands::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Strategy { command } => format!("strategy {}", strategy_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
