@@ -114,10 +114,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_created"),
             ref_header,
             format!("  onchainos agent asp-match --job-id {job_id} --agent-id <agentId>  # Search matching ASPs"),
-            format!("  onchainos agent ack-to-confirm {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt> --agent-id <agentId>  # Composite: save-agreed + set-payment-mode + confirmNow branch"),
-            format!("  onchainos agent get-agreed {job_id}  # Read locally persisted negotiation result"),
             format!("  onchainos agent set-payment-mode {job_id} --payment-mode <escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # Set payment mode (standalone)"),
-            format!("  onchainos agent confirm-accept {job_id}  # Confirm accept (reads provider/token from negotiate-state; escrow only)"),
+            format!("  onchainos agent confirm-accept {job_id}  # Confirm accept (reads provider/token/amount from task detail API)"),
             format!("  onchainos agent direct-accept {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt>  # x402 phase 2b: call after endpoint interaction"),
             format!("  onchainos agent close {job_id}          # Close task"),
             format!("  onchainos agent set-public {job_id}     # Convert to public task"),
@@ -379,9 +377,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 Event::DisputeResolved => "okx-a2a user notify (notify arbitration result)",
                 Event::JobRefunded => "okx-a2a user notify (notify refund complete)",
                 Event::JobAutoRefunded => "okx-a2a user notify (claimAutoRefund tx receipt)",
-                Event::NegotiateReply => "okx-a2a xmtp-send (evaluate provider natural-language reply)",
-                Event::NegotiateAck => "save-agreed → [if paymentMode already set: send confirm; else: set-payment-mode]",
-                Event::NegotiateCounter => "okx-a2a xmtp-send (evaluate COUNTER → new PROPOSE or REJECT)",
+                Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter =>
+                    "natural-language reply (max 2 rounds; over-limit → mark-failed + user decision card)",
                 Event::AttachmentAdded => "okx-a2a file upload → okx-a2a xmtp-send (upload + forward attachment to provider)",
                 Event::DeliverableReceived => "task-deliverable-save (download + save deliverable immediately)",
                 _ => "none",
@@ -420,9 +417,9 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
             super::flow_negotiate::job_visibility_changed(&ctx, visibility)
         }
         Event::JobPaymentModeChanged => super::flow_negotiate::job_payment_mode_changed(&ctx),
-        Event::NegotiateReply => super::flow_negotiate::negotiate_reply(&ctx),
-        Event::NegotiateAck => super::flow_negotiate::negotiate_ack(&ctx),
-        Event::NegotiateCounter => super::flow_negotiate::negotiate_counter(&ctx),
+        Event::NegotiateReply
+        | Event::NegotiateAck
+        | Event::NegotiateCounter => super::flow_negotiate::negotiate_reply(&ctx),
 
         // ─── Task execution + arbitration + terminal states → flow_lifecycle ─────────────────
         Event::ProviderApplied => {
@@ -672,7 +669,6 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     };
 
     let use_slim_preamble = matches!(event_str,
-        "negotiate_ack" |
         "approve_review" | "reject_review" |
         "job_completed" | "job_refunded" | "job_auto_refunded" | "job_expired" | "job_closed" | "job_rejected" |
         "submit_expired" | "reject_expired" | "review_deadline_warn" | "review_expired" |
@@ -690,7 +686,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "user_decision_set_asp_params"
     );
     let use_negotiate_preamble = matches!(event_str,
-        "negotiate_reply" | "negotiate_counter"
+        "negotiate_reply" | "negotiate_ack" | "negotiate_counter"
     );
     let use_medium_preamble = matches!(event_str,
         "job_payment_mode_changed" |
@@ -712,7 +708,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     // (no `okx-a2a xmtp-send` call to validate).
     let use_cli_minimal = super::content::is_cli_mode()
         && matches!(event_str,
-            "job_created" | "negotiate_reply" | "negotiate_ack" |
+            "job_created" | "negotiate_reply" | "negotiate_ack" | "negotiate_counter" |
             "provider_applied" | "deliverable_received" | "approve_review" |
             "review_expired" | "job_expired" | "job_auto_refunded" |
             "submit_expired" | "reject_expired" |

@@ -18,7 +18,7 @@ const HANDSHAKE_RULES_A2A: &str = "🛑 **Negotiation ground rules — natural l
     ❌ **Do NOT discuss price** — tokenSymbol / tokenAmount / paymentMode / budget are locked at accept time, not negotiated in chat.\n\
     ❌ **Do NOT include any `[intent:*]` marker** in your messages — the structured intent handshake has been removed; ASP messages are also plain text.\n\
     ❌ **Do NOT ask the ASP to quote** — pricing is not part of this conversation.\n\n\
-    Once you've finished clarifying task details, end your turn. The ASP will independently decide when to submit their on-chain apply; you will then receive a `provider_applied` system notification and handle it via `confirm-accept` / `reject-apply`.";
+    Once you've finished clarifying task details, end your turn. The ASP will independently decide when to submit their on-chain apply; you will then receive a `provider_applied` system notification.";
 
 /// Branch B title + B-Step 0 (duplicate guard) + B-Step 1 (group creation) +
 /// B-Step 1.5 (SKILL_PREFETCH). Used by the MCP path (`branch_a2a` →
@@ -162,7 +162,7 @@ pub(crate) fn negotiate_section_step2_onwards(
              **You (backup/user session) do NOT execute any further negotiation steps in this turn.**\n\n\
              ⚠️ When negotiation fails (timeout / no agreement reachable on task details), the sub session runs `{fallback_cmd}` to switch. Do NOT call `xmtp_delete_conversation` when switching.\n\n\
              [Subsequent events]\n\
-             - escrow → ASP independently submits apply → provider_applied → confirm-accept / reject-apply → job_accepted\n\
+             - escrow → ASP independently submits apply → provider_applied → job_accepted\n\
              - x402  → asp-match auto-routing → set-payment-mode → job_payment_mode_changed → task-402-pay → job_accepted → complete\n")
 }
 
@@ -266,18 +266,21 @@ pub(crate) fn branch_a2a_cli(
         return format!("[branch_a2a_cli] ERROR: okx-a2a session send (SKILL_PREFETCH) failed: {e}\n");
     }
 
-    // Sub session created + SKILL_PREFETCH sent. Do NOT send the first
-    // inquiry or attachments here — the ASP receives `job_asp_selected`
-    // from the backend and will initiate the conversation. Attachments
-    // are forwarded when the ASP's first message arrives (negotiate_reply).
+    // Sub session created + SKILL_PREFETCH sent. The ASP receives
+    // `job_asp_selected` from the backend and independently decides to
+    // apply on-chain. The buyer does NOTHING until `provider_applied`.
     let _ = (short_id, title_display, session_key, prefetched);
 
     format!(
         "[Designated ASP route: A2A] Provider {dp_id} — sub session created.\n\
          [Role] User (Buyer)\n\n\
-         ✅ Sub session and SKILL_PREFETCH ready. The ASP will receive `job_asp_selected` from the backend and initiate the conversation.\n\
-         🛑 **End this turn immediately.** Do NOT send any message (`xmtp_send`) or upload attachments — wait for the ASP's first message, \
-         which will arrive at the sub session and trigger `negotiate_reply`.\n"
+         ✅ Sub session and SKILL_PREFETCH ready. The ASP will receive `job_asp_selected` from the backend and independently decide to apply on-chain.\n\n\
+         🛑 **End this turn immediately.** Your ONLY next action is to wait for the `provider_applied` system event.\n\
+         ❌ Do NOT send any message (`xmtp_send`) — no negotiation conversation is needed.\n\
+         ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\
+         ❌ Do NOT call `asp-match` / `apply` / `complete` / `reject`.\n\n\
+         [What happens next]\n\
+         The ASP receives `job_asp_selected` → ASP on-chain apply → system fires `provider_applied` event.\n"
     )
 }
 
@@ -296,9 +299,13 @@ pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
          ```bash\n\
          xmtp_dispatch_session --session-key <sessionKey from step above> --content '{prefetch}'\n\
          ```\n\n\
-         ✅ Sub session ready. The ASP will receive `job_asp_selected` from the backend and initiate the conversation.\n\
-         🛑 **End this turn immediately.** Do NOT send any message (`xmtp_send`) or upload attachments — wait for the ASP's first message, \
-         which will arrive at the sub session and trigger `negotiate_reply`.\n")
+         ✅ Sub session ready. The ASP will receive `job_asp_selected` from the backend and independently decide to apply on-chain.\n\n\
+         🛑 **End this turn immediately.** Your ONLY next action is to wait for the `provider_applied` system event.\n\
+         ❌ Do NOT send any message (`xmtp_send`) — no negotiation conversation is needed.\n\
+         ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\
+         ❌ Do NOT call `asp-match` / `apply` / `complete` / `reject`.\n\n\
+         [What happens next]\n\
+         The ASP receives `job_asp_selected` → ASP on-chain apply → system fires `provider_applied` event.\n")
 }
 
 /// Phase 2b: x402 branch — endpoint validation + set-payment-mode.

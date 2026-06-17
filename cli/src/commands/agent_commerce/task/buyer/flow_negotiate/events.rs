@@ -110,11 +110,11 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-/// CLI-mode variant of `negotiate_reply`. Inlines task fields from
-/// `ctx.prefetched` so the LLM doesn't need to run `common context`; switches
-/// the tool call from MCP `xmtp_send` to bash `okx-a2a xmtp-send`. Same core
-/// rule as `negotiate_reply`: discuss task details only, price is locked at
-/// accept time.
+/// Negotiation reply handler — natural-language exchange, max 2 rounds.
+///
+/// Round counting: the LLM checks how many buyer replies have already been
+/// sent in this sub session. If this would be the 3rd reply, the negotiation
+/// has exceeded the 2-round limit → mark-failed + push decision card to user.
 pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
@@ -122,14 +122,14 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     let p = match ctx.prefetched {
         Some(p) => p,
         None => return format!(
-            "[negotiate_reply_cli] ❌ no prefetched task context for job {job_id}; cannot resolve providerAgentId.\n\n\
+            "[negotiate_reply] ❌ no prefetched task context for job {job_id}; cannot resolve providerAgentId.\n\n\
              Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
         ),
     };
     let provider_agent_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
-            "[negotiate_reply_cli] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot send a reply.\n\n\
+            "[negotiate_reply] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot send a reply.\n\n\
              Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
         ),
     };
@@ -139,43 +139,86 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     } else {
         p.description.clone()
     };
+    let is_public = p.visibility == Some(0) || p.service_id.is_none();
+
+    let max_budget_val = p.max_budget.as_deref().unwrap_or("0");
+    let (price_rule, price_fields, reply_hint) = if is_public {
+        (
+            format!(
+                "**Public task — price is negotiable**: you MAY discuss tokenAmount with the ASP. \
+                 Internally enforce: proposed price must NOT exceed {max_budget_val} {symbol}. \
+                 If the ASP proposes above this cap, say the price is too high and ask them to \
+                 lower it — but **NEVER reveal the exact max budget number**.\n\n",
+                symbol = p.token_symbol,
+            ),
+            format!(
+                "\x20\x20• Budget: {budget} {symbol}\n\
+                 \x20\x20• Currency: {symbol}\n\n\
+                 🛑 **max budget is confidential** — NEVER mention the max budget value to the ASP.\n\n",
+                budget = p.token_amount,
+                symbol = p.token_symbol,
+            ),
+            "task details + price negotiation (never reveal max budget)",
+        )
+    } else {
+        (
+            "🛑 **Private task — price is locked**: do NOT discuss tokenAmount / tokenSymbol / \
+             paymentMode / budget with the ASP. Price was determined by the service listing at \
+             creation time and is locked at accept.\n\n".to_string(),
+            String::new(),
+            "task details only — no price talk",
+        )
+    };
+
     let task_block = format!(
-        "**Task fields (already fetched — use these, do NOT call `common context`):**\n\
+        "**Task fields (already fetched — do NOT call `common context`):**\n\
          \x20\x20• Title: {title}\n\
-         \x20\x20• Description: {desc}\n\n\
-         🛑 **Price fields (tokenSymbol / tokenAmount / paymentMostTokenAmount) are intentionally omitted — do NOT discuss price with the ASP.**\n\n",
+         \x20\x20• Description: {desc}\n\
+         {price_fields}\n\
+         {price_rule}",
         title = p.title,
     );
 
+    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, None, "[No ASP] negotiate timeout — next-step decision", "no_asp_found");
+
     format!(
         "{task_block}\
-         [Negotiation relay] negotiate_reply (ASP sent a natural-language message)\n\
+         [Negotiation] negotiate_reply (ASP sent a natural-language message)\n\
          [Role] User (Buyer)\n\n\
-         **Reply only about task details** — scope, requirements, deliverable format, timeline, clarifying questions. **Do NOT discuss price** — pricing is locked at accept time, not in chat.\n\n\
+         **2-round limit**: count how many buyer replies (your `okx-a2a xmtp-send` calls) have already been sent in this sub session's conversation history.\n\
+         - Rounds sent < 2 → reply normally (see below).\n\
+         - Rounds sent ≥ 2 → negotiation exceeded the 2-round limit. **Do NOT reply.** Jump to **[Over-limit]** below.\n\n\
+         **Reply about**: scope, requirements, deliverable format, timeline, clarifying questions{public_price_note}.\n\n\
          🚫 **Forbidden in this event:**\n\
-         \x20\x20❌ Discussing tokenAmount / tokenSymbol / paymentMode / budget — price is not negotiated in chat.\n\
          \x20\x20❌ `xmtp_dispatch_user` / `pending-decisions-v2 request` to ask the user about the ASP's message — negotiation is autonomous in this sub session.\n\
-         \x20\x20❌ `save-agreed` / `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
-         [Your next action — single CLI call, then end the turn]\n\n\
+         \x20\x20❌ `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
+         [Normal reply — single CLI call, then end the turn]\n\n\
          ```bash\n\
          okx-a2a xmtp-send \\\n\
          \x20\x20--job-id {job_id} \\\n\
          \x20\x20--to-agent-id {provider_agent_id} \\\n\
-         \x20\x20--message '<natural-language reply, task details only — no price talk>' \\\n\
+         \x20\x20--message '<natural-language reply, {reply_hint}>' \\\n\
          \x20\x20--no-wait\n\
          ```\n\n\
-         ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, run `onchainos agent mark-failed {job_id} --provider {provider_agent_id}` then `onchainos agent asp-match --job-id {job_id} --agent-id {agent_id}` to switch.\n"
+         ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, treat as over-limit (see below).\n\n\
+         ━━━━━━━━━ [Over-limit] 2-round limit exceeded or timeout ━━━━━━━━━\n\n\
+         **Step 1** — mark this ASP as failed:\n\
+         ```bash\n\
+         onchainos agent mark-failed {job_id} --provider {provider_agent_id}\n\
+         ```\n\n\
+         **Step 2** — push a decision card to the user:\n\
+         ```bash\n\
+         {cmd_no_asp}\n\
+         ```\n\
+         `--user-content` template (translate to user's language):\n\
+         Negotiation with ASP {provider_agent_id} did not reach agreement within 2 rounds.\n\n\
+         What would you like to do next?\n\
+         A. Browse the ASP list\n\
+         B. Designate a specific ASP by agentId\n\
+         C. Close the task\n\n\
+         → **End this turn.**\n",
+        public_price_note = if is_public { ", and **price** (within max budget)" } else { "" },
     )
-}
-
-/// DEPRECATED — see `negotiate_ack_cli` above; delegates to `negotiate_reply_cli`.
-pub(crate) fn negotiate_ack(ctx: &FlowContext<'_>) -> String {
-    negotiate_reply(ctx)
-}
-
-/// DEPRECATED — see `negotiate_ack_cli` above; delegates to `negotiate_reply_cli`.
-pub(crate) fn negotiate_counter(ctx: &FlowContext<'_>) -> String {
-    negotiate_reply(ctx)
 }
 
 /// `Event::JobProviderReject` — ASP declined via `asp/reject` API (status remains `created`).

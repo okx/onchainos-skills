@@ -36,35 +36,18 @@ async fn resolve_token_for_validation(
     Ok((symbol.to_string(), token_address, decimals_u8))
 }
 
-/// Resolve `(symbol, amount)` from CLI flags / local negotiation record.
+/// Resolve `(symbol, amount)` from CLI flags (required).
 fn resolve_symbol_and_amount(
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
-    job_id: &str,
-    provider_agent_id: Option<&str>,
     mode_label: &str,
 ) -> Result<(String, String)> {
-    let agreed = negotiate::load_agreed(job_id, provider_agent_id)?;
-    let symbol = match token_symbol {
-        Some(s) => s.to_string(),
-        None => match &agreed {
-            Some((sym, _)) => {
-                if DEBUG_LOG { eprintln!("ℹ --token-symbol not provided; using locally saved negotiation record: {sym}"); }
-                sym.clone()
-            }
-            None => bail!("{mode_label} requires --token-symbol, or run `save-agreed` first to persist the negotiation result"),
-        },
-    };
-    let amount = match token_amount {
-        Some(a) => a.to_string(),
-        None => match &agreed {
-            Some((_, amt)) => {
-                if DEBUG_LOG { eprintln!("ℹ --token-amount not provided; using locally saved negotiation record: {amt}"); }
-                amt.clone()
-            }
-            None => bail!("{mode_label} requires --token-amount, or run `save-agreed` first to persist the negotiation result"),
-        },
-    };
+    let symbol = token_symbol
+        .ok_or_else(|| anyhow::anyhow!("{mode_label} requires --token-symbol"))?
+        .to_string();
+    let amount = token_amount
+        .ok_or_else(|| anyhow::anyhow!("{mode_label} requires --token-amount"))?
+        .to_string();
     Ok((symbol, amount))
 }
 
@@ -148,7 +131,7 @@ pub async fn handle_set_payment_mode(
         Some(resolved)
     } else {
         // Balance pre-check.
-        let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, None, "set-payment-mode")?;
+        let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, "set-payment-mode")?;
         let amt: f64 = amt_str.parse().unwrap_or(0.0);
         if amt > 0.0 {
             common::ensure_sufficient_balance(amt, &sym).await?;
@@ -240,139 +223,31 @@ pub async fn handle_set_payment_mode(
     Ok(())
 }
 
-/// ack-to-confirm — composite: save-agreed + conditional set-payment-mode + confirmNow branch.
+/// confirm-accept — confirm acceptance of the provider.
 ///
-/// Merges the negotiate_ack → job_payment_mode_changed two-turn flow into a conditional one-turn flow.
-/// Output:
-/// - `confirmNow=true` (paymentMode already escrow): `{ "ok": true, "data": { "confirmNow": true, "confirmContent": "..." } }`
-/// - `confirmNow=false` (needs on-chain setPaymentMode): `{ "confirming": true, ... }`
-#[allow(clippy::too_many_arguments)]
-pub async fn handle_ack_to_confirm(
-    client: &mut TaskApiClient,
-    job_id: &str,
-    provider_agent_id: &str,
-    token_symbol: &str,
-    token_amount: &str,
-    agent_id: Option<&str>,
-) -> Result<()> {
-    // Step 1: save-agreed (persist negotiation result + maxBudget validation).
-    negotiate::save_agreed(client, job_id, provider_agent_id, token_symbol, token_amount, agent_id).await?;
-
-    // Resolve wallet + agent for on-chain operations.
-    let (account_id, address, resolved_agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
-
-    // Step 2: query task detail for current paymentMode + status check.
-    let task_resp = client.get_with_identity(&client.task_path(job_id), &resolved_agent_id).await?;
-    let task_status = common::state_machine::Status::from_int(
-        task_resp["status"].as_i64().unwrap_or(-1) as i32,
-    );
-    if task_status != common::state_machine::Status::Created {
-        bail!(
-            "current task status is {:?}; ack-to-confirm is only allowed in `created` status",
-            task_status
-        );
-    }
-
-    let current_mode = PaymentMode::from_int(
-        task_resp["paymentMode"].as_i64().unwrap_or(0) as i32,
-    );
-    let already_escrow = current_mode == PaymentMode::Escrow;
-
-    // Balance pre-check.
-    let amt: f64 = token_amount.parse().unwrap_or(0.0);
-    if amt > 0.0 {
-        common::ensure_sufficient_balance(amt, token_symbol).await?;
-    }
-
-    // Step 3: branch on current paymentMode.
-    if already_escrow {
-        let confirm_content = format!(
-            "jobId: {job_id}\npaymentMode: escrow\ntokenSymbol: {token_symbol}\ntokenAmount: {token_amount}"
-        );
-        audit::log(
-            "cli",
-            "buyer/ack_to_confirm_skip",
-            true,
-            Duration::default(),
-            Some(vec![
-                format!("jobId={job_id}"),
-                format!("provider={provider_agent_id}"),
-                format!("paymentMode=escrow(alreadySet)"),
-            ]),
-            None,
-        );
-        println!("✓ paymentMode already escrow; skipping on-chain setPaymentMode.");
-        crate::output::success(serde_json::json!({
-            "confirmNow": true,
-            "confirmContent": confirm_content,
-            "providerAgentId": provider_agent_id,
-            "tokenSymbol": token_symbol,
-            "tokenAmount": token_amount,
-        }));
-    } else {
-        let mode_int = PaymentMode::Escrow.as_int();
-        let resp = client.post_with_identity(
-            &client.endpoint(job_id, "setPaymentMode"),
-            &serde_json::json!({ "paymentMode": mode_int }),
-            &resolved_agent_id,
-        ).await?;
-
-        let tx_hash = signing::sign_uop_and_broadcast(
-            client, &resp["uopData"], &account_id, &address,
-            job_id, signing::extract_biz_type(&resp), &resolved_agent_id,
-            None,
-        ).await?;
-
-        audit::log(
-            "cli",
-            "buyer/ack_to_confirm_set",
-            true,
-            Duration::default(),
-            Some(vec![
-                format!("jobId={job_id}"),
-                format!("provider={provider_agent_id}"),
-                format!("paymentMode=escrow(new)"),
-                format!("txHash={tx_hash}"),
-            ]),
-            None,
-        );
-        println!("✓ save-agreed + setPaymentMode(escrow) complete; awaiting on-chain confirmation...");
-        crate::output::confirming(
-            &format!("ack-to-confirm: save-agreed + setPaymentMode(escrow) complete. txHash={tx_hash}"),
-            "Wait for the `job_payment_mode_changed` system notification, then notify the user; the provider will submit their apply independently.",
-        );
-    }
-    Ok(())
-}
-
-/// get-agreed — return the locally persisted negotiation result (no network).
-pub fn handle_get_agreed(job_id: &str) -> Result<()> {
-    match negotiate::get_agreed_json(job_id)? {
-        Some(data) => crate::output::success(data),
-        None => bail!("no agreed terms found for job {job_id}; save-agreed must run first"),
-    }
-    Ok(())
-}
-
-/// confirm-accept — confirm acceptance of the provider (setPaymentMode must already have run via set-payment-mode).
-///
-/// All parameters (provider, token symbol, amount) are read from the local negotiate-state;
-/// the CLI caller only passes `job_id`.
+/// All parameters (provider, token symbol, amount) are read from the task detail API.
 pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
     job_id: &str,
 ) -> Result<()> {
-    let (provider, token_symbol, token_amount) = negotiate::current_agreed_provider(job_id)?
-        .ok_or_else(|| anyhow::anyhow!(
-            "no agreed provider found in negotiate-state for job {job_id}; \
-             the negotiation flow (save-agreed) must complete before confirm-accept"
-        ))?;
-
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
     let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
+
+    let provider = task_resp["providerAgentId"].as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("task {job_id} has no providerAgentId; cannot confirm-accept"))?
+        .to_string();
+    let token_symbol = task_resp["tokenSymbol"].as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenSymbol"))?
+        .to_string();
+    let token_amount = task_resp["tokenAmount"].as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenAmount"))?
+        .to_string();
+
     let payment_mode = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
     if payment_mode == PaymentMode::None {
         bail!(
@@ -419,7 +294,7 @@ async fn confirm_accept_escrow(
     address: &str,
     agent_id: &str,
 ) -> Result<()> {
-    let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), "escrow")?;
+    let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, "escrow")?;
 
     // providerConfirmStatus confirms the provider has applied and returns the escrow parameters.
     let confirm_resp = fetch_provider_confirm_status(

@@ -191,24 +191,8 @@ pub enum AgentCommand {
         #[arg(long)] endpoint: Option<String>,
     },
 
-    /// Composite: save-agreed + conditional set-payment-mode → confirmNow branch
-    #[command(name = "ack-to-confirm")]
-    AckToConfirm {
-        job_id: String,
-        #[arg(long = "provider-agent-id")] provider_agent_id: String,
-        #[arg(long = "token-symbol")] token_symbol: String,
-        #[arg(long = "token-amount")] token_amount: String,
-        #[arg(long = "agent-id")] agent_id: Option<String>,
-    },
-
-    /// Read locally persisted negotiation result (no network)
-    #[command(name = "get-agreed")]
-    GetAgreed {
-        job_id: String,
-    },
-
     /// Client confirms provider and executes payment (setPaymentMode must be done first).
-    /// All parameters are auto-resolved from the local negotiate-state written by save-agreed.
+    /// All parameters are auto-resolved from the task detail API.
     #[command(name = "confirm-accept")]
     ConfirmAccept {
         job_id: String,
@@ -415,39 +399,6 @@ pub enum AgentCommand {
     },
 
 
-
-    /// Save negotiated payment params locally (agent calls after negotiation)
-    #[command(name = "save-agreed")]
-    SaveAgreed {
-        job_id: String,
-        #[arg(long = "provider")]
-        provider_agent_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        /// Buyer agent ID (used to query task detail and validate budget ceiling)
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
-
-    /// Atomic save-agreed + set-payment-mode(escrow) — used by negotiate_ack
-    /// to collapse two LLM steps into one CLI call. payment-mode is fixed to
-    /// escrow (A2A negotiation path). If save-agreed fails the call short-
-    /// circuits; if set-payment-mode fails the agreement is already persisted
-    /// and the LLM can retry just step 2 via cli_failed.
-    #[command(name = "save-agreed-and-set-payment")]
-    SaveAgreedAndSetPayment {
-        job_id: String,
-        #[arg(long = "provider")]
-        provider_agent_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
-    },
 
     /// Client claims auto-refund after provider timeout
     #[command(name = "claim-auto-refund")]
@@ -959,11 +910,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             task::buyer::run_task(T::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
 
-        AgentCommand::AckToConfirm { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
-            task::buyer::run_task(T::AckToConfirm { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
-
-        AgentCommand::GetAgreed { job_id } =>
-            task::buyer::run_task(T::GetAgreed { job_id }, ctx).await,
 
         AgentCommand::ConfirmAccept { job_id } =>
             task::buyer::run_task(T::ConfirmAccept { job_id }, ctx).await,
@@ -998,11 +944,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Payment { job_id, agent_id } =>
             task::buyer::run_task(T::Payment { job_id, agent_id }, ctx).await,
 
-        AgentCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
-            task::buyer::run_task(T::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
-
-        AgentCommand::SaveAgreedAndSetPayment { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
-            task::buyer::run_task(T::SaveAgreedAndSetPayment { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
 
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,

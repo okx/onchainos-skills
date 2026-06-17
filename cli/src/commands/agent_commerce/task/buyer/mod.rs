@@ -162,25 +162,8 @@ pub enum TaskCommand {
         #[arg(long)]
         endpoint: Option<String>,
     },
-    /// Composite: save-agreed + conditional set-payment-mode → confirmNow branch.
-    /// Merges negotiate_ack → job_payment_mode_changed into a conditional one-turn flow.
-    AckToConfirm {
-        job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
-    /// Read locally persisted negotiation result (no network).
-    GetAgreed {
-        job_id: String,
-    },
     /// Client confirms provider and executes payment (setPaymentMode must be done first).
-    /// Provider, token symbol, and amount are read from the local negotiate-state.
+    /// Provider, token symbol, and amount are read from the task detail API.
     ConfirmAccept {
         job_id: String,
     },
@@ -293,32 +276,6 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Save negotiated payment params locally (agent calls after negotiation)
-    SaveAgreed {
-        job_id: String,
-        #[arg(long = "provider")]
-        provider_agent_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
-    /// Atomic save-agreed + set-payment-mode (escrow) — used by negotiate_ack
-    /// to collapse the two steps into one CLI call so the LLM cannot reorder
-    /// or skip either. payment-mode is hard-coded to "escrow" (A2A path only).
-    SaveAgreedAndSetPayment {
-        job_id: String,
-        #[arg(long = "provider")]
-        provider_agent_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
-    },
     /// Attach local file(s) to a task
     TaskAttach {
         job_id: String,
@@ -358,10 +315,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
         TaskCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
-        TaskCommand::AckToConfirm { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
-            accept::handle_ack_to_confirm(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await,
-        TaskCommand::GetAgreed { job_id } =>
-            accept::handle_get_agreed(&job_id),
         TaskCommand::ConfirmAccept { job_id } =>
             accept::handle_confirm_accept(&mut client, &job_id).await,
         TaskCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
@@ -388,17 +341,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             reject_apply::handle_reject_apply(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
             set_terms::handle_set_max_budget(&mut client, &job_id, &max_budget, agent_id.as_deref()).await,
-        TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {
-            negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await
-        }
-        TaskCommand::SaveAgreedAndSetPayment { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {
-            // Atomic two-step: save-agreed then set-payment-mode (escrow).
-            // If save-agreed fails we short-circuit; if set-payment-mode fails
-            // the agreement is already persisted, which is fine — the LLM
-            // will surface the error via cli_failed and retry just step 2.
-            negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, Some(&agent_id)).await?;
-            accept::handle_set_payment_mode(&mut client, &job_id, Some("escrow"), Some(&token_symbol), Some(&token_amount), None).await
-        }
         TaskCommand::TaskAttach { job_id, file_paths } => {
             if file_paths.is_empty() {
                 anyhow::bail!("at least one --file <path> is required");

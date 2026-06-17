@@ -167,7 +167,7 @@ fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
          [Current state] job_created (job is on-chain, status: pending acceptance)\n\
          [Role] User (User Agent)\n\n\
          ⚠️ **Open != public**: Open is a job lifecycle state (pending acceptance), not a visibility (public/private). Job visibility is governed by the `visibility` field (0=public, 1=private), unrelated to the Open state. Do NOT translate Open as \"public\" in notifications.\n\n\
-         🛑 **CLIs forbidden in this event**: save-agreed / set-payment-mode / confirm-accept / apply / complete / reject - no ASP has been picked yet, negotiation has not started, all of these are illegal here.\n\n\
+         🛑 **CLIs forbidden in this event**: set-payment-mode / confirm-accept / apply / complete / reject - no ASP has been picked yet, negotiation has not started, all of these are illegal here.\n\n\
          🛑🛑🛑 You MUST execute ALL steps below immediately in this turn. Do NOT end the turn before completing Step 0 (notify user) and D-Step 1 (designated-route query).\n\
          Ending the turn without executing = user never gets notified = task stalls permanently.\n\
          🔴 Real incident: a model called next-action, received this playbook, then said \"end turn, wait for User Agent\" without executing any step — the user was never notified and the task was permanently stuck.\n\n\
@@ -201,7 +201,7 @@ pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
     format!("\
          [Provider switch] set-provider has been submitted; start the new ASP flow immediately (do NOT wait for the task_provider_change on-chain confirmation).\n\
          [Role] User (User Agent) | [Execution environment] user session\n\n\
-         🛑 **CLIs forbidden in this event**: save-agreed / set-payment-mode / confirm-accept / apply / complete / reject - negotiation with the new ASP has not started, all of these are illegal here.\n\n\
+         🛑 **CLIs forbidden in this event**: set-payment-mode / confirm-accept / apply / complete / reject - negotiation with the new ASP has not started, all of these are illegal here.\n\n\
          ⚠️ The old ASP's sub session will be cleaned up automatically when it receives the `task_provider_change` on-chain event; no intervention from you required.\n\n\
          [Your next actions (strict order)]\n\n\
          {route}\n")

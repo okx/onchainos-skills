@@ -6,7 +6,6 @@
 //! State file: `~/.onchainos/task/{jobId}/negotiate-state.json`.
 //! Cleanup: after the user successfully runs `confirm-accept`.
 
-use std::collections::HashMap;
 use std::time::Duration;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
@@ -58,16 +57,6 @@ pub struct ServiceInfo {
     pub fee_token: String,
 }
 
-/// Negotiated terms agreed with a specific provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgreedTerms {
-    pub token_symbol: String,
-    pub token_amount: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payment_most_token_amount: Option<String>,
-}
-
 /// Negotiation state.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,9 +65,6 @@ pub struct NegotiateState {
     pub providers: Vec<ProviderInfo>,
     pub current_index: usize,
     pub created_at: String,
-    /// Negotiation results stored per `provider_agent_id` (supports negotiating with multiple providers concurrently).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub agreed: HashMap<String, AgreedTerms>,
     /// Current page (0-based).
     #[serde(default)]
     pub page: usize,
@@ -117,7 +103,6 @@ pub fn save(job_id: &str, providers: Vec<ProviderInfo>, page: usize) -> Result<(
         providers,
         current_index: 0,
         created_at: chrono::Utc::now().to_rfc3339(),
-        agreed: HashMap::new(),
         page,
         failed_providers: existing_failed,
     };
@@ -148,157 +133,12 @@ pub fn current(job_id: &str) -> Result<Option<ProviderInfo>> {
 pub fn next(job_id: &str) -> Result<Option<ProviderInfo>> {
     let mut state = load(job_id)?;
 
-    // Drop the prior provider's negotiation result (switching only happens on negotiation failure).
-    if let Some(old) = state.providers.get(state.current_index) {
-        state.agreed.remove(&old.provider_agent_id);
-    }
-
     state.current_index += 1;
 
     let json = serde_json::to_string_pretty(&state)?;
     std::fs::write(state_path(job_id)?, json)?;
 
     Ok(state.providers.get(state.current_index).cloned())
-}
-
-/// Save the negotiated payment parameters (called by the agent after negotiation).
-///
-/// Queries the task detail for `paymentMostTokenAmount` (the max budget);
-/// refuses to save if the negotiated amount exceeds the max budget.
-pub async fn save_agreed(
-    client: &mut crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient,
-    job_id: &str,
-    provider_agent_id: &str,
-    token_symbol: &str,
-    token_amount: &str,
-    agent_id: Option<&str>,
-) -> Result<()> {
-    // Query task detail to obtain the max budget.
-    let agent_id = if let Some(id) = agent_id.filter(|s| !s.is_empty()) {
-        id.to_string()
-    } else {
-        super::create::resolve_buyer_agent()
-            .await
-            .map(|(id, _)| id)
-            .unwrap_or_default()
-    };
-    let task_path = format!("/priapi/v1/aieco/task/{job_id}");
-    let task_detail = client.get_with_identity(&task_path, &agent_id).await;
-
-    let max_amount_saved = if let Ok(detail) = &task_detail {
-        let max_amount_str = detail["paymentMostTokenAmount"].as_str().unwrap_or("");
-        if !max_amount_str.is_empty() {
-            let agreed: f64 = token_amount.parse().unwrap_or(0.0);
-            let max_budget: f64 = max_amount_str.parse().unwrap_or(0.0);
-            if max_budget > 0.0 && agreed > max_budget {
-                bail!(
-                    "negotiated amount {token_amount} {token_symbol} exceeds task max budget {max_amount_str} {token_symbol}; quote cannot be accepted"
-                );
-            }
-            Some(max_amount_str.to_string())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let mut state = match load(job_id) {
-        Ok(s) => s,
-        Err(_) => {
-            let dir = state_dir(job_id)?;
-            std::fs::create_dir_all(&dir)?;
-            NegotiateState {
-                job_id: job_id.to_string(),
-                providers: vec![],
-                current_index: 0,
-                created_at: chrono::Utc::now().to_rfc3339(),
-                agreed: HashMap::new(),
-                page: 0,
-                failed_providers: vec![],
-            }
-        }
-    };
-    state.agreed.insert(provider_agent_id.to_string(), AgreedTerms {
-        token_symbol: token_symbol.to_string(),
-        token_amount: token_amount.to_string(),
-        payment_most_token_amount: max_amount_saved,
-    });
-    let json = serde_json::to_string_pretty(&state)?;
-    std::fs::write(state_path(job_id)?, json)?;
-    audit::log(
-        "cli",
-        "buyer/agreed_terms_saved",
-        true,
-        Duration::default(),
-        Some(vec![
-            format!("jobId={job_id}"),
-            format!("agentId={agent_id}"),
-            format!("provider={provider_agent_id}"),
-            format!("tokenSymbol={token_symbol}"),
-            format!("tokenAmount={token_amount}"),
-        ]),
-        None,
-    );
-    println!("✓ Negotiation result saved: provider={provider_agent_id}, {token_symbol} {token_amount} (job={job_id})");
-    Ok(())
-}
-
-/// Read the negotiated payment parameters; returns `(token_symbol, token_amount)`.
-///
-/// When `provider_agent_id` is `Some`, matches exactly; when `None`, falls back to
-/// the provider at `current_index`.
-pub fn load_agreed(job_id: &str, provider_agent_id: Option<&str>) -> Result<Option<(String, String)>> {
-    let state = match load(job_id) {
-        Ok(s) => s,
-        Err(_) => return Ok(None),
-    };
-    let key = match provider_agent_id {
-        Some(id) => id.to_string(),
-        None => match state.providers.get(state.current_index) {
-            Some(p) => p.provider_agent_id.clone(),
-            None => return Ok(None),
-        },
-    };
-    Ok(state.agreed.get(&key).map(|t| (t.token_symbol.clone(), t.token_amount.clone())))
-}
-
-/// Return the single agreed provider and its terms from the negotiate-state.
-///
-/// Expects exactly one entry in `agreed` (the normal case after negotiate_ack).
-/// Multiple entries: disambiguate via `current_index`.
-pub fn current_agreed_provider(job_id: &str) -> Result<Option<(String, String, String)>> {
-    let state = match load(job_id) {
-        Ok(s) => s,
-        Err(_) => return Ok(None),
-    };
-    let (key, terms) = if state.agreed.len() == 1 {
-        state.agreed.iter().next().map(|(k, v)| (k.clone(), v.clone())).unwrap()
-    } else if state.agreed.is_empty() {
-        return Ok(None);
-    } else {
-        match state.providers.get(state.current_index) {
-            Some(p) => match state.agreed.get(&p.provider_agent_id) {
-                Some(v) => (p.provider_agent_id.clone(), v.clone()),
-                None => return Ok(None),
-            },
-            None => return Ok(None),
-        }
-    };
-    Ok(Some((key, terms.token_symbol, terms.token_amount)))
-}
-
-/// Return the agreed terms as a JSON value (for the `get-agreed` CLI command).
-pub fn get_agreed_json(job_id: &str) -> Result<Option<serde_json::Value>> {
-    let (provider, symbol, amount) = match current_agreed_provider(job_id)? {
-        Some(t) => t,
-        None => return Ok(None),
-    };
-    Ok(Some(serde_json::json!({
-        "providerAgentId": provider,
-        "tokenSymbol": symbol,
-        "tokenAmount": amount,
-    })))
 }
 
 /// Save the designated provider (specified via `create-task --provider`; on `job_created` we skip `asp-match`).
@@ -376,7 +216,6 @@ pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
                 providers: vec![],
                 current_index: 0,
                 created_at: chrono::Utc::now().to_rfc3339(),
-                agreed: HashMap::new(),
                 page: 0,
                 failed_providers: vec![],
             }
