@@ -718,13 +718,23 @@ pub(crate) async fn find_service(
         return Ok(None);
     }
     let data = spawn_service_list(agent_id).await?;
+    // service-list returns the service ID under the `id` key as a JSON number
+    // (e.g. `"id": 1270`), while the buyer's designation envelope sends
+    // `"serviceId"` as a string. Try both keys, coerce number↔string for
+    // comparison.
     let matched = data
         .as_array()
         .and_then(|arr| arr.first())
         .and_then(|item| item.get("list"))
         .and_then(|list| list.as_array())
         .and_then(|list| list.iter().find(|s| {
-            s.get("serviceId").and_then(|v| v.as_str()) == Some(service_id)
+            let id_val = s.get("id").or_else(|| s.get("serviceId"));
+            let id_str = id_val.and_then(|v| {
+                v.as_str().map(String::from)
+                    .or_else(|| v.as_i64().map(|n| n.to_string()))
+                    .or_else(|| v.as_u64().map(|n| n.to_string()))
+            });
+            id_str.as_deref() == Some(service_id)
         }).cloned());
     Ok(matched)
 }

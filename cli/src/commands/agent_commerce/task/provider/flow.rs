@@ -559,10 +559,11 @@ pub async fn generate_next_action(
                 .or_else(|| msg_str("tokenAmount"))
                 .or_else(|| p.map(|x| x.token_amount.as_str()).filter(|s| !s.is_empty()))
                 .unwrap_or("");
-            // buyer's token symbol — task-level; envelope wins.
-            let buyer_token_symbol = msg_str("tokenSymbol")
-                .or_else(|| p.map(|x| x.token_symbol.as_str()).filter(|s| !s.is_empty() && *s != "?"))
-                .unwrap_or("USDT");
+            // buyer's token symbol — task-level; envelope wins. Stays as Option so missing
+            // tokenSymbol triggers the incomplete-terms guard (do NOT silent-fallback to USDT
+            // — applying with the wrong token would lock the wrong escrow currency).
+            let buyer_token_symbol_opt = msg_str("tokenSymbol")
+                .or_else(|| p.map(|x| x.token_symbol.as_str()).filter(|s| !s.is_empty() && *s != "?"));
             let task_title = msg_str("jobTitle")
                 .or_else(|| msg_str("title"))
                 .or_else(|| p.map(|x| x.title.as_str()).filter(|s| !s.is_empty()))
@@ -571,18 +572,31 @@ pub async fn generate_next_action(
                 .or_else(|| p.map(|x| x.description.as_str()).filter(|s| !s.is_empty()))
                 .unwrap_or("");
 
-            if service_id.is_empty() {
-                // No designated serviceId → notify the user, then end the turn.
-                let user_notify = super::content::job_asp_selected_no_service_notify(job_id);
+            // Render-helper for the three early-bailout branches (no service / empty
+            // offer / missing token symbol). All share: notify + end turn, no on-chain
+            // action, no asp-reject (buyer is in incomplete state and needs to re-route).
+            let render_bailout = |header: &str, user_notify: &str| -> String {
                 format!(
-                    "[Current state] job_asp_selected — designated by buyer, but no specific `serviceId` was pinned. jobId=`{job_id}` agentId={agent_id}\n\n\
+                    "[Current state] job_asp_selected — {header}. jobId=`{job_id}` agentId={agent_id}\n\n\
                      **Notify the user, then end the turn** (🌐 translate template to user's language first):\n\
                      {user_notify}\n\n\
                      ```bash\n\
                      okx-a2a user notify --content \"<translated text>\"\n\
                      ```\n"
                 )
+            };
+
+            if service_id.is_empty() {
+                let user_notify = super::content::job_asp_selected_no_service_notify(job_id);
+                render_bailout("designated by buyer, but no specific `serviceId` was pinned", &user_notify)
+            } else if offer_amount.is_empty() {
+                let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenAmount");
+                render_bailout("designation envelope missing `tokenAmount`", &user_notify)
+            } else if buyer_token_symbol_opt.is_none() {
+                let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenSymbol");
+                render_bailout("designation envelope missing `tokenSymbol`", &user_notify)
             } else {
+                let buyer_token_symbol = buyer_token_symbol_opt.unwrap();
                 // CODE: fetch service catalog and find the designated entry.
                 let matched = crate::commands::agent_commerce::task::common::find_service(agent_id, service_id).await.ok().flatten();
 
@@ -705,6 +719,11 @@ pub async fn generate_next_action(
                                  \x20\x20• Price: is the buyer's offer fair for this task's workload?\n\
                                  \x20\x20• BOTH yes → run **APPLY path** below.\n\
                                  \x20\x20• Either no → run **REJECT path** below.\n\n\
+                                 💰 **Workload tier rubric** (no registered fee on this service — estimate by complexity):\n\
+                                 \x20\x20- ✅ Reference comparable tasks / the buyer's offer / task complexity for a reasonable estimate. If the buyer's offer is already at-or-above your workload estimate → ACCEPT; never counter down.\n\
+                                 \x20\x20- ❌ Don't blindly throw out something like 100 USDT.\n\
+                                 \x20\x20- ❌ Don't self-discount to 0 / free — `price is always asked, never assumed`.\n\
+                                 \x20\x20- Simple query tasks (1 API call / 1 datum) typically 0.001–0.05 USDT; complex tasks (multi-step / long text generation / reports) 0.05–1 USDT; deep research > 1 USDT requires solid justification.\n\n\
                                  {apply_template}\n\
                                  {reject_template}"
                             ),

@@ -85,7 +85,7 @@ pub struct TaskApiClient {
 /// affect this. A task-specific `OKX_TASK_BASE_URL` env var still takes
 /// precedence if explicitly set, so devs can point at a custom task backend
 /// without recompiling.
-const TASK_DEFAULT_BASE_URL: &str = "http://okx-defi-wallet-aiecotask.forked-walletmain-swim.swim.env";
+const TASK_DEFAULT_BASE_URL: &str = "http://forked-walletmain-swim.okx.testokg.com";
 
 impl TaskApiClient {
     pub fn new() -> Self {

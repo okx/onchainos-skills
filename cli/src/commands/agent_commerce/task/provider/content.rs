@@ -40,12 +40,25 @@ pub fn job_asp_selected_accepted_notify(job_id: &str) -> String {
 }
 
 /// `Event::JobAspSelected` no-serviceId fallback — user-facing notification
-/// pushed via `okx-a2a user notify --content <text>` before the ASP enters
-/// the generic JobCreated negotiation flow. Localize before sending.
+/// pushed via `okx-a2a user notify --content <text>`. The playbook does NOT
+/// auto-start negotiation; it ends the turn and waits for the buyer to re-route
+/// (designate a specific service / list the task publicly). Localize before sending.
 pub fn job_asp_selected_no_service_notify(job_id: &str) -> String {
     format!(
-        "[Designated Task — Negotiating] Job {job_id} — the buyer designated you as the ASP without pinning a specific service.\n\
-         \x20\x20Starting the standard negotiation flow now; will notify you again once the apply is on-chain."
+        "[Designated Task — Skipped] Job {job_id} — the buyer designated you as the ASP without pinning a specific service.\n\
+         \x20\x20No action taken; waiting for the buyer to re-route with a specific service or list the task publicly."
+    )
+}
+
+/// `Event::JobAspSelected` incomplete-terms guard — pushed when the inbound
+/// envelope is missing `tokenAmount` and/or `tokenSymbol`. Same shape as the
+/// no-service notify: user is informed; the ASP takes no on-chain action.
+/// `missing_field` is interpolated (e.g. `"tokenAmount"` / `"tokenSymbol"` /
+/// `"tokenAmount + tokenSymbol"`). Localize before sending.
+pub fn job_asp_selected_missing_terms_notify(job_id: &str, missing_field: &str) -> String {
+    format!(
+        "[Designated Task — Skipped] Job {job_id} — the buyer's designation envelope is missing `{missing_field}`; cannot determine the apply terms.\n\
+         \x20\x20No action taken; waiting for the buyer to re-send the designation with complete terms."
     )
 }
 
