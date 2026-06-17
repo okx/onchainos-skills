@@ -294,13 +294,6 @@ pub enum Event {
     // ── Buyer terms-change tx receipts (no status change, stays created) ─
     /// setTokenAndBudget tx on-chain success (notifies all sub sessions on the buyer side; if none, notifies backup).
     TaskTokenBudgetChange,
-    /// setProviderAndAgentId tx on-chain success (notifies all sub sessions on the buyer side; if none, notifies backup).
-    TaskProviderChange,
-
-    // ── User-session pseudo events (triggered by user command, no status change) ──
-    /// After set-provider succeeds, the user session immediately kicks off the new-provider flow
-    /// (without waiting for the on-chain task_provider_change confirmation).
-    SwitchProvider,
 
     // ── Attachment relay events (local dispatch, no status change) ──────
     /// User session dispatched `[ATTACHMENT_ADDED]`; sub session uploads + forwards the file to the provider.
@@ -390,9 +383,6 @@ impl Event {
             "cooldown_entered"          => Event::CooldownEntered,
             // Buyer terms-change tx receipts
             "task_token_budget_change"  => Event::TaskTokenBudgetChange,
-            "task_provider_change"      => Event::TaskProviderChange,
-            // User-session pseudo events
-            "switch_provider"           => Event::SwitchProvider,
             // Attachment relay (local dispatch)
             "attachment_added"          => Event::AttachmentAdded,
             "buyer_attachment_received" => Event::BuyerAttachmentReceived,
@@ -449,8 +439,6 @@ impl Event {
             Event::StakeStopped           => "stake_stopped",
             Event::CooldownEntered        => "cooldown_entered",
             Event::TaskTokenBudgetChange  => "task_token_budget_change",
-            Event::TaskProviderChange    => "task_provider_change",
-            Event::SwitchProvider         => "switch_provider",
             Event::AttachmentAdded        => "attachment_added",
             Event::BuyerAttachmentReceived => "buyer_attachment_received",
             Event::DeliverableReceived    => "deliverable_received",
@@ -469,7 +457,6 @@ impl Event {
             Event::JobVisibilityChanged  => "visibility toggle failed",
             Event::JobPaymentModeChanged => "payment mode switch failed",
             Event::TaskTokenBudgetChange => "payment terms change failed",
-            Event::TaskProviderChange    => "provider change failed",
             Event::JobAutoCompleted   => "auto-complete failed",
             Event::RewardClaimed      => "reward claim failed",
             Event::DisputeApproved    => "dispute initiation failed",
@@ -498,8 +485,7 @@ pub fn status_when_event(e: &Event) -> Status {
         // Main flow
         Event::JobCreated | Event::ProviderApplied | Event::JobAspSelected
         | Event::JobProviderReject | Event::JobUserReject
-        | Event::TaskTokenBudgetChange | Event::TaskProviderChange
-        | Event::SwitchProvider
+        | Event::TaskTokenBudgetChange
         | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,
         Event::JobAccepted | Event::DeliverableReceived                       => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,

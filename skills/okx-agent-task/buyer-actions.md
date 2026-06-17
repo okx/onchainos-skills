@@ -53,7 +53,7 @@
 | Field | CLI command | On-chain | Group |
 |------|---------|------|------|
 | tokenAmount + tokenSymbol | `set-token-and-budget` | Yes | Change together |
-| provider | `set-provider` | Yes | Change alone |
+| provider + service | `set-asp` | No (off-chain) | Change together (full ASP + service reset) |
 | max_budget | `set-max-budget` | No | Change alone |
 
 **Non-modifiable**: title, description, acceptance window, delivery window → inform "This field cannot be changed after task creation."
@@ -68,20 +68,29 @@
 
 > ❌ **The user session must NOT initiate negotiation itself** — negotiation is handled automatically by the sub session after receiving the system event.
 
-### 3.3 Modify provider
+### 3.3 Re-set ASP (provider + service)
+
+> **Scenario**: seller rejected / user wants to switch to a different ASP. This replaces the provider, service, and optionally the payment terms in one call.
 
 1. Parse the user's intent (the new providerAgentId).
-2. Confirm: "Confirm switching the provider to <providerAgentId>?"
-3. User confirms → `onchainos agent set-provider <jobId> --provider-agent-id <providerAgentId>`
-4. Inform: "Change submitted."
-5. 🛑 **MUST NOT wait for on-chain confirmation; immediately start the new-provider flow after Step 4**:
-   - **escrow** → call `next-action --role buyer --agentId <yours> --message '{"event":"switch_provider","jobId":"<jobId>","provider":"<new agentId>"}'` to fetch the script.
-   - **x402** → reuse §6 x402 flow below (start from Step 2 endpoint validation).
-   - ❌ Waiting for `task_provider_change` = the new-provider flow is pointlessly blocked.
-6. The sub session receives `task_provider_change` → first call `agent status <jobId>` to compare `providerAgentId` against this session's provider: only send `[intent:reject]` **when they differ**; if equal, ignore. Handle silently.
+2. Fetch service info: `onchainos agent asp-match --job-id <jobId> --provider-agent-id <providerAgentId>` → extract `serviceId`, `serviceParams`, `feeToken` (= serviceTokenAddress), `feeAmount` (= serviceTokenAmount), `feeTokenSymbol`.
+3. Confirm: "Confirm switching to ASP <providerAgentId>, service <serviceName>, fee <feeAmount> <feeTokenSymbol>?"
+4. User confirms → run:
+   ```bash
+   onchainos agent set-asp <jobId> \
+     --provider-agent-id <providerAgentId> \
+     --service-id <serviceId> \
+     --service-params '<serviceParams JSON>' \
+     --service-token-address <feeToken> \
+     --service-token-amount <feeAmount> \
+     --payment-token-symbol <feeTokenSymbol> \
+     --payment-token-amount <paymentTokenAmount> \
+     --payment-most-token-amount <paymentMostTokenAmount>
+   ```
+5. Inform: "ASP reset submitted."
+6. **End this turn** — backend triggers `job_created` event with the new `providerAgentId`; the standard `job_created` handler detects the designated provider and routes to `designated-route` → A2A / x402 automatically.
 
 > ❌ **Forbidden** to call `mark-failed` — it only terminates negotiation; it does NOT exclude that provider.
-> ❌ **Forbidden** to continue chatting in the existing sessions with other providers — the REJECT is sent automatically by the sub.
 
 ### 3.4 Modify max-budget
 

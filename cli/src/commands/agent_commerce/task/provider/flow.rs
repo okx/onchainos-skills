@@ -1125,9 +1125,8 @@ pub async fn generate_next_action(
             event = event.as_str()
         ),
 
-        // ─── Buyer terms-change on-chain receipts — provider does not receive these two events; fallback ignore ─────
-        Event::TaskTokenBudgetChange
-        | Event::TaskProviderChange => format!(
+        // ─── Buyer terms-change on-chain receipt — provider does not receive this event; fallback ignore ─────
+        Event::TaskTokenBudgetChange => format!(
             "[System notification] {event} (User Agent terms-change receipt; provider does not handle directly)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              Silently ignore; end this turn.\n",
@@ -1246,7 +1245,7 @@ pub async fn generate_next_action(
         | Event::NegotiateCounter => "[System notification] negotiate_* (buyer-side negotiation relay event; not the provider's concern)\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
-        Event::SwitchProvider | Event::AttachmentAdded | Event::DeliverableReceived => "[System notification] buyer-side event; not the provider's concern.\n\
+        Event::AttachmentAdded | Event::DeliverableReceived => "[System notification] buyer-side event; not the provider's concern.\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
         // ─── user_decision_* relay router (provider-side scenes) ───

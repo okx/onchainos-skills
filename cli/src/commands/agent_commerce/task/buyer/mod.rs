@@ -254,14 +254,6 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Change provider (on-chain, does not wait for confirmation)
-    SetProvider {
-        job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
     /// Reject a provider's apply (on-chain pass-through; status stays `created`)
     RejectApply {
         job_id: String,
@@ -335,8 +327,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
         TaskCommand::SetTokenAndBudget { job_id, token_symbol, budget, agent_id } =>
             set_terms::handle_set_token_and_budget(&mut client, &job_id, &token_symbol, &budget, agent_id.as_deref()).await,
-        TaskCommand::SetProvider { job_id, provider_agent_id, agent_id } =>
-            set_terms::handle_set_provider(&mut client, &job_id, &provider_agent_id, agent_id.as_deref()).await,
         TaskCommand::RejectApply { job_id, agent_id } =>
             reject_apply::handle_reject_apply(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::SetMaxBudget { job_id, max_budget, agent_id } =>

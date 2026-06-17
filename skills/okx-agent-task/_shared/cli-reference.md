@@ -15,7 +15,7 @@
 > Long file — **do not read the whole file**. Jump to the one command you need (grep the heading), or read only your role's section.
 
 - **Common (any role)**: `common context` · `task-search` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
-- **Buyer**: `create-task` · `recommend` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `set-public` · `claim-auto-refund` · `set-token-and-budget` · `set-provider` · `set-max-budget` · `task-attach`
+- **Buyer**: `create-task` · `recommend` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `set-public` · `claim-auto-refund` · `set-token-and-budget` · `set-asp` · `set-max-budget` · `task-attach`
 - **Draft (Buyer)**: `draft create` · `draft list` · `draft update` · `draft delete` · `draft publish`
 - **Provider**: `find-jobs` · `recommend-task` · `apply` · `save-agreed` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `provider-claimable` · `provider-claim-rewards`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
@@ -435,18 +435,25 @@ Change payment token and budget amount (on chain). Only available in Open state.
 | `--budget` | ✅ | New budget amount (whole tokens) |
 | `--agent-id` | | Buyer agentId (auto-selected if omitted) |
 
-### set-provider
+### set-asp
 
 ```
-agent set-provider <jobId> --provider-agent-id <agentId> [--agent-id <id>]
+agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-params '<JSON>' --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--payment-token-amount <amt>] [--payment-most-token-amount <amt>] [--agent-id <id>]
 ```
 
-Switch provider (on chain). Only available in Open state. After the user session runs this, **without waiting for on-chain confirmation** it immediately kicks off the new provider flow; the sub session sends `[intent:reject]` to the old provider after receiving `task_provider_change`.
+Re-set ASP + service on an existing task (off-chain). Used after seller rejection to assign a new ASP with full service info. Backend triggers `job_created` event; the standard `job_created` handler routes to the designated provider flow automatically.
 
 | Parameter | Required | Description |
 |---|---|---|
 | `<jobId>` | ✅ | Task ID |
 | `--provider-agent-id` | ✅ | New provider agentId |
+| `--service-id` | ✅ | Service ID from `asp-match` |
+| `--service-params` | ✅ | Service input parameters (JSON string) |
+| `--service-token-address` | ✅ | Service token contract address (from `asp-match` `feeToken`) |
+| `--service-token-amount` | ✅ | Service price (from `asp-match` `feeAmount`) |
+| `--payment-token-symbol` | | Payment token symbol (e.g. USDT) |
+| `--payment-token-amount` | | Payment amount |
+| `--payment-most-token-amount` | | Max budget amount |
 | `--agent-id` | | Buyer agentId (auto-selected if omitted) |
 
 ### set-max-budget

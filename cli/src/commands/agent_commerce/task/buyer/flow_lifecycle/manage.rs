@@ -475,7 +475,7 @@ pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> Str
 // --- Term-change events ------------------------------------------------
 
 pub(crate) fn task_token_budget_change(ctx: &super::super::flow::FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
+    let _job_id = ctx.job_id;
 
     format!(
     "[System Notification] task_token_budget_change (payment token / amount change settled on-chain)\n\
@@ -488,83 +488,6 @@ pub(crate) fn task_token_budget_change(ctx: &super::super::flow::FlowContext<'_>
      Rationale: price is locked at accept time, not negotiated in chat. The on-chain tokenSymbol / tokenAmount update is visible to the ASP via task-detail queries; no `xmtp_send` propagation is needed.\n\n\
      ❌ Do not xmtp_send to the provider (price talk is forbidden in chat).\n\
      ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session).\n\
-     ❌ Do not call set-token-and-budget / set-provider / set-max-budget (the user session already did).\n"
-    )
-}
-
-pub(crate) fn task_provider_change(ctx: &super::super::flow::FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-
-    let has_dp = super::super::negotiate::has_designated_provider(job_id);
-
-    let backup_instruction = if has_dp {
-        format!(
-            "- If you are the **backup session** → the user session has written the new provider info via `set-provider`.\n\
-             \x20\x20**🛑 MUST run the following command immediately to kick off the new provider flow**:\n\
-             \x20\x20```bash\n\
-             \x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"switch_provider\",\"jobId\":\"{job_id}\"}}'\n\
-             \x20\x20```\n\
-             \x20\x20Follow the returned playbook (D-Steps → negotiation / x402).\n\
-             \x20\x20❌ Do not ignore this event ❌ Do not skip next-action and decide the next step yourself\n")
-    } else {
-        "- If you are the **backup session** → **ignore this event, end the turn immediately, do not call any tool**\n".to_string()
-    };
-
-    let p = match ctx.prefetched {
-        Some(p) => p,
-        None => return format!(
-            "[task_provider_change] ❌ no prefetched task context for job {job_id}; sub-session cannot decide whether to send REJECT.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
-        ),
-    };
-    let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
-        Some(s) => s,
-        None => return format!(
-            "[task_provider_change] ❌ prefetched.provider_agent_id missing for job {job_id}; sub-session cannot decide whether to send REJECT.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
-        ),
-    };
-    let session_key_inline: Option<String> = if crate::commands::agent_commerce::task::common::config::is_cli_mode() {
-        crate::commands::agent_commerce::task::common::okx_a2a::session_status().ok().flatten()
-    } else {
-        None
-    };
-    let step2 = match session_key_inline.as_deref() {
-        Some(sk) => format!(
-            "**Step 2 -- sessionKey (CLI pre-fetched; do NOT call `session_status`):**\n\
-             \x20\x20`{sk}`\n\n"
-        ),
-        None => "**Step 2 -- 🛑 MUST get the sessionKey:**\n\
-                 Call the `session_status` tool to obtain the current sub session's `sessionKey`.\n\
-                 ❌ Skipping this step = xmtp_send lacks sessionKey = REJECT cannot be sent\n\n".to_string(),
-    };
-    let sk_hint_in_step3 = if session_key_inline.is_some() {
-        "sessionKey from Step 2 above"
-    } else {
-        "value from Step 2"
-    };
-
-    format!(
-    "[System Notification] task_provider_change (provider change settled on-chain)\n\
-     [Role] User (User Agent)\n\n\
-     ⚠️ This event is triggered by the user session calling `set-provider`. The provider is now updated on-chain.\n\n\
-     [Receiving-scenario decision -- 🛑 MANDATORY; wrong decision = flow stuck]\n\
-     This event is broadcast to all user-side sub sessions.\n\
-     {backup_instruction}\
-     - If you are a **sub session (a negotiation session with a specific provider)** → first run Step 0 liveness check, then continue\n\n\
-     [Sub-session action (🛑 four steps in strict order; MUST be fully executed)]\n\n\
-     **Step 1 -- Compare against the on-chain provider:**\n\
-     The on-chain current providerAgentId is **{provider_id}**. Compare it with **the provider agentId this session is negotiating with**:\n\
-     \x20\x20- **Match** (this session's provider IS the on-chain provider) → this session belongs to the new provider; **ignore this event, end the turn**\n\
-     \x20\x20- **Mismatch** (this session's provider has been replaced) → continue to Step 2\n\n\
-     {step2}\
-     **Step 2 (mismatch only) -- send a brief natural-language goodbye to the replaced provider, then end the turn:**\n\
-     Use the sessionKey above; xmtp_send a concise message telling the provider you've switched and the negotiation is over. Plain natural language — no `[intent:*]` markers.\n\n\
-     ❌ Do not xmtp_dispatch_user (the user already knows about the change in the user session).\n\
-     ❌ Do not call set-token-and-budget / set-provider / set-max-budget (the user session already did).\n\
-     ❌ Do not call mark-failed (it only ends the negotiation, it does not exclude that provider).\n\
-     ❌ Do not keep talking to that provider after the goodbye message — this sub session's mission is over.\n\n\
-     → **End this turn**. The new provider's negotiation is initiated by the user session, unrelated to this sub session.\n"
+     ❌ Do not call set-token-and-budget / set-asp / set-max-budget (the user session already did).\n"
     )
 }

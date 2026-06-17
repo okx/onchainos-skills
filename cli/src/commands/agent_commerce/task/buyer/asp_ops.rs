@@ -176,6 +176,8 @@ pub async fn handle_set_asp(
         )
         .await?;
 
+    super::negotiate::save_designated_provider(job_id, provider_agent_id)?;
+
     audit::log(
         "cli",
         "buyer/set_asp",
@@ -191,7 +193,7 @@ pub async fn handle_set_asp(
         None,
     );
 
-    println!("✓ ASP and service updated (off-chain). Backend will trigger job_asp_selected.");
+    println!("✓ ASP and service updated (off-chain). Waiting for job_created event.");
     println!("  providerAgentId: {provider_agent_id}");
     println!("  serviceId: {service_id}");
     println!("  serviceTokenAmount: {service_token_amount}");

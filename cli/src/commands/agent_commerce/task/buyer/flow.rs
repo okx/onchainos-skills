@@ -120,7 +120,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent close {job_id}          # Close task"),
             format!("  onchainos agent set-public {job_id}     # Convert to public task"),
             format!("  onchainos agent set-token-and-budget {job_id} --token-symbol <USDT|USDG> --budget <amount>  # Change payment token and amount (on-chain)"),
-            format!("  onchainos agent set-provider {job_id} --provider-agent-id <agentId>  # Change provider (on-chain)"),
+            format!("  onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <svc> --service-params '<JSON>' --service-token-address <addr> --service-token-amount <amt>  # Re-set ASP + service (off-chain, triggers job_created)"),
             format!("  onchainos agent set-max-budget {job_id} --max-budget <amount>  # Change max budget (off-chain)"),
             format!("  onchainos agent reject-apply {job_id}  # Reject the current provider's apply (off-chain)"),
         ],
@@ -395,7 +395,6 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 super::flow_negotiate::job_created(&ctx)
             }
         }
-        Event::SwitchProvider => super::flow_negotiate::switch_provider(&ctx),
         Event::Other(ref s) if s == "provider_conversation" => super::flow_negotiate::provider_conversation(&ctx),
         Event::Other(ref s) if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" => {
             let dp_id = super::negotiate::get_designated_provider(job_id).ok().flatten().unwrap_or_default();
@@ -473,8 +472,6 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::Other(ref s) if s == "set_public" => super::flow_lifecycle::set_public(&ctx).await,
         Event::AttachmentAdded => super::flow_lifecycle::attachment_added(&ctx),
         Event::TaskTokenBudgetChange => super::flow_lifecycle::task_token_budget_change(&ctx),
-        Event::TaskProviderChange => super::flow_lifecycle::task_provider_change(&ctx),
-
         // ─── Events the buyer never receives + unknown fallback ──────────────────────────
         Event::Staked
         | Event::UnstakeRequested
@@ -716,7 +713,6 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         );
     let core = if use_cli_minimal
         || event_str == "create_task"
-        || event_str == "switch_provider"
     {
         body
     } else if use_slim_preamble {

@@ -1,4 +1,4 @@
-//! Event handlers for job_created, switch_provider, and provider_conversation.
+//! Event handlers for job_created and provider_conversation.
 
 use super::super::flow::FlowContext;
 
@@ -180,31 +180,6 @@ fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
          ⚠️ Subsequent routing -> negotiation / acceptance all run in the **current session**; do NOT switch to the user session, do NOT sessions_spawn.\n\n\
          {routing_section}\n\n"
     )
-}
-
-pub(crate) fn switch_provider(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let short_id = ctx.short_id;
-
-    let designated_provider = super::super::negotiate::get_designated_provider(job_id).ok().flatten();
-    let dp_id = match &designated_provider {
-        Some(id) => id.clone(),
-        None => {
-            return format!("[Error] switch_provider is missing the `provider` field in --message.\n\
-                 Please call again: onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"switch_provider\",\"jobId\":\"{job_id}\",\"provider\":\"<new ASP agentId>\"}}'\n");
-        }
-    };
-
-    let designated_endpoint = super::super::negotiate::get_designated_endpoint(job_id).ok().flatten();
-    let route = super::designated::route_only(job_id, agent_id, short_id, &dp_id, designated_endpoint.as_deref());
-    format!("\
-         [Provider switch] set-provider has been submitted; start the new ASP flow immediately (do NOT wait for the task_provider_change on-chain confirmation).\n\
-         [Role] User (User Agent) | [Execution environment] user session\n\n\
-         🛑 **CLIs forbidden in this event**: set-payment-mode / confirm-accept / apply / complete / reject - negotiation with the new ASP has not started, all of these are illegal here.\n\n\
-         ⚠️ The old ASP's sub session will be cleaned up automatically when it receives the `task_provider_change` on-chain event; no intervention from you required.\n\n\
-         [Your next actions (strict order)]\n\n\
-         {route}\n")
 }
 
 pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {

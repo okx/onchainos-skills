@@ -423,15 +423,6 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Change provider (on-chain, does not wait for confirmation)
-    #[command(name = "set-provider")]
-    SetProvider {
-        job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
     /// Reject a provider's apply (on-chain pass-through; status stays `created`)
     #[command(name = "reject-apply")]
     RejectApply {
@@ -958,8 +949,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::SetTokenAndBudget { job_id, token_symbol, budget, agent_id } =>
             task::buyer::run_task(T::SetTokenAndBudget { job_id, token_symbol, budget, agent_id }, ctx).await,
-        AgentCommand::SetProvider { job_id, provider_agent_id, agent_id } =>
-            task::buyer::run_task(T::SetProvider { job_id, provider_agent_id, agent_id }, ctx).await,
         AgentCommand::RejectApply { job_id, agent_id } =>
             task::buyer::run_task(T::RejectApply { job_id, agent_id }, ctx).await,
         AgentCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
@@ -1497,7 +1486,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
 
     // Events that skip both freshness validation AND pre-fetching (no jobId yet, or irrelevant).
     const SKIP_ALL_EVENTS: &[&str] = &[
-        "create_task", "switch_provider",
+        "create_task",
         "approve_review", "reject_review", "attachment_added", "buyer_attachment_received", "close", "set_public", "job_user_reject",
         "dispute_raise", "agree_refund",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
