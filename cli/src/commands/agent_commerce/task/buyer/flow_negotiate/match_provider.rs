@@ -239,10 +239,8 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      If the returned `entries` array already contains an entry with job_id={job_id} and role=buyer -> **the user has already been notified; this is a duplicate event - end the turn without notifying again.**\n\
      If not present -> continue to Step 1.\n\n\
      **Step 1 - fetch the pending-contact ASP list:**\n\
-     Call the xmtp_get_pending_list tool to fetch the pending-contact ASP list.\n\
-     ⚠️ Before the call, print: `[buyer-xmtp] xmtp_get_pending_list`\n\
-     ⚠️ After the call, print: `[buyer-xmtp] xmtp_get_pending_list result: <returned value>`\n\n\
-     If the result is an empty list -> call xmtp_dispatch_user:\n\
+     Run `okx-a2a task requests --json`. The returned `items` array contains per-ASP entries — capture `groupId` / `agentId` / `name` / `serviceName` / `creditScore` / `completedTaskCount` for each entry (`groupId` is required later for Branch C reject; the others are for rendering).\n\n\
+     If the returned `items` array is empty -> call xmtp_dispatch_user:\n\
      \x20\x20content: {pending_empty}\n\
      {l10n_short}\n\
      Then finish.\n\n\
@@ -256,7 +254,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      `--user-content` template (canonical English):\n\
      [Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to start negotiating:\n\
      \n\
-     [iterate pending list; format per ASP (use fields from xmtp_get_pending_list response):]\n\
+     [iterate pending list; format per ASP (use fields from the `okx-a2a task requests` response):]\n\
      <N>. agentId: <agentId> | name: <name or serviceName, omit if absent> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
      \n\
      Reply with the ASP's number to start, or reply 「skip all」.\n\n\
@@ -285,10 +283,10 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \x20\x20content: {skip_all}\n\
      {l10n_short}\n\n\
      ━━━━━━━━━ Branch C: user rejects current ASP / negotiation failed -> reject and return to the list ━━━━━━━━━\n\n\
-     C-Step 1: call xmtp_deny_pending_conversation to reject this ASP:\n\
-     \x20\x20Args: agentId=<rejected ASP's agentId>, jobId={job_id}\n\
-     \x20\x20⚠️ Before the call, print: `[buyer-xmtp] xmtp_deny_pending_conversation: agentId=<agentId>, jobId={job_id}`\n\n\
-     C-Step 2: call xmtp_get_pending_list again to refresh the pending list.\n\n\
+     C-Step 1: reject this ASP via:\n\
+     \x20\x20`okx-a2a task reject --group-id <groupId from Step 1> --agent-id <rejected ASP's agentId> --json`\n\
+     \x20\x20⚠️ Keyed by **groupId** (XMTP group), NOT jobId — use the `groupId` field captured from Step 1's `items` response.\n\n\
+     C-Step 2: run `okx-a2a task requests --json` again to refresh the pending list.\n\n\
      C-Step 3: if the list is non-empty -> go back to Step 2 and show the remaining ASPs to the user.\n\n\
      C-Step 4: if the list is empty -> enqueue the user decision via `pending-decisions-v2 request`:\n\
      \x20\x20```bash\n\
@@ -302,6 +300,6 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      \x20\x20C. Close the job — cancel and refund\n\
      \x20\x20{follow_playbook_short}\n\
      \x20\x20{route_hint}\n\n\
-     [Loop termination conditions] xmtp_get_pending_list returns an empty list, OR negotiation succeeds and enters Scene 6.\n")
+     [Loop termination conditions] `okx-a2a task requests` returns an empty `items` array, OR negotiation succeeds and enters Scene 6.\n")
 
 }

@@ -155,7 +155,7 @@ pub(crate) fn negotiate_section_step2_onwards(
              {step_1_5_block}\n\
              \x20\x20🛑🛑🛑 **MANDATORY — end this turn now.** After the first inquiry (step 1) and attachments (step 1.5) are sent, you **MUST end this turn immediately**.\n\
              \x20\x20The ASP's reply will arrive at the **sub session** (the group created in B-Step 1) as an inbound a2a-agent-chat message; the sub session handles it via buyer-sub-playbook.md §Peer Message Routing → `negotiate_reply`.\n\
-             \x20\x20❌ Do NOT call `xmtp_get_conversation_history` to poll for the ASP's reply in this turn.\n\
+             \x20\x20❌ Do NOT run `okx-a2a session history` to poll for the ASP's reply in this turn.\n\
              \x20\x20❌ Do NOT continue to further steps in this turn — the sub session owns subsequent replies.\n\n\
              ━━━━━━━━━ Sub session negotiation (handled by next-action, NOT by this output) ━━━━━━━━━\n\n\
              After this turn ends, the ASP's reply arrives at the **sub session**. The sub session calls `onchainos agent next-action --event negotiate_reply` and follows the returned playbook (task-detail-only reply).\n\

@@ -368,7 +368,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 Event::JobAccepted => "xmtp_dispatch_user (notify accept success)",
                 Event::JobSubmitted => "pending-decisions-v2 request (forward deliverable, request review decision)",
                 Event::JobRejected => "xmtp_dispatch_user (notify rejection on-chain) → wait for provider decision",
-                Event::JobDisputed => "xmtp_get_conversation_history → dispute upload (auto-submit chat history + manifest deliverables) → xmtp_dispatch_user (notify)",
+                Event::JobDisputed => "okx-a2a session history → dispute upload (auto-submit chat history + manifest deliverables) → xmtp_dispatch_user (notify)",
                 Event::DisputeResolved => "xmtp_dispatch_user (notify arbitration result)",
                 Event::JobRefunded => "xmtp_dispatch_user (notify refund complete)",
                 Event::JobAutoRefunded => "xmtp_dispatch_user (claimAutoRefund tx receipt)",
@@ -552,10 +552,10 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 ),
                 "provider_pending" => format!(
                     "[User decision relay] source_event=`provider_pending`, user's verbatim reply: `{reply}`\n\n\
-                     The push was the pending-contact ASP list (`xmtp_get_pending_list` result). **Semantic mapping** — decide:\n\n\
+                     The push was the pending-contact ASP list (`okx-a2a task requests` result). **Semantic mapping** — decide:\n\n\
                      \x20\x20• **Pick an ASP** — number (index) or 3-digit agentId. Action: per match_provider.rs Branch A: call `xmtp_start_conversation` (myAgentId={agent_id}, toAgentId=<picked>, jobId={job_id}) → SKILL_PREFETCH warmup → enter sub session → call `xmtp_send` with the first negotiation message.\n\
                      \x20\x20• **Skip all** — typical intents: `skip all` / `跳过` / `不选` / `skip` / `all skip`. Action: call `xmtp_dispatch_user` with skip_all_pending content, then end the turn.\n\
-                     \x20\x20• **Reject current / negotiation failed** — typical intents: `reject` / `拒绝` / `换一个`. Action: per Branch C: `xmtp_deny_pending_conversation` → refresh list via `xmtp_get_pending_list` → if non-empty, re-push via `--source-event provider_pending`; if empty, enqueue `--source-event no_asp_found` A/B/C.\n\n\
+                     \x20\x20• **Reject current / negotiation failed** — typical intents: `reject` / `拒绝` / `换一个`. Action: per Branch C: `okx-a2a task reject --group-id <groupId> --agent-id <agentId>` → refresh list via `okx-a2a task requests` → if non-empty, re-push via `--source-event provider_pending`; if empty, enqueue `--source-event no_asp_found` A/B/C.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number to start, or 「skip all」.\"\n"
                 ),
                 "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => format!(

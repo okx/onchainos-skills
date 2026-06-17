@@ -199,26 +199,6 @@ pub fn session_send_by_job(job_id: &str, to_agent_id: Option<&str>, content: &st
     Ok(())
 }
 
-/// Bridge equivalent: `xmtp_delete_conversation '{sessionKey}'`
-/// Close a session (sub or backup) at terminal state to release resources.
-/// `--session-key` is mandatory.
-#[deprecated(note = "use `session_delete_by_job` — sessionKey path is being phased out per CLI spec")]
-pub fn session_delete(session_key: &str) -> Result<()> {
-    let out = Command::new("okx-a2a")
-        .args([
-            "session", "delete",
-            "--session-key", session_key,
-            "--json",
-        ])
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a session delete exit {status}: {stderr}", status = out.status);
-    }
-    Ok(())
-}
-
 /// Delete sessions matched by job (and optionally peer agent).
 ///
 /// - `to_agent_id = None`  → deletes every session matching `jobId`.
@@ -226,7 +206,7 @@ pub fn session_delete(session_key: &str) -> Result<()> {
 ///
 /// When the daemon's lifecycle provider is `openclaw`, the CLI also asks the
 /// gateway to drop the corresponding session.
-pub fn session_delete_by_job(job_id: &str, to_agent_id: Option<&str>) -> Result<()> {
+pub fn session_delete(job_id: &str, to_agent_id: Option<&str>) -> Result<()> {
     let mut args: Vec<&str> = vec![
         "session", "delete",
         "--job-id", job_id,
@@ -304,7 +284,7 @@ struct RawResp {
     file: Option<RawFile>,
 }
 
-/// Normalized message record returned by `xmtp_get_conversation_history`.
+/// Normalized message record returned by `session_history`.
 #[derive(Serialize, Debug)]
 pub struct ConversationMessage {
     pub id: String,
@@ -317,31 +297,9 @@ pub struct ConversationMessage {
     pub delivery_status: String,
 }
 
-/// Bridge equivalent: `xmtp_get_conversation_history '{sessionKey}'`
-/// Fetch the full XMTP message history for a sub session via
-/// `okx-a2a session get` and normalize the records (collapses `rawText` /
-/// `content` and `xmtpSentAtMs` / `receivedAtMs` into single fields).
-pub fn xmtp_get_conversation_history(session_key: &str) -> Result<Vec<ConversationMessage>> {
-    let out = Command::new("okx-a2a")
-        .args([
-            "session", "get",
-            "--session-key", session_key,
-            "--json",
-        ])
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a session get exit {status}: {stderr}", status = out.status);
-    }
-    let resp: RawResp = serde_json::from_slice(&out.stdout)
-        .map_err(|e| anyhow::anyhow!("parse okx-a2a session get json failed: {e}"))?;
-    Ok(normalize_messages(resp))
-}
-
-/// Shared post-processor for `okx-a2a session get` / `session history`
-/// responses — collapses `rawText` / `content` and `xmtpSentAtMs` /
-/// `receivedAtMs` into the canonical `ConversationMessage` shape.
+/// Shared post-processor for `okx-a2a session history` responses —
+/// collapses `rawText` / `content` and `xmtpSentAtMs` / `receivedAtMs`
+/// into the canonical `ConversationMessage` shape.
 fn normalize_messages(resp: RawResp) -> Vec<ConversationMessage> {
     let messages = resp.file.map(|f| f.messages).unwrap_or_default();
     messages
@@ -376,6 +334,62 @@ pub fn session_history(job_id: &str, to_agent_id: &str) -> Result<Vec<Conversati
     let resp: RawResp = serde_json::from_slice(&out.stdout)
         .map_err(|e| anyhow::anyhow!("parse okx-a2a session history json failed: {e}"))?;
     Ok(normalize_messages(resp))
+}
+
+// ── Pending task requests ────────────────────────────────────────────────
+
+/// Bridge equivalent: `xmtp_get_pending_list` / `xmtp_pending_list`
+/// `okx-a2a task requests --json` — list pending XMTP task requests (ASPs
+/// trying to reach the buyer). Returns the raw item array as
+/// `Vec<serde_json::Value>` so callers can extract whichever fields they
+/// need (typical: `agentId` / `name` / `serviceName` / `creditScore` /
+/// `completedTaskCount`).
+///
+/// Requires daemon running. The CLI response shape may wrap items under
+/// `items` / `requests` / `pending`, or use a top-level array — this helper
+/// tries each in order and falls back to an empty vec.
+pub fn task_requests() -> Result<Vec<serde_json::Value>> {
+    let out = Command::new("okx-a2a")
+        .args(["task", "requests", "--json"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("okx-a2a task requests exit {status}: {stderr}", status = out.status);
+    }
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .map_err(|e| anyhow::anyhow!("task requests stdout not valid JSON: {e}"))?;
+    let arr = json.get("items").and_then(|v| v.as_array())
+        .or_else(|| json.get("requests").and_then(|v| v.as_array()))
+        .or_else(|| json.get("pending").and_then(|v| v.as_array()))
+        .or_else(|| json.as_array())
+        .cloned()
+        .unwrap_or_default();
+    Ok(arr)
+}
+
+/// Bridge equivalent: `xmtp_deny_pending_conversation` / `xmtp_deny_conversation`
+/// `okx-a2a task reject --group-id <id> [--agent-id <id>] [--json]` — reject
+/// a pending XMTP conversation. Note: keyed by **groupId** (the XMTP group),
+/// not jobId.
+///
+/// Requires daemon running. Queued command — does not wait for the final
+/// result.
+pub fn task_reject(group_id: &str) -> Result<()> {
+    let mut args: Vec<&str> = vec![
+        "task", "reject",
+        "--group-id", group_id,
+    ];
+    args.push("--json");
+    let out = Command::new("okx-a2a")
+        .args(&args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("okx-a2a task reject exit {status}: {stderr}", status = out.status);
+    }
+    Ok(())
 }
 
 // ── File transfer ────────────────────────────────────────────────────────

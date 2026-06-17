@@ -1118,7 +1118,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::pending_v2::run(c).await,
 
         AgentCommand::SessionCleanup { job_id, role } =>
-            task::common::session_cleanup::handle_session_cleanup(&job_id, &role),
+            task::common::session_cleanup::handle_session_cleanup(&job_id),
 
         // ── Evaluator Agent flat dispatch ───────────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {
