@@ -440,7 +440,13 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
             super::flow_negotiate::provider_reject(&ctx, visibility).await
         }
         Event::JobAccepted => super::flow_lifecycle::job_accepted(&ctx),
-        Event::DeliverableReceived => super::flow_lifecycle::deliverable_received(&ctx),
+        Event::DeliverableReceived => {
+            if super::content::is_cli_mode() {
+                super::flow_lifecycle::deliverable_received_cli(&ctx, message)
+            } else {
+                super::flow_lifecycle::deliverable_received(&ctx)
+            }
+        }
         Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),
         Event::JobRejected => super::flow_lifecycle::job_rejected(&ctx),
         Event::JobDisputed => super::flow_lifecycle::job_disputed(&ctx),

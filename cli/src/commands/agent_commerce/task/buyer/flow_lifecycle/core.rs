@@ -188,100 +188,213 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
 
-    // Inline task fields from prefetched into the save command template
-    // when available; fall back to `<placeholder>` markers otherwise (LLM
-    // fills from session context).
-    let (title_field, sym_field, amt_field, provider_field, step0_block) = match ctx.prefetched {
-        Some(p) => {
-            let prov = p.provider_agent_id.clone().unwrap_or_else(|| "<providerAgentId>".to_string());
-            (
-                p.title.clone(),
-                p.token_symbol.clone(),
-                p.token_amount.clone(),
-                prov,
-                "**Step 0 — Task context** (pre-fetched and inlined below; `providerName` is best-effort from session context).\n\n".to_string(),
-            )
-        }
+    let (title_field, sym_field, amt_field, provider_field) = match ctx.prefetched {
+        Some(p) => (
+            p.title.clone(),
+            p.token_symbol.clone(),
+            p.token_amount.clone(),
+            p.provider_agent_id.clone().unwrap_or_else(|| "<providerAgentId>".to_string()),
+        ),
         None => (
             "<title>".to_string(),
             "<tokenSymbol>".to_string(),
             "<tokenAmount>".to_string(),
             "<providerAgentId>".to_string(),
-            "**Step 0 — Task context** (prefetch failed; fall back to `[Pre-fetched task context]` block above or session-context best-effort):\n\
-             \x20\x20- `title`, `providerAgentId`, `providerName` (best-effort), `tokenSymbol`, `tokenAmount`\n\
-             A missing field does not block the save.\n\n".to_string(),
         ),
+    };
+    format!(
+    "[Current action] deliverable_received — download → save → notify\n\
+     [Role] Buyer\n\n\
+     Determine `deliverableType` from the ASP's message, then execute all steps in one turn.\n\n\
+     **Step 1 — Download / extract**\n\
+     • **file** (message has fileKey/digest/salt/nonce/secret): `okx-a2a file download --file-key <fileKey> --agent-id {agent_id} --digest <digest> --salt <salt> --nonce <nonce> --secret <secret> [--filename <filename>]` → record localPath.\n\
+     • **text** (content between `- - -` separators): extract full text, write to a temp .txt file → record localPath.\n\n\
+     **Step 2 — Save**\n\
+     ```bash\n\
+     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
+       --file \"<localPath>\" --deliverable-type <file|text> --title \"{title_field}\" \\\n\
+       --short-id {short_id} \\\n\
+       --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
+       --token-symbol \"{sym_field}\" --token-amount \"{amt_field}\"\n\
+     ```\n\
+     For file type only, add `--file-key \"<fileKey>\"`. Record savedPath from output.\n\n\
+     **Step 3 — Notify user** (🌐 translate to user's language; keep data values verbatim)\n\
+     ```bash\n\
+     okx-a2a user notify --content '<translated content>' --json\n\
+     ```\n\
+     Canonical content:\n\
+     \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
+     \x20\x20Provider: {provider_field}\n\
+     \x20\x20Type: <file|text>\n\
+     \x20\x20Saved at: <savedPath>\n\
+     \x20\x20(text only: show first 200 chars as preview)\n\
+     \x20\x20Awaiting on-chain submission confirmation; review will follow.\n\n\
+     **Step 4 — End turn**. Wait for `job_submitted` → `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
+    )
+}
+
+/// CLI-mode fast path: download + save in-process, return a notify-only prompt.
+///
+/// The sub-session LLM passes deliverable metadata (deliverableType, fileKey, etc.)
+/// in the `--message` JSON. This handler does the file download and deliverable save
+/// entirely in Rust, then returns a minimal playbook that only asks the LLM to
+/// translate and dispatch a user notification.
+pub(crate) fn deliverable_received_cli(
+    ctx: &FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    use crate::commands::agent_commerce::task::common::{deliverables, okx_a2a};
+
+    let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
+
+    let dtype = message
+        .and_then(|m| m.get("deliverableType"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if dtype.is_empty() {
+        return deliverable_received(ctx);
+    }
+
+    let (title, sym, amt, provider_id) = match ctx.prefetched {
+        Some(p) => (
+            p.title.as_str(),
+            p.token_symbol.as_str(),
+            p.token_amount.as_str(),
+            p.provider_agent_id.as_deref().unwrap_or(""),
+        ),
+        None => ("<title>", "<tokenSymbol>", "<tokenAmount>", ""),
+    };
+
+    let msg_str = |key: &str| {
+        message
+            .and_then(|m| m.get(key))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    };
+
+    let (saved_path, original_name, deliverable_type, text_preview) = match dtype {
+        "file" => {
+            let file_key = msg_str("fileKey");
+            let digest = msg_str("digest");
+            let salt = msg_str("salt");
+            let nonce = msg_str("nonce");
+            let secret = msg_str("secret");
+            let filename = message.and_then(|m| m.get("filename")).and_then(|v| v.as_str());
+
+            if file_key.is_empty() || digest.is_empty() || salt.is_empty()
+                || nonce.is_empty() || secret.is_empty()
+            {
+                return deliverable_received(ctx);
+            }
+
+            let local_path = match okx_a2a::file_download(
+                file_key, agent_id, digest, salt, nonce, secret, filename,
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[deliverable_received_cli] file download failed: {e}");
+                    return deliverable_received(ctx);
+                }
+            };
+
+            let save_result = deliverables::handle_save(&deliverables::SaveParams {
+                job_id,
+                role: "buyer",
+                file_path: &local_path,
+                deliverable_type: "file",
+                title,
+                short_id,
+                file_key: Some(file_key),
+                token_symbol: Some(sym),
+                token_amount: Some(amt),
+                counterparty_agent_id: if provider_id.is_empty() { None } else { Some(provider_id) },
+                counterparty_name: None,
+            });
+
+            match save_result {
+                Ok(r) => (
+                    r.path,
+                    filename.unwrap_or("deliverable").to_string(),
+                    "file".to_string(),
+                    String::new(),
+                ),
+                Err(e) => {
+                    eprintln!("[deliverable_received_cli] save failed: {e}");
+                    return deliverable_received(ctx);
+                }
+            }
+        }
+        "text" => {
+            let text = msg_str("text");
+            if text.is_empty() {
+                return deliverable_received(ctx);
+            }
+
+            let tmp_dir = std::env::temp_dir();
+            let tmp_path = tmp_dir.join(format!("deliverable-text-{job_id}.txt"));
+            if let Err(e) = std::fs::write(&tmp_path, text) {
+                eprintln!("[deliverable_received_cli] write temp file failed: {e}");
+                return deliverable_received(ctx);
+            }
+
+            let save_result = deliverables::handle_save(&deliverables::SaveParams {
+                job_id,
+                role: "buyer",
+                file_path: &tmp_path.display().to_string(),
+                deliverable_type: "text",
+                title,
+                short_id,
+                file_key: None,
+                token_symbol: Some(sym),
+                token_amount: Some(amt),
+                counterparty_agent_id: if provider_id.is_empty() { None } else { Some(provider_id) },
+                counterparty_name: None,
+            });
+
+            let preview = if text.len() <= 200 {
+                text.to_string()
+            } else {
+                format!("{}…", &text[..text.char_indices().nth(200).map(|(i, _)| i).unwrap_or(text.len())])
+            };
+
+            match save_result {
+                Ok(r) => (r.path, "deliverable.txt".to_string(), "text".to_string(), preview),
+                Err(e) => {
+                    eprintln!("[deliverable_received_cli] save failed: {e}");
+                    return deliverable_received(ctx);
+                }
+            }
+        }
+        _ => return deliverable_received(ctx),
+    };
+
+    let preview_block = if deliverable_type == "text" && !text_preview.is_empty() {
+        format!(
+            "\n  ---Preview---\n  {text_preview}\n  ---End of preview---"
+        )
+    } else {
+        String::new()
     };
 
     format!(
-    "[Current action] deliverable_received — download, persist, and notify\n\
-     [Role] User (User Agent)\n\n\
-     🛑 This playbook fires when the ASP's a2a-agent-chat message contains `[intent:deliver]`.\n\
-     Its sole purpose is: **download → save → brief notification**. The full review card is owned by `job_submitted`.\n\n\
-     [Your next actions]\n\n\
-     {step0_block}\
-     **Step 1 — Download/extract + save + notify** (complete all sub-steps before ending the turn):\n\n\
-     --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret) ---\n\n\
-     1a. Run `okx-a2a file download` to download + decrypt:\n\
-     ```bash\n\
-     okx-a2a file download \\\n\
-     \x20\x20--file-key <fileKey> \\\n\
-     \x20\x20--agent-id {agent_id} \\\n\
-     \x20\x20--digest <digest> \\\n\
-     \x20\x20--salt <salt> \\\n\
-     \x20\x20--nonce <nonce> \\\n\
-     \x20\x20--secret <secret> \\\n\
-     \x20\x20[--filename <filename>]\n\
-     ```\n\
-     Fill `<fileKey> / <digest> / <salt> / <nonce> / <secret>` from the ASP's message; `--filename` is optional.\n\
-     ⚠️ Before calling, print: `[buyer] file download: fileKey=<fileKey>, agentId={agent_id}`\n\
-     ⚠️ After calling, print: `[buyer] file download result: localPath=<stdout path>`\n\
-     On success, record localPath. If download fails → note it; `job_submitted` will re-attempt.\n\n\
-     1b. Persist the deliverable:\n\
-     ```bash\n\
-     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
-       --file \"<localPath>\" --deliverable-type file --title \"{title_field}\" \\\n\
-       --short-id {short_id} --file-key \"<fileKey>\" \\\n\
-       --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"{sym_field}\" --token-amount \"{amt_field}\"\n\
-     ```\n\
-     Record the saved path from the command output. If save fails, log the error but continue.\n\n\
-     --- Case B: deliverableType=text (body content between `- - -` separators) ---\n\n\
-     1a. Extract the text between `- - -` separators; **keep the original wording in full**. Write to a temp .txt file.\n\n\
-     1b. Persist:\n\
-     ```bash\n\
-     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
-       --file \"<temp .txt path>\" --deliverable-type text \\\n\
-       --title \"{title_field}\" --short-id {short_id} \\\n\
-       --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"{sym_field}\" --token-amount \"{amt_field}\"\n\
-     ```\n\
-     Record the saved path from the command output. If save fails, log the error but continue.\n\n\
-     --- After save returns (both cases) — 🛑 SAME TURN, do NOT end the turn yet ---\n\n\
-     1c. Send the preview card to the user via `okx-a2a user notify`:\n\
-     🌐 **Localize first** — translate the canonical English content below to the user's language (preserve every data value verbatim — jobId hex, AgentID digits, saved path, amounts, symbols).\n\
-     ```bash\n\
-     okx-a2a user notify --content '<your translated content>' --json\n\
-     ```\n\
-     Canonical English content template (fill from Step 0 + 1a/1b results):\n\
-     \x20\x20```\n\
-     \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
-     \x20\x20Provider: <providerName> ({provider_field})\n\
-     \x20\x20Type: <file|text>\n\
-     \x20\x20Saved at: <savedPath from 1b output>\n\
-     \x20\x20\n\
-     \x20\x20▸ deliverableType=file: no inline preview; the user can open the file at the path above.\n\
-     \x20\x20▸ deliverableType=text: show the first 200 characters of deliverableText below; if total length ≤ 200 show full text.\n\
-     \x20\x20---Preview---\n\
-     \x20\x20<first 200 characters; if truncated append: (… full content saved at the path above)>\n\
-     \x20\x20---End of preview---\n\
-     \x20\x20\n\
-     \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\
-     \x20\x20```\n\
-     ⚠️ This is a preview card, NOT the formal review card. Do NOT include A/B acceptance choices.\n\n\
-     **Step 2 — End this turn**. Wait for the `job_submitted` system event.\n\
-     When `job_submitted` arrives, call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n\
-     The `job_submitted` playbook will check for already-saved deliverables and skip re-download if found.\n"
+        "[deliverable_received_cli] ✓ {deliverable_type} deliverable downloaded and saved in-process.\n\
+         savedPath: {saved_path}\n\
+         originalName: {original_name}\n\n\
+         [Your next action] Translate the canonical English notification below to the user's language, then dispatch it. End the turn after notifying.\n\n\
+         Canonical content:\n\
+         \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
+         \x20\x20Provider: {provider_id}\n\
+         \x20\x20Type: {deliverable_type}\n\
+         \x20\x20Saved at: {saved_path}{preview_block}\n\
+         \x20\x20\n\
+         \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\n\
+         ```bash\n\
+         okx-a2a user notify --content '<your translated content>' --json\n\
+         ```\n\n\
+         **End this turn** after notifying. Wait for `job_submitted`.\n\
+         When it arrives, call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
     )
 }
 
