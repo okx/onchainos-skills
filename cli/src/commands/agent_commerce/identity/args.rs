@@ -50,6 +50,34 @@ pub struct UpdateArgs {
 }
 
 #[derive(Args, Clone, Debug)]
+pub struct GetMyAgentsArgs {
+    /// Filter the listing to a single role. Accepts requester / provider /
+    /// evaluator (aliases: 1/2/3, plus buyer/requestor → requester). Sent to
+    /// the backend as the integer code `role` (1/2/3).
+    #[arg(long)]
+    pub role: Option<String>,
+    /// Filter the listing to all agents owned by this address. Sent to the
+    /// backend as `ownerAddress`.
+    #[arg(long = "owner-address")]
+    pub owner_address: Option<String>,
+    #[arg(long)]
+    pub page: Option<String>,
+    #[arg(long = "page-size")]
+    pub page_size: Option<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct GetAgentsArgs {
+    /// Agent ID(s), comma-separated. Each id is sent as one `agentIdList`
+    /// array element to the batch-list endpoint.
+    #[arg(long = "agent-ids")]
+    pub agent_ids: Option<String>,
+}
+
+/// `onchainos agent get`: the original dual-mode agent-list query — list mode
+/// (no ids, paginated) or detail mode (`--agent-ids`, comma-joined into a single
+/// `agentIdList` param). Hits `GET /agent/agent-list`.
+#[derive(Args, Clone, Debug)]
 pub struct GetArgs {
     #[arg(long = "agent-ids")]
     pub agent_ids: Option<String>,

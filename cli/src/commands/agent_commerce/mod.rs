@@ -17,8 +17,17 @@ pub enum AgentCommand {
     /// Update Agent identity and services
     Update(identity::UpdateArgs),
 
-    /// Query your Agents / agent details
+    /// Query your Agents / agent details (agent-list; optional --agent-ids / --page / --page-size)
+    #[command(name = "get", hide = true)]
     Get(identity::GetArgs),
+
+    /// List your own Agents (optional --role / --owner-address filters)
+    #[command(name = "get-my-agents")]
+    GetMyAgents(identity::GetMyAgentsArgs),
+
+    /// Query Agent details by ID(s) (batch-list lookup)
+    #[command(name = "get-agents")]
+    GetAgents(identity::GetAgentsArgs),
 
     /// Unified registration entry (role required, consentKey optional): first-time consent + per-wallet uniqueness verdict
     #[command(name = "pre-check")]
@@ -820,6 +829,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Create(args) => identity::create(args, ctx).await,
         AgentCommand::Update(args) => identity::update(args, ctx).await,
         AgentCommand::Get(args) => identity::get(args, ctx).await,
+        AgentCommand::GetMyAgents(args) => identity::get_my_agents(args, ctx).await,
+        AgentCommand::GetAgents(args) => identity::get_agents(args, ctx).await,
         AgentCommand::Precheck(args) => identity::precheck(args, ctx).await,
         AgentCommand::GetByAddress(args) => identity::get_by_address(args, ctx).await,
         AgentCommand::Activate(args) => identity::activate(args, ctx).await,
