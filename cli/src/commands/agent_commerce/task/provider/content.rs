@@ -308,11 +308,6 @@ pub fn deliver_file_to_buyer(job_id: &str) -> String {
     )
 }
 
-/// `Event::JobUserReject` — the buyer rejected this ASP; notify the provider's user.
-pub fn job_user_reject_user_notify(job_id: &str) -> String {
-    format!("[Job `{job_id}`] The buyer has selected a different provider for this task. No further action is needed on your side.")
-}
-
 /// Buyer attachment received — notify the provider's user.
 pub fn buyer_attachment_received_user_notify(job_id: &str) -> String {
     format!("[Job `{job_id}`] The buyer sent an attachment (reference material for this task). File downloaded and saved locally.")

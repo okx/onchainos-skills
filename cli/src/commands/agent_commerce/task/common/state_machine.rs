@@ -614,4 +614,33 @@ mod tests {
         // Pass-through event does not change status.
         assert_eq!(status_when_event(&Event::ProviderApplied), Status::Created);
     }
+
+    #[test]
+    fn parse_new_asp_events() {
+        assert_eq!(Event::parse("job_provider_reject"), Event::JobProviderReject);
+        assert_eq!(Event::parse("job_user_reject"), Event::JobUserReject);
+        assert_eq!(Event::parse("job_asp_selected"), Event::JobAspSelected);
+    }
+
+    #[test]
+    fn new_asp_events_as_str_roundtrip() {
+        for evt in [Event::JobProviderReject, Event::JobUserReject, Event::JobAspSelected] {
+            let s = evt.as_str();
+            assert_eq!(Event::parse(s), evt, "roundtrip failed for {s}");
+        }
+    }
+
+    #[test]
+    fn new_asp_events_keep_status_created() {
+        assert_eq!(status_when_event(&Event::JobProviderReject), Status::Created);
+        assert_eq!(status_when_event(&Event::JobUserReject), Status::Created);
+        assert_eq!(status_when_event(&Event::JobAspSelected), Status::Created);
+    }
+
+    #[test]
+    fn parse_status_or_event_new_asp_events() {
+        assert_eq!(parse_status_or_event("job_provider_reject"), Event::JobProviderReject);
+        assert_eq!(parse_status_or_event("job_user_reject"), Event::JobUserReject);
+        assert_eq!(parse_status_or_event("job_asp_selected"), Event::JobAspSelected);
+    }
 }

@@ -1436,7 +1436,7 @@ mod tests {
         match cli.cmd {
             super::super::DraftCommand::Update {
                 job_id, title, description, budget, max_budget,
-                currency, deadline_open, deadline_submit, provider,
+                currency, deadline_open, deadline_submit, provider, ..
             } => {
                 assert_eq!(job_id, "j-99");
                 assert_eq!(title.as_deref(), Some("new"));

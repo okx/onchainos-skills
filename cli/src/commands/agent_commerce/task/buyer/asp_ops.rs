@@ -283,3 +283,233 @@ async fn resolve_agent(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(subcommand)]
+        cmd: super::super::TaskCommand,
+    }
+
+    // ── asp-match ───────────────────────────────────────────────────
+
+    #[test]
+    fn cli_asp_match_task_desc_only() {
+        let cli = TestCli::parse_from([
+            "test", "asp-match", "--task-desc", "build a trading bot",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } => {
+                assert_eq!(task_desc, "build a trading bot");
+                assert!(job_id.is_none());
+                assert!(provider_agent_id.is_none());
+                assert_eq!(page, 1);
+                assert!(agent_id.is_none());
+            }
+            _ => panic!("expected AspMatch"),
+        }
+    }
+
+    #[test]
+    fn cli_asp_match_with_job_id_and_provider() {
+        let cli = TestCli::parse_from([
+            "test", "asp-match",
+            "--job-id", "job-123",
+            "--provider-agent-id", "agent-456",
+            "--page", "2",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::AspMatch { job_id, provider_agent_id, page, .. } => {
+                assert_eq!(job_id.as_deref(), Some("job-123"));
+                assert_eq!(provider_agent_id.as_deref(), Some("agent-456"));
+                assert_eq!(page, 2);
+            }
+            _ => panic!("expected AspMatch"),
+        }
+    }
+
+    // ── set-asp ─────────────────────────────────────────────────────
+
+    #[test]
+    fn cli_set_asp_required_fields() {
+        let cli = TestCli::parse_from([
+            "test", "set-asp", "job-abc",
+            "--provider-agent-id", "prov-1",
+            "--service-id", "svc-99",
+            "--service-params", "{\"query\":\"BTC price\"}",
+            "--service-token-address", "0xUSDT",
+            "--service-token-amount", "10.5",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::SetAsp {
+                job_id, provider_agent_id, service_id, service_params,
+                service_token_address, service_token_amount,
+                payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id,
+            } => {
+                assert_eq!(job_id, "job-abc");
+                assert_eq!(provider_agent_id, "prov-1");
+                assert_eq!(service_id, "svc-99");
+                assert_eq!(service_params, "{\"query\":\"BTC price\"}");
+                assert_eq!(service_token_address, "0xUSDT");
+                assert_eq!(service_token_amount, "10.5");
+                assert!(payment_token_symbol.is_none());
+                assert!(payment_token_amount.is_none());
+                assert!(payment_most_token_amount.is_none());
+                assert!(agent_id.is_none());
+            }
+            _ => panic!("expected SetAsp"),
+        }
+    }
+
+    #[test]
+    fn cli_set_asp_with_payment_fields() {
+        let cli = TestCli::parse_from([
+            "test", "set-asp", "job-abc",
+            "--provider-agent-id", "prov-1",
+            "--service-id", "svc-1",
+            "--service-params", "none",
+            "--service-token-address", "0xAddr",
+            "--service-token-amount", "5",
+            "--payment-token-symbol", "USDT",
+            "--payment-token-amount", "5",
+            "--payment-most-token-amount", "10",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::SetAsp {
+                payment_token_symbol, payment_token_amount, payment_most_token_amount, ..
+            } => {
+                assert_eq!(payment_token_symbol.as_deref(), Some("USDT"));
+                assert_eq!(payment_token_amount.as_deref(), Some("5"));
+                assert_eq!(payment_most_token_amount.as_deref(), Some("10"));
+            }
+            _ => panic!("expected SetAsp"),
+        }
+    }
+
+    #[test]
+    fn cli_set_asp_missing_required_fails() {
+        assert!(TestCli::try_parse_from(["test", "set-asp", "job-1"]).is_err());
+    }
+
+    // ── reset-asp ───────────────────────────────────────────────────
+
+    #[test]
+    fn cli_reset_asp_parses_job_id() {
+        let cli = TestCli::parse_from(["test", "reset-asp", "job-xyz"]);
+        match cli.cmd {
+            super::super::TaskCommand::ResetAsp { job_id, agent_id } => {
+                assert_eq!(job_id, "job-xyz");
+                assert!(agent_id.is_none());
+            }
+            _ => panic!("expected ResetAsp"),
+        }
+    }
+
+    #[test]
+    fn cli_reset_asp_missing_job_id_fails() {
+        assert!(TestCli::try_parse_from(["test", "reset-asp"]).is_err());
+    }
+
+    // ── user-reject ─────────────────────────────────────────────────
+
+    #[test]
+    fn cli_user_reject_parses_job_id() {
+        let cli = TestCli::parse_from(["test", "user-reject", "job-rej"]);
+        match cli.cmd {
+            super::super::TaskCommand::UserReject { job_id, agent_id } => {
+                assert_eq!(job_id, "job-rej");
+                assert!(agent_id.is_none());
+            }
+            _ => panic!("expected UserReject"),
+        }
+    }
+
+    #[test]
+    fn cli_user_reject_with_agent_id() {
+        let cli = TestCli::parse_from([
+            "test", "user-reject", "job-rej", "--agent-id", "buyer-42",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::UserReject { job_id, agent_id } => {
+                assert_eq!(job_id, "job-rej");
+                assert_eq!(agent_id.as_deref(), Some("buyer-42"));
+            }
+            _ => panic!("expected UserReject"),
+        }
+    }
+
+    #[test]
+    fn cli_user_reject_missing_job_id_fails() {
+        assert!(TestCli::try_parse_from(["test", "user-reject"]).is_err());
+    }
+
+    // ── create-task visibility ──────────────────────────────────────
+
+    #[test]
+    fn cli_create_visibility_defaults_to_private() {
+        let cli = TestCli::parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--deadline-open", "2h", "--deadline-submit", "3d",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::Create { visibility, .. } => {
+                assert_eq!(visibility, 1);
+            }
+            _ => panic!("expected Create"),
+        }
+    }
+
+    #[test]
+    fn cli_create_visibility_public() {
+        let cli = TestCli::parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--deadline-open", "2h", "--deadline-submit", "3d",
+            "--visibility", "0",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::Create { visibility, .. } => {
+                assert_eq!(visibility, 0);
+            }
+            _ => panic!("expected Create"),
+        }
+    }
+
+    #[test]
+    fn cli_create_with_service_fields() {
+        let cli = TestCli::parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--deadline-open", "2h", "--deadline-submit", "3d",
+            "--provider", "agent-1",
+            "--service-id", "svc-1",
+            "--service-params", "{\"x\":1}",
+            "--service-token-address", "0xAddr",
+            "--service-token-amount", "5.0",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::Create {
+                provider, service_id, service_params,
+                service_token_address, service_token_amount, visibility, ..
+            } => {
+                assert_eq!(provider.as_deref(), Some("agent-1"));
+                assert_eq!(service_id.as_deref(), Some("svc-1"));
+                assert_eq!(service_params.as_deref(), Some("{\"x\":1}"));
+                assert_eq!(service_token_address.as_deref(), Some("0xAddr"));
+                assert_eq!(service_token_amount.as_deref(), Some("5.0"));
+                assert_eq!(visibility, 1);
+            }
+            _ => panic!("expected Create"),
+        }
+    }
+}
