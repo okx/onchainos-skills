@@ -56,9 +56,9 @@ pub enum TaskCommand {
         #[arg(long)]
         currency: String,
         #[arg(long = "deadline-open")]
-        deadline_open: String,
+        deadline_open: Option<String>,
         #[arg(long = "deadline-submit")]
-        deadline_submit: String,
+        deadline_submit: Option<String>,
         #[arg(long)]
         title: Option<String>,
         /// Designated provider agentId (skip asp-match; negotiate or x402-accept with this provider directly).
@@ -369,10 +369,6 @@ pub enum DraftCommand {
         max_budget: Option<f64>,
         #[arg(long)]
         currency: Option<String>,
-        #[arg(long = "deadline-open")]
-        deadline_open: Option<String>,
-        #[arg(long = "deadline-submit")]
-        deadline_submit: Option<String>,
         #[arg(long)]
         provider: Option<String>,
         #[arg(long = "file")]
@@ -408,10 +404,6 @@ pub enum DraftCommand {
         max_budget: Option<f64>,
         #[arg(long)]
         currency: Option<String>,
-        #[arg(long = "deadline-open")]
-        deadline_open: Option<String>,
-        #[arg(long = "deadline-submit")]
-        deadline_submit: Option<String>,
         #[arg(long)]
         provider: Option<String>,
         #[arg(long = "service-id")]
@@ -444,10 +436,6 @@ pub enum DraftCommand {
         max_budget: Option<f64>,
         #[arg(long)]
         currency: Option<String>,
-        #[arg(long = "deadline-open")]
-        deadline_open: Option<String>,
-        #[arg(long = "deadline-submit")]
-        deadline_submit: Option<String>,
     },
 }
 
@@ -457,7 +445,7 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         DraftCommand::Create {
             title, description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, provider, attachments,
+            provider, attachments,
             service_id, service_params, service_token_address, service_token_amount,
         } => {
             draft::handle_draft_create(
@@ -468,8 +456,6 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
                 budget,
                 max_budget,
                 currency.as_deref(),
-                deadline_open.as_deref(),
-                deadline_submit.as_deref(),
                 provider.as_deref(),
                 attachments.as_deref(),
                 service_id.as_deref(),
@@ -483,8 +469,7 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
         }
         DraftCommand::Update {
             job_id, title, description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, provider,
-            service_id, service_params, service_token_address, service_token_amount,
+            provider, service_id, service_params, service_token_address, service_token_amount,
         } => {
             draft::handle_draft_update(
                 &mut client,
@@ -495,8 +480,6 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
                 budget,
                 max_budget,
                 currency.as_deref(),
-                deadline_open.as_deref(),
-                deadline_submit.as_deref(),
                 provider.as_deref(),
                 service_id.as_deref(),
                 service_params.as_deref(),
@@ -511,8 +494,7 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
             draft::handle_draft_publish(&mut client, &job_id).await
         }
         DraftCommand::Validate {
-            description, title, budget, max_budget,
-            currency, deadline_open, deadline_submit,
+            description, title, budget, max_budget, currency,
         } => {
             draft::handle_validate_draft(
                 description.as_deref(),
@@ -520,8 +502,6 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
                 budget,
                 max_budget,
                 currency.as_deref(),
-                deadline_open.as_deref(),
-                deadline_submit.as_deref(),
             )
         }
     }

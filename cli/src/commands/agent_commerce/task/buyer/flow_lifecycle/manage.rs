@@ -20,11 +20,12 @@ Step 1 -- Field collection (collect progressively in conversation; **only enter 
 ================================================
 
 🛑🛑🛑 **ABSOLUTE RULE — No auto-fill for user-provided fields**:
-The following fields MUST come from the user's explicit input: **Description, Budget, Max budget, Currency, Acceptance window, Delivery window**.
+The following fields MUST come from the user's explicit input: **Description, Budget, Max budget, Currency**.
 If the user has NOT explicitly stated a field's value, you MUST ask for it — do NOT guess, infer, generate a default, or extract an implied value from the task description.
-Even if the user's description hints at a price range or timeline (e.g. \"大概50块\" / \"一两天\"), you MUST confirm with the user before filling.
+Even if the user's description hints at a price range (e.g. \"大概50块\"), you MUST confirm with the user before filling.
 Only **Title** and **Summary** are agent-generated (from the user's description).
-🔴 Real incident: a user said \"翻译2000字文档\", the agent auto-filled budget, deadline-open, and deadline-submit without asking — the user did not agree to those values, and the task was published with wrong terms.
+**Acceptance window** (30 days) and **Delivery window** (7 days) are system defaults — do NOT ask the user for these.
+🔴 Real incident: a user said \"翻译2000字文档\", the agent auto-filled budget without asking — the user did not agree to those values, and the task was published with wrong terms.
 
 | Field | CLI flag | Constraint | How to collect |
 |---|---|---|---|
@@ -34,8 +35,6 @@ Only **Title** and **Summary** are agent-generated (from the user's description)
 | Payment token | --currency | Only USDT / USDG | ⚠️ See token rules below |
 | Budget | --budget | number; <=5 decimal places; max 10,000,000 | **MUST ask the user; do NOT auto-fill or guess.** Extract the number only after the user states it explicitly |
 | Max budget | --max-budget | **Required**; >= budget; <=5 decimal places; max 10,000,000 | ⚠️ **You MUST ask the user explicitly**, do not auto-fill or guess. This is the negotiation price cap; the ASP's quote cannot exceed it |
-| Acceptance window | --deadline-open | 10 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user; do NOT auto-fill or guess.** How long the task stays open before auto-closing if no ASP accepts |
-| Delivery window | --deadline-submit | 1 min - 6 months; format `<n>h` / `<n>m` | **MUST ask the user; do NOT auto-fill or guess.** How long after acceptance the ASP must deliver |
 | Designated provider | --provider | optional; provider agentId | If the user names a specific provider, extract the agentId. **Do not ask proactively** -- if the user does not bring it up, omit it |
 
 🛑 **Token rules (top priority)**:
@@ -152,8 +151,8 @@ Step 5 -- Show the confirmation form
 | Payment token | <USDT or USDG> |
 | Budget | <number> |
 | Max budget | <number> (negotiation price cap) |
-| Acceptance window | <Nh> |
-| Delivery window | <Nh> |
+| Acceptance window | 30 days (system default) |
+| Delivery window | 7 days (system default) |
 | --- | --- |
 | Provider | Agent <providerAgentId> (or \"Public — no designated provider\" if public) |
 | Service | <serviceName> (<serviceType>) |
@@ -184,7 +183,7 @@ After the user replies, determine which path to take:
 
 - **User confirms / says publish / approves** → go to Step 6
 - **User says \"save as draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D
-- **User asks to edit a basic field** (description/budget/currency/deadlines) → update the field, re-run Step 4.5 validation (currency consistency) if currency changed, show the form again (return to Step 5)
+- **User asks to edit a basic field** (description/budget/currency) → update the field, re-run Step 4.5 validation (currency consistency) if currency changed, show the form again (return to Step 5)
 - **User asks to change the ASP** (\"换个服务商\" / \"change ASP\" / \"other provider\") → go back to Step 4.5 Branch B (show the full asp-match list)
 - **User asks to modify serviceParams** → update serviceParams, show the form again (return to Step 5)
 - **Ambiguous reply** → ask: publish on-chain now, or save as draft?
@@ -203,7 +202,6 @@ onchainos agent create-task \\
   --title \"<title>\" \\
   --budget <budget> --max-budget <max_budget> \\
   --currency <USDT|USDG> \\
-  --deadline-open <deadline_open> --deadline-submit <deadline_submit> \\
   --provider <providerAgentId> \\
   --service-id <serviceId> \\
   --service-params '<serviceParams JSON>' \\
@@ -220,7 +218,6 @@ onchainos agent create-task \\
   --title \"<title>\" \\
   --budget <budget> --max-budget <max_budget> \\
   --currency <USDT|USDG> \\
-  --deadline-open <deadline_open> --deadline-submit <deadline_submit> \\
   --visibility 0
 ```
 ⚠️ Public tasks: NO `--provider` / `--service-*` / `--payment-mode` flags. `--visibility 0` is required.
@@ -281,8 +278,8 @@ Once description is ready, generate title and summary from it, then show a draft
 | Budget | <value or \"—\"> |\n\
 | Max budget | <value or \"—\"> |\n\
 | Currency | <value or \"—\"> |\n\
-| Acceptance window | <value or \"—\"> |\n\
-| Delivery window | <value or \"—\"> |\n\
+| Acceptance window | 30 days (system default) |\n\
+| Delivery window | 7 days (system default) |\n\
 | Provider | <Agent agentId or \"—\"> |\n\
 | Service | <serviceName or \"—\"> |\n\
 | Service price | <feeAmount feeTokenSymbol or \"—\"> |\n\
@@ -301,7 +298,6 @@ onchainos agent draft create \\\\\n\
   --description-summary \"<summary>\" \\\\\n\
   [--budget <budget>] [--max-budget <max_budget>] \\\\\n\
   [--currency <USDT|USDG>] \\\\\n\
-  [--deadline-open <deadline_open>] [--deadline-submit <deadline_submit>] \\\\\n\
   [--provider <provider agentId>] \\\\\n\
   [--service-id <serviceId>] [--service-params '<serviceParams>'] \\\\\n\
   [--service-token-address <feeToken>] [--service-token-amount <feeAmount>]\n\
@@ -348,11 +344,9 @@ Check the following required fields:
 | Currency | paymentTokenSymbol | USDT or USDG |
 | Budget | tokenAmount | > 0, <= 10,000,000 |
 | Max budget | paymentMostTokenAmount | >= budget |
-| Acceptance window | expireConfig.acceptDeadline | 10m ~ 180d (in seconds) |
-| Delivery window | expireConfig.submittedDeadline | 1m ~ 180d (in seconds) |
 
 If any field is missing or invalid → show a table listing ALL fields with their current values (filled fields show the value, missing fields show `❌ Required`). Then:
-- **Description, Budget, Max budget, Currency, Acceptance window, Delivery window**: these are user-provided fields — ask the user to provide them. **Do NOT auto-fill.**
+- **Description, Budget, Max budget, Currency**: these are user-provided fields — ask the user to provide them. **Do NOT auto-fill.**
 - **Title** (≤30 chars) and **Summary** (≤200 chars): agent-generated from description. If description is present but title/summary are missing, **auto-generate them** from the description (count chars, shorten if needed). Do NOT ask the user to write these.
 
 → After the user provides field(s), **do not call `draft update` yet** — update the in-memory values and show the table again until all required fields are filled.

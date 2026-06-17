@@ -1266,8 +1266,6 @@ pub async fn handle_prepare_create(
     budget: Option<f64>,
     max_budget: Option<f64>,
     currency: Option<&str>,
-    deadline_open: Option<&str>,
-    deadline_submit: Option<&str>,
     provider: Option<&str>,
 ) -> Result<()> {
     use super::buyer::draft::validate_draft_fields;
@@ -1275,7 +1273,6 @@ pub async fn handle_prepare_create(
     // ── 1. Validate fields (local, instant) ──────────────────────
     let validation = validate_draft_fields(
         description, title, budget, max_budget, currency,
-        deadline_open, deadline_submit,
     );
     let v_ok = validation.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
     if !v_ok {

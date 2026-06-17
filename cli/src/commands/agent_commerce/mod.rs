@@ -72,8 +72,8 @@ pub enum AgentCommand {
         #[arg(long)] budget: f64,
         #[arg(long = "max-budget")] max_budget: f64,
         #[arg(long)] currency: String,
-        #[arg(long = "deadline-open")]  deadline_open: String,
-        #[arg(long = "deadline-submit")] deadline_submit: String,
+        #[arg(long = "deadline-open")]  deadline_open: Option<String>,
+        #[arg(long = "deadline-submit")] deadline_submit: Option<String>,
         #[arg(long)] title: Option<String>,
         /// Specified provider agentId (skip asp-match, negotiate directly with this provider or x402 accept)
         #[arg(long)] provider: Option<String>,
@@ -337,10 +337,6 @@ pub enum AgentCommand {
         max_budget: Option<f64>,
         #[arg(long)]
         currency: Option<String>,
-        #[arg(long = "deadline-open")]
-        deadline_open: Option<String>,
-        #[arg(long = "deadline-submit")]
-        deadline_submit: Option<String>,
         #[arg(long)]
         provider: Option<String>,
     },
@@ -1033,11 +1029,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::PrepareCreate {
             description, title, budget, max_budget,
-            currency, deadline_open, deadline_submit, provider,
+            currency, provider,
         } => task::common::handle_prepare_create(
             description.as_deref(), title.as_deref(),
             budget, max_budget,
-            currency.as_deref(), deadline_open.as_deref(), deadline_submit.as_deref(),
+            currency.as_deref(),
             provider.as_deref(),
         ).await,
 
