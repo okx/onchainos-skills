@@ -44,6 +44,85 @@ fn notify_block(content: &str) -> String {
     )
 }
 
+fn notify_block_lines(lines: &[String]) -> String {
+    let body = lines
+        .iter()
+        .map(|l| format!("    {l}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+         ```bash\n\
+         okx-a2a user notify --content '<localized content>' --json\n\
+         ```\n\n\
+         Canonical English content:\n\
+         {body}\n"
+    )
+}
+
+/// Extract a non-empty string field from `message`.
+fn str_field(msg: &Value, key: &str) -> Option<String> {
+    msg.get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Extract a signed integer field — accepts JSON number or numeric string.
+fn i64_field(msg: &Value, key: &str) -> Option<i64> {
+    msg.get(key).and_then(|v| match v {
+        Value::Number(n) => n.as_i64(),
+        Value::String(s) => s.parse::<i64>().ok(),
+        _ => None,
+    })
+}
+
+/// Extract a field for verbatim display — accepts string or number.
+fn display_field(msg: &Value, key: &str) -> Option<String> {
+    msg.get(key).and_then(|v| match v {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    })
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Returns `None` when the deadline has already passed; otherwise renders
+/// `"<N> hours"` for >=1h or `"less than 1 hour"` for sub-hour windows.
+fn hours_left_text(deadline: i64) -> Option<String> {
+    let now = now_secs();
+    if deadline <= now {
+        return None;
+    }
+    let hrs = (deadline - now) / 3600;
+    if hrs >= 1 {
+        Some(format!("{hrs} hours"))
+    } else {
+        Some("less than 1 hour".to_string())
+    }
+}
+
+/// Returns `None` when the deadline has already passed; otherwise renders
+/// `"<N> minutes remaining"` or `"less than 1 minute remaining"`.
+fn minutes_left_text(deadline: i64) -> Option<String> {
+    let now = now_secs();
+    if deadline <= now {
+        return None;
+    }
+    let mins = (deadline - now) / 60;
+    if mins >= 1 {
+        Some(format!("{mins} minutes remaining"))
+    } else {
+        Some("less than 1 minute remaining".to_string())
+    }
+}
+
 async fn staking_next_action(_job_id: &str, event: &str, agent_id: &str) -> Option<String> {
     let body = match event {
         "staked" => {
@@ -74,29 +153,20 @@ async fn staking_next_action(_job_id: &str, event: &str, agent_id: &str) -> Opti
             format!("[Current Event] unstake_requested\n\n{}", notify_block(&content))
         }
 
-        "unstake_claimed" => "[Current Status] unstake_claimed\n\n\
-             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content:\n\
-             \x20\x20\x20\x20Your unstake has been claimed; OKB has been credited to your wallet.\n".to_string(),
+        "unstake_claimed" => format!(
+            "[Current Status] unstake_claimed\n\n{}",
+            notify_block("Your unstake has been claimed; OKB has been credited to your wallet.")
+        ),
 
-        "unstake_cancelled" => "[Current Status] unstake_cancelled\n\n\
-             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content:\n\
-             \x20\x20\x20\x20Your unstake has been cancelled; the pending OKB is back in staked state.\n".to_string(),
+        "unstake_cancelled" => format!(
+            "[Current Status] unstake_cancelled\n\n{}",
+            notify_block("Your unstake has been cancelled; the pending OKB is back in staked state.")
+        ),
 
-        "stake_stopped" => "[Current Status] stake_stopped\n\n\
-             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content:\n\
-             \x20\x20\x20\x20You have exited the voter pool and will no longer be selected as a juror.\n".to_string(),
+        "stake_stopped" => format!(
+            "[Current Status] stake_stopped\n\n{}",
+            notify_block("You have exited the voter pool and will no longer be selected as a juror.")
+        ),
 
         _ => return None,
     };
@@ -105,103 +175,145 @@ async fn staking_next_action(_job_id: &str, event: &str, agent_id: &str) -> Opti
 
 async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message: Option<&Value>) -> Option<String> {
     let body = match event {
-        "evaluator_selected" => format!(
-            "[Current Status] evaluator_selected\n\n\
-             **Step 1 — Notify the user that you've been selected as a juror:**\n\n\
-             Extract from `message`: `jobTitle`, `budget`, `tokenSymbol`, `commitDeadline` (epoch seconds), `agentName`. Render `commitDeadline` (epoch seconds) into the user's local time as `commitDeadlineLocal`, and compute `hoursLeft` = `floor((commitDeadline - now_epoch_seconds) / 3600)`. Render `hoursLeftText`: if `hoursLeft >= 1` use `<hoursLeft> hours`; else if the deadline has not passed (`commitDeadline > now_epoch_seconds`) use `less than 1 hour`; else treat as expired (drop the entire `⏰ Key deadline` block). **Substitute every `<message.jobTitle>` below with the actual value extracted from `message.jobTitle`.**\n\n\
-             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【Your Agent <agentName> has been selected as juror for task [<message.jobTitle>]】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Task Amount: <budget> <tokenSymbol>\n\
-             \x20\x20\x20\x20⏰ Key deadline\n\
-             \x20\x20\x20\x20Your Agent must vote within <hoursLeftText>\n\n\
-             [Field-missing fallbacks] Apply each independently — do **not** invent placeholders.\n\
-             - `agentName` missing → degrade header to `You have been selected as juror for task [<message.jobTitle>]`.\n\
-             - `budget` / `tokenSymbol` missing → drop the `Amount:` line.\n\
-             - `commitDeadline` missing or deadline already passed → drop the entire `⏰ Key deadline` block.\n\n\
-             → **Once Step 1 has attempted the `okx-a2a user notify` call (whether it succeeds or errors), continue with Step 2 in this same turn.** Step 1 is a user-facing notification, not a precondition for Step 2.\n\n\
-             **Step 2 — Fetch evidence (`--round-num` comes from the envelope's top-level `roundNum`; if missing, abort this turn and log `missing roundNum in payload; abort`):**\n\
-             ```bash\n\
-             onchainos agent evidence-info {job_id} --agent-id {agent_id} --round-num <envelope top-level roundNum>\n\
-             ```\n\n\
-             Evidence JSON top-level: `{{ title, description, provider: {{reason, texts[], files[]}}, client: {{reason, texts[], files[]}} }}`. `description` / `title` is the task's original definition. Per side: `reason` is the party's stated motivation (`provider.reason` = why arbitration was raised; `client.reason` = why delivery was rejected); `texts[]` is free-text evidence; `files[]` is **any file type** (image / PDF / video / archive / unknown binary), already downloaded — each item has `localPath` (absolute path; **the local file has NO extension** — CLI deliberately leaves type detection to the agent).\n\n\
-             **Post-evidence hard constraints** (only the rules the agent could not infer on its own — tool choice / commands are the agent's call):\n\
-             - `files[]` items arrive **without extensions** by design; probe the type yourself (`file --mime-type`, hexdump, whatever) and use whatever tools you have to inspect each one. If you rename a file to give it an extension, **update the `localPath` you cite in the verdict**.\n\
-             - **Never vote blindly on an item you could not inspect.** If a file is unreadable for any reason (unsupported format, conversion failed, archive contents inaccessible, download error), cite it in the verdict as `<short reason> — contents unreviewable` and apply the rubric's evidence-missing rule for that item.\n\
-             - **Do not recurse into nested archives** (zip-in-tar-in-gz etc.). One extraction layer at most; deeper = treat as unreviewable.\n\
-             - A `files[]` item with `downloadError` set = CLI already gave up after 3 retries; treat as missing. Do not re-run `evidence-info` and do not scan local disk for replacements.\n"
-        ),
+        "evaluator_selected" => {
+            let job_title = message.and_then(|m| str_field(m, "jobTitle")).unwrap_or_default();
+            let agent_name = message.and_then(|m| str_field(m, "agentName"));
+            let budget = message.and_then(|m| display_field(m, "budget"));
+            let token_symbol = message.and_then(|m| str_field(m, "tokenSymbol"));
+            let commit_deadline = message.and_then(|m| i64_field(m, "commitDeadline"));
+            let round_num = message.and_then(|m| i64_field(m, "roundNum"));
 
-        "vote_committed" => format!(
-            "[Current Status] vote_committed\n\n\
-             Extract from `message`: `jobTitle`, `vote` (0 or 1). Render vote as text:\n\
-             - `vote = 0` → `User`\n\
-             - `vote = 1` → `ASP`\n\
-             Run `okx-a2a user notify` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.** Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【Arbitration vote committed for task [<message.jobTitle>] · waiting for Reveal】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20🗳️ Your Agent supports: <ASP | User>\n\n\
-             [Field-missing fallbacks]\n\
-             - `vote` missing → drop the `🗳️ Your Agent supports:` line entirely; do NOT guess.\n"
-        ),
+            let mut lines = Vec::new();
+            match &agent_name {
+                Some(n) => lines.push(format!("【Your Agent {n} has been selected as juror for task [{job_title}]】")),
+                None => lines.push(format!("You have been selected as juror for task [{job_title}]")),
+            }
+            lines.push(format!("Task title: {job_title}"));
+            lines.push(format!("Task ID: #{job_id}"));
+            if let (Some(b), Some(t)) = (&budget, &token_symbol) {
+                lines.push(format!("Task Amount: {b} {t}"));
+            }
+            if let Some(d) = commit_deadline {
+                if let Some(text) = hours_left_text(d) {
+                    lines.push("⏰ Key deadline".to_string());
+                    lines.push(format!("Your Agent must vote within {text}"));
+                }
+            }
 
-        "vote_commit_deadline_warn" => format!(
-            "[Current Status] vote_commit_deadline_warn\n\n\
-             Extract from `message`: `jobTitle`, `commitDeadline`, `slashTimeoutBps`, `slashedCooldownSeconds`. Compute `commitDeadlineLocal` from `commitDeadline` (local time) and `minutesLeft` = `floor((commitDeadline - now_epoch_seconds) / 60)`. Render `minutesLeftText`: if `minutesLeft >= 1` use `<minutesLeft> minutes remaining`; else if the deadline has not passed (`commitDeadline > now_epoch_seconds`) use `less than 1 minute remaining`; else treat as expired (drop the `Commit deadline:` line). Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
-             Run `okx-a2a user notify` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.** Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【⏰ URGENT: Arbitration vote for task [<message.jobTitle>] is about to close】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Commit deadline: <commitDeadlineLocal> (<minutesLeftText>)\n\
-             \x20\x20\x20\x20Current Status: Agent has not committed yet\n\
-             \x20\x20\x20\x20🚨 Timeout consequences:\n\
-             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\
-             \x20\x20\x20\x20• Enter a <cooldownHours>h cooldown during which you cannot be selected\n\
-             \x20\x20\x20\x20• Miss the base validation fee\n\
-             \x20\x20\x20\x20⚡ Have the Agent vote immediately\n\n\
-             [Field-missing fallbacks]\n\
-             - `commitDeadline` missing or deadline already passed → drop the `Commit deadline:` line.\n\
-             - `slashTimeoutBps` missing → drop the `• Stake slashed` bullet.\n\
-             - `slashedCooldownSeconds` missing → drop the `• Enter a ... cooldown` bullet.\n"
-        ),
+            let step2 = match round_num {
+                Some(n) => format!(
+                    "**Step 2 — Fetch evidence:**\n\
+                     ```bash\n\
+                     onchainos agent evidence-info {job_id} --agent-id {agent_id} --round-num {n}\n\
+                     ```\n\n\
+                     Evidence JSON top-level: `{{ title, description, provider: {{reason, texts[], files[]}}, client: {{reason, texts[], files[]}} }}`. `description` / `title` is the task's original definition. Per side: `reason` is the party's stated motivation (`provider.reason` = why arbitration was raised; `client.reason` = why delivery was rejected); `texts[]` is free-text evidence; `files[]` is **any file type** (image / PDF / video / archive / unknown binary), already downloaded — each item has `localPath` (absolute path; **the local file has NO extension** — CLI deliberately leaves type detection to the agent).\n\n\
+                     **Post-evidence hard constraints** (only the rules the agent could not infer on its own — tool choice / commands are the agent's call):\n\
+                     - `files[]` items arrive **without extensions** by design; probe the type yourself (`file --mime-type`, hexdump, whatever) and use whatever tools you have to inspect each one. If you rename a file to give it an extension, **update the `localPath` you cite in the verdict**.\n\
+                     - **Never vote blindly on an item you could not inspect.** If a file is unreadable for any reason (unsupported format, conversion failed, archive contents inaccessible, download error), cite it in the verdict as `<short reason> — contents unreviewable` and apply the rubric's evidence-missing rule for that item.\n\
+                     - **Do not recurse into nested archives** (zip-in-tar-in-gz etc.). One extraction layer at most; deeper = treat as unreviewable.\n\
+                     - A `files[]` item with `downloadError` set = CLI already gave up after 3 retries; treat as missing. Do not re-run `evidence-info` and do not scan local disk for replacements.\n"
+                ),
+                None => "**Step 2 aborted** — message envelope is missing `roundNum`; cannot fetch evidence. End this turn and wait for a fresh notification.\n".to_string(),
+            };
 
-        "vote_reveal_deadline_warn" => format!(
-            "[Current Status] vote_reveal_deadline_warn\n\n\
-             Extract from `message`: `jobTitle`, `revealDeadline`, `slashTimeoutBps`, `slashedCooldownSeconds`. Compute `revealDeadlineLocal` from `revealDeadline` (local time) and `minutesLeft` = `floor((revealDeadline - now_epoch_seconds) / 60)`. Render `minutesLeftText`: if `minutesLeft >= 1` use `<minutesLeft> minutes remaining`; else if the deadline has not passed (`revealDeadline > now_epoch_seconds`) use `less than 1 minute remaining`; else treat as expired (drop the `Reveal deadline:` line). Compute `cooldownHours` = `slashedCooldownSeconds / 3600`.\n\
-             Run `okx-a2a user notify` to push the notification to the user. **Substitute `<message.jobTitle>` with the actual extracted value.** Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【⏰ URGENT: Arbitration reveal for task [<message.jobTitle>] is about to close】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Reveal deadline: <revealDeadlineLocal> (<minutesLeftText>)\n\
-             \x20\x20\x20\x20Current Status: Agent has not revealed yet\n\
-             \x20\x20\x20\x20🚨 Timeout consequences:\n\
-             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\
-             \x20\x20\x20\x20• Enter a <cooldownHours>h cooldown during which you cannot be selected\n\
-             \x20\x20\x20\x20• Miss the base validation fee\n\
-             \x20\x20\x20\x20⚡ Have the Agent reveal immediately\n\n\
-             [Field-missing fallbacks]\n\
-             - `revealDeadline` missing or deadline already passed → drop the `Reveal deadline:` line.\n\
-             - `slashTimeoutBps` missing → drop the `• Stake slashed` bullet.\n\
-             - `slashedCooldownSeconds` missing → drop the `• Enter a ... cooldown` bullet.\n"
-        ),
+            format!(
+                "[Current Status] evaluator_selected\n\n\
+                 **Step 1 — Notify the user that you've been selected as a juror:**\n\n\
+                 {step1}\n\
+                 → **Once Step 1 has attempted the `okx-a2a user notify` call (whether it succeeds or errors), continue with Step 2 in this same turn.** Step 1 is a user-facing notification, not a precondition for Step 2.\n\n\
+                 {step2}",
+                step1 = notify_block_lines(&lines),
+            )
+        }
+
+        "vote_committed" => {
+            let job_title = message.and_then(|m| str_field(m, "jobTitle")).unwrap_or_default();
+            let vote = message.and_then(|m| i64_field(m, "vote"));
+
+            let mut lines = vec![
+                format!("【Arbitration vote committed for task [{job_title}] · waiting for Reveal】"),
+                format!("Task title: {job_title}"),
+                format!("Task ID: #{job_id}"),
+            ];
+            if let Some(v) = vote {
+                let label = if v == 0 { "User" } else { "ASP" };
+                lines.push(format!("🗳️ Your Agent supports: {label}"));
+            }
+            format!(
+                "[Current Status] vote_committed\n\n{}",
+                notify_block_lines(&lines)
+            )
+        }
+
+        "vote_commit_deadline_warn" => {
+            let job_title = message.and_then(|m| str_field(m, "jobTitle")).unwrap_or_default();
+            let commit_deadline = message.and_then(|m| i64_field(m, "commitDeadline"));
+            let slash_timeout_bps = message.and_then(|m| str_field(m, "slashTimeoutBps"));
+            let slashed_cooldown_seconds = message.and_then(|m| i64_field(m, "slashedCooldownSeconds"));
+
+            let mut lines = vec![
+                format!("【⏰ URGENT: Arbitration vote for task [{job_title}] is about to close】"),
+                format!("Task title: {job_title}"),
+                format!("Task ID: #{job_id}"),
+            ];
+            if let Some(d) = commit_deadline {
+                if let (Some(local), Some(text)) = (fmt_local_time(d), minutes_left_text(d)) {
+                    lines.push(format!("Commit deadline: {local} ({text})"));
+                }
+            }
+            lines.push("Current Status: Agent has not committed yet".to_string());
+            lines.push("🚨 Timeout consequences:".to_string());
+            if let Some(bps) = &slash_timeout_bps {
+                lines.push(format!("• Stake slashed {bps}"));
+            }
+            if let Some(cd) = slashed_cooldown_seconds {
+                lines.push(format!(
+                    "• Enter a {}h cooldown during which you cannot be selected",
+                    cd / 3600
+                ));
+            }
+            lines.push("• Miss the base validation fee".to_string());
+            lines.push("⚡ Have the Agent vote immediately".to_string());
+            format!(
+                "[Current Status] vote_commit_deadline_warn\n\n{}",
+                notify_block_lines(&lines)
+            )
+        }
+
+        "vote_reveal_deadline_warn" => {
+            let job_title = message.and_then(|m| str_field(m, "jobTitle")).unwrap_or_default();
+            let reveal_deadline = message.and_then(|m| i64_field(m, "revealDeadline"));
+            let slash_timeout_bps = message.and_then(|m| str_field(m, "slashTimeoutBps"));
+            let slashed_cooldown_seconds = message.and_then(|m| i64_field(m, "slashedCooldownSeconds"));
+
+            let mut lines = vec![
+                format!("【⏰ URGENT: Arbitration reveal for task [{job_title}] is about to close】"),
+                format!("Task title: {job_title}"),
+                format!("Task ID: #{job_id}"),
+            ];
+            if let Some(d) = reveal_deadline {
+                if let (Some(local), Some(text)) = (fmt_local_time(d), minutes_left_text(d)) {
+                    lines.push(format!("Reveal deadline: {local} ({text})"));
+                }
+            }
+            lines.push("Current Status: Agent has not revealed yet".to_string());
+            lines.push("🚨 Timeout consequences:".to_string());
+            if let Some(bps) = &slash_timeout_bps {
+                lines.push(format!("• Stake slashed {bps}"));
+            }
+            if let Some(cd) = slashed_cooldown_seconds {
+                lines.push(format!(
+                    "• Enter a {}h cooldown during which you cannot be selected",
+                    cd / 3600
+                ));
+            }
+            lines.push("• Miss the base validation fee".to_string());
+            lines.push("⚡ Have the Agent reveal immediately".to_string());
+            format!(
+                "[Current Status] vote_reveal_deadline_warn\n\n{}",
+                notify_block_lines(&lines)
+            )
+        }
 
         "reveal_started" => format!(
             "[Current Status] reveal_started\n\n\
@@ -213,102 +325,121 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
              - `canReveal=false` → CLI has already pre-checked and rejected; no retry needed. This round may have settled already (wait for dispute_resolved) or you did not commit (normal skip). **End this turn; skip Step 2.**\n\
              - `voter has not committed` → you did not commit this round; skipping reveal is normal. **End this turn; skip Step 2.**\n\
              - Other failures: retry up to 3 times.\n\n\
-             **Step 2 — Notify the user that the reveal has been submitted via `okx-a2a user notify`.** Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20Your agent has submitted the reveal transaction for Job jobId={job_id}. Waiting for chain confirmation — no action needed from you.\n"
+             **Step 2 — Notify the user that the reveal has been submitted via `okx-a2a user notify`.**\n\n\
+             {}",
+            notify_block(&format!(
+                "Your agent has submitted the reveal transaction for Job jobId={job_id}. Waiting for chain confirmation — no action needed from you."
+            ))
         ),
 
         "vote_revealed" => format!(
-            "[Current Status] vote_revealed\n\n\
-             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20Your agent has revealed its vote on-chain for Job jobId={job_id}. Waiting for the dispute resolution result — no action needed from you.\n"
+            "[Current Status] vote_revealed\n\n{}",
+            notify_block(&format!(
+                "Your agent has revealed its vote on-chain for Job jobId={job_id}. Waiting for the dispute resolution result — no action needed from you."
+            ))
         ),
 
-        "dispute_resolved" => format!(
-            "[Current Status] dispute_resolved\n\n\
-             Extract from `message`: `jobTitle`, `vote` (0 or 1), `jobStatus` (`complete` or `failed`), `slashMinorityBps` (lost branch only), `agentName`, `slashTimeoutBps`, `hasCommit`, `hasReveal`. **Substitute `<message.jobTitle>` below with the extracted value.**\n\
-             Render two text labels (pure text mapping, no semantic interpretation):\n\
-             - `vote = 0` → `yourVote = User`; `vote = 1` → `yourVote = ASP`\n\
-             - `jobStatus = complete` → `winningSide = ASP`; `jobStatus = failed` → `winningSide = User`\n\
-             `hasCommit` / `hasReveal` missing → treat as `1` (participated).\n\n\
-             **Routing (evaluate in order, first match wins):**\n\
-             1. `hasCommit == 0` → Branch 0a (missed commit)\n\
-             2. `hasReveal == 0` → Branch 0b (missed reveal)\n\
-             3. `vote` missing → Branch B (lost / minority)\n\
-             4. `yourVote == winningSide` → Branch A (won)\n\
-             5. otherwise → Branch B (lost)\n\
-             ━━━━━━━━━━━━━ Branch 0a: MISSED COMMIT ━━━━━━━━━━━━━\n\n\
-             Run `okx-a2a user notify` (🌐 localize first):\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Commit] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20You did not participate in [Commit]\n\
-             \x20\x20\x20\x20🚫 Penalty applied\n\
-             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
-             Missed-commit branch ends this turn; do not call `arbitration-claim`.\n\n\
-             ━━━━━━━━━━━━━ Branch 0b: MISSED REVEAL ━━━━━━━━━━━━━\n\n\
-             Run `okx-a2a user notify` (🌐 localize first):\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Reveal] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20You did not participate in [Reveal]\n\
-             \x20\x20\x20\x20🚫 Penalty applied\n\
-             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
-             Missed-reveal branch ends this turn; do not call `arbitration-claim`.\n\n\
-             ━━━━━━━━━━━━━ Branch A: WON ━━━━━━━━━━━━━\n\n\
-             Run `okx-a2a user notify` (🌐 localize first):\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【🎉 Arbitration result for task [<message.jobTitle>]: your vote aligned with the majority — reward eligible】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Your vote: backed <yourVote> ✓ aligned with majority\n\n\
-             Pull claimable then claim:\n\
-             ```bash\n\
-             onchainos agent arbitration-claimable --agent-id {agent_id}\n\
-             ```\n\
-             The last line is the stable marker `hasClaimable: yes | no`. Decide on that line only; do not parse amounts.\n\
-             - `hasClaimable: no` → end this turn; do not call claim (reward may be pending settlement; a later `reward_claimed` event will close the loop).\n\
-             - `hasClaimable: yes` →\n\
-             \x20\x20```bash\n\
-             \x20\x20onchainos agent arbitration-claim --agent-id {agent_id}\n\
-             \x20\x20```\n\
-             \x20\x20⚠️ Account-level pull: aside from `--agent-id`, pass no other business params. Retry up to 3 times on failure. Final credit confirmation arrives via the later `reward_claimed` event.\n\n\
-             ━━━━━━━━━━━━━ Branch B: LOST ━━━━━━━━━━━━━\n\n\
-             Run `okx-a2a user notify` (🌐 localize first):\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【⚠️ Arbitration result for task [<message.jobTitle>]: your vote disagreed with the majority — slash penalty incoming】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Your vote: backed <yourVote> ✗ opposed majority\n\
-             \x20\x20\x20\x20🚫 Penalty applied\n\
-             \x20\x20\x20\x20• Stake slashed <slashMinorityBps>\n\n\
-             Lost branch ends this turn; do not call `arbitration-claim` (nothing to claim). The slash was conveyed in the notification above — no follow-up event will arrive.\n\n\
-             [Field-missing fallbacks]\n\
-             - `slashMinorityBps` missing → drop the `🚫 Penalty applied` block (Branch B).\n\
-             - `agentName` missing → degrade Branch 0a/0b header to `⚖️ You missed [Commit|Reveal] for task [<message.jobTitle>] arbitration — penalty incoming`.\n\
-             - `slashTimeoutBps` missing → drop the entire `🚫 Penalty applied` block in Branch 0a/0b.\n"
-        ),
+        "dispute_resolved" => {
+            let job_title = message.and_then(|m| str_field(m, "jobTitle")).unwrap_or_default();
+            let agent_name = message.and_then(|m| str_field(m, "agentName"));
+            let vote = message.and_then(|m| i64_field(m, "vote"));
+            let job_status = message.and_then(|m| str_field(m, "jobStatus"));
+            let slash_minority_bps = message.and_then(|m| str_field(m, "slashMinorityBps"));
+            let slash_timeout_bps = message.and_then(|m| str_field(m, "slashTimeoutBps"));
+            let has_commit = message.and_then(|m| i64_field(m, "hasCommit")).unwrap_or(1);
+            let has_reveal = message.and_then(|m| i64_field(m, "hasReveal")).unwrap_or(1);
+
+            let your_vote = vote.map(|v| if v == 0 { "User" } else { "ASP" });
+            let winning_side = match job_status.as_deref() {
+                Some("complete") => Some("ASP"),
+                Some("failed") => Some("User"),
+                _ => None,
+            };
+
+            #[derive(Clone, Copy)]
+            enum Branch { MissedCommit, MissedReveal, Won, Lost }
+            let branch = if has_commit == 0 {
+                Branch::MissedCommit
+            } else if has_reveal == 0 {
+                Branch::MissedReveal
+            } else {
+                match (your_vote, winning_side) {
+                    (Some(y), Some(w)) if y == w => Branch::Won,
+                    _ => Branch::Lost,
+                }
+            };
+
+            match branch {
+                Branch::MissedCommit | Branch::MissedReveal => {
+                    let phase = if matches!(branch, Branch::MissedCommit) { "Commit" } else { "Reveal" };
+                    let mut lines = Vec::new();
+                    match &agent_name {
+                        Some(n) => lines.push(format!("【⚖️ Your Agent {n} missed [{phase}] for task [{job_title}] arbitration — penalty incoming】")),
+                        None => lines.push(format!("⚖️ You missed [{phase}] for task [{job_title}] arbitration — penalty incoming")),
+                    }
+                    lines.push(format!("Task title: {job_title}"));
+                    lines.push(format!("Task ID: #{job_id}"));
+                    lines.push(format!("You did not participate in [{phase}]"));
+                    if let Some(bps) = &slash_timeout_bps {
+                        lines.push("🚫 Penalty applied".to_string());
+                        lines.push(format!("• Stake slashed {bps}"));
+                    }
+                    format!(
+                        "[Current Status] dispute_resolved\n\n\
+                         {}\n\
+                         Missed-{} branch ends this turn; do not call `arbitration-claim`.\n",
+                        notify_block_lines(&lines),
+                        phase.to_lowercase()
+                    )
+                }
+                Branch::Won => {
+                    let mut lines = vec![
+                        format!("【🎉 Arbitration result for task [{job_title}]: your vote aligned with the majority — reward eligible】"),
+                        format!("Task title: {job_title}"),
+                        format!("Task ID: #{job_id}"),
+                    ];
+                    if let Some(y) = your_vote {
+                        lines.push(format!("Your vote: backed {y} ✓ aligned with majority"));
+                    }
+                    format!(
+                        "[Current Status] dispute_resolved\n\n\
+                         {}\n\
+                         Pull claimable then claim:\n\
+                         ```bash\n\
+                         onchainos agent arbitration-claimable --agent-id {agent_id}\n\
+                         ```\n\
+                         The last line is the stable marker `hasClaimable: yes | no`. Decide on that line only; do not parse amounts.\n\
+                         - `hasClaimable: no` → end this turn; do not call claim (reward may be pending settlement; a later `reward_claimed` event will close the loop).\n\
+                         - `hasClaimable: yes` →\n\
+                         \x20\x20```bash\n\
+                         \x20\x20onchainos agent arbitration-claim --agent-id {agent_id}\n\
+                         \x20\x20```\n\
+                         \x20\x20⚠️ Account-level pull: aside from `--agent-id`, pass no other business params. Retry up to 3 times on failure. Final credit confirmation arrives via the later `reward_claimed` event.\n",
+                        notify_block_lines(&lines)
+                    )
+                }
+                Branch::Lost => {
+                    let mut lines = vec![
+                        format!("【⚠️ Arbitration result for task [{job_title}]: your vote disagreed with the majority — slash penalty incoming】"),
+                        format!("Task title: {job_title}"),
+                        format!("Task ID: #{job_id}"),
+                    ];
+                    if let Some(y) = your_vote {
+                        lines.push(format!("Your vote: backed {y} ✗ opposed majority"));
+                    }
+                    if let Some(bps) = &slash_minority_bps {
+                        lines.push("🚫 Penalty applied".to_string());
+                        lines.push(format!("• Stake slashed {bps}"));
+                    }
+                    format!(
+                        "[Current Status] dispute_resolved\n\n\
+                         {}\n\
+                         Lost branch ends this turn; do not call `arbitration-claim` (nothing to claim). The slash was conveyed in the notification above — no follow-up event will arrive.\n",
+                        notify_block_lines(&lines)
+                    )
+                }
+            }
+        }
 
         "cooldown_entered" => {
             let content = match fetch_my_stake(agent_id).await.and_then(|s| fmt_local_time(s.cooldown_ends_at)) {
@@ -320,66 +451,75 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
             format!("[Current Status] cooldown_entered\n\n{}", notify_block(&content))
         }
 
-        "round_failed" => format!(
-            "[Current Status] round_failed\n\n\
-             Extract from `message`: `jobTitle`, `abstainCount`, `totalSlashed`, `slashTimeoutBps`, `revealCount`, `agentName`, `hasCommit`, `hasReveal`. **Substitute `<message.jobTitle>` below with the extracted value.**\n\
-             `hasCommit` / `hasReveal` missing → treat as `1` (participated).\n\n\
-             **Routing (evaluate in order, first match wins):**\n\
-             1. `hasCommit == 0` → Branch 0a (missed commit)\n\
-             2. `hasReveal == 0` → Branch 0b (missed reveal)\n\
-             3. otherwise → Branch C (round invalidated)\n\n\
-             ━━━━━━━━━━━━━ Branch 0a: MISSED COMMIT ━━━━━━━━━━━━━\n\n\
-             Run `okx-a2a user notify` (🌐 localize first):\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Commit] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20You did not participate in [Commit]\n\
-             \x20\x20\x20\x20🚫 Penalty applied\n\
-             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
-             Missed-commit branch ends this turn.\n\n\
-             ━━━━━━━━━━━━━ Branch 0b: MISSED REVEAL ━━━━━━━━━━━━━\n\n\
-             Run `okx-a2a user notify` (🌐 localize first):\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【⚖️ Your Agent <agentName> missed [Reveal] for task [<message.jobTitle>] arbitration — penalty incoming】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20You did not participate in [Reveal]\n\
-             \x20\x20\x20\x20🚫 Penalty applied\n\
-             \x20\x20\x20\x20• Stake slashed <slashTimeoutBps>\n\n\
-             Missed-reveal branch ends this turn.\n\n\
-             ━━━━━━━━━━━━━ Branch C: ROUND INVALIDATED ━━━━━━━━━━━━━\n\n\
-             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content (substitute placeholders first):\n\
-             \x20\x20\x20\x20【⚖️ Task [<message.jobTitle>] arbitration round invalidated】\n\
-             \x20\x20\x20\x20Task title: <message.jobTitle>\n\
-             \x20\x20\x20\x20Task ID: #{job_id}\n\
-             \x20\x20\x20\x20Tally: no side reached ≥ 50%\n\
-             \x20\x20\x20\x20💰 Abstain-slash pool distribution\n\
-             \x20\x20\x20\x20• Source: <abstainCount> abstainers × <slashTimeoutBps> = <totalSlashed> OKB total\n\
-             \x20\x20\x20\x20• Split evenly among <revealCount> revealers\n\n\
-             [Field-missing fallbacks]\n\
-             - Any of `abstainCount` / `totalSlashed` / `slashTimeoutBps` / `revealCount` missing → drop the `💰 Abstain-slash pool distribution` block (Branch C).\n\
-             - `agentName` missing → degrade Branch 0a/0b header to `⚖️ You missed [Commit|Reveal] for task [<message.jobTitle>] arbitration — penalty incoming`.\n\
-             - `slashTimeoutBps` missing → drop the entire `🚫 Penalty applied` block in Branch 0a/0b.\n"
-        ),
+        "round_failed" => {
+            let job_title = message.and_then(|m| str_field(m, "jobTitle")).unwrap_or_default();
+            let agent_name = message.and_then(|m| str_field(m, "agentName"));
+            let abstain_count = message.and_then(|m| display_field(m, "abstainCount"));
+            let total_slashed = message.and_then(|m| display_field(m, "totalSlashed"));
+            let slash_timeout_bps = message.and_then(|m| str_field(m, "slashTimeoutBps"));
+            let reveal_count = message.and_then(|m| display_field(m, "revealCount"));
+            let has_commit = message.and_then(|m| i64_field(m, "hasCommit")).unwrap_or(1);
+            let has_reveal = message.and_then(|m| i64_field(m, "hasReveal")).unwrap_or(1);
 
-        "reward_claimed" => "[Current Status] reward_claimed\n\n\
-             Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
-             ```\n\n\
-             Canonical English content:\n\
-             \x20\x20\x20\x20Your arbitration reward has been credited.\n".to_string(),
+            #[derive(Clone, Copy)]
+            enum Branch { MissedCommit, MissedReveal, Invalidated }
+            let branch = if has_commit == 0 {
+                Branch::MissedCommit
+            } else if has_reveal == 0 {
+                Branch::MissedReveal
+            } else {
+                Branch::Invalidated
+            };
+
+            match branch {
+                Branch::MissedCommit | Branch::MissedReveal => {
+                    let phase = if matches!(branch, Branch::MissedCommit) { "Commit" } else { "Reveal" };
+                    let mut lines = Vec::new();
+                    match &agent_name {
+                        Some(n) => lines.push(format!("【⚖️ Your Agent {n} missed [{phase}] for task [{job_title}] arbitration — penalty incoming】")),
+                        None => lines.push(format!("⚖️ You missed [{phase}] for task [{job_title}] arbitration — penalty incoming")),
+                    }
+                    lines.push(format!("Task title: {job_title}"));
+                    lines.push(format!("Task ID: #{job_id}"));
+                    lines.push(format!("You did not participate in [{phase}]"));
+                    if let Some(bps) = &slash_timeout_bps {
+                        lines.push("🚫 Penalty applied".to_string());
+                        lines.push(format!("• Stake slashed {bps}"));
+                    }
+                    format!(
+                        "[Current Status] round_failed\n\n\
+                         {}\n\
+                         Missed-{} branch ends this turn.\n",
+                        notify_block_lines(&lines),
+                        phase.to_lowercase()
+                    )
+                }
+                Branch::Invalidated => {
+                    let mut lines = vec![
+                        format!("【⚖️ Task [{job_title}] arbitration round invalidated】"),
+                        format!("Task title: {job_title}"),
+                        format!("Task ID: #{job_id}"),
+                        "Tally: no side reached ≥ 50%".to_string(),
+                    ];
+                    if let (Some(a), Some(t), Some(b), Some(r)) =
+                        (&abstain_count, &total_slashed, &slash_timeout_bps, &reveal_count)
+                    {
+                        lines.push("💰 Abstain-slash pool distribution".to_string());
+                        lines.push(format!("• Source: {a} abstainers × {b} = {t} OKB total"));
+                        lines.push(format!("• Split evenly among {r} revealers"));
+                    }
+                    format!(
+                        "[Current Status] round_failed\n\n{}",
+                        notify_block_lines(&lines)
+                    )
+                }
+            }
+        }
+
+        "reward_claimed" => format!(
+            "[Current Status] reward_claimed\n\n{}",
+            notify_block("Your arbitration reward has been credited.")
+        ),
 
         _ => return None,
     };
