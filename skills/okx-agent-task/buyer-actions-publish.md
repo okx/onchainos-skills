@@ -39,7 +39,6 @@ Run one command to validate fields, check readiness, and resolve provider routin
 onchainos agent prepare-create \
   --description "<desc>" --title "<title>" \
   --budget <b> --max-budget <mb> --currency <token> \
-  --deadline-open <do> --deadline-submit <ds> \
   [--provider <agentId>]
 ```
 
@@ -62,8 +61,6 @@ Returns `{ ok, stage, validation, preflight, routing }`. Pipeline short-circuits
 | `budget` | > 0, ≤ 10M, ≤ 5 decimal places |
 | `max_budget` | same as budget |
 | `max_budget_vs_budget` | max_budget ≥ budget |
-| `deadline_open` | 10m ~ 180d |
-| `deadline_submit` | 1m ~ 180d |
 
 **Routing output** (when `--provider` given and `ok: true`):
 - `routing.route` = `a2a` or `x402` — determines `--payment-mode` (escrow / x402)
@@ -101,7 +98,6 @@ Display the confirmation form (format see **Appendix A** below) → **end this t
 onchainos agent create-task \
   --description "<desc>" --description-summary "<summary>" --title "<title>" \
   --budget <b> --max-budget <mb> --currency <USDT|USDG> \
-  --deadline-open <do> --deadline-submit <ds> \
   --provider <providerAgentId> \
   --service-id <serviceId> --service-params '<json>' \
   --service-token-address <addr> --service-token-amount <amt> \
@@ -115,7 +111,6 @@ onchainos agent create-task \
 onchainos agent create-task \
   --description "<desc>" --description-summary "<summary>" --title "<title>" \
   --budget <b> --max-budget <mb> --currency <USDT|USDG> \
-  --deadline-open <do> --deadline-submit <ds> \
   --visibility 0
 ```
 
@@ -154,10 +149,10 @@ The user can say "save as draft" / "先保存草稿" / "草稿" **at any point**
 - **Title** (≤ 30 chars): agent-generated from description.
 - **Summary** (≤ 200 chars): agent-generated from description.
 
-Other fields (budget, currency, deadlines, provider, service info) are optional for drafts.
+Other fields (budget, currency, provider, service info) are optional for drafts.
 
 ```bash
-onchainos agent draft create --title <title> --description <desc> --description-summary <summary> [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--deadline-open <dur>] [--deadline-submit <dur>] [--provider <agentId>] [--service-id <id>] [--service-params '<json>'] [--service-token-address <addr>] [--service-token-amount <amt>] [--file <path> ...]
+onchainos agent draft create --title <title> --description <desc> --description-summary <summary> [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--provider <agentId>] [--service-id <id>] [--service-params '<json>'] [--service-token-address <addr>] [--service-token-amount <amt>] [--file <path> ...]
 ```
 
 #### List / Update / Delete drafts

@@ -25,8 +25,6 @@ pub const MIN_DESCRIPTION_CHARS: usize = 20;
 pub const MAX_DESCRIPTION_CHARS: usize = 2000;
 pub const MAX_BUDGET_DECIMALS: usize = 5;
 pub const MAX_SUMMARY_CHARS: usize = 200;
-pub const ACCEPT_DEFAULT: u64 = 30 * 86400;
-pub const SUBMIT_DEFAULT: u64 = 7 * 86400;
 pub const MAX_TITLE_CHARS: usize = 30;
 
 // ─── Parameter struct ────────────────────────────────────────────────────
@@ -37,8 +35,6 @@ pub struct CreateTaskParams {
     pub budget: f64,
     pub max_budget: f64,
     pub currency: String,
-    pub deadline_open: Option<String>,
-    pub deadline_submit: Option<String>,
     pub title: Option<String>,
     pub provider: Option<String>,
     pub attachments: Option<Vec<String>>,
@@ -55,8 +51,6 @@ struct ValidatedParams {
     currency: String,
     title: String,
     summary: String,
-    open_secs: u64,
-    submit_secs: u64,
 }
 
 impl CreateTaskParams {
@@ -82,15 +76,6 @@ impl CreateTaskParams {
         validate_budget(self.max_budget)?;
         validate_budget_decimals(self.max_budget)?;
 
-        let open_secs = match &self.deadline_open {
-            Some(v) => parse_duration_secs(v).map_err(|e| anyhow::anyhow!("--deadline-open {e}"))?,
-            None => ACCEPT_DEFAULT,
-        };
-        let submit_secs = match &self.deadline_submit {
-            Some(v) => parse_duration_secs(v).map_err(|e| anyhow::anyhow!("--deadline-submit {e}"))?,
-            None => SUBMIT_DEFAULT,
-        };
-
         let title = match &self.title {
             Some(t) if t.chars().count() > MAX_TITLE_CHARS => t.chars().take(MAX_TITLE_CHARS).collect(),
             Some(t) => t.clone(),
@@ -114,26 +99,11 @@ impl CreateTaskParams {
             }
         }
 
-        Ok(ValidatedParams { currency, title, summary, open_secs, submit_secs })
+        Ok(ValidatedParams { currency, title, summary })
     }
 }
 
 // ─── Validation helpers ─────────────────────────────────────────────────
-
-pub fn parse_duration_secs(s: &str) -> Result<u64> {
-    let s = s.trim();
-    if let Some(d) = s.strip_suffix('d') {
-        Ok(d.parse::<u64>()? * 86400)
-    } else if let Some(h) = s.strip_suffix('h') {
-        Ok(h.parse::<u64>()? * 3600)
-    } else if let Some(m) = s.strip_suffix('m') {
-        Ok(m.parse::<u64>()? * 60)
-    } else if let Some(sec) = s.strip_suffix('s') {
-        Ok(sec.parse::<u64>()?)
-    } else {
-        bail!("please specify a time unit, e.g. 3d (days), 72h (hours), 30m (minutes), 3600s (seconds)")
-    }
-}
 
 pub fn normalize_currency(currency: &str) -> Result<String> {
     let normalized: String = currency.chars()
@@ -226,10 +196,6 @@ pub async fn handle_create(
         "paymentTokenAmount": params.budget.to_string(),
         "paymentMostTokenAmount": params.max_budget.to_string(),
         "chainId":            XLAYER_CHAIN_ID,
-        "expireConfig": {
-            "acceptDeadline":    validated.open_secs,
-            "submittedDeadline": validated.submit_secs
-        },
         "paymentMode":        match params.payment_mode.as_deref() {
             None => 0,
             Some("escrow") => PaymentMode::Escrow.as_int(),

@@ -184,7 +184,7 @@ List all attachments registered on a task. Both buyer (to confirm uploads succee
 ### create-task
 
 ```
-agent create-task --description <txt> --budget <num> --currency <USDT|USDG> --deadline-open <RFC3339> --deadline-submit <RFC3339> [...]
+agent create-task --description <txt> --budget <num> --currency <USDT|USDG> [...]
 ```
 
 Publish a new task (`POST /aieco/task/create` → uopData → sign → broadcast).
@@ -196,8 +196,6 @@ Publish a new task (`POST /aieco/task/create` → uopData → sign → broadcast
 | `--budget` | ✅ | Budget (whole tokens, e.g. `100`) |
 | `--max-budget` | ✅ | Maximum budget (hard upper bound for negotiated price; provider's quote cannot exceed it) |
 | `--currency` | ✅ | `USDT` or `USDG`; other currencies will bail |
-| `--deadline-open` | ✅ | Acceptance window (RFC3339) |
-| `--deadline-submit` | ✅ | Delivery window (RFC3339) |
 | `--title` |  | Task title; defaults to a truncated form of description |
 | `--provider` |  | Designated provider agentId; when set, `job_created` skips recommend and routes directly via service-list |
 | `--endpoint` |  | Designated service endpoint (for multi-service providers); persisted alongside `--provider` |
@@ -493,7 +491,7 @@ After success, propagate an `[ATTACHMENT_ADDED]` notice to the provider sub via 
 ### draft create
 
 ```
-agent draft create --title <txt> --description <txt> --description-summary <txt> [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--deadline-open <dur>] [--deadline-submit <dur>] [--provider <agentId>] [--file <path> ...]
+agent draft create --title <txt> --description <txt> --description-summary <txt> [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--provider <agentId>] [--file <path> ...]
 ```
 
 Save a task as a draft (off-chain, status = -1). `--title`, `--description`, and `--description-summary` are required; all other fields are optional and can be filled later via `draft update`. Fields present at creation time are validated (same rules as `create-task`).
@@ -506,8 +504,6 @@ Save a task as a draft (off-chain, status = -1). `--title`, `--description`, and
 | `--budget` | | Budget amount (> 0, ≤ 10M, ≤ 5 decimals) |
 | `--max-budget` | | Maximum budget (≥ budget) |
 | `--currency` | | `USDT` or `USDG` |
-| `--deadline-open` | | Acceptance window (duration: `10m`–`180d`) |
-| `--deadline-submit` | | Delivery window (duration: `1m`–`180d`) |
 | `--provider` | | Designated provider agentId |
 | `--file` | | Attachment file path (repeatable) |
 
@@ -527,7 +523,7 @@ List the current buyer's drafts (paginated).
 ### draft update
 
 ```
-agent draft update <jobId> [--title <txt>] [--description <txt>] [--description-summary <txt>] [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--deadline-open <dur>] [--deadline-submit <dur>] [--provider <agentId>]
+agent draft update <jobId> [--title <txt>] [--description <txt>] [--description-summary <txt>] [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--provider <agentId>]
 ```
 
 Partial update of a draft. At least one field must be provided. Validation rules are the same as `draft create` (validate only provided fields). When `--description` is updated without `--description-summary`, the summary is auto-regenerated from the new description.

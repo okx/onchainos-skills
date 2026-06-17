@@ -536,7 +536,6 @@ mod tests {
             "--description", "a long enough description text",
             "--budget", "10", "--max-budget", "20",
             "--currency", "USDT",
-            "--deadline-open", "2h", "--deadline-submit", "3d",
         ]);
         match cli.cmd {
             super::super::TaskCommand::Create { visibility, .. } => {
@@ -553,7 +552,6 @@ mod tests {
             "--description", "a long enough description text",
             "--budget", "10", "--max-budget", "20",
             "--currency", "USDT",
-            "--deadline-open", "2h", "--deadline-submit", "3d",
             "--visibility", "0",
         ]);
         match cli.cmd {
@@ -571,7 +569,6 @@ mod tests {
             "--description", "a long enough description text",
             "--budget", "10", "--max-budget", "20",
             "--currency", "USDT",
-            "--deadline-open", "2h", "--deadline-submit", "3d",
             "--provider", "agent-1",
             "--service-id", "svc-1",
             "--service-params", "{\"x\":1}",

@@ -69,7 +69,7 @@ Match by priority — stop at first hit:
 > Trigger: Peer Message Routing #6 fallback, status=1 (accepted). Sub session, reactive only.
 
 1. Context from `agent status` already called at #6 — no repeat `common context`.
-2. **Locked parameters are immutable** — refuse provider modifications to description / amount / symbol / paymentMode / expireConfig.
+2. **Locked parameters are immutable** — refuse provider modifications to description / amount / symbol / paymentMode.
 3. **No CLI**: do NOT call confirm-accept / set-payment-mode / apply / create-task / deliver / complete / reject.
 4. Autonomous reply for execution-detail questions; one message per turn via `okx-a2a xmtp-send`.
 5. Beyond capability → `okx-a2a user notify` forwards to user.

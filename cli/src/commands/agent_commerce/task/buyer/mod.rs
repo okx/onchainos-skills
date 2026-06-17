@@ -55,10 +55,6 @@ pub enum TaskCommand {
         max_budget: f64,
         #[arg(long)]
         currency: String,
-        #[arg(long = "deadline-open")]
-        deadline_open: Option<String>,
-        #[arg(long = "deadline-submit")]
-        deadline_submit: Option<String>,
         #[arg(long)]
         title: Option<String>,
         /// Designated provider agentId (skip asp-match; negotiate or x402-accept with this provider directly).
@@ -290,10 +286,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount, visibility } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount, visibility } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider, attachments, endpoint, payment_mode,
+                title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount, visibility,
             }).await,
         TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } =>

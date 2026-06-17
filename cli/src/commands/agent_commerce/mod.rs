@@ -71,8 +71,6 @@ pub enum AgentCommand {
         #[arg(long)] budget: f64,
         #[arg(long = "max-budget")] max_budget: f64,
         #[arg(long)] currency: String,
-        #[arg(long = "deadline-open")]  deadline_open: Option<String>,
-        #[arg(long = "deadline-submit")] deadline_submit: Option<String>,
         #[arg(long)] title: Option<String>,
         /// Specified provider agentId (skip asp-match, negotiate directly with this provider or x402 accept)
         #[arg(long)] provider: Option<String>,
@@ -872,13 +870,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, provider, endpoint, attachments, payment_mode,
+            title, provider, endpoint, attachments, payment_mode,
             service_id, service_params, service_token_address, service_token_amount, visibility,
             _agent_id: _,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider, endpoint, attachments, payment_mode,
+                title, provider, endpoint, attachments, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount, visibility,
             }, ctx,
         ).await,

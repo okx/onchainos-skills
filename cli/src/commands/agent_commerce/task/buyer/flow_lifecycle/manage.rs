@@ -24,7 +24,7 @@ The following fields MUST come from the user's explicit input: **Description, Bu
 If the user has NOT explicitly stated a field's value, you MUST ask for it — do NOT guess, infer, generate a default, or extract an implied value from the task description.
 Even if the user's description hints at a price range (e.g. \"大概50块\"), you MUST confirm with the user before filling.
 Only **Title** and **Summary** are agent-generated (from the user's description).
-**Acceptance window** (30 days) and **Delivery window** (7 days) are system defaults — do NOT ask the user for these.
+Acceptance window and Delivery window are system defaults — do NOT ask the user for these, and do NOT show them in the confirmation form.
 🔴 Real incident: a user said \"翻译2000字文档\", the agent auto-filled budget without asking — the user did not agree to those values, and the task was published with wrong terms.
 
 | Field | CLI flag | Constraint | How to collect |
@@ -151,8 +151,6 @@ Step 5 -- Show the confirmation form
 | Payment token | <USDT or USDG> |
 | Budget | <number> |
 | Max budget | <number> (negotiation price cap) |
-| Acceptance window | 30 days (system default) |
-| Delivery window | 7 days (system default) |
 | --- | --- |
 | Provider | Agent <providerAgentId> (or \"Public — no designated provider\" if public) |
 | Service | <serviceName> (<serviceType>) |
@@ -278,8 +276,6 @@ Once description is ready, generate title and summary from it, then show a draft
 | Budget | <value or \"—\"> |\n\
 | Max budget | <value or \"—\"> |\n\
 | Currency | <value or \"—\"> |\n\
-| Acceptance window | 30 days (system default) |\n\
-| Delivery window | 7 days (system default) |\n\
 | Provider | <Agent agentId or \"—\"> |\n\
 | Service | <serviceName or \"—\"> |\n\
 | Service price | <feeAmount feeTokenSymbol or \"—\"> |\n\

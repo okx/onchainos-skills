@@ -214,8 +214,8 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      If the returned `entries` array already contains an entry with job_id={job_id} and role=buyer -> **the user has already been notified; this is a duplicate event - end the turn without notifying again.**\n\
      If not present -> continue to Step 1.\n\n\
      **Step 1 - fetch the pending-contact ASP list:**\n\
-     Run `okx-a2a task requests --json`. The returned `items` array contains per-ASP entries — capture `agentId` / `name` / `serviceName` / `creditScore` / `completedTaskCount` for each entry.\n\n\
-     If the returned `items` array is empty -> run `okx-a2a user notify`:\n\
+     Run `okx-a2a task requests --json`. The returned `payload` array contains per-ASP entries — capture `toAgentId` (the ASP's agent ID) / `groupId` / `name` for each entry. If `name` is absent at the top level, extract it from `messages[0].content` (JSON) → `sender.name`.\n\n\
+     If the returned `payload` array is empty -> run `okx-a2a user notify`:\n\
      \x20\x20```bash\n\
      \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
      \x20\x20```\n\
@@ -232,7 +232,7 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
      [Job {short_id} — you are the User Agent] The following ASPs have reached out. Pick one to designate as the provider:\n\
      \n\
      [iterate pending list; format per ASP (use fields from the `okx-a2a task requests` response):]\n\
-     <N>. agentId: <agentId> | name: <name or serviceName, omit if absent> | credit: <creditScore> | completed jobs: <completedTaskCount>\n\
+     <N>. agentId: <toAgentId> | name: <name or sender.name, omit if absent>\n\
      \n\
      Reply with the ASP's number to designate, or reply 「skip all」.\n\n\
      {follow_playbook}\n\n\
@@ -392,17 +392,24 @@ pub(crate) fn provider_conversation_cli_inner(
     }
 
     let first = &items[0];
-    let asp_agent_id = first.get("agentId").and_then(|v| v.as_str()).unwrap_or("?");
+    let asp_agent_id = first.get("toAgentId").and_then(|v| v.as_str())
+        .or_else(|| first.get("agentId").and_then(|v| v.as_str()))
+        .unwrap_or("?");
     let group_id = first.get("groupId").and_then(|v| v.as_str()).unwrap_or("?");
-    let name = first.get("name").and_then(|v| v.as_str())
-        .or_else(|| first.get("serviceName").and_then(|v| v.as_str()))
-        .unwrap_or("");
-    let credit = first.get("creditScore").and_then(|v| v.as_u64()).unwrap_or(0);
-    let completed = first.get("completedTaskCount").and_then(|v| v.as_u64()).unwrap_or(0);
+    let sender_name: String = first.get("name").and_then(|v| v.as_str()).map(String::from)
+        .or_else(|| first.get("serviceName").and_then(|v| v.as_str()).map(String::from))
+        .or_else(|| {
+            first.get("messages")?.as_array()?.first()?
+                .get("content")?.as_str()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .and_then(|parsed| parsed.get("sender")?.get("name")?.as_str().map(String::from))
+        })
+        .unwrap_or_default();
+    let name = sender_name.as_str();
     let remaining = items.len() - 1;
 
     let card_content = super::super::content::provider_pending_single_user_card(
-        short_id, title, asp_agent_id, name, credit, completed,
+        short_id, title, asp_agent_id, name,
     );
 
     let cmd = super::super::flow::pending_cmd(
@@ -418,7 +425,7 @@ pub(crate) fn provider_conversation_cli_inner(
          [Role] User (Buyer)\n\n\
          🛑 Push the accept/reject decision card via `pending-decisions-v2 request`, then end turn.\n\n\
          ASP context (LLM-only; do NOT expose groupId to user):\n\
-         \x20\x20agentId: {asp_agent_id} | groupId: {group_id} | name: {name} | credit: {credit} | completed: {completed} | remaining after this: {remaining}\n\n\
+         \x20\x20agentId: {asp_agent_id} | groupId: {group_id} | name: {name} | remaining after this: {remaining}\n\n\
          ```bash\n\
          {cmd}\n\
          ```\n\

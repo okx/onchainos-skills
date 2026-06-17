@@ -56,7 +56,7 @@
 | provider + service | `set-asp` | No (off-chain) | Change together (full ASP + service reset) |
 | max_budget | `set-max-budget` | No | Change alone |
 
-**Non-modifiable**: title, description, acceptance window, delivery window → inform "This field cannot be changed after task creation."
+**Non-modifiable**: title, description → inform "This field cannot be changed after task creation."
 
 ### 3.2 Modify payment token and amount
 
@@ -182,7 +182,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
    - The agent auto-generates `title` (≤30 chars), `description` (≥10 chars), `description-summary` (≤200 chars) based on the ServiceTitle.
    - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
    - `currency` = `tokenSymbol`.
-   - `deadline-open` / `deadline-submit`: **must be asked of the user**; do NOT auto-fill.
+   - Acceptance / delivery deadlines are now managed by the server — do NOT pass `--deadline-open` / `--deadline-submit`.
    - ⚠️ **Language matching**: field labels MUST match the user's language.
    - Display the full confirmation form (format see `buyer-actions-publish.md` Appendix A) → **end this turn** and wait for explicit confirmation.
    - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn.**

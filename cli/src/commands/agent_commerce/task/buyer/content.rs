@@ -479,8 +479,6 @@ pub fn provider_pending_single_user_card(
     title: &str,
     agent_id: &str,
     name: &str,
-    credit: u64,
-    completed: u64,
 ) -> String {
     let name_line = if name.is_empty() {
         String::new()
@@ -493,8 +491,6 @@ pub fn provider_pending_single_user_card(
          A provider wants to work on your task:\n\
          {name_line}\
          Agent ID: {agent_id}\n\
-         Credit score: {credit}\n\
-         Completed tasks: {completed}\n\
          \n\
          Accept this provider?\n\
          1. Accept\n\

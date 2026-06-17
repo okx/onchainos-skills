@@ -16,7 +16,7 @@ use crate::commands::agent_commerce::task::signing;
 
 use super::create::{
     normalize_currency, resolve_buyer_agent, validate_budget,
-    validate_budget_decimals, ACCEPT_DEFAULT, SUBMIT_DEFAULT,
+    validate_budget_decimals,
     MAX_DESCRIPTION_CHARS, MAX_SUMMARY_CHARS, MAX_TITLE_CHARS, MIN_DESCRIPTION_CHARS,
 };
 
@@ -304,10 +304,6 @@ pub async fn handle_draft_create(
     if let Some(mb) = max_budget {
         obj.insert("paymentMostTokenAmount".into(), serde_json::json!(mb.to_string()));
     }
-    obj.insert("expireConfig".into(), serde_json::json!({
-        "acceptDeadline": ACCEPT_DEFAULT,
-        "submittedDeadline": SUBMIT_DEFAULT,
-    }));
     if let Some(pid) = provider {
         obj.insert("providerAgentId".into(), serde_json::json!(pid));
     }
