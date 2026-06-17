@@ -65,8 +65,8 @@ pub fn user_notify(content: &str) -> Result<()> {
 /// Sub-side replacement for the MCP `xmtp_prompt_user` tool. Pushes a
 /// decision card into the okx-a2a CLI's SQLite `user_attention` table so the
 /// user-session can surface it and relay the user's reply back later.
-/// All routing fields (sub_key / job_id / role / source_event) are encoded
-/// inside `llm_content` by the caller (see `resolve_llm_content_cli`).
+/// All routing fields (job_id / role / agent_id / to_agent_id / source_event)
+/// are encoded inside `llm_content` by the caller (see `resolve_llm_content_cli`).
 pub fn user_decision_request(user_content: &str, llm_content: &str) -> Result<()> {
     let out = Command::new("okx-a2a")
         .args([

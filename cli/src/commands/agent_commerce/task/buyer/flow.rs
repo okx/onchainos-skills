@@ -69,12 +69,20 @@ call `next-action --role <buyer|provider|evaluator|auto> --agentId <yours> --mes
 the CLI returns the routing playbook (does the semantic mapping: pick ASP / set-public / close / accept / reject / etc.). Follow it verbatim. \
 Do NOT keyword-match yourself.";
 
-pub(super) fn pending_cmd(job_id: &str, agent_id: &str, list_label: &str, source_event: &str) -> String {
-    format!("onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"{list_label}\" --source-event {source_event}")
+pub(super) fn pending_cmd(job_id: &str, agent_id: &str, to_agent_id: Option<&str>, list_label: &str, source_event: &str) -> String {
+    let to_flag = match to_agent_id {
+        Some(t) => format!(" --to-agent-id {t}"),
+        None => String::new(),
+    };
+    format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id}{to_flag} --user-content \"<compose from template below>\" --list-label \"{list_label}\" --source-event {source_event}")
 }
 
-pub(super) fn pending_cmd_file(job_id: &str, agent_id: &str, list_label: &str, source_event: &str) -> String {
-    format!("onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content-file \"<card file path from Step 1 output>\" --list-label \"{list_label}\" --source-event {source_event}")
+pub(super) fn pending_cmd_file(job_id: &str, agent_id: &str, to_agent_id: Option<&str>, list_label: &str, source_event: &str) -> String {
+    let to_flag = match to_agent_id {
+        Some(t) => format!(" --to-agent-id {t}"),
+        None => String::new(),
+    };
+    format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id}{to_flag} --user-content-file \"<card file path from Step 1 output>\" --list-label \"{list_label}\" --source-event {source_event}")
 }
 
 /// Shared context parameter pack across all event handler functions.
@@ -235,8 +243,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     //   - xmtp_send: send to provider (peer sub session), params sessionKey + content
     //   - xmtp_dispatch_user: notify the user (no user decision needed), params: content
     //   - xmtp_prompt_user: needs user interaction (confirm / decide), params: llmContent + userContent
-    //     llmContent = instructions injected into the user session LLM (invisible to the user, contains sub_key so the user agent
-    //                  can relay the decision back to the sub)
+    //     llmContent = instructions injected into the user session LLM (invisible to the user, contains
+    //                  (jobId, role, agentId, toAgentId?) routing fields so the user agent can relay the decision back to the sub)
     //     userContent = visible message sent to the user
     //
     // The old `xmtp_dispatch_session` shape (sessionKey omitted + `[STATUS_NOTIFY]` wrapping) has been replaced by
@@ -260,6 +268,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         job_id,
         "buyer",
         agent_id,
+        prefetched.and_then(|p| p.provider_agent_id.as_deref()),
         &escalation_cli_failed,
         &format!("[Error {short_id}] {title_display} error decision"),
         "cli_failed",
@@ -504,7 +513,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      # For reject_review — pass the extracted rejection reason via message.data (empty string if user gave no reason; the handler falls back to a default):\n\
                      onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"reject_review\",\"jobId\":\"{job_id}\",\"data\":\"<extracted reason from user's reply, or empty>\"}}'\n\
                      ```\n\
-                     If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--sub-key` and `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
+                     If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
                 ),
                 "cli_failed" => format!(
                     "[User decision relay] source_event=`cli_failed`, user's verbatim reply: `{reply}`\n\n\
@@ -513,7 +522,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20• **Dismiss** — user takes manual control of this step (typical intents: B / 选B / dismiss / 不再提示 / skip prompts / 我自己处理 / let me handle it). Action: end the turn. Do not re-prompt; the user owns this step now.\n\
                      \x20\x20• **New instruction** — user gives a corrective instruction in natural language (e.g. `把 token-symbol 改成 USDT 再试` / `change --token-symbol to USDT and retry` / `用 endpoint https://... 重试` / `先 cancel 那个 unstake`). Action: parse the modification, rebuild the CLI invocation with the user's adjustment, and execute once. Treat the result as a fresh attempt (success → continue the original scene; failure → enqueue another `cli_failed` decision).\n\n\
                      ⚠️ Do NOT execute any on-chain action that wasn't part of the original failed command — the user reply only authorizes retry/edit of the failed step, not unrelated new actions.\n\
-                     ⚠️ If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event cli_failed`. **`--user-content` and `--list-label` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
+                     ⚠️ If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event cli_failed`. **`--user-content` and `--list-label` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
                 ),
                 "asp_match_pick" => format!(
                     "[User decision relay] source_event=`asp_match_pick`, user's verbatim reply: `{reply}`\n\n\
@@ -522,7 +531,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x201. From the asp-match list, extract the picked ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`.\n\
                      \x20\x20\x20\x202. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
                      \x20\x20\x20\x20You selected Agent <X> — <serviceName>.\n\
@@ -539,7 +548,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <X>. Waiting for ASP to accept.\" End the turn.\n\
                      \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent asp-match --job-id {job_id} --next-page`. If results → the CLI writes a new card file (path printed as `Card file: <path>`); re-push the same asp_match_pick decision (`pending-decisions-v2 request --source-event asp_match_pick --user-content-file \"<card file path>\"`; --list-label `[ASP <shortJobId>] <task title> ASP-pick decision`). **`--list-label` must be localized to the user's language**. If the user's language is not English, read the card file, translate field labels + footer, and pass via `--user-content` instead. If empty → enqueue the no-ASP next-step decision:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] <task title> next-step decision\" --source-event no_asp_found\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] <task title> next-step decision\" --source-event no_asp_found\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
                      \x20\x20\x20\x20[Job <shortJobId> — you are the User Agent] All matched ASPs have been tried; no match found. Choose next step:\n\
@@ -548,7 +557,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20C. Close the job — cancel and refund\n\
                      \x20\x20• **Make public** — typical intents: B / 选B / `public` / `公开` / `公开任务`. Action: `onchainos agent set-public {job_id}`.\n\
                      \x20\x20• **Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
-                     ⚠️ If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event asp_match_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or see more ASPs, list the task publicly, or cancel.\"\n"
+                     ⚠️ If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event asp_match_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or see more ASPs, list the task publicly, or cancel.\"\n"
                 ),
                 "provider_pending" => format!(
                     "[User decision relay] source_event=`provider_pending`, user's verbatim reply: `{reply}`\n\n\
@@ -573,7 +582,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services for this ASP, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event {source}`.\n\
                      \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
                      \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
@@ -588,7 +597,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n\
-                     \x20\x20\x20\x20⚠️ If user said A / specify but **did NOT include an agentId** (e.g. just `A`, `选A`, `换一个 ASP`): re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event {source}`; `--user-content` and `--list-label` must be localized to the user's language; `--user-content` must ask for the agentId (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
+                     \x20\x20\x20\x20⚠️ If user said A / specify but **did NOT include an agentId** (e.g. just `A`, `选A`, `换一个 ASP`): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event {source}`; `--user-content` and `--list-label` must be localized to the user's language; `--user-content` must ask for the agentId (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
                      \x20\x20• **B — Make public** — typical intents: B / 选B / `public` / `公开`. Action: `onchainos agent set-public {job_id}`.\n\
                      \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
                      ⚠️ If ambiguous (unrelated chitchat / non-committal `hmm` / `got it`): re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=specify another ASP (include the agentId)  B=make public  C=close the job\".\n"
@@ -609,7 +618,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`.\n\
                      \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --sub-key \"<full sessionKey from session_status>\" --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
                      \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\

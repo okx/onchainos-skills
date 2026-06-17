@@ -360,9 +360,9 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
     let follow_playbook_short = super::super::flow::FOLLOW_PLAYBOOK_SHORT;
     let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
-    let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 invalid {short_id}] next-step decision"), "x402_invalid");
-    let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, &format!("[x402 price {short_id}] price decision"), "x402_price_mismatch");
-    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Over budget {short_id}] budget decision"), "over_budget");
+    let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[x402 invalid {short_id}] next-step decision"), "x402_invalid");
+    let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[x402 price {short_id}] price decision"), "x402_price_mismatch");
+    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[Over budget {short_id}] budget decision"), "over_budget");
 
     format!("\
          [Designated ASP route: x402] Provider {dp_id} has an x402 endpoint.\n\
@@ -451,9 +451,9 @@ pub(crate) fn branch_error(job_id: &str, agent_id: &str, short_id: &str, dp_id: 
     let session_hint = super::super::flow::SESSION_STATUS_HINT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
     let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
-    let cmd_not_provider = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Not ASP {short_id}] next-step decision"), "not_provider");
-    let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Offline {short_id}] next-step decision"), "provider_offline");
-    let cmd_endpoint_not_found = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Endpoint gone {short_id}] next-step decision"), "endpoint_not_found");
+    let cmd_not_provider = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[Not ASP {short_id}] next-step decision"), "not_provider");
+    let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[Offline {short_id}] next-step decision"), "provider_offline");
+    let cmd_endpoint_not_found = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[Endpoint gone {short_id}] next-step decision"), "endpoint_not_found");
     let not_provider = super::super::content::not_provider_user_prompt(job_id, short_id, dp_id);
     let provider_offline = super::super::content::provider_offline_user_prompt(job_id, short_id, dp_id);
 

@@ -423,6 +423,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         job_id,
         "buyer",
         agent_id,
+        ctx.prefetched.and_then(|p| p.provider_agent_id.as_deref()),
         "<composed in Step 3a from the deliverableType template above — paste the localized result here verbatim, including the A. and B. option lines>",
         &format!("[Decision {short_id}] {title_display} acceptance decision"),
         "job_submitted",

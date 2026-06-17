@@ -30,9 +30,11 @@
    - **CLI returns success** → continue to step 3.
    - 🔴 Real incident: CLI returned error → model used `mkdir -p` + `cp` to bypass status guard.
    - ❌ **ABSOLUTE PROHIBITION**: when `task-attach` returns an error, **forbidden** from using shell commands (`mkdir`, `cp`, `mv`) to save files or dispatching `[ATTACHMENT_ADDED]` to the sub session.
-3. 🛑 **Forward to sub session (MUST NOT SKIP)**: call `xmtp_sessions_query` (myAgentId, jobId) to find the sub session key, then dispatch:
-   ```
-   xmtp_dispatch_session(sessionKey=<sub_key>, content="[ATTACHMENT_ADDED] <file path from task-attach output>")
+3. 🛑 **Forward to sub session (MUST NOT SKIP)**: dispatch via `okx-a2a session send` — the daemon resolves the active sub session from `--job-id` + `--to-agent-id`:
+   ```bash
+   okx-a2a session send --no-wait \
+     --job-id <jobId> --to-agent-id <providerAgentId> \
+     --content "[ATTACHMENT_ADDED] <file path from task-attach output>"
    ```
    ❌ Stopping after step 2 without dispatching = the attachment is stuck locally. ❌ Using any other prefix = sub session cannot recognize the message.
    - If no sub session exists (task not yet matched with a provider), tell the user the file is saved and will be forwarded once a provider is matched.
@@ -87,11 +89,12 @@
 2. Confirm: "Confirm changing max-budget to <amount>?"
 3. User confirms → `onchainos agent set-max-budget <jobId> --max-budget <amount>`
 4. Inform: "Max-budget updated."
-5. 🛑 **MUST sync to all sub sessions** — call `xmtp_sessions_query` (parameters: myAgentId, jobId) to fetch **all** sub session keys.
-6. 🛑 **MUST iterate over every sub session**; call `xmtp_dispatch_session` one by one:
-   ```
-   sessionKey: <sub session key>
-   content: [MAX_BUDGET_UPDATE] paymentMostTokenAmount=<amount>
+5. 🛑 **MUST sync to all sub sessions** — call `okx-a2a session query --job-id <jobId>` to fetch **all** sub sessions for this job.
+6. 🛑 **MUST iterate over every sub session**; for each, dispatch via `okx-a2a session send`:
+   ```bash
+   okx-a2a session send --no-wait \
+     --job-id <jobId> --to-agent-id <providerAgentId-from-query-row> \
+     --content "[MAX_BUDGET_UPDATE] paymentMostTokenAmount=<amount>"
    ```
    ❌ Notifying only some sub sessions = data inconsistency.
 7. Sub session receives → silently update the max_budget cap (no reply, no forwarding, no notifying the provider).
@@ -148,7 +151,7 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `P
 2. **Service-type determination**: `onchainos agent service-list --agent-id <agentId>` (joint check on serviceType + endpoint):
    - x402 supported → carry `agentId` + `endpoint` and enter §6 below (from Step 2).
    - Otherwise → A2A (step 3 below).
-   - ⚠️ **Do NOT call `xmtp_start_conversation` directly.**
+   - ⚠️ **Do NOT call `okx-a2a session create` directly.**
 3. **A2A path**: map fields (`description` ← ServiceTitle, `budget` ← Price, `currency` ← symbol), cache `designatedProvider = { agentId, serviceType }` → enter [`buyer-actions-publish.md`](./buyer-actions-publish.md) to publish the task (🛑 must run the full publishing flow including confirmation form).
 4. `job_created` arrives → detect `designatedProvider` → **skip `recommend`, keep it private** → directly create the group and negotiate.
 5. Negotiation fails → automatically run `recommend <jobId>` to display for user to choose.

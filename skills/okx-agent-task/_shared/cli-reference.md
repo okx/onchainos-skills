@@ -110,24 +110,24 @@ onchainos agent task-search \
 ### pending-decisions-v2 request / resolve-prompt / cancel / list
 
 ```
-agent pending-decisions-v2 request --sub-key <sub_session_key> --job-id <jobId> --role <buyer|provider|evaluator> --agent-id <agentId> --user-content "<full userContent verbatim>" --list-label "<short multi-decision label>" [--llm-content "<custom llmContent override>"] [--source-event <chain event name>]
-agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --sub-key <sub_session_key> --job-id <jobId> --role <buyer|provider|evaluator> --agent-id <agentId> --source-event <chain event name>
+agent pending-decisions-v2 request --job-id <jobId> --role <buyer|provider|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --user-content "<full userContent verbatim>" --list-label "<short multi-decision label>" [--llm-content "<custom llmContent override>"] [--source-event <chain event name>]
+agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <buyer|provider|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <chain event name>
 agent pending-decisions-v2 cancel --index <N>
 agent pending-decisions-v2 list --format markdown
 ```
 
-Pending-decisions queue. Same `sub_key` re-`request` overwrites in place (idempotent). User-reply routing uses the pre-filled `resolve-prompt` command embedded in each block's llmContent. Authoritative rules: `buyer-sub-playbook.md` §Communication Contract (pending-decisions-v2 request).
+Pending-decisions queue. Same `(jobId, role, agentId, toAgentId?)` key re-`request` overwrites in place (idempotent). User-reply routing uses the pre-filled `resolve-prompt` command embedded in each block's llmContent. Authoritative rules: `buyer-sub-playbook.md` §Communication Contract (pending-decisions-v2 request).
 
 | Command | Who calls | When | Key parameters |
 |---|---|---|---|
-| `request` | sub agent | When the script says "push a decision to the user". Sub does not call `xmtp_prompt_user` directly; CLI returns the exact tool-invocation playbook. | `--sub-key` (required, full XMTP sessionKey from `session_status`) / `--job-id` / `--role` / `--agent-id` (all required) / `--user-content` (required, full userContent shown to user verbatim) / `--list-label` (required, short label for multi-decision list view, e.g. `[Decision 0x3938…815d] Approve / Reject`) / `--source-event` (optional but recommended — chain event name, used to build `user_decision_<source_event>` on resolve) / `--llm-content` (optional override). Returns: `playbook_push_cli` (when `OKX_A2A_IS_CLI=1` — emits `okx-a2a user decision-request` bash command); otherwise `playbook_push_prompt_user` (MCP `xmtp_prompt_user` form, with embedded `resolve-prompt` template). |
-| `resolve-prompt` | user-session agent | After the user actually replies to a `[USER_DECISION_REQUEST]`. Copy the **pre-filled command template embedded in the block's llmContent verbatim** — only fill in `--user-reply`. User-session does not call `xmtp_dispatch_session` directly; CLI returns a relay playbook. | All required: `--user-reply` (verbatim user wording, no interpretation) / `--sub-key` (from the block's `[sub_key:]` header) / `--job-id` / `--role` / `--agent-id` / `--source-event`. Builds the relay content as a **JSON envelope** shaped like a chain notification (`{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role, code:0, description, timestamp}}`). Best-effort deletes the matching queue entry by `--sub-key`. Returns `playbook_relay_only_prompt` (MCP `xmtp_dispatch_session` form). Sub receives the envelope and routes via `next-action --role <role> --agentId <yours> --message '{"event":"user_decision_<source_event>","jobId":"<jobId>","data":"<message.data>"}'`. |
-| `cancel` | user-session agent | When the user says "ignore / cancel / delete this decision" (e.g. `忽略这个决策` / `取消第 2 条` / `cancel this`). **Silent delete** — does NOT dispatch a relay to the sub (the sub will TTL-evict the entry eventually or be re-triggered by a new system event). | `--index N` (1-based, from the latest displayed list snapshot) or `--sub-key <key>`. Behavior: removes the matching entry from the queue file. Returns: `playbook_cancel` (with the standard list view body when the queue has remaining entries). |
+| `request` | sub agent | When the script says "push a decision to the user". Sub does not call `okx-a2a user decision-request` directly; CLI returns the exact command-invocation playbook. | `--job-id` / `--role` / `--agent-id` (all required) / `--to-agent-id` (optional — peer agentId for task sub; omit for backup sub) / `--user-content` (required, full userContent shown to user verbatim) / `--list-label` (required, short label for multi-decision list view, e.g. `[Decision 0x3938…815d] Approve / Reject`) / `--source-event` (optional but recommended — chain event name, used to build `user_decision_<source_event>` on resolve) / `--llm-content` (optional override). Returns: `playbook_push_cli` — emits the `okx-a2a user decision-request` bash command with embedded `resolve-prompt` template. |
+| `resolve-prompt` | user-session agent | After the user actually replies to a `[USER_DECISION_REQUEST]`. Copy the **pre-filled command template embedded in the block's llmContent verbatim** — only fill in `--user-reply`. User-session does not call `okx-a2a session send` directly; CLI returns a relay playbook. | Required: `--user-reply` (verbatim user wording, no interpretation) / `--job-id` / `--role` / `--agent-id` / `--source-event`. Optional: `--to-agent-id` (must match the request — omit only when the request also omitted it). Builds the relay content as a **JSON envelope** shaped like a chain notification (`{agentId, message:{source:"system", event:"user_decision_<source_event>", data:<verbatim>, jobId, role, code:0, description, timestamp}}`). Best-effort deletes the matching queue entry by the `(jobId, role, agentId, toAgentId?)` tuple. Returns `playbook_relay_only_prompt` — emits the `okx-a2a session send` bash command targeting `--job-id` + (optional) `--to-agent-id`. Sub receives the envelope and routes via `next-action --role <role> --agentId <yours> --message '{"event":"user_decision_<source_event>","jobId":"<jobId>","data":"<message.data>"}'`. |
+| `cancel` | user-session agent | When the user says "ignore / cancel / delete this decision" (e.g. `忽略这个决策` / `取消第 2 条` / `cancel this`). **Silent delete** — does NOT dispatch a relay to the sub (the sub will TTL-evict the entry eventually or be re-triggered by a new system event). | `--index N` (1-based, from the latest displayed list snapshot). Behavior: removes the matching entry from the queue file. Returns: `playbook_cancel` (with the standard list view body when the queue has remaining entries). |
 | `list` | user-session agent (user-facing entry) | When the user explicitly says `决策列表` / `查看决策` / `decision list` / `what's pending` / etc. **The stdout is a self-contained playbook** — render the user-visible source body to chat AND follow the printed routing rules verbatim when the user replies. Do NOT call other pending-decisions-v2 subcommands from skill knowledge. | `--format markdown` (the user-facing rendering). Side effect: refreshes the internal display snapshot used by follow-up commands embedded in the playbook. |
 
-**Primary key** = `sub_key` (full XMTP sessionKey string). Same `sub_key` re-`request` = overwrites the existing entry (`created_at` preserved; `updated_at` refreshed). Different `sub_key` = adds a new entry alongside.
+**Primary key** = `(jobId, role, agentId, toAgentId?)`. Same key re-`request` = overwrites the existing entry (`created_at` preserved; `updated_at` refreshed). Different on any field = adds a new entry alongside.
 
-**Routing**: on user reply, the LLM runs the pre-filled `resolve-prompt` command embedded in each `[USER_DECISION_REQUEST]` block's llmContent (sub-key + 5 routing fields). `resolve-prompt` best-effort deletes the matching queue entry by `--sub-key` on success.
+**Routing**: on user reply, the LLM runs the pre-filled `resolve-prompt` command embedded in each `[USER_DECISION_REQUEST]` block's llmContent (job/role/agent + optional to-agent + source-event). `resolve-prompt` best-effort deletes the matching queue entry on success.
 
 **TTL**: defaults to 7 days (`ONCHAINOS_PENDING_DECISIONS_TTL_DAYS` env override). Expired entries auto-cleaned + persisted on every locked op.
 
@@ -139,7 +139,7 @@ Pending-decisions queue. Same `sub_key` re-`request` overwrites in place (idempo
 agent next-action --role <buyer|provider|evaluator|auto> --agentId <agentId> --message '<envelope.message as JSON>'
 ```
 
-Outputs the script the agent should currently execute (CLI templates / xmtp_send templates / closing scripts) based on `(event, role)`. The CLI extracts every routing field from inside the `--message` JSON; only three flags are accepted.
+Outputs the script the agent should currently execute (CLI templates / `okx-a2a xmtp-send` templates / closing scripts) based on `(event, role)`. The CLI extracts every routing field from inside the `--message` JSON; only three flags are accepted.
 
 | Parameter | Required | Description |
 |---|---|---|
@@ -225,7 +225,7 @@ Fetch the recommended provider list (`POST /aieco/task/match`); providers marked
 | `--page <n>` | Page number (0-based); defaults to 0 |
 | `--next-page` | Advance to the next page (current cached page +1) |
 | `--emit-decision` | Enqueue the recommendation card as a `pending-decisions-v2` `recommend_pick` decision. Requires `--sub-key` |
-| `--sub-key` | Full XMTP sessionKey (from `session_status`). Required with `--emit-decision` |
+| `--sub-key` | Full XMTP sessionKey (from `okx-a2a session status` or `okx-a2a session query`). Required with `--emit-decision` |
 | `--job-title` | Task title for the decision label (defaults to `<title>` placeholder) |
 | `--user-content` | Pre-localized card body to enqueue instead of the auto-written canonical English card |
 
@@ -305,11 +305,13 @@ Output (`output::success` JSON):
 onchainos agent active-tasks
 # → user picks a task by jobId
 
-# 2. Resolve sessionKey via xmtp_sessions_query(myAgentId, toAgentId=counterpartyAgentId, jobId)
-#    (uses tool, not CLI)
+# 2. (Optional) Confirm an active session exists for that job + counterparty
+okx-a2a session query --job-id <jobId> --my-agent-id <myAgentId> --to-agent-id <counterpartyAgentId>
 
-# 3. Forward the user's verbatim instruction
-#    xmtp_dispatch_session(sessionKey=<from step 2>, content=<user's verbatim text>)
+# 3. Forward the user's verbatim instruction (daemon resolves the session from --job-id + --to-agent-id)
+okx-a2a session send --no-wait \
+  --job-id <jobId> --to-agent-id <counterpartyAgentId> \
+  --content "<user's verbatim text>"
 ```
 
 ### set-payment-mode
@@ -484,7 +486,7 @@ Switch provider (on chain). Only available in Open state. After the user session
 agent set-max-budget <jobId> --max-budget <amount> [--agent-id <id>]
 ```
 
-Change the maximum budget cap (off-chain; API success completes it). After the user session runs this, it must propagate `[MAX_BUDGET_UPDATE]` to all sub sessions via `xmtp_sessions_query` + `xmtp_dispatch_session`.
+Change the maximum budget cap (off-chain; API success completes it). After the user session runs this, it must propagate `[MAX_BUDGET_UPDATE]` to all sub sessions via `okx-a2a session query --job-id <jobId>` + `okx-a2a session send --no-wait` per row.
 
 | Parameter | Required | Description |
 |---|---|---|
@@ -505,7 +507,7 @@ Buyer attaches local files to an existing task (mid-task supplementation of refe
 | `<jobId>` | Required |
 | `--file` | Required; absolute path to the local file. Repeat the flag for multiple files. |
 
-After success, propagate an `[ATTACHMENT_ADDED]` notice to the provider sub via `xmtp_dispatch_session` (the playbook from `next-action` will include this step).
+After success, propagate an `[ATTACHMENT_ADDED]` notice to the provider sub via `okx-a2a session send --no-wait --job-id <jobId> --to-agent-id <providerAgentId>` (the playbook from `next-action` will include this step).
 
 ---
 
@@ -619,8 +621,8 @@ agent apply <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id
 🛑🛑🛑 **`apply` is the LAST step of negotiation — NEVER call it as the first response to a user's "take task X" instruction**.
 
 The mandatory pre-conditions (per `provider.md §2.1` / §2.2):
-1. **User says "take task X"** → provider runs `xmtp_start_conversation(myAgentId, toAgentId=task.buyerAgentId, jobId=X)` → group + sub session created
-2. Provider sends a **cold-start opener** via `xmtp_send` (self-introduction + interest + asking about budget / acceptance criteria / payment mode) — NOT a price quote
+1. **User says "take task X"** → provider runs `okx-a2a session create --job-id <X> --my-agent-id <myAgentId> --to-agent-id <task.buyerAgentId>` → group + sub session created (group materializes on the first `xmtp-send`)
+2. Provider sends a **cold-start opener** via `okx-a2a xmtp-send --job-id <X> --to-agent-id <task.buyerAgentId> --message "<text>" --no-wait` (self-introduction + interest + asking about budget / acceptance criteria / payment mode) — NOT a price quote
 3. **End the turn**; wait for the User Agent's reply
 4. After User Agent replies, call `next-action --role provider --agentId <yours> --message '{"event":"job_created","jobId":"<jobId>"}'` to fetch the negotiation script
 5. **Three-step handshake**: User Agent sends `[intent:propose]` → provider sends `[intent:ack]` → User Agent sends **`[intent:confirm]`** (literal, exact string)
@@ -660,7 +662,7 @@ Submit the deliverable on chain (`POST /aieco/task/{jobId}/deliver`). **Only all
 | `--file` | `""` (message-only delivery) |
 | `--message` | `Task completed, please review` |
 
-For file-type deliverables, send via the `xmtp_file_upload` tool first; this command's `--file` is used to bind the file_key reference rather than to transmit directly.
+For file-type deliverables, send via `okx-a2a file upload --file-path <path> --agent-id <providerAgentId> --job-id <jobId>` first; this command's `--file` is used to bind the file_key reference rather than to transmit directly.
 
 ### task-deliverable-list
 
@@ -862,7 +864,7 @@ agent file-upload --file <path> --agent-id <id> --job-id <jobId>
 agent file-download --file-key <key> --agent-id <id> --output <path>
 ```
 
-Low-level file-transfer CLIs, but **the `xmtp_file_upload` / `xmtp_file_download` tools take priority** (XMTP plugin; encryption metadata + delivery to the counterpart via the a2a envelope are built in); these commands are for scripting scenarios.
+Low-level file-transfer CLIs, but **`okx-a2a file upload` / `okx-a2a file download` take priority** (handles encryption metadata + delivery to the counterpart via the a2a envelope); these `onchainos agent file-*` commands are for scripting scenarios only.
 
 ### sensitive-words / message-eligible / system-config
 

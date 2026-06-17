@@ -101,7 +101,7 @@ pub async fn generate_next_action(
     //   - okx-a2a user decision-request: needs user interaction (confirmation / decision);
     //     params: llmContent + userContent
     //     llmContent = instruction injected into the user session LLM (invisible to user;
-    //                  contains sub_key so the user agent can relay the decision back to sub)
+    //                  contains (jobId, role, agentId, toAgentId?) routing fields so the user agent can relay the decision back to sub)
     //     userContent = the user-visible message to send to the user
     // ──────────────────────────────────────────────────────────────────────
     let send_to_peer = format!(
@@ -259,6 +259,7 @@ pub async fn generate_next_action(
                 job_id,
                 "provider",
                 agent_id,
+                prefetched.and_then(|p| p.buyer_agent_id.as_deref()),
                 &user_prompt,
                 &format!("[Decision {short_id}] {title_display} dispute decision"),
                 "job_rejected",
@@ -1094,6 +1095,7 @@ pub async fn generate_next_action(
                 job_id,
                 "provider",
                 agent_id,
+                prefetched.and_then(|p| p.buyer_agent_id.as_deref()),
                 &user_prompt,
                 &format!("[Decision {short_id}] {title_display} submit decision"),
                 "submit_deadline_warn",
@@ -1110,7 +1112,7 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent pending-decisions-v2 list --format json\n\
              ```\n\
-             If the returned `entries` already contains a sub_key with `job={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue to the push protocol below.\n\n\
+             If the returned `entries` already contains an entry with `job_id={job_id}` for this role → the user has already been notified; this is a duplicate event; **end the turn without re-notifying**. Otherwise → continue to the push protocol below.\n\n\
              **Push the decision to the user (5-substep protocol; read ALL 5 before running any command)**:\n\n\
              {request_block}\n\
              ⚠️ **Do NOT auto-run `onchainos agent deliver` later** — only the user knows whether the deliverable is actually ready; the agent must not decide \"deliverable is ready\" on the user's behalf.\n",
@@ -1239,7 +1241,7 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent pending-decisions-v2 list --format json\n\
              ```\n\
-             - The returned `entries` already contains a sub_key with `job={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead run `okx-a2a user notify --content \"{wakeup_resume}\"` and end the turn.\n\
+             - The returned `entries` already contains an entry with `job_id={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead run `okx-a2a user notify --content \"{wakeup_resume}\"` and end the turn.\n\
              - No matching entry → run the Step 2 script normally; the `pending-decisions-v2 request` call handles the prompt.\n\n\
              ⚠️ **Do NOT** okx-a2a session send the User Agent something like `I'm back online` — the peer does not care about your connection status.\n\
              ⚠️ If the Step 2 script is a passive-wait kind (e.g. status=accepted: ASP is working / status=submitted: waiting for User Agent review), only emit a `task resumed` notification and end the turn; do not proactively run business actions.\n"
@@ -1275,7 +1277,7 @@ pub async fn generate_next_action(
                      ```bash\n\
                      onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"<dispute_raise|agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
                      ```\n\
-                     If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--sub-key` and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=file dispute  B=accept refund\".\n"
+                     If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=file dispute  B=accept refund\".\n"
                 ),
                 "submit_deadline_warn" => format!(
                     "[User decision relay] source_event=`submit_deadline_warn`, user's verbatim reply: `{reply}`\n\n\
@@ -1291,7 +1293,7 @@ pub async fn generate_next_action(
                      \x20\x20• **Dismiss** — user takes manual control of this step (typical intents: B / 选B / dismiss / 不再提示 / skip prompts / 我自己处理 / let me handle it). Action: end the turn. Do not re-prompt; the user owns this step now.\n\
                      \x20\x20• **New instruction** — user gives a corrective instruction in natural language (e.g. `把 token-symbol 改成 USDT 再试` / `change --token-symbol to USDT and retry` / `用 endpoint https://... 重试`). Action: parse the modification, rebuild the CLI invocation with the user's adjustment, and execute once. Treat the result as a fresh attempt (success → continue the original scene; failure → enqueue another `cli_failed` decision).\n\n\
                      ⚠️ Do NOT execute any on-chain action that wasn't part of the original failed command — the user reply only authorizes retry/edit of the failed step, not unrelated new actions.\n\
-                     ⚠️ If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with `--sub-key <same>` and `--source-event cli_failed`. **`--user-content` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
+                     ⚠️ If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` and `--source-event cli_failed`. **`--user-content` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
                 ),
                 _ => format!(
                     "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n"

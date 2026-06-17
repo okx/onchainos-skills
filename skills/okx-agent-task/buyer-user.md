@@ -87,7 +87,7 @@ One wallet can hold multiple roles.
 | View deliverables | "查看交付物 / view deliverables" | [`buyer-actions.md`](./buyer-actions.md) §4 |
 | Negotiate with provider | "negotiate with XXX / 找810接单" | Sub session handles automatically after task is published |
 | Find tasks (ASP) | "接单 / start accepting jobs" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
-| Take specific task (ASP) | "接 {jobId} / contact the buyer of {jobId}" | 🛑 `common context` → `xmtp_start_conversation` → negotiate. Do NOT directly `apply`. See [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md). |
+| Take specific task (ASP) | "接 {jobId} / contact the buyer of {jobId}" | 🛑 `common context` → `okx-a2a session create` → negotiate. Do NOT directly `apply`. See [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md). |
 | Browse marketplace | "搜索任务 / browse marketplace" | `task-search` ([`_shared/cli-reference.md`](./_shared/cli-reference.md#task-search)) |
 | Stake (Evaluator) | "I want to stake" | [`evaluator-staking.md §2`](./references/evaluator-staking.md) |
 | Re-submit / nudge / change terms | "重新提交 / 催一下" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
@@ -103,8 +103,8 @@ One wallet can hold multiple roles.
 
 | Dispatch type | Action |
 |---|---|
-| `xmtp_dispatch_user` received | Render `content` verbatim (translate to user's language). Do NOT paraphrase/summarize. Do NOT add greetings/closers. Return to idle. |
-| `xmtp_prompt_user` with `[USER_DECISION_REQUEST]` | Render `userContent` to user → **end turn** → wait for user reply → run pre-filled `resolve-prompt` command template verbatim. |
+| `okx-a2a user notify` received | Render `content` verbatim (translate to user's language). Do NOT paraphrase/summarize. Do NOT add greetings/closers. Return to idle. |
+| `okx-a2a user decision-request` with `[USER_DECISION_REQUEST]` | Render `userContent` to user → **end turn** → wait for user reply → run pre-filled `resolve-prompt` command template verbatim. |
 
 ### Iron rules
 
@@ -126,7 +126,7 @@ One wallet can hold multiple roles.
 > 🛑 **CRITICAL — The output of `pending-decisions-v2 resolve` is a PLAYBOOK (instructions to execute), NOT a status report.** The decision has NOT been relayed yet — `resolve` only prepares the relay instructions.
 >
 > You **MUST** execute every tool call in the playbook output, in order:
-> - **Step 1** (`xmtp_dispatch_session`): relay the user's decision to the sub session. Without this call, the sub never receives the decision and the task is **stuck forever**.
-> - **Step 2** (if present, `xmtp_prompt_user`): render the next pending entry to the user.
+> - **Step 1** (`okx-a2a session send --no-wait`): relay the user's decision to the sub session. Without this call, the sub never receives the decision and the task is **stuck forever**.
+> - **Step 2** (if present, `okx-a2a user decision-request`): render the next pending entry to the user.
 > - ❌ Treating the playbook output as "done" instead of executing it = relay lost = task stuck.
 

@@ -217,8 +217,8 @@ pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let title = ctx.title_display;
-    let cmd_pending_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[Pending ASP {short_id}] {title} ASP-contact decision"), "provider_pending");
-    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, &format!("[No ASP {short_id}] {title} next-step decision"), "no_asp_found");
+    let cmd_pending_asp = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[Pending ASP {short_id}] {title} ASP-contact decision"), "provider_pending");
+    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[No ASP {short_id}] {title} next-step decision"), "no_asp_found");
 
     let no_sellers = super::super::content::no_more_sellers_user_notify(job_id);
     let pending_empty = super::super::content::pending_list_empty_user_notify();

@@ -15,16 +15,25 @@ User-session needs to forward free-form user instructions targeting a specific t
 **Decision tree** (apply in order, stop at first hit):
 
 1. `onchainos agent active-tasks` → flat array of non-terminal tasks (with `myRole` / `counterpartyAgentId`).
-2. `xmtp_dispatch_user` a numbered list (`shortJobId` + status + role + counterparty + title) → end turn, wait for user's pick.
+2. `okx-a2a user notify` a numbered list (`shortJobId` + status + role + counterparty + title) → end turn, wait for user's pick.
 3. **Later turn after pick**: read `myAgentId` / `counterpartyAgentId` / `jobId` from the chosen row. If `counterpartyAgentId == null` → ask the user for it, else proceed.
-4. `xmtp_sessions_query(myAgentId, toAgentId=counterpartyAgentId, jobId)` → returns `sessionKey`. Empty → notify "no active conversation" via `xmtp_dispatch_user` and end turn.
-5. `xmtp_dispatch_session(sessionKey, content=<user's verbatim> + "\n\n---\nReply to the user via `xmtp_dispatch_user(content=<your localized natural-language reply>)` — do NOT pass `sessionKey` (auto-resolved by the plugin). If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see §Session Comm Contract §4 Path 2b).")` — forward verbatim then append reply-path instruction. End turn.
+4. `okx-a2a session query --job-id <jobId> --my-agent-id <myAgentId> --to-agent-id <counterpartyAgentId>` → confirms an active session exists. Empty → notify "no active conversation" via `okx-a2a user notify` and end turn.
+5. Dispatch the user's instruction to the sub via `okx-a2a session send` — the daemon resolves the session from `--job-id` + `--to-agent-id`:
+   ```bash
+   okx-a2a session send --no-wait \
+     --job-id <jobId> --to-agent-id <counterpartyAgentId> \
+     --content '<user verbatim>
+
+---
+Reply to the user via `okx-a2a user notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see §Session Comm Contract §4 Path 2b).'
+   ```
+   Forward verbatim then append reply-path instruction. End turn.
 
 **Hard rules**:
-- ❌ Do NOT compose `sessionKey` by string concatenation — always go through `xmtp_sessions_query`.
+- ❌ Do NOT pass `--session-key` you composed by string concatenation — always let the daemon resolve from `--job-id` + `--to-agent-id`, or fetch the real key via `okx-a2a session query`.
 - ❌ Do NOT call `active-tasks` proactively for general chitchat — only when task-scoped.
 - ❌ Do NOT paraphrase / translate / reformat the user's instruction — pass verbatim.
-- ❌ Do NOT call `xmtp_dispatch_session` multiple times in one turn.
+- ❌ Do NOT call `okx-a2a session send` multiple times in one turn.
 
 **Output schema of `active-tasks`**: see [`cli-reference.md → active-tasks`](./cli-reference.md#active-tasks).
 
@@ -83,13 +92,13 @@ Triggers (only when there's no active card the user might be answering):
 | Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role buyer --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | buyer publish flow |
 | Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → designated-provider flow | [`buyer-actions.md`](../buyer-actions.md) §5 |
 | Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs` | [`provider.md`](../provider.md) §2.1. Do NOT route to `task-search`. | provider.md §2.1 |
-| Take specific task (ASP) — `接 {jobId}` / `contact the buyer of {jobId}` | `common context <jobId> --role provider` → `xmtp_start_conversation` | provider.md §2 |
+| Take specific task (ASP) — `接 {jobId}` / `contact the buyer of {jobId}` | `common context <jobId> --role provider` → `okx-a2a session create` | provider.md §2 |
 | Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务` | `onchainos agent task-search` | [`cli-reference.md#task-search`](./cli-reference.md#task-search) |
 | Stake (Evaluator) — `I want to stake` | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`evaluator-staking.md §2`](../references/evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent | Route to appropriate skill; do NOT suggest task creation | — |
 
 ⚠️ **Disambig — `接单` vs `搜索任务`**: skill-profile match ("用 X 接单") → `recommend-task`; explicit filters → `task-search`.
-🛑 **ASP constraint**: "take task X" → must `xmtp_start_conversation` + negotiate first; do NOT directly `apply`.
+🛑 **ASP constraint**: "take task X" → must `okx-a2a session create` + negotiate first; do NOT directly `apply`.
 
 ---
 

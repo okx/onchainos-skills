@@ -59,8 +59,7 @@ pub async fn handle_task_attach(client: &mut TaskApiClient, job_id: &str, file_p
     println!("   If a sub session exists for this job (task already has a matched provider),");
     println!("   you MUST call xmtp_dispatch_session to notify the sub session:");
     println!();
-    println!("   1. xmtp_sessions_query (myAgentId, jobId={job_id}) → find the sub session key", );
-    println!("   2. xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[ATTACHMENT_ADDED] {}\")  ← exact prefix, do NOT change", dest.display());
+    println!("   Call xmtp_dispatch_session with (jobId={job_id}, toAgentId=<peer agentId from sub session>) and content=\"[ATTACHMENT_ADDED] {}\"  ← exact prefix, do NOT change", dest.display());
     println!();
     println!("   If NO sub session exists yet (task not matched with a provider), skip the dispatch —");
     println!("   the sub session will pick up the file automatically via list-attachments when it starts.");
