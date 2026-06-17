@@ -40,9 +40,11 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
 
 ## Fields-from-user (output-safety invariant)
 
-`name` / `description` / `picture` / `service.*` come from the user's **literal reply this turn** — never pre-filled from userEmail, wallet name, or session metadata. Carve-out: you MAY reformat the user's OWN words into the 3-part service description and draft 1–3 example prompts (illustrate, never invent a capability or metric).
+`name` / `description` / `picture` / `service.*` come from the user's **literal reply this turn** — never pre-filled from userEmail, wallet name, or session metadata. Carve-out: you MAY reformat the user's OWN words into the **2-part service description** (① core-capability summary ② what the user must provide) on separate lines (illustrate, never invent a capability or metric).
 
-**Confirmation requirement for any reformat/draft (non-overridable):** reformatting or drafting is a *draft*, never an authorization to commit silently. Whenever you reshape the user's words or draft example prompts, you MUST (1) flag every affected row on the confirmation card / diff card with an explicit marker — e.g. ` ✏️ drafted from your words — please review` — so the user can tell Claude-rewritten content from their own verbatim input, and (2) wait for the normal card confirm (Reply **1**) before the write. Never let reformatted/drafted content reach the chain presented as the user's literal input. If the user flags any drafted row as wrong, re-collect that field from their own words and redraw — do not argue or keep your draft.
+**Name must be a brand, not a person (semantic QA — register §4):** block any agent name that **contains** a celebrity / public-figure name as a substring, even when prefixed or suffixed (e.g. Trump, Musk, CZ, 马斯克, 马云). This is a semantic check, not a CLI mechanical rule.
+
+**Confirmation requirement for any reformat/draft (non-overridable):** reformatting or drafting is a *draft*, never an authorization to commit silently. Whenever you reshape the user's words into the 2-part description, you MUST (1) flag every affected row on the confirmation card / diff card with an explicit marker — e.g. ` ✏️ drafted from your words — please review` — so the user can tell Claude-rewritten content from their own verbatim input, and (2) wait for the normal card confirm (Reply **1**) before the write. Never let reformatted/drafted content reach the chain presented as the user's literal input. If the user flags any drafted row as wrong, re-collect that field from their own words and redraw — do not argue or keep your draft.
 
 ## Commands (10 `onchainos agent` subcommands — you invoke them, never show them)
 
@@ -63,7 +65,7 @@ Array fields: create/update/get/search → `list`; feedback-list → `items` or 
 | key | required | rule |
 |---|---|---|
 | `name` | ✅ | service name (5–30) |
-| `servicedescription` | ✅ | 3-part description (summary / capabilities / 1–3 prompts) |
+| `servicedescription` | ✅ | 2-part description on separate lines: ① core-capability summary (≤200 CJK chars) · ② what the user must provide (≤200 CJK chars). Total ≤400 CJK chars; no example prompts / links / tech-stack / disclaimers. Length is counted in **East-Asian display width** (CJK = 2, ASCII = 1) — matches the backend |
 | `servicetype` | ✅ | raw enum `A2MCP` (API service) or `A2A` (agent to agent) — never the localized label |
 | `fee` | A2MCP ✅ / A2A optional | a **plain number as a JSON string**, e.g. `"10"` (quoted — never a bare number `10`). USDT is the implicit, only currency; **no currency suffix/symbol**, ≤6 dp. `"10 USDT"` / `"5元"` → rejected (P1) |
 | `endpoint` | A2MCP only | `https://…`; **omit entirely for A2A** |

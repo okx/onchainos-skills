@@ -93,19 +93,26 @@ fn a2a_with_endpoint_fails_t3() {
 }
 
 #[test]
-fn fee_with_negotiable_paren_fails_p3_and_p4() {
-    let service = svc(
-        "Pricing Service",
-        "Does a thing.\\nMore detail here.\\nDo the thing",
-        "A2A",
-        "0.2 (negotiable)",
-        None,
-    );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
-    let c = codes(&r);
-    assert!(c.contains(&"P3".to_string()), "got {:?}", c);
-    assert!(c.contains(&"P4".to_string()), "got {:?}", c);
-    assert!(!r.pass);
+fn fee_with_negotiation_or_paren_fails_p1() {
+    // The spec no longer enumerates parenthetical / negotiation cases as
+    // separate rules; any non-plain-number fee is rejected via P1 (and there
+    // is no longer a P3 / P4 code). Covers ASCII parens, fullwidth parens, and
+    // negotiation wording.
+    for fee in &["0.2 (negotiable)", "0.05 USDT（支持 USDG 结算）", "按复杂度协商"] {
+        let service = svc(
+            "Pricing Service",
+            "Does a thing.\\nMore detail here.\\nDo the thing",
+            "A2A",
+            fee,
+            None,
+        );
+        let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+        let c = codes(&r);
+        assert!(c.contains(&"P1".to_string()), "fee={fee} got {:?}", c);
+        assert!(!c.contains(&"P3".to_string()), "P3 retired, fee={fee} got {:?}", c);
+        assert!(!c.contains(&"P4".to_string()), "P4 retired, fee={fee} got {:?}", c);
+        assert!(!r.pass);
+    }
 }
 
 #[test]
@@ -623,11 +630,11 @@ fn requester_ignores_invalid_service_json() {
     assert!(r.pass, "got {:?}", codes(&r));
 }
 
-// ─── D1–D6: service description structure ─────────────────────────────────
+// ─── D1–D7: service description structure (two-part, display-width) ────────
 
 #[test]
-fn description_missing_parts_fails_d1() {
-    // Only one line → D1.
+fn description_single_line_fails_d1() {
+    // Only one non-empty line → no part 2 → D1.
     let service = svc(
         "Doc Summarizer",
         "Does one thing only",
@@ -640,66 +647,71 @@ fn description_missing_parts_fails_d1() {
 }
 
 #[test]
-fn description_two_parts_fails_d1() {
-    let service = svc(
-        "Doc Summarizer",
-        "Summary line.\nCapabilities line.",
-        "A2A",
-        "5",
-        None,
-    );
+fn description_empty_fails_d1() {
+    let service = svc("Doc Summarizer", "", "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
-fn description_over_400_chars_fails_d2() {
-    // 401-char description.
-    let long = "x".repeat(401);
-    let service = svc("Doc Summarizer", &long, "A2A", "5", None);
+fn description_two_parts_passes_d1() {
+    // First line = summary, second line = what to provide → valid two-part.
+    let service = svc(
+        "Doc Summarizer",
+        "Summary line.\nProvide: a document and a target language.",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn description_over_800_width_fails_d2() {
+    // 801 half-width chars across two lines → total display width 801 > 800.
+    let part1 = "x".repeat(400);
+    let part2 = "y".repeat(401);
+    let desc = format!("{part1}\n{part2}");
+    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
+    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
+    // 400-CJK-char part 2 is too long too (800 width) → also D4.
+}
+
+#[test]
+fn description_cjk_width_counts_double_d2() {
+    // 401 CJK chars on one line + a short second line. Width = 401*2 = 802 > 800.
+    let part1 = "测".repeat(401);
+    let desc = format!("{part1}\n需要提供钱包地址");
+    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
-fn description_part1_over_50_chars_fails_d3() {
-    // Part 1 (summary) exceeds 50 chars.
-    let p1 = "A".repeat(51);
-    let desc = format!("{p1}\nCapabilities paragraph here.\nExample prompt one");
+fn description_part1_over_400_width_fails_d3() {
+    // Part 1 = first line; 401 half-width chars > 400 width.
+    let p1 = "A".repeat(401);
+    let desc = format!("{p1}\nProvide a document.");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D3".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
-fn description_part2_over_150_chars_fails_d4() {
-    let p2 = "B".repeat(151);
-    let desc = format!("Short summary.\n{p2}\nExample prompt one");
+fn description_part2_over_400_width_fails_d4() {
+    // Part 2 = LAST line; 401 half-width chars > 400 width.
+    let p2 = "B".repeat(401);
+    let desc = format!("Short summary.\n{p2}");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
-fn description_over_3_prompts_fails_d5() {
-    let desc = "Short summary.\nCapabilities line.\nPrompt one\nPrompt two\nPrompt three\nPrompt four";
-    let service = svc("Doc Summarizer", desc, "A2A", "5", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D5".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn description_prompt_over_80_chars_fails_d5() {
-    let long_prompt = "C".repeat(81);
-    let desc = format!("Short summary.\nCapabilities line.\n{long_prompt}");
-    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D5".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
 fn description_with_url_fails_d6() {
-    let desc = "Short summary.\nCapabilities.\nhttps://example.com for more";
+    let desc = "Short summary.\nhttps://example.com for more";
     let service = svc("Doc Summarizer", desc, "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D6".to_string()), "got {:?}", codes(&r));
@@ -924,16 +936,16 @@ fn hex_address_non_hex_char_terminates_run() {
     assert!(contains_hex_address("0x123456g"));
 }
 
-// D1 + D2 both fire on single long line
+// D1 + D2 both fire on a single over-long line
 #[test]
-fn description_over_400_single_line_fails_d1_and_d2() {
-    // A single line of 401 chars → D2 (too long) and D1 (only 1 part).
-    let long = "x".repeat(401);
+fn description_over_800_single_line_fails_d1_and_d2() {
+    // A single line of 801 chars → D2 (total width > 800) and D1 (only 1 part).
+    let long = "x".repeat(801);
     let service = svc("Doc Summarizer", &long, "A2A", "5", None);
     let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);
     assert!(c.contains(&"D2".to_string()), "expected D2, got {:?}", c);
-    assert!(c.contains(&"D1".to_string()), "expected D1 (single line → <3 parts), got {:?}", c);
+    assert!(c.contains(&"D1".to_string()), "expected D1 (single line → no part 2), got {:?}", c);
 }
 
 // N3 integration: No. suffix through run_validation
