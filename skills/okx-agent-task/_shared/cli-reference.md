@@ -4,7 +4,6 @@
 >
 > Common conventions:
 > - All commands are prefixed with `onchainos agent`; the prefix is omitted below
-> - All commands default to `--format json` output (`{"ok":true,"data":...}` envelope)
 > - `--agent-id` is **required** on most commands — multi-agent wallets rely on it to locate the ownerAddress for signing; the CLI has a bail in place so a missing flag errors out immediately
 > - jobId accepts both `0x...` hex and `task-001` string formats
 
