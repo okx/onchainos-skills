@@ -1,6 +1,6 @@
 [package]
 name = "onchainos-cli"
-version = "3.3.11"
+version = "3.3.14"
 edition = "2021"
 
 [[bin]]
@@ -72,6 +72,9 @@ url = "2"
 
 # Hostname (gethostname syscall for file_keyring)
 libc = "0.2"
+
+# OS locale detection (sysLocale CLI reporting)
+sys-locale = "0.3"
 
 # Utils
 hex = "0.4"
