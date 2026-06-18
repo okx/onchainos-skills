@@ -10,37 +10,6 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-/// Spawn `okx-a2a session status --json` and return the active sessionKey.
-///
-/// - `Ok(Some(value))` — CLI succeeded, JSON parsed, sessionKey present
-/// - `Ok(None)`        — CLI succeeded but no active session (field absent)
-/// - `Err(e)`          — spawn failed, non-zero exit, or stdout not valid JSON
-#[deprecated(
-    note = "`okx-a2a session status` is not documented in the current CLI spec — \
-            this call will fail at runtime. Migrate to job-id / to-agent-id based lookups."
-)]
-pub fn session_status() -> Result<Option<String>> {
-    let out = Command::new("okx-a2a")
-        .args(["session", "status", "--json"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a session status exit {status}: {stderr}", status = out.status);
-    }
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout)
-        .map_err(|e| anyhow::anyhow!("session status stdout not valid JSON: {e}"))?;
-    // Same dual-shape handling as session_create: prefer nested
-    // `session.sessionKey`, fall back to top-level `sessionKey`.
-    let sk = json
-        .get("session")
-        .and_then(|s| s.get("sessionKey"))
-        .and_then(|v| v.as_str())
-        .or_else(|| json.get("sessionKey").and_then(|v| v.as_str()))
-        .map(|s| s.to_string());
-    Ok(sk)
-}
-
 // ── User-facing notifications ──────────────────────────────────────────────
 
 /// Bridge equivalent: `xmtp_dispatch_user '{"content": "..."}'`
@@ -148,36 +117,12 @@ pub fn session_create(job_id: &str, my_agent_id: &str, to_agent_id: &str) -> Res
         .ok_or_else(|| anyhow::anyhow!("session create response missing sessionKey (checked session.sessionKey and top-level)"))
 }
 
-/// Bridge equivalent: `xmtp_dispatch_session '{sessionKey, content}'`
-/// Local sub→sub dispatch (NOT XMTP wire). `--no-wait` is mandatory — the
-/// bridge wires fire-and-forget; ack waiting would block the sender.
-/// `--session-key` is mandatory — CLI has no default (bridge silently defaults
-/// to "main", but the CLI does not).
-#[deprecated(note = "use `session_send_by_job` — sessionKey path is being phased out per CLI spec")]
-pub fn session_send(session_key: &str, content: &str) -> Result<()> {
-    let out = Command::new("okx-a2a")
-        .args([
-            "session", "send",
-            "--session-key", session_key,
-            "--content", content,
-            "--no-wait",
-            "--json",
-        ])
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a session send exit {status}: {stderr}", status = out.status);
-    }
-    Ok(())
-}
-
 /// Dispatch a session message using the new job-id based addressing.
 ///
 /// - `to_agent_id = None`  → sends to the `backup:<jobId>` session.
 /// - `to_agent_id = Some`  → sends to every session matching `jobId + toAgentId`.
 ///   The CLI auto-suffixes message ids to avoid duplicates across fan-out.
-pub fn session_send_by_job(job_id: &str, to_agent_id: Option<&str>, content: &str) -> Result<()> {
+pub fn session_send(job_id: &str, to_agent_id: Option<&str>, content: &str) -> Result<()> {
     let mut args: Vec<&str> = vec![
         "session", "send",
         "--job-id", job_id,

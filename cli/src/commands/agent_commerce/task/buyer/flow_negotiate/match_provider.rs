@@ -290,7 +290,7 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
             return format!("[provider_conversation_pick] ERROR: session create failed: {e}\n");
         }
     }
-    if let Err(e) = okx_a2a::session_send_by_job(job_id, Some(dp_id), prefetch) {
+    if let Err(e) = okx_a2a::session_send(job_id, Some(dp_id), prefetch) {
         return format!("[provider_conversation_pick] ERROR: SKILL_PREFETCH failed: {e}\n");
     }
 

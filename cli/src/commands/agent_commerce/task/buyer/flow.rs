@@ -709,17 +709,22 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=view ASP list  B=specify another ASP (include the agentId)  C=close the job\".\n"
                 ),
-                "apply_over_budget" => {
-                    let switch_asp = switch_asp_routing(job_id, agent_id, "apply_over_budget");
+                "apply_over_budget" | "job_provider_reject" => {
+                    let switch_asp = switch_asp_routing(job_id, agent_id, &source);
+                    let scene_lead = if source == "apply_over_budget" {
+                        "ASP applied but quote exceeded max budget; apply auto-rejected."
+                    } else {
+                        "ASP declined to take this task; the apply has been reset."
+                    };
                     format!(
-                    "[User decision relay] source_event=`apply_over_budget`, user's verbatim reply: `{reply}`\n\n\
-                     ASP applied but quote exceeded max budget; apply auto-rejected. Options: A=browse / B=designate / (C=make public if private) / last=close. **Semantic mapping**:\n\n\
+                    "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
+                     {scene_lead} Options: A=browse / B=designate / (C=make public if private) / last=close. **Semantic mapping**:\n\n\
                      \x20\x20• **A — Browse ASP list** — typical intents: A / 选A / `推荐` / `列表` / `list` / `浏览`. Action: `onchainos agent asp-match --job-id {job_id}` — push the card file via `pending-decisions-v2 request --source-event asp_match_pick --user-content-file \"<card file path>\"`. If non-English, translate field labels + footer and pass via `--user-content` instead.\n\
                      \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId** (e.g. `B 864` / `指定 864`). Action (switch-asp flow):\n\
                      {switch_asp}\
                      \x20\x20• **C — Make public** — typical intents: C / 选C / `public` / `公开`. Action: `onchainos agent set-public {job_id}`. (Harmless no-op if already public.)\n\
                      \x20\x20• **Close** (last option, C or D) — typical intents: `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
-                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event apply_over_budget`. **`--user-content` and `--list-label` must be localized**.\n"
+                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized**.\n"
                 )},
                 "x402_price_mismatch" => format!(
                     "[User decision relay] source_event=`x402_price_mismatch`, user's verbatim reply: `{reply}`\n\n\
@@ -825,6 +830,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "user_decision_provider_offline" | "user_decision_x402_invalid" |
         "user_decision_over_budget" |
         "user_decision_negotiate_over_budget" | "user_decision_apply_over_budget" |
+        "user_decision_job_provider_reject" |
         "user_decision_x402_price_mismatch" |
         "user_decision_set_asp_params"
     );

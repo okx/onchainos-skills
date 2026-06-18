@@ -690,10 +690,11 @@ fn handle_request(
 }
 
 /// CLI-driver bypass: build the full system-shaped relay envelope from the
-/// caller-supplied routing fields and emit `playbook_relay_only`. Mirrors the
-/// queue-based `handle_resolve` envelope shape exactly (same fields, same
-/// `user_decision_<source_event>` event), so the receiving sub routes via the
-/// same `next-action --event user_decision_<X>` handler regardless of mode.
+/// caller-supplied routing fields and dispatch it in-process via
+/// `okx_a2a::session_send`. Mirrors the queue-based `handle_resolve`
+/// envelope shape exactly (same fields, same `user_decision_<source_event>`
+/// event), so the receiving sub routes via the same
+/// `next-action --event user_decision_<X>` handler regardless of mode.
 fn handle_resolve_with_sessionkey(
     user_reply: String,
     job_id: String,
@@ -702,6 +703,7 @@ fn handle_resolve_with_sessionkey(
     to_agent_id: Option<String>,
     source_event: String,
 ) -> Result<()> {
+    use crate::commands::agent_commerce::task::common::okx_a2a;
     trace_log(&format!(
         "handle_resolve_with_sessionkey: job_id={} role={} agent_id={} to_agent_id={:?} source_event={} user_reply={:?}",
         job_id, role, agent_id, to_agent_id, source_event, user_reply,
@@ -734,7 +736,10 @@ fn handle_resolve_with_sessionkey(
             "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",
             agent_id, relay_event, user_reply, job_id, role,
         ));
-    print!("{}", playbook_relay_only_cli(&job_id, to_agent_id.as_deref(), &relay_content));
+    okx_a2a::session_send(&job_id, to_agent_id.as_deref(), &relay_content)?;
+    print!(
+        "▶️ After the relay succeeds, **resume watching** — re-enter the watch loop per `skills/okx-task-watch/SKILL.md` (preserve the session's sticky `--job-id` if it was started post-publish).\n"
+    );
     Ok(())
 }
 
@@ -1604,30 +1609,6 @@ fn playbook_relay_only_prompt(job_id: &str, to_agent_id: Option<&str>, relay_con
          ```\n\n\
          ⚠️ Run this command **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
          🛑 User reply consumed — do NOT reuse it (no `resolve-prompt` retry, no future-card reference); wait for a fresh user message.\n",
-        job = job_id_q,
-        to_flag = fmt_to_agent_flag_bash(to_agent_id),
-        content = relay_content_q,
-    )
-}
-
-/// CLI-driver variant of `playbook_relay_only`. Uses the `okx-a2a session send`
-/// CLI subprocess (single-active in-process flow; no queue persistence).
-/// Same semantics as `playbook_relay_only`: relay once, then end.
-fn playbook_relay_only_cli(job_id: &str, to_agent_id: Option<&str>, relay_content: &str) -> String {
-    // Single-quote the bash args; only `'` itself needs escaping via the canonical `'\''` trick.
-    let job_id_q = job_id.replace('\'', "'\\''");
-    let relay_content_q = relay_content.replace('\'', "'\\''");
-    format!(
-        "Relay the user's decision to the just-resolved sub session.\n\n\
-         ```bash\n\
-         okx-a2a session send \\\n\
-         \x20\x20--job-id '{job}' \\\n\
-         \x20\x20{to_flag}--content '{content}' \\\n\
-         \x20\x20--json\n\
-         ```\n\n\
-         ⚠️ Run this command **exactly once**. Repeat = recursion loop; skip = task stalls.\n\
-         🛑 User reply consumed — do NOT reuse it (no `resolve-with-sessionkey` retry, no future-card reference); wait for a fresh user message.\n\
-         ▶️ After the relay succeeds, **resume watching** — re-enter the watch loop per `skills/okx-task-watch/SKILL.md` (preserve the session's sticky `--job-id` if it was started post-publish).\n",
         job = job_id_q,
         to_flag = fmt_to_agent_flag_bash(to_agent_id),
         content = relay_content_q,

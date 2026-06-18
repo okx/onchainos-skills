@@ -280,22 +280,17 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
 
     // visibility: 0 = public, 1 = private. The "make public" option only makes sense
     // when the task is currently private; otherwise drop the option and renumber close.
     let is_private = visibility == 1;
-    let option_count_word = if is_private { "four" } else { "three" };
     let option_count_num = if is_private { "4" } else { "3" };
-    let close_num = if is_private { "4" } else { "3" };
-    let option3_user_line = if is_private {
-        "3. Make the task public so any qualified ASP can apply\n     "
+    let close_label = if is_private { "D" } else { "C" };
+    let option_public_line = if is_private {
+        "C. Make the task public so any qualified ASP can apply\n         "
     } else {
         ""
-    };
-    let option3_llm_line = if is_private {
-        format!("\x20\x20• 3 / \"public\" / \"open\" / \"公开\"                  → run `onchainos agent set-public {job_id} --agent-id {agent_id}` then END TURN.\n     ")
-    } else {
-        String::new()
     };
 
     // Step 0 — reset the rejected ASP binding on the task record (empty body).
@@ -313,37 +308,35 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
         );
     }
 
+    let session_hint = super::super::flow::SESSION_STATUS_HINT;
+    let l10n_prompt = super::super::flow::L10N_PROMPT;
+    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
+    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
+    let cmd = super::super::flow::pending_cmd(
+        job_id,
+        agent_id,
+        None,
+        &format!("[Reject {short_id}] next-step decision"),
+        "job_provider_reject",
+    );
+
     format!(
-    "[Your next action — call ONE command only, then END TURN]\n\n\
-     🌐 **Localize first** — rewrite the `--user-content` template below into the user's language (preserve the {option_count_word} numbered choices and their order). The `--llm-content` block stays English verbatim — it is consumed by the user-session agent for routing, not by the human user.\n\n\
-     Deliver the {option_count_num}-option card:\n\
+    "[job_provider_reject] ✅ ASP binding reset (reset/asp) completed in-process.\n\n\
+     🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
+     {session_hint}\n\
      ```bash\n\
-     onchainos agent pending-decisions-v2 request \\\n\
-     \x20\x20--job-id {job_id} \\\n\
-     \x20\x20--role buyer \\\n\
-     \x20\x20--agent-id {agent_id} \\\n\
-     \x20\x20--list-label '' \\\n\
-     \x20\x20--user-content '<LOCALIZED user-facing text — see template below>' \\\n\
-     \x20\x20--llm-content '<English routing block — see template below; copy verbatim>'\n\
-     ```\n\n\
-     **`--user-content` template (translate to the user's language; keep the {option_count_num} numbered options):**\n\
+     {cmd}\n\
      ```\n\
-     ASP declined to take this task (jobId: {job_id}).\n\n\
-     What would you like to do next?\n\
-     1. Browse the ASP list\n\
-     2. Designate a specific ASP by agentId\n\
-     {option3_user_line}{close_num}. Close the task\n\
-     ```\n\n\
-     **`--llm-content` block (keep English; copy verbatim — do NOT translate):**\n\
+     {l10n_prompt}\n\
+     **`--user-content` template** (canonical English — translate to user's language; keep the {option_count_num} lettered options):\n\
      ```\n\
-     [USER_DECISION_REQUEST][source: job_provider_reject][job: {job_id}][role: buyer][agentId: {agent_id}]\n\n\
-     Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
-     Step 2 — When the user actually replies (next turn), route by choice:\n\
-     \x20\x20• 1 / \"list\" / \"asp-match\" / \"浏览\" / \"推荐\"   → run `onchainos agent asp-match --job-id {job_id}` to fetch the ASP-match list, then re-prompt the user to pick one.\n\
-     \x20\x20• 2 / \"designate\" / \"specify\" / \"指定\"           → run `onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json` to get service info, then `onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '<params>' --service-token-address <feeToken> --service-token-amount <feeAmount>`.\n\
-     {option3_llm_line}\x20\x20• {close_num} / \"close\" / \"cancel\" / \"关闭\"                  → run `onchainos agent close {job_id} --agent-id {agent_id}` then END TURN.\n\
+     [Job {short_id} — you are the User Agent] ASP declined to take this task. What would you like to do next?\n\n\
+     A. Browse the ASP list\n\
+     B. Designate a specific ASP by agentId\n\
+     {option_public_line}{close_label}. Close the task\n\
      ```\n\n\
-     → After `decision-request` returns, **END THIS TURN**. Do NOT call any other tool in this turn.\n"
+     {follow_playbook}\n\
+     {route_hint}\n"
     )
 }
 
