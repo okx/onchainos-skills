@@ -4,6 +4,30 @@
 
 The CLI accepts human-readable chain names and resolves them automatically.
 
-When a wallet account is created via `onchainos wallet add`, the response's `addressList` enumerates every chain on which an address was generated for that account — the backend determines the full set at creation time, currently spanning 18+ chains across the EVM and Solana families (Ethereum, BNB Chain, Polygon, Arbitrum, Base, Optimism, X Layer, Avalanche, Linea, Scroll, zkSync, Sonic, Blast, Fantom, Monad, Conflux, Tempo, Solana, etc.). Treat that response as the source of truth — do not hard-code a chain count or list here.
+## Wallet address creation (7 chains)
 
-For the up-to-date list of chains the CLI recognizes (with both name aliases and chainIndex), run `onchainos wallet chains`.
+The following 7 chains support **wallet address creation** (i.e., you can generate a wallet address on these chains):
+
+| Chain | Name | chainIndex |
+|---|---|---|
+| XLayer | `xlayer` | `196` |
+| XLayer Testnet | `xlayer_test` | `1952` |
+| Solana | `solana` | `501` |
+| Ethereum | `ethereum` | `1` |
+| Base | `base` | `8453` |
+| BSC | `bsc` | `56` |
+| Arbitrum | `arbitrum` | `42161` |
+
+> **Note**: The wallet supports interacting with 17+ chains beyond this list (e.g., Polygon, Avalanche, Optimism).
+> Run `onchainos wallet chains` for the full list of supported chains.
+
+## Gas Station supported chains and tokens (Solana only)
+
+Authoritative matrix for Gas Station. Use this when the Agent needs chain display name, native token symbol, or the set of stablecoins accepted.
+
+| chainIndex | Display name | Native symbol | USDT | USDC | USDG |
+|---|---|---|---|---|---|
+| `501` | Solana | SOL | ✓ | ✓ | ✓ |
+
+> **Always derive the per-tx token set from the response's `gasStationTokenList`** — it's backend-authoritative. The table above is for reference only (FAQ answers, unsupported-chain detection).
+

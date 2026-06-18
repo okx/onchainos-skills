@@ -378,7 +378,7 @@ pub(crate) fn prepare_resolved_entry(
 /// Variant of `sign_payment` that signs exactly what the caller's
 /// `accepts` says, without consulting the saved default asset. Used by
 /// the manual `onchainos payment pay` command so the user-supplied
-/// `--accepts` isn't silently reordered by a stored preference.
+/// `--payload` isn't silently reordered by a stored preference.
 pub async fn sign_payment_with_preference(
     accepts: &Value,
     from: Option<&str>,
@@ -413,11 +413,7 @@ pub async fn sign_payment_with_preference(
     // Permit2 / upto branch — both require a prior PERMIT2 approve; we
     // pre-check allowance so an insufficient approval surfaces here rather
     // than as an on-chain settle revert.
-    let scheme_lower = params
-        .scheme
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let scheme_lower = params.scheme.as_deref().unwrap_or("").to_ascii_lowercase();
     let asset_transfer_method = entry
         .get("extra")
         .and_then(|e| e.get("assetTransferMethod"))
@@ -429,7 +425,10 @@ pub async fn sign_payment_with_preference(
 
     if is_upto || is_exact_permit2 {
         let required: alloy_primitives::U256 = params.amount.parse().with_context(|| {
-            format!("invalid required amount (decimal uint256): {}", params.amount)
+            format!(
+                "invalid required amount (decimal uint256): {}",
+                params.amount
+            )
         })?;
         match crate::permit2_rpc::fetch_permit2_allowance(
             &chain_index,
@@ -485,12 +484,8 @@ pub async fn sign_payment_with_preference(
                 witness_valid_after: &valid_after,
                 chain_id,
             };
-            let payload = crate::permit2_sign::sign_exact_permit2(
-                &chain_index,
-                payer_addr,
-                &input,
-            )
-            .await?;
+            let payload =
+                crate::permit2_sign::sign_exact_permit2(&chain_index, payer_addr, &input).await?;
             return Ok((
                 PaymentProof::Permit2 {
                     signature: payload.signature,
@@ -661,7 +656,7 @@ pub async fn sign_payment_with_preference(
 ///
 /// Signs exactly what `accepts` carries — does NOT consult the saved
 /// default asset. Used by the manual `payment pay-local` command,
-/// which inherits `payment pay`'s "sign what --accepts says" contract so
+/// which inherits `payment pay`'s "sign what --payload says" contract so
 /// the caller's supplied entry isn't silently reordered by a stored
 /// preference.
 ///
@@ -894,6 +889,29 @@ pub fn build_payment_header(
     entry: &Value,
     resource: &str,
 ) -> Result<(&'static str, String)> {
+    // Internal callers (OKX openapi) only have the request URL, so reconstruct
+    // the minimal `{url, mimeType}` resource object. Third-party x402 servers
+    // may send a richer `resource` (with `description` etc.) — those go through
+    // `assemble_v2_payment_header` with the object passed verbatim.
+    assemble_v2_payment_header(
+        proof,
+        entry,
+        &json!({ "url": resource, "mimeType": "application/json" }),
+    )
+}
+
+/// Same as [`build_payment_header`] but takes the `resource` value verbatim
+/// (the object exactly as it appeared in the decoded 402 payload) instead of
+/// reconstructing it from a URL string. Used by `onchainos payment pay`
+/// so the header round-trips whatever the server sent — including
+/// fields like `description` that a reconstruction would drop.
+///
+/// v2 only (emits `PAYMENT-SIGNATURE`).
+pub fn assemble_v2_payment_header(
+    proof: &PaymentProof,
+    entry: &Value,
+    resource: &Value,
+) -> Result<(&'static str, String)> {
     // The Permit2 variants ship `permit2Authorization` instead of
     // `authorization`. Keep the EIP-3009 branch responsible for its own
     // sessionCert embedding — that's a deferred-scheme concern only.
@@ -947,16 +965,41 @@ pub fn build_payment_header(
 
     let body = json!({
         "x402Version": 2,
-        "resource": {
-            "url": resource,
-            "mimeType": "application/json",
-        },
+        "resource": resource,
         "accepted": accepted,
         "payload": payload_inner,
     });
 
     let encoded = B64.encode(serde_json::to_vec(&body).context("encode payment header body")?);
     Ok(("PAYMENT-SIGNATURE", encoded))
+}
+
+/// Build the `onchainos payment pay` header output: assemble the v2
+/// `PAYMENT-SIGNATURE` header and wrap it with the routing metadata the skill
+/// needs to replay the request — mirroring the `charge` / `session` contract so
+/// the agent never has to hand-assemble the header.
+///
+/// `wallet` is read from the payer address inside the signed proof
+/// (`authorization.from` for EIP-3009, `permit2Authorization.from` for
+/// Permit2 / upto).
+pub fn pay_with_header_json(
+    proof: &PaymentProof,
+    entry: &Value,
+    resource: &Value,
+) -> Result<Value> {
+    let (header_name, header_value) = assemble_v2_payment_header(proof, entry, resource)?;
+    let pay = proof.to_pay_json();
+    let wallet = pay
+        .get("authorization")
+        .or_else(|| pay.get("permit2Authorization"))
+        .and_then(|a| a.get("from"))
+        .and_then(|v| v.as_str());
+    Ok(json!({
+        "authorization_header": header_value,
+        "header_name": header_name,
+        "scheme": entry.get("scheme").and_then(|v| v.as_str()).unwrap_or(""),
+        "wallet": wallet,
+    }))
 }
 
 /// Extract numeric chain ID from a CAIP-2 `eip155:<chainId>` identifier.
@@ -977,6 +1020,7 @@ pub(crate) fn parse_eip155_chain_id(network: &str) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::await_holding_lock)] // TEST_ENV_MUTEX serializes process-wide env vars across async tests
     use super::*;
 
     #[test]
@@ -1281,6 +1325,81 @@ mod tests {
         assert_eq!(body["accepted"]["extra"]["sessionCert"], "cert-123");
     }
 
+    // ── P1: `payment pay` direct-header emission ──────────────────
+
+    #[test]
+    fn assemble_v2_header_embeds_resource_verbatim() {
+        let proof = PaymentProof::Eip3009 {
+            signature: "sig".into(),
+            authorization: json!({"from": "0xPayer"}),
+            session_cert: None,
+        };
+        let entry = json!({"scheme":"exact","network":"eip155:196"});
+        // A server-provided resource object carrying an extra `description`
+        // field and a non-default mimeType. The skill passes `decoded.resource`
+        // verbatim today, so both must survive into the header unchanged —
+        // unlike `build_payment_header`, which reconstructs `{url, mimeType}`.
+        let resource = json!({
+            "url": "https://api.example.com/data",
+            "description": "Premium data",
+            "mimeType": "text/plain"
+        });
+        let (name, value) = assemble_v2_payment_header(&proof, &entry, &resource).unwrap();
+        assert_eq!(name, "PAYMENT-SIGNATURE");
+        let body: Value = serde_json::from_slice(&B64.decode(&value).unwrap()).unwrap();
+        assert_eq!(body["x402Version"], 2);
+        assert_eq!(body["resource"], resource); // verbatim — keeps description + text/plain
+        assert_eq!(body["payload"]["authorization"]["from"], "0xPayer");
+    }
+
+    #[test]
+    fn pay_with_header_json_emits_header_and_routing_metadata() {
+        // aggr_deferred carries a sessionCert that must merge into
+        // accepted.extra WITHOUT clobbering the existing `name` — the exact
+        // step the skill used to do by hand and frequently got wrong.
+        let proof = PaymentProof::Eip3009 {
+            signature: "sig".into(),
+            authorization: json!({"from": "0xPayer", "to": "0xMerchant"}),
+            session_cert: Some("cert-aggr".into()),
+        };
+        let entry =
+            json!({"scheme":"aggr_deferred","network":"eip155:196","extra":{"name":"USDG"}});
+        let resource = json!({"url":"https://api.example.com/data","mimeType":"application/json"});
+
+        let out = pay_with_header_json(&proof, &entry, &resource).unwrap();
+
+        assert_eq!(out["header_name"], "PAYMENT-SIGNATURE");
+        assert_eq!(out["scheme"], "aggr_deferred");
+        assert_eq!(out["wallet"], "0xPayer");
+        let header = out["authorization_header"]
+            .as_str()
+            .expect("header is a string");
+        let body: Value = serde_json::from_slice(&B64.decode(header).unwrap()).unwrap();
+        assert_eq!(body["accepted"]["extra"]["sessionCert"], "cert-aggr");
+        assert_eq!(body["accepted"]["extra"]["name"], "USDG"); // not clobbered
+    }
+
+    #[test]
+    fn pay_with_header_json_wallet_from_permit2_authorization() {
+        // Permit2 / upto proofs put the payer under `permit2Authorization.from`,
+        // not `authorization.from` — wallet extraction must handle both.
+        let proof = PaymentProof::Permit2 {
+            signature: "0xsig".into(),
+            permit2_authorization: json!({"from": "0xPermitPayer"}),
+        };
+        let entry = json!({"scheme":"exact","network":"eip155:196",
+            "extra":{"assetTransferMethod":"permit2"}});
+        let resource = json!({"url":"https://api.example.com/data"});
+
+        let out = pay_with_header_json(&proof, &entry, &resource).unwrap();
+
+        assert_eq!(out["wallet"], "0xPermitPayer");
+        let header = out["authorization_header"].as_str().unwrap();
+        let body: Value = serde_json::from_slice(&B64.decode(header).unwrap()).unwrap();
+        assert!(body["payload"].get("permit2Authorization").is_some());
+        assert!(body["payload"].get("authorization").is_none());
+    }
+
     #[test]
     fn read_private_key_reads_from_env_var() {
         // The env var is checked first, so this doesn't need a temp home.
@@ -1423,6 +1542,9 @@ mod tests {
 
     #[tokio::test]
     async fn sign_payment_local_rejects_aggr_deferred_only() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let accepts = json!([{
             "scheme": "aggr_deferred",
             "network": "eip155:196",
@@ -1663,7 +1785,7 @@ mod tests {
         // select the exact entry. This locks in scheme-priority behavior
         // for the manual-command variant, which passes `preferred = None`
         // down to `sign_payment_local_with_preference` unconditionally so
-        // it signs exactly what the caller supplied via `--accepts`.
+        // it signs exactly what the caller supplied via `--payload`.
         let _lock = crate::home::TEST_ENV_MUTEX
             .lock()
             .unwrap_or_else(|e| e.into_inner());

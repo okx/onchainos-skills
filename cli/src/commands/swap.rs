@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 
 use super::Context;
 use crate::client::ApiClient;
+use crate::commands::common::wait_tx_onchain;
 use crate::output;
 use crate::token_alias::{resolve_token_address, validate_address_for_chain};
 use crate::validators::{readable_to_minimal_str, validate_amount, validate_slippage};
@@ -798,31 +799,51 @@ fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
     Ok((tx_hash, order_id))
 }
 
-/// Build ready-to-paste `onchainos wallet history --tx-hash <h> --chain <c>`
-/// commands so callers can poll on-chain status without string surgery.
+/// Build ready-to-paste `onchainos wallet history` commands so callers can poll
+/// on-chain status without string surgery. Prefer `--tx-hash`; when the hash is
+/// empty (Gas Station broadcasts return an orderId before the relayer fills in
+/// the on-chain hash) fall back to `--order-id`, which routes to `/order/detail`
+/// and locates the order deterministically. A `--tx-hash <empty>` command would
+/// instead fall through to `/order/list` and cannot identify the order.
 fn next_steps_for_swap(
     chain_index: &str,
     swap_tx_hash: &str,
+    swap_order_id: &str,
     approve_tx_hash: Option<&str>,
+    approve_order_id: Option<&str>,
 ) -> Value {
     let mut steps = serde_json::Map::new();
-    steps.insert(
-        "checkSwapStatus".to_string(),
-        json!(format!(
-            "onchainos wallet history --tx-hash {} --chain {}",
-            swap_tx_hash, chain_index
-        )),
-    );
-    if let Some(approve) = approve_tx_hash {
-        steps.insert(
-            "checkApproveStatus".to_string(),
-            json!(format!(
-                "onchainos wallet history --tx-hash {} --chain {}",
-                approve, chain_index
-            )),
-        );
+    if let Some(cmd) = history_status_cmd(chain_index, swap_tx_hash, swap_order_id) {
+        steps.insert("checkSwapStatus".to_string(), json!(cmd));
+    }
+    if let Some(cmd) = history_status_cmd(
+        chain_index,
+        approve_tx_hash.unwrap_or(""),
+        approve_order_id.unwrap_or(""),
+    ) {
+        steps.insert("checkApproveStatus".to_string(), json!(cmd));
     }
     Value::Object(steps)
+}
+
+/// Build a `wallet history` status-query command, preferring txHash (routes to
+/// `/order/detail` by hash) and falling back to orderId (`/order/detail` by
+/// orderId, used for Gas Station broadcasts whose hash is not yet available).
+/// Returns `None` when neither identifier is present.
+fn history_status_cmd(chain_index: &str, tx_hash: &str, order_id: &str) -> Option<String> {
+    if !tx_hash.is_empty() {
+        Some(format!(
+            "onchainos wallet history --tx-hash {} --chain {}",
+            tx_hash, chain_index
+        ))
+    } else if !order_id.is_empty() {
+        Some(format!(
+            "onchainos wallet history --order-id {} --chain {}",
+            order_id, chain_index
+        ))
+    } else {
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1127,7 +1148,13 @@ async fn cmd_execute(
         );
     }
     let router_result = &swap_result["routerResult"];
-    let next_steps = next_steps_for_swap(&chain_index, &swap_tx_hash, approve_tx_hash.as_deref());
+    let next_steps = next_steps_for_swap(
+        &chain_index,
+        &swap_tx_hash,
+        &swap_order_id,
+        approve_tx_hash.as_deref(),
+        approve_order_id.as_deref(),
+    );
     let mut out = json!({
         "approveTxHash": approve_tx_hash,
         "swapTxHash": swap_tx_hash,
@@ -1289,7 +1316,8 @@ async fn cmd_execute_batch(
         )
         .await?;
         let swap_tx_hash = extract_tx_hash(&result)?;
-        let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, None);
+        // Batch path never uses Gas Station → no orderId; txHash is always present.
+        let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, "", None, None);
         let router_result = &swap_result["routerResult"];
         let out = json!({
             "approveTxHash": Value::Null,
@@ -1380,7 +1408,8 @@ async fn cmd_execute_batch(
     }
 
     let router_result = &swap_result["routerResult"];
-    let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, approve_tx_hash.as_deref());
+    // Batch path never uses Gas Station → no orderId; txHash is always present.
+    let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, "", approve_tx_hash.as_deref(), None);
     let out = json!({
         "approveTxHash": approve_tx_hash,
         "swapTxHash": swap_tx_hash,
@@ -1469,66 +1498,6 @@ fn token_requires_revoke(chain_index: &str, token: &str) -> bool {
         .is_some_and(|addrs| addrs.iter().any(|a| a.to_lowercase() == token_lc))
 }
 
-/// Per-chain confirmation timeout for [`wait_tx_onchain`]. Picked to cover a
-/// typical block time with a small buffer; falls back to a generous default
-/// for unknown chains so the poller still bounds.
-fn tx_confirmation_timeout(chain_index: &str) -> std::time::Duration {
-    use std::time::Duration;
-    match chain_index {
-        // ETH, Linea
-        "1" | "59144" => Duration::from_secs(20),
-        _ => Duration::from_secs(10),
-    }
-}
-
-/// Poll the public DEX tx-history endpoint until the tx confirms on-chain
-/// (`txStatus == "success"`) or the per-chain timeout elapses.
-///
-/// GET `/api/v6/dex/post-transaction/transaction-detail-by-txhash`
-async fn wait_tx_onchain(client: &mut ApiClient, tx_hash: &str, chain_index: &str) -> Result<()> {
-    use std::time::{Duration, Instant};
-
-    let timeout = tx_confirmation_timeout(chain_index);
-    let poll_interval = Duration::from_secs(1);
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        let result = client
-            .get(
-                "/api/v6/dex/post-transaction/transaction-detail-by-txhash",
-                &[("chainIndex", chain_index), ("txHash", tx_hash)],
-            )
-            .await;
-        if cfg!(feature = "debug-log") {
-            eprintln!(
-                "[DEBUG][wait_tx_onchain] tx={} chain={} response={:?}",
-                tx_hash, chain_index, result
-            );
-        }
-
-        if let Ok(data) = result {
-            let detail = unwrap_api_array(&data);
-            let status = detail["txStatus"].as_str().unwrap_or("");
-            if status.eq_ignore_ascii_case("success") {
-                return Ok(());
-            }
-            if status.eq_ignore_ascii_case("fail") {
-                bail!("tx {} failed on-chain (chain={})", tx_hash, chain_index);
-            }
-        }
-
-        if Instant::now() >= deadline {
-            bail!(
-                "tx {} not confirmed on-chain within {}s (chain={})",
-                tx_hash,
-                timeout.as_secs(),
-                chain_index
-            );
-        }
-        tokio::time::sleep(poll_interval).await;
-    }
-}
-
 /// Compare allowance (spendable) against required amount.
 /// Single source of truth for approve / revoke gating. Used by both single-tx
 /// and batch swap paths to guarantee identical decisions for identical inputs.
@@ -1579,6 +1548,90 @@ mod tests {
         let uint256_max =
             "115792089237316195423570985008687907853269984665640564039457584007913129639935";
         assert!(!is_allowance_insufficient(uint256_max, "1000000"));
+    }
+
+    // ── next-step status-query command builders ────────────────────
+
+    #[test]
+    fn history_status_cmd_prefers_tx_hash() {
+        // txHash present → use --tx-hash (orderId ignored even if present)
+        assert_eq!(
+            history_status_cmd("solana", "0xabc", "999").as_deref(),
+            Some("onchainos wallet history --tx-hash 0xabc --chain solana")
+        );
+    }
+
+    #[test]
+    fn history_status_cmd_falls_back_to_order_id() {
+        // txHash empty + orderId present (Gas Station) → use --order-id
+        assert_eq!(
+            history_status_cmd("solana", "", "1659439748798636032").as_deref(),
+            Some("onchainos wallet history --order-id 1659439748798636032 --chain solana")
+        );
+    }
+
+    #[test]
+    fn history_status_cmd_none_when_both_empty() {
+        assert_eq!(history_status_cmd("solana", "", ""), None);
+    }
+
+    #[test]
+    fn next_steps_for_swap_normal_uses_tx_hash() {
+        // Normal swap: swap txHash present, no orderId, no approve.
+        let steps = next_steps_for_swap("1", "0xswap", "", None, None);
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --tx-hash 0xswap --chain 1")
+        );
+        // No approve identifiers → key must be absent.
+        assert!(steps.get("checkApproveStatus").is_none());
+    }
+
+    #[test]
+    fn next_steps_for_swap_gas_station_uses_order_id() {
+        // Gas Station swap: txHash empty, orderId present → --order-id.
+        let steps = next_steps_for_swap("solana", "", "1659439748798636032", None, None);
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --order-id 1659439748798636032 --chain solana")
+        );
+        assert!(steps.get("checkApproveStatus").is_none());
+    }
+
+    #[test]
+    fn next_steps_for_swap_includes_approve_tx_hash() {
+        // EVM swap with a preceding approve tx → both keys, both via --tx-hash.
+        let steps = next_steps_for_swap("1", "0xswap", "", Some("0xapprove"), None);
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --tx-hash 0xswap --chain 1")
+        );
+        assert_eq!(
+            steps["checkApproveStatus"].as_str(),
+            Some("onchainos wallet history --tx-hash 0xapprove --chain 1")
+        );
+    }
+
+    #[test]
+    fn next_steps_for_swap_approve_falls_back_to_order_id() {
+        // Gas Station with approve: both txHashes empty, both orderIds present.
+        let steps = next_steps_for_swap("solana", "", "swap-oid", None, Some("approve-oid"));
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --order-id swap-oid --chain solana")
+        );
+        assert_eq!(
+            steps["checkApproveStatus"].as_str(),
+            Some("onchainos wallet history --order-id approve-oid --chain solana")
+        );
+    }
+
+    #[test]
+    fn next_steps_for_swap_omits_swap_when_no_identifier() {
+        // Defensive: neither swap txHash nor orderId → checkSwapStatus absent.
+        let steps = next_steps_for_swap("1", "", "", None, None);
+        assert!(steps.get("checkSwapStatus").is_none());
+        assert!(steps.get("checkApproveStatus").is_none());
     }
 
     #[test]

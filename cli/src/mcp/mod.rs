@@ -2222,7 +2222,7 @@ impl McpServer {
         // pair runs as one atomic unit on the shared ApiClient.
         let mut client = self.client.lock().await;
         let raw_amount = match crate::commands::swap::resolve_amount_arg(
-            &mut *client,
+            &mut client,
             None,
             Some(&p.readable_amount),
             &from_token,
@@ -2234,7 +2234,7 @@ impl McpServer {
             Err(e) => return err(e),
         };
         match cross_chain::fetch_quote(
-            &mut *client,
+            &mut client,
             &from_chain_index,
             &to_chain_index,
             &from_token,

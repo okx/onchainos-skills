@@ -48,6 +48,7 @@ For script requests, append `--format json` to all CLI commands.
 | Skill                | Purpose | When to Use |
 |----------------------|---------|-------------|
 | okx-agentic-wallet   | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
+| okx-ai-support       | Customer service guidance: returns Help Center link + operation steps | User wants to find customer service, talk to a human, file a complaint, give feedback, or find help docs / FAQ |
 | okx-wallet-portfolio | Public address balance: total value, all tokens, specific tokens | User asks about wallet holdings, token balances, portfolio value across chains |
 | okx-security         | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
 | okx-dex-market       | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, index/aggregate prices, wallet PnL analysis |
@@ -58,7 +59,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-dex-token        | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history, holder cluster analysis | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, filtered trade history, or holder cluster concentration |
 | okx-dex-social       | Crypto news (latest / by-symbol / search / detail / platforms), market-wide sentiment ranking + per-coin sentiment with trend, per-token vibe timeline + TOP50 KOL leaderboard | User asks for crypto news / headlines, market sentiment, bullish vs bearish mood, top hot coins by chatter, who's tweeting about a token, or token vibe / hotness score |
 | okx-onchain-gateway  | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
-| okx-agent-payments-protocol   | Unified payment dispatcher: x402 (`exact` / `aggr_deferred` schemes — TEE or local-key), MPP (`charge` / `session` intents in transaction or hash mode), and a2a-pay (paymentId-based create / pay / status). Routes by scheme/intent to `references/{exact,aggr_deferred,charge,session,a2a_charge}.md`. | User encounters HTTP 402, mentions x402, MPP channel/voucher/session/charge, or a paymentId / `a2a_...` link / "create payment link" / "payment status" |
+| okx-agent-payments-protocol   | Unified payment dispatcher: x402 (`exact` / `aggr_deferred` schemes — TEE or local-key), MPP (`charge` / `session` intents in transaction or hash mode), and a2a-pay (paymentId-based create / pay / status). Routes by scheme/intent to `references/{accepts-schemes,charge,session,a2a_charge}.md`. | User encounters HTTP 402, mentions x402, MPP channel/voucher/session/charge, or a paymentId / `a2a_...` link / "create payment link" / "payment status" |
 | okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols, claim DeFi rewards across Aave/Lido/PancakeSwap/Kamino/NAVI and hundreds more |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
@@ -78,6 +79,7 @@ When the user names a third-party DApp/protocol as the destination of an action,
 Routing:
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first
 - User mentions wallet/balance/transfer/login → read `skills/okx-agentic-wallet/SKILL.md` first
+- User mentions customer service / talk to a human / complaint / feedback / help docs / FAQ / help center → read `skills/okx-ai-support/SKILL.md` first
 - User names a specific third-party DApp/protocol as the destination, OR asks "what dapps are available" → read `skills/okx-dapp-discovery/SKILL.md` first. That skill owns the supported-DApp set; do not enumerate DApps in this file.
 - User mentions **Gas Station / stablecoin gas / enable or disable gas station / revoke 7702**, or asks FAQ-style questions about any of those (what is / how does it work / which chains / upgrade cost / ...) → read `skills/okx-agentic-wallet/SKILL.md` AND `skills/okx-agentic-wallet/references/gas-station.md` first.
   - **Scope note:** "Gas Station" in this repo always means the OKX Agentic Wallet feature shipped by this CLI + skill — NOT a generic paymaster / meta-transaction / ERC-4337 category.
