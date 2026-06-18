@@ -400,16 +400,6 @@ pub fn x402_replay_success_user_notify(job_id: &str) -> String {
     )
 }
 
-/// x402 replay failure — accepted but endpoint replay failed.
-pub fn x402_replay_fail_user_notify(job_id: &str) -> String {
-    format!(
-        "[x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
-         HTTP status: <replayStatus>\n\
-         Error: <replayBody>\n\
-         Auto-complete will not run. Please give a new instruction; the agent will not auto-retry."
-    )
-}
-
 // ── complete failure (job_accepted x402 branch) ──────────────────
 
 /// x402 complete command failed — notify user with retry command.

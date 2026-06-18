@@ -295,7 +295,19 @@ pub async fn check_x402_endpoint(endpoint: &str, body: Option<&str>) -> Result<X
     let body_text = resp.text().await
         .map_err(|e| anyhow!("failed to read 402 response body: {e}"))?;
 
-    let payload = decode_402_response(&headers, &body_text)?;
+    let payload = match decode_402_response(&headers, &body_text) {
+        Ok(p) => p,
+        Err(_) => {
+            return Ok(X402EndpointCheck {
+                valid: false,
+                status_code: 402,
+                pricing: None,
+                accepts_json: None,
+                x402_version: None,
+                input_required: None,
+            });
+        }
+    };
     if payload.accepts.is_empty() {
         return Ok(X402EndpointCheck {
             valid: false,
@@ -307,7 +319,36 @@ pub async fn check_x402_endpoint(endpoint: &str, body: Option<&str>) -> Result<X
         });
     }
 
-    let pricing = extract_x402_pricing(&payload.accepts)?;
+    let has_valid_entry = payload.accepts.iter().any(|entry| {
+        entry.get("asset").and_then(|v| v.as_str()).is_some()
+            && entry.get("payTo").and_then(|v| v.as_str()).is_some()
+            && entry.get("network").and_then(|v| v.as_str()).is_some()
+            && (entry.get("amount").is_some() || entry.get("maxAmountRequired").is_some())
+    });
+    if !has_valid_entry {
+        return Ok(X402EndpointCheck {
+            valid: false,
+            status_code: 402,
+            pricing: None,
+            accepts_json: None,
+            x402_version: Some(payload.x402_version),
+            input_required: None,
+        });
+    }
+
+    let pricing = match extract_x402_pricing(&payload.accepts) {
+        Ok(p) => p,
+        Err(_) => {
+            return Ok(X402EndpointCheck {
+                valid: false,
+                status_code: 402,
+                pricing: None,
+                accepts_json: None,
+                x402_version: Some(payload.x402_version),
+                input_required: None,
+            });
+        }
+    };
     let accepts_json = serde_json::to_string(&payload.accepts)?;
 
     Ok(X402EndpointCheck {

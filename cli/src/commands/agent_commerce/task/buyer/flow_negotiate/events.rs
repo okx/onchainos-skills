@@ -47,7 +47,6 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     let payment_escrow_notify = super::super::content::payment_mode_escrow_user_notify(job_id, title_display);
     let x402_paying = super::super::content::x402_paying_user_notify(job_id, title_display);
     let x402_replay_ok = super::super::content::x402_replay_success_user_notify(job_id);
-    let x402_replay_fail = super::super::content::x402_replay_fail_user_notify(job_id);
     let short_id = if job_id.len() >= 8 { &job_id[..8] } else { job_id };
     let session_hint = super::super::flow::SESSION_STATUS_HINT;
     let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
@@ -146,7 +145,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      \x20\x20-> **end this turn** and wait for the user's reply. The `job_accepted` event will also arrive; the `job_accepted` handler (B-Branch 2) will detect the pending decision and skip its notification.\n\
      \x20\x20{route_hint}\n\n\
      \x20\x20▸▸ **Otherwise** (generic replay failure, no field info):\n\
-     \x20\x20{x402_replay_fail}\n\
+     \x20\x20Do NOT notify the user here — the `job_accepted` handler (B-Branch 2) will send the failure notification to avoid duplicates.\n\
      \x20\x20-> **end this turn** and wait for the `job_accepted` system notification.\n"
     )
 }

@@ -750,14 +750,71 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      ```\n\
                      \x20\x20- If the re-check returns `valid: true` → extract `acceptsJson`, `amountHuman`, `tokenSymbol` and proceed to **Step 3**.\n\
                      \x20\x20- If the re-check fails → notify the user of the validation error and re-ask via `pending-decisions-v2 request` with `--source-event x402_input_required`.\n\n\
-                     **Step 3 — set-payment-mode (push x402 on-chain):**\n\
-                     ```bash\n\
-                     onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from Step 2> --token-amount <amountHuman from Step 2> --endpoint <endpoint>\n\
-                     ```\n\
-                     ⚠️ **Remember the assembled `--body` JSON** — you must pass it to `task-402-pay` in the `job_payment_mode_changed` turn.\n\n\
-                     **Step 3 result branch:**\n\
-                     \x20\x20- Output contains `\"alreadySet\": true` → call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\"}}' ` immediately.\n\
-                     \x20\x20- Output contains `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n"
+                     **Step 2b — Price & budget guard:**\n\
+                     Compare `amountHuman` from x402-check output against the fee and budget (check in this order — over-budget takes priority):\n\n\
+                     \x20\x201. **Over-budget**: Read `maxBudget` from the `[Pre-fetched task context]`. If `maxBudget` > 0 AND `amountHuman` > `maxBudget`:\n\
+                     \x20\x20\x20\x20Push an `over_budget` decision card:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event over_budget --list-label \"[Over budget <shortJobId>] budget decision\" --user-content \"<compose from template below>\"\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20🌐 `--user-content` template (translate to user's language):\n\
+                     \x20\x20\x20\x20The x402 endpoint's actual price is <amountHuman> <tokenSymbol>, which exceeds your max budget (<maxBudget>). Choose next step:\n\
+                     \x20\x20\x20\x20A. Specify another ASP — provide the agentId\n\
+                     \x20\x20\x20\x20B. Make the job public\n\
+                     \x20\x20\x20\x20C. Close the job\n\
+                     \x20\x20\x20\x20→ **end this turn** and wait for the user's reply.\n\n\
+                     \x20\x202. **Price-mismatch**: Read `feeAmount` from the `[IR_CONTEXT]` block. If both values > 0 AND `|amountHuman - feeAmount| / feeAmount > 0.01` (delta > 1%):\n\
+                     \x20\x20\x20\x20Push a `x402_ir_price_confirm` decision card:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event x402_ir_price_confirm --list-label \"[x402 price <shortJobId>] price confirmation\" --user-content \"<compose from template below>\"\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20🌐 `--user-content` template (translate):\n\
+                     \x20\x20\x20\x20[Job <shortJobId>] The x402 endpoint's actual price is <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
+                     \x20\x20\x20\x20A. Accept — continue with this price\n\
+                     \x20\x20\x20\x20B. Reject — switch to another ASP\n\
+                     \x20\x20\x20\x20`--llm-content` (keep English; fill actual values):\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20[PRICE_CONTEXT] endpoint=<endpoint> amountHuman=<amountHuman> tokenSymbol=<tokenSymbol> acceptsJson=<acceptsJson> body=<assembled body JSON>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20→ **end this turn** and wait for the user's reply.\n\n\
+                     \x20\x203. **Both pass** → proceed to **Step 3**.\n\n\
+                     **Step 3 — set-payment-mode (if needed):**\n\
+                     Check the current task's `paymentMode` from the `[Pre-fetched task context]` or from context.\n\n\
+                     \x20\x20▸ **If paymentMode is already `3` (x402)** → skip `set-payment-mode` and call `next-action` immediately:\n\
+                     \x20\x20```bash\n\
+                     \x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
+                     \x20\x20```\n\n\
+                     \x20\x20▸ **Otherwise** → push payment mode on-chain:\n\
+                     \x20\x20```bash\n\
+                     \x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from Step 2> --token-amount <amountHuman from Step 2> --endpoint <endpoint>\n\
+                     \x20\x20```\n\
+                     \x20\x20**Result branch:**\n\
+                     \x20\x20\x20\x20- Output contains `\"alreadySet\": true` → call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}' ` immediately.\n\
+                     \x20\x20\x20\x20- Output contains `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
+                     ⚠️ **Remember the assembled `--body` JSON** — you must pass it to `task-402-pay` in the `job_payment_mode_changed` turn.\n"
+                ),
+                "x402_ir_price_confirm" => format!(
+                    "[User decision relay] source_event=`x402_ir_price_confirm`, user's verbatim reply: `{reply}`\n\n\
+                     The user was shown a price-mismatch warning after filling x402 inputRequired fields. **Semantic mapping:**\n\n\
+                     \x20\x20• **Accept** — typical intents: A / 选A / `accept` / `接受` / yes / OK.\n\
+                     \x20\x20\x20\x20Read `endpoint`, `amountHuman`, `tokenSymbol`, `acceptsJson`, `body` from the `[PRICE_CONTEXT]` block in the `--llm-content` of the pending decision.\n\
+                     \x20\x20\x20\x20Proceed to set-payment-mode:\n\n\
+                     \x20\x20\x20\x20Check `paymentMode` from the `[Pre-fetched task context]` or from context.\n\
+                     \x20\x20\x20\x20▸ **If paymentMode is already `3`** → skip `set-payment-mode`:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20▸ **Otherwise** → push payment mode on-chain:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol> --token-amount <amountHuman> --endpoint <endpoint>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20**Result branch:**\n\
+                     \x20\x20\x20\x20\x20\x20- `\"alreadySet\": true` → call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
+                     \x20\x20\x20\x20\x20\x20- `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
+                     \x20\x20\x20\x20⚠️ **Remember the `body` from PRICE_CONTEXT** — pass it to `task-402-pay --body` in the `job_payment_mode_changed` turn.\n\n\
+                     \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`.\n\
+                     \x20\x20\x20\x20Action: `onchainos agent mark-failed {job_id} --provider <designated agentId from context>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → push via `--source-event asp_match_pick --user-content-file \"<card file path>\"` (translate if non-English); if empty → push via `--source-event no_asp_found`.\n\n\
+                     ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event x402_ir_price_confirm`. **`--user-content` and `--list-label` must be localized**. Reference (English): \"I didn't catch your reply, please clarify: A=accept this price  B=reject and switch ASP\".\n"
                 ),
                 "x402_replay_input" => format!(
                     "[User decision relay] source_event=`x402_replay_input`, user's verbatim reply: `{reply}`\n\n\

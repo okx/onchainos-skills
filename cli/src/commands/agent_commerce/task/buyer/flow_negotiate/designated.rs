@@ -416,31 +416,15 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          \x20\x20{follow_playbook}\n\
          \x20\x20-> **end this turn** and wait for the user's reply.\n\
          \x20\x20{route_hint}\n\n\
-         - **`result == \"pass\"`** -> all checks passed.\n\
-         \x20\x20Check `serviceParams` from the `[Pre-fetched task context]` block above.\n\n\
-         \x20\x20▸ **If serviceParams is non-empty** (the task carries business parameters that should be sent to the endpoint):\n\
-         \x20\x20\x20\x20The user must confirm these parameters before payment. Follow the same **IR-Step 2** as the `input_required` branch:\n\
-         \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20{cmd_input_required}\n\
-         \x20\x20\x20\x20```\n\
-         \x20\x20\x20\x20{l10n_prompt}\n\
-         \x20\x20\x20\x20`--user-content` template (canonical English — translate to user's language):\n\
-         \x20\x20\x20\x20```\n\
-         \x20\x20\x20\x20[Job {short_id}] The following parameters will be sent to the x402 endpoint along with payment:\n\n\
-         \x20\x20\x20\x20<display serviceParams content — if JSON, show each key: value; if text, show as-is>\n\n\
-         \x20\x20\x20\x20A. Confirm → proceed with payment\n\
-         \x20\x20\x20\x20B. Modify → specify changes\n\
-         \x20\x20\x20\x20```\n\
-         \x20\x20\x20\x20`--llm-content` block (keep English; fill actual values):\n\
-         \x20\x20\x20\x20```\n\
-         \x20\x20\x20\x20[IR_CONTEXT] endpoint=<endpoint> feeTokenSymbol=<feeTokenSymbol from x402-validate> feeAmount=<feeAmount from x402-validate>\n\
-         \x20\x20\x20\x20Pre-filled values: <serviceParams content>\n\
-         \x20\x20\x20\x20```\n\
-         \x20\x20\x20\x20{follow_playbook}\n\
-         \x20\x20\x20\x20-> **end this turn** and wait for the user's reply (the `x402_input_required` handler will validate → set-payment-mode).\n\
-         \x20\x20\x20\x20{route_hint}\n\n\
-         \x20\x20▸ **If serviceParams is empty/null** → proceed directly to **A-Step 3**.\n\n\
-         **A-Step 3 — set-payment-mode (push x402 on-chain):**\n\
+         - **`result == \"pass\"`** -> all checks passed. Proceed to **A-Step 3**.\n\n\
+         **A-Step 3 — set-payment-mode (if needed):**\n\
+         Check `paymentMode` from the `[Pre-fetched task context]` block above.\n\n\
+         ▸ **If paymentMode is already `3` (x402)** → payment mode is already on-chain. Skip `set-payment-mode` and call `next-action` immediately:\n\
+         ```bash\n\
+         onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
+         ```\n\
+         The returned playbook will guide the sign → pay → replay flow.\n\n\
+         ▸ **Otherwise** → push payment mode on-chain:\n\
          ```bash\n\
          onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from x402-validate> --token-amount <amountHuman from x402-validate> --endpoint <endpoint>\n\
          ```\n\
@@ -448,7 +432,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          **A-Step 3 result branch (🛑 MANDATORY — getting this wrong = the flow stalls):**\n\
          Inspect the CLI output (JSON) of set-payment-mode:\n\
          - Output contains `\"alreadySet\": true` -> **do NOT wait for `job_payment_mode_changed`**;\n\
-         \x20\x20call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\"}}'` immediately.\n\
+         \x20\x20call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
          - Output contains `\"confirming\": true` -> **end this turn** and wait for `job_payment_mode_changed`.\n")
 }
 
