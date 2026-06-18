@@ -419,18 +419,10 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     let body = match event {
         // ─── Negotiation / matching phase → flow_negotiate ──────────────────────────
         Event::JobCreated => {
-            if super::content::is_cli_mode() {
-                super::flow_negotiate::job_created_cli(&ctx).await
-            } else {
-                super::flow_negotiate::job_created(&ctx)
-            }
+            super::flow_negotiate::job_created_cli(&ctx).await
         }
         Event::Other(ref s) if s == "provider_conversation" => {
-            if super::content::is_cli_mode() {
-                super::flow_negotiate::provider_conversation_cli(&ctx)
-            } else {
-                super::flow_negotiate::provider_conversation(&ctx)
-            }
+            super::flow_negotiate::provider_conversation_cli(&ctx)
         }
         Event::Other(ref s) if s == "provider_conversation_reject" => {
             let gid = message
@@ -454,11 +446,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                          onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<ASP agentId>\"}}'\n")
             } else {
                 let _ = super::negotiate::save_designated_provider(job_id, dp_id);
-                if super::content::is_cli_mode() {
-                    super::flow_negotiate::provider_conversation_pick_cli(job_id, agent_id, &short_id, dp_id, title_display, prefetched).await
-                } else {
-                    super::flow_negotiate::designated::route_only(job_id, agent_id, &short_id, dp_id, None)
-                }
+                super::flow_negotiate::provider_conversation_pick_cli(job_id, agent_id, &short_id, dp_id, title_display, prefetched).await
             }
         }
         Event::Other(ref s) if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" => {
@@ -506,11 +494,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         }
         Event::JobAccepted => super::flow_lifecycle::job_accepted(&ctx),
         Event::DeliverableReceived => {
-            if super::content::is_cli_mode() {
-                super::flow_lifecycle::deliverable_received_cli(&ctx, message)
-            } else {
-                super::flow_lifecycle::deliverable_received(&ctx)
-            }
+            super::flow_lifecycle::deliverable_received_cli(&ctx, message)
         }
         Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),
         Event::JobRejected => super::flow_lifecycle::job_rejected(&ctx),
@@ -917,19 +901,12 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         "provider_conversation_pick" | "provider_conversation_reject" |
         "job_rejected" | "job_disputed" | "attachment_added" | "provider_conversation"
     );
-    // cli-mode short-circuit: applies to events whose body is self-contained
+    // Minimal-output short-circuit: applies to events whose body is self-contained
     // and does NOT call any of the IRON-RULE-governed commands (okx-a2a xmtp-send /
-    // okx-a2a session status / sessions_spawn / pending-decisions-v2 request). Two
-    // shapes qualify:
-    //   1. `_cli` handlers that executed user_notify / asp-match in-process —
-    //      body is a self-contained 2-step playbook.
-    //   2. Terminal / notification-only events (e.g. `review_expired`) whose
-    //      body is a single `okx-a2a user notify` + end-turn — the body already
-    //      embeds L10N_DISPATCH_SHORT translation hints.
+    // okx-a2a session status / sessions_spawn / pending-decisions-v2 request).
     // Skip every preamble (the IRON RULEs do not apply) and version_prefix
     // (no `okx-a2a xmtp-send` call to validate).
-    let use_cli_minimal = super::content::is_cli_mode()
-        && matches!(event_str,
+    let use_cli_minimal = matches!(event_str,
             "job_created" | "provider_conversation_pick" |
             "negotiate_reply" | "negotiate_ack" | "negotiate_counter" |
             "provider_applied" | "deliverable_received" | "approve_review" |
