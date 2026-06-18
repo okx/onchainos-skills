@@ -589,9 +589,9 @@ pub async fn generate_next_action(
              ==== Negotiation / delivery chat history (from okx-a2a session history) ====\n\
              [time] User Agent(<agentId>): ...\n\
              [time] ASP(<agentId>): ...\n\
-             ... (chronological; key checkpoints: User Agent inquiry / [intent:propose] / your [intent:ack] / User Agent [intent:confirm] / your deliver message)\n\
+             ... (chronological; key checkpoints: provider's cold-start opener / task scope clarifications / provider's capability confirmation / your deliver message / each side's key contention points)\n\
              ```\n\n\
-             ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints (PROPOSE / ACK / CONFIRM / deliverable / each side's key contention points) and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
+             ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints (opener / scope clarifications / capability confirmation / deliverable / each side's key contention points) and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
              If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
              **Step 3 — Upload (off-chain multipart):**\n\
              ```bash\n\
@@ -657,11 +657,13 @@ pub async fn generate_next_action(
             let render_bailout = |header: &str, user_notify: &str| -> String {
                 format!(
                     "[Current state] job_asp_selected — {header}. jobId=`{job_id}` agentId={agent_id}\n\n\
-                     **Notify the user, then end the turn** (🌐 translate template to user's language first):\n\
-                     {user_notify}\n\n\
+                     **Notify the user, then end the turn**:\n\n\
+                     🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
                      ```bash\n\
-                     okx-a2a user notify --content \"<translated text>\"\n\
-                     ```\n"
+                     okx-a2a user notify --content \"<localized content shown below>\"\n\
+                     ```\n\
+                     content:\n\
+                     {user_notify}\n"
                 )
             };
 
@@ -689,18 +691,25 @@ pub async fn generate_next_action(
                          ```bash\n\
                          onchainos agent asp-reject {job_id} --agent-id {agent_id} --reason \"{reason_for_cli}\"\n\
                          ```\n\
-                         Then (🌐 translate template to user's language first):\n\
-                         {notify_body}\n\n\
+                         Then notify the user:\n\n\
+                         🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
                          ```bash\n\
-                         okx-a2a user notify --content \"<translated text>\"\n\
+                         okx-a2a user notify --content \"<localized content shown below>\"\n\
                          ```\n\
+                         content:\n\
+                         {notify_body}\n\n\
                          ❌ Do NOT call `apply`. ❌ Do NOT okx-a2a xmtp-send the buyer.\n"
                     )
                 };
-                // Generic LLM-fillable reject template (used by capability-mismatch / general fallbacks).
+                // Generic LLM-driven reject template — only `capability mismatch` is
+                // LLM-decidable here. `price too low` is handled by the TOO_LOW branch
+                // (code-decided) and `designated service not registered` by the
+                // matched=None branch (code-decided), so the menu collapses to one
+                // option. Kept as a placeholder so the CLI / notify wording stays
+                // verbatim-aligned across the rendered playbook.
                 let reject_template = build_reject_template(
-                    "<short reason: capability mismatch / price too low / designated service not registered>",
-                    "<reason>",
+                    "capability mismatch",
+                    "capability mismatch — the designated service does not match the task",
                 );
 
                 match matched {
@@ -740,7 +749,7 @@ pub async fn generate_next_action(
                             (_, None) => (
                                 "ESTIMATE",
                                 format!("registered fee not set; buyer offer {offer_amount} {buyer_token_symbol} — judge by task complexity"),
-                                "If offer is fair for the workload → apply at offer; else reject."
+                                "If offer is fair for the workload → apply at offer; else counter-apply at your fair price (do NOT reject for price alone)."
                             ),
                             _ => (
                                 "PARSE_FAIL",
@@ -758,18 +767,43 @@ pub async fn generate_next_action(
                              ```bash\n\
                              onchainos agent apply {job_id} --agent-id {agent_id} --token-amount {offer_amount} --token-symbol {buyer_token_symbol}\n\
                              ```\n\n\
-                             ✅ **On success** (exit code 0 + `txHash` in stdout) — notify the user (🌐 fill `<serviceName>` / `<offerAmount>` / `<tokenSymbol>` from [Auto-decision context] above, then translate):\n\
+                             ✅ **On success** (exit code 0 + `txHash` in stdout) — notify the user:\n\n\
+                             🌐 **Localize first** — fill `<serviceName>` / `<offerAmount>` / `<tokenSymbol>` from the [Auto-decision context] above, then rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
+                             ```bash\n\
+                             okx-a2a user notify --content \"<localized content shown below>\"\n\
+                             ```\n\
+                             content:\n\
                              {apply_user_notify}\n\n\
-                             ```bash\n\
-                             okx-a2a user notify --content \"<filled + translated text>\"\n\
-                             ```\n\
                              Then end the turn; wait for the `provider_applied` system event.\n\n\
-                             ❌ **On failure** (non-zero exit / stderr / no txHash) — DO NOT proceed to the success notify. Push a failure notification instead (🌐 fill `<one-line error from apply's stderr>`, then translate):\n\
-                             {apply_failed_notify}\n\n\
+                             ❌ **On failure** (non-zero exit / stderr / no txHash) — DO NOT proceed to the success notify. Push a failure notification instead:\n\n\
+                             🌐 **Localize first** — fill `<one-line error from apply's stderr>`, then rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
                              ```bash\n\
-                             okx-a2a user notify --content \"<filled + translated text>\"\n\
+                             okx-a2a user notify --content \"<localized content shown below>\"\n\
                              ```\n\
+                             content:\n\
+                             {apply_failed_notify}\n\n\
                              Then end the turn. Do NOT retry apply automatically — the user will decide manually.\n"
+                        );
+
+                        // Counter-offer apply template — same `apply` CLI as above but `--token-amount`
+                        // is a placeholder the LLM fills with its own fair price. Token symbol stays
+                        // the buyer's specified token (we don't counter the currency, only the amount).
+                        let apply_counter_template = format!(
+                            "**APPLY-COUNTER path** — capability fits but the buyer's offer is unfair for the workload. Apply at YOUR fair price (buyer will see the difference and decide whether to confirm-accept):\n\
+                             ```bash\n\
+                             onchainos agent apply {job_id} --agent-id {agent_id} --token-amount <YOUR_FAIR_PRICE> --token-symbol {buyer_token_symbol}\n\
+                             ```\n\
+                             ⚠️ `<YOUR_FAIR_PRICE>` — substitute a numeric value YOU judge fair for this workload (e.g. `0.05`). Same token as the buyer's offer ({buyer_token_symbol}); do NOT change the symbol.\n\
+                             ⚠️ Do NOT self-discount to 0 / free. Do NOT throw a wildly inflated number (e.g. 100×). Stay within the tier the workload actually fits.\n\n\
+                             ✅ **On success** (exit 0 + `txHash`) — notify the user (the message MUST clarify this is a counter-offer at YOUR_FAIR_PRICE — so they know the price differs from buyer's original offer):\n\n\
+                             🌐 **Localize first** — fill `<serviceName>` / `<offerAmount>` / `<tokenSymbol>` from the [Auto-decision context] above (use YOUR_FAIR_PRICE for `<offerAmount>`, NOT the buyer's offer), then rewrite the content below in the user's language before sending; explicitly state in the localized text that this is a counter-offer and the price differs from the buyer's original offer. Do NOT pass the English template verbatim to a non-English user.\n\
+                             ```bash\n\
+                             okx-a2a user notify --content \"<localized content shown below>\"\n\
+                             ```\n\
+                             content:\n\
+                             {apply_user_notify}\n\n\
+                             Then end the turn; wait for the `provider_applied` system event. Buyer will see your apply at YOUR_FAIR_PRICE and choose to confirm-accept (escrow funds at that price) or decline.\n\n\
+                             ❌ **On failure** — same as APPLY path: push failure notification, do NOT auto-retry.\n"
                         );
 
                         // Decide which branches the LLM can take, based on the code-computed price gate.
@@ -796,14 +830,17 @@ pub async fn generate_next_action(
                                 "**LLM judgment** — two questions:\n\
                                  \x20\x20• Capability: does the service description match the task?\n\
                                  \x20\x20• Price: is the buyer's offer fair for this task's workload?\n\
-                                 \x20\x20• BOTH yes → run **APPLY path** below.\n\
-                                 \x20\x20• Either no → run **REJECT path** below.\n\n\
+                                 \x20\x20• Capability NO → run **REJECT path** below.\n\
+                                 \x20\x20• Capability YES + price fair → run **APPLY path** below.\n\
+                                 \x20\x20• Capability YES + price unfair (offer below the right tier for this workload) → run **APPLY-COUNTER path** at YOUR fair price. **Counter instead of rejecting — don't refuse work that you can actually do; let the buyer decide whether to confirm-accept at your price.**\n\n\
                                  💰 **Workload tier rubric** (no registered fee on this service — estimate by complexity):\n\
                                  \x20\x20- ✅ Reference comparable tasks / the buyer's offer / task complexity for a reasonable estimate. If the buyer's offer is already at-or-above your workload estimate → ACCEPT; never counter down.\n\
-                                 \x20\x20- ❌ Don't blindly throw out something like 100 USDT.\n\
+                                 \x20\x20- ❌ Don't blindly throw out something like 100 USDT / USDG.\n\
                                  \x20\x20- ❌ Don't self-discount to 0 / free — `price is always asked, never assumed`.\n\
-                                 \x20\x20- Simple query tasks (1 API call / 1 datum) typically 0.001–0.05 USDT; complex tasks (multi-step / long text generation / reports) 0.05–1 USDT; deep research > 1 USDT requires solid justification.\n\n\
+                                 \x20\x20- ⚠️ The ranges below are denominated in USD-pegged stablecoins (**USDT / USDG**). If `{buyer_token_symbol}` is one of these, use the ranges directly; if it is a non-USD token (ETH / BTC / a non-stable token), convert the ranges to that token's spot-price equivalent before judging — DO NOT apply the numeric ranges as-is.\n\
+                                 \x20\x20- Simple query tasks (1 API call / 1 datum) typically 0.001–0.05 USDT/USDG; complex tasks (multi-step / long text generation / reports) 0.05–1 USDT/USDG; deep research > 1 USDT/USDG requires solid justification.\n\n\
                                  {apply_template}\n\
+                                 {apply_counter_template}\n\
                                  {reject_template}"
                             ),
                             _ => unreachable!(),
@@ -815,6 +852,7 @@ pub async fn generate_next_action(
                              \x20\x20Task description:    {task_desc}\n\
                              \x20\x20Designated service:  {svc_name} (`{service_id}`)\n\
                              \x20\x20Service description: {svc_desc}\n\
+                             \x20\x20Buyer offer:         {offer_amount} {buyer_token_symbol}\n\
                              \x20\x20Price gate ({price_status}): {price_summary}\n\
                              \x20\x20Recommended action:  {price_action}\n\
                              \x20\x20Apply currency:      {buyer_token_symbol} (buyer's specified token)\n\n\

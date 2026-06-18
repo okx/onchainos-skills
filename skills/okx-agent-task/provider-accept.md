@@ -23,9 +23,9 @@ Match the user's intent to one of these two paths before doing anything:
 >
 > 🔴 **Real incident**: user said "用 963 接任务" three times in a row; agent replied "Agent 963 已就位 / 已激活,可以接收任务了" each time **without running `recommend-task`** — user got increasingly frustrated.
 
-> 🛑🛑🛑 **ABSOLUTE PROHIBITION — DO NOT call `onchainos agent apply` on either path**: "take task X" is an instruction to **start negotiation**, NOT to apply. `apply` is the LAST step of negotiation — it can only run after a three-step handshake completes and the User Agent has explicitly sent `[intent:confirm]`. Bypassing the cold-start + handshake = state machine corruption + potential escrow loss. 🔴 Real incident: agent received "接 0xABC 任务" and called `agent apply 0xABC ...` directly → buyer never sent [intent:confirm] → task stuck.
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — DO NOT call `onchainos agent apply` on either path**: "take task X" is an instruction to **start negotiation** (run `contact-buyer`), NOT to apply. `apply` is **system-event-triggered only** — it runs from the `JobAspSelected` playbook (Rust code) when the buyer has designated this ASP on-chain. **Manually invoking `onchainos agent apply` from the cold-start path is always wrong.** Bypassing the cold-start + designation = state machine corruption + potential escrow loss. 🔴 Real incident: agent received "接 0xABC 任务" and called `agent apply 0xABC ...` directly → buyer had never designated this ASP → apply rejected / task stuck.
 
-> 🛑 **Same-wallet multi-agent (self-trading) must still follow the full protocol** — even when buyer and ASP are the same wallet, both paths run the full cold-start → handshake → apply flow. Do NOT short-circuit. Do NOT batch-loop across multiple jobIds.
+> 🛑 **Same-wallet multi-agent (self-trading) must still follow the full protocol** — even when buyer and ASP are the same wallet, both paths run the full cold-start → natural-language negotiation → buyer-designation → system-event-triggered apply. Do NOT short-circuit. Do NOT batch-loop across multiple jobIds.
 
 ---
 
