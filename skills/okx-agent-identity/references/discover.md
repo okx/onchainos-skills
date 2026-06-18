@@ -7,8 +7,8 @@ CLI call (SKILL §Gates No-poll); never grep/jq/parse the JSON or read your own 
 re-issue the CLI instead (SKILL §Gates No-shell-stitching).
 
 ## Routing nuances (decide before calling)
-- "my <descriptor> agents" / any ownership word → **list** = `agent get` (no ids) + client-side group/filter,
-  NOT `search`. Explicit `#ids` ("detail #42", "#42 #58") → **detail** = `agent get --agent-ids`, NOT search.
+- "my <descriptor> agents" / any ownership word → **list** = `agent get-my-agents` + client-side group/filter,
+  NOT `search`. Explicit `#ids` ("detail #42", "#42 #58") → **detail** = `agent get-agents --agent-ids`, NOT search.
 - Free-text "find agents doing X" → **search**.
 
 ---
@@ -56,7 +56,7 @@ column, divide a score, or add a column the cells don't carry.
 
 ---
 
-## list — `agent get` (no ids)
+## list — `agent get-my-agents`
 
 Rows arrive at `list[*]`; each row carries `accountName`, `ownerAddress`, and a ready `cells[]` (with
 `roleLabel`/`statusLabel`/`ratingStars` already resolved). **Group by `accountName`** — one header + table
@@ -82,9 +82,9 @@ role/status integers, no raw 0–100 score).
 
 ---
 
-## detail — `agent get --agent-ids N`
+## detail — `agent get-agents --agent-ids N`
 
-The response carries a ready `card[]` of `{label,value}` with `roleLabel`/`statusLabel`/`approvalLabel`
+The response is a flat array of agents (one per id), each carrying a ready `card[]` of `{label,value}` with `roleLabel`/`statusLabel`/`approvalLabel`
 resolved — **identity rows only**. Render the `card` rows **verbatim** (SKILL §Invariants Verbatim-render
 contract). The agent-list card does **not** inline services or rating. **Provider (ASP) → chain exactly ONE
 `agent service-list --agent-id N`** and render the §service-list table beneath the card; requester / evaluator
@@ -97,8 +97,7 @@ contract). The agent-list card does **not** inline services or rating. **Provide
 ```
 
 - **Multiple ids** (`#42 #58` → `--agent-ids 42,58`): one `card[]` per agent — render one card each in order,
-  separated by `---`. Trigger on the **flattened agent count** > 1 (rows at `list[*]` or legacy
-  `list[*].agentList[*]` — count agents, not accountName wrappers).
+  separated by `---`. Trigger on the **returned agent count** > 1 (the response is a flat top-level array — count its entries).
 - After the card(s), offer reviews via ONE numbered prompt — do not auto-run (detail-card only; other references
   use a single suggestion line, never a menu):
   ```

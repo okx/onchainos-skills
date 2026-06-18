@@ -30,7 +30,7 @@ Reply to the user via `okx-a2a user notify --content "<localized natural-languag
    Forward verbatim then append reply-path instruction. End turn.
 
 **Hard rules**:
-- ❌ Do NOT pass `--session-key` you composed by string concatenation — always let the daemon resolve from `--job-id` + `--to-agent-id`, or fetch the real key via `okx-a2a session query`.
+- ❌ Do NOT pass `--session-key` you composed by string concatenation — always let the daemon resolve from `--job-id` + `--to-agent-id`.
 - ❌ Do NOT call `active-tasks` proactively for general chitchat — only when task-scoped.
 - ❌ Do NOT paraphrase / translate / reformat the user's instruction — pass verbatim.
 - ❌ Do NOT call `okx-a2a session send` multiple times in one turn.

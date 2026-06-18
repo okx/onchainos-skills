@@ -288,15 +288,9 @@ pub async fn handle_create(
     if super::content::is_cli_mode() {
         println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
         println!();
-        println!("**Step 1 — If you haven't read `skills/okx-task-watch/SKILL.md` in this session, read it FIRST.**");
-        println!("(It explains: watch is a single foreground long-poll — the wait IS the design;");
-        println!(" the call may block this turn until events arrive; do NOT background, do NOT loop-wrap.)");
+        println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-task-watch/SKILL.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
         println!();
-        println!("**Step 2 — Run the bash below (foreground, long-poll blocks this turn until events arrive):**");
-        println!("```bash");
-        println!("okx-a2a user watch --json --job-id {job_id}");
-        println!("```");
-        println!("Then dispatch each returned item per `skills/okx-task-watch/SKILL.md` §Dispatch and re-enter the same command per §re-arm.");
+        println!("**Step 2 — Execute the watch per `skills/okx-task-watch/SKILL.md` §Run watch, scoped to job-id `{job_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read SKILL.md first.)");
     }
     println!("🛑 Do NOT call set-payment-mode.");
     Ok(())

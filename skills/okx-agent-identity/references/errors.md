@@ -11,7 +11,7 @@ Next step: <user action / what you'll do>
 `<raw CLI line — verbatim, never translated>`
 ```
 
-Translate, don't parrot — the friendly line is for the user; the raw line sits in inline code for debug. **Redaction overrides verbatim:** if the raw CLI line would contain an `onchainos ...` command literal, a skill name (`okx-*`), or an internal label, strip/redact that token before showing it — SKILL §UX Red Lines 1 wins over "verbatim". **Never auto-retry** a business error (retry once only on 5xx / network, per SKILL §Gates No-poll). Never chase a failure with `agent get` — the error is authoritative. Each row resumes at a concrete step. An unlisted string → put it in the raw line and ask how to proceed.
+Translate, don't parrot — the friendly line is for the user; the raw line sits in inline code for debug. **Redaction overrides verbatim:** if the raw CLI line would contain an `onchainos ...` command literal, a skill name (`okx-*`), or an internal label, strip/redact that token before showing it — SKILL §UX Red Lines 1 wins over "verbatim". **Never auto-retry** a business error (retry once only on 5xx / network, per SKILL §Gates No-poll). Never chase a failure with `agent get-agents` / `agent get-my-agents` — the error is authoritative. Each row resumes at a concrete step. An unlisted string → put it in the raw line and ask how to proceed.
 
 ## CLI `bail!` rows (usually never reach the user — you collect params upfront)
 
@@ -19,7 +19,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 |---|---|
 | `session expired` | "Session expired." → hand to wallet login (business language, no skill name — SKILL §Routing), re-run original. |
 | `no XLayer address found` | "No XLayer address in the current account." → hand to wallet add / switch. |
-| `missing required parameter: <flag>` | "`<flag>` can't be empty." → re-ask it. `--agent-id` → ask which agent (`agent get` if needed); `--file` → ask path. |
+| `missing required parameter: <flag>` | "`<flag>` can't be empty." → re-ask it. `--agent-id` → ask which agent (`agent get-my-agents` if needed); `--file` → ask path. |
 | `unexpected argument '<v>' found` (positional) | User typed e.g. `update 42`. Re-ask in plain language; you supply the flag yourself, never echo it. |
 | `missing required field in --service: name`/`: servicedescription` | "Service <name/description> can't be empty." → re-ask that field. |
 | `missing required field in --service: fee`/`: endpoint` | API service needs a fee (a plain number, USDT implied, ≤6 dp) / a public https endpoint → re-ask. Gloss type once (SKILL §Invariants Lexicon); never echo `A2MCP`. |
@@ -37,7 +37,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | Keyword | Friendly + next |
 |---|---|
 | `approved agent whitelist` / `10016` | "Your account isn't in the agent beta whitelist yet. Apply here: `<URL>`. We'll email you when approved." Extract the FIRST url from `msg` **verbatim** (keep `/zh-hans/` etc.); none → drop the URL sentence, say "Contact OKX support for the application portal." **No auto-retry**; no further create / update. Redact `approved agent whitelist` from the raw CLI line (§Redaction rule above). |
-| `agent not found` / 404 | "Agent not found." → verify id with `agent get`. |
+| `agent not found` / 404 | "Agent not found." → verify id with `agent get-agents --agent-ids`. |
 | `already active` / `already inactive` | "Agent is already active / inactive." No-op; show detail card. |
 | `pending settlements` / `cannot deactivate` | "There's an unsettled task on this agent — close it first. Want me to take you there?" → on yes, hand to task flow internally (no skill name). |
 | consent `40020` / `40021` / `40022` | "Consent <incomplete / invalid / was declined> — registration failed. Please restart the registration flow." Raw line shown. **Hard stop**, no auto-retry, no in-flow re-agree (40022 = restart from scratch). No Step 5/6. |

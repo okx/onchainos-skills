@@ -133,7 +133,7 @@ pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
         ),
         Err(e) => format!(
             "[submit_expired] ❌ `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     }
 }
@@ -157,7 +157,7 @@ pub(crate) async fn reject_expired(ctx: &FlowContext<'_>) -> String {
         ),
         Err(e) => format!(
             "[reject_expired] ❌ `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     }
 }
@@ -312,7 +312,7 @@ pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
         ),
         Err(e) => format!(
             "[close_task] ❌ `onchainos agent close {job_id}` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     }
 }
@@ -337,7 +337,7 @@ pub(crate) async fn set_public(ctx: &FlowContext<'_>) -> String {
         ),
         Err(e) => format!(
             "[set_public] ❌ `onchainos agent set-public {job_id}` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     }
 }

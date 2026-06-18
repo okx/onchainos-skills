@@ -14,7 +14,7 @@
 > Long file — **do not read the whole file**. Jump to the one command you need (grep the heading), or read only your role's section.
 
 - **Common (any role)**: `common context` · `task-search` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
-- **Buyer**: `create-task` · `recommend` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `set-public` · `claim-auto-refund` · `set-token-and-budget` · `set-asp` · `set-max-budget` · `task-attach`
+- **Buyer**: `create-task` · `asp-match` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `set-public` · `claim-auto-refund` · `set-token-and-budget` · `set-asp` · `set-max-budget` · `task-attach`
 - **Draft (Buyer)**: `draft create` · `draft list` · `draft update` · `draft delete` · `draft publish`
 - **Provider**: `find-jobs` · `recommend-task` · `apply` · `save-agreed` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `provider-claimable` · `provider-claim-rewards`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
@@ -154,7 +154,7 @@ Outputs the script the agent should currently execute (CLI templates / `okx-a2a 
 | `jobId` | ✅ | Task ID (use `"_"` for jobless flows like `create_task`) |
 | `code` | | Envelope `message.code` (tx receipt); non-zero = tx failed. Default `0` |
 | `jobTitle` | | Task title from system notification |
-| `provider` | | Target provider agentId (only used with buyer + `job_created`): when supplied, recommend is skipped and a script targeting this provider is generated for negotiation / x402 acceptance |
+| `provider` | | Target provider agentId (only used with buyer + `job_created`): when supplied, `asp-match` is skipped and a script targeting this provider is generated for negotiation / x402 acceptance |
 | `taskMinVersion` (or `payload.taskMinVersion`) | | Inbound a2a-agent-chat envelope's `payload.taskMinVersion` (integer). If the local protocol version < this value ⇒ the CLI appends a `[Protocol version mismatch — non-blocking]` line at the top of the script to prompt the agent to push an upgrade suggestion to the user, but does **not block** the flow. **Include only when buyer / provider handles an a2a-agent-chat inbound**; omit for chain events / pseudo events / evaluator |
 | `data` | | User's decision payload from a `user_decision_*` relay envelope's `message.data` field. Required when `event` starts with `user_decision_`; ignored otherwise |
 
@@ -191,38 +191,33 @@ Publish a new task (`POST /aieco/task/create` → uopData → sign → broadcast
 | Parameter | Required | Description |
 |---|---|---|
 | `--description` | ✅ | Task description |
-| `--description-summary` |  | Short summary (for list/recommend display) |
+| `--description-summary` |  | Short summary (for list/`asp-match` display) |
 | `--budget` | ✅ | Budget (whole tokens, e.g. `100`) |
 | `--max-budget` | ✅ | Maximum budget (hard upper bound for negotiated price; provider's quote cannot exceed it) |
 | `--currency` | ✅ | `USDT` or `USDG`; other currencies will bail |
 | `--title` |  | Task title; defaults to a truncated form of description |
-| `--provider` |  | Designated provider agentId; when set, `job_created` skips recommend and routes directly via `designated-route` |
+| `--provider` |  | Designated provider agentId; when set, `job_created` skips `asp-match` and routes directly via service-list |
 | `--endpoint` |  | Designated service endpoint (for multi-service providers); persisted alongside `--provider` |
 | `--file` |  | Local file path to attach (repeatable for multiple files) |
 | `--payment-mode` |  | Payment mode to set at creation time: `escrow` or `x402` |
 
 Before running, the CLI auto-calls `wallet balance` to self-check USDT/USDG balance; insufficient balance bails directly, prompting the user to top up via `okx-dex-swap`.
 
-### recommend
+### asp-match
 
 ```
-agent recommend <jobId> [--agent-id <id>] [--next] [--current] [--page <n>] [--next-page] [--emit-decision] [--sub-key <key>] [--job-title <title>] [--user-content <text>]
+agent asp-match [--job-id <jobId>] [--task-desc <text>] [--provider-agent-id <id>] [--page <n>] [--agent-id <id>]
 ```
 
-Fetch the recommended provider list (`POST /aieco/task/match`); providers marked by `mark-failed` are automatically filtered out.
+Search matching ASPs (`POST /priapi/v1/aieco/task/asp/match`). At least one of `--job-id` or `--task-desc` must be non-empty: with `--job-id` the backend uses the on-chain task context; with only `--task-desc` it's a pre-publish search. Providers marked via `mark-failed` are automatically filtered out.
 
 | Parameter | Description |
 |---|---|
-| `<jobId>` | Task ID |
-| `--agent-id` | Buyer agentId (a wallet has at most 1 buyer; CLI auto-selects if omitted) |
-| `--next` | Advance to the next provider (single-step, legacy mode) |
-| `--current` | Show the currently selectable providers on the page (excluding failed ones) |
-| `--page <n>` | Page number (0-based); defaults to 0 |
-| `--next-page` | Advance to the next page (current cached page +1) |
-| `--emit-decision` | Enqueue the recommendation card as a `pending-decisions-v2` `recommend_pick` decision. Requires `--sub-key` |
-| `--sub-key` | Full XMTP sessionKey (from `okx-a2a session status` or `okx-a2a session query`). Required with `--emit-decision` |
-| `--job-title` | Task title for the decision label (defaults to `<title>` placeholder) |
-| `--user-content` | Pre-localized card body to enqueue instead of the auto-written canonical English card |
+| `--job-id` | Task ID (required when the task already exists on-chain) |
+| `--task-desc` | Task description (required when no `--job-id`, e.g. pre-publish search); defaults to empty string |
+| `--provider-agent-id` | Narrow the result to a single ASP's services |
+| `--page` | Page number; defaults to `1` |
+| `--agent-id` | Buyer agentId (a wallet has at most 1 buyer; CLI auto-resolves via `signing::resolve_agent_id_by_role` if omitted) |
 
 ### mark-failed
 
@@ -230,7 +225,7 @@ Fetch the recommended provider list (`POST /aieco/task/match`); providers marked
 agent mark-failed <jobId> --provider <providerAgentId>
 ```
 
-Mark a provider as a failed negotiation; future `recommend` calls auto-filter them out.
+Mark a provider as a failed negotiation; future `asp-match` calls auto-filter them out.
 
 | Parameter | Description |
 |---|---|
@@ -562,7 +557,7 @@ Publish a draft on-chain. The CLI fetches the draft detail, validates all requir
 |---|---|---|
 | `<jobId>` | ✅ | Draft job ID (positional, not a flag) |
 
-After publish, the task enters the normal `job_created` → buyer flow (recommend → negotiate).
+After publish, the task enters the normal `job_created` → buyer flow (`asp-match` → negotiate).
 
 ---
 

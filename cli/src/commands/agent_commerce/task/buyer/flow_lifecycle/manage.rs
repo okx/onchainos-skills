@@ -255,9 +255,9 @@ After success, tell the user directly (do NOT call `okx-a2a user notify` — you
 ===============================================================\n\
 🛑🛑🛑 STOP -- after create-task + task-attach (if any) + watch (if prompted), you **MUST end this turn**\n\
 ===============================================================\n\
-✅ **Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, run the emitted `okx-a2a user watch ...` command before ending the turn. Read `skills/okx-task-watch/SKILL.md` first if you haven't in this session.\n\
+✅ **Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, you MUST first read `skills/okx-task-watch/SKILL.md` (if not already read this session), then execute the watch per its §Run watch using the jobId in the `[Watch]` block, before ending the turn. Do NOT short-circuit by guessing the bash command.\n\
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- create-task only submits the transaction; it is not yet confirmed on-chain.\n\
-❌ **Do not call any other onchainos agent commands** (except `task-attach` in Step 6.5 and `okx-a2a user watch` above) -- all further actions are driven by on-chain events.\n\
+❌ **Do not call any other onchainos agent commands** (except `task-attach` in Step 6.5 and the watch above) -- all further actions are driven by on-chain events.\n\
 ❌ **Do not describe the subsequent flow** (negotiation / payment) in the notification — the payment path is determined downstream, not here.\n\
 ===============================================================\n\n\
 ================================================\n\
@@ -385,9 +385,9 @@ After success, tell the user directly (do NOT call `okx-a2a user notify` — you
 ===============================================================
 🛑🛑🛑 STOP -- after draft publish + watch (if prompted), you **MUST end this turn**
 ===============================================================
-✅ **Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, run the emitted `okx-a2a user watch ...` command before ending the turn. Read `okx-task-watch/SKILL.md` first if you haven't in this session.
+✅ **Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, you MUST first read `skills/okx-task-watch/SKILL.md` (if not already read this session), then execute the watch per its §Run watch using the jobId in the `[Watch]` block, before ending the turn. Do NOT short-circuit by guessing the bash command.
 ❌ **Do not say \"task published\" or \"publish succeeded\"** -- draft publish only submits the transaction; it is not yet confirmed on-chain.
-❌ **Do not call any other onchainos agent commands** (except `okx-a2a user watch` above) -- all further actions are driven by on-chain events.
+❌ **Do not call any other onchainos agent commands** (except the watch above) -- all further actions are driven by on-chain events.
 ===============================================================\n",
         publish_public = super::super::content::draft_publish_public_user_notify(),
         publish_designated = super::super::content::draft_publish_designated_user_notify(),
