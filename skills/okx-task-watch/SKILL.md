@@ -32,7 +32,7 @@ When ANY trigger phrase below matches, execute §Action. The watch command is a 
 
 ## Platform compatibility — Claude Code / Codex only
 
-🛑 The `okx-a2a` CLI is only wired on **Claude Code** and **Codex** harnesses. On **Hermes** and **OpenClaw**, the client itself pushes task notifications natively — there is no `okx-a2a` command and no manual watch is needed.
+🛑 The `okx-a2a` CLI is only wired on **Claude Code** and **Codex** harnesses. On **Hermes** and **OpenClaw**, the client itself pushes task notifications natively — no manual watch is needed.
 
 Before §Action, gate on environment variables:
 
