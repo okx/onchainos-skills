@@ -744,11 +744,10 @@ fn handle_resolve_with_sessionkey(
 }
 
 /// Queue-backed variant of `handle_resolve_with_sessionkey`. Builds the same
-/// system-shaped relay envelope from the caller-supplied routing fields, but
-/// emits `playbook_relay_only_prompt` (keyed to `resolve-prompt` so the LLM
-/// doesn't retry against another resolver) and best-effort removes the matching
-/// queue entry. Pairs with `playbook_push_prompt_user` so a queue-mode push
-/// lands a queue-mode relay.
+/// system-shaped relay envelope from the caller-supplied routing fields,
+/// dispatches it in-process via `okx_a2a::session_send`, and best-effort
+/// removes the matching queue entry. Pairs with `playbook_push_prompt_user`
+/// so a queue-mode push lands a queue-mode relay.
 fn handle_resolve_prompt(
     user_reply: String,
     job_id: String,
@@ -757,6 +756,7 @@ fn handle_resolve_prompt(
     to_agent_id: Option<String>,
     source_event: String,
 ) -> Result<()> {
+    use crate::commands::agent_commerce::task::common::okx_a2a;
     trace_log(&format!(
         "handle_resolve_prompt: job_id={} role={} agent_id={} to_agent_id={:?} source_event={} user_reply={:?}",
         job_id, role, agent_id, to_agent_id, source_event, user_reply,
@@ -791,7 +791,7 @@ fn handle_resolve_prompt(
 
     // Best-effort remove the matching entry from the queue (paired with the
     // `handle_request` non-CLI write path). If lock / IO fails, log + continue —
-    // the relay playbook below is the critical path and must still be emitted.
+    // the in-process relay below is the critical path and must still happen.
     let to_ref = to_agent_id.as_deref();
     match acquire_lock() {
         Ok(_lock) => match read_queue() {
@@ -809,11 +809,15 @@ fn handle_resolve_prompt(
         Err(e) => trace_log(&format!("handle_resolve_prompt: acquire_lock failed: {e}")),
     }
 
-    print!("{}", playbook_relay_only_prompt(&job_id, to_ref, &relay_content));
+    okx_a2a::session_send(&job_id, to_ref, &relay_content)?;
+    print!(
+        "🛑 User reply relayed and consumed — do NOT reuse it (no `resolve-prompt` retry, no future-card reference); wait for a fresh user message, then end the turn.\n"
+    );
     Ok(())
 }
 
 fn handle_resolve(user_reply: String) -> Result<()> {
+    use crate::commands::agent_commerce::task::common::okx_a2a;
     let _lock = acquire_lock()?;
     let mut q = read_queue()?;
     ensure_invariant_and_evict(&mut q);
@@ -903,8 +907,11 @@ fn handle_resolve(user_reply: String) -> Result<()> {
 
     if queued.is_empty() {
         // Nothing left to advance to — just relay and end the turn.
-        print!("{}", playbook_relay_only(&active.job_id, active.to_agent_id.as_deref(), &relay_content));
+        okx_a2a::session_send(&active.job_id, active.to_agent_id.as_deref(), &relay_content)?;
         write_queue_atomic(&q)?;
+        print!(
+            "🛑 User reply relayed and consumed — do NOT reuse it for future cards; wait for a fresh user message, then end the turn.\n"
+        );
     } else {
         // Auto-advance: promote the newest queued entry (LIFO — sort already placed it at
         // index 0 since the active was just removed). Render the new active + the remaining
@@ -928,10 +935,8 @@ fn handle_resolve(user_reply: String) -> Result<()> {
         write_snapshot_atomic(&snap)?;
         write_queue_atomic(&q)?;
 
-        print!(
-            "{}",
-            playbook_relay_and_advance(&active.job_id, active.to_agent_id.as_deref(), &relay_content, &q)
-        );
+        okx_a2a::session_send(&active.job_id, active.to_agent_id.as_deref(), &relay_content)?;
+        print!("{}", playbook_advance_only(&q));
     }
     Ok(())
 }
@@ -1125,7 +1130,7 @@ fn handle_list(format: ListFormat) -> Result<()> {
 ///   [Future-turn user-reply routing]:
 ///   - …
 ///
-/// Callers (`handle_list`, `playbook_relay_and_advance`, `playbook_cancel`) wrap
+/// Callers (`handle_list`, `playbook_advance_only`, `playbook_cancel`) wrap
 /// this with their own Step numbering (e.g. "Step 1 — Translate", "Step 2 —
 /// Render", "Step N — (Future turn) routing"). The labeled sections act as
 /// natural boundaries — no ═══ zone markers needed.
@@ -1564,94 +1569,28 @@ fn playbook_wait_with_reprompt(
     )
 }
 
-/// Format the `--to-agent-id '<X>' \` bash flag only when present.
-fn fmt_to_agent_flag_bash(to_agent_id: Option<&str>) -> String {
-    match to_agent_id {
-        Some(t) => format!("--to-agent-id '{}' \\\n         \x20\x20", t.replace('\'', "'\\''")),
-        None => String::new(),
-    }
-}
-
-fn playbook_relay_only(job_id: &str, to_agent_id: Option<&str>, relay_content: &str) -> String {
-    let job_id_q = job_id.replace('\'', "'\\''");
-    let relay_content_q = relay_content.replace('\'', "'\\''");
-    format!(
-        "Relay the user's decision to the just-resolved sub session, then end the turn.\n\n\
-         ```bash\n\
-         okx-a2a session send \\\n\
-         \x20\x20--job-id '{job}' \\\n\
-         \x20\x20{to_flag}--content '{content}' \\\n\
-         \x20\x20--no-wait --json\n\
-         ```\n\n\
-         ⚠️ Run this command **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
-         🛑 User reply consumed — do NOT reuse it for future cards; wait for a fresh user message.\n",
-        job = job_id_q,
-        to_flag = fmt_to_agent_flag_bash(to_agent_id),
-        content = relay_content_q,
-    )
-}
-
-/// Queue-backed variant of `playbook_relay_only_cli` — same `okx-a2a session send`
-/// bash invocation as `playbook_relay_only`, just with the CONSUMPTION MARKER's
-/// command name pinned to `resolve-prompt` so the LLM doesn't accidentally
-/// retry against another resolver. Pairs with `handle_resolve_prompt` /
-/// `playbook_push_prompt_user` for the queue-mode push → queue-mode relay round-trip.
-fn playbook_relay_only_prompt(job_id: &str, to_agent_id: Option<&str>, relay_content: &str) -> String {
-    let job_id_q = job_id.replace('\'', "'\\''");
-    let relay_content_q = relay_content.replace('\'', "'\\''");
-    format!(
-        "Relay the user's decision to the just-resolved sub session, then end the turn.\n\n\
-         ```bash\n\
-         okx-a2a session send \\\n\
-         \x20\x20--job-id '{job}' \\\n\
-         \x20\x20{to_flag}--content '{content}' \\\n\
-         \x20\x20--no-wait --json\n\
-         ```\n\n\
-         ⚠️ Run this command **exactly once**, then end the turn. Repeat = recursion loop; skip = task stalls.\n\
-         🛑 User reply consumed — do NOT reuse it (no `resolve-prompt` retry, no future-card reference); wait for a fresh user message.\n",
-        job = job_id_q,
-        to_flag = fmt_to_agent_flag_bash(to_agent_id),
-        content = relay_content_q,
-    )
-}
-
-/// Resolve auto-advance playbook: relay user's reply to the just-resolved sub, then render
-/// the next decision (auto-promoted newest queued) using the unified list view.
+/// Resolve auto-advance playbook: render the next decision (auto-promoted newest queued)
+/// using the unified list view.
 ///
-/// Used whenever ≥1 queued entry remains after resolve. The newly-promoted active is shown
-/// at the top with its full card; if other queued entries remain, they form the "Remaining"
-/// list underneath. No more "selection mode" round-trip — the user gets the next card
-/// immediately and can keep deciding.
+/// Used whenever ≥1 queued entry remains after resolve. The previous decision's relay has
+/// already been dispatched in-process by the caller (`okx_a2a::session_send`); this playbook
+/// only covers the translate + render + future-turn-routing steps. The newly-promoted active
+/// is shown at the top with its full card; if other queued entries remain, they form the
+/// "Remaining" list underneath. No more "selection mode" round-trip — the user gets the
+/// next card immediately and can keep deciding.
 ///
 /// Caller is responsible for promoting the new active + re-sorting the queue BEFORE invoking
 /// this function; we just consume `q` (post-promotion) and produce the playbook.
-fn playbook_relay_and_advance(
-    resolved_job_id: &str,
-    resolved_to_agent_id: Option<&str>,
-    relay_content: &str,
-    q: &Queue,
-) -> String {
+fn playbook_advance_only(q: &Queue) -> String {
     let list_view = render_list_markdown(q);
-    let job_id_q = resolved_job_id.replace('\'', "'\\''");
-    let relay_content_q = relay_content.replace('\'', "'\\''");
-    let to_flag = fmt_to_agent_flag_bash(resolved_to_agent_id);
     format!(
-        "4 steps (Steps 1-3 in this turn, Step 4 in the future turn).\n\
-         🛑 **STRICTLY ORDERED — execute Step 1 → 2 → 3 sequentially in this turn; do NOT skip any step.**\n\n\
-         **Step 1** — Forward the user's reply to the just-resolved sub session. Run the command below **exactly once**.\n\
-         ```bash\n\
-         okx-a2a session send \\\n\
-         \x20\x20--job-id '{job}' \\\n\
-         \x20\x20{to_flag}--content '{content}' \\\n\
-         \x20\x20--no-wait --json\n\
-         ```\n\n\
-         **Step 2** — Translate the [Source content] below to the user's language per [Translation rules]. Prepend a transition line `✓ Previous decision handled. Here's the next pending one:` (also translated) to the top of the translated output.\n\n\
-         **Step 3** — Render Step 2's output to the user as your assistant response. The user's reply just dispatched in Step 1 is **already consumed** — it is NOT the answer to the next card.\n\n\
-         **Step 4** — (Future turn) Apply [Future-turn user-reply routing] below when the user replies.\n\n\
+        "✓ Previous decision already relayed in-process — the user's reply is consumed; do NOT relay it again.\n\n\
+         3 steps (Steps 1-2 in this turn, Step 3 in the future turn).\n\
+         🛑 **STRICTLY ORDERED — execute Step 1 → 2 sequentially in this turn; do NOT skip any step.**\n\n\
+         **Step 1** — Translate the [Source content] below to the user's language per [Translation rules]. Prepend a transition line `✓ Previous decision handled. Here's the next pending one:` (also translated) to the top of the translated output.\n\n\
+         **Step 2** — Render Step 1's output to the user as your assistant response. The user's reply just relayed is **already consumed** — it is NOT the answer to the next card.\n\n\
+         **Step 3** — (Future turn) Apply [Future-turn user-reply routing] below when the user replies.\n\n\
          {list}",
-        job = job_id_q,
-        to_flag = to_flag,
-        content = relay_content_q,
         list = list_view,
     )
 }
