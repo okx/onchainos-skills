@@ -277,6 +277,18 @@ pub(super) fn normalize_role(role: &str) -> Result<String> {
     }
 }
 
+/// Normalize a role alias to its backend integer code (`"1"` / `"2"` / `"3"`).
+/// Accepts the same inputs as [`normalize_role`] (numbers + names), so callers
+/// that send the role as a code (e.g. the `agent get` listing filter) share one
+/// validation path. Errors on any unrecognized value.
+pub(super) fn normalize_role_code(role: &str) -> Result<String> {
+    match normalize_role(role)?.as_str() {
+        "requester" => Ok("1".to_string()),
+        "provider" => Ok("2".to_string()),
+        _ => Ok("3".to_string()),
+    }
+}
+
 /// Normalize a user-supplied language tag into a canonically-cased BCP-47 tag,
 /// then apply product-level default-region completion.
 ///
@@ -561,6 +573,19 @@ fn format_rating_stars(score: u64) -> String {
 /// when its source maps to a known value.
 pub(super) fn enrich_agent_get_rows(v: &mut Value) {
     for_each_agent_row(v, enrich_agent_row);
+}
+
+/// Enrich the `agent detail` (batch-list) response — a BARE array of agent
+/// objects (`get_authed` unwraps `data`) — with the SAME per-row display
+/// fields as `agent get` (roleLabel / statusLabel / approvalLabel /
+/// ratingStars / card). No-op when `v` isn't an array. Additive: raw fields
+/// stay intact.
+pub(super) fn enrich_agent_detail_rows(v: &mut Value) {
+    if let Some(rows) = v.as_array_mut() {
+        for row in rows.iter_mut() {
+            enrich_agent_row(row);
+        }
+    }
 }
 
 /// Add the 4 computed display fields to a single agent-row object. No-op for
