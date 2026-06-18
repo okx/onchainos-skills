@@ -1530,12 +1530,13 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     const PREFETCH_ONLY_EVENTS: &[&str] = &[
         "deliverable_received",
         "job_provider_reject",
+        "attachment_added",
     ];
 
     // Events that skip both freshness validation AND pre-fetching (no jobId yet, or irrelevant).
     const SKIP_ALL_EVENTS: &[&str] = &[
         "create_task",
-        "approve_review", "reject_review", "attachment_added", "buyer_attachment_received", "close", "set_public", "job_user_reject",
+        "approve_review", "reject_review", "buyer_attachment_received", "close", "set_public", "job_user_reject",
         "dispute_raise", "agree_refund",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
         "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",
