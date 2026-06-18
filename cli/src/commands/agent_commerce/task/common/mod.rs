@@ -190,6 +190,10 @@ impl PreFetchedTaskContext {
         } else {
             format!("\x20\x20description: {}\n", self.description)
         };
+        let sp_line = match &self.service_params {
+            Some(sp) if !sp.is_empty() => format!("\x20\x20serviceParams: {}\n", sp),
+            _ => String::new(),
+        };
         let deliv_line = match &self.deliverable {
             Some(d) => format!(
                 "\x20\x20deliverable: saved | path: {} | type: {} | name: {}\n",
@@ -203,6 +207,7 @@ impl PreFetchedTaskContext {
              {desc_line}\
              \x20\x20tokenSymbol: {sym} | tokenAmount: {amt} | paymentMode: {pm}\n\
              \x20\x20maxBudget (paymentMostTokenAmount): {max_b} | providerAgentId: {prov} | buyerAgentId: {buyer}\n\
+             {sp_line}\
              {deliv_line}",
             title = self.title,
             sym = self.token_symbol,
