@@ -554,6 +554,7 @@ pub async fn handle_task_402_pay(
             authorization,
             session_cert,
         } => (signature, authorization, session_cert),
+        // TODO: support Permit2/Upto — replace x402_flow::assemble_payment_header with payment_flow::build_payment_header, pass (proof, entry) through
         payment_flow::PaymentProof::Permit2 { .. } | payment_flow::PaymentProof::Upto { .. } => {
             bail!(
                 "task-402-pay only supports the EIP-3009 (exact / aggr_deferred) x402 schemes; \

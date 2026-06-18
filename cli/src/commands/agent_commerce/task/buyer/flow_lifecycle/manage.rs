@@ -477,14 +477,33 @@ pub(crate) fn attachment_added_cli(
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if file_path.is_empty() {
-        return attachment_added(ctx);
+        let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
+        return format!(
+            "[attachment_added_cli] ERROR: filePath missing in --message JSON. \
+             The caller must include filePath when dispatching attachment_added.\n\n\
+             [Your next action] Notify the user that the attachment could not be processed.\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<translate: Attachment forwarding failed — file path was not provided. Please retry via task-attach.>'\n\
+             ```\n\
+             {l10n_short}\n\n\
+             **End this turn.**\n"
+        );
     }
 
     let to_agent_id = ctx.prefetched
         .and_then(|p| p.provider_agent_id.as_deref())
         .unwrap_or("");
     if to_agent_id.is_empty() {
-        return attachment_added(ctx);
+        let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
+        return format!(
+            "[attachment_added_cli] ERROR: provider not assigned — cannot forward attachment.\n\n\
+             [Your next action] Notify the user that the attachment will be sent once a provider is matched.\n\n\
+             ```bash\n\
+             okx-a2a user notify --content '<translate: [Job {short_id}] Attachment saved locally but no provider assigned yet. It will be forwarded automatically once a provider accepts the task.>'\n\
+             ```\n\
+             {l10n_short}\n\n\
+             **End this turn.**\n"
+        );
     }
 
     match upload_and_forward_one(file_path, agent_id, job_id, to_agent_id) {
@@ -504,74 +523,16 @@ pub(crate) fn attachment_added_cli(
         }
         Err(e) => {
             eprintln!("[attachment_added_cli] upload/forward failed: {e}");
-            attachment_added(ctx)
+            format!(
+                "[attachment_added_cli] ERROR: upload/forward failed: {e}\n\n\
+                 [Your next action] Notify the user that the attachment could not be sent.\n\n\
+                 ```bash\n\
+                 okx-a2a user notify --content '<translate: [Job {short_id}] Attachment forwarding failed. Please retry later.>'\n\
+                 ```\n\n\
+                 **End this turn.**\n"
+            )
         }
     }
-}
-
-pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> String {
-    let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let short_id = ctx.short_id;
-    let attachment_template = super::super::content::attachment_file_to_seller(job_id);
-    let att_sent = super::super::content::attachment_sent_user_notify();
-    let att_saved = super::super::content::attachment_saved_user_notify();
-    let att_blocked = super::super::content::attachment_phase_blocked_user_notify();
-
-    format!(
-    "[Trigger] attachment_added (user session dispatched `[ATTACHMENT_ADDED]` — a file was saved locally and must be uploaded + forwarded to the provider)\n\
-     [Role] User (User Agent)\n\n\
-     🛑 **This is the ONLY correct path for forwarding attachments. Do not improvise.**\n\
-     🔴 Real incident: a Minimax model received `[ATTACHMENT_ADDED]`, skipped `okx-a2a file upload`, and sent the raw local file path via `okx-a2a xmtp-send` — \
-     the provider received a path like `/Users/.../attachments/photo.jpg` which it cannot access. Then the model called next-action with `event=job_submitted` in --message (wrong event) and the task got stuck.\n\n\
-     [Your next actions (strict order)]\n\n\
-     **Step 1 — Extract the file path:**\n\
-     The `[ATTACHMENT_ADDED]` message content has the format: `[ATTACHMENT_ADDED] <absolute file path>`.\n\
-     Extract the file path (everything after the prefix). This is a **local** file that has NOT been sent to the provider yet.\n\n\
-     **Step 2 — Check task status:**\n\
-     ```bash\n\
-     onchainos agent status {job_id}\n\
-     ```\n\
-     Read `status` (int) and branch:\n\n\
-     --------- Branch A: status=1 (accepted) OR status=0 (created) with an active sub session ---------\n\n\
-     **A-Step 1 — Upload the file (encrypted):**\n\
-     Run `okx-a2a file upload`:\n\
-     \x20\x20```bash\n\
-     \x20\x20okx-a2a file upload --file-path <extracted path from Step 1> --agent-id {agent_id} --job-id {job_id} --json\n\
-     \x20\x20```\n\
-     → On success you receive 6 fields: `fileKey`, `digest`, `salt`, `nonce`, `secret`, `filename`.\n\n\
-     ⚠️ If `okx-a2a file upload` fails → run `okx-a2a user notify` to notify the user that the attachment failed to send; **do NOT retry or block** — end the turn.\n\n\
-     **A-Step 2 — Forward to the provider via `okx-a2a xmtp-send`:**\n\
-     Send to the provider with **all 6 fields** + `[intent:attachment]` suffix (exact format — paste all fields verbatim):\n\
-     ```\n\
-     {attachment_template}\n\
-     ```\n\
-     ❌ Do NOT send the local file path — the provider cannot access your filesystem.\n\
-     ❌ Do NOT omit any of the 6 encryption fields — the provider needs all of them to decrypt the file.\n\
-     🛑 **VERBATIM COPY — every field value (especially `secret`, `digest`, `salt`, `nonce`) must be pasted in FULL, character-for-character from `okx-a2a file upload` output. These are base64/hex strings that can be 40-200+ characters long. Do NOT truncate, abbreviate, or replace any part with `...` or ellipsis — even a single missing character = decryption failure.**\n\
-     🔴 Real incident: a model abbreviated `secret: SHUJoA...dqE=` (replaced the middle with `...`), the provider could not decrypt the file and the task stalled.\n\n\
-     **A-Step 3 — Notify the user:**\n\
-     Run `okx-a2a user notify`:\n\
-     \x20\x20content: {att_sent}\n\
-     Fill: `<short_jobId>` = {short_id}\n\
-     {l10n_short}\n\n\
-     → **End this turn.**\n\n\
-     --------- Branch B: status=0 (created) and NO active sub session ---------\n\n\
-     The file is already stored locally under `~/.onchainos/task/<jobId>/attachments/`.\n\
-     It will be uploaded to the provider automatically when the negotiation session starts.\n\n\
-     Run `okx-a2a user notify`:\n\
-     \x20\x20content: {att_saved}\n\
-     Fill: `<short_jobId>` = {short_id}\n\
-     {l10n_short}\n\n\
-     → **End this turn.**\n\n\
-     --------- Branch C: status≥2 (submitted / rejected / disputed / terminal) ---------\n\n\
-     Run `okx-a2a user notify`:\n\
-     \x20\x20content: {att_blocked}\n\
-     Fill: `<short_jobId>` = {short_id}\n\
-     {l10n_short}\n\n\
-     → **End this turn.**\n"
-    )
 }
 
 // --- Term-change events ------------------------------------------------

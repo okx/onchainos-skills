@@ -542,11 +542,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::Other(ref s) if s == "close" => super::flow_lifecycle::close_task(&ctx).await,
         Event::Other(ref s) if s == "set_public" => super::flow_lifecycle::set_public(&ctx).await,
         Event::AttachmentAdded => {
-            if super::content::is_cli_mode() {
-                super::flow_lifecycle::attachment_added_cli(&ctx, message)
-            } else {
-                super::flow_lifecycle::attachment_added(&ctx)
-            }
+            super::flow_lifecycle::attachment_added_cli(&ctx, message)
         }
         Event::TaskTokenBudgetChange => super::flow_lifecycle::task_token_budget_change(&ctx),
         // ─── Events the buyer never receives + unknown fallback ──────────────────────────
