@@ -129,7 +129,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         Some(p) => p,
         None => return format!(
             "[negotiate_reply] ❌ no prefetched task context for job {job_id}; cannot resolve providerAgentId.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     };
     let provider_agent_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
@@ -141,7 +141,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
             }
             return format!(
                 "[negotiate_reply] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot send a reply.\n\n\
-                 Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+                 Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
             );
         }
     };
@@ -274,7 +274,7 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
     if let Err(e) = reset_result {
         return format!(
             "[job_provider_reject] ❌ POST /priapi/v1/aieco/task/{job_id}/reset/asp failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         );
     }
 

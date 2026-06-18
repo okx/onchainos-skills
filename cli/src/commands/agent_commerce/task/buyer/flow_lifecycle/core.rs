@@ -27,7 +27,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         if let Err(e) = super::super::reject_apply::handle_reject_apply(&mut client, job_id, Some(agent_id)).await {
             return format!(
                 "[provider_applied/over_budget] ❌ reject-apply failed in-process: {e}\n\n\
-                 Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+                 Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
             );
         }
 
@@ -63,7 +63,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
     if let Err(e) = super::super::accept::handle_confirm_accept(&mut client, job_id).await {
         return format!(
             "[provider_applied/confirm_accept] ❌ confirm-accept failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         );
     }
 
@@ -429,14 +429,14 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         Some(p) => p,
         None => return format!(
             "[job_submitted_escrow] ❌ no prefetched task context for job {job_id}; cannot run the review flow.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     };
     let provider_field: &str = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
             "[job_submitted_escrow] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot run the review flow.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     };
     // Inline-from-prefetched values used in Step 2b's task-deliverable-save commands.
@@ -611,14 +611,14 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
         Some(p) => p,
         None => return format!(
             "[job_submitted_x402] ❌ no prefetched task context for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     };
     let provider_field: &str = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
             "[job_submitted_x402] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     };
 
@@ -735,7 +735,7 @@ pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
         ),
         Err(e) => format!(
             "[approve_review] ❌ `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     }
 }
@@ -768,7 +768,7 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
         ),
         Err(e) => format!(
             "[reject_review] ❌ `onchainos agent reject {job_id} --reason \"{reason}\"` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see SKILL.md §Exception Escalation 5-substep protocol). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
         ),
     }
 }
