@@ -1,6 +1,6 @@
 [package]
 name = "onchainos-cli"
-version = "3.3.13"
+version = "3.3.14"
 edition = "2021"
 
 [[bin]]
