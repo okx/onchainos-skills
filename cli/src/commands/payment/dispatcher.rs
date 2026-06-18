@@ -15,27 +15,31 @@ use zeroize::Zeroize;
 
 #[derive(Subcommand)]
 pub enum PaymentCommand {
-    /// Sign a payment authorization for an HTTP 402-gated resource (from `accepts[]`) and return the proof
+    /// Sign a payment authorization for an HTTP 402-gated resource and return the
+    /// assembled `PAYMENT-SIGNATURE` header (x402 v2). Signs from the currently
+    /// selected wallet account via TEE.
     #[command(name = "pay")]
     X402Pay {
-        /// JSON accepts array from the 402 response. CLI auto-selects the
-        /// best scheme (exact > aggr_deferred > first entry; Permit2 / upto
-        /// routes emit `permit2Authorization`).
+        /// base64 of the decoded 402 payload `{x402Version, resource, accepts}`
+        /// — i.e. the raw `PAYMENT-REQUIRED` header value (base64 or base64url).
+        /// The CLI decodes it, signs the selected accepts entry, and (v2) returns
+        /// `{authorization_header, header_name, scheme, wallet}`.
         #[arg(long)]
-        accepts: String,
-        /// Payer address (optional, defaults to selected account)
+        payload: String,
+        /// Optional 0-based index into the payload's `accepts[]` to sign. Use it
+        /// to pin the exact scheme the user chose from a multi-scheme prompt.
+        /// Omit to let the CLI auto-select (exact > aggr_deferred > first).
         #[arg(long)]
-        from: Option<String>,
+        selected_index: Option<usize>,
     },
     /// Sign an EIP-3009 TransferWithAuthorization locally with a hex private key
-    /// (reads EVM_PRIVATE_KEY env var). Accepts the same JSON accepts array as `payment pay`;
-    /// domain name/version are read from accepts[].extra.name / extra.version.
+    /// (reads EVM_PRIVATE_KEY env var). Same base64 `--payload` as `payment pay`;
+    /// domain name/version are read from the selected entry's `extra.name` / `extra.version`.
     #[command(name = "pay-local")]
     Eip3009Sign {
-        /// JSON accepts array from the 402 response (same format as `payment pay`).
-        /// domain name/version are extracted from the selected entry's `extra.name` / `extra.version`.
+        /// base64 of the decoded 402 payload (same as `payment pay --payload`).
         #[arg(long)]
-        accepts: String,
+        payload: String,
     },
     /// Manage the default payment asset used when the server offers multiple options.
     Default {
@@ -231,30 +235,24 @@ pub enum DefaultAction {
 
 pub async fn execute(cmd: PaymentCommand) -> Result<()> {
     match cmd {
-        PaymentCommand::X402Pay { accepts, from } => cmd_pay(&accepts, from.as_deref()).await,
-        PaymentCommand::Eip3009Sign { accepts } => {
-            let accepts_val: Value =
-                serde_json::from_str(&accepts).context("--accepts must be a valid JSON array")?;
-            let (proof, _entry) = payment_flow::sign_payment_local(&accepts_val, None).await?;
+        PaymentCommand::X402Pay {
+            payload,
+            selected_index,
+        } => cmd_pay(&payload, selected_index).await,
+        PaymentCommand::Eip3009Sign { payload } => {
+            let (accepts_val, resource_val) = decode_pay_payload(&payload)?;
+            let (proof, entry) = payment_flow::sign_payment_local(&accepts_val, None).await?;
             // Local-key path only supports EIP-3009 (no TEE session).
-            match proof {
-                payment_flow::PaymentProof::Eip3009 {
-                    signature,
-                    authorization,
-                    ..
-                } => {
-                    output::success(json!({
-                        "signature": signature,
-                        "authorization": authorization,
-                    }));
+            match &proof {
+                payment_flow::PaymentProof::Eip3009 { .. } => {
+                    output::success(emit_pay_result(&proof, &entry, resource_val.as_ref())?);
                     Ok(())
                 }
-                payment_flow::PaymentProof::Permit2 { .. } | payment_flow::PaymentProof::Upto { .. } => {
-                    Err(anyhow!(
-                        "eip3009-sign produced a Permit2/upto proof, which it should never do — \
+                payment_flow::PaymentProof::Permit2 { .. }
+                | payment_flow::PaymentProof::Upto { .. } => Err(anyhow!(
+                    "eip3009-sign produced a Permit2/upto proof, which it should never do — \
                          this debug command only supports EIP-3009 local signing"
-                    ))
-                }
+                )),
             }
         }
         PaymentCommand::Default { action } => cmd_default(action),
@@ -478,14 +476,68 @@ fn validate_payment_inputs(amount: &str, pay_to: &str, asset: &str) -> Result<u1
 /// All crypto happens in `payment_flow::sign_payment_with_preference`. Passes
 /// `None` for the preference so the user's saved default asset does NOT
 /// influence which accepts entry gets signed — this command signs exactly
-/// what the caller supplied via `--accepts`.
-async fn cmd_pay(accepts_json: &str, from: Option<&str>) -> Result<()> {
-    let accepts: Value =
-        serde_json::from_str(accepts_json).context("--accepts must be a valid JSON array")?;
-    let (proof, _entry) =
-        payment_flow::sign_payment_with_preference(&accepts, from, None, None).await?;
-    output::success(proof.to_pay_json());
+/// what the caller supplied via `--payload`.
+async fn cmd_pay(payload: &str, selected_index: Option<usize>) -> Result<()> {
+    let (mut accepts_val, resource_val) = decode_pay_payload(payload)?;
+    if let Some(i) = selected_index {
+        accepts_val = select_accepts_index(&accepts_val, i)?;
+    }
+    let (proof, entry) =
+        payment_flow::sign_payment_with_preference(&accepts_val, None, None, None).await?;
+    output::success(emit_pay_result(&proof, &entry, resource_val.as_ref())?);
     Ok(())
+}
+
+/// Decode the base64 `--payload` (the raw decoded 402 payload — shell-safe, no
+/// JSON-array quoting) into the `(accepts, resource)` the signer needs.
+///
+/// `resource` comes verbatim from the decoded payload (so the assembled header
+/// round-trips exactly what the server sent); it drives v2 header assembly and
+/// is absent on v1 (→ raw-proof output). To pin a single scheme, the caller
+/// encodes a payload whose `accepts` holds just the chosen entry.
+fn decode_pay_payload(payload: &str) -> Result<(Value, Option<Value>)> {
+    let decoded = decode_payment_blob(payload)?;
+    let accepts_val = decoded
+        .get("accepts")
+        .cloned()
+        .ok_or_else(|| anyhow!("--payload decoded to JSON without an 'accepts' field"))?;
+    let resource_val = decoded.get("resource").cloned();
+    Ok((accepts_val, resource_val))
+}
+
+/// Narrow an `accepts[]` array to a single-entry array holding `accepts[index]`.
+///
+/// Lets the caller pin exactly which scheme the user chose (e.g. from a
+/// multi-scheme recommendation card) by index into the decoded payload's
+/// `accepts`, so the signer can't auto-select a different entry.
+fn select_accepts_index(accepts: &Value, index: usize) -> Result<Value> {
+    let arr = accepts.as_array().ok_or_else(|| {
+        anyhow!("--selected-index requires the payload's 'accepts' to be an array")
+    })?;
+    let entry = arr.get(index).ok_or_else(|| {
+        anyhow!(
+            "--selected-index {} is out of range (accepts has {} entr{})",
+            index,
+            arr.len(),
+            if arr.len() == 1 { "y" } else { "ies" }
+        )
+    })?;
+    Ok(json!([entry]))
+}
+
+/// Shape the `payment pay` / `pay-local` output. When a `resource` is available
+/// (x402 v2 — carried inside the decoded `--payload`), emit the assembled
+/// `PAYMENT-SIGNATURE` header + routing metadata; otherwise emit the raw proof
+/// (legacy contract — caller assembles the header).
+fn emit_pay_result(
+    proof: &payment_flow::PaymentProof,
+    entry: &Value,
+    resource: Option<&Value>,
+) -> Result<Value> {
+    match resource {
+        Some(r) => payment_flow::pay_with_header_json(proof, entry, r),
+        None => Ok(proof.to_pay_json()),
+    }
 }
 
 // ── MPP Challenge Parser ─────────────────────────────────────────
@@ -587,6 +639,62 @@ fn decode_challenge_request(challenge: &serde_json::Value) -> Result<serde_json:
         .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(request_b64))
         .context("invalid base64url in challenge request")?;
     serde_json::from_slice(&decoded).context("invalid JSON in challenge request")
+}
+
+/// Decode any payment header value / body into JSON, so the agent never has to
+/// hand-run `base64 -d` (which is standard-base64-only and silently fails on
+/// base64url). Handles, in order:
+///   1. a `WWW-Authenticate: Payment ...` challenge — parsed, with the base64url
+///      `request` param decoded inline;
+///   2. base64-encoded JSON (`PAYMENT-REQUIRED` / `PAYMENT-RESPONSE` /
+///      `Payment-Receipt`), trying standard + url-safe, padded + unpadded;
+///   3. plain JSON (an x402 v1 body that was never base64-encoded).
+fn decode_payment_blob(input: &str) -> Result<Value> {
+    use base64::engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+
+    let trimmed = input.trim();
+
+    // 1. WWW-Authenticate challenge.
+    let is_www_auth = trimmed
+        .as_bytes()
+        .get(..8)
+        .map(|b| b.eq_ignore_ascii_case(b"Payment "))
+        .unwrap_or(false);
+    if is_www_auth {
+        let mut challenge = parse_www_authenticate(trimmed)?;
+        if challenge.get("request").and_then(|v| v.as_str()).is_some() {
+            challenge["request"] = decode_challenge_request(&challenge)?;
+        }
+        return Ok(challenge);
+    }
+
+    // 2. base64-encoded JSON — try every common variant, accept the first whose
+    //    decoded bytes parse as JSON. (`Engine` isn't dyn-compatible, so decode
+    //    eagerly and filter; checking JSON per-variant also guards the case
+    //    where one alphabet decodes to non-JSON bytes but another yields JSON.)
+    for bytes in [
+        B64.decode(trimmed).ok(),
+        STANDARD_NO_PAD.decode(trimmed).ok(),
+        URL_SAFE.decode(trimmed).ok(),
+        URL_SAFE_NO_PAD.decode(trimmed).ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+            return Ok(v);
+        }
+    }
+
+    // 3. plain JSON (x402 v1 body).
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+        return Ok(v);
+    }
+
+    bail!(
+        "could not decode payment blob: not a WWW-Authenticate challenge, \
+         base64-encoded JSON, or plain JSON"
+    )
 }
 
 /// Build a challenge echo object for the credential.
@@ -1205,7 +1313,10 @@ fn random_nonce_hex() -> String {
 fn normalize_bytes32_hex(value: &str, label: &str) -> Result<String> {
     let body = value.trim_start_matches("0x");
     if body.len() != 64 {
-        bail!("{label} must be 32 bytes (0x + 64 hex chars), got {} chars", body.len());
+        bail!(
+            "{label} must be 32 bytes (0x + 64 hex chars), got {} chars",
+            body.len()
+        );
     }
     if !body.chars().all(|c| c.is_ascii_hexdigit()) {
         bail!("{label} contains non-hex characters");
@@ -1935,62 +2046,52 @@ mod tests {
     // ── CLI argument parsing ──────────────────────────────────────────
 
     #[test]
-    fn cli_x402_pay_accepts_and_from() {
-        let json = r#"[{"scheme":"aggr_deferred","network":"eip155:196","amount":"1000","payTo":"0xA","asset":"0xB"}]"#;
-        let cli = TestCli::parse_from(["test", "pay", "--accepts", json, "--from", "0xPayer"]);
-        match cli.command {
-            PaymentCommand::X402Pay { accepts, from } => {
-                assert_eq!(accepts, json);
-                assert_eq!(from.as_deref(), Some("0xPayer"));
+    fn cli_x402_pay_payload_and_optional_index() {
+        let b64 = "eyJ4NDAyVmVyc2lvbiI6Mn0"; // base64url of {"x402Version":2}
+                                             // payload only → no index (CLI auto-selects).
+        match TestCli::parse_from(["test", "pay", "--payload", b64]).command {
+            PaymentCommand::X402Pay {
+                payload,
+                selected_index,
+            } => {
+                assert_eq!(payload, b64);
+                assert_eq!(selected_index, None);
+            }
+            _ => panic!("expected X402Pay"),
+        }
+        // multi-scheme: pin the user's pick by index.
+        match TestCli::parse_from(["test", "pay", "--payload", b64, "--selected-index", "1"])
+            .command
+        {
+            PaymentCommand::X402Pay { selected_index, .. } => {
+                assert_eq!(selected_index, Some(1));
             }
             _ => panic!("expected X402Pay"),
         }
     }
 
     #[test]
-    fn cli_x402_pay_accepts_only() {
-        let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
-        let cli = TestCli::parse_from(["test", "pay", "--accepts", json]);
-        match cli.command {
-            PaymentCommand::X402Pay { accepts, from } => {
-                assert_eq!(accepts, json);
-                assert_eq!(from, None);
-            }
-            _ => panic!("expected X402Pay"),
-        }
-    }
-
-    #[test]
-    fn cli_x402_pay_missing_accepts() {
-        let result = TestCli::try_parse_from(["test", "pay"]);
-        assert!(result.is_err());
+    fn cli_x402_pay_requires_payload() {
+        assert!(TestCli::try_parse_from(["test", "pay"]).is_err());
+        // legacy flags are gone
+        assert!(TestCli::try_parse_from(["test", "pay", "--accepts", "[]"]).is_err());
     }
 
     // ── eip3009-sign CLI parsing ─────────────────────────────────────
 
     #[test]
-    fn cli_eip3009_sign_accepts_and_from() {
-        let json = r#"[{"scheme":"exact","network":"eip155:8453","amount":"1000000","payTo":"0xA","asset":"0xB","extra":{"name":"USD Coin","version":"2"}}]"#;
-        let cli = TestCli::parse_from(["test", "pay-local", "--accepts", json]);
+    fn cli_eip3009_sign_takes_only_payload() {
+        let b64 = "eyJhY2NlcHRzIjpbXX0"; // base64url of {"accepts":[]}
+        let cli = TestCli::parse_from(["test", "pay-local", "--payload", b64]);
         match cli.command {
-            PaymentCommand::Eip3009Sign { accepts } => {
-                assert_eq!(accepts, json);
-            }
+            PaymentCommand::Eip3009Sign { payload } => assert_eq!(payload, b64),
             _ => panic!("expected Eip3009Sign"),
         }
     }
 
     #[test]
-    fn cli_eip3009_sign_no_from_required() {
-        let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
-        let result = TestCli::try_parse_from(["test", "pay-local", "--accepts", json]);
-        assert!(result.is_ok(), "eip3009-sign should parse without --from");
-    }
-
-    #[test]
-    fn cli_eip3009_sign_missing_accepts() {
-        let result = TestCli::try_parse_from(["test", "pay-local", "--from", "0xPayer"]);
-        assert!(result.is_err());
+    fn cli_eip3009_sign_requires_payload() {
+        assert!(TestCli::try_parse_from(["test", "pay-local"]).is_err());
     }
 
     // ── default subcommand CLI parsing ────────────────────────────────
@@ -2442,6 +2543,117 @@ mod tests {
             "196",
         ]);
         assert!(result.is_err());
+    }
+
+    // ── select_accepts_index ─────────────────────────────────────────
+
+    #[test]
+    fn select_accepts_index_picks_entry() {
+        // Multi-scheme: the skill passes the raw PAYMENT-REQUIRED header + the
+        // index the user picked in the recommendation card; CLI narrows to that
+        // single entry so it can't deviate from the user's choice.
+        let accepts = json!([
+            {"scheme":"exact","asset":"0xA"},
+            {"scheme":"aggr_deferred","asset":"0xB"}
+        ]);
+        let picked = select_accepts_index(&accepts, 1).unwrap();
+        assert_eq!(picked, json!([{"scheme":"aggr_deferred","asset":"0xB"}]));
+    }
+
+    #[test]
+    fn select_accepts_index_out_of_range_errors() {
+        assert!(select_accepts_index(&json!([{"scheme":"exact"}]), 5).is_err());
+    }
+
+    #[test]
+    fn select_accepts_index_non_array_errors() {
+        assert!(select_accepts_index(&json!({"scheme":"exact"}), 0).is_err());
+    }
+
+    // ── decode_pay_payload ───────────────────────────────────────────
+
+    #[test]
+    fn decode_pay_payload_from_base64() {
+        // One base64 blob = the decoded 402 payload; accepts + resource come out.
+        let payload = json!({
+            "x402Version": 2,
+            "resource": {"url":"https://api.example.com/data","mimeType":"application/json"},
+            "accepts": [{"scheme":"exact","network":"eip155:196","amount":"1000","payTo":"0xA","asset":"0xB"}]
+        });
+        let b64 = B64.encode(serde_json::to_vec(&payload).unwrap());
+        let (accepts, resource) = decode_pay_payload(&b64).unwrap();
+        assert_eq!(accepts, payload["accepts"]);
+        assert_eq!(resource, Some(payload["resource"].clone())); // verbatim from payload
+    }
+
+    #[test]
+    fn decode_pay_payload_accepts_base64url() {
+        // PAYMENT-REQUIRED headers may be base64url — reuse decode_payment_blob.
+        let payload = json!({"resource":{"url":"u"},"accepts":[{"scheme":"exact"}]});
+        let b64url = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&payload).unwrap());
+        let (accepts, _resource) = decode_pay_payload(&b64url).unwrap();
+        assert_eq!(accepts[0]["scheme"], "exact");
+    }
+
+    #[test]
+    fn decode_pay_payload_without_accepts_errors() {
+        let b64 = B64.encode(br#"{"x402Version":2,"resource":{"url":"u"}}"#);
+        assert!(decode_pay_payload(&b64).is_err());
+    }
+
+    #[test]
+    fn decode_pay_payload_rejects_garbage() {
+        assert!(decode_pay_payload("@@@ not base64, not json @@@").is_err());
+    }
+
+    // ── decode_payment_blob ──────────────────────────────────────────
+
+    #[test]
+    fn decode_blob_standard_base64_json() {
+        // PAYMENT-RESPONSE / Payment-Receipt: standard base64 of a JSON body.
+        let body = json!({"status":"settled","amount":"1000","payer":"0xA"});
+        let b64 = B64.encode(serde_json::to_vec(&body).unwrap());
+        assert_eq!(decode_payment_blob(&b64).unwrap(), body);
+    }
+
+    #[test]
+    fn decode_blob_base64url_no_pad() {
+        // A base64url body (with '-'/'_', no padding) that the skill's
+        // `base64 -d` (standard only) would choke on — the CLI must handle it.
+        let body = json!({"transaction":"0xab__--cd","amount":"0"});
+        let b64url = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&body).unwrap());
+        assert_eq!(decode_payment_blob(&b64url).unwrap(), body);
+    }
+
+    #[test]
+    fn decode_blob_www_authenticate_decodes_request_inline() {
+        // WWW-Authenticate: Payment ... — parse the header AND decode the
+        // base64url `request` param into JSON inline.
+        let request = json!({"recipient":"0xMerchant","amount":"1000000","currency":"0xUSDC"});
+        let req_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&request).unwrap());
+        let header = format!(
+            "Payment id=\"abc\", realm=\"api.shop.com\", method=\"evm\", intent=\"charge\", request=\"{req_b64}\""
+        );
+        let out = decode_payment_blob(&header).unwrap();
+        assert_eq!(out["intent"], "charge");
+        assert_eq!(out["request"], request);
+    }
+
+    #[test]
+    fn decode_blob_plain_json_v1_body() {
+        // v1 PAYMENT body is plain JSON (not base64) — returned as-is.
+        let out =
+            decode_payment_blob(r#"{"x402Version":1,"accepts":[{"scheme":"exact"}]}"#).unwrap();
+        assert_eq!(out["x402Version"], 1);
+        assert_eq!(out["accepts"][0]["scheme"], "exact");
+    }
+
+    #[test]
+    fn decode_blob_rejects_unrecognized_input() {
+        assert!(decode_payment_blob("@@@ not base64, not json @@@").is_err());
     }
 
     // ── parse_www_authenticate ───────────────────────────────────────
