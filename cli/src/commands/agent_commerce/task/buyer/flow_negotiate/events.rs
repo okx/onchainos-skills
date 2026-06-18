@@ -48,6 +48,11 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     let x402_paying = super::super::content::x402_paying_user_notify(job_id, title_display);
     let x402_replay_ok = super::super::content::x402_replay_success_user_notify(job_id);
     let x402_replay_fail = super::super::content::x402_replay_fail_user_notify(job_id);
+    let short_id = if job_id.len() >= 8 { &job_id[..8] } else { job_id };
+    let session_hint = super::super::flow::SESSION_STATUS_HINT;
+    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
+    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
+    let cmd_replay_input = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[x402 replay input {short_id}] field input"), "x402_replay_input");
     format!(
     "[Current state] job_payment_mode_changed (payment-mode switch is on-chain)\n\
      [Role] User (User Agent)\n\n\
@@ -88,8 +93,9 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      \x20\x20content (canonical English template — translate before passing): {x402_paying}\n\n\
      **Step 3 — sign + direct/accept + endpoint replay (atomic command):**\n\
      ```bash\n\
-     onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
+     onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount> [--body '<serviceBody JSON>']\n\
      ```\n\
+     `--body`: if the earlier `x402_input_required` field-confirmation flow constructed a JSON body (stored in this sub session's context), pass it here. The body was already confirmed by the user before payment. Omit `--body` only when no `x402_input_required` confirmation happened.\n\
      Internally executes: x402_pay signing -> direct/accept on-chain -> assemble payment header -> replay endpoint.\n\
      Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, deliverableSavedPath, signature, authorization, sessionCert, txHash }}\n\
      ✅ The CLI **auto-saves** the deliverable to disk when replaySuccess=true (`deliverableSavedPath` in output). No manual `task-deliverable-save` call needed.\n\n\
@@ -101,9 +107,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data they paid for.\n\n\
      Branch by `replaySuccess`:\n\n\
      ▸ replaySuccess=true:\n\
-     {x402_replay_ok}\n\n\
-     ▸ replaySuccess=false:\n\
-     {x402_replay_fail}\n\n\
+     {x402_replay_ok}\n\
      -> **end this turn** and wait for the `job_accepted` system notification.\n\n\
      🛑🛑🛑 **Iron rule (MANDATORY) after receiving `job_accepted`**:\n\
      After the `job_accepted` system event arrives, you **must** call:\n\
@@ -112,7 +116,38 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Follow the returned script (the script will guide you to run `onchainos agent complete`).\n\
      ❌ **Absolutely forbidden**: re-running this turn's `x402-check` / `task-402-pay` / `okx-a2a user notify` - those completed in this turn; re-running causes double payment or duplicate notification.\n\
-     ❌ **Absolutely forbidden**: skipping `next-action` and deciding the next step yourself - the `job_accepted` script contains the `complete` step; skipping = the job is permanently stuck in the accepted state.\n"
+     ❌ **Absolutely forbidden**: skipping `next-action` and deciding the next step yourself - the `job_accepted` script contains the `complete` step; skipping = the job is permanently stuck in the accepted state.\n\n\
+     ▸ replaySuccess=false:\n\
+     Check the `replayBody` JSON from task-402-pay output. Does it describe required business parameters?\n\
+     Look for: `requiredArgs`, `requiredAnyOf`, `fields`, `status: \"input_required\"`, or a message mentioning missing/required parameters.\n\n\
+     \x20\x20▸▸ **If the endpoint needs business parameters** (field info found in replayBody):\n\
+     \x20\x20The payment (EIP-3009 signing + direct/accept) succeeded, but the endpoint could not deliver because it needs a request body.\n\
+     \x20\x20**Push a decision card** so the user can provide the missing parameters:\n\
+     \x20\x20{session_hint}\n\
+     \x20\x20```bash\n\
+     \x20\x20{cmd_replay_input}\n\
+     \x20\x20```\n\
+     \x20\x20🌐 **Localize `--user-content` AND `--list-label`**.\n\
+     \x20\x20`--user-content` template (canonical English — translate to user's language; fill `<placeholder>` from runtime values):\n\
+     \x20\x20```\n\
+     \x20\x20[Job {short_id}] The x402 payment succeeded (on-chain accepted), but the endpoint requires business parameters to deliver the result.\n\
+     \x20\x20Already paid: <feeAmount> <feeTokenSymbol>\n\n\
+     \x20\x20The endpoint requires:\n\
+     \x20\x20<for each field in replayBody's requiredArgs/fields, one line:>\n\
+     \x20\x20• <fieldName> (<type>): <description>\n\n\
+     \x20\x20Please provide the required parameter values.\n\
+     \x20\x20```\n\
+     \x20\x20`--llm-content` block (keep English; replace `<placeholders>` with actual values):\n\
+     \x20\x20```\n\
+     \x20\x20[REPLAY_CONTEXT] endpoint=<endpoint> providerAgentId=<providerAgentId> acceptsJson=<acceptsJson> feeTokenSymbol=<feeTokenSymbol> feeAmount=<feeAmount>\n\
+     \x20\x20requiredFields: <copy the fields/requiredArgs list from replayBody>\n\
+     \x20\x20```\n\
+     \x20\x20{follow_playbook}\n\
+     \x20\x20-> **end this turn** and wait for the user's reply. The `job_accepted` event will also arrive; the `job_accepted` handler (B-Branch 2) will detect the pending decision and skip its notification.\n\
+     \x20\x20{route_hint}\n\n\
+     \x20\x20▸▸ **Otherwise** (generic replay failure, no field info):\n\
+     \x20\x20{x402_replay_fail}\n\
+     \x20\x20-> **end this turn** and wait for the `job_accepted` system notification.\n"
     )
 }
 

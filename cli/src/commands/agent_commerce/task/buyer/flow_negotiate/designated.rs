@@ -327,6 +327,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
     let follow_playbook_short = super::super::flow::FOLLOW_PLAYBOOK_SHORT;
     let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
     let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[x402 invalid {short_id}] next-step decision"), "x402_invalid");
+    let cmd_input_required = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[x402 input {short_id}] field confirmation"), "x402_input_required");
     let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[x402 price {short_id}] price decision"), "x402_price_mismatch");
     let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[Over budget {short_id}] budget decision"), "over_budget");
 
@@ -353,24 +354,40 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          \x20\x20{follow_playbook}\n\
          \x20\x20-> **end this turn** and wait for the user's reply.\n\
          \x20\x20{route_hint}\n\n\
-         - **`result == \"input_required\"`** -> the endpoint is a valid x402 service but requires business parameters to trigger the 402 payment challenge.\n\
-         \x20\x20The response includes `fields` / `requiredAnyOf` describing what the endpoint needs.\n\
-         \x20\x20**You MUST construct a JSON body from the task description:**\n\
-         \x20\x20\x20\x201. Read the `fields` array from the response — each entry has `name`, `type`, and optionally `required`/`label`.\n\
-         \x20\x20\x20\x202. Read `requiredAnyOf` — at least one of these fields must be present.\n\
-         \x20\x20\x20\x203. Extract matching values from the **task description** (the user's original request). Map task description content to the field names.\n\
-         \x20\x20\x20\x204. If you can fill the required fields, re-run x402-validate with `--body`:\n\
-         \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id} --body '<constructed JSON>'\n\
-         \x20\x20\x20\x20```\n\
-         \x20\x20\x20\x20If the re-check returns `valid: true`, use its `acceptsJson`, `amountHuman`, `tokenSymbol` and proceed to **A-Step 3** (set-payment-mode).\n\
-         \x20\x20\x20\x20⚠️ **Remember the constructed JSON body** — you must pass the same `--body` to `task-402-pay` later so the replay sends business parameters along with the payment header.\n\
-         \x20\x20\x20\x205. If you cannot extract the required fields from the task description, enqueue a user decision asking them to provide the missing business parameters:\n\
-         \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20{cmd_x402_invalid}\n\
-         \x20\x20\x20\x20```\n\
-         \x20\x20\x20\x20`--user-content` template: [Job {short_id}] The x402 service requires business parameters (<list field names from response>) but they could not be extracted from the task description. Please provide them or choose: A. Retry with parameters / B. Switch ASP / C. Close the job.\n\
+         - **`result == \"input_required\"`** -> the endpoint needs business parameters before payment.\n\
+         \x20\x20The response includes `fields` / `requiredAnyOf` describing what the endpoint needs.\n\n\
+         \x20\x20**IR-Step 1 — Pre-fill from serviceParams:**\n\
+         \x20\x20Read `serviceParams` from the `[Pre-fetched task context]` block above.\n\
+         \x20\x20For each field in the `fields`/`requiredAnyOf` list:\n\
+         \x20\x20\x20\x20- If `serviceParams` is non-empty and parseable as JSON, check whether a key matches the field `name` → pre-fill that value.\n\
+         \x20\x20\x20\x20- If `serviceParams` is natural language (not valid JSON), try to extract a value that semantically matches the field `description` → pre-fill.\n\
+         \x20\x20\x20\x20- Otherwise → mark as \"pending user input\".\n\n\
+         \x20\x20**IR-Step 2 — Push confirmation form to the user** (🛑 even if all fields are pre-filled, the user MUST confirm):\n\
+         \x20\x20{session_hint}\n\
+         \x20\x20```bash\n\
+         \x20\x20{cmd_input_required}\n\
+         \x20\x20```\n\
+         \x20\x20{l10n_prompt}\n\
+         \x20\x20`--user-content` template (canonical English — translate to user's language; fill `<placeholder>` from runtime values):\n\
+         \x20\x20```\n\
+         \x20\x20[Job {short_id}] The x402 endpoint requires the following business parameters before payment:\n\n\
+         \x20\x20<for each field in the inputRequired list, one line:>\n\
+         \x20\x20• <fieldName> (<type>): <description> — [Pre-filled: <value>] or [Please fill in]\n\n\
+         \x20\x20<if all fields pre-filled:>\n\
+         \x20\x20Please confirm the values above are correct.\n\
+         \x20\x20A. Confirm → proceed with payment\n\
+         \x20\x20B. Modify → specify which field and new value\n\n\
+         \x20\x20<if any field needs user input:>\n\
+         \x20\x20Please fill in the blank fields and confirm.\n\
+         \x20\x20```\n\
+         \x20\x20`--llm-content` block (keep English; replace `<placeholders>` with actual values):\n\
+         \x20\x20```\n\
+         \x20\x20[IR_CONTEXT] endpoint=<endpoint> feeTokenSymbol=<feeTokenSymbol> feeAmount=<feeAmount>\n\
+         \x20\x20inputRequired fields: <copy the fields/requiredAnyOf list from x402-validate output>\n\
+         \x20\x20Pre-filled values: <list each pre-filled field=value pair>\n\
+         \x20\x20```\n\
          \x20\x20{follow_playbook}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\
          \x20\x20{route_hint}\n\n\
          - **`result == \"price_mismatch\"`** -> enqueue the user decision:\n\
          \x20\x20{session_hint}\n\
@@ -399,7 +416,30 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          \x20\x20{follow_playbook}\n\
          \x20\x20-> **end this turn** and wait for the user's reply.\n\
          \x20\x20{route_hint}\n\n\
-         - **`result == \"pass\"`** -> all checks passed. Execute **A-Step 3** below.\n\n\
+         - **`result == \"pass\"`** -> all checks passed.\n\
+         \x20\x20Check `serviceParams` from the `[Pre-fetched task context]` block above.\n\n\
+         \x20\x20▸ **If serviceParams is non-empty** (the task carries business parameters that should be sent to the endpoint):\n\
+         \x20\x20\x20\x20The user must confirm these parameters before payment. Follow the same **IR-Step 2** as the `input_required` branch:\n\
+         \x20\x20\x20\x20```bash\n\
+         \x20\x20\x20\x20{cmd_input_required}\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20{l10n_prompt}\n\
+         \x20\x20\x20\x20`--user-content` template (canonical English — translate to user's language):\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20[Job {short_id}] The following parameters will be sent to the x402 endpoint along with payment:\n\n\
+         \x20\x20\x20\x20<display serviceParams content — if JSON, show each key: value; if text, show as-is>\n\n\
+         \x20\x20\x20\x20A. Confirm → proceed with payment\n\
+         \x20\x20\x20\x20B. Modify → specify changes\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20`--llm-content` block (keep English; fill actual values):\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20[IR_CONTEXT] endpoint=<endpoint> feeTokenSymbol=<feeTokenSymbol from x402-validate> feeAmount=<feeAmount from x402-validate>\n\
+         \x20\x20\x20\x20Pre-filled values: <serviceParams content>\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20{follow_playbook}\n\
+         \x20\x20\x20\x20-> **end this turn** and wait for the user's reply (the `x402_input_required` handler will validate → set-payment-mode).\n\
+         \x20\x20\x20\x20{route_hint}\n\n\
+         \x20\x20▸ **If serviceParams is empty/null** → proceed directly to **A-Step 3**.\n\n\
          **A-Step 3 — set-payment-mode (push x402 on-chain):**\n\
          ```bash\n\
          onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from x402-validate> --token-amount <amountHuman from x402-validate> --endpoint <endpoint>\n\

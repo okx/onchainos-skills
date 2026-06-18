@@ -126,16 +126,24 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      → **End this turn** and wait for user retry or a wakeup_notify event.\n\n\
      **B-Branch 2: replaySuccess=false (only take this branch when replaySuccess=false is explicitly found in context)**\n\n\
      ⚠️ **Do not run complete** -- the user did not receive the deliverable.\n\n\
-     **B-Step 2 -- Notify the user of replay failure via `okx-a2a user notify`:**\n\
-     🌐 **Localize first** — translate the canonical English content below.\n\
-     ```bash\n\
-     okx-a2a user notify --content '<your translated content>'\n\
-     ```\n\
-     Canonical English content:\n\
-     {accepted_x402_fail}\n\n\
+     **B-Step 2 — Check whether a `x402_replay_input` pending decision was already pushed:**\n\
+     Look in this sub session's context for a `pending-decisions-v2 request ... --source-event x402_replay_input` call from the previous `job_payment_mode_changed` turn.\n\n\
+     \x20\x20▸ **If yes** (a `x402_replay_input` decision was already sent to the user session):\n\
+     \x20\x20\x20\x20**Skip notification.** The user will reply to the pending decision with the required parameters.\n\
+     \x20\x20\x20\x20The `user_decision_x402_replay_input` handler will re-run `task-402-pay --body` and call `complete` on success.\n\
+     \x20\x20\x20\x20→ **End this turn.** Do nothing further.\n\n\
+     \x20\x20▸ **If no** (generic replay failure, no pending decision):\n\
+     \x20\x20\x20\x20Notify the user of replay failure via `okx-a2a user notify`:\n\
+     \x20\x20\x20\x20🌐 **Localize first** — translate the canonical English content below.\n\
+     \x20\x20\x20\x20```bash\n\
+     \x20\x20\x20\x20okx-a2a user notify --content '<your translated content>'\n\
+     \x20\x20\x20\x20```\n\
+     \x20\x20\x20\x20Canonical English content:\n\
+     \x20\x20\x20\x20{accepted_x402_fail}\n\n\
      [Follow-up events]\n\
      - replaySuccess=true / default: job_completed → final confirmation\n\
-     - replaySuccess=false: wait for user instructions (retry or close task)\n\n\
+     - replaySuccess=false + x402_replay_input pending: wait for user reply to provide body → re-replay → complete\n\
+     - replaySuccess=false + no pending: wait for user instructions (retry or close task)\n\n\
      🛑🛑🛑 **job_completed MANDATORY rule**:\n\
      After complete is settled on-chain, a `job_completed` system event will arrive.\n\
      Upon receiving `job_completed`, you **MUST** call:\n\

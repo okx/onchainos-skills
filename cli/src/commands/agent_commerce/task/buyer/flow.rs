@@ -728,6 +728,59 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`. Action: `onchainos agent mark-failed {job_id} --provider <designated agentId>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → the CLI writes a card file (path in stdout); push via `--source-event asp_match_pick --user-content-file \"<card file path>\"` (translate field labels if non-English); if empty → push via `--source-event no_asp_found`.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event x402_price_mismatch`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=accept this price  B=reject and switch ASP\".\n"
                 ),
+                "x402_input_required" => format!(
+                    "[User decision relay] source_event=`x402_input_required`, user's verbatim reply: `{reply}`\n\n\
+                     The user was shown the x402 inputRequired field form (pre-filled from serviceParams + blanks for user input). **Semantic mapping** — decide:\n\n\
+                     \x20\x20• **Confirm** — typical intents: A / 选A / `confirm` / `确认` / `ok` / `yes` / `好` / `可以`. Use the pre-filled values as-is.\n\
+                     \x20\x20• **Provide/modify values** — user typed field values or corrections (e.g. `address: 0x123...`, `B` + new values). Parse the reply, update the fields.\n\n\
+                     **Execution flow (follow in strict order):**\n\n\
+                     **Step 1 — Parse the user's reply and assemble the `--body` JSON:**\n\
+                     \x20\x20- If confirm → use the pre-filled values from the `[IR_CONTEXT]` block in the `--llm-content` of the pending decision.\n\
+                     \x20\x20- If user provided new/modified values → merge with pre-filled values (user input overrides).\n\
+                     \x20\x20- Assemble all field values into a flat JSON object.\n\n\
+                     **Step 2 — Validate the body via `x402-check --body`:**\n\
+                     Read `endpoint` from the `[IR_CONTEXT]` block. If missing, fallback to `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json`.\n\
+                     ```bash\n\
+                     onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id} --body '<assembled JSON from Step 1>'\n\
+                     ```\n\
+                     \x20\x20- If the re-check returns `valid: true` → extract `acceptsJson`, `amountHuman`, `tokenSymbol` and proceed to **Step 3**.\n\
+                     \x20\x20- If the re-check fails → notify the user of the validation error and re-ask via `pending-decisions-v2 request` with `--source-event x402_input_required`.\n\n\
+                     **Step 3 — set-payment-mode (push x402 on-chain):**\n\
+                     ```bash\n\
+                     onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from Step 2> --token-amount <amountHuman from Step 2> --endpoint <endpoint>\n\
+                     ```\n\
+                     ⚠️ **Remember the assembled `--body` JSON** — you must pass it to `task-402-pay` in the `job_payment_mode_changed` turn.\n\n\
+                     **Step 3 result branch:**\n\
+                     \x20\x20- Output contains `\"alreadySet\": true` → call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\"}}' ` immediately.\n\
+                     \x20\x20- Output contains `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n"
+                ),
+                "x402_replay_input" => format!(
+                    "[User decision relay] source_event=`x402_replay_input`, user's verbatim reply: `{reply}`\n\n\
+                     The user was asked to provide business parameters for an x402 endpoint that already accepted payment but could not deliver without a request body.\n\n\
+                     **Execution flow (follow in strict order):**\n\n\
+                     **Step 1 — Parse the user's reply and assemble the `--body` JSON:**\n\
+                     \x20\x20Read the `[REPLAY_CONTEXT]` block from the `--llm-content` of the pending decision.\n\
+                     \x20\x20Extract field requirements from `requiredFields`.\n\
+                     \x20\x20Map the user's reply values to the field names → assemble a flat JSON object.\n\n\
+                     **Step 2 — Re-run task-402-pay with `--body`:**\n\
+                     Read `endpoint`, `providerAgentId`, `acceptsJson`, `feeTokenSymbol`, `feeAmount` from the `[REPLAY_CONTEXT]` block.\n\
+                     ```bash\n\
+                     onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint> --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --body '<assembled JSON from Step 1>'\n\
+                     ```\n\
+                     ⚠️ `task-402-pay` will re-sign (new EIP-3009 proof) and skip direct/accept (already accepted on-chain). The endpoint replay now includes the body.\n\n\
+                     **Step 3 — Branch on result:**\n\n\
+                     \x20\x20▸ replaySuccess=true:\n\
+                     \x20\x20\x20\x20**3a** — Notify user with the FULL deliverable via `okx-a2a user notify`:\n\
+                     \x20\x20\x20\x20🌐 Localize. Copy `replayBodyDisplay` verbatim into the notification (do NOT summarize or truncate).\n\
+                     \x20\x20\x20\x20**3b** — Run `complete` immediately (the `job_accepted` event already passed):\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent complete {job_id}\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20→ **End this turn.** Wait for `job_completed` event.\n\n\
+                     \x20\x20▸ replaySuccess=false:\n\
+                     \x20\x20\x20\x20Re-push `pending-decisions-v2 request` with `--source-event x402_replay_input`, include the validation error in `--user-content` so the user can correct their input.\n\
+                     \x20\x20\x20\x20→ **End this turn.** Wait for user's corrected reply.\n"
+                ),
                 "set_asp_params" => format!(
                     "[User decision relay] source_event=`set_asp_params`, user's verbatim reply: `{reply}`\n\n\
                      The user was asked for serviceParams after selecting an ASP (via the set-asp flow). Their reply IS the serviceParams value.\n\n\
