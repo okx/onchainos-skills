@@ -658,7 +658,7 @@ fn handle_request_prompt(
         // same llmContent generator as the CLI-mode branch so resolve behavior
         // stays consistent across modes.
         let entry = q.entries.last().unwrap();
-        let llm_content = resolve_llm_content_cli(entry);
+        let llm_content = playbook_push_prompt_user(entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
         println!("Decision request submitted (queued for tracking). ");
@@ -667,7 +667,6 @@ fn handle_request_prompt(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(unreachable_code)]
 fn handle_request(
     job_id: String,
     role: String,
@@ -678,151 +677,16 @@ fn handle_request(
     llm_content: Option<String>,
     source_event: Option<String>,
 ) -> Result<()> {
-    let cli_mode_env = std::env::var("OKX_A2A_IS_CLI").unwrap_or_default();
-    let cli_mode = cli_mode_env == "1";
-    trace_log(&format!(
-        "handle_request {} (OKX_A2A_IS_CLI={:?}): job_id={} role={} agent_id={} to_agent_id={:?}",
-        if cli_mode { "CLI_MODE" } else { "QUEUE_MODE" },
-        cli_mode_env, job_id, role, agent_id, to_agent_id,
-    ));
-    if cli_mode {
-        let now = Utc::now();
-        let entry = PendingEntry {
-            job_id,
-            role,
-            agent_id,
-            to_agent_id,
-            user_content,
-            list_label,
-            llm_content_override: llm_content,
-            source_event,
-            status: Status::Active,
-            created_at: now,
-            updated_at: now,
-        };
-        let llm_content = resolve_llm_content_cli(&entry);
-        use crate::commands::agent_commerce::task::common::okx_a2a;
-        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
-        print!("Decision request submitted. End the turn now.\n");
-        return Ok(());
-    }
-
-    {
-        let now = Utc::now();
-        let to_ref = to_agent_id.as_deref();
-        let new_entry_template = PendingEntry {
-            job_id: job_id.clone(),
-            role: role.clone(),
-            agent_id: agent_id.clone(),
-            to_agent_id: to_agent_id.clone(),
-            user_content: user_content.clone(),
-            list_label: list_label.clone(),
-            llm_content_override: llm_content.clone(),
-            source_event: source_event.clone(),
-            status: Status::Queued,
-            created_at: now,
-            updated_at: now,
-        };
-
-        let _lock = acquire_lock()?;
-        let mut q = read_queue()?;
-        let original_created_at = q
-            .entries
-            .iter()
-            .find(|e| entry_matches(e, &job_id, &role, &agent_id, to_ref))
-            .map(|e| e.created_at)
-            .unwrap_or(now);
-        q.entries.retain(|e| !entry_matches(e, &job_id, &role, &agent_id, to_ref));
-        q.entries.push(PendingEntry {
-            created_at: original_created_at,
-            ..new_entry_template
-        });
-        write_queue_atomic(&q)?;
-        let entry = q.entries.last().unwrap();
-        print!("{}", playbook_push_prompt_user(entry));
-        return Ok(());
-    }
-
-    // Unreachable: the early-returns above cover every path. Keeping the
-    // historical Active/Queued queue-routing branch behind #[allow(unreachable_code)]
-    // until the v2-legacy code path is fully retired.
-    let to_ref = to_agent_id.as_deref();
-
-    let _lock = acquire_lock()?;
-    let mut q = read_queue()?;
-    ensure_invariant_and_evict(&mut q);
-
-    let prev_idx = q.entries.iter().position(|e| entry_matches(e, &job_id, &role, &agent_id, to_ref));
-    let (new_status, original_created_at) = match prev_idx {
-        Some(idx) => {
-            let old = &q.entries[idx];
-            (old.status.clone(), old.created_at)
-        }
-        None => {
-            let status = if q.entries.iter().any(|e| e.status == Status::Active) {
-                Status::Queued
-            } else {
-                Status::Active
-            };
-            (status, Utc::now())
-        }
-    };
-
-    // Re-prompt the active card whenever this request lands as queued — regardless of
-    // whether the (jobId, role, agentId, toAgentId?) tuple is new or an overwrite. Same
-    // sub re-asking still surfaces the active card (defensive against the active getting
-    // buried by intermediate chat).
-    let active_for_reprompt: Option<PendingEntry> = if new_status == Status::Queued {
-        q.entries
-            .iter()
-            .find(|e| e.status == Status::Active)
-            .cloned()
-    } else {
-        None
-    };
-
-    if let Some(idx) = prev_idx {
-        q.entries.remove(idx);
-    }
-    q.entries.push(PendingEntry {
-        job_id: job_id.clone(),
-        role: role.clone(),
+    handle_request_prompt(
+        job_id,
+        role,
         agent_id,
         to_agent_id,
-        user_content: user_content.clone(),
+        user_content,
         list_label,
-        llm_content_override: llm_content,
+        llm_content,
         source_event,
-        status: new_status.clone(),
-        created_at: original_created_at,
-        updated_at: Utc::now(),
-    });
-
-    write_queue_atomic(&q)?;
-
-    match new_status {
-        Status::Active => {
-            let entry = q.entries.last().unwrap();
-            print!("{}", playbook_push(entry));
-        }
-        Status::Queued => {
-            let pos = q
-                .entries
-                .iter()
-                .filter(|e| e.status == Status::Queued)
-                .count();
-            if let Some(active) = active_for_reprompt {
-                let new_entry = q.entries.last().unwrap();
-                print!(
-                    "{}",
-                    playbook_wait_with_reprompt(&active, new_entry, pos)
-                );
-            } else {
-                print!("{}", playbook_wait(pos));
-            }
-        }
-    }
-    Ok(())
+    )
 }
 
 /// CLI-driver bypass: build the full system-shaped relay envelope from the
