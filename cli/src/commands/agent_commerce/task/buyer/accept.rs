@@ -510,28 +510,45 @@ pub async fn handle_task_402_pay(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
-    // Step 0: amount validation — the amount in `402 accepts` must match the business-negotiated amount.
+    // Step 0: filter accepts by --token-symbol, then validate amount.
     let accepts_vec: Vec<serde_json::Value> = serde_json::from_str(accepts)
         .map_err(|e| anyhow::anyhow!("accepts JSON parse failed: {e}"))?;
-    let pricing = x402_flow::extract_x402_pricing(&accepts_vec)?;
 
     let (_, token_address, decimals) = match resolve_token_for_validation(client, token_symbol, &agent_id).await {
         Ok(v) => v,
         Err(e) => {
-            if DEBUG_LOG { eprintln!("[task-402-pay] ⚠ token-info lookup failed; skipping amount validation: {e}"); }
+            if DEBUG_LOG { eprintln!("[task-402-pay] ⚠ token-info lookup failed; skipping token filter: {e}"); }
             (String::new(), String::new(), 0u8)
         }
     };
-    if decimals > 0 {
-        if !token_address.is_empty()
-            && !pricing.asset.is_empty()
-            && token_address.to_lowercase() != pricing.asset.to_lowercase()
-        {
+
+    let effective_accepts: Vec<serde_json::Value> = if !token_address.is_empty() {
+        let filtered: Vec<_> = accepts_vec.iter()
+            .filter(|e| {
+                e["asset"].as_str()
+                    .map(|a| a.eq_ignore_ascii_case(&token_address))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
+            let available: Vec<_> = accepts_vec.iter()
+                .filter_map(|e| e["asset"].as_str())
+                .collect();
             bail!(
-                "x402 token mismatch: 402 returned asset={}, expected tokenAddress={} ({})",
-                pricing.asset, token_address, token_symbol
+                "x402 token mismatch: no accepts entry matches {} ({}); available assets: {}",
+                token_address, token_symbol, available.join(", ")
             );
         }
+        if DEBUG_LOG { eprintln!("[task-402-pay] filtered accepts: {} → {} entries matching {}", accepts_vec.len(), filtered.len(), token_symbol); }
+        filtered
+    } else {
+        accepts_vec
+    };
+
+    let pricing = x402_flow::extract_x402_pricing(&effective_accepts)?;
+
+    if decimals > 0 {
         if !x402_flow::amounts_match(&pricing.amount_minimal, token_amount, decimals) {
             let expected_minimal = x402_flow::human_to_minimal(token_amount, decimals).unwrap_or_else(|_| "?".to_string());
             bail!(
@@ -542,12 +559,15 @@ pub async fn handle_task_402_pay(
         if DEBUG_LOG { eprintln!("[task-402-pay] ✓ amount validation passed: {} {} ≈ {} (minimal units)", token_amount, token_symbol, pricing.amount_minimal); }
     }
 
+    let effective_accepts_str = serde_json::to_string(&effective_accepts)
+        .context("failed to serialize filtered accepts")?;
+
     // Step 1: x402_pay signing.
     if DEBUG_LOG {
         eprintln!("[task-402-pay] Step 1: x402_pay signing");
-        eprintln!("[task-402-pay] accepts: {accepts}");
+        eprintln!("[task-402-pay] accepts: {effective_accepts_str}");
     }
-    let proof = payment_flow::x402_pay_from_accepts(accepts, from.map(|s| s.to_string())).await?;
+    let proof = payment_flow::x402_pay_from_accepts(&effective_accepts_str, from.map(|s| s.to_string())).await?;
     let (proof_signature, proof_authorization, proof_session_cert) = match proof {
         payment_flow::PaymentProof::Eip3009 {
             signature,
@@ -600,7 +620,7 @@ pub async fn handle_task_402_pay(
     // Step 3: build payment header from the already-signed accepts[], then replay.
     // No re-fetch — avoids the double-GET inconsistency and supports body-required endpoints.
     if DEBUG_LOG { eprintln!("[task-402-pay] Step 3: assemble payment header from signed accepts[] → replay endpoint"); }
-    let x402_payload = match x402_flow::payload_from_accepts(accepts) {
+    let x402_payload = match x402_flow::payload_from_accepts(&effective_accepts_str) {
         Ok(p) => p,
         Err(e) => {
             if DEBUG_LOG { eprintln!("[task-402-pay] failed to build x402 payload from accepts: {e}"); }

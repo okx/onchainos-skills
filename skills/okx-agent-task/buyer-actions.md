@@ -176,19 +176,27 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 
 **Flow**:
 1. **Provider validation**: same as §5 step 1.
-2. **Endpoint validation**: `onchainos agent x402-check --endpoint <endpoint>` — `valid=false` → inform "invalid"; `tokenSymbol` not USDT/USDG → inform "unsupported".
+2. **Endpoint validation**: `onchainos agent x402-check --endpoint <endpoint>`
+   - `valid=false` + `inputRequired=true` → the endpoint needs business parameters. Cache the `fields` / `requiredAnyOf` list for Step 4. **Continue** (this is not a real failure).
+   - `valid=false` + no `inputRequired` → inform "invalid endpoint"; stop.
+   - `tokenSymbol` not USDT/USDG → inform "unsupported token"; stop.
 3. **User pricing confirmation** → show a 2-column table (`| Field | Value |`): 卖家/Seller, 服务/Service, Endpoint (in backticks), 费用/Price. If refused, end.
 4. **Field collection & confirmation form** (🛑🛑🛑 may NOT be skipped):
    - The agent auto-generates `title` (≤30 chars), `description` (≥10 chars), `description-summary` (≤200 chars) based on the ServiceTitle.
    - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
    - `currency` = `tokenSymbol`.
+   - 🛑 **`inputRequired` field collection** — if Step 2 returned `inputRequired=true`:
+     - Display each field from `fields` / `requiredAnyOf` to the user with its `name`, `type`, and `description`.
+     - The user MUST fill in or explicitly confirm every field value. Do NOT auto-generate or infer values on behalf of the user.
+     - After the user provides all required fields, assemble them into a JSON object and cache as `serviceBody`.
    - Acceptance / delivery deadlines are now managed by the server — do NOT pass `--deadline-open` / `--deadline-submit`.
    - ⚠️ **Language matching**: field labels MUST match the user's language.
    - Display the full confirmation form (format see `buyer-actions-publish.md` Appendix A) → **end this turn** and wait for explicit confirmation.
    - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn.**
 5. **Create the task after user confirmation**: `create-task` → **end this turn**, wait for `job_created`, cache `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`.
 6. **set-payment-mode** (triggered by `job_created`): `set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>` → **end this turn**, wait for `job_payment_mode_changed`.
-7. **task-402-pay** (triggered by `job_payment_mode_changed`): `task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt>`
+7. **task-402-pay** (triggered by `job_payment_mode_changed`): `task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt> [--body '<serviceBody JSON>']`
+   - `--body`: only when Step 2 returned `inputRequired=true` — pass the `serviceBody` JSON collected in Step 4. Omit when the endpoint does not require business parameters.
    - `replaySuccess=true` → notify deliverable + "awaiting on-chain confirmation".
    - `replaySuccess=false` → notify replay failure.
 8. Wait for `job_accepted` → call `next-action --role buyer --agentId <yours> --message '{"event":"job_accepted","jobId":"<jobId>"}'`; follow the script to complete.
