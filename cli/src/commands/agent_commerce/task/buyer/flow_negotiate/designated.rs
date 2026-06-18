@@ -193,7 +193,7 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
     format!("\
              🎯 **Designated ASP**: {dp_id}\n\
              ⚠️ The persisted designated-provider file has already been removed by the CLI when this prompt was generated (consume-on-read); no manual cleanup needed.\n\n\
-             **D-Step 1 — query ASP route (service-list + profile combined):**\n\
+             **D-Step 1 — query ASP route:**\n\
              ```bash\n\
              onchainos agent designated-route --provider {dp_id}{endpoint_flag}\n\
              ```\n\

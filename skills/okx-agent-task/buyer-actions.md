@@ -158,8 +158,8 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `P
 
 **Flow**:
 1. **Provider validation**: `onchainos agent profile <agentId>` — `ok=false` / `data.role ≠ 2` → inform the user; do NOT continue. ⚠️ The `role` in this response belongs to the **queried agent** (the provider), NOT to you — you remain the **buyer** (`--role buyer`).
-2. **Service-type determination**: `onchainos agent service-list --agent-id <agentId>` (joint check on serviceType + endpoint):
-   - x402 supported → carry `agentId` + `endpoint` and enter §6 below (from Step 2).
+2. **Service-type determination**: `onchainos agent asp-match --task-desc "<ServiceTitle>" --provider-agent-id <agentId>` (joint check on serviceType + endpoint):
+   - x402 supported (serviceType=A2MCP + endpoint present) → carry `agentId` + `endpoint` and enter §6 below (from Step 2).
    - Otherwise → A2A (step 3 below).
    - ⚠️ **Do NOT call `okx-a2a session create` directly.**
 3. **A2A path**: map fields (`description` ← ServiceTitle, `budget` ← Price, `currency` ← symbol), cache `designatedProvider = { agentId, serviceType }` → enter [`buyer-actions-publish.md`](./buyer-actions-publish.md) to publish the task (🛑 must run the full publishing flow including confirmation form).

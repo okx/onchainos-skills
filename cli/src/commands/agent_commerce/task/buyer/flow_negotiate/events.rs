@@ -74,7 +74,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     to extract `providerAgentId`; get `endpoint` from `services[0].endpoint` of `onchainos agent service-list --agent-id <providerAgentId>`.\n\n\
+     to extract `providerAgentId`; get `endpoint` from `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId>`.\n\n\
      If acceptsJson / feeTokenSymbol / feeAmount is missing -> re-validate with the endpoint above:\n\
      ```bash\n\
      onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\

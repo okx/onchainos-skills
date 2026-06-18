@@ -197,7 +197,7 @@ Publish a new task (`POST /aieco/task/create` → uopData → sign → broadcast
 | `--max-budget` | ✅ | Maximum budget (hard upper bound for negotiated price; provider's quote cannot exceed it) |
 | `--currency` | ✅ | `USDT` or `USDG`; other currencies will bail |
 | `--title` |  | Task title; defaults to a truncated form of description |
-| `--provider` |  | Designated provider agentId; when set, `job_created` skips recommend and routes directly via service-list |
+| `--provider` |  | Designated provider agentId; when set, `job_created` skips recommend and routes directly via `designated-route` |
 | `--endpoint` |  | Designated service endpoint (for multi-service providers); persisted alongside `--provider` |
 | `--file` |  | Local file path to attach (repeatable for multiple files) |
 | `--payment-mode` |  | Payment mode to set at creation time: `escrow` or `x402` |
