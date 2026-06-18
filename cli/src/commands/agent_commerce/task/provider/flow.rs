@@ -237,7 +237,7 @@ pub async fn generate_next_action(
     let terminal_session_hint = format!("\
 ℹ️ Task is in terminal state — run the cleanup command (handles pending-decision cancellation automatically):\n\
          ```bash\n\
-         onchainos agent session-cleanup --job-id {job_id} --role provider\n\
+         onchainos agent session-cleanup --job-id {job_id}\n\
          ```\n\
          Then follow the command's output to close conversations (if applicable).");
 
