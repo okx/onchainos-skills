@@ -1367,10 +1367,20 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                             format!("agentId={agent_id}"),
                             format!("event={event}"),
                             format!("code={code}"),
+                            format!("paymentMode={:?}", payment_mode),
                         ]),
                         None,
                     );
-                    task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
+                    // x402 (paymentMode=3): the buyer paid the ASP at request time via
+                    // the A2MCP service endpoint, so the on-chain events are pure
+                    // receipts — provider has no business action for any of them.
+                    // Route every x402 event to the observer-only a2mcp playbook.
+                    let use_a2mcp = matches!(payment_mode, Some(3));
+                    if use_a2mcp {
+                        task::provider::flow::generate_a2mcp_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
+                    } else {
+                        task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
+                    }
                 }
                 "buyer" | "client" => {
                     crate::audit::log(

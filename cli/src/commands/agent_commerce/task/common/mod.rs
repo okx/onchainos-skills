@@ -55,7 +55,7 @@ pub use util::{ensure_sufficient_balance, ensure_sufficient_balance_at};
 /// Master switch for diagnostic `eprintln!` output across the task system.
 /// Flip to `true` and recompile to enable verbose debug logging; `false` (default)
 /// lets the compiler eliminate all guarded branches (zero runtime cost).
-pub const DEBUG_LOG: bool = true;
+pub const DEBUG_LOG: bool = false;
 
 // ─── CLI definition ─────────────────────────────────────────────────────
 #[derive(Subcommand)]

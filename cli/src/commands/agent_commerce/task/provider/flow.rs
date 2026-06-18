@@ -8,6 +8,116 @@
 
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 
+/// x402 / A2MCP next-action playbook for the ASP.
+///
+/// In the x402 flow the buyer paid the ASP at request time via the A2MCP
+/// service endpoint, so every on-chain task event is a pure receipt with no
+/// provider-side business action. `JobAccepted` and `JobCompleted` get a
+/// dedicated note that explains the payment model; every other event gets a
+/// shorter generic "ignore and end the turn" message.
+pub async fn generate_a2mcp_next_action(
+    job_id: &str,
+    event_str: &str,
+    agent_id: &str,
+    job_title: Option<&str>,
+    data: Option<&str>,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    let _ = (job_title, data, message);
+    use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
+    let event = parse_status_or_event(event_str);
+    // Used by JobCompleted's auto-rate step. Inline a minimal Task fields block
+    // from the prefetched context so the LLM can fill `<buyerAgentId>` / `<title>`
+    // into the feedback-submit command and the rating-notify content without
+    // calling `common context`.
+    let task_fields_inline: String = {
+        let mut out = String::new();
+        if let Some(p) = prefetched {
+            let mut any = false;
+            if !p.title.is_empty() { out.push_str(&format!("\x20\x20- title: {}\n", p.title)); any = true; }
+            if !p.token_amount.is_empty() { out.push_str(&format!("\x20\x20- tokenAmount: {}\n", p.token_amount)); any = true; }
+            if !p.token_symbol.is_empty() && p.token_symbol != "?" { out.push_str(&format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol)); any = true; }
+            if let Some(b) = p.buyer_agent_id.as_deref().filter(|s| !s.is_empty()) {
+                out.push_str(&format!("\x20\x20- buyerAgentId: {b}\n"));
+                any = true;
+            }
+            if any {
+                out.insert_str(0, "**Task fields** (pre-fetched; use directly):\n");
+            }
+        }
+        out
+    };
+    match event {
+        Event::JobAccepted => {
+            let user_notify = super::content::job_accepted_user_notify_a2mcp(job_id, agent_id);
+            format!(
+                "[Current state] job_accepted (x402 / A2MCP flow — buyer's request received, payment confirmed at the A2MCP endpoint)\n\
+                 [Role] ASP (Agent Service Provider)\n\n\
+                 {task_fields_inline}\n\
+                 **Notify the user via `okx-a2a user notify`** — no on-chain `deliver`, no `okx-a2a xmtp-send` (the deliverable was already returned by the A2MCP service endpoint at request time):\n\n\
+                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Fill `<title>` / `<description>` / `<price>` / `<tokenSymbol>` from the **Task fields** block above. Do NOT pass the English template verbatim to a non-English user.\n\
+                 ```bash\n\
+                 okx-a2a user notify --content \"<localized content shown below>\"\n\
+                 ```\n\
+                 content:\n\
+                 {user_notify}\n\n\
+                 jobId={job_id}\n"
+            )
+        },
+        Event::JobCompleted => {
+            let user_notify = super::content::job_completed_user_notify(job_id);
+            let rating_notify = super::content::rating_submitted_user_notify(job_id);
+            format!(
+                "[Current state] job_completed (x402 / A2MCP flow — terminal receipt; funds were already received at request time)\n\
+                 [Role] ASP (Agent Service Provider)\n\n\
+                 ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
+                 {task_fields_inline}\n\
+                 **Step 1 — Notify the user of task completion via `okx-a2a user notify`**:\n\n\
+                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
+                 ```bash\n\
+                 okx-a2a user notify --content \"<localized content shown below>\"\n\
+                 ```\n\
+                 content:\n\
+                 {user_notify}\n\n\
+                 🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
+                 **Step 2 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
+                 Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
+                 \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent buyer (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
+                 \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
+                 Then execute:\n\
+                 ```bash\n\
+                 onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+                 ```\n\
+                 ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block above); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
+                 **Step 2.5 — Notify the user of the submitted rating**:\n\
+                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
+                 After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
+                 - ✅ **Success** (output contains `txHash`):\n\
+                 ```bash\n\
+                 okx-a2a user notify --content \"<localized content shown below>\"\n\
+                 ```\n\
+                 content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
+                 {rating_notify}\n\
+                 - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
+                 **Step 3 — Terminal wrap-up (keep the sub session):**\n\
+                 ℹ️ Task is in terminal state — run the cleanup command:\n\
+                 ```bash\n\
+                 onchainos agent session-cleanup --job-id {job_id} --role provider\n\
+                 ```\n\
+                 Task fully complete.\n"
+            )
+        },
+        other => format!(
+            "[System notification] {other} (x402 / A2MCP flow — no provider-side action)\n\
+             [Role] ASP (Agent Service Provider)\n\n\
+             Ignore this event; take no action.\n\
+             jobId={job_id}\n",
+            other = other.as_str()
+        ),
+    }
+}
+
 /// Generate the structured next-action prompt for the ASP based on event.
 ///
 /// `event_str` accepts either an event name (provider_applied / job_accepted / ...)
