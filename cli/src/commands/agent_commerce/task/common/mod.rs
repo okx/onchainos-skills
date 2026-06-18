@@ -491,10 +491,10 @@ pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
     };
 
     let mut cmd = tokio::process::Command::new(&exe);
-    cmd.args(["agent", "get"]);
+    cmd.args(["agent", "get", "--page-size", "100"]);
     if DEBUG_LOG {
         eprintln!(
-            "[fetch_my_agents] running: {} agent get (filter ownerAddress={my_owner})",
+            "[fetch_my_agents] running: {} agent get --page-size 100 (filter ownerAddress={my_owner})",
             exe.display()
         );
     }
@@ -560,10 +560,10 @@ pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
     };
 
     let mut cmd = tokio::process::Command::new(&exe);
-    cmd.args(["agent", "get"]);
+    cmd.args(["agent", "get", "--page-size", "100"]);
     if DEBUG_LOG {
         eprintln!(
-            "[fetch_my_agent_by_id] running: {} agent get (filter agentId={id})",
+            "[fetch_my_agent_by_id] running: {} agent get --page-size 100 (filter agentId={id})",
             exe.display()
         );
     }
