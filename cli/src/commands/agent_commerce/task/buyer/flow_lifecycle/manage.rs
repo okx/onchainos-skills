@@ -129,12 +129,13 @@ Reply with a number to pick an ASP, or \"more\" for the next page.
 Step 4.6 -- serviceParams inference
 ================================================
 
-Using the selected service's `serviceDescription` + `serviceName` + the user's task `description`, infer a `serviceParams` JSON string.
+Using the selected service's `serviceDescription` + `serviceName` + the user's task `description`, infer a `serviceParams` plain-text string.
 
 Rules:
 - Identify what input the service expects from its description
 - Extract matching values from the user's task description
-- Output a JSON object (e.g. `{\"contractAddress\": \"0x1234...\", \"chain\": \"ETH\"}`)
+- Output a **natural-language key-value string** (e.g. `\"meme 图片：稍后通过通信组件发给你；\\n名称：xxxx。\"`)
+- Do NOT use JSON format — use human-readable `key：value` pairs separated by `；` or `\\n`
 - If nothing can be inferred → use empty string `\"\"`, do not block the flow
 
 Do NOT ask the user for serviceParams — infer silently and show it in the confirmation form (Step 5). The user can correct it there.
@@ -201,7 +202,7 @@ onchainos agent create-task \\
   --currency <USDT|USDG> \\
   --provider <providerAgentId> \\
   --service-id <serviceId> \\
-  --service-params '<serviceParams JSON>' \\
+  --service-params '<serviceParams>' \\
   --service-token-address <feeToken> \\
   --service-token-amount <feeAmount> \\
   --payment-mode <escrow|x402>

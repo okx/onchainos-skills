@@ -326,7 +326,7 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          If `serviceDescription` is empty, skip the decision and go to Step 3 directly (serviceParams = `''`).\n\n\
          **Step 3 — call `set-asp`:**\n\
          ```bash\n\
-         onchainos agent set-asp {job_id} --provider-agent-id {dp_id} --service-id <sid> --service-params '<JSON or empty>' \
+         onchainos agent set-asp {job_id} --provider-agent-id {dp_id} --service-id <sid> --service-params '<params or empty>' \
          --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
          ```\n\
          On success → notify user (🌐 localized): \"Provider set to Agent {dp_id}. Waiting for provider to accept.\"\n\n\

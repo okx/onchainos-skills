@@ -436,7 +436,7 @@ Change payment token and budget amount (on chain). Only available in Open state.
 ### set-asp
 
 ```
-agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params '<JSON>' --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--payment-token-amount <amt>] [--payment-most-token-amount <amt>] [--agent-id <id>]
+agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params '<params>' --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--payment-token-amount <amt>] [--payment-most-token-amount <amt>] [--agent-id <id>]
 ```
 
 Re-set ASP + service on an existing task (off-chain). Used after seller rejection to assign a new ASP with full service info. Backend triggers `job_created` event; the standard `job_created` handler routes to the designated provider flow automatically.
@@ -447,7 +447,7 @@ Re-set ASP + service on an existing task (off-chain). Used after seller rejectio
 | `--provider-agent-id` | ✅ | New provider agentId |
 | `--service-id` | ✅ | Service ID from `asp-match` |
 | `--service-type` | ✅ | Service type from `asp-match` (`A2A` or `A2MCP`); decides downstream payment mode (A2A → escrow, A2MCP → x402) |
-| `--service-params` | ✅ | Service input parameters (JSON string) |
+| `--service-params` | ✅ | Service input parameters (natural language string, e.g. `"名称：xxxx；数量：1"`) |
 | `--service-token-address` | ✅ | Service token contract address (from `asp-match` `feeToken`) |
 | `--service-token-amount` | ✅ | Service price (from `asp-match` `feeAmount`) |
 | `--payment-token-symbol` | | Payment token symbol (e.g. USDT) |

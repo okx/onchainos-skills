@@ -405,7 +405,7 @@ mod tests {
             "--provider-agent-id", "prov-1",
             "--service-id", "svc-99",
             "--service-type", "A2MCP",
-            "--service-params", "{\"query\":\"BTC price\"}",
+            "--service-params", "查询内容：BTC price",
             "--service-token-address", "0xUSDT",
             "--service-token-amount", "10.5",
         ]);
@@ -419,7 +419,7 @@ mod tests {
                 assert_eq!(provider_agent_id, "prov-1");
                 assert_eq!(service_id, "svc-99");
                 assert_eq!(service_type, "A2MCP");
-                assert_eq!(service_params, "{\"query\":\"BTC price\"}");
+                assert_eq!(service_params, "查询内容：BTC price");
                 assert_eq!(service_token_address, "0xUSDT");
                 assert_eq!(service_token_amount, "10.5");
                 assert!(payment_token_symbol.is_none());
@@ -571,7 +571,7 @@ mod tests {
             "--currency", "USDT",
             "--provider", "agent-1",
             "--service-id", "svc-1",
-            "--service-params", "{\"x\":1}",
+            "--service-params", "参数：x=1",
             "--service-token-address", "0xAddr",
             "--service-token-amount", "5.0",
         ]);
@@ -582,7 +582,7 @@ mod tests {
             } => {
                 assert_eq!(provider.as_deref(), Some("agent-1"));
                 assert_eq!(service_id.as_deref(), Some("svc-1"));
-                assert_eq!(service_params.as_deref(), Some("{\"x\":1}"));
+                assert_eq!(service_params.as_deref(), Some("参数：x=1"));
                 assert_eq!(service_token_address.as_deref(), Some("0xAddr"));
                 assert_eq!(service_token_amount.as_deref(), Some("5.0"));
                 assert_eq!(visibility, 1);
