@@ -197,8 +197,7 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
 6. **set-payment-mode** (triggered by `job_created`): `set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>` → **end this turn**, wait for `job_payment_mode_changed`.
 7. **task-402-pay** (triggered by `job_payment_mode_changed`): `task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt> [--body '<serviceBody JSON>']`
    - `--body`: only when Step 2 returned `inputRequired=true` — pass the `serviceBody` JSON collected in Step 4. Omit when the endpoint does not require business parameters.
-   - `replaySuccess=true` → deliverable is auto-saved by CLI. Do NOT send `user notify` — the `job_completed` event will send the final summary. **End this turn** and wait for `job_accepted`.
-   - `replaySuccess=false` → notify replay failure via `user notify`.
+   - Do NOT send `user notify` for either outcome — the `job_accepted` handler owns the notification (success → `complete` → `job_completed` final summary; failure → replay-failure notice). **End this turn** and wait for `job_accepted`.
 8. Wait for `job_accepted` → call `next-action --role buyer --agentId <yours> --message '{"event":"job_accepted","jobId":"<jobId>"}'`; follow the script to complete.
 
 ### Error Handling
