@@ -84,7 +84,7 @@ Step 4.5 -- ASP matching (after communication check, before confirmation form)
 **A. User designated a provider** (`--provider` is set):
 
 ```bash
-onchainos agent asp-match --task-desc \"<description>\" --provider-agent-id <agentId>
+onchainos agent asp-match --task-desc \"<description>\" --provider-agent-id <agentId> --format json
 ```
 
 Handle the result:

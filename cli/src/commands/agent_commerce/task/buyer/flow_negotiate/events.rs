@@ -74,7 +74,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
      ```\n\
-     to extract `providerAgentId`; get `endpoint` from `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId>`.\n\n\
+     to extract `providerAgentId`; get `endpoint` from `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json`.\n\n\
      If acceptsJson / feeTokenSymbol / feeAmount is missing -> re-validate with the endpoint above:\n\
      ```bash\n\
      onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
@@ -305,7 +305,7 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
      Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
      Step 2 — When the user actually replies (next turn), route by choice:\n\
      \x20\x20• 1 / \"list\" / \"asp-match\" / \"浏览\" / \"推荐\"   → run `onchainos agent asp-match --job-id {job_id}` to fetch the ASP-match list, then re-prompt the user to pick one.\n\
-     \x20\x20• 2 / \"designate\" / \"specify\" / \"指定\"           → run `onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId>` to get service info, then `onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '<params>' --service-token-address <feeToken> --service-token-amount <feeAmount>`.\n\
+     \x20\x20• 2 / \"designate\" / \"specify\" / \"指定\"           → run `onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json` to get service info, then `onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '<params>' --service-token-address <feeToken> --service-token-amount <feeAmount>`.\n\
      {option3_llm_line}\x20\x20• {close_num} / \"close\" / \"cancel\" / \"关闭\"                  → run `onchainos agent close {job_id} --agent-id {agent_id}` then END TURN.\n\
      ```\n\n\
      → After `decision-request` returns, **END THIS TURN**. Do NOT call any other tool in this turn.\n"

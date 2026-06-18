@@ -102,6 +102,9 @@ pub enum TaskCommand {
         /// Buyer agent ID
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
+        /// Output format: "json" for raw JSON (no formatted list)
+        #[arg(long, default_value = "")]
+        format: String,
     },
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     SetAsp {
@@ -292,8 +295,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount, visibility,
             }).await,
-        TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } =>
-            asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), page, agent_id.as_deref()).await,
+        TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format } =>
+            asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), page, agent_id.as_deref(), &format).await,
         TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
             asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), payment_token_amount.as_deref(), payment_most_token_amount.as_deref(), agent_id.as_deref()).await,
         TaskCommand::ResetAsp { job_id, agent_id } =>

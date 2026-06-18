@@ -27,10 +27,13 @@ pub async fn handle_asp_match(
     provider_agent_id: Option<&str>,
     page: usize,
     explicit_agent_id: Option<&str>,
+    format: &str,
 ) -> Result<()> {
     if job_id.is_none_or(|s| s.is_empty()) && task_desc.is_empty() {
         anyhow::bail!("at least one of --job-id or --task-desc is required for asp-match");
     }
+
+    let json_mode = format.eq_ignore_ascii_case("json");
 
     let agent_id = match explicit_agent_id {
         Some(id) => id.to_string(),
@@ -78,6 +81,11 @@ pub async fn handle_asp_match(
         ]),
         None,
     );
+
+    if json_mode {
+        crate::output::success(resp);
+        return Ok(());
+    }
 
     if recs.is_empty() {
         println!("No matching ASPs found for the given description.");
@@ -367,12 +375,13 @@ mod tests {
             "test", "asp-match", "--task-desc", "build a trading bot",
         ]);
         match cli.cmd {
-            super::super::TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } => {
+            super::super::TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format } => {
                 assert_eq!(task_desc, "build a trading bot");
                 assert!(job_id.is_none());
                 assert!(provider_agent_id.is_none());
                 assert_eq!(page, 1);
                 assert!(agent_id.is_none());
+                assert_eq!(format, "");
             }
             _ => panic!("expected AspMatch"),
         }

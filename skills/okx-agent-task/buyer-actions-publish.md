@@ -75,7 +75,7 @@ Returns `{ ok, stage, validation, preflight, routing }`. Pipeline short-circuits
 
 After `prepare-create` ok (without `--provider`):
 
-- **Designated provider**: `onchainos agent asp-match --task-desc "<description>" --provider-agent-id <agentId>` → extract top service → validate currency consistency + budget ≥ feeAmount.
+- **Designated provider**: `onchainos agent asp-match --task-desc "<description>" --provider-agent-id <agentId> --format json` → extract top service → validate currency consistency + budget ≥ feeAmount.
 - **No designated provider**: `onchainos agent asp-match --task-desc "<description>"` → show numbered list → user picks → validate.
 - **Empty list** → offer three choices:
   - A. Refine description and retry

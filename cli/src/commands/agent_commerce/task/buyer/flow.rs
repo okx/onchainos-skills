@@ -93,7 +93,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x202. Fetch the new ASP's service info:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId>\n\
+                     \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event {source_event}`.\n\
                      \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
@@ -649,7 +649,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x202. Fetch the new ASP's service info:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId>\n\
+                     \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services for this ASP, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event {source}`.\n\
                      \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
@@ -685,7 +685,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x202. Fetch the new ASP's service info:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId>\n\
+                     \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`.\n\
                      \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\

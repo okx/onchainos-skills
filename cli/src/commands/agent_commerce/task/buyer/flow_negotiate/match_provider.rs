@@ -301,7 +301,7 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          **You MUST now set the provider on this task via `set-asp` so the server can notify the ASP.**\n\n\
          **Step 1 — fetch the ASP's service info:**\n\
          ```bash\n\
-         onchainos agent asp-match --job-id {job_id} --provider-agent-id {dp_id}\n\
+         onchainos agent asp-match --job-id {job_id} --provider-agent-id {dp_id} --format json\n\
          ```\n\
          From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, \
          `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`.\n\

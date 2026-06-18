@@ -108,6 +108,8 @@ pub enum AgentCommand {
         #[arg(long, default_value = "1")] page: usize,
         /// Buyer agent ID
         #[arg(long = "agent-id")] agent_id: Option<String>,
+        /// Output format: "json" for raw JSON (no formatted list)
+        #[arg(long, default_value = "")] format: String,
     },
 
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
@@ -878,8 +880,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }, ctx,
         ).await,
 
-        AgentCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id } =>
-            task::buyer::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id }, ctx).await,
+        AgentCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format } =>
+            task::buyer::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format }, ctx).await,
 
         AgentCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
             task::buyer::run_task(T::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id }, ctx).await,
