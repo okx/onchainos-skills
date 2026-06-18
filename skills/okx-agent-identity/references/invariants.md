@@ -20,7 +20,7 @@ Two-column pipe table `| Field | Value |`, one row per field. Role row uses loca
 
 ## Verbatim-render contract (P0-4)
 
-When CLI returns `card[]` / `cells[]` plus `roleLabel` / `statusLabel` / `approvalLabel` / `ratingStars`, render numeric/star fields **verbatim** — do not hand-map integers, do not divide score/20, never show raw 0–100. **Exception:** string `*Label` fields are English-canonical — translate to conversation language before rendering. Fallback: hand-map via Lexicon if `*Label` absent (legacy response).
+When CLI returns `card[]` / `cells[]` plus `roleLabel` / `statusLabel` / `approvalLabel` / `ratingStars`, render numeric/star fields **verbatim** — do not hand-map integers, do not divide score/20, never show raw 0–100. **Verbatim applies to numbers/stars/ids/addresses only — NOT to language.** Every string `*Label` field and all surrounding prose/labels are English-canonical and MUST be translated into the SKILL §Language-Lock language before rendering. Fallback: hand-map via Lexicon if `*Label` absent (legacy response).
 
 ## CLI output fields — translate before rendering
 
