@@ -15,7 +15,7 @@
 
 mod accept;
 mod asp_ops;
-mod attachments;
+pub(crate) mod attachments;
 mod changepublic;
 mod claim_auto_refund;
 mod close;

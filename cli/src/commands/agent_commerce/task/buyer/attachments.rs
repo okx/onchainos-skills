@@ -11,13 +11,13 @@ use crate::commands::agent_commerce::task::common::{AGENT_ROLE_BUYER, DEBUG_LOG}
 
 const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
 
-fn attachments_dir(job_id: &str) -> Result<PathBuf> {
+pub(crate) fn attachments_dir(job_id: &str) -> Result<PathBuf> {
     let home = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
     Ok(home.join(".onchainos").join("task").join(job_id).join("attachments"))
 }
 
-fn dedup_dest(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
+pub(crate) fn dedup_dest(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
     let candidate = dir.join(file_name);
     if !candidate.exists() {
         return candidate;

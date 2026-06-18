@@ -854,42 +854,11 @@ pub async fn generate_next_action(
 
         // ─── Buyer attachment received — download + save, no reply ─────
         Event::BuyerAttachmentReceived => {
-            let l10n_short = super::content::L10N_DISPATCH_SHORT;
-            let att_notify = super::content::buyer_attachment_received_user_notify(job_id);
-            format!(
-            "[Trigger] buyer_attachment_received (User Agent forwarded an attachment via `[intent:attachment]`)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
-             🛑 **This is a file-download event, NOT a negotiation message.** Do NOT reply with `[intent:ack]` or any negotiation marker.\n\n\
-             [Your next actions (strict order)]\n\n\
-             **Step 1 — Parse the attachment fields from the inbound message:**\n\
-             Extract all 6 decryption-metadata fields from the `[intent:attachment]` message:\n\
-             \x20\x20- `fileKey` (FULL value)\n\
-             \x20\x20- `digest` (FULL hex string)\n\
-             \x20\x20- `salt` (FULL base64 string)\n\
-             \x20\x20- `nonce` (FULL base64 string)\n\
-             \x20\x20- `secret` (FULL base64 string, can be 100+ chars)\n\
-             \x20\x20- `filename`\n\
-             All 6 fields are REQUIRED for decryption. If any field is missing, log the error and end the turn.\n\n\
-             **Step 2 — Download the file:**\n\
-             Run `okx-a2a file download` (pass every metadata field from the inbound message):\n\
-             \x20\x20```bash\n\
-             \x20\x20okx-a2a file download --file-key <fileKey> --agent-id {agent_id} --digest <digest> --salt <salt> --nonce <nonce> --secret <secret> --filename <filename> --json\n\
-             \x20\x20```\n\
-             ⚠️ Before calling, print: `[provider-xmtp] file download: fileKey=<fileKey>, agentId={agent_id}`\n\
-             ⚠️ After calling, print: `[provider-xmtp] file download result: localPath=<returned local path>`\n\n\
-             On success, record the localPath.\n\
-             On failure → log the error; do NOT block negotiation or task execution.\n\n\
-             **Step 3 — Notify the user:**\n\
-             Run `okx-a2a user notify`:\n\
-             \x20\x20```bash\n\
-             \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
-             \x20\x20```\n\
-             \x20\x20content (canonical English template — translate before passing): {att_notify}\n\
-             {l10n_short}\n\n\
-             **Step 4 — Silent acknowledgement (do NOT reply to the User Agent):**\n\
-             ❌ Do NOT call `okx-a2a xmtp-send` — attachments are supplementary reference materials; no protocol reply is needed.\n\
-             ❌ Do NOT treat this as a negotiation turn — do NOT send `[intent:ack]` / `[intent:counter]` / any natural-language reply.\n\n\
-             → **End this turn.** Continue negotiation or task execution when the next message arrives.\n")
+            if crate::commands::agent_commerce::task::common::config::is_cli_mode() {
+                buyer_attachment_received_cli(job_id, agent_id, &short_id, message)
+            } else {
+                buyer_attachment_received_llm(job_id, agent_id)
+            }
         }
 
         // ─── Staking / reward / slash lifecycle tx receipts — irrelevant when provider is not an evaluator ─────
@@ -1026,4 +995,122 @@ pub async fn generate_next_action(
         }
         Event::Other(ref other) => format!("[Unknown state] {other}\n"),
     }
+}
+
+// ── buyer_attachment_received helpers ────────────────────────────────
+
+fn buyer_attachment_received_cli(
+    job_id: &str,
+    agent_id: &str,
+    short_id: &str,
+    message: Option<&serde_json::Value>,
+) -> String {
+    use crate::commands::agent_commerce::task::common::okx_a2a;
+    use crate::commands::agent_commerce::task::buyer::attachments::{attachments_dir, dedup_dest};
+
+    let msg_str = |key: &str| {
+        message
+            .and_then(|m| m.get(key))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    };
+
+    let file_key = msg_str("fileKey");
+    let digest = msg_str("digest");
+    let salt = msg_str("salt");
+    let nonce = msg_str("nonce");
+    let secret = msg_str("secret");
+    let filename = message.and_then(|m| m.get("filename")).and_then(|v| v.as_str());
+
+    if file_key.is_empty() || digest.is_empty() || salt.is_empty()
+        || nonce.is_empty() || secret.is_empty()
+    {
+        return buyer_attachment_received_llm(job_id, agent_id);
+    }
+
+    let local_path = match okx_a2a::file_download(
+        file_key, agent_id, digest, salt, nonce, secret, filename,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[buyer_attachment_received_cli] download failed: {e}");
+            return buyer_attachment_received_llm(job_id, agent_id);
+        }
+    };
+
+    let save_path = match (|| -> Result<String, String> {
+        let src = std::path::Path::new(&local_path);
+        if !src.exists() {
+            return Err(format!("downloaded file not found: {local_path}"));
+        }
+        let dir = attachments_dir(job_id).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir failed: {e}"))?;
+        let file_name = src.file_name()
+            .ok_or_else(|| format!("invalid file path: {local_path}"))?;
+        let dest = dedup_dest(&dir, file_name);
+        if std::fs::rename(src, &dest).is_err() {
+            std::fs::copy(src, &dest).map_err(|e| format!("copy failed: {e}"))?;
+            let _ = std::fs::remove_file(src);
+        }
+        Ok(dest.display().to_string())
+    })() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[buyer_attachment_received_cli] save-to-job-dir failed: {e}");
+            local_path
+        }
+    };
+
+    let att_notify = super::content::buyer_attachment_received_user_notify(job_id);
+    let _ = short_id;
+    format!(
+        "[buyer_attachment_received_cli] ✓ Attachment downloaded and saved: {save_path}\n\n\
+         [Your next action] Translate the notification below to the user's language, then dispatch it. End the turn after notifying.\n\n\
+         Canonical content:\n\
+         \x20\x20{att_notify}\n\n\
+         ```bash\n\
+         okx-a2a user notify --content '<your translated content>'\n\
+         ```\n\n\
+         ❌ Do NOT reply to the buyer via okx-a2a xmtp-send.\n\
+         **End this turn.**\n"
+    )
+}
+
+fn buyer_attachment_received_llm(job_id: &str, agent_id: &str) -> String {
+    let l10n_short = super::content::L10N_DISPATCH_SHORT;
+    let att_notify = super::content::buyer_attachment_received_user_notify(job_id);
+    format!(
+    "[Trigger] buyer_attachment_received (User Agent forwarded an attachment via `[intent:attachment]`)\n\
+     [Role] ASP (Agent Service Provider)\n\n\
+     🛑 **This is a file-download event, NOT a negotiation message.** Do NOT reply with `[intent:ack]` or any negotiation marker.\n\n\
+     [Your next actions (strict order)]\n\n\
+     **Step 1 — Parse the attachment fields from the inbound message:**\n\
+     Extract all 6 decryption-metadata fields from the `[intent:attachment]` message:\n\
+     \x20\x20- `fileKey` (FULL value)\n\
+     \x20\x20- `digest` (FULL hex string)\n\
+     \x20\x20- `salt` (FULL base64 string)\n\
+     \x20\x20- `nonce` (FULL base64 string)\n\
+     \x20\x20- `secret` (FULL base64 string, can be 100+ chars)\n\
+     \x20\x20- `filename`\n\
+     All 6 fields are REQUIRED for decryption. If any field is missing, log the error and end the turn.\n\n\
+     **Step 2 — Download the file:**\n\
+     Run `okx-a2a file download` (pass every metadata field from the inbound message):\n\
+     \x20\x20```bash\n\
+     \x20\x20okx-a2a file download --file-key <fileKey> --agent-id {agent_id} --digest <digest> --salt <salt> --nonce <nonce> --secret <secret> --filename <filename> --json\n\
+     \x20\x20```\n\
+     ⚠️ Before calling, print: `[provider-xmtp] file download: fileKey=<fileKey>, agentId={agent_id}`\n\
+     ⚠️ After calling, print: `[provider-xmtp] file download result: localPath=<returned local path>`\n\n\
+     On success, record the localPath.\n\
+     On failure → log the error; do NOT block negotiation or task execution.\n\n\
+     **Step 3 — Notify the user:**\n\
+     Run `okx-a2a user notify`:\n\
+     \x20\x20```bash\n\
+     \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
+     \x20\x20```\n\
+     \x20\x20content (canonical English template — translate before passing): {att_notify}\n\
+     {l10n_short}\n\n\
+     **Step 4 — Silent acknowledgement (do NOT reply to the User Agent):**\n\
+     ❌ Do NOT call `okx-a2a xmtp-send` — attachments are supplementary reference materials; no protocol reply is needed.\n\
+     ❌ Do NOT treat this as a negotiation turn — do NOT send `[intent:ack]` / `[intent:counter]` / any natural-language reply.\n\n\
+     → **End this turn.** Continue negotiation or task execution when the next message arrives.\n")
 }
