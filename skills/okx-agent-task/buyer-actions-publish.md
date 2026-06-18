@@ -176,12 +176,12 @@ The `jobId` is preserved — attachments from the draft phase carry over.
 
 ## Appendix A: Task Creation Confirmation Card Template
 
-Display as a `| Field | Value |` table with these rows:
+Display as a single `| Field | Value |` table:
 
-**Basic fields**: Title, Summary, Description, Currency, Budget, Max Budget.
-**Service fields** (private task only): Provider, Service, Service ID, Service Price, Service Params, Payment Mode.
-**Public task**: Provider shows "Public — no designated provider", omit Service/ID/Price/Params/Payment Mode rows.
-If attachments present, add **Attachments** row.
+1. Title, Summary, Description, Currency, Budget, Max Budget
+2. (private task only) Provider, Service, Service ID, Service Price, Service Params, Payment Mode
+3. (public task) Provider → "公开任务 — 无指定服务商", omit Service/ID/Price/Params/Payment Mode rows
+4. If attachments present, add Attachments row
 
 **Example — Private task** (Chinese):
 
