@@ -34,9 +34,9 @@ use super::signing::{
 use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
     build_precheck, collect_owned_agents, ensure_provider_has_service, identity_ws_url,
-    normalize_bcp47, normalize_role, normalize_singleton_object, parse_agent_unsigned,
-    parse_services, parse_stars_arg, reconstruct_post_url_for_log, redact_token_for_debug,
-    require_non_empty, trim_or_empty, wallet_client,
+    normalize_bcp47, normalize_role, normalize_role_code, normalize_singleton_object,
+    parse_agent_unsigned, parse_services, parse_stars_arg, reconstruct_post_url_for_log,
+    redact_token_for_debug, require_non_empty, trim_or_empty, wallet_client,
 };
 
 const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -280,28 +280,44 @@ async fn consent_impl(args: &ConsentArgs, ctx: &Context) -> Result<Value> {
 //
 // Folds first-time consent + per-wallet uniqueness into ONE command (see the
 // registration flow diagram). `--role` is REQUIRED; `--consent-key` optional.
-// Flow: fetch agent list → if the wallet HAS agents (⇒ already consented),
-// return the uniqueness verdict; if it has NO agents, run the consent gate
-// first. Always returns `{ canCreate, role, reason?, consent?, existingSameRole,
-// providerCount }`:
-//   • has agents          → build_precheck verdict (reason when false)
-//   • no agents + key      → submit agreement → canCreate:true verdict
-//   • no agents + agreed   → canCreate:true verdict
-//   • no agents + !agreed  → { canCreate:false, role, reason, consent:{key,terms} }
-// A present `--consent-key` submits the agreement (agreed=true). Decline is
-// skill-side (show terms, user declines → terminate; user agrees → re-invoke
-// with `--consent-key`).
+// Four-step flow:
+//   1. Parse `--role` (+ wallet addr). If `--consent-key` is present, submit the
+//      agreement to /agent-consent up-front, then continue.
+//   2. Fetch the FULL agent list (no role filter) → does the wallet have ANY agent?
+//      a. No agent → consent gate: query /agent-consent status.
+//           i.  required:true  → { canCreate:false, role, reason, consent } (block)
+//           ii. required:false → canCreate:true (zero agents ⇒ no same-role agent)
+//      b. Has agents (⇒ already consented) → step 3.
+//   3. Fetch the role-scoped agent list (`role` pushed to the backend).
+//      a. same-role agent present → step 4.
+//      b. absent → canCreate:true.
+//   4. Uniqueness rule (build_precheck): requester/evaluator are single per
+//      address, provider is unlimited → final canCreate verdict.
+// Always returns `{ canCreate, role, reason?, consent?, existingSameRole,
+// providerCount }`. Decline is skill-side (show terms, user declines → terminate;
+// user agrees → re-invoke with `--consent-key`).
 
-/// Fetch the JWT-scoped agent list for the current wallet (chainIndex only),
-/// single page — used by precheck for uniqueness scanning.
-async fn fetch_wallet_agents(ctx: &Context) -> Result<Value> {
+/// Fetch the agent list for the precheck uniqueness scan. The `agent-list`
+/// endpoint is JWT-scoped to the current wallet, so no `ownerAddress` is sent;
+/// `role` (as the backend integer code) is pushed so the backend returns the
+/// role-scoped slice rather than the full list (mirrors get-my-agents' role filter).
+async fn fetch_wallet_agents(ctx: &Context, role: Option<&str>) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
+
+    let mut query = vec![("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string())];
+    if let Some(role_raw) = role.filter(|r| !r.trim().is_empty()) {
+        query.push(("role".to_string(), normalize_role_code(role_raw)?));
+    }
+
+    let query_refs: Vec<(&str, &str)> =
+        query.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+
     let data = client
         .get_authed(
             "/priapi/v5/wallet/agentic/agent/agent-list",
             &access_token,
-            &[("chainIndex", XLAYER_CHAIN_INDEX)],
+            &query_refs,
         )
         .await
         .map_err(format_api_error)?;
@@ -309,47 +325,59 @@ async fn fetch_wallet_agents(ctx: &Context) -> Result<Value> {
 }
 
 async fn precheck_impl(args: &PrecheckArgs, ctx: &Context) -> Result<Value> {
+    // ── Step 1 — parse inputs ──
     // `--role` is required (same handling as `agent create`): missing → bail
     // `missing required parameter`, unrecognized → `invalid value for --role`.
     let role_key = normalize_role(require_non_empty(args.role.as_deref(), "--role")?)?;
-    // Current signing wallet → scopes uniqueness to this XLayer address.
+    // Current signing wallet → scopes the scan to this XLayer address (the
+    // agent-list endpoint is JWT-scoped, so the wallet is implicit).
     let from_addr = load_agent_signing_session(None)?.addr_info.address;
 
-    // Fetch the wallet's agent list to determine whether any agents exist.
-    let agents = fetch_wallet_agents(ctx).await?;
-    let has_agents = !collect_owned_agents(&agents, &from_addr).is_empty();
-
-    // Consent gate — ONLY on the no-agents branch (a non-empty agent list proves
-    // consent was already given). `--consent-key` present → submit the agreement;
-    // absent → check consent status, returning terms (canCreate:false) if not yet
-    // accepted so the skill can run the blocking legal-confirmation step.
-    if !has_agents {
-        if args.consent_key.as_deref().map(|k| !k.trim().is_empty()).unwrap_or(false) {
-            consent_impl(
-                &ConsentArgs { consent_key: args.consent_key.clone(), agreed: Some(true) },
-                ctx,
-            )
-            .await?; // submit consent (agreed=true)
-        } else {
-            let c = consent_impl(&ConsentArgs { consent_key: None, agreed: None }, ctx).await?; // query consent status
-            if c.get("required").and_then(Value::as_bool).unwrap_or(false) {
-                // Legal terms not yet accepted → block with terms; skill confirms with the
-                // user, then re-invokes carrying `--consent-key`.
-                return Ok(json!({
-                    "canCreate": false,
-                    "role": role_key,
-                    "reason": "You must accept the legal terms before registering an Agent.",
-                    "consent": c.get("consent").cloned().unwrap_or(Value::Null),
-                }));
-            }
-        }
+    // Step 1a — a present `--consent-key` means "the user agreed": submit the
+    // agreement (agreed=true) up-front, then continue. Absent → straight to step 2.
+    if args.consent_key.as_deref().map(|k| !k.trim().is_empty()).unwrap_or(false) {
+        consent_impl(
+            &ConsentArgs { consent_key: args.consent_key.clone(), agreed: Some(true) },
+            ctx,
+        )
+        .await?;
     }
 
-    // Check whether an agent with the same role already exists → canCreate (build_precheck handles the empty list
-    // too: a brand-new wallet yields canCreate:true; reason is added when false).
-    // The verdict carries `existingSameRole` (the same-role agents the skill lists
-    // for the provider update-vs-new choice) — no separate full agentList needed.
-    Ok(build_precheck(&agents, &from_addr, &role_key))
+    // ── Step 2 — does the wallet have ANY agent? ──
+    // Fetch the FULL agent list (no role filter). A non-empty list proves consent
+    // was already given.
+    let all_agents = fetch_wallet_agents(ctx, None).await?;
+    let has_any_agent = !collect_owned_agents(&all_agents, &from_addr).is_empty();
+
+    // Step 2a — no agent at all → consent gate. Query consent status; if the terms
+    // are not yet accepted, block with them so the skill runs the legal-confirm
+    // step. Otherwise (already consented) the wallet has zero agents, hence no
+    // same-role agent → can register directly.
+    if !has_any_agent {
+        let c = consent_impl(&ConsentArgs { consent_key: None, agreed: None }, ctx).await?;
+        if c.get("required").and_then(Value::as_bool).unwrap_or(false) {
+            // Step 2a.i — legal terms not yet accepted → block with terms; skill
+            // confirms with the user, then re-invokes carrying `--consent-key`.
+            return Ok(json!({
+                "canCreate": false,
+                "role": role_key,
+                "reason": "You must accept the legal terms before registering an Agent.",
+                "consent": c.get("consent").cloned().unwrap_or(Value::Null),
+            }));
+        }
+        // Step 2a.ii — consent satisfied + zero agents → canCreate:true (the empty
+        // list yields no same-role agent).
+        return Ok(build_precheck(&all_agents, &from_addr, &role_key));
+    }
+
+    // ── Step 2b → Step 3 — wallet has agents (⇒ already consented) ──
+    // Fetch the role-scoped slice (`role` pushed to the backend) and let
+    // build_precheck (Step 4) apply the per-wallet uniqueness rule:
+    // requester/evaluator are single, provider is unlimited. An empty slice (no
+    // same-role agent) yields canCreate:true; `existingSameRole` carries the
+    // same-role agents the skill lists for the provider update-vs-new choice.
+    let role_agents = fetch_wallet_agents(ctx, Some(&role_key)).await?;
+    Ok(build_precheck(&role_agents, &from_addr, &role_key))
 }
 
 // ─── `agent update` ───────────────────────────────────────────────────────
