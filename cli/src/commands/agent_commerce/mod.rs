@@ -380,10 +380,10 @@ pub enum AgentCommand {
     /// Provider applies for a task (apply API → sign → broadcast)
     Apply {
         job_id: String,
-        /// Negotiated token amount from `[intent:confirm]`. **Required**; must be > 0 (empty / 0 = apply for free, irreversible — CLI rejects).
+        /// Negotiated token amount. **Required**; must be > 0 (empty / 0 = apply for free, irreversible — CLI rejects).
         #[arg(long = "token-amount")]
         token_amount: String,
-        /// Actual task currency (USDT / USDG); read from `[intent:confirm]` / `[intent:propose]`, do not assume USDT
+        /// Actual task currency (USDT / USDG); read from negotiation context, do not assume USDT
         #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "agent-id")]
@@ -1336,7 +1336,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             // current turn ends without re-notifying.
             //
             // Only dedup events that push a decision/notification to the user;
-            // negotiation / handshake / lifecycle-only events have no user-visible
+            // negotiation / lifecycle-only events have no user-visible
             // side effect and must always run their playbook.
             let dedup_eligible = matches!(
                 event.as_str(),
@@ -1617,7 +1617,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
          - 你传的 event = `{job_status_or_event}`，对应任务状态应为 `{expected_str}`\n\
          - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\n\
          **必须做**（二选一）：\n\
-         1. 如果当前 inbound 是 **P2P 消息**（a2a-agent-chat）→ 你很可能用错了 event。回到 buyer-sub-playbook.md / provider.md §3 Inbound Message Routing 重新匹配正确的事件（例如 `[intent:deliver]` → `deliverable_received`，自然语言报价 → `negotiate_reply`，`[intent:ack]` → `negotiate_ack`）。这些伪事件不受 freshness 限制。\n\
+         1. 如果当前 inbound 是 **P2P 消息**（a2a-agent-chat）→ 你很可能用错了 event。回到 buyer-sub-playbook.md / provider.md §3 Inbound Message Routing 重新匹配正确的事件（例如 `[intent:deliver]` → `deliverable_received`，自然语言报价 → `negotiate_reply`）。这些伪事件不受 freshness 限制。\n\
          2. 如果当前 inbound 是 **system event** → 重调 next-action，并在 `--message` JSON 里把 `event` 字段改成 `{actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
          **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 `okx-a2a user notify` 推用户。\n",
         expected_str = expected.as_str(),

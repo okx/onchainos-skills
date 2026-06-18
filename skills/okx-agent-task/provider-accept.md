@@ -1,6 +1,6 @@
 # ASP — Job Acceptance / Negotiation Flow
 
-> This file covers the negotiation phase of accepting a job (cold-start → handshake → apply).
+> This file covers the negotiation phase of accepting a job (cold-start → negotiation → apply).
 > Generic ASP role rules + system event handling live in [`provider.md`](./provider.md).
 
 ---

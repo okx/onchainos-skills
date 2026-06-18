@@ -51,9 +51,9 @@ Match by priority — stop at first hit:
 
 | # | Match condition | Action |
 |---|---|---|
-| 1 | Contains `[intent:applied]` or semantically "apply submitted / please run confirm-accept" | `next-action --role buyer --agentId <yours> --message '{"event":"provider_applied","jobId":"<jobId>"}'` → execute `confirm-accept`. Buyer does NOT receive system `provider_applied`; a2a-agent-chat is the ONLY trigger. Do NOT query API to validate. |
+| 1 | _(removed — `provider_applied` is now received as a system event, not via a2a-agent-chat)_ | System event `provider_applied` is handled by `next-action --role auto` in §Activation #1. No peer-message routing needed. |
 | 2 | Contains `[intent:deliver]` | Extract deliverable metadata from the message and pass it in `--message` so the CLI handles download+save in-process. **File**: `next-action --role buyer --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>","deliverableType":"file","fileKey":"<fileKey>","digest":"<digest>","salt":"<salt>","nonce":"<nonce>","secret":"<secret>","filename":"<filename>"}'`. **Text**: extract the content between `- - -` separators and pass as `text`: `next-action --role buyer --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>","deliverableType":"text","text":"<full text content>"}'`. The CLI downloads, saves, and returns a notify-only prompt. |
-| 3 | Contains `[intent:reject]` | Don't reply; `mark-failed <jobId> --provider <agentId>` → push decision card to user (see `negotiate_reply` over-limit flow). Other `[intent:*]` markers (legacy `ack` / `counter` / `propose`) → treat as natural language, fall through to #5. |
+| 3 | Contains `[intent:reject]` | Don't reply; `mark-failed <jobId> --provider <agentId>` → push decision card to user (see `negotiate_reply` over-limit flow). |
 | 4 | `[MAX_BUDGET_UPDATE]` (from user session) | Extract `paymentMostTokenAmount=<value>`, update cap. 🛑 Do NOT reply/forward/notify provider — end turn immediately. |
 | 5 | `[ATTACHMENT_ADDED]` (from user session) | Extract the file path from the message (`[ATTACHMENT_ADDED] <path>`). 🛑 Do NOT Read/open/describe the file — pass the path straight to `next-action`: `next-action --role buyer --agentId <yours> --message '{"event":"attachment_added","jobId":"<jobId>","filePath":"<extracted path>"}'` → CLI uploads + forwards in-process; follow the returned playbook. |
 | 5b | Raw base64 / image / file data (no `[ATTACHMENT_ADDED]` prefix) | User session bypassed `task-attach`. → `okx-a2a user notify --content '<translate: Attachment failed — please type "补充附件" or "attach file" and resend.>'` → **end turn**. Do NOT save / parse / describe the content or ask questions (Rule 9). |
@@ -149,7 +149,7 @@ Send refusal or enqueue `pending-decisions-v2 request`. Never push Layer 0 overr
 
 **Only respond to notifications that have actually arrived; never predict or assume follow-ups.**
 
-> ✅ **User Agent exception**: `provider_applied` notification is sent only to ASP. User Agent learns via a2a-agent-chat → immediately `confirm-accept`. Do NOT query API to verify.
+> ✅ `provider_applied` is now delivered to both ASP and User Agent as a system event. The buyer's `next-action` handles `confirm-accept` automatically.
 
 ❌ Forbidden: outputting "job accepted" before real `job_accepted` arrives; telling peer "submitted on-chain" after `apply`/`deliver`/`dispute raise`/`agree-refund` (wait for system event); handling multiple system events in the same turn.
 

@@ -7,9 +7,8 @@
 /// Negotiation ground rules — static text shared by every A2A negotiation path
 /// (both `branch_a2a` and `branch_a2a_cli`). No format args here.
 ///
-/// The old `[intent:propose] / [intent:ack] / [intent:counter] / [intent:reject]
-/// / [intent:confirm]` three-step handshake has been removed. Negotiation is now
-/// pure natural-language task-detail discussion; pricing is locked at accept time.
+/// Negotiation is pure natural-language task-detail discussion; pricing is locked
+/// at accept time.
 const HANDSHAKE_RULES_A2A: &str = "🛑 **Negotiation ground rules — natural language only, task details only**\n\n\
     Negotiation is a free-form discussion between you (buyer) and the ASP about **task details only**:\n\
     \x20\x20• Scope / requirements / deliverable format\n\
@@ -23,7 +22,7 @@ const HANDSHAKE_RULES_A2A: &str = "🛑 **Negotiation ground rules — natural l
 /// Branch B title + B-Step 0 (duplicate guard) + B-Step 1 (group creation) +
 /// B-Step 1.5 (SKILL_PREFETCH). Used by the MCP path (`branch_a2a` →
 /// `designated_provider_negotiate`); the CLI path (`branch_a2a_cli`) skips
-/// this section because Rust already executes those three steps inline.
+/// this section because Rust already executes the setup steps inline.
 fn negotiate_section_pre_inquiry(job_id: &str, agent_id: &str, dp_id: &str) -> String {
     format!("━━━━━━━━━ Branch B: supportA2MCP=false -> A2A (negotiation required) ━━━━━━━━━\n\n\
              **B-Step 0 - duplicate guard (🛑 hard gate):**\n\
@@ -61,9 +60,9 @@ fn negotiate_section_pre_inquiry(job_id: &str, agent_id: &str, dp_id: &str) -> S
 /// has already been created and SKILL_PREFETCH dispatched by Rust before this
 /// function runs; attachments (if any) are uploaded + forwarded by Rust too.
 /// All that's left for the LLM in this turn is: author one natural-language
-/// inquiry, send it, end the turn. Subsequent steps (handshake / ACK / counter
-/// / confirm) are driven by the sub session's own `next-action` calls when
-/// reply events arrive — they do not belong in this output.
+/// inquiry, send it, end the turn. Subsequent steps (negotiation replies) are
+/// driven by the sub session's own `next-action` calls when reply events
+/// arrive — they do not belong in this output.
 pub(crate) fn negotiate_section_step1_only_cli(
     job_id: &str,
     my_agent_id: &str,
@@ -169,7 +168,7 @@ pub(crate) fn negotiate_section_step2_onwards(
              - x402  → asp-match auto-routing → set-payment-mode → job_payment_mode_changed → task-402-pay → job_accepted → complete\n")
 }
 
-/// Designated-provider B-Step negotiation protocol (three-step handshake + group creation + first inquiry + end turn).
+/// Designated-provider B-Step negotiation protocol (group creation + first inquiry + end turn).
 /// Composed of three reusable sections so the CLI path can skip the
 /// pre-inquiry portion (Rust runs B-Step 0 / 1 / 1.5 inline).
 pub(crate) fn designated_provider_negotiate(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, title_display: &str) -> String {
@@ -227,7 +226,7 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
 ///   - B-Step 0   (duplicate guard)        → okx_a2a::session_query_exists
 ///   - B-Step 1   (create sub session)     → okx_a2a::session_create
 ///   - B-Step 1.5 (SKILL_PREFETCH dispatch) → okx_a2a::session_send
-/// Everything from B-Step 2 onward (first inquiry, three-step handshake,
+/// Everything from B-Step 2 onward (first inquiry, negotiation,
 /// timeouts) requires the LLM to author natural-language content and remains
 /// in the returned playbook.
 pub(crate) fn branch_a2a_cli(
