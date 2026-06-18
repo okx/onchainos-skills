@@ -1,26 +1,41 @@
 //! Read-only agent commands and their query assembly:
-//! - `agent get`         → `GET /agent/agent-list`
+//! - `agent get-my-agents` → `GET /agent/agent-list`
+//! - `agent get-agents`   → `GET /agent/batch-list`
 //! - `agent search`      → `GET /search/agent-search`
 //! - `agent service-list`→ `GET /agent/services`
 //! - `agent feedback-list`→ `GET /agent/reviews`
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde_json::{json, Value};
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::Context;
 use crate::output;
 
-use super::args::{FeedbackListArgs, GetArgs, GetByAddressArgs, SearchArgs, ServiceListArgs};
+use super::args::{
+    FeedbackListArgs, GetAgentsArgs, GetArgs, GetByAddressArgs, GetMyAgentsArgs, SearchArgs,
+    ServiceListArgs,
+};
 use super::models::XLAYER_CHAIN_INDEX;
 use super::utils::{
     add_agent_list_cells, add_feedback_list_cells, add_search_cells, add_service_list_cells,
-    convert_feedback_list_scores, enrich_agent_get_rows, normalize_singleton_object, parse_u32_arg,
-    push_multi_query, push_optional_query, reconstruct_get_url_for_log, redact_token_for_debug,
-    require_non_empty, wallet_client,
+    convert_feedback_list_scores, enrich_agent_detail_rows, enrich_agent_get_rows,
+    normalize_role_code, normalize_singleton_object, parse_u32_arg, push_multi_query,
+    push_optional_query, reconstruct_get_url_for_log, redact_token_for_debug, require_non_empty,
+    wallet_client,
 };
 
 // ─── Public command entry points ──────────────────────────────────────────
+
+pub async fn get_my_agents(args: GetMyAgentsArgs, ctx: &Context) -> Result<()> {
+    output::success(get_my_agents_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn get_agents(args: GetAgentsArgs, ctx: &Context) -> Result<()> {
+    output::success(get_agents_impl(&args, ctx).await?);
+    Ok(())
+}
 
 pub async fn get(args: GetArgs, ctx: &Context) -> Result<()> {
     output::success(get_impl(&args, ctx).await?);
@@ -123,7 +138,76 @@ async fn top_asps_impl(limit: usize, ctx: &Context) -> Result<Value> {
     Ok(json!({ "totalPulled": total_pulled, "asps": all }))
 }
 
-// ─── `agent get` ──────────────────────────────────────────────────────────
+// ─── `agent get-my-agents` ────────────────────────────────────────────────
+
+async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    // Product spec: agent-list identifies the user via JWT; `from` is never needed.
+    let mut query = vec![("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string())];
+    // Optional listing filters. `role` accepts requester/provider/evaluator
+    // (aliases 1/2/3) and is sent to the backend as its integer code (1/2/3),
+    // matching the on-chain role enum. `ownerAddress` filters to a single owner.
+    if let Some(role_raw) = args.role.as_deref().filter(|r| !r.trim().is_empty()) {
+        query.push(("role".to_string(), normalize_role_code(role_raw)?));
+    }
+    push_optional_query(&mut query, "ownerAddress", args.owner_address.as_deref());
+    if let Some(page_raw) = args.page.as_deref() {
+        let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
+        query.push(("page".to_string(), page.to_string()));
+    }
+    let page_size = parse_u32_arg(args.page_size.as_deref(), "--page-size", 5, Some(1), None, false)?;
+    query.push(("pageSize".to_string(), page_size.to_string()));
+
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    eprintln!(
+        "[agent-identity] get-my-agents request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/agent-list", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/agent-list",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] get-my-agents response: {}",
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
+        ),
+        Err(e) => eprintln!("[agent-identity] get-my-agents response err: {:#}", e),
+    }
+
+    let mut out = normalize_singleton_object(result?);
+    // Additive: enrich each agent row with computed display fields (roleLabel
+    // / statusLabel / approvalLabel / ratingStars). Rows are read from either
+    // the single-layer shape (row = list[*]) or the legacy double-layer shape
+    // (row = list[*].agentList[*]); both are tolerated. Raw role / status /
+    // approvalDisplayStatus / reputation are left intact.
+    enrich_agent_get_rows(&mut out);
+    // Additive: add a ready-to-render `cells` array per row (the list-table
+    // analog of `card`; references/discover.md §list columns). `agent get` is
+    // now list-only — filtered by `--role` / `--owner-address` — so cells are
+    // always meaningful.
+    add_agent_list_cells(&mut out);
+    Ok(out)
+}
+
+// ─── `agent get` (original dual-mode agent-list query) ────────────────────
 
 async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
@@ -161,13 +245,14 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
-            "[agent-identity] get response: {}",
-            {
-                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
-                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+        Ok(data) => eprintln!("[agent-identity] get response: {}", {
+            let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+            if s.chars().count() > 256 {
+                format!("{}...", s.chars().take(256).collect::<String>())
+            } else {
+                s
             }
-        ),
+        }),
         Err(e) => eprintln!("[agent-identity] get response err: {:#}", e),
     }
 
@@ -185,6 +270,74 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
     if args.agent_ids.is_none() {
         add_agent_list_cells(&mut out);
     }
+    Ok(out)
+}
+
+// ─── `agent get-agents` ───────────────────────────────────────────────────
+
+async fn get_agents_impl(args: &GetAgentsArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    // Parse the comma-separated `--agent-ids` into the `agentIdList` array —
+    // one query param per id (the backend binds repeated keys to a List). Trim
+    // and drop empties so `1791, ,1002` → ["1791","1002"].
+    let raw_ids = require_non_empty(args.agent_ids.as_deref(), "--agent-ids")?;
+    let ids: Vec<String> = raw_ids
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if ids.is_empty() {
+        bail!("--agent-ids must contain at least one agent ID");
+    }
+
+    let mut query: Vec<(String, String)> = ids
+        .iter()
+        .map(|id| ("agentIdList".to_string(), id.clone()))
+        .collect();
+    query.push(("needBlackStatus".to_string(), "false".to_string()));
+    query.push(("needAgentService".to_string(), "false".to_string()));
+
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    eprintln!(
+        "[agent-identity] get-agents request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/batch-list", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/batch-list",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => eprintln!("[agent-identity] get-agents response: {}", {
+            let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+            if s.chars().count() > 256 {
+                format!("{}...", s.chars().take(256).collect::<String>())
+            } else {
+                s
+            }
+        }),
+        Err(e) => eprintln!("[agent-identity] get-agents response err: {:#}", e),
+    }
+
+    // batch-list returns a BARE array of agent objects (get_authed unwraps
+    // `data`). Additive: enrich each row with the same display fields + `card`
+    // as `agent get`. Raw fields are left intact.
+    let mut out = result?;
+    enrich_agent_detail_rows(&mut out);
     Ok(out)
 }
 
