@@ -729,8 +729,23 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 "x402_price_mismatch" => format!(
                     "[User decision relay] source_event=`x402_price_mismatch`, user's verbatim reply: `{reply}`\n\n\
                      The push was an Accept/Reject choice (x402 endpoint price differs from the registered fee). **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **Accept** — typical intents: A / 选A / `accept` / `接受` / `同意` / `agree` / yes / OK. Action: continue with the x402 flow at DX-Step 3 (budget check + set-payment-mode). Call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_created\",\"jobId\":\"{job_id}\",\"provider\":\"<designated agentId>\"}}'` to re-enter the designated flow at DX-Step 3.\n\
-                     \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`. Action: `onchainos agent mark-failed {job_id} --provider <designated agentId>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → the CLI writes a card file (path in stdout); push via `--source-event asp_match_pick --user-content-file \"<card file path>\"` (translate field labels if non-English); if empty → push via `--source-event no_asp_found`.\n\n\
+                     \x20\x20• **Accept** — typical intents: A / 选A / `accept` / `接受` / `同意` / `agree` / yes / OK.\n\
+                     \x20\x20\x20\x20Read `endpoint`, `amountHuman`, `tokenSymbol`, `acceptsJson` from the `[PRICE_CONTEXT]` block in the `--llm-content` of the pending decision.\n\
+                     \x20\x20\x20\x20Proceed to set-payment-mode:\n\n\
+                     \x20\x20\x20\x20Check `paymentMode` from the `[Pre-fetched task context]` or from context.\n\
+                     \x20\x20\x20\x20▸ **If paymentMode is already `3`** → skip `set-payment-mode`:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20▸ **Otherwise** → push payment mode on-chain:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol> --token-amount <amountHuman> --endpoint <endpoint>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20**Result branch:**\n\
+                     \x20\x20\x20\x20\x20\x20- `\"alreadySet\": true` → call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
+                     \x20\x20\x20\x20\x20\x20- `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
+                     \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`.\n\
+                     \x20\x20\x20\x20Action: `onchainos agent mark-failed {job_id} --provider <designated agentId from context>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → the CLI writes a card file (path in stdout); push via `--source-event asp_match_pick --user-content-file \"<card file path>\"` (translate field labels if non-English); if empty → push via `--source-event no_asp_found`.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event x402_price_mismatch`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=accept this price  B=reject and switch ASP\".\n"
                 ),
                 "x402_input_required" => format!(
