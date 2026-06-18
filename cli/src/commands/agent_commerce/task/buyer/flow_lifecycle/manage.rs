@@ -395,6 +395,120 @@ After success, tell the user directly (do NOT call `okx-a2a user notify` — you
 
 // --- Attachment forwarding ---------------------------------------------
 
+/// Upload + forward a single attachment file in Rust. Returns Ok(()) on
+/// success or Err with a human message on failure.
+fn upload_and_forward_one(
+    file_path: &str,
+    agent_id: &str,
+    job_id: &str,
+    to_agent_id: &str,
+) -> Result<(), String> {
+    use crate::commands::agent_commerce::task::common::okx_a2a;
+
+    let upload = okx_a2a::file_upload(file_path, agent_id, job_id, None, None)
+        .map_err(|e| format!("file upload failed for {file_path}: {e}"))?;
+
+    let msg = format!(
+        "jobId: {job_id}\n\
+         attachmentType: file\n\
+         fileKey: {file_key}\n\
+         digest: {digest}\n\
+         salt: {salt}\n\
+         nonce: {nonce}\n\
+         secret: {secret}\n\
+         filename: {filename}\n\
+         description: This is an attachment/reference material for the task. The ASP should download it for task execution.\n\
+         [intent:attachment]",
+        file_key = upload.file_key,
+        digest = upload.digest,
+        salt = upload.salt,
+        nonce = upload.nonce,
+        secret = upload.secret,
+        filename = upload.filename,
+    );
+
+    okx_a2a::xmtp_send(job_id, to_agent_id, &msg)
+        .map_err(|e| format!("xmtp-send failed for {file_path}: {e}"))
+}
+
+/// Upload + forward ALL pending attachments for a job. Best-effort: failures
+/// are logged but do not block the caller. Returns the count of successfully
+/// forwarded files.
+pub(crate) fn upload_and_forward_all_attachments(
+    job_id: &str,
+    agent_id: &str,
+    to_agent_id: &str,
+) -> usize {
+    use crate::commands::agent_commerce::task::common::DEBUG_LOG;
+
+    let files = super::super::attachments::list_attachment_paths(job_id);
+    if files.is_empty() {
+        return 0;
+    }
+    let mut ok_count = 0usize;
+    for fp in &files {
+        match upload_and_forward_one(fp, agent_id, job_id, to_agent_id) {
+            Ok(()) => {
+                ok_count += 1;
+                if DEBUG_LOG {
+                    eprintln!("[attachment_cli] ✓ forwarded: {fp}");
+                }
+            }
+            Err(e) => {
+                eprintln!("[attachment_cli] ⚠ skipped: {e}");
+            }
+        }
+    }
+    ok_count
+}
+
+/// Rust fast-path for `attachment_added`: upload + xmtp-send in-process,
+/// then return a notify-only prompt for the LLM.
+pub(crate) fn attachment_added_cli(
+    ctx: &super::super::flow::FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    let job_id = ctx.job_id;
+    let agent_id = ctx.agent_id;
+    let short_id = ctx.short_id;
+
+    let file_path = message
+        .and_then(|m| m.get("filePath"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if file_path.is_empty() {
+        return attachment_added(ctx);
+    }
+
+    let to_agent_id = ctx.prefetched
+        .and_then(|p| p.provider_agent_id.as_deref())
+        .unwrap_or("");
+    if to_agent_id.is_empty() {
+        return attachment_added(ctx);
+    }
+
+    match upload_and_forward_one(file_path, agent_id, job_id, to_agent_id) {
+        Ok(()) => {
+            let att_sent = super::super::content::attachment_sent_user_notify()
+                .replace("<short_jobId>", short_id);
+            format!(
+                "[attachment_added_cli] ✓ Attachment uploaded and forwarded to provider in-process.\n\n\
+                 [Your next action] Translate the notification below to the user's language, then dispatch it. End the turn after notifying.\n\n\
+                 Canonical content:\n\
+                 \x20\x20{att_sent}\n\n\
+                 ```bash\n\
+                 okx-a2a user notify --content '<your translated content>'\n\
+                 ```\n\n\
+                 **End this turn.**\n"
+            )
+        }
+        Err(e) => {
+            eprintln!("[attachment_added_cli] upload/forward failed: {e}");
+            attachment_added(ctx)
+        }
+    }
+}
+
 pub(crate) fn attachment_added(ctx: &super::super::flow::FlowContext<'_>) -> String {
     let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;

@@ -475,7 +475,7 @@ Change the maximum budget cap (off-chain; API success completes it). After the u
 agent task-attach <jobId> --file <local-path> [--file <local-path> ...]
 ```
 
-Buyer attaches local files to an existing task (mid-task supplementation of reference materials / images / docs). The CLI stages files into `~/.onchainos/task/<jobId>/attachments/` and registers them on-chain so the provider can fetch them.
+Buyer attaches local files to an existing task (mid-task supplementation of reference materials / images / docs). The CLI stages files into `~/.onchainos/task/<jobId>/attachments/` and registers them on-chain so the provider can fetch them. **File size limit: 100 MB per file.** Same-name files are automatically renamed (e.g. `photo_2.jpg`) to prevent overwrite.
 
 | Parameter | When to fill |
 |---|---|
@@ -635,7 +635,7 @@ Submit the deliverable on chain (`POST /aieco/task/{jobId}/deliver`). **Only all
 | `--file` | `""` (message-only delivery) |
 | `--message` | `Task completed, please review` |
 
-For file-type deliverables, send via `okx-a2a file upload --file-path <path> --agent-id <providerAgentId> --job-id <jobId>` first; this command's `--file` is used to bind the file_key reference rather than to transmit directly.
+Provider delivery is a 3-step process: (1) `okx-a2a file upload` encrypts + uploads the file and returns 6 metadata fields; (2) `okx-a2a xmtp-send` forwards the 6 fields + `[intent:deliver]` to the buyer; (3) `agent deliver --file <local-path>` submits the delivery on-chain and auto-saves the deliverable locally to `~/.onchainos/deliverables/provider/<jobId>/`. The `--file` parameter is the **local file path** (used for auto-save), not a fileKey.
 
 ### task-deliverable-list
 

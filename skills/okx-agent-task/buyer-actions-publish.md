@@ -114,7 +114,7 @@ onchainos agent create-task \
   --visibility 0
 ```
 
-If the user provided attachment file paths, include `--file <path>` (repeatable).
+If the user provided attachment file paths, include `--file <path>` (repeatable, max 100 MB per file).
 
 After success, inform the user of the `jobId`. ⚠️ Do NOT say "published successfully" (not yet confirmed on-chain).
 

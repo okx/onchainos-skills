@@ -269,6 +269,14 @@ pub(crate) fn branch_a2a_cli(
         return format!("[branch_a2a_cli] ERROR: okx-a2a session send (SKILL_PREFETCH) failed: {e}\n");
     }
 
+    // B-Step 1.6 — Upload + forward any pending attachments (best-effort).
+    let att_count = super::super::flow_lifecycle::upload_and_forward_all_attachments(
+        job_id, agent_id, dp_id,
+    );
+    if att_count > 0 {
+        eprintln!("[branch_a2a_cli] {att_count} attachment(s) uploaded and forwarded to provider {dp_id}");
+    }
+
     // Sub session created + SKILL_PREFETCH sent. The ASP receives
     // `job_asp_selected` from the backend and independently decides to
     // apply on-chain. The buyer does NOTHING until `provider_applied`.
