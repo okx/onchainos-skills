@@ -1,6 +1,6 @@
 ---
 name: okx-task-watch
-description: "ACTIVATE for OKX A2A user-session task-progress flows: live monitoring via `okx-a2a user watch` (single-shot blocking read: exits on first message; destructive read — re-enter to continue) and outstanding-decision listing via `okx-a2a user outdated-list` (un-checked decision_request items). Claude Code / Codex only; other platforms get native push. Use whenever the user wants to watch/monitor progress of their published A2A tasks, be kept posted on task events, catch up on missed/unread/past task notifications, review outstanding/pending task decisions, or continue a previous task watch — 监听任务进展 / 帮我盯着任务 / 历史消息 / 未读消息 / 未决策 / 继续监听 and any-language paraphrase. Read-only notification monitoring: covers A2A task event notifications only — not wallets, gas, CLI command history, task lists, or status queries — and surfaces decisions without executing task actions; never wrap the watch in cron/loop schedulers — the call itself long-polls."
+description: "监听任务进展 / 帮我盯着任务 / 任务有动静告诉我 / 历史消息 / 未读消息 / 未决策 / 待决策 / 继续监听 / task watch / user watch / monitor task progress / catch me up on tasks / outstanding decisions — OKX A2A user-session task-notification monitor: live long-poll via `okx-a2a user watch` (also drains backlog of past/missed/unread events on entry) plus un-replied decision_request lister via `okx-a2a user outdated-list`. Not for wallet / gas / task-list / status queries."
 license: Apache-2.0
 metadata:
   author: okx
