@@ -30,13 +30,6 @@ impl Role {
         }
     }
 
-    pub fn as_canonical_str(&self) -> &'static str {
-        match self {
-            Role::Buyer     => "buyer",
-            Role::Provider    => "provider",
-            Role::Evaluator => "evaluator",
-        }
-    }
 }
 
 // ─── Status ─────────────────────────────────────────────────────────────

@@ -246,18 +246,6 @@ pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
     )
 }
 
-// ── Event::NegotiateReply (over budget) ────────────────────────────
-
-/// `Event::NegotiateReply` — decision prompt when the ASP's quote exceeds max_budget.
-pub fn over_budget_user_prompt(short_id: &str) -> String {
-    format!(
-        "[Job {short_id} — you are the User Agent] The ASP's quote exceeds the maximum budget; negotiation terminated. Choose next step:\n\
-         A. View ASP list\n\
-         B. Designate another ASP — provide the agentId\n\
-         C. Close the job"
-    )
-}
-
 // ── Pseudo events (close / set_public) ─────────────────────────────
 
 /// User notification after closing a job (B-7-11).
@@ -349,16 +337,6 @@ pub fn attachment_sent_user_notify() -> &'static str {
     "[Job <short_jobId>] Attachment sent to the ASP."
 }
 
-/// Attachment saved locally (no active session yet) — notify the user.
-pub fn attachment_saved_user_notify() -> &'static str {
-    "[Job <short_jobId>] Attachment saved. It will be forwarded to the ASP once a negotiation session is established."
-}
-
-/// Attachment rejected — task is in review/terminal phase.
-pub fn attachment_phase_blocked_user_notify() -> &'static str {
-    "[Job <short_jobId>] The task has entered the review/terminal phase — attachments can no longer be added."
-}
-
 // ── Attachment (buyer → provider) ──────────────────────────────────
 
 /// File attachment peer message sent from the buyer sub session to the provider sub session.
@@ -434,18 +412,6 @@ pub fn draft_saved_user_notify() -> String {
         .to_string()
 }
 
-/// Draft updated — user notification.
-pub fn draft_updated_user_notify() -> String {
-    "Draft updated (jobId: <jobId>)."
-        .to_string()
-}
-
-/// Draft deleted — user notification.
-pub fn draft_deleted_user_notify() -> String {
-    "Draft deleted (jobId: <jobId>)."
-        .to_string()
-}
-
 /// Draft publish success — no designated provider (public task).
 pub fn draft_publish_public_user_notify() -> String {
     "Draft published (public); jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
@@ -486,13 +452,6 @@ pub fn provider_pending_single_user_card(
          1. Accept\n\
          2. Reject"
     )
-}
-
-// ── pending_list empty (provider_conversation) ───────────────────
-
-/// provider_conversation — user chose "skip all" pending ASPs.
-pub fn skip_all_pending_user_notify(job_id: &str) -> String {
-    format!("Job `{job_id}` — all pending ASPs have been skipped. You can wait for new ASPs to reach out, or reply \"close\" to close the task.")
 }
 
 /// provider_conversation — pending list is empty; no ASPs to contact.

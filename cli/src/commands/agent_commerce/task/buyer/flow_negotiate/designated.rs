@@ -56,63 +56,6 @@ fn negotiate_section_pre_inquiry(job_id: &str, agent_id: &str, dp_id: &str) -> S
 /// no-op marker (used by `branch_a2a_cli`, which uploads + forwards
 /// attachments inline before emitting this playbook). When `false`, the
 /// full LLM-driven step 1.5 instructions are emitted (the original MCP path).
-/// Step-1-only playbook for the CLI path (`branch_a2a_cli`). The sub session
-/// has already been created and SKILL_PREFETCH dispatched by Rust before this
-/// function runs; attachments (if any) are uploaded + forwarded by Rust too.
-/// All that's left for the LLM in this turn is: author one natural-language
-/// inquiry, send it, end the turn. Subsequent steps (negotiation replies) are
-/// driven by the sub session's own `next-action` calls when reply events
-/// arrive — they do not belong in this output.
-pub(crate) fn negotiate_section_step1_only_cli(
-    job_id: &str,
-    my_agent_id: &str,
-    to_agent_id: &str,
-    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
-) -> String {
-    // Inline the task fields the LLM needs to compose the inquiry — saves a
-    // `common context` round-trip. NEVER inline max_budget; that's the whole
-    // point of "do not leak it to the ASP". Description is the source of
-    // truth for both task body and expected deliverable.
-    let task_block = match prefetched {
-        Some(p) => {
-            let desc = if p.description.is_empty() {
-                "(missing — run `onchainos agent common context` if needed)".to_string()
-            } else {
-                p.description.clone()
-            };
-            let amt = if p.token_amount.is_empty() { "?" } else { p.token_amount.as_str() };
-            format!(
-                "**Task fields (already fetched — use these verbatim, do NOT call `common context`):**\n\
-                 \x20\x20• Title: {title}\n\
-                 \x20\x20• Description / expected deliverable: {desc}\n\
-                 \x20\x20• Base budget: {amt} {sym}  (this is the value to mention; max_budget is intentionally withheld)\n\
-                 \x20\x20• Payment mode: escrow (fixed on the A2A path)\n\n",
-                title = p.title,
-                sym = p.token_symbol,
-            )
-        }
-        None => "**Task fields not pre-fetched.** Run `onchainos agent common context {job_id} --role buyer --agent-id <agentId>` first, extract title / description / tokenSymbol / tokenAmount, then proceed.\n\n".to_string(),
-    };
-
-    format!(
-        "{task_block}\
-         **Step 1 — First inquiry to the ASP. Compose a natural-language message in the user's language using the fields above, then run this bash exactly once:**\n\n\
-         ```bash\n\
-         okx-a2a xmtp-send \\\n\
-         \x20\x20--job-id {job_id} \\\n\
-         \x20\x20--my-agent-id {my_agent_id} \\\n\
-         \x20\x20--to-agent-id {to_agent_id} \\\n\
-         \x20\x20--message '<your composed inquiry — see rules below>' \\\n\
-         \x20\x20--json\n\
-         ```\n\n\
-         🛑 **Content iron rules — task details only, no price talk:**\n\
-         \x20\x20❌ Do NOT discuss price / tokenSymbol / tokenAmount / paymentMode / budget — pricing is locked at accept time, not in chat.\n\
-         \x20\x20❌ Do NOT include any `[intent:*]` marker — the structured intent handshake has been removed.\n\
-         \x20\x20❌ Do NOT promise terms or ask the ASP to quote — discuss scope, requirements, deliverable format, and timeline only.\n\n\
-         🛑🛑🛑 **End this turn immediately after the command returns.** The ASP's reply will arrive at the sub session and trigger `next-action` with `event=negotiate_reply` in --message automatically. Do NOT poll, do NOT continue.\n"
-    )
-}
-
 pub(crate) fn negotiate_section_step2_onwards(
     job_id: &str,
     agent_id: &str,
