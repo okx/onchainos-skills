@@ -29,9 +29,7 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
      - Timeout → system auto-refunds, you will receive job_refunded\n\n\
      ⚠️ **The buyer cannot initiate arbitration** — only the ASP can open a dispute. If the user asks \"can I start a dispute?\", reply: the buyer side does not support initiating arbitration; please wait for the ASP's decision.\n\n\
      After Step 1 → **end this turn** and wait for the next system event.\n\n\
-     [Follow-up events]\n\
-     - job_disputed → submit user evidence\n\
-     - job_refunded → refund complete\n"
+"
     )
 }
 
@@ -105,9 +103,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      Canonical English content:\n\
      \x20\x20\x20\x20[Dispute opened] Arbitration for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the arbiter's verdict.\n\n\
      **Step 5 — End this turn.** Do NOT send any message to the ASP.\n\n\
-     [Follow-up events]\n\
-     - job_completed → arbitration ruled for the ASP, task completes\n\
-     - job_refunded → arbitration ruled for the user, refund\n"
+"
     )
 }
 

@@ -95,9 +95,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
      Canonical English content:\n\
-     {accepted_escrow_notify}\n\n\
-     [Follow-up events]\n\
-     - job_submitted → review the deliverable\n\n") };
+     {accepted_escrow_notify}\n\n") };
 
     let x402_section = if pm == Some(1) { String::new() } else { format!("\
      --------- Branch B: x402 ---------\n\n\
@@ -140,10 +138,6 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20```\n\
      \x20\x20\x20\x20Canonical English content:\n\
      \x20\x20\x20\x20{accepted_x402_fail}\n\n\
-     [Follow-up events]\n\
-     - replaySuccess=true / default: job_completed → final confirmation\n\
-     - replaySuccess=false + x402_replay_input pending: wait for user reply to provide body → re-replay → complete\n\
-     - replaySuccess=false + no pending: wait for user instructions (retry or close task)\n\n\
      🛑🛑🛑 **job_completed MANDATORY rule**:\n\
      After complete is settled on-chain, a `job_completed` system event will arrive.\n\
      Upon receiving `job_completed`, you **MUST** call:\n\
