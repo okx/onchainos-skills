@@ -422,17 +422,17 @@ pub async fn fetch_my_agents_by_role(role: &str) -> Vec<serde_json::Value> {
 
 /// Find a specific agent by ID (not limited to current account).
 /// Returns `None` on any failure or when no agent matches.
-pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
+pub async fn fetch_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
     let id = agent_id.trim();
     if id.is_empty() {
-        if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] empty agent_id; returning None"); }
+        if DEBUG_LOG { eprintln!("[fetch_agent_by_id] empty agent_id; returning None"); }
         return None;
     }
 
     let agents = match raw_query_by_ids(id).await {
         Ok(a) => a,
         Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] {e}; returning None"); }
+            if DEBUG_LOG { eprintln!("[fetch_agent_by_id] {e}; returning None"); }
             return None;
         }
     };
@@ -441,7 +441,7 @@ pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
         .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(id));
     if DEBUG_LOG {
         eprintln!(
-            "[fetch_my_agent_by_id] {} for agentId={id}",
+            "[fetch_agent_by_id] {} for agentId={id}",
             if hit.is_some() { "matched" } else { "no match" }
         );
     }

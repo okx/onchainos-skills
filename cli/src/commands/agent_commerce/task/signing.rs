@@ -16,7 +16,7 @@ use crate::audit;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    fetch_my_agent_by_id, fetch_my_agents, DEBUG_LOG, AGENT_ROLE_BUYER,
+    fetch_agent_by_id, fetch_my_agents, DEBUG_LOG, AGENT_ROLE_BUYER,
     XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
@@ -66,7 +66,7 @@ pub async fn resolve_wallet_by_agent_id(agent_id: &str) -> Result<(String, Strin
         bail!("agent_id must not be empty; pass the provider's own agentId");
     }
 
-    let wallet_address = fetch_my_agent_by_id(id)
+    let wallet_address = fetch_agent_by_id(id)
         .await
         .and_then(|a| {
             a.get("agentWalletAddress")
@@ -167,7 +167,7 @@ async fn resolve_agent_by_role(
 
 /// Resolve wallet + evaluator agentId for signing.
 ///
-/// Call `fetch_my_agent_by_id` by `agent_id` (does a full `get-my-agents` pull, then client-side
+/// Call `fetch_agent_by_id` by `agent_id` (does a `get-agents --agent-ids` lookup, then client-side
 /// filters by `agentId`) to get `agentWalletAddress` → find the corresponding account in wallet store.
 /// `agent_id` is required (from system message envelope's top-level `agentId`); it is the only
 /// correct path in multi-identity scenarios — the "default wallet reverse lookup" fallback is disabled to prevent mis-signing.
@@ -184,7 +184,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
         bail!("agent_id must not be empty (envelope top-level agentId required)");
     }
 
-    let owner = fetch_my_agent_by_id(id)
+    let owner = fetch_agent_by_id(id)
         .await
         .and_then(|a| {
             a.get("agentWalletAddress")
@@ -202,7 +202,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
                 format!("agentId={id}"),
                 "reason=missing_agent_wallet_address".into(),
             ]),
-            Some("fetch_my_agent_by_id returned no agentWalletAddress"),
+            Some("fetch_agent_by_id returned no agentWalletAddress"),
         );
         bail!(
             "cannot get wallet address for agentId={id}; verify the agentId exists in `onchainos agent get-my-agents`"
