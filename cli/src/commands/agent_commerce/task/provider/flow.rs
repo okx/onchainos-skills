@@ -202,7 +202,7 @@ pub async fn generate_next_action(
     // tool usage.
     //
     let send_to_peer = format!(
-        "→ Run `okx-a2a xmtp-send` (Current jobId={job_id}, our agentId={agent_id}). Resolve `<buyerAgentId>` from the task fields above (or via `common context`):\n\
+        "→ Run `okx-a2a xmtp-send` (Current jobId={job_id}, our agentId={agent_id}). Resolve `<buyerAgentId>` from the task fields above:\n\
          ```bash\n\
          okx-a2a xmtp-send \\\n\
          \x20\x20--job-id {job_id} \\\n\

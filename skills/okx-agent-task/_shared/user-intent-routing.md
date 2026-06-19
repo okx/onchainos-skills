@@ -19,14 +19,16 @@ User-session needs to forward free-form user instructions targeting a specific t
 3. **Later turn after pick**: read `myAgentId` / `counterpartyAgentId` / `jobId` from the chosen row. If `counterpartyAgentId == null` → ask the user for it, else proceed.
 4. `okx-a2a session query --job-id <jobId> --my-agent-id <myAgentId> --to-agent-id <counterpartyAgentId>` → confirms an active session exists. Empty → notify "no active conversation" via `okx-a2a user notify` and end turn.
 5. Dispatch the user's instruction to the sub via `okx-a2a session send` — the daemon resolves the session from `--job-id` + `--to-agent-id`:
+
    ```bash
    okx-a2a session send --no-wait \
      --job-id <jobId> --to-agent-id <counterpartyAgentId> \
      --content '<user verbatim>
 
----
-Reply to the user via `okx-a2a user notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see §Session Comm Contract §4 Path 2b).'
+   ---
+   Reply to the user via `okx-a2a user notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `buyer-sub-playbook.md` §Communication Contract).'
    ```
+
    Forward verbatim then append reply-path instruction. End turn.
 
 **Hard rules**:
@@ -91,14 +93,14 @@ Triggers (only when there's no active card the user might be answering):
 |---|---|---|
 | Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role buyer --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | buyer publish flow |
 | Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → designated-provider flow | [`buyer-actions.md`](../buyer-actions.md) §5 |
-| Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs` | [`provider.md`](../provider.md) §2.1. Do NOT route to `task-search`. | provider.md §2.1 |
-| Take specific task (ASP) — `接 {jobId}` / `contact the buyer of {jobId}` | `common context <jobId> --role provider` → `okx-a2a session create` | provider.md §2 |
+| Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs` | [`provider-accept.md`](../provider-accept.md) §2 (Path A). Do NOT route to `task-search`. | provider-accept.md §2 |
+| Take specific task (ASP) — `接 {jobId}` / `contact the buyer of {jobId}` | `onchainos agent contact-buyer <jobId> --agent-id <chosen agentId>` (single CLI: session create + canonical opener) | provider-accept.md §3 |
 | Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务` | `onchainos agent task-search` | [`cli-reference.md#task-search`](./cli-reference.md#task-search) |
 | Stake (Evaluator) — `I want to stake` | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`evaluator-staking.md §2`](../references/evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent | Route to appropriate skill; do NOT suggest task creation | — |
 
 ⚠️ **Disambig — `接单` vs `搜索任务`**: skill-profile match ("用 X 接单") → `recommend-task`; explicit filters → `task-search`.
-🛑 **ASP constraint**: "take task X" → must `okx-a2a session create` + negotiate first; do NOT directly `apply`.
+🛑 **ASP constraint**: "take task X" → must run `onchainos agent contact-buyer <jobId>` (cold-start opener) and wait for buyer designation; do NOT directly `apply` — `apply` is `JobAspSelected`-system-event-triggered only.
 
 ---
 
