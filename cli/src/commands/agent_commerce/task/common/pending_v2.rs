@@ -658,7 +658,7 @@ fn handle_request_prompt(
         // same llmContent generator as the CLI-mode branch so resolve behavior
         // stays consistent across modes.
         let entry = q.entries.last().unwrap();
-        let llm_content = playbook_push_prompt_user(entry);
+        let llm_content = resolve_llm_content_prompt_user(entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
         println!("Decision request submitted (queued for tracking). ");
@@ -1333,8 +1333,7 @@ pub fn request_command_block(
          \x20\x20--user-content \"{content}\" \\\n\
          \x20\x20--list-label \"{label}\" \\\n\
          \x20\x20--source-event {source_event}\n\
-         ```\n\n\
-         **(3) Read step (2)'s stdout and follow it verbatim.** 🛑 The printed text IS your next-action playbook (it self-describes: tells you which `okx-a2a` command to run with which args, or to end the turn) — it is NOT a success-confirmation receipt. Skipping (3) = card never reaches the user → flow stalls → 24h auto-refund / mistaken auto-decline. Do NOT hand-craft `--llm-content` or call `okx-a2a session send` yourself — that path is owned by `pending-decisions-v2` now.\n",
+         ```",
         job_id = job_id,
         role = role,
         agent_id = agent_id,
@@ -1379,23 +1378,6 @@ fn resolve_llm_content(entry: &PendingEntry) -> String {
         entry.agent_id,
         to_header,
         DEFER_KEYWORDS.join(" / "),
-    )
-}
-
-fn playbook_push(entry: &PendingEntry) -> String {
-    let llm_content = resolve_llm_content(entry);
-    let llm_content_q = llm_content.replace('\'', "'\\''");
-    let user_content_q = entry.user_content.replace('\'', "'\\''");
-    format!(
-        "Now run the EXACT command below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the command returns.\n\n\
-         ```bash\n\
-         okx-a2a user decision-request \\\n\
-         \x20\x20--user-content '{user_content}' \\\n\
-         \x20\x20--llm-content '{llm_content}' \\\n\
-         \x20\x20--json\n\
-         ```\n",
-        user_content = user_content_q,
-        llm_content = llm_content_q,
     )
 }
 
@@ -1479,28 +1461,6 @@ fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
         to_flag = to_flag,
         src = source_event_str,
         defer = DEFER_KEYWORDS.join(" / "),
-    )
-}
-
-/// Default (non-CLI) variant of `playbook_push`. Same `okx-a2a user decision-request`
-/// bash invocation shape as `playbook_push`; the only difference is the
-/// embedded llm-content comes from `resolve_llm_content_prompt_user` (with
-/// multi-decision disambiguation). Used by `handle_request` when
-/// `OKX_A2A_IS_CLI` is NOT set.
-fn playbook_push_prompt_user(entry: &PendingEntry) -> String {
-    let llm_content = resolve_llm_content_prompt_user(entry);
-    let llm_content_q = llm_content.replace('\'', "'\\''");
-    let user_content_q = entry.user_content.replace('\'', "'\\''");
-    format!(
-        "Now run the EXACT command below. Do NOT modify any field. Do NOT call any other tool first or after. End the turn after the command returns.\n\n\
-         ```bash\n\
-         okx-a2a user decision-request \\\n\
-         \x20\x20--user-content '{user_content}' \\\n\
-         \x20\x20--llm-content '{llm_content}' \\\n\
-         \x20\x20--json\n\
-         ```\n",
-        user_content = user_content_q,
-        llm_content = llm_content_q,
     )
 }
 
