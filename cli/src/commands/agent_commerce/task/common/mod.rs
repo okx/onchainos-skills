@@ -53,9 +53,8 @@ pub use payment_mode::PaymentMode;
 pub use util::{ensure_sufficient_balance, ensure_sufficient_balance_at};
 
 /// Master switch for diagnostic `eprintln!` output across the task system.
-/// Flip to `true` and recompile to enable verbose debug logging; `false` (default)
-/// lets the compiler eliminate all guarded branches (zero runtime cost).
-pub const DEBUG_LOG: bool = false;
+/// Enabled by `cargo build --features debug-log`; default off (zero runtime cost).
+pub const DEBUG_LOG: bool = cfg!(feature = "debug-log");
 
 // ─── CLI definition ─────────────────────────────────────────────────────
 #[derive(Subcommand)]
