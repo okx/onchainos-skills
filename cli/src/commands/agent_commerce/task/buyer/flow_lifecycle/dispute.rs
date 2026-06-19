@@ -184,7 +184,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
-     Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
+     Canonical English content — compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Arbitration outcome (always included):\n\
      \x20\x20{dispatch_content}\n\n\
      ▸ Rating info (include ONLY if Step 2's feedback-submit succeeded; if it failed, omit this entire half):\n\

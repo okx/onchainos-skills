@@ -269,7 +269,7 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
-     Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
+     Canonical English content — compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Auto-completion notice (always included):\n\
      \x20\x20{auto_completed_notify}\n\n\
      ▸ Rating info (include ONLY if Step 2's feedback-submit succeeded; if it failed, omit this entire half):\n\

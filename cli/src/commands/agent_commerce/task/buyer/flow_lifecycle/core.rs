@@ -687,7 +687,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
-     Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
+     Canonical English content — compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Deliverable received notice (always included; pick the sub-template that matches `deliverableType`):\n\n\
      \x20\x20deliverableType=file:\n\
      \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
@@ -817,7 +817,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
-     Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
+     Canonical English content — compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Completion notice (always included):\n\
      \x20\x20{completed_escrow_notify}\n\n\
      ▸ Rating info (include ONLY if A-Step 1's feedback-submit succeeded; if it failed, omit this entire half):\n\
@@ -847,7 +847,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      okx-a2a user notify --content '<your translated content>'\n\
      ```\n\n\
-     Canonical English content — compose by merging the two halves below (concatenate with a blank line between them):\n\n\
+     Canonical English content — compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Completion notice (always included):\n\
      \x20\x20{completed_x402_notify}\n\n\
      ▸ Rating info (include ONLY if B-Step 1's feedback-submit succeeded; if it failed, omit this entire half):\n\
