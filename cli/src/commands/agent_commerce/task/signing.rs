@@ -77,7 +77,7 @@ pub async fn resolve_wallet_by_agent_id(agent_id: &str) -> Result<(String, Strin
 
     if wallet_address.is_empty() {
         bail!(
-            "cannot resolve wallet for agentId={id}; agentWalletAddress not found in `onchainos agent get`"
+            "cannot resolve wallet for agentId={id}; agentWalletAddress not found in `onchainos agent get-agents`"
         );
     }
 
@@ -126,7 +126,7 @@ async fn query_agent_list() -> Vec<Value> {
     fetch_my_agents().await
 }
 
-/// Filter the `onchainos agent get` list by `role`, optionally constrained by `ownerAddress`.
+/// Filter the `onchainos agent get-my-agents` list by `role`, optionally constrained by `ownerAddress`.
 ///
 /// - `wallet_address`: pass `Some(addr)` to only match identities with matching `ownerAddress` (case-insensitive);
 ///   pass `None` to take the first matching role (for read-only scenarios that only need the agentId header).
@@ -167,7 +167,7 @@ async fn resolve_agent_by_role(
 
 /// Resolve wallet + evaluator agentId for signing.
 ///
-/// Call `fetch_my_agent_by_id` by `agent_id` (does a full `agent get` pull, then client-side
+/// Call `fetch_my_agent_by_id` by `agent_id` (does a full `get-my-agents` pull, then client-side
 /// filters by `agentId`) to get `agentWalletAddress` → find the corresponding account in wallet store.
 /// `agent_id` is required (from system message envelope's top-level `agentId`); it is the only
 /// correct path in multi-identity scenarios — the "default wallet reverse lookup" fallback is disabled to prevent mis-signing.
@@ -205,7 +205,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
             Some("fetch_my_agent_by_id returned no agentWalletAddress"),
         );
         bail!(
-            "cannot get wallet address for agentId={id}; verify the agentId exists in `onchainos agent get`"
+            "cannot get wallet address for agentId={id}; verify the agentId exists in `onchainos agent get-my-agents`"
         );
     }
 

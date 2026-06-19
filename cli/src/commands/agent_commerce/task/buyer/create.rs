@@ -2,7 +2,7 @@
 //!
 //! User action: publish a task — `onchainos agent create-task`.
 //!
-//! Identity check: invokes the identity-module CLI (`onchainos agent get`) to verify
+//! Identity check: invokes the identity-module CLI (`onchainos agent get-my-agents`) to verify
 //! that the current user has a buyer identity (role=1) before running the publish flow.
 
 use anyhow::{bail, Result};
@@ -12,7 +12,7 @@ use crate::audit;
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::{
-    self, fetch_my_agents, network::task_api_client::TaskApiClient,
+    self, fetch_my_agents_by_role, network::task_api_client::TaskApiClient,
     payment_mode::PaymentMode,
     AGENT_ROLE_BUYER, XLAYER_CHAIN_ID, DEBUG_LOG,
 };
@@ -144,10 +144,7 @@ pub fn validate_budget_decimals(budget: f64) -> Result<()> {
 // ─── Identity check ─────────────────────────────────────────────────────
 
 pub(crate) async fn resolve_buyer_agent() -> Result<(String, String)> {
-    // fetch_my_agents() spawns `onchainos agent get` and filters to the current
-    // active account's XLayer ownerAddress — the new response shape returns
-    // multiple ownerAddress groups, so this filter is now mandatory client-side.
-    let agents = fetch_my_agents().await;
+    let agents = fetch_my_agents_by_role("buyer").await;
 
     let buyer = agents.iter()
         .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))

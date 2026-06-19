@@ -76,7 +76,7 @@ pub enum CommonCommand {
         /// Caller AgentID (**required**). The beta backend requires a non-empty agenticId header;
         /// a wallet may have multiple provider agents and the caller must pick one explicitly —
         /// the CLI does not auto-select. Wallet / communication addresses are looked up via
-        /// `agent get --agent-ids <agent_id>` automatically and need not be passed via the CLI.
+        /// `agent get-agents --agent-ids <agent_id>` automatically and need not be passed via the CLI.
         #[arg(long)]
         agent_id: String,
     },
@@ -232,13 +232,90 @@ pub struct AgentProfile {
     pub communication_address: Option<String>,
 }
 
-/// Query the agent profile for the given agentId (name / profileDescription / wallet address / communication address).
-///
-/// Spawns `onchainos agent get --agent-ids <id>` as a subprocess and parses stdout — does not
-/// re-implement token / wallet-client / URL assembly logic, so this automatically follows any
-/// future changes in the `agent get` implementation.
-/// On any error path it falls back to a placeholder with agentId set (address fields None),
-/// guaranteeing a non-empty return.
+// ─── Identity-system subprocess wrappers ──────────────────────────────────
+//
+// All identity queries from the task system go through these two helpers.
+// When the identity CLI changes (command names, response shapes), only
+// these two functions need updating.
+
+/// Query agents by ID (`get-agents --agent-ids`). Returns the flattened
+/// list of matched agent JSON objects. Works for any agent (current
+/// account or peer).
+async fn raw_query_by_ids(agent_ids: &str) -> Result<Vec<serde_json::Value>> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+
+    let output = tokio::process::Command::new(&exe)
+        .args(["agent", "get-agents", "--agent-ids", agent_ids])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn `get-agents` failed: {e}"))?;
+
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow::anyhow!(
+            "parse `get-agents` stdout failed: {e}; raw={}",
+            String::from_utf8_lossy(&output.stdout)
+        ))?;
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
+        bail!("`get-agents` returned failure: {err}");
+    }
+
+    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    Ok(flatten_agent_groups(&data))
+}
+
+/// List the current account's agents (`get-my-agents`). When `role` is
+/// provided (e.g. `"buyer"`), passes `--role` and `--owner-address` to
+/// let the backend filter server-side. When `None`, fetches all roles
+/// and filters by ownerAddress client-side.
+async fn raw_query_my_agents(role: Option<&str>) -> Result<Vec<serde_json::Value>> {
+    let my_owner = current_account_xlayer_address()
+        .ok_or_else(|| anyhow::anyhow!("no current XLayer address"))?;
+
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+
+    let mut args = vec!["agent", "get-my-agents"];
+    let role_val: String;
+    if let Some(r) = role {
+        role_val = r.to_string();
+        args.extend(["--role", &role_val, "--owner-address", &my_owner]);
+    }
+    args.extend(["--page-size", "100"]);
+
+    if DEBUG_LOG {
+        eprintln!(
+            "[raw_query_my_agents] running: {} {}",
+            exe.display(),
+            args.join(" ")
+        );
+    }
+
+    let output = tokio::process::Command::new(&exe)
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn `get-my-agents` failed: {e}"))?;
+
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow::anyhow!(
+            "parse `get-my-agents` stdout failed: {e}; raw={}",
+            String::from_utf8_lossy(&output.stdout)
+        ))?;
+
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
+        bail!("`get-my-agents` returned failure: {err}");
+    }
+
+    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    Ok(flatten_my_agents(&data, &my_owner))
+}
+
+/// Query the agent profile for the given agentId.
+/// On any error path it falls back to a placeholder with agentId set.
 pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     let fallback = || AgentProfile {
         agent_id: Some(agent_id.to_string()),
@@ -251,56 +328,16 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
         return fallback();
     }
 
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
+    let all_agents = match raw_query_by_ids(agent_id).await {
+        Ok(agents) => agents,
         Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_agent_profile] current_exe failed: {e}; fallback"); }
+            if DEBUG_LOG { eprintln!("[fetch_agent_profile] {e}; fallback"); }
             return fallback();
         }
     };
 
-    // The subprocess inherits the parent's env (including OKX_BASE_URL), so it hits the exact same URL as the parent.
-    let mut cmd = tokio::process::Command::new(&exe);
-    cmd.args(["agent", "get", "--agent-ids", agent_id]);
-    let output = match cmd.output().await
-    {
-        Ok(o) => o,
-        Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_agent_profile] spawn `agent get` failed: {e}; fallback"); }
-            return fallback();
-        }
-    };
-
-    let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-        Ok(v) => v,
-        Err(e) => {
-            if DEBUG_LOG {
-                eprintln!(
-                    "[fetch_agent_profile] parse `agent get` stdout failed: {e}; raw={}; fallback",
-                    String::from_utf8_lossy(&output.stdout)
-                );
-            }
-            return fallback();
-        }
-    };
-
-    // The output shape of `agent get` is wrapped by output::success: { ok: true, data: <value> }
-    // On failure it is { ok: false, error: "..." }.
-    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
-        if DEBUG_LOG { eprintln!("[fetch_agent_profile] `agent get` returned failure: {err}; fallback"); }
-        return fallback();
-    }
-    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
-
-    // Flatten the response (new shape: `list[].agentList[]` groups; old shape:
-    // `list[]` flat agents). No ownerAddress filter — we're looking up any
-    // agent by id, possibly belonging to another user (e.g. peer buyer profile).
-    let all_agents = flatten_agent_groups(&data);
     if all_agents.is_empty() && DEBUG_LOG {
-        eprintln!(
-            "[fetch_agent_profile] `agent get` returned empty agent list (agentId={agent_id}); fallback"
-        );
+        eprintln!("[fetch_agent_profile] empty agent list (agentId={agent_id}); fallback");
     }
 
     let matched = all_agents.iter()
@@ -322,9 +359,7 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
                 .map(String::from),
         });
     if !all_agents.is_empty() && matched.is_none() && DEBUG_LOG {
-        eprintln!(
-            "[fetch_agent_profile] agentId={agent_id} not present in `agent get` response; fallback"
-        );
+        eprintln!("[fetch_agent_profile] agentId={agent_id} not present in response; fallback");
     }
     matched.unwrap_or_else(fallback)
 }
@@ -356,87 +391,38 @@ pub fn current_account_xlayer_address() -> Option<String> {
         .map(|a| a.address.to_lowercase())
 }
 
-/// Spawn `onchainos agent get` (paginated mode, no `--agent-ids`) and return the
-/// list of agents belonging to the **current active account**.
-///
-/// Pipeline:
-/// 1. resolve current account's XLayer ownerAddress (lowercase)
-/// 2. shell out to `agent get` → parse JSON
-/// 3. flatten the response (new shape: `list[].agentList[]`; old shape:
-///    `list[]` flat agents) → filter by ownerAddress
-///
-/// Returns empty `Vec` on any failure (not logged in / no XLayer / network /
-/// shape mismatch) — robust by design; callers can rely on non-panicking.
-/// Each element of the returned `Vec` is the raw agent JSON object (fields:
-/// `agentId` / `name` / `role` / `status` / `agentWalletAddress` / etc.).
+/// List agents belonging to the current active account.
+/// Returns empty `Vec` on any failure — robust by design.
 pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
-    let Some(my_owner) = current_account_xlayer_address() else {
-        if DEBUG_LOG { eprintln!("[fetch_my_agents] no current XLayer address; returning empty"); }
-        return Vec::new();
-    };
-
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_my_agents] current_exe failed: {e}"); }
-            return Vec::new();
+    match raw_query_my_agents(None).await {
+        Ok(agents) => {
+            if DEBUG_LOG { eprintln!("[fetch_my_agents] matched {} agents", agents.len()); }
+            agents
         }
-    };
-
-    let mut cmd = tokio::process::Command::new(&exe);
-    cmd.args(["agent", "get", "--page-size", "100"]);
-    if DEBUG_LOG {
-        eprintln!(
-            "[fetch_my_agents] running: {} agent get --page-size 100 (filter ownerAddress={my_owner})",
-            exe.display()
-        );
-    }
-
-    let output = match cmd.output().await {
-        Ok(o) => o,
         Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_my_agents] spawn `agent get` failed: {e}"); }
-            return Vec::new();
+            if DEBUG_LOG { eprintln!("[fetch_my_agents] {e}; returning empty"); }
+            Vec::new()
         }
-    };
-
-    let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-        Ok(v) => v,
-        Err(e) => {
-            if DEBUG_LOG {
-                eprintln!(
-                    "[fetch_my_agents] parse stdout failed: {e}; raw={}",
-                    String::from_utf8_lossy(&output.stdout)
-                );
-            }
-            return Vec::new();
-        }
-    };
-
-    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
-        if DEBUG_LOG { eprintln!("[fetch_my_agents] `agent get` returned failure: {err}"); }
-        return Vec::new();
     }
-
-    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
-    let agents = flatten_my_agents(&data, &my_owner);
-    if DEBUG_LOG {
-        eprintln!(
-            "[fetch_my_agents] matched {} agents under ownerAddress={my_owner}",
-            agents.len()
-        );
-    }
-    agents
 }
 
-/// Spawn `onchainos agent get` (paginated mode, no `--agent-ids`) and return
-/// the single agent whose `agentId` matches the argument, by filtering the
-/// flattened response client-side.
-///
-/// Same pipeline as [`fetch_my_agents`] but the filter key is `agentId` rather
-/// than `ownerAddress`. Returns `None` on any failure (empty id / subprocess /
-/// parse / shape mismatch) or when no agent matches.
+/// List agents belonging to the current active account, filtered by role.
+/// Returns empty `Vec` on any failure — robust by design.
+pub async fn fetch_my_agents_by_role(role: &str) -> Vec<serde_json::Value> {
+    match raw_query_my_agents(Some(role)).await {
+        Ok(agents) => {
+            if DEBUG_LOG { eprintln!("[fetch_my_agents_by_role] matched {} agents (role={role})", agents.len()); }
+            agents
+        }
+        Err(e) => {
+            if DEBUG_LOG { eprintln!("[fetch_my_agents_by_role] {e}; returning empty"); }
+            Vec::new()
+        }
+    }
+}
+
+/// Find a specific agent by ID among the current account's agents.
+/// Returns `None` on any failure or when no agent matches.
 pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
     let id = agent_id.trim();
     if id.is_empty() {
@@ -444,53 +430,15 @@ pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
         return None;
     }
 
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
+    let agents = match raw_query_my_agents(None).await {
+        Ok(a) => a,
         Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] current_exe failed: {e}"); }
+            if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] {e}; returning None"); }
             return None;
         }
     };
 
-    let mut cmd = tokio::process::Command::new(&exe);
-    cmd.args(["agent", "get", "--page-size", "100"]);
-    if DEBUG_LOG {
-        eprintln!(
-            "[fetch_my_agent_by_id] running: {} agent get --page-size 100 (filter agentId={id})",
-            exe.display()
-        );
-    }
-
-    let output = match cmd.output().await {
-        Ok(o) => o,
-        Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] spawn `agent get` failed: {e}"); }
-            return None;
-        }
-    };
-
-    let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-        Ok(v) => v,
-        Err(e) => {
-            if DEBUG_LOG {
-                eprintln!(
-                    "[fetch_my_agent_by_id] parse stdout failed: {e}; raw={}",
-                    String::from_utf8_lossy(&output.stdout)
-                );
-            }
-            return None;
-        }
-    };
-
-    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
-        if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] `agent get` returned failure: {err}"); }
-        return None;
-    }
-
-    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
-    let hit = flatten_agent_groups(&data)
-        .into_iter()
+    let hit = agents.into_iter()
         .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(id));
     if DEBUG_LOG {
         eprintln!(
@@ -513,45 +461,19 @@ fn parse_role_filter(raw: &str) -> Option<i64> {
     }
 }
 
-/// Internal helper: by-id direct lookup against the agent registry. Returns
-/// the matched agent JSON object without printing anything. Suitable for
-/// reuse by other handlers (e.g. `next-action --role auto`) that need an
-/// agent's metadata mid-flow without polluting stdout.
-///
-/// Spawns `onchainos agent get --agent-ids <id>` (backend-direct lookup, no
-/// pagination), flattens the response groups, and filters by `agentId`. No
-/// ownerAddress restriction — works for any agent (current account or peer).
+/// By-id direct lookup against the agent registry. Returns the matched
+/// agent JSON object without printing anything. Works for any agent
+/// (current account or peer).
 pub async fn query_agent_by_id_direct(agent_id: &str) -> Result<serde_json::Value> {
     let id = agent_id.trim();
     if id.is_empty() {
         bail!("agent_id must not be empty");
     }
 
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
-
-    let output = tokio::process::Command::new(&exe)
-        .args(["agent", "get", "--agent-ids", id])
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("spawn `agent get` failed: {e}"))?;
-
-    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| anyhow::anyhow!(
-            "parse `agent get` stdout failed: {e}; raw={}",
-            String::from_utf8_lossy(&output.stdout)
-        ))?;
-
-    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
-        bail!("`agent get` returned failure: {err}");
-    }
-
-    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
-    let all = flatten_agent_groups(&data);
+    let all = raw_query_by_ids(id).await?;
     all.into_iter()
         .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(id))
-        .ok_or_else(|| anyhow::anyhow!("agentId={id} not found in `agent get` response"))
+        .ok_or_else(|| anyhow::anyhow!("agentId={id} not found in `get-agents` response"))
 }
 
 /// `onchainos agent profile <agent_id>` — look up a single agent by id and
@@ -1222,24 +1144,19 @@ pub async fn handle_prepare_create(
 }
 
 /// Flatten the agent-list response into a flat `Vec` of agent JSON objects —
-/// **pure shape conversion, no filtering**. Single source of truth for handling
-/// both old and new response shapes; callers layer their own filters on top.
+/// **pure shape conversion, no filtering**. Handles three response shapes:
 ///
-/// Shapes handled:
-/// - **New**: `data.list[]` is groups, each `{ownerAddress, accountName, agentList[]}`.
-///   Returns all `agentList[]` items across all groups. Group-level
-///   `ownerAddress` / `accountName` are injected into each agent if the
-///   agent itself is missing them (defensive — current spec already
-///   duplicates `ownerAddress` at agent level, but next spec rev might not).
-/// - **Old**: `data.list[]` is flat agent objects. Pass through.
-///
-/// `data` is the value at `body.data` after the `{ok, data}` envelope is
-/// stripped. Handles both object shape (`{list:...}` after
-/// `normalize_singleton_object`) and array shape (`[{list:...}]`).
+/// - **Grouped**: `data.list[]` with `{ownerAddress, accountName, agentList[]}` groups
+/// - **Flat list**: `data.list[]` with flat agent objects
+/// - **Bare array**: `data` is already `[{agentId, ...}, ...]` (get-agents response)
 pub fn flatten_agent_groups(data: &serde_json::Value) -> Vec<serde_json::Value> {
-    // data may be:
-    //   - object {list, page, ...} after normalize_singleton_object unwraps singleton
-    //   - array [{list, page, ...}]
+    // Bare array: `get-agents` returns data as `[{agentId, ...}, ...]` directly
+    if let Some(arr) = data.as_array() {
+        if arr.first().and_then(|x| x.get("agentId")).is_some() {
+            return arr.clone();
+        }
+    }
+
     let list_val = data.get("list").cloned().or_else(|| {
         data.as_array()
             .and_then(|arr| arr.first())
@@ -1249,7 +1166,7 @@ pub fn flatten_agent_groups(data: &serde_json::Value) -> Vec<serde_json::Value> 
     let Some(list) = list_val.as_ref().and_then(|v| v.as_array()) else {
         if DEBUG_LOG {
             eprintln!(
-                "[flatten_agent_groups] response missing `list` field (tried both shapes); raw data: {}",
+                "[flatten_agent_groups] response missing `list` field (tried all shapes); raw data: {}",
                 serde_json::to_string(data).unwrap_or_default()
             );
         }
@@ -1409,7 +1326,7 @@ async fn build_context(
     out.push_str(&format!("You are the {role_cn} in the task system.\n\n"));
 
     // ── Identity info ────────────────────────────────────────────────────
-    // Wallet / communication addresses come from `agent get` lookup (fetch_agent_profile);
+    // Wallet / communication addresses come from `agent get-agents` lookup (fetch_agent_profile);
     // buyerAgentAddress / providerAgentAddress in the task detail are still used in the
     // "User Agent info" / "ASP info" blocks below.
     out.push_str("[Your Identity]\n");

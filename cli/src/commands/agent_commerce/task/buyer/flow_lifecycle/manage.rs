@@ -57,7 +57,7 @@ Step 2 -- Validation (after all fields collected, before showing the form)
 Step 3 -- Identity & balance check
 ================================================
 
-1. `onchainos agent get` to check whether the current account has buyer identity (role=1)
+1. `onchainos agent get-my-agents` to check whether the current account has buyer identity (role=1)
 2. Has buyer → tell the user which account is being used
 3. No buyer → guide registration via `onchainos agent register`
 4. Insufficient balance → warn but do not block creation. The CLI will output a structured funding guide (swap / bridge / send) — relay it to the user
@@ -181,7 +181,9 @@ After the user replies, determine which path to take:
 
 - **User confirms / says publish / approves** → go to Step 6
 - **User says \"save as draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D
-- **User asks to edit a basic field** (description/budget/currency) → update the field, re-run Step 4.5 validation (currency consistency) if currency changed, show the form again (return to Step 5)
+- **User asks to edit description** → update the field, **go back to Step 4.5** (re-run full asp-match with the new description — description is the primary matching input, changed description may match entirely different ASPs), then Step 4.6 (re-infer serviceParams), then Step 5 (show updated confirmation form)
+- **User asks to edit budget/max-budget** → update the field, show the form again (return to Step 5)
+- **User asks to edit currency** → update the field, re-run Step 4.5 validation (currency consistency), show the form again (return to Step 5)
 - **User asks to change the ASP** (\"换个服务商\" / \"change ASP\" / \"other provider\") → go back to Step 4.5 Branch B (show the full asp-match list)
 - **User asks to modify serviceParams** → update serviceParams, show the form again (return to Step 5)
 - **Ambiguous reply** → ask: publish on-chain now, or save as draft?
