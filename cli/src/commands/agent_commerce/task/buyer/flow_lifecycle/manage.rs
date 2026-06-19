@@ -180,7 +180,7 @@ NEVER skip directly to Step 6 or Step 6-D.
 After the user replies, determine which path to take:
 
 - **User confirms / says publish / approves** → go to Step 6
-- **User says \"save as draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D
+- **User says \"save as draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D. ⚡ Since the user already saw and confirmed the full form in Step 5, **skip Step 6-D.1** (no second confirmation form needed) and go directly to **Step 6-D.2** (call draft create CLI with all collected fields)
 - **User asks to edit description** → update the field, **go back to Step 4.5** (re-run full asp-match with the new description — description is the primary matching input, changed description may match entirely different ASPs), then Step 4.6 (re-infer serviceParams), then Step 5 (show updated confirmation form)
 - **User asks to edit budget/max-budget** → update the field, show the form again (return to Step 5)
 - **User asks to edit currency** → update the field, re-run Step 4.5 validation (currency consistency), show the form again (return to Step 5)
