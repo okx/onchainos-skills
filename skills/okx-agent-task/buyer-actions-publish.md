@@ -87,7 +87,7 @@ Display as a single `| Field | Value |` table:
 | 服务参数 | {"region": "江苏省"} |
 | 支付方式 | x402 |
 
-> 确认无误？确认后我立即上链创建任务。
+> 确认无误？确认后我立即上链创建任务。也可以说「保存为草稿」。
 
 **Example — Public task** (Chinese):
 
@@ -101,6 +101,6 @@ Display as a single `| Field | Value |` table:
 | 最高预算 | 0.15 |
 | 服务商 | 公开任务 — 无指定服务商 |
 
-> 确认无误？确认后我立即上链创建公开任务。
+> 确认无误？确认后我立即上链创建公开任务。也可以说「保存为草稿」。
 
 Rules: summary always in table; description > 200 chars → `见下方`/`See below` + prose below table; footer = blockquote asking confirmation.
