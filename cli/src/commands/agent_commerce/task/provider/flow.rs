@@ -1069,9 +1069,7 @@ pub async fn generate_next_action(
         }
 
         // Negotiation relay events are only used by the buyer side; provider ignores
-        Event::NegotiateReply
-        | Event::NegotiateAck
-        | Event::NegotiateCounter => "[System notification] negotiate_* (buyer-side negotiation relay event; not the provider's concern)\n\
+        Event::NegotiateReply => "[System notification] negotiate_reply (buyer-side negotiation relay event; not the provider's concern)\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
         Event::AttachmentAdded | Event::DeliverableReceived => "[System notification] buyer-side event; not the provider's concern.\n\

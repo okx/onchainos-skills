@@ -311,10 +311,6 @@ pub enum Event {
     // ── Negotiation relay events (buyer-local dispatch, no status change) ─
     /// Provider's natural-language reply; buyer-sub-playbook.md Route 6 → negotiate_reply.
     NegotiateReply,
-    /// Provider accepted the proposal.
-    NegotiateAck,
-    /// Provider sent a counter-proposal.
-    NegotiateCounter,
 
     // ── Network / restart recovery events (pass-through, no status change) ─
     /// After a network / machine restart, the backend notifies the agent to resume this task's script.
@@ -390,8 +386,6 @@ impl Event {
             "deliverable_received"      => Event::DeliverableReceived,
             // Negotiation relay (buyer-local dispatch)
             "negotiate_reply"           => Event::NegotiateReply,
-            "negotiate_ack"             => Event::NegotiateAck,
-            "negotiate_counter"         => Event::NegotiateCounter,
             // Network / restart recovery
             "wakeup_notify"             => Event::WakeupNotify,
             other                       => Event::Other(other.to_string()),
@@ -443,8 +437,6 @@ impl Event {
             Event::BuyerAttachmentReceived => "buyer_attachment_received",
             Event::DeliverableReceived    => "deliverable_received",
             Event::NegotiateReply         => "negotiate_reply",
-            Event::NegotiateAck           => "negotiate_ack",
-            Event::NegotiateCounter       => "negotiate_counter",
             Event::WakeupNotify           => "wakeup_notify",
             Event::Other(s)               => s.as_str(),
         }
@@ -486,7 +478,7 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::JobCreated | Event::ProviderApplied | Event::JobAspSelected
         | Event::JobProviderReject | Event::JobUserReject
         | Event::TaskTokenBudgetChange
-        | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,
+        | Event::NegotiateReply => Status::Created,
         Event::JobAccepted | Event::DeliverableReceived                       => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
         Event::JobRejected | Event::RejectExpired                             => Status::Rejected,
