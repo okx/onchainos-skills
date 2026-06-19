@@ -237,10 +237,7 @@ pub async fn check_x402_endpoint(endpoint: &str, body: Option<&str>) -> Result<X
             .json(&parsed)
             .send().await
     } else {
-        http.post(endpoint)
-            .header("Content-Type", "application/json")
-            .json(&serde_json::json!({}))
-            .send().await
+        http.get(endpoint).send().await
     }.map_err(|e| anyhow!("endpoint request failed: {e}"))?;
 
     let status = resp.status().as_u16();
