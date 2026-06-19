@@ -1,6 +1,6 @@
 # User Intent Routing
 
-User-session needs to forward free-form user instructions targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job", "remind seller 963 that the deliverable is overdue", "switch the payment token to USDG") to the **specific sub session that owns that task**, when there's no matching active pending decision.
+User-session needs to forward free-form user instructions targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job", "remind seller 963 that the deliverable is overdue", "switch to a different provider") to the **specific sub session that owns that task**, when there's no matching active pending decision.
 
 **Trigger phrases** — when the user says any of the following AND no matching entry exists in `pending-decisions-v2`, **MUST** enter this flow:
 
@@ -8,7 +8,7 @@ User-session needs to forward free-form user instructions targeting a specific t
 |---|---|---|
 | 重新提交 / 补充内容 | "重新提交 X / 再上传 / 重发 / 给我改 / 补充证据 / 改一下" | "re-submit / re-upload / resubmit / add more / append / change my X" |
 | 催促 / 让 sub 主动同步状态 | "提醒 / 催一下 / 让卖家知道一下 X / 跟买家说一下 X" | "remind / nudge / chase up / tell the seller X" |
-| 变更条款 | "换币种 / 改价 / 改 provider" | "switch token / change price / use a different provider" |
+| 变更条款 | "改 provider / 换服务商" | "use a different provider / switch provider" |
 
 🛑🛑🛑 **CRITICAL — do NOT make domain assumptions on behalf of the user**: when the queue is empty and the user issues a task-scoped instruction, your job is to **route**, not to **adjudicate**. **Do NOT** reply "the evidence phase is over" / "this state doesn't allow that". Only the sub session can query the chain and know for sure. Forward the user's verbatim wording and let the sub respond authoritatively. (🔴 I-15: user typed "重新提交证据" → user session refused with "证据阶段已结束"; correct path: route to sub.)
 

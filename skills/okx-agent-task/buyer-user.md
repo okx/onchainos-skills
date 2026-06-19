@@ -89,9 +89,9 @@ Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proce
 | Intent | Trigger examples | Route to |
 |---|---|---|
 | Publish task | "发布任务 / create a task / 帮我发个任务" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
-| Draft operations | "save as draft / 草稿列表 / publish draft" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) §1.6 |
+| Draft operations | "save as draft / 草稿列表 / publish draft" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) §1.1 |
 | Add attachment / image | "补充附件 / attach file to task" | [`buyer-actions.md`](./buyer-actions.md) §2 |
-| Modify task terms | "change budget / 换服务商 / 换币种" | [`buyer-actions.md`](./buyer-actions.md) §3 |
+| Switch provider / stop task | "换服务商 / switch provider / 关闭任务 / stop task" | [`buyer-actions.md`](./buyer-actions.md) §3 |
 | View deliverables | "查看交付物 / view deliverables" | [`buyer-actions.md`](./buyer-actions.md) §4 |
 | Negotiate with provider | "negotiate with XXX / 找810接单" | Sub session handles automatically after task is published |
 | Find tasks (ASP) | "接单 / start accepting jobs" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |

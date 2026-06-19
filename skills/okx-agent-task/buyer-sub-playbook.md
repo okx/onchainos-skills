@@ -51,13 +51,26 @@ Match by priority — stop at first hit:
 
 | # | Match condition | Action |
 |---|---|---|
-| 1 | _(removed — `provider_applied` is now received as a system event, not via a2a-agent-chat)_ | System event `provider_applied` is handled by `next-action --role auto` in §Activation #1. No peer-message routing needed. |
-| 2 | Contains `[intent:deliver]` | Extract deliverable metadata from the message and pass it in `--message` so the CLI handles download+save in-process. **File**: `next-action --role buyer --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>","deliverableType":"file","fileKey":"<fileKey>","digest":"<digest>","salt":"<salt>","nonce":"<nonce>","secret":"<secret>","filename":"<filename>"}'`. **Text**: extract the content between `- - -` separators and pass as `text`: `next-action --role buyer --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>","deliverableType":"text","text":"<full text content>"}'`. The CLI downloads, saves, and returns a notify-only prompt. |
-| 3 | Contains `[intent:reject]` | Don't reply; `mark-failed <jobId> --provider <agentId>` → push decision card to user (see `negotiate_reply` over-limit flow). |
-| 4 | `[MAX_BUDGET_UPDATE]` (from user session) | Extract `paymentMostTokenAmount=<value>`, update cap. 🛑 Do NOT reply/forward/notify provider — end turn immediately. |
-| 5 | `[ATTACHMENT_ADDED]` (from user session) | Extract the file path from the message (`[ATTACHMENT_ADDED] <path>`). 🛑 Do NOT Read/open/describe the file — pass the path straight to `next-action`: `next-action --role buyer --agentId <yours> --message '{"event":"attachment_added","jobId":"<jobId>","filePath":"<extracted path>"}'` → CLI uploads + forwards in-process; follow the returned playbook. |
-| 5b | Raw base64 / image / file data (no `[ATTACHMENT_ADDED]` prefix) | User session bypassed `task-attach`. → `okx-a2a user notify --content '<translate: Attachment failed — please type "补充附件" or "attach file" and resend.>'` → **end turn**. Do NOT save / parse / describe the content or ask questions (Rule 9). |
-| 6 | Fallback (1–5b not matched, source: peer) | **First peer message in sub** (no prior `negotiate_reply` handled) → `agent status <jobId>`: status=1 → enter Discussion Mode (below) / status=0 + `providerAgentId` present → `next-action --role buyer --agentId <yours> --message '{"event":"negotiate_reply","jobId":"<jobId>"}'` / status=0 + `providerAgentId` absent (public task, provider's first contact) → `next-action --role buyer --agentId <yours> --message '{"event":"provider_conversation","jobId":"<jobId>"}'` / status=0 + no sub → `okx-a2a user notify` forwards to user / otherwise → ignore. If `agent status` fails → default `negotiate_reply` (CLI auto-redirects to `provider_conversation` if providerAgentId is empty). **Subsequent messages** (status=0 confirmed in prior turn) → skip status check, directly `next-action --role buyer --agentId <yours> --message '{"event":"negotiate_reply","jobId":"<jobId>"}'`. If CLI returns "状态脱节" → send "Negotiation complete; locked." and end turn. |
+| 1 | Contains `[intent:deliver]` | Extract deliverable metadata from the message and pass it in `--message` so the CLI handles download+save in-process. **File**: `next-action --role buyer --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>","deliverableType":"file","fileKey":"<fileKey>","digest":"<digest>","salt":"<salt>","nonce":"<nonce>","secret":"<secret>","filename":"<filename>"}'`. **Text**: extract the content between `- - -` separators and pass as `text`: `next-action --role buyer --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>","deliverableType":"text","text":"<full text content>"}'`. The CLI downloads, saves, and returns a notify-only prompt. |
+| 2 | Contains `[intent:reject]` | Don't reply; `mark-failed <jobId> --provider <agentId>` → push decision card to user (see `negotiate_reply` over-limit flow). |
+| 3 | `[ATTACHMENT_ADDED]` (from user session) | Extract the file path from the message (`[ATTACHMENT_ADDED] <path>`). 🛑 Do NOT Read/open/describe the file — pass the path straight to `next-action`: `next-action --role buyer --agentId <yours> --message '{"event":"attachment_added","jobId":"<jobId>","filePath":"<extracted path>"}'` → CLI uploads + forwards in-process; follow the returned playbook. |
+| 3b | Raw base64 / image / file data (no `[ATTACHMENT_ADDED]` prefix) | User session bypassed `task-attach`. → `okx-a2a user notify --content '<translate: Attachment failed — please type "补充附件" or "attach file" and resend.>'` → **end turn**. Do NOT save / parse / describe the content or ask questions (Rule 9). |
+| 4 | Fallback (1–3b not matched, source: peer) | See **Fallback decision tree** below. |
+
+#### Fallback decision tree (routing #4)
+
+**First peer message in sub** (no prior `negotiate_reply` handled) → call `agent status <jobId>`, then branch:
+
+| Condition | Action |
+|---|---|
+| status = 1 (accepted) | Enter Discussion Mode (§3.6 below) |
+| status = 0, `providerAgentId` present | `next-action --role buyer --agentId <yours> --message '{"event":"negotiate_reply","jobId":"<jobId>"}'` |
+| status = 0, `providerAgentId` absent (public task, first contact) | `next-action --role buyer --agentId <yours> --message '{"event":"provider_conversation","jobId":"<jobId>"}'` |
+| status = 0, no active sub | `okx-a2a user notify` forwards to user |
+| `agent status` fails | Default to `negotiate_reply` (CLI auto-redirects to `provider_conversation` if providerAgentId is empty) |
+| Otherwise | Ignore |
+
+**Subsequent messages** (status=0 confirmed in prior turn) → skip status check, directly `next-action` with event `negotiate_reply`. If CLI returns "状态脱节" → send "Negotiation complete; locked." and end turn.
 
 > 🛑 Buyer cannot initiate arbitration — correct path: reject deliverable → ASP has 24h to dispute; if not, system auto-refunds. Do NOT call `dispute_raise`.
 
@@ -67,9 +80,9 @@ Match by priority — stop at first hit:
 
 ## Accepted-Execution Discussion Mode (§3.6)
 
-> Trigger: Peer Message Routing #6 fallback, status=1 (accepted). Sub session, reactive only.
+> Trigger: Peer Message Routing #4 fallback, status=1 (accepted). Sub session, reactive only.
 
-1. Context from `agent status` already called at #6 — no repeat `common context`.
+1. Context from `agent status` already called at #4 — no repeat `common context`.
 2. **Locked parameters are immutable** — refuse provider modifications to description / amount / symbol / paymentMode.
 3. **No CLI**: do NOT call confirm-accept / set-payment-mode / apply / create-task / deliver / complete / reject.
 4. Autonomous reply for execution-detail questions; one message per turn via `okx-a2a xmtp-send`.
@@ -96,26 +109,18 @@ Match by priority — stop at first hit:
 
 ### Command invocation
 
-**`okx-a2a xmtp-send`** (sub ↔ peer): the daemon resolves the active sub session from `--job-id` + `--to-agent-id`; no separate sessionKey lookup needed.
+**`okx-a2a xmtp-send`** (sub ↔ peer):
 ```bash
 okx-a2a xmtp-send --job-id <jobId> --to-agent-id <providerAgentId> --message "<content>" --no-wait
 ```
 ❌ Do NOT output content as assistant text (peer won't receive it) or paraphrase after tool call (user sees duplicate).
 
-**`okx-a2a user notify`** (sub → user, display-only): plain text content; the CLI auto-routes to the active user session.
+**`okx-a2a user notify`** (sub → user, display-only):
 ```bash
 okx-a2a user notify --content "<text>" [--job-id <jobId>]
 ```
 
-**`pending-decisions-v2 request`** (sub → user decision): `pending-decisions-v2 request --job-id <jobId> --role <role> --agent-id <agentId> [--to-agent-id <peer agentId — task sub only; omit for backup sub>] --user-content "<question + options>" --list-label "<short label>"`. Follow returned playbook (`playbook_push` / `playbook_wait` / `playbook_wait_with_reprompt`). Primary key is `(jobId, role, agentId, toAgentId?)` — same key → overwrite; different on any field → new entry. When `request` returns `queued`, follow `playbook_wait_with_reprompt` to re-push active card.
-
-### Command whitelist
-
-`okx-a2a xmtp-send`, `okx-a2a user notify`, `okx-a2a user decision-request`, `okx-a2a session send`, `okx-a2a session create`, `okx-a2a session history`, `okx-a2a session delete`, `okx-a2a session query`, `okx-a2a file upload`, `okx-a2a file download`. Do NOT invent alternate forms (`Session Send` / `sessions.send` / `session_send` etc.).
-
-### sessionKey-free addressing
-
-All session ops (`okx-a2a session send/history/delete`) and `pending-decisions-v2 request` now address via `--job-id` + optional `--to-agent-id` (peer agentId for task sub, omitted for backup). The daemon resolves the actual session internally — you no longer need to fetch the raw sessionKey via `session status` / `session query` for these flows.
+**`pending-decisions-v2 request`** (sub → user decision): see [`cli-reference.md#pending-decisions-v2`](./_shared/cli-reference.md#pending-decisions-v2) for full params. Follow returned playbook (`playbook_push` / `playbook_wait` / `playbook_wait_with_reprompt`). Primary key is `(jobId, role, agentId, toAgentId?)` — same key → overwrite; different on any field → new entry. When `request` returns `queued`, follow `playbook_wait_with_reprompt` to re-push active card.
 
 ---
 

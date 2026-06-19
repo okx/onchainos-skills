@@ -5,13 +5,7 @@
 
 ---
 
-## 1. Publishing a Task (Scene 1)
-
-> **⚡ Single Source of Truth**: the complete script for publishing a task (field definitions / collection order / ASP matching / CLI parameters) is output by the CLI:
-> ```bash
-> onchainos agent next-action --role buyer --agentId <agentId> --message '{"event":"create_task","jobId":"_"}'
-> ```
-> The section below only supplements validation and interaction rules that `next-action` does not cover.
+## 1. Publishing a Task
 
 > **Session**: user session
 
@@ -19,122 +13,15 @@
 
 > ⚠️ In "publish/create a task for XXX", XXX is the task description, NOT an action to execute directly.
 
-### 1.1 Flow overview
-
-1. Collect task fields (description, budget, currency, deadlines, optional provider)
-2. **`prepare-create`** — validate + preflight + routing in one call
-3. serviceParams inference — LLM extracts service input from task description
-4. Confirmation form — includes task fields + ASP + service info
-5. `create-task` with `--provider --service-id --service-params --service-token-address --service-token-amount --payment-mode`
-
-> **Designated-provider path**: steps 2-4 collapse — `prepare-create` returns routing with service info, LLM infers serviceParams, shows confirmation form, then `create-task`.
->
-> **No-provider path**: `prepare-create` without `--provider` validates fields + preflight only. Then run `asp-match` separately (§1.3).
-
-### 1.2 Prepare-create (after field collection)
-
-Run one command to validate fields, check readiness, and resolve provider routing:
+Run the CLI to get the complete publishing playbook (field collection, validation, ASP matching, confirmation form, `create-task` command):
 
 ```bash
-onchainos agent prepare-create \
-  --description "<desc>" --title "<title>" \
-  --budget <b> --max-budget <mb> --currency <token> \
-  [--provider <agentId>]
+onchainos agent next-action --role buyer --agentId <agentId> --message '{"event":"create_task","jobId":"_"}'
 ```
 
-Returns `{ ok, stage, validation, preflight, routing }`. Pipeline short-circuits on first failure:
+Follow the returned script verbatim. The confirmation form format is in **Appendix A** below.
 
-| `ok` | `stage` | Meaning | Action |
-|------|---------|---------|--------|
-| `false` | `validation` | Field errors | Show all `validation.errors[]` to user at once; do NOT ask one-by-one |
-| `false` | `preflight` | Readiness gate failed | Check `preflight.wallet` / `identity` / `communication` — fix the `ok: false` gate per §Pre-flight in `buyer-user.md` |
-| `false` | `routing` | Provider lookup failed | Show `routing.error`; guide user to check provider agentId |
-| `true` | — | All passed | Proceed to serviceParams inference → confirmation form |
-
-**Validation checks** (all fields optional — only provided fields are validated):
-
-| Field | Rule |
-|---|---|
-| `description` | 20 ~ 2000 chars |
-| `title` | 1 ~ 30 chars |
-| `currency` | USDT or USDG only; auto-normalizes variants (usdt/USDT0/USD₮0 → USDT) |
-| `budget` | > 0, ≤ 10M, ≤ 5 decimal places |
-| `max_budget` | same as budget |
-| `max_budget_vs_budget` | max_budget ≥ budget |
-
-**Routing output** (when `--provider` given and `ok: true`):
-- `routing.route` = `a2a` or `x402` — determines `--payment-mode` (escrow / x402)
-- `routing.providerName`, `routing.feeAmount`, `routing.feeTokenSymbol`, `routing.endpoint`
-- `routing.services[]` — when multiple services exist, LLM picks the best match by task description
-
-**Supplementary rules** (LLM-side, not in `prepare-create`):
-1. **Payment-method intercept**: user mentions escrow / x402 → "The payment method will be determined automatically based on the provider's capabilities."
-2. **Attachment reminder**: if description implies supplementary files → ask user whether to attach now or after creation.
-
-### 1.3 ASP Matching (no designated provider)
-
-After `prepare-create` ok (without `--provider`):
-
-- **Designated provider**: `onchainos agent asp-match --task-desc "<description>" --provider-agent-id <agentId> --format json` → extract top service → validate currency consistency + budget ≥ feeAmount.
-- **No designated provider**: `onchainos agent asp-match --task-desc "<description>"` → show numbered list → user picks → validate.
-- **Empty list** → offer three choices:
-  - A. Refine description and retry
-  - B. Designate a specific ASP (provide agentId)
-  - C. Publish as a **public task** — `visibility=0`, no provider/service fields, skip Step 4.6
-
-### 1.4 Confirmation Form + Create Task
-
-Display the confirmation form (format see **Appendix A** below) → **end this turn** and wait for the user's explicit confirmation. Prior confirmations of sub-questions do NOT count.
-
-- **Private task** (ASP selected): form includes Provider / Service / Service ID / Service Price / Service Params / Payment Mode rows.
-- **Public task** (user chose "public" when ASP list was empty): form shows "Public — no designated provider", omits Service / Payment Mode rows.
-
-🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` or any `onchainos agent` command in the same turn.**
-
-⚠️ **`create-task` does NOT take `--agentId`** — the CLI auto-resolves the buyer identity internally.
-
-**Private task** (default):
-```bash
-onchainos agent create-task \
-  --description "<desc>" --description-summary "<summary>" --title "<title>" \
-  --budget <b> --max-budget <mb> --currency <USDT|USDG> \
-  --provider <providerAgentId> \
-  --service-id <serviceId> --service-params '<json>' \
-  --service-token-address <addr> --service-token-amount <amt> \
-  --payment-mode <escrow|x402>
-```
-
-⚠️ `--payment-mode` is derived from `serviceType`: A2A → `escrow`, A2MCP → `x402`. Do NOT ask the user.
-
-**Public task** (ASP list was empty, user chose public):
-```bash
-onchainos agent create-task \
-  --description "<desc>" --description-summary "<summary>" --title "<title>" \
-  --budget <b> --max-budget <mb> --currency <USDT|USDG> \
-  --visibility 0
-```
-
-If the user provided attachment file paths, include `--file <path>` (repeatable, max 100 MB per file).
-
-After success, inform the user of the `jobId`. ⚠️ Do NOT say "published successfully" (not yet confirmed on-chain).
-
-**What happens after `job_created` (on-chain confirmation):**
-- **Private task**: designated-route → negotiate with the selected ASP (a2a / x402)
-- **Public task**: notify user → wait for ASPs to discover the task and apply via `provider_conversation`
-
-### 1.5 Error Handling
-
-**Pre-create errors** — caught by `prepare-create` (§1.2). Check `stage` field to identify which step failed.
-
-**Post-ASP-match errors** — caught by LLM after ASP selection:
-
-| Error | Response |
-|---|---|
-| ASP has no service | "This ASP has no registered services. Please choose another or remove the designation." |
-| Currency ≠ feeTokenSymbol | "Task token differs from service fee token. Please change the task token or choose another ASP." |
-| create-task tx failure | Check network; guide retry. |
-
-### 1.6 Draft tasks (save, edit, list, delete, publish)
+### 1.1 Draft tasks (save, edit, list, delete, publish)
 
 > **Session**: user session
 

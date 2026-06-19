@@ -11,7 +11,7 @@
 |---|---|
 | §1 Publishing | **Moved** → [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
 | §2 Mid-task attachment | User wants to add files to an active task |
-| §3 Terms changes | Modify token / budget / provider / max-budget |
+| §3 Terms changes | Switch provider (set-asp) / stop task |
 | §4 View deliverables | User wants to see submitted deliverables |
 | §5 Designated-Provider A2A | User designates a specific provider (A2A path) |
 | §6 Designated-Provider x402 | User designates a provider with x402 endpoint |
@@ -28,7 +28,6 @@
 2. 🛑 **Save locally via CLI**: `onchainos agent task-attach <jobId> --file <path>` — the CLI **internally checks the task status** before saving. If the task is in submitted or later state (status≥2), the CLI **rejects** the operation. **File size limit: 100 MB per file.**
    - **CLI returns error** → 🛑🛑🛑 **STOP immediately**. Inform the user that the task has entered the review/terminal phase and attachments can no longer be added. **Do NOT proceed to step 3.** **Do NOT save the file manually.**
    - **CLI returns success** → continue to step 3.
-   - 🔴 Real incident: CLI returned error → model used `mkdir -p` + `cp` to bypass status guard.
    - ❌ **ABSOLUTE PROHIBITION**: when `task-attach` returns an error, **forbidden** from using shell commands (`mkdir`, `cp`, `mv`) to save files or dispatching `[ATTACHMENT_ADDED]` to the sub session.
 3. 🛑 **Forward to sub session (MUST NOT SKIP)**: dispatch via `okx-a2a session send` — the daemon resolves the active sub session from `--job-id` + `--to-agent-id`:
    ```bash
@@ -48,27 +47,10 @@
 
 🛑 **Priority rule**: user instruction > automated flow. Terms-change or stop from user → immediately interrupt and handle first.
 
-### 3.1 Modifiable fields
+### 3.1 Re-set ASP (provider + service)
 
-| Field | CLI command | On-chain | Group |
-|------|---------|------|------|
-| tokenAmount + tokenSymbol | `set-token-and-budget` | Yes | Change together |
-| provider + service | `set-asp` | No (off-chain) | Change together (full ASP + service reset) |
-| max_budget | `set-max-budget` | No | Change alone |
-
-**Non-modifiable**: title, description → inform "This field cannot be changed after task creation."
-
-### 3.2 Modify payment token and amount
-
-1. Parse the user's intent (tokenSymbol + amount).
-2. Confirm: "Confirm changing the payment terms to <amount> <tokenSymbol>?"
-3. User confirms → `onchainos agent set-token-and-budget <jobId> --token-symbol <USDT|USDG> --budget <amount>`
-4. Inform: "Transaction submitted; awaiting on-chain confirmation."
-5. On on-chain success, the sub session receives `task_token_budget_change` → automatically re-initiates negotiation with the current provider.
-
-> ❌ **The user session must NOT initiate negotiation itself** — negotiation is handled automatically by the sub session after receiving the system event.
-
-### 3.3 Re-set ASP (provider + service)
+> **Only modifiable field**: provider + service (off-chain, via `set-asp`; always changed together).
+> **Non-modifiable after publishing**: budget, max_budget, currency, title, description — inform the user these cannot be changed.
 
 > **Scenario**: seller rejected / user wants to switch to a different ASP. This replaces the provider, service, and optionally the payment terms in one call.
 
@@ -93,30 +75,12 @@
 
 > ❌ **Forbidden** to call `mark-failed` — it only terminates negotiation; it does NOT exclude that provider.
 
-### 3.4 Modify max-budget
-
-1. Parse the user's intent (the new max_budget amount).
-2. Confirm: "Confirm changing max-budget to <amount>?"
-3. User confirms → `onchainos agent set-max-budget <jobId> --max-budget <amount>`
-4. Inform: "Max-budget updated."
-5. 🛑 **MUST sync to all sub sessions** — call `okx-a2a session query --job-id <jobId>` to fetch **all** sub sessions for this job.
-6. 🛑 **MUST iterate over every sub session**; for each, dispatch via `okx-a2a session send`:
-   ```bash
-   okx-a2a session send --no-wait \
-     --job-id <jobId> --to-agent-id <providerAgentId-from-query-row> \
-     --content "[MAX_BUDGET_UPDATE] paymentMostTokenAmount=<amount>"
-   ```
-   ❌ Notifying only some sub sessions = data inconsistency.
-7. Sub session receives → silently update the max_budget cap (no reply, no forwarding, no notifying the provider).
-
-> 🛑 **ABSOLUTE PROHIBITION: `max_budget` MUST NEVER be leaked to the provider.**
-
-### 3.5 Stop task
+### 3.3 Stop task
 
 1. Confirm: "Confirm closing task <jobId>? Funds will be refunded after closing; the operation is irreversible."
 2. User confirms → `onchainos agent close <jobId>`
 
-### 3.6 Other non-terms input
+### 3.4 Other non-terms input
 
 User messages unrelated to terms → sync to the Client session as context; do NOT trigger any API.
 
