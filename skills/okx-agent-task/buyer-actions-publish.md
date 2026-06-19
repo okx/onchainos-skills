@@ -31,16 +31,13 @@ Follow the returned script verbatim. The confirmation form format is in **Append
 
 #### Save as draft (from create-task flow or standalone)
 
-The user can say "save as draft" / "先保存草稿" / "草稿" **at any point**. Required fields:
-- **Description** (≥ 20 chars): user-provided.
-- **Title** (≤ 30 chars): agent-generated from description.
-- **Summary** (≤ 200 chars): agent-generated from description.
+Draft creation requires only: **title**, **description** (≥20 chars), **descriptionSummary**. If a provider is designated, **serviceId** is also required. Other fields (budget, currency, service params, etc.) are optional for drafts.
 
-Other fields (budget, currency, provider, service info) are optional for drafts.
-
+**Flow**: run the same `next-action` call as §1 Publishing:
 ```bash
-onchainos agent draft create --title <title> --description <desc> --description-summary <summary> [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--provider <agentId>] [--service-id <id>] [--service-params '<json>'] [--service-token-address <addr>] [--service-token-amount <amt>] [--file <path> ...]
+onchainos agent next-action --role buyer --agentId <agentId> --message '{"event":"create_task","jobId":"_"}'
 ```
+Follow the returned playbook to collect fields → user says "save as draft" at any point → Step 6-D.
 
 #### List / Update / Delete drafts
 
@@ -52,10 +49,8 @@ onchainos agent draft delete <jobId>
 
 #### Publish a draft
 
-1. `onchainos agent status <jobId>` to check all required fields.
-2. If fields missing → show table, guide user to provide. Title/summary: agent auto-generates.
-3. `onchainos agent draft update <jobId> --<field> <value>` to persist new values.
-4. `onchainos agent draft publish <jobId>` (⚠️ positional argument, NOT `--job-id`).
+1. `onchainos agent draft publish <jobId>` (⚠️ positional argument, NOT `--job-id`).
+2. Backend validates required fields; if any are missing, relay the error to the user. Use `draft update` to fix, then retry.
 
 The `jobId` is preserved — attachments from the draft phase carry over.
 
@@ -66,8 +61,8 @@ The `jobId` is preserved — attachments from the draft phase carry over.
 Display as a single `| Field | Value |` table:
 
 1. Title, Summary, Description, Currency, Budget, Max Budget
-2. (private task only) Provider, Service, Service ID, Service Price, Service Params, Payment Mode
-3. (public task) Provider → "公开任务 — 无指定服务商", omit Service/ID/Price/Params/Payment Mode rows
+2. (private task only) Provider, Service, Service Desc, Service Price (only if feeAmount has value), Service Params, Payment Mode
+3. (public task) Provider → "公开任务 — 无指定服务商", omit Service/Service Desc/Price/Params/Payment Mode rows
 4. If attachments present, add Attachments row
 
 **Example — Private task** (Chinese):
@@ -81,8 +76,8 @@ Display as a single `| Field | Value |` table:
 | 预算 | 0.1 |
 | 最高预算 | 0.15 |
 | 服务商 | Agent 864 |
-| 服务 | Weather Query (A2MCP) |
-| 服务 ID | 1270 |
+| 服务 | Weather Query |
+| 服务描述 | 查询指定地区的实时天气信息 |
 | 服务价格 | 0.08 USDT |
 | 服务参数 | {"region": "江苏省"} |
 | 支付方式 | x402 |

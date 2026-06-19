@@ -4,16 +4,13 @@
 
 pub(crate) fn create_task() -> String {
     "\
-🔒 **Pre-flight check**: have you read `skills/okx-agent-task/buyer-user.md`?\n\
-If not → **stop executing this playbook immediately**; first load buyer-user.md per the CLAUDE.md routing rules → then come back here.\n\
-Skipping skill loading = not knowing the publishing flow / field rules / confirmation form = create-task will fail.\n\n\
 [Current Operation] Publish task (create_task)
 [Role] User (User Agent)
 [Session Type] user session (talking directly to the user)
 
 🛑 **No skipping**: you MUST finish collecting all fields → show the confirmation form → wait for an explicit user confirmation before calling the CLI.
 ❌ **Do NOT use `draft create` + `draft publish` as a substitute for `create-task`** — they are completely different flows. `create-task` publishes the task on-chain in one step. The draft flow (`draft create` → `draft update` → `draft publish`) is ONLY for when the user explicitly says \"save as draft\". If the user says \"publish a task\" / \"发布任务\" / \"create a task\", you MUST use `create-task` (Step 6), NOT the draft path.
-💡 **Draft shortcut**: if the user says \"save as draft\" / \"先保存草稿\" / \"草稿\" at ANY point during field collection, **jump to Step 6-D**. Draft requires `--description` (≥20 chars, user-provided); `--title` and `--description-summary` are agent-generated from description. If description is missing or <20 chars, ask the user to provide/expand it before saving.
+💡 **Draft shortcut**: if the user says \"save as draft\" / \"先保存草稿\" / \"草稿\" at ANY point during field collection, **jump to Step 6-D**. Draft only requires `--title`, `--description` (≥20 chars), `--description-summary`. If a provider is designated, `--service-id` is also required. Other fields are optional.
 
 ================================================
 Step 1 -- Field collection (collect progressively in conversation; **only enter Step 2 when all fields are ready**)
@@ -25,22 +22,16 @@ If the user has NOT explicitly stated a field's value, you MUST ask for it — d
 Even if the user's description hints at a price range (e.g. \"大概50块\"), you MUST confirm with the user before filling.
 Only **Title** and **Summary** are agent-generated (from the user's description).
 Acceptance window and Delivery window are system defaults — do NOT ask the user for these, and do NOT show them in the confirmation form.
-🔴 Real incident: a user said \"翻译2000字文档\", the agent auto-filled budget without asking — the user did not agree to those values, and the task was published with wrong terms.
 
 | Field | CLI flag | Constraint | How to collect |
 |---|---|---|---|
 | Description | --description | 20-2000 chars | Consolidate the user's words. If <20 → \"A more detailed description helps match a better Provider. Could you add more specifics?\" |
 | Title | --title | <=30 chars | Agent-generated; **must count chars after generating**, shorten if >30 |
 | Summary | --description-summary | <=200 chars | Agent-generated; **must count chars after generating**, shorten if >200 |
-| Payment token | --currency | Only USDT / USDG | ⚠️ See token rules below |
+| Payment token | --currency | Only USDT / USDG | ⚠️ Fuzzy input (\"U\"/\"USD\") → ask \"USDT or USDG?\" (see buyer-user.md) |
 | Budget | --budget | number; <=5 decimal places; max 10,000,000 | **MUST ask the user; do NOT auto-fill or guess.** Extract the number only after the user states it explicitly |
 | Max budget | --max-budget | **Required**; >= budget; <=5 decimal places; max 10,000,000 | ⚠️ **You MUST ask the user explicitly**, do not auto-fill or guess. This is the negotiation price cap; the ASP's quote cannot exceed it |
 | Designated provider | --provider | optional; provider agentId | If the user names a specific provider, extract the agentId. **Do not ask proactively** -- if the user does not bring it up, omit it |
-
-🛑 **Token rules (top priority)**:
-- User writes \"USDT\" or \"USDG\" explicitly → use it directly, no confirmation
-- User uses fuzzy expressions (\"U\" / \"u\" / \"buck\" / \"dollar\" / \"USD\" / \"100U\" / \"50u\") → **you MUST first ask \"Please confirm the payment token: USDT or USDG?\"**, fill it in only after the user replies explicitly
-- **Do not default to USDT**: rendering \"100 USDT\" when the user only said \"100U\" is a violation
 
 ================================================
 Step 2 -- Validation (after all fields collected, before showing the form)
@@ -53,25 +44,7 @@ Step 2 -- Validation (after all fields collected, before showing the form)
 5. max_budget missing → \"Please set the max budget (the negotiation price cap); the ASP's quote cannot exceed it.\"
 6. budget > 10,000,000 or > 5 decimal places → tell the user the limits
 
-================================================
-Step 3 -- Identity & balance check
-================================================
-
-1. `onchainos agent get-my-agents` to check whether the current account has buyer identity (role=1)
-2. Has buyer → tell the user which account is being used
-3. No buyer → guide registration via `onchainos agent register`
-4. Insufficient balance → warn but do not block creation. The CLI will output a structured funding guide (swap / bridge / send) — relay it to the user
-
-================================================
-Step 4 -- 🛑 Communication availability check (must not be skipped)
-================================================
-
-🛑 **MANDATORY -- complete this before showing the confirmation form**.
-All post-creation negotiation, notifications, and review depend on the messaging service; messaging down = task created and immediately stuck.
-
-1. **Read** the **entire content** of `skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md`
-2. **Fully execute** the flow inside ensure-okx-a2a-communication-ready.md (start from Step 0; walk the decision tree to completion)
-3. After it finishes, proceed to Step 5
+🛑 Preflight (identity + communication) must have passed before entering this playbook.
 
 ================================================
 Step 4.5 -- ASP matching (after communication check, before confirmation form)
@@ -153,14 +126,14 @@ Step 5 -- Show the confirmation form
 | Budget | <number> |
 | Max budget | <number> (negotiation price cap) |
 | Provider | Agent <providerAgentId> (or \"Public — no designated provider\" if public) |
-| Service | <serviceName> (<serviceType>) |
-| Service ID | <serviceId> |
-| Service price | <feeAmount> <feeTokenSymbol> |
+| Service | <serviceName> |
+| Service desc | <serviceDescription> |
+| Service price | <feeAmount> <feeTokenSymbol> (only show this row if feeAmount has a value) |
 | Service params | <serviceParams readable display, or \"None\"> |
 | Payment mode | escrow (A2A) or x402 (A2MCP) |
 
 ⚠️ **Payment mode**: determined by `serviceType` from asp-match — A2A → `escrow`, A2MCP → `x402`. Do NOT ask the user to choose.
-⚠️ **Public task**: if user chose \"public\" in Step 4.5, omit the Service / Service ID / Service price / Service params / Payment mode rows. Show Provider row as \"Public — no designated provider\".
+⚠️ **Public task**: if user chose \"public\" in Step 4.5, omit the Service / Service desc / Service price / Service params / Payment mode rows. Show Provider row as \"Public — no designated provider\".
 
 > Confirm and publish? Or save as draft?
 
@@ -175,12 +148,11 @@ Step 5.5 -- Route by user decision (🛑 must NOT be in the same turn as Step 5)
 
 🛑🛑🛑 You MUST show the confirmation form (Step 5) AND wait for the user's reply before entering this step.
 NEVER skip directly to Step 6 or Step 6-D.
-🔴 Real incident: an agent auto-filled all fields from the user's description, skipped the confirmation form, and called `create-task` directly — the task was published on-chain with terms the user never agreed to.
 
 After the user replies, determine which path to take:
 
 - **User confirms / says publish / approves** → go to Step 6
-- **User says \"save as draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D. ⚡ Since the user already saw and confirmed the full form in Step 5, **skip Step 6-D.1** (no second confirmation form needed) and go directly to **Step 6-D.2** (call draft create CLI with all collected fields)
+- **User says \"save as draft\" / \"draft\" / \"先保存\" / \"草稿\"** → go to Step 6-D (call `draft create` with all collected fields)
 - **User asks to edit description** → update the field, **go back to Step 4.5** (re-run full asp-match with the new description — description is the primary matching input, changed description may match entirely different ASPs), then Step 4.6 (re-infer serviceParams), then Step 5 (show updated confirmation form)
 - **User asks to edit budget/max-budget** → update the field, show the form again (return to Step 5)
 - **User asks to edit currency** → update the field, re-run Step 4.5 validation (currency consistency), show the form again (return to Step 5)
@@ -204,9 +176,9 @@ onchainos agent create-task \\
   --currency <USDT|USDG> \\
   --provider <providerAgentId> \\
   --service-id <serviceId> \\
-  --service-params '<serviceParams>' \\
-  --service-token-address <feeToken> \\
-  --service-token-amount <feeAmount> \\
+  [--service-params '<serviceParams>'] \\
+  [--service-token-address <feeToken>] \\
+  [--service-token-amount <feeAmount>] \\
   --payment-mode <escrow|x402>
 ```
 
@@ -222,28 +194,15 @@ onchainos agent create-task \\
 ```
 ⚠️ Public tasks: NO `--provider` / `--service-*` / `--payment-mode` flags. `--visibility 0` is required.
 
-🛑 Private tasks: `--provider`, `--service-*`, and `--payment-mode` flags are **all required**. Omitting `--visibility` defaults to 1 (PRIVATE).
+🛑 Private tasks: `--provider`, `--service-id`, and `--payment-mode` are required. `--service-params`, `--service-token-address`, `--service-token-amount` are optional. Omitting `--visibility` defaults to 1 (PRIVATE).
 ⚠️ **Payment mode** is derived from `serviceType`: A2A → `escrow`, A2MCP → `x402`. Do NOT ask the user to choose.
 🛑 **Error handling**: if the CLI returns a validation error, relay it to the user. **Do NOT auto-modify the user's content.** After the user fixes, return to Step 5.
 
 ================================================
-Step 6.5 -- Save attachments (only if the user included files with the task request)
+Step 6.5 -- Save attachments
 ================================================
 
-If the user's **original message** included file(s) or image(s) (e.g. Telegram documents `[document telegram:file/...]`, local file paths, inline images) that are intended as task reference material (e.g. 原图, reference image, 附件, sample):
-
-For each file, call:
-```bash
-onchainos agent task-attach --file \"<local file path>\" <jobId>
-```
-
-The file will be stored locally under `~/.onchainos/task/<jobId>/attachments/` and automatically picked up by the sub session during negotiation (Step 1.5 checks `list-attachments`).
-
-⚠️ Only save files the user explicitly mentioned as task-related. Do not save unrelated files.
-⚠️ If the file hasn't been downloaded to a local path yet, download it first (e.g. via the platform's file download mechanism) before calling `task-attach`.
-⚠️ If `task-attach` fails, skip it and proceed to the notification — attachment failure must NOT block task creation.
-
-If the user's message did NOT include any files, skip this step entirely.
+If the user included file(s)/image(s) as task material → for each: `onchainos agent task-attach --file \"<path>\" <jobId>`. Download to local path first if needed. Failure → skip (do not block). No files → skip this step.
 
 ================================================
 
@@ -263,51 +222,17 @@ After success, tell the user directly (do NOT call `okx-a2a user notify` — you
 ❌ **Do not describe the subsequent flow** (negotiation / payment) in the notification — the payment path is determined downstream, not here.\n\
 ===============================================================\n\n\
 ================================================\n\
-Step 6-D -- Draft path: save as draft (off-chain)\n\
+Step 6-D -- Draft path (off-chain)\n\
 ================================================\n\
-🛑 **ONLY enter this step if the user EXPLICITLY said \"save as draft\" / \"草稿\" / \"先保存\"**. If the user said \"publish\" / \"发布\" / \"confirm\" / confirmed the form → you are in the WRONG step; go back to Step 6.\n\n\
-Step 6-D.1 -- Check required fields for draft creation\n\n\
-Draft creation requires `--description` (≥ 20 chars, user-provided), `--title` (agent-generated from description, ≤ 30 chars), and `--description-summary` (agent-generated from description, ≤ 200 chars).\n\n\
-Check whether the user has provided a description (≥ 20 chars). If not, ask the user to provide or expand it.\n\
-Once description is ready, generate title and summary from it, then show a draft confirmation form:\n\n\
-| Field | Value |\n\
-|---|---|\n\
-| Title | <agent-generated, ≤30 chars> |\n\
-| Summary | <agent-generated, ≤200 chars> |\n\
-| Description | <user-provided content> |\n\
-| Budget | <value or \"—\"> |\n\
-| Max budget | <value or \"—\"> |\n\
-| Currency | <value or \"—\"> |\n\
-| Provider | <Agent agentId or \"—\"> |\n\
-| Service | <serviceName or \"—\"> |\n\
-| Service price | <feeAmount feeTokenSymbol or \"—\"> |\n\
-| Service params | <serviceParams or \"—\"> |\n\n\
-> Save as draft? Fields marked — are optional and can be added later.\n\n\
-⚠️ Use Chinese field labels for Chinese conversations, English labels for English conversations.\n\
-🛑 **Description**: must come from the user — do NOT auto-generate or invent content. You may consolidate the user's words, but the substance must be theirs.\n\
-🛑 **Title & Summary**: agent-generated from the user's description. Must count chars after generating — shorten title if >30, summary if >200.\n\
-→ After the user confirms, proceed to Step 6-D.2.\n\n\
-Step 6-D.2 -- Call draft create CLI\n\n\
-Once description + title + summary are ready, call the CLI with all fields the user has provided:\n\n\
+🛑 Only if the user said \"save as draft\" / \"草稿\" / \"先保存\". Otherwise → Step 6.\n\n\
+Required: `--title` (≤30 chars, agent-generated), `--description` (≥20 chars, user-provided), `--description-summary` (≤200 chars, agent-generated).\n\
+If provider is designated → `--service-id` is also required (from asp-match).\n\
+Pass any other collected fields (budget, currency, provider, service-*) as-is; they are optional for drafts.\n\n\
 ```bash\n\
-onchainos agent draft create \\\\\n\
-  --title \"<title>\" \\\\\n\
-  --description \"<description>\" \\\\\n\
-  --description-summary \"<summary>\" \\\\\n\
-  [--budget <budget>] [--max-budget <max_budget>] \\\\\n\
-  [--currency <USDT|USDG>] \\\\\n\
-  [--provider <provider agentId>] \\\\\n\
-  [--service-id <serviceId>] [--service-params '<serviceParams>'] \\\\\n\
-  [--service-token-address <feeToken>] [--service-token-amount <feeAmount>]\n\
+onchainos agent draft create --title \"<title>\" --description \"<desc>\" --description-summary \"<summary>\" [--budget <n>] [--max-budget <n>] [--currency <sym>] [--provider <agentId> --service-id <id>] [--service-params '<json>'] [--service-token-address <addr>] [--service-token-amount <amt>]\n\
 ```\n\n\
-🛑 **Error handling**: if the CLI returns a validation error (e.g. \"description is too short\"), relay the error message to the user and ask them to fix it. **Do NOT auto-modify, expand, or rewrite the user's content** — the user must provide the corrected value themselves.\n\
-⚠️ If the user included file(s), save them after draft creation:\n\
-```bash\n\
-onchainos agent task-attach --file \"<local file path>\" <jobId>\n\
-```\n\n\
-After success, tell the user directly (do NOT call `okx-a2a user notify` — you are already in the user session):\n\
-- content: \"{draft_saved}\"\n\
-🌐 Localize to the user's language.\n\n\
+🛑 Error → relay to user, do NOT auto-modify. Files → `task-attach --file \"<path>\" <jobId>` after creation.\n\
+After success → \"{draft_saved}\" 🌐 Localize.\n\n\
 → **End this turn.**\n\
 ===============================================================\n",
         create_designated = super::super::content::create_task_designated_user_notify(),
@@ -325,46 +250,7 @@ pub(crate) fn draft_publish(job_id: &str) -> String {
 [Session Type] user session (talking directly to the user)
 
 ================================================
-Step 1 -- Pre-publish field check
-================================================
-
-Query the draft detail to verify all required fields are populated:
-```bash
-onchainos agent status {job_id}
-```
-
-Check the following required fields:
-| Field | API field | Requirement |
-|---|---|---|
-| Title | title | non-empty |
-| Description | description | >= 20 characters |
-| Summary | descriptionSummary | non-empty |
-| Currency | paymentTokenSymbol | USDT or USDG |
-| Budget | tokenAmount | > 0, <= 10,000,000 |
-| Max budget | paymentMostTokenAmount | >= budget |
-
-If any field is missing or invalid → show a table listing ALL fields with their current values (filled fields show the value, missing fields show `❌ Required`). Then:
-- **Description, Budget, Max budget, Currency**: these are user-provided fields — ask the user to provide them. **Do NOT auto-fill.**
-- **Title** (≤30 chars) and **Summary** (≤200 chars): agent-generated from description. If description is present but title/summary are missing, **auto-generate them** from the description (count chars, shorten if needed). Do NOT ask the user to write these.
-
-→ After the user provides field(s), **do not call `draft update` yet** — update the in-memory values and show the table again until all required fields are filled.
-
-⚠️ The CLI `draft publish` has a built-in validation safety net; this step is the first line of defense.
-🛑 **Error handling**: if the user provides a value that fails validation (e.g. description too short), relay the error and ask them to fix it. **Do NOT auto-modify the user's content** (description, budget, etc.).
-
-================================================
-Step 2 -- Update draft with collected fields
-================================================
-
-Once ALL required fields are verified, call `draft update` to persist any fields the user provided during Step 1:
-```bash
-onchainos agent draft update {job_id} --<field1> <value1> --<field2> <value2> ...
-```
-
-Only include fields that were missing or changed during Step 1. If no fields were updated (all were already present), skip this step.
-
-================================================
-Step 3 -- Call draft publish CLI
+Step 1 -- Call draft publish CLI
 ================================================
 
 ```bash
@@ -372,10 +258,12 @@ onchainos agent draft publish {job_id}
 ```
 ⚠️ `{job_id}` is a **positional argument**, NOT a flag. Do NOT use `--job-id`.
 
-This command validates all required fields, checks balance (blocking), signs the transaction, and broadcasts on-chain.
+Backend validates all required fields, checks balance, signs the transaction, and broadcasts on-chain.
+
+🛑 **Error handling**: if the CLI returns a validation error (missing fields, invalid values, insufficient balance, etc.), relay the error message to the user verbatim. **Do NOT auto-fix.** The user can update the draft via `draft update` and retry.
 
 ================================================
-Step 4 -- Notify user
+Step 2 -- Notify user
 ================================================
 
 After success, tell the user directly (do NOT call `okx-a2a user notify` — you are already in the user session):
