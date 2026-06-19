@@ -249,14 +249,16 @@ pub async fn generate_next_action(
             format!(
             "[Current state] provider_applied (apply has been recorded on-chain)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             **Step 1 — Use `okx-a2a user notify` to push the apply-submitted notification to the user**:\n\n\
-             🌐 **Localize first** — rewrite `content` below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             ```bash\n\
-             okx-a2a user notify --content \"<the template below, localized>\"\n\
-             ```\n\
-             `--content` template (canonical English; do NOT add / drop fields):\n\
-             {user_notify}\n\n\
              ❌ Do NOT communicate with the buyer. ❌ Do NOT deliver directly.\n\n\
+             **Step 1 — Use `okx-a2a user notify` to push the apply-submitted notification to the user**:\n\n\
+             🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
+             ```bash\n\
+             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             ```\n\
+             content (only the lines between `=== BEGIN ===` and `=== END ===` — do NOT add / drop fields, do NOT include the markers themselves, do NOT include anything below END):\n\
+             === BEGIN ===\n\
+             {user_notify}\n\
+             === END ===\n\n\
              [Follow-up events]\n\
              - job_accepted → User Agent has confirm-accepted, escrow funding complete.\n"
             )
@@ -356,7 +358,8 @@ pub async fn generate_next_action(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              🛑 **MUST push the dispute/refund decision via `pending-decisions-v2 request-prompt`** — `okx-a2a user notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = 24h timeout → auto-refund.\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\n\
+             ⚠️ Do NOT send `okx-a2a xmtp-send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\
+             ⚠️ **24h hard deadline** — if the user does not decide within 24h, funds are auto-refunded to the User Agent. (Agent-side context; do NOT include in `--user-content` unless the localized template already mentions it.)\n\n\
              **Step 1 — Push the decision to the user via `pending-decisions-v2 request-prompt`**:\n\n\
              🌐 **Localize first** — translate the source template below to the user's language before passing to `--user-content`. Keep `[Job <shortId>]`, the `A.` / `B.` letters, the shortId hex.\n\
              ```bash\n\
@@ -366,9 +369,10 @@ pub async fn generate_next_action(
              \x20\x20--list-label \"[Decision {short_id}] {title_display} dispute decision\" \\\n\
              \x20\x20--source-event job_rejected\n\
              ```\n\
-             content (source template — translate before passing):\n\
-             {user_prompt}\n\n\
-             ⚠️ Decision must be made within 24h; otherwise funds are auto-refunded to the User Agent.\n",
+             content (only the lines between `=== BEGIN ===` and `=== END ===` — translate before passing; do NOT include the markers themselves, do NOT append anything else):\n\
+             === BEGIN ===\n\
+             {user_prompt}\n\
+             === END ===\n",
             )
         }
 
@@ -430,15 +434,15 @@ pub async fn generate_next_action(
              [Your next action]\n\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
              {task_fields}\n\
-             **Step 2 — Notify the user of task completion via `okx-a2a user notify`**:\n\n\
+             **Step 1 — Notify the user of task completion via `okx-a2a user notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
              okx-a2a user notify --content \"<localized content shown below>\"\n\
              ```\n\
              content:\n\
              {user_notify}\n\n\
-             🛑 Do NOT end this turn — Step 3 (auto-rate) and Step 3.5 (notify rating) below are MANDATORY.\n\n\
-             **Step 3 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
+             🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
+             **Step 2 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
              Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
              \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent buyer (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
              \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
@@ -447,17 +451,17 @@ pub async fn generate_next_action(
              onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
-             **Step 3.5 — Notify the user of the submitted rating**:\n\
+             **Step 2.5 — Notify the user of the submitted rating**:\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
              ```bash\n\
              okx-a2a user notify --content \"<localized content shown below>\"\n\
              ```\n\
-             content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
+             content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
              {rating_notify}\n\
              - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
-             **Step 4 — Terminal wrap-up (keep the sub session):**\n\
+             **Step 3 — Terminal wrap-up (keep the sub session):**\n\
              {terminal_session_hint}\n\
              Task fully complete.\n"
             )
@@ -688,6 +692,7 @@ pub async fn generate_next_action(
                     let notify_body = super::content::job_asp_selected_rejected_notify(job_id, reason_for_notify);
                     format!(
                         "**REJECT path** — run in order, then end the turn:\n\
+                         ❌ Do NOT call `apply`. ❌ Do NOT `okx-a2a xmtp-send` the buyer. (Agent-side constraint; do NOT include in any `--content` / `--reason` text below.)\n\n\
                          ```bash\n\
                          onchainos agent asp-reject {job_id} --agent-id {agent_id} --reason \"{reason_for_cli}\"\n\
                          ```\n\
@@ -696,9 +701,10 @@ pub async fn generate_next_action(
                          ```bash\n\
                          okx-a2a user notify --content \"<localized content shown below>\"\n\
                          ```\n\
-                         content:\n\
-                         {notify_body}\n\n\
-                         ❌ Do NOT call `apply`. ❌ Do NOT okx-a2a xmtp-send the buyer.\n"
+                         content (only the lines between `=== BEGIN ===` and `=== END ===` — do NOT include the markers themselves, do NOT append anything else):\n\
+                         === BEGIN ===\n\
+                         {notify_body}\n\
+                         === END ===\n"
                     )
                 };
                 // Generic LLM-driven reject template — only `capability mismatch` is
