@@ -88,7 +88,7 @@ async fn job_created_with_designated_provider_cli(ctx: &FlowContext<'_>) -> Stri
     let route = route_json.get("route").and_then(|v| v.as_str()).unwrap_or("");
     let branch_playbook = match route {
         "a2a" => super::designated::branch_a2a_cli(job_id, agent_id, short_id, &dp_id, title, ctx.prefetched),
-        "x402" => super::designated::branch_x402(job_id, agent_id, short_id, &dp_id),
+        "x402" => super::designated::branch_x402(job_id, agent_id, short_id, &dp_id, Some(&route_json)),
         "error" => super::designated::branch_error(job_id, agent_id, short_id, &dp_id),
         _ => return format!(
             "[job_created_cli] ERROR: unknown route value '{route}' in designated-route response: {route_json}\n"
@@ -124,7 +124,7 @@ pub(crate) async fn provider_conversation_pick_cli(
     let route = route_json.get("route").and_then(|v| v.as_str()).unwrap_or("");
     match route {
         "a2a" => provider_conversation_pick_a2a(job_id, agent_id, short_id, dp_id),
-        "x402" => super::designated::branch_x402(job_id, agent_id, short_id, dp_id),
+        "x402" => super::designated::branch_x402(job_id, agent_id, short_id, dp_id, Some(&route_json)),
         "error" => super::designated::branch_error(job_id, agent_id, short_id, dp_id),
         _ => format!(
             "[provider_conversation_pick] ERROR: unknown route value '{route}' in designated-route response: {route_json}\n"

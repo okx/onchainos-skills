@@ -262,11 +262,34 @@ pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
 }
 
 /// Phase 2b: x402 branch — endpoint validation + set-payment-mode.
-pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
+///
+/// `route_data`: pre-fetched JSON from `designated_route_inner` (when called
+/// in-process). Contains `endpoint`, `feeAmount`, `feeTokenSymbol`. When
+/// `Some`, values are filled directly into the playbook so the LLM does not
+/// need to "recall" them from a prior designated-route response.
+pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, route_data: Option<&serde_json::Value>) -> String {
     let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[x402 invalid {short_id}] next-step decision"), "x402_invalid");
     let cmd_input_required = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[x402 input {short_id}] field confirmation"), "x402_input_required");
     let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[x402 price {short_id}] price decision"), "x402_price_mismatch");
     let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[Over budget {short_id}] budget decision"), "over_budget");
+
+    // Extract x402 fields from pre-fetched route data; fall back to placeholders.
+    let (ep, fa, ft) = route_data.map(|rd| (
+        rd["endpoint"].as_str().unwrap_or(""),
+        rd["feeAmount"].as_str().unwrap_or(""),
+        rd["feeTokenSymbol"].as_str().unwrap_or(""),
+    )).unwrap_or(("", "", ""));
+    let has_route = !ep.is_empty() && !fa.is_empty() && !ft.is_empty();
+
+    let validate_cmd = if has_route {
+        format!("onchainos agent x402-validate --endpoint {ep} --agent-id {agent_id} --job-id {job_id} --fee-amount {fa} --fee-token {ft}")
+    } else {
+        format!("onchainos agent x402-validate --endpoint <endpoint from designated-route> --agent-id {agent_id} --job-id {job_id} --fee-amount <feeAmount> --fee-token <feeTokenSymbol>")
+    };
+    let validate_hint = if has_route { "" } else {
+        "⚠️ Use `feeAmount` and `feeTokenSymbol` from the `designated-route` response above (earlier in this turn).\n         "
+    };
+    let ep_for_spm = if has_route { ep.to_string() } else { "<endpoint>".to_string() };
 
     format!("\
          [Designated ASP route: x402] Provider {dp_id} has an x402 endpoint.\n\
@@ -278,10 +301,9 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          (R4) After the user replies, the system relays it as `event:\"user_decision_<source-event>\"`. Call `next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"user_decision_<source-event>\",\"jobId\":\"{job_id}\",\"data\":\"<verbatim reply>\"}}'` and follow the returned playbook. Do NOT keyword-match yourself.\n\n\
          **DX-Step 1 — validate endpoint + price + budget (single CLI call):**\n\
          ```bash\n\
-         onchainos agent x402-validate --endpoint <endpoint from designated-route> --agent-id {agent_id} --job-id {job_id} --fee-amount <feeAmount> --fee-token <feeTokenSymbol>\n\
+         {validate_cmd}\n\
          ```\n\
-         ⚠️ Use `feeAmount` and `feeTokenSymbol` from the `designated-route` response above (earlier in this turn).\n\
-         Response field `result` determines the branch:\n\n\
+         {validate_hint}Response field `result` determines the branch:\n\n\
          - **`result == \"x402_invalid\"`** -> run (apply R1–R4):\n\
          \x20\x20```bash\n\
          \x20\x20{cmd_x402_invalid}\n\
@@ -355,7 +377,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          ```\n\n\
          ▸ **Otherwise** → push payment mode on-chain:\n\
          ```bash\n\
-         onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from x402-validate> --token-amount <amountHuman from x402-validate> --endpoint <endpoint>\n\
+         onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from x402-validate> --token-amount <amountHuman from x402-validate> --endpoint {ep_for_spm}\n\
          ```\n\
          ⚠️ Use the **actual values returned by x402-validate** for `tokenSymbol` and `tokenAmount` (NOT the original budget used at job creation).\n\n\
          **A-Step 3 result branch (🛑 MANDATORY — getting this wrong = the flow stalls):**\n\

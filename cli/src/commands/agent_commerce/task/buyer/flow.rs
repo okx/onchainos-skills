@@ -435,7 +435,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
             } else {
                 match s.as_str() {
                     "designated_a2a" => super::flow_negotiate::designated::branch_a2a(job_id, agent_id, &short_id, &dp_id, title_display),
-                    "designated_x402" => super::flow_negotiate::designated::branch_x402(job_id, agent_id, &short_id, &dp_id),
+                    "designated_x402" => super::flow_negotiate::designated::branch_x402(job_id, agent_id, &short_id, &dp_id, None),
                     _ => super::flow_negotiate::designated::branch_error(job_id, agent_id, &short_id, &dp_id),
                 }
             }
