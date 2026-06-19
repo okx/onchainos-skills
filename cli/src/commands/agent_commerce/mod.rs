@@ -1160,10 +1160,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 parsed_message.get(key).and_then(|v| v.as_i64())
             };
 
-            let job_id: String = msg_str("jobId")
-                .ok_or_else(|| anyhow::anyhow!("--message.jobId is required"))?;
             let event: String = msg_str("event")
                 .ok_or_else(|| anyhow::anyhow!("--message.event is required"))?;
+            let job_id: String = match msg_str("jobId") {
+                Some(j) => j,
+                None if event == "reward_claimed" => String::new(),
+                None => anyhow::bail!("--message.jobId is required"),
+            };
             let code: i32 = msg_i64("code").and_then(|v| i32::try_from(v).ok()).unwrap_or(0);
             let job_title: Option<String> = msg_str("jobTitle");
             let provider: Option<String> = msg_str("provider");
@@ -1176,8 +1179,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     .and_then(|v| v.as_u64())
                     .and_then(|v| u32::try_from(v).ok()));
             let parsed_message = Some(parsed_message);
-            if let Err(msg) = task::common::util::validate_job_id(&job_id) {
-                anyhow::bail!(msg);
+            if !job_id.is_empty() {
+                if let Err(msg) = task::common::util::validate_job_id(&job_id) {
+                    anyhow::bail!(msg);
+                }
             }
             if DEBUG_LOG {
                 eprintln!(
