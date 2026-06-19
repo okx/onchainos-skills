@@ -266,10 +266,9 @@ async fn raw_query_by_ids(agent_ids: &str) -> Result<Vec<serde_json::Value>> {
     Ok(flatten_agent_groups(&data))
 }
 
-/// List the current account's agents (`get-my-agents`). When `role` is
-/// provided (e.g. `"buyer"`), passes `--role` and `--owner-address` to
-/// let the backend filter server-side. When `None`, fetches all roles
-/// and filters by ownerAddress client-side.
+/// List the current account's agents (`get-my-agents`). Always passes
+/// `--owner-address` so the backend filters by the active account
+/// server-side. When `role` is provided, also passes `--role`.
 async fn raw_query_my_agents(role: Option<&str>) -> Result<Vec<serde_json::Value>> {
     let my_owner = current_account_xlayer_address()
         .ok_or_else(|| anyhow::anyhow!("no current XLayer address"))?;
@@ -277,11 +276,11 @@ async fn raw_query_my_agents(role: Option<&str>) -> Result<Vec<serde_json::Value
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
 
-    let mut args = vec!["agent", "get-my-agents"];
+    let mut args = vec!["agent", "get-my-agents", "--owner-address", &my_owner];
     let role_val: String;
     if let Some(r) = role {
         role_val = r.to_string();
-        args.extend(["--role", &role_val, "--owner-address", &my_owner]);
+        args.extend(["--role", &role_val]);
     }
     args.extend(["--page-size", "100"]);
 
@@ -311,7 +310,7 @@ async fn raw_query_my_agents(role: Option<&str>) -> Result<Vec<serde_json::Value
     }
 
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
-    Ok(flatten_my_agents(&data, &my_owner))
+    Ok(flatten_agent_groups(&data))
 }
 
 /// Query the agent profile for the given agentId.
@@ -421,7 +420,7 @@ pub async fn fetch_my_agents_by_role(role: &str) -> Vec<serde_json::Value> {
     }
 }
 
-/// Find a specific agent by ID among the current account's agents.
+/// Find a specific agent by ID (not limited to current account).
 /// Returns `None` on any failure or when no agent matches.
 pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
     let id = agent_id.trim();
@@ -430,7 +429,7 @@ pub async fn fetch_my_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
         return None;
     }
 
-    let agents = match raw_query_my_agents(None).await {
+    let agents = match raw_query_by_ids(id).await {
         Ok(a) => a,
         Err(e) => {
             if DEBUG_LOG { eprintln!("[fetch_my_agent_by_id] {e}; returning None"); }
@@ -1209,21 +1208,6 @@ pub fn flatten_agent_groups(data: &serde_json::Value) -> Vec<serde_json::Value> 
         }
     }
     flat
-}
-
-/// Extract agents matching `my_owner` (lowercase) from the agent-list response.
-/// Thin wrapper over `flatten_agent_groups` + per-agent `ownerAddress` filter.
-fn flatten_my_agents(data: &serde_json::Value, my_owner: &str) -> Vec<serde_json::Value> {
-    flatten_agent_groups(data)
-        .into_iter()
-        .filter(|a| {
-            a.get("ownerAddress")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_lowercase())
-                .as_deref()
-                == Some(my_owner)
-        })
-        .collect()
 }
 
 // ─── Status descriptions ────────────────────────────────────────────────

@@ -351,7 +351,7 @@ pub enum AgentCommand {
     },
 
     /// Look up a single agent's profile by `agentId` (any owner, not limited
-    /// to current account). Wrapper over `agent get --agent-ids` that flattens
+    /// to current account). Wrapper over `agent get-agents --agent-ids` that flattens
     /// the `list[].agentList[]` nesting and returns the matched agent as a
     /// single flat object. Used for verifying peer / designated provider
     /// identities (e.g. buyer-sub-playbook.md Provider validation).
@@ -373,7 +373,7 @@ pub enum AgentCommand {
         agent_id: String,
     },
 
-    /// Start accepting jobs: call `agent get` to pull all online provider agents and loop recommend-task over each
+    /// Start accepting jobs: call `agent get-my-agents` to pull all online provider agents and loop recommend-task over each
     #[command(name = "find-jobs")]
     FindJobs,
 
