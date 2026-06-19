@@ -43,111 +43,81 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
     let title_query_hint = ctx.title_query_hint;
+    let pm = ctx.payment_mode;
 
-    let payment_escrow_notify = super::super::content::payment_mode_escrow_user_notify(job_id, title_display);
-    let x402_paying = super::super::content::x402_paying_user_notify(job_id, title_display);
-    let x402_replay_ok = super::super::content::x402_replay_success_user_notify(job_id);
     let short_id = if job_id.len() >= 8 { &job_id[..8] } else { job_id };
-    let session_hint = super::super::flow::SESSION_STATUS_HINT;
-    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
-    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
-    let cmd_replay_input = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[x402 replay input {short_id}] field input"), "x402_replay_input");
-    format!(
+
+    let mut out = format!(
     "[Current state] job_payment_mode_changed (payment-mode switch is on-chain)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user of the payment-mode change.**\n\n\
-     ❌ Do NOT call set-payment-mode again (paymentMode is already on-chain; calling again pollutes state).\n\
-     ❌ Do NOT call apply (apply is an ASP action; the user never executes it).\n\
-     ❌ Do NOT call confirm-accept (the ASP has not applied yet; must wait for the provider_applied system notification).\n\n\
+     🛑 **You MUST notify the user of the payment-mode change.**\n\
+     ❌ Do NOT call set-payment-mode again / apply / confirm-accept.\n\n\
      [Your next actions]\n\n\
-     {title_query_hint}\
-     **Step 1 - read the `paymentMode` field from the system notification envelope:**\n\
-     paymentMode value mapping: 1=escrow, 3=x402.\n\
-     ⚠️ Use the `paymentMode` from the envelope directly; no extra API query needed.\n\n\
+     {title_query_hint}");
+
+    // ── escrow branch ──
+    if pm != Some(3) {
+        let payment_escrow_notify = super::super::content::payment_mode_escrow_user_notify(job_id, title_display);
+        out.push_str(&format!("\
      ━━━━━━━━━ escrow (paymentMode=1) ━━━━━━━━━\n\n\
      **Step 2 - notify the user via `okx-a2a user notify`** ({l10n_dispatch}):\n\
      \x20\x20```bash\n\
      \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
      \x20\x20```\n\
-     \x20\x20content (canonical English template — translate before passing): {payment_escrow_notify}\n\n\
-     -> **end this turn** and wait for the ASP to submit their apply on-chain (provider_applied system notification).\n\n\
+     \x20\x20content template: {payment_escrow_notify}\n\n\
+     -> **end this turn** and wait for provider_applied.\n\n"));
+    }
+
+    // ── x402 branch ──
+    if pm != Some(1) {
+        let x402_paying = super::super::content::x402_paying_user_notify(job_id, title_display);
+        let x402_replay_ok = super::super::content::x402_replay_success_user_notify(job_id);
+        let cmd_replay_input = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[x402 replay input {short_id}] field input"), "x402_replay_input");
+
+        out.push_str(&format!("\
      ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\
-     From the previous set-payment-mode / x402-check output, extract endpoint, acceptsJson, feeTokenSymbol, feeAmount, providerAgentId.\n\n\
-     ⚠️ **Parameter-loss fallback** (context compaction may drop the previous turn's output):\n\
-     If providerAgentId or endpoint is missing in context -> first call:\n\
-     ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\
-     to extract `providerAgentId`; get `endpoint` from `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json`.\n\n\
-     If acceptsJson / feeTokenSymbol / feeAmount is missing -> re-validate with the endpoint above:\n\
-     ```bash\n\
-     onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}\n\
-     ```\n\
-     Extract `acceptsJson`, `tokenSymbol` (= feeTokenSymbol), `amountHuman` (= feeAmount).\n\n\
-     **Step 2 — 🌐 notify the user that payment is in progress via `okx-a2a user notify`:**\n\
-     {l10n_dispatch}\n\
+     [Shared rules]\n\
+     (R1) L10n: MUST translate `--user-content` / `--list-label` / `--content` to the user's language.\n\
+     (R2) Follow the playbook the CLI returns verbatim. Do NOT manually construct `--llm-content`.\n\
+     (R3) After the user replies (relayed as `event:\"user_decision_<source-event>\"`), call `next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"user_decision_<source-event>\",\"jobId\":\"{job_id}\",\"data\":\"<verbatim>\"}}'`. Do NOT keyword-match yourself.\n\n\
+     Extract endpoint, acceptsJson, feeTokenSymbol, feeAmount, providerAgentId from the previous turn.\n\
+     ⚠️ **If any parameter is missing** (context compaction): run `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` for providerAgentId, then `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json` for endpoint, then `onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}` for acceptsJson/feeTokenSymbol/feeAmount.\n\n\
+     **Step 2 — notify payment in progress** (apply R1):\n\
      \x20\x20```bash\n\
-     \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
+     \x20\x20okx-a2a user notify --content '<translated>'\n\
      \x20\x20```\n\
-     \x20\x20content (canonical English template — translate before passing): {x402_paying}\n\n\
-     **Step 3 — sign + direct/accept + endpoint replay (atomic command):**\n\
+     \x20\x20content template: {x402_paying}\n\n\
+     **Step 3 — sign + accept + replay (atomic):**\n\
      ```bash\n\
-     onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount> [--body '<serviceBody JSON>']\n\
+     onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint> --token-symbol <feeTokenSymbol> --token-amount <feeAmount> [--body '<serviceBody JSON>']\n\
      ```\n\
-     `--body`: if the earlier `x402_input_required` field-confirmation flow constructed a JSON body (stored in this sub session's context), pass it here. The body was already confirmed by the user before payment. Omit `--body` only when no `x402_input_required` confirmation happened.\n\
-     Internally executes: x402_pay signing -> direct/accept on-chain -> assemble payment header -> replay endpoint.\n\
-     Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, deliverableSavedPath, signature, authorization, sessionCert, txHash }}\n\
-     ✅ The CLI **auto-saves** the deliverable to disk when replaySuccess=true (`deliverableSavedPath` in output). No manual `task-deliverable-save` call needed.\n\n\
-     🔴🔴🔴 **CRITICAL — Step 4: notify the user with the FULL deliverable content via `okx-a2a user notify`**\n\
-     {l10n_dispatch}\n\
-     The `replayBodyDisplay` field in the CLI output IS the deliverable the user paid for. You **MUST** copy it verbatim into the notification template below.\n\
-     ❌ Do NOT summarize, truncate, or omit `replayBodyDisplay` — doing so = the user paid but never received the deliverable.\n\
-     ❌ Do NOT compose your own \"payment succeeded\" message — use the template below which includes the deliverable content.\n\
-     🔴 Real incident: a model composed \"x402 payment succeeded, awaiting confirmation\" and dropped the replayBody deliverable content; the user never saw the data they paid for.\n\n\
-     Branch by `replaySuccess`:\n\n\
+     `--body`: pass the JSON body from `x402_input_required` confirmation if it happened; omit otherwise.\n\
+     Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, deliverableSavedPath, txHash }}\n\n\
+     🔴 **Step 4 — notify user with FULL deliverable** (apply R1):\n\
+     `replayBodyDisplay` IS the deliverable the user paid for. Copy it **verbatim** into the notification.\n\
+     ❌ Do NOT summarize/truncate `replayBodyDisplay` — the user paid but never receives the deliverable.\n\n\
      ▸ replaySuccess=true:\n\
      {x402_replay_ok}\n\
-     -> **end this turn** and wait for the `job_accepted` system notification.\n\n\
-     🛑🛑🛑 **Iron rule (MANDATORY) after receiving `job_accepted`**:\n\
-     After the `job_accepted` system event arrives, you **must** call:\n\
-     ```bash\n\
-     onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'\n\
-     ```\n\
-     Follow the returned script (the script will guide you to run `onchainos agent complete`).\n\
-     ❌ **Absolutely forbidden**: re-running this turn's `x402-check` / `task-402-pay` / `okx-a2a user notify` - those completed in this turn; re-running causes double payment or duplicate notification.\n\
-     ❌ **Absolutely forbidden**: skipping `next-action` and deciding the next step yourself - the `job_accepted` script contains the `complete` step; skipping = the job is permanently stuck in the accepted state.\n\n\
+     -> **end this turn** and wait for `job_accepted`.\n\
+     🛑 When `job_accepted` arrives, call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'`.\n\
+     ❌ Do NOT re-run this turn's commands (double payment) or skip next-action (job stuck).\n\n\
      ▸ replaySuccess=false:\n\
-     Check the `replayBody` JSON from task-402-pay output. Does it describe required business parameters?\n\
-     Look for: `requiredArgs`, `requiredAnyOf`, `fields`, `status: \"input_required\"`, or a message mentioning missing/required parameters.\n\n\
-     \x20\x20▸▸ **If the endpoint needs business parameters** (field info found in replayBody):\n\
-     \x20\x20The payment (EIP-3009 signing + direct/accept) succeeded, but the endpoint could not deliver because it needs a request body.\n\
-     \x20\x20**Push a decision card** so the user can provide the missing parameters:\n\
-     \x20\x20{session_hint}\n\
+     Check `replayBody` for `requiredArgs` / `fields` / `status: \"input_required\"`.\n\n\
+     \x20\x20▸▸ **Endpoint needs business parameters** → push decision card (apply R1–R3):\n\
      \x20\x20```bash\n\
      \x20\x20{cmd_replay_input}\n\
      \x20\x20```\n\
-     \x20\x20🌐 **Localize `--user-content` AND `--list-label`**.\n\
-     \x20\x20`--user-content` template (canonical English — translate to user's language; fill `<placeholder>` from runtime values):\n\
-     \x20\x20```\n\
-     \x20\x20[Job {short_id}] The x402 payment succeeded (on-chain accepted), but the endpoint requires business parameters to deliver the result.\n\
-     \x20\x20Already paid: <feeAmount> <feeTokenSymbol>\n\n\
-     \x20\x20The endpoint requires:\n\
-     \x20\x20<for each field in replayBody's requiredArgs/fields, one line:>\n\
-     \x20\x20• <fieldName> (<type>): <description>\n\n\
-     \x20\x20Please provide the required parameter values.\n\
-     \x20\x20```\n\
-     \x20\x20`--llm-content` block (keep English; replace `<placeholders>` with actual values):\n\
-     \x20\x20```\n\
-     \x20\x20[REPLAY_CONTEXT] endpoint=<endpoint> providerAgentId=<providerAgentId> acceptsJson=<acceptsJson> feeTokenSymbol=<feeTokenSymbol> feeAmount=<feeAmount>\n\
-     \x20\x20requiredFields: <copy the fields/requiredArgs list from replayBody>\n\
-     \x20\x20```\n\
-     \x20\x20{follow_playbook}\n\
-     \x20\x20-> **end this turn** and wait for the user's reply. The `job_accepted` event will also arrive; the `job_accepted` handler (B-Branch 2) will detect the pending decision and skip its notification.\n\
-     \x20\x20{route_hint}\n\n\
-     \x20\x20▸▸ **Otherwise** (generic replay failure, no field info):\n\
-     \x20\x20Do NOT notify the user here — the `job_accepted` handler (B-Branch 2) will send the failure notification to avoid duplicates.\n\
-     \x20\x20-> **end this turn** and wait for the `job_accepted` system notification.\n"
-    )
+     \x20\x20`--user-content` template:\n\
+     \x20\x20[Job {short_id}] x402 payment succeeded but the endpoint requires parameters to deliver.\n\
+     \x20\x20Already paid: <feeAmount> <feeTokenSymbol>\n\
+     \x20\x20Required: <list each field from replayBody>\n\
+     \x20\x20Please provide the values.\n\
+     \x20\x20`--llm-content`: `[REPLAY_CONTEXT] endpoint=<> providerAgentId=<> acceptsJson=<> feeTokenSymbol=<> feeAmount=<> requiredFields: <copy from replayBody>`\n\
+     \x20\x20-> **end this turn**. `job_accepted` handler will detect the pending decision and skip its notification.\n\n\
+     \x20\x20▸▸ **Otherwise** (generic failure) → do NOT notify. **end this turn** and wait for `job_accepted`.\n"));
+    }
+
+    out
 }
 
 /// Negotiation reply handler — natural-language exchange, max 2 rounds.
