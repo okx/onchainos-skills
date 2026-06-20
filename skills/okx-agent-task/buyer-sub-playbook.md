@@ -39,7 +39,7 @@ System events (`message.source == "system"`) → follow SKILL.md `## Activation`
 Match by priority — stop at first hit:
 
 > 🛑 **Negotiation-phase autonomy**: status=0 + active sub → negotiate autonomously (max 2 rounds of natural-language exchange). Forbidden to forward provider's message to user. Only user involvement: negotiation exceeds 2 rounds without agreement → mark-failed + decision card.
-> 📌 **`--peerTaskMinVersion`**: pass through `payload.taskMinVersion`; if absent → omit.
+> 📌 **`taskMinVersion`**: include `payload.taskMinVersion` as a top-level field in the `--message` JSON (e.g. `"taskMinVersion":1`); CLI reads it automatically for version handshake. If `payload.taskMinVersion` is absent → omit.
 > 🛑 **Status name ≠ event name**: `common context` / `agent status` return STATUS, NOT event names. Peer message events are determined by this routing table.
 
 | # | Match condition | Action |
