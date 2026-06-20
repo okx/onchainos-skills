@@ -69,32 +69,6 @@ Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proce
 
 ---
 
-## 🔒 Communication Boundary (User Session)
+## Designated-Provider flows → [`buyer-actions.md`](./buyer-actions.md) §5/§6
 
-> User session does NOT use XMTP tools directly. The rules below apply when rendering sub-session dispatches.
-
-### Rendering dispatched content
-
-| Dispatch type | Action |
-|---|---|
-| `okx-a2a user notify` received | Render `content` verbatim (translate to user's language). Do NOT paraphrase/summarize. Do NOT add greetings/closers. Return to idle. |
-| `okx-a2a user decision-request` with `[USER_DECISION_REQUEST]` | Render `userContent` to user → **end turn** → wait for user reply → run pre-filled `resolve-prompt` command template verbatim. |
-
-### Iron rules
-
-- ❌ Never fabricate a user decision — wait for actual user input
-- ❌ Never run `onchainos agent` task CLIs directly from user session (only sub sessions do that)
-- ❌ Never craft `source:"system"` envelopes
-- ❌ Never call `pending-decisions-v2 resolve/pick/cancel/list` proactively — only `resolve-prompt` after user replies
-
----
-
-## `pending-decisions-v2 resolve` execution rule
-
-> 🛑 **CRITICAL — The output of `pending-decisions-v2 resolve` is a PLAYBOOK (instructions to execute), NOT a status report.** The decision has NOT been relayed yet — `resolve` only prepares the relay instructions.
->
-> You **MUST** execute every tool call in the playbook output, in order:
-> - **Step 1** (`okx-a2a session send --no-wait`): relay the user's decision to the sub session. Without this call, the sub never receives the decision and the task is **stuck forever**.
-> - **Step 2** (if present, `okx-a2a user decision-request`): render the next pending entry to the user.
-> - ❌ Treating the playbook output as "done" instead of executing it = relay lost = task stuck.
-
+**Trigger**: "Please initiate a direct conversation with this provider" (A2A §5) / "Please use onchainos to send a request to this endpoint" (x402 §6) / "指定服务商" / "use the service of Agent X"
