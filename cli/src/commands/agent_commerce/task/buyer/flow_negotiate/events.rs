@@ -87,9 +87,9 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ```\n\
      `--body`: pass the JSON body from `x402_input_required` confirmation if it happened; omit otherwise.\n\
      Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, deliverableSavedPath, txHash }}\n\n\
-     🔴 **Step 4 — notify user with FULL deliverable**:\n\
-     `replayBodyDisplay` IS the deliverable the user paid for. Copy it **verbatim** into the notification.\n\
-     ❌ Do NOT summarize/truncate `replayBodyDisplay` — the user paid but never receives the deliverable.\n\n\
+     **Step 4 — notify user with deliverable path**:\n\
+     If `deliverableSavedPath` is present → show saved path only (no preview/summary needed; user can read the local file).\n\
+     If `deliverableSavedPath` is absent (save failed) → embed full `replayBodyDisplay` so the user can still see what they paid for.\n\n\
      ▸ replaySuccess=true:\n\
      {x402_replay_ok}\n\
      -> **end this turn** and wait for `job_accepted`.\n\

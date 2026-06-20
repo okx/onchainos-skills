@@ -394,7 +394,6 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
 
 /// x402 replay success — deliverable received, awaiting on-chain confirmation.
 pub fn x402_replay_success_user_notify(job_id: &str) -> String {
-    // CLI mode: drop the trailing "Waiting for on-chain confirmation..." line — passive turn-end cue.
     let trailing = if is_cli_mode() {
         ""
     } else {
@@ -403,11 +402,13 @@ pub fn x402_replay_success_user_notify(job_id: &str) -> String {
     format!(
         "[x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
          ASP agentId: <providerAgentId>\n\
-         Amount: <tokenAmount> <tokenSymbol>\n\
-         Deliverable saved to: <deliverableSavedPath from CLI output>\n\
-         ---Deliverable---\n\
-         <replayBodyDisplay value from CLI output — pass through in full, do not truncate or summarize>\n\
-         ---End of deliverable---{trailing}"
+         Amount: <tokenAmount> <tokenSymbol>\n\n\
+         If CLI output contains `deliverableSavedPath`:\n\
+         \x20\x20Deliverable saved to: <deliverableSavedPath>\n\n\
+         If CLI output does NOT contain `deliverableSavedPath` (save failed):\n\
+         \x20\x20---Deliverable---\n\
+         \x20\x20<replayBodyDisplay in full>\n\
+         \x20\x20---End of deliverable---{trailing}"
     )
 }
 
