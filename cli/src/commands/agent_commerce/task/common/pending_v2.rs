@@ -1354,33 +1354,6 @@ fn role_short_label(role: &str) -> &str {
     }
 }
 
-// ─── Playbook generators ──────────────────────────────────────────────
-
-/// Resolve the llmContent string for a push-type playbook.
-/// If the entry has a sub-provided `llm_content_override`, return that verbatim.
-/// Otherwise generate the v2 default template.
-fn resolve_llm_content(entry: &PendingEntry) -> String {
-    if let Some(ref custom) = entry.llm_content_override {
-        return custom.clone();
-    }
-    let to_header = match entry.to_agent_id.as_deref() {
-        Some(t) => format!("[to: {t}]"),
-        None => "[to: backup]".to_string(),
-    };
-    format!(
-        "[USER_DECISION_REQUEST][job: {}][role: {}][agent: {}]{}\n\n\
-         Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
-         Step 2 — When the user actually replies (next turn):\n\
-         \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
-         \x20\x20\x20\x20· else → run `onchainos agent pending-decisions-v2 resolve --user-reply \"<user's verbatim wording — no interpretation, no translation>\"` exactly once, then follow the relay playbook it returns.",
-        entry.job_id,
-        entry.role,
-        entry.agent_id,
-        to_header,
-        DEFER_KEYWORDS.join(" / "),
-    )
-}
-
 /// CLI-driver variant of `resolve_llm_content`. The queue file is bypassed in
 /// CLI mode, so the future `resolve` call cannot reverse-lookup routing fields
 /// from a queue entry — embed all of them up front so the LLM passes them
@@ -1439,12 +1412,12 @@ fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
         "[USER_DECISION_REQUEST]\n\
          [job: {job}][role: {role}][agent: {agent}]{to_header}\n\
          (Anything above this marker is stale — NOT a reply to this card.)\n\n\
-         Step 1 — Card just delivered.\n\n\
+         Step 1 — Card was already delivered to the user. You MUST NOT re-render it, paraphrase it, summarize it, translate it again, or compose your own \"please choose A/B/...\" prompt — the user already has the exact text. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — Scan your current context for OTHER [USER_DECISION_REQUEST] blocks. \
          If you find any, render the warning below to the user as your assistant response (in user's language), e.g.:\n\
          \x20\x20`⚠️ You have multiple decisions pending — please prefix your reply with the jobId short hash, e.g. \\`0x7091: approve\\`, so it routes correctly.`\n\
          If no other blocks → skip this step.\n\n\
-         Step 3 — **END THE TURN NOW**, wait for user reply.\n\n\
+         Step 3 — **END THE TURN NOW with NO assistant text output** (unless Step 2 fired its multi-card warning, which is the ONLY allowed text this turn). No confirmation, no recap, no fabricated option list. Just stop. Wait for the user to reply in a future turn.\n\n\
          🛑 **The block below runs ONLY in a future turn**, AFTER the user has actually replied. Do NOT run anything in the current turn.\n\
          On the user's next reply, re-scan your context for [USER_DECISION_REQUEST] blocks (the count may have changed since Step 2), then walk this decision tree:\n\
          \x20\x20· defer keyword ({defer}) → END TURN, do NOT run anything.\n\
