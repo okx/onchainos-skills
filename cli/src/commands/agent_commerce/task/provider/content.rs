@@ -122,7 +122,7 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
         "\x20\x20\x20\x20[Job Accepted] Job {job_id} has been accepted.\n\
          \x20\x20\x20\x20- Title: <title>\n\
          \x20\x20\x20\x20- Description: <description>\n\
-         \x20\x20\x20\x20- Negotiated price: <amount> <tokenSymbol>\n\
+         \x20\x20\x20\x20- Negotiated price: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20- Payment: <escrow>\n\
          \x20\x20\x20\x20- ASP: {agent_id}\n\
          \x20\x20\x20\x20Funds are now escrowed; the ASP has started execution."
@@ -133,14 +133,14 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
 /// version: there is no negotiation (price is fixed by service registration),
 /// funds were paid up-front via the A2MCP endpoint (not escrowed), and the
 /// deliverable was already returned at request time. The agent fills in the
-/// `<title>` / `<description>` / `<price>` / `<tokenSymbol>` placeholders from
+/// `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` placeholders from
 /// the prefetched task context. Localize before sending.
 pub fn job_accepted_user_notify_a2mcp(job_id: &str, agent_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[Service Request Received] Job {job_id} — request received and paid via the A2MCP endpoint.\n\
          \x20\x20\x20\x20- Title: <title>\n\
          \x20\x20\x20\x20- Description: <description>\n\
-         \x20\x20\x20\x20- Price: <price> <tokenSymbol>\n\
+         \x20\x20\x20\x20- Price: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20- Payment: A2MCP (paid at request time)\n\
          \x20\x20\x20\x20- ASP: {agent_id}\n\
          \x20\x20\x20\x20Deliverable was returned by the service endpoint at request time; awaiting on-chain completion receipt."

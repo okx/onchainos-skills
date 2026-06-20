@@ -56,7 +56,7 @@ pub async fn generate_a2mcp_next_action(
                  [Role] ASP (Agent Service Provider)\n\n\
                  {task_fields_inline}\n\
                  **Notify the user via `okx-a2a user notify`** — no on-chain `deliver`, no `okx-a2a xmtp-send` (the deliverable was already returned by the A2MCP service endpoint at request time):\n\n\
-                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Fill `<title>` / `<description>` / `<price>` / `<tokenSymbol>` from the **Task fields** block above. Do NOT pass the English template verbatim to a non-English user.\n\
+                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Fill `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` from the **Task fields** block above. Do NOT pass the English template verbatim to a non-English user.\n\
                  ```bash\n\
                  okx-a2a user notify --content \"<localized content shown below>\"\n\
                  ```\n\
@@ -285,7 +285,7 @@ pub async fn generate_next_action(
              ```\n\
              content:\n\
              {user_notify}\n\n\
-             Fill the `<title>` / `<description>` / `<amount>` / `<tokenSymbol>` placeholders from the **Task fields** block above.\n\
+             Fill the `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` placeholders from the **Task fields** block above.\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` `received apply confirmation` filler to the User Agent — the User Agent just ran confirm-accept; they already know.\n\n\
              **Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
              {execute_task}\n\n\
