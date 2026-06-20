@@ -68,7 +68,3 @@ Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proce
 | Task list / status / close / decision list | "我的任务 / 查看决策 / close task" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
 
 ---
-
-## Designated-Provider flows → [`buyer-actions.md`](./buyer-actions.md) §5/§6
-
-**Trigger**: "Please initiate a direct conversation with this provider" (A2A §5) / "Please use onchainos to send a request to this endpoint" (x402 §6) / "指定服务商" / "use the service of Agent X"
