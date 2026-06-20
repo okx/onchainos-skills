@@ -50,7 +50,16 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n\
+                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\"\n\
+                     \x20\x20\x20\x206. **Create sub session + SKILL_PREFETCH** (only after set-asp succeeds):\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id <agentId> --json\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20Then send SKILL_PREFETCH:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content '[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context.'\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20End the turn. Wait for `provider_applied`.\n\
                      \x20\x20\x20\x20⚠️ If user said specify but **did NOT include an agentId**: re-ask via `pending-decisions-v2 request --source-event {source_event}` asking for the agentId; **`--user-content` and `--list-label` must be localized to the user's language** (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n")
 }
 
@@ -689,8 +698,16 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      onchainos agent set-asp {job_id} --provider-agent-id <providerAgentId> --service-id <serviceId> --service-type <serviceType> --service-params '<verbatim reply from user>' --service-token-address <serviceTokenAddress> --service-token-amount <serviceTokenAmount>\n\
                      ```\n\
                      3. On success → notify user (🌐 localize per user's language): \"ASP set to Agent <providerAgentId>. Waiting for ASP to accept the task.\"\n\
-                     4. On failure → relay the error to the user and re-ask via `pending-decisions-v2 request` with `--source-event set_asp_params`.\n\
-                     5. End the turn.\n"
+                     4. **Create sub session + SKILL_PREFETCH** (only after set-asp succeeds):\n\
+                     ```bash\n\
+                     okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id <providerAgentId> --json\n\
+                     ```\n\
+                     Then send SKILL_PREFETCH:\n\
+                     ```bash\n\
+                     okx-a2a session send --session-key <sessionKey from above> --content '[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context.'\n\
+                     ```\n\
+                     5. On failure → relay the error to the user and re-ask via `pending-decisions-v2 request` with `--source-event set_asp_params`.\n\
+                     6. End the turn.\n"
                 ),
                 _ => format!(
                     "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n\n\
