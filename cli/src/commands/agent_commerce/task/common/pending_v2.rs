@@ -738,7 +738,7 @@ fn handle_resolve_with_sessionkey(
         ));
     okx_a2a::session_send(&job_id, to_agent_id.as_deref(), &relay_content)?;
     print!(
-        "▶️ After the relay succeeds, **resume watching** — re-enter the watch loop per `skills/okx-task-watch/SKILL.md` (preserve the session's sticky `--job-id` if it was started post-publish).\n"
+        "▶️ **Resume watching** — re-enter the watch loop per `skills/okx-task-watch/SKILL.md` (preserve the session's sticky `--job-id` if it was started post-publish).\n"
     );
     Ok(())
 }
