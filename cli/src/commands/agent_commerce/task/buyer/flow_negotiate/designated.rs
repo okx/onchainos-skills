@@ -225,15 +225,8 @@ pub(crate) fn branch_a2a_cli(
     let _ = (short_id, title_display, session_key, prefetched);
 
     format!(
-        "[Designated ASP route: A2A] Provider {dp_id} — sub session created.\n\
-         [Role] User (Buyer)\n\n\
-         ✅ Sub session and SKILL_PREFETCH ready. The ASP will receive `job_asp_selected` from the backend and independently decide to apply on-chain.\n\n\
-         🛑 **End this turn immediately.** Your ONLY next action is to wait for the `provider_applied` system event.\n\
-         ❌ Do NOT send any message (`okx-a2a xmtp-send`) — no negotiation conversation is needed.\n\
-         ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\
-         ❌ Do NOT call `asp-match` / `apply` / `complete` / `reject`.\n\n\
-         [What happens next]\n\
-         The ASP receives `job_asp_selected` → ASP on-chain apply → system fires `provider_applied` event.\n"
+        "[Designated ASP route: A2A] Provider {dp_id} — session created, SKILL_PREFETCH sent. \
+         All setup done. 🛑 End this turn. Do NOT call any command.\n"
     )
 }
 
@@ -256,9 +249,7 @@ pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
          🛑 **End this turn immediately.** Your ONLY next action is to wait for the `provider_applied` system event.\n\
          ❌ Do NOT send any message (`okx-a2a xmtp-send`) — no negotiation conversation is needed.\n\
          ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\
-         ❌ Do NOT call `asp-match` / `apply` / `complete` / `reject`.\n\n\
-         [What happens next]\n\
-         The ASP receives `job_asp_selected` → ASP on-chain apply → system fires `provider_applied` event.\n")
+         ❌ Do NOT call `asp-match` / `apply` / `complete` / `reject`.\n")
 }
 
 /// Phase 2b: x402 branch — endpoint validation + set-payment-mode.

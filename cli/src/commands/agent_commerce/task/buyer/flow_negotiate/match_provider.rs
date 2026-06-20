@@ -132,31 +132,19 @@ pub(crate) async fn provider_conversation_pick_cli(
     }
 }
 
-/// A2A branch for public-task ASP pick. Creates session + SKILL_PREFETCH,
-/// then returns LLM instructions to run asp-match + set-asp so the server
-/// knows who the provider is and can send `job_asp_selected`.
+/// A2A branch for public-task ASP pick. Returns LLM instructions to run
+/// asp-match + set-asp, then create sub session + SKILL_PREFETCH only after
+/// set-asp succeeds (avoids orphan sessions when asp-match finds no services
+/// or set-asp fails).
 fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
-    use crate::commands::agent_commerce::task::common::okx_a2a;
-
     let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. \
         This prefetch message itself requires no action — but when the NEXT inbound message arrives \
         (same turn or later turn), you MUST process it normally via buyer-sub-playbook.md \
         §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
 
-    if !okx_a2a::session_query_exists(job_id, agent_id, dp_id).unwrap_or(false) {
-        if let Err(e) = okx_a2a::session_create(job_id, agent_id, dp_id) {
-            return format!("[provider_conversation_pick] ERROR: session create failed: {e}\n");
-        }
-    }
-    if let Err(e) = okx_a2a::session_send(job_id, Some(dp_id), prefetch) {
-        return format!("[provider_conversation_pick] ERROR: SKILL_PREFETCH failed: {e}\n");
-    }
-
     format!(
-        "[Provider picked: A2A] Provider {dp_id} — session ready.\n\
+        "[Provider picked: A2A] Provider {dp_id}\n\
          [Role] User (Buyer)\n\n\
-         ✅ Sub session and SKILL_PREFETCH sent.\n\n\
-         **You MUST now set the provider on this task via `set-asp` so the server can notify the ASP.**\n\n\
          **Step 1 — fetch the ASP's service info:**\n\
          ```bash\n\
          onchainos agent asp-match --job-id {job_id} --provider-agent-id {dp_id} --format json\n\
@@ -188,10 +176,16 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
          ```\n\
          On success → notify user (🌐 localized): \"Provider set to Agent {dp_id}. Waiting for provider to accept.\"\n\n\
-         🛑 **End this turn after `set-asp` succeeds.** Wait for the `provider_applied` system event.\n\
-         ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\n\
-         [What happens next]\n\
-         `set-asp` → server sends `job_asp_selected` to ASP → ASP on-chain apply → system fires `provider_applied` event.\n"
+         **Step 4 — create sub session + SKILL_PREFETCH (only after Step 3 succeeds):**\n\
+         ```bash\n\
+         okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id {dp_id} --json\n\
+         ```\n\
+         Then send SKILL_PREFETCH to the newly created session:\n\
+         ```bash\n\
+         okx-a2a session send --session-key <sessionKey from above> --content '{prefetch}'\n\
+         ```\n\n\
+         🛑 **End this turn after Step 4.** Wait for the `provider_applied` system event.\n\
+         ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n"
     )
 }
 
