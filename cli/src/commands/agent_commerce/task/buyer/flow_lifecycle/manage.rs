@@ -106,25 +106,26 @@ Step 4.6 -- serviceParams inference
 
 Using the selected service's `serviceDescription` + `serviceName` + the user's task `description`, infer a `serviceParams` plain-text string.
 
-**Step A — Identify expected fields** from `serviceDescription`:
-- Look for enumerated items (①②③, 1./2./3., bullets, comma-separated labels)
-- Look for key phrases: \"需要提供\" / \"required\" / \"input\" / \"参数\" / \"请输入\" / \"provide\" / \"示例\" / \"例如\" / \"example\" / \"e.g.\"
-- Look for inline field names: noun phrases before colons or slashes (e.g. \"名称/风格/数量\", \"image: ..., name: ...\")
-- If none of the above found → treat the entire serviceDescription as a single implicit requirement
+**Step 1 — Identify required user input** from `serviceDescription`:
+Read the serviceDescription semantically and determine what specific input the user must provide to use this service. Common patterns:
+- Action verbs directed at the user (specify / provide / input / enter / describe / tell / set up)
+- Conditional phrases implying expected input (\"after receiving [X]\", \"given [X]\", \"just say [X]\")
+- Templates with placeholders (\"from A to B\", \"some [X]\", \"a specific [X]\")
+- Examples showing expected input format (after \"example\" / \"e.g.\")
+- Compound input (\"a one-line description + an image\")
+If the serviceDescription only describes the service's **output or capabilities** without indicating any user-provided input → no serviceParams needed, skip to Step 4.
 
-**Step B — Extract values** for each identified field from the user's task description:
-- Direct match: task description explicitly states the value (e.g. \"logo for token called PEPE\" → name: PEPE)
-- Contextual match: value can be reasonably derived (e.g. \"red and black theme\" → style: red and black)
-- No match: mark as `<待补充>` (Chinese) / `<to be provided>` (English)
+**Step 2 — Match against user's task description**:
+For each required input from Step 1, check if the user's task description already provides it:
+- **Provided** → extract the concrete value
+- **Not provided** → mark as `<to be provided>`, with a hint derived from the serviceDescription (e.g. serviceDescription says \"input an EVM address\" but user didn't specify → `EVM address: <to be provided>`)
 
-**Step C — Format**: natural-language `key：value` pairs separated by `；` or `\\n`.
-Example: `\"名称：PEPE；\\n风格：赛博朋克；\\n图片：<待补充>。\"`
-Do NOT use JSON format.
+**Step 3 — Format**: natural-language `key：value` pairs separated by `；` or `\\n`. Do NOT use JSON.
 
-**Step D — Confidence routing:**
-- **All fields filled** (no `<待补充>` marks) → use inferred serviceParams directly in the confirmation form
-- **Some fields filled, some marked `<待补充>`** → show in confirmation form with marks; user can edit before confirming
-- **Nothing extractable** (serviceDescription is vague AND task description has no matching values) → use empty string `\"\"`
+**Step 4 — Confidence routing:**
+- All fields filled (no `<to be provided>` marks) → use inferred serviceParams directly in the confirmation form
+- Some fields marked `<to be provided>` → show in confirmation form with marks; user can edit before confirming
+- No input required (Step 1 found nothing) → serviceParams is empty
 
 Do NOT ask the user for serviceParams separately — always show in the confirmation form (Step 5). The user can correct it there.
 
