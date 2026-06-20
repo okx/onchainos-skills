@@ -252,12 +252,21 @@ pub async fn handle_create(
     if let Some(ref provider_id) = params.provider {
         super::negotiate::save_designated_provider_with_endpoint(&job_id, provider_id, params.endpoint.as_deref())?;
     }
+    let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(&job_id).await;
 
-    let tx_hash = signing::sign_uop_and_broadcast(
+    let tx_hash = match signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
         &job_id, 1, &buyer_agent_id,
         None,
-    ).await?;
+    ).await {
+        Ok(tx_hash) => tx_hash,
+        Err(err) => {
+            if let Some(prebind) = &provider_prebind {
+                prebind.rollback_if_created().await;
+            }
+            return Err(err);
+        }
+    };
 
     audit::log(
         "cli",
