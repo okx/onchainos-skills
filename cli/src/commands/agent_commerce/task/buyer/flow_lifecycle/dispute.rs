@@ -48,28 +48,19 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
-    let messages = match okx_a2a::session_history(job_id, provider_id) {
-        Ok(m) => m,
+    let chat_block = match okx_a2a::session_history(job_id, provider_id) {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() || trimmed == "[]" {
+                "(no chat history available)".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        }
         Err(e) => return format!(
             "[job_disputed] ❌ `okx-a2a session history` failed: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
-    };
-    let chat_block = if messages.is_empty() {
-        "(no chat history available)".to_string()
-    } else {
-        messages.into_iter()
-            .map(|m| {
-                let ts = m.sent_at.map(|v| v.to_string()).unwrap_or_else(|| "?".to_string());
-                let status = if m.delivery_status.is_empty() {
-                    "?".to_string()
-                } else {
-                    m.delivery_status
-                };
-                format!("[{ts}][{status}] sender={}: {}", m.sender_inbox_id, m.content)
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
     };
 
     format!(

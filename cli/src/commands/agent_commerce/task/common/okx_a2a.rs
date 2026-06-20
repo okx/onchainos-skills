@@ -200,69 +200,16 @@ pub fn xmtp_send(job_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
 
 // ── XMTP conversation history ─────────────────────────────────────────────
 
-#[derive(Deserialize)]
-struct RawMessage {
-    id: String,
-    #[serde(rename = "senderInboxId", default)]
-    sender_inbox_id: Option<String>,
-    #[serde(rename = "rawText", default)]
-    raw_text: Option<String>,
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(rename = "xmtpSentAtMs", default)]
-    xmtp_sent_at_ms: Option<i64>,
-    #[serde(rename = "receivedAtMs", default)]
-    received_at_ms: Option<i64>,
-    #[serde(rename = "deliveryStatus", default)]
-    delivery_status: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct RawFile {
-    #[serde(default)]
-    messages: Vec<RawMessage>,
-}
-
-#[derive(Deserialize)]
-struct RawResp {
-    #[serde(default)]
-    file: Option<RawFile>,
-}
-
-/// Normalized message record returned by `session_history`.
-#[derive(Serialize, Debug)]
-pub struct ConversationMessage {
-    pub id: String,
-    #[serde(rename = "senderInboxId")]
-    pub sender_inbox_id: String,
-    pub content: String,
-    #[serde(rename = "sentAt")]
-    pub sent_at: Option<i64>,
-    #[serde(rename = "deliveryStatus")]
-    pub delivery_status: String,
-}
-
-/// Shared post-processor for `okx-a2a session history` responses —
-/// collapses `rawText` / `content` and `xmtpSentAtMs` / `receivedAtMs`
-/// into the canonical `ConversationMessage` shape.
-fn normalize_messages(resp: RawResp) -> Vec<ConversationMessage> {
-    let messages = resp.file.map(|f| f.messages).unwrap_or_default();
-    messages
-        .into_iter()
-        .map(|m| ConversationMessage {
-            id: m.id,
-            sender_inbox_id: m.sender_inbox_id.unwrap_or_default(),
-            content: m.raw_text.or(m.content).unwrap_or_default(),
-            sent_at: m.xmtp_sent_at_ms.or(m.received_at_ms),
-            delivery_status: m.delivery_status.unwrap_or_default(),
-        })
-        .collect()
-}
-
 /// Bridge equivalent: `xmtp_get_conversation_history '{jobId, toAgentId}'`
 /// `okx-a2a session history --job-id <id> --to-agent-id <id> --json` — new
 /// job-id based addressing; matches the session bound to `jobId + toAgentId`.
-pub fn session_history(job_id: &str, to_agent_id: &str) -> Result<Vec<ConversationMessage>> {
+///
+/// Returns the CLI's raw stdout verbatim (typically a JSON array of
+/// messages). Schema evolves on the okx-a2a side faster than this CLI
+/// recompiles, so we hand the bytes straight to the LLM downstream rather
+/// than maintaining a brittle parser. Callers should still trim and treat
+/// `""` / `"[]"` as the empty case.
+pub fn session_history(job_id: &str, to_agent_id: &str) -> Result<String> {
     let out = Command::new("okx-a2a")
         .args([
             "session", "history",
@@ -276,9 +223,7 @@ pub fn session_history(job_id: &str, to_agent_id: &str) -> Result<Vec<Conversati
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!("okx-a2a session history exit {status}: {stderr}", status = out.status);
     }
-    let resp: RawResp = serde_json::from_slice(&out.stdout)
-        .map_err(|e| anyhow::anyhow!("parse okx-a2a session history json failed: {e}"))?;
-    Ok(normalize_messages(resp))
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 // ── Pending task requests ────────────────────────────────────────────────
