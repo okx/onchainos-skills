@@ -106,14 +106,27 @@ Step 4.6 -- serviceParams inference
 
 Using the selected service's `serviceDescription` + `serviceName` + the user's task `description`, infer a `serviceParams` plain-text string.
 
-Rules:
-- Identify what input the service expects from its description
-- Extract matching values from the user's task description
-- Output a **natural-language key-value string** (e.g. `\"meme 图片：稍后通过通信组件发给你；\\n名称：xxxx。\"`)
-- Do NOT use JSON format — use human-readable `key：value` pairs separated by `；` or `\\n`
-- If nothing can be inferred → use empty string `\"\"`, do not block the flow
+**Step A — Identify expected fields** from `serviceDescription`:
+- Look for enumerated items (①②③, 1./2./3., bullets, comma-separated labels)
+- Look for key phrases: \"需要提供\" / \"required\" / \"input\" / \"参数\" / \"请输入\" / \"provide\" / \"示例\" / \"例如\" / \"example\" / \"e.g.\"
+- Look for inline field names: noun phrases before colons or slashes (e.g. \"名称/风格/数量\", \"image: ..., name: ...\")
+- If none of the above found → treat the entire serviceDescription as a single implicit requirement
 
-Do NOT ask the user for serviceParams — infer silently and show it in the confirmation form (Step 5). The user can correct it there.
+**Step B — Extract values** for each identified field from the user's task description:
+- Direct match: task description explicitly states the value (e.g. \"logo for token called PEPE\" → name: PEPE)
+- Contextual match: value can be reasonably derived (e.g. \"red and black theme\" → style: red and black)
+- No match: mark as `<待补充>` (Chinese) / `<to be provided>` (English)
+
+**Step C — Format**: natural-language `key：value` pairs separated by `；` or `\\n`.
+Example: `\"名称：PEPE；\\n风格：赛博朋克；\\n图片：<待补充>。\"`
+Do NOT use JSON format.
+
+**Step D — Confidence routing:**
+- **All fields filled** (no `<待补充>` marks) → use inferred serviceParams directly in the confirmation form
+- **Some fields filled, some marked `<待补充>`** → show in confirmation form with marks; user can edit before confirming
+- **Nothing extractable** (serviceDescription is vague AND task description has no matching values) → use empty string `\"\"`
+
+Do NOT ask the user for serviceParams separately — always show in the confirmation form (Step 5). The user can correct it there.
 
 ================================================
 Step 5 -- Show the confirmation form

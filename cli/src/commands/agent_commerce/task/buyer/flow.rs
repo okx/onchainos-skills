@@ -41,7 +41,31 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event {source_event}`.\n\
-                     \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
+                     \x20\x20\x20\x204. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not available):\n\
+                     \x20\x20\x20\x20- Scan `serviceDescription` for expected fields: enumerated items (①②③, 1./2./3.), key phrases (\"需要提供\"/\"required\"/\"input\"/\"参数\"/\"示例\"/\"例如\"/\"example\"/\"e.g.\"), inline labels (\"名称/风格/数量\"). If none → treat entire serviceDescription as a single implicit requirement.\n\
+                     \x20\x20\x20\x20- For each field, search task description for a matching value (direct or contextual). Unmatched → mark `<待补充>`/`<to be provided>`.\n\
+                     \x20\x20\x20\x20- Format as natural-language `key：value` pairs (separated by `；` or `\\n`). No JSON.\n\
+                     \x20\x20\x20\x205. **Route by inference result:**\n\
+                     \x20\x20\x20\x20- **serviceDescription is empty OR all fields filled** (no `<待补充>` marks) → call `set-asp` directly:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-params '<inferred or empty>' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\"\n\
+                     \x20\x20\x20\x20- **Some fields filled, some marked `<待补充>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
+                     \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
+                     \x20\x20\x20\x20Service: <serviceDescription>\n\
+                     \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Pre-filled service params (please confirm or modify):\n\
+                     \x20\x20\x20\x20<inferred serviceParams with `<待补充>` marks>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Reply \"ok\" to confirm, or provide corrections.\n\
+                     \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount> inferredParams=<inferred serviceParams>]\n\
+                     \x20\x20\x20\x20- **Nothing extractable** (serviceDescription is vague, task description has no matching values) → ask user to provide — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
@@ -53,11 +77,6 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20Please describe the input for this service (serviceParams):\n\
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
                      \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
-                     \x20\x20\x20\x205. If `serviceDescription` is empty, skip the decision and call `set-asp` directly:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
-                     \x20\x20\x20\x20```\n\
-                     {success_line}\
                      \x20\x20\x20\x206. **Create sub session + SKILL_PREFETCH** (only after set-asp succeeds):\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id <agentId> --json\n\
@@ -439,11 +458,35 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      The push was the ASP-match list. **Semantic mapping** — decide what the user means:\n\n\
                      \x20\x20• **Pick an ASP** — user gave an index (1/2/3/...) or a 3-digit agentId (e.g. `864`). Map index → agentId from the asp-match list shown in the source-scene; the user picked agentId=`<X>`. Action (set-asp flow):\n\
                      \x20\x20\x20\x201. From the asp-match list, extract the picked ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`.\n\
-                     \x20\x20\x20\x202. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
+                     \x20\x20\x20\x202. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not available):\n\
+                     \x20\x20\x20\x20- Scan `serviceDescription` for expected fields: enumerated items (①②③, 1./2./3.), key phrases (\"需要提供\"/\"required\"/\"input\"/\"参数\"/\"示例\"/\"例如\"/\"example\"/\"e.g.\"), inline labels (\"名称/风格/数量\"). If none → treat entire serviceDescription as a single implicit requirement.\n\
+                     \x20\x20\x20\x20- For each field, search task description for a matching value (direct or contextual). Unmatched → mark `<待补充>`/`<to be provided>`.\n\
+                     \x20\x20\x20\x20- Format as natural-language `key：value` pairs (separated by `；` or `\\n`). No JSON.\n\
+                     \x20\x20\x20\x203. **Route by inference result:**\n\
+                     \x20\x20\x20\x20- **serviceDescription is empty OR all fields filled** (no `<待补充>` marks) → call `set-asp` directly:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <X> --service-id <sid> --service-type <serviceType> --service-params '<inferred or empty>' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <X>. Waiting for ASP to accept.\" End the turn.\n\
+                     \x20\x20\x20\x20- **Some fields filled, some marked `<待补充>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20`--user-content` template (🌐 localize):\n\
+                     \x20\x20\x20\x20You selected Agent <X> — <serviceName>.\n\
+                     \x20\x20\x20\x20Service: <serviceDescription>\n\
+                     \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Pre-filled service params (please confirm or modify):\n\
+                     \x20\x20\x20\x20<inferred serviceParams with `<待补充>` marks>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Reply \"ok\" to confirm, or provide corrections.\n\
+                     \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<X> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount> inferredParams=<inferred serviceParams>]\n\
+                     \x20\x20\x20\x20- **Nothing extractable** (serviceDescription is vague, task description has no matching values) → ask user — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
+                     \x20\x20\x20\x20`--user-content` template (🌐 localize):\n\
                      \x20\x20\x20\x20You selected Agent <X> — <serviceName>.\n\
                      \x20\x20\x20\x20Service: <serviceDescription>\n\
                      \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
@@ -451,11 +494,6 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20Please describe the input for this service (serviceParams):\n\
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<X> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
                      \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
-                     \x20\x20\x20\x203. If `serviceDescription` is empty (the service needs no input), skip the decision and call `set-asp` directly:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <X> --service-id <sid> --service-type <serviceType> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
-                     \x20\x20\x20\x20```\n\
-                     {success_line}\
                      \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent asp-match --job-id {job_id} --page <next_page>`. If results → re-push the asp_match_pick decision with the new list (`pending-decisions-v2 request --source-event asp_match_pick`; --list-label `[ASP <shortJobId>] <task title> ASP-pick decision`). **`--list-label` and all footer keywords must be localized** (e.g. Chinese: 回复\"更多\", NOT 回复\"more\"). If empty → enqueue the no-ASP next-step decision:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] <task title> next-step decision\" --source-event no_asp_found\n\
@@ -506,11 +544,35 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services for this ASP, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event {source}`.\n\
-                     \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
+                     \x20\x20\x20\x204. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not available):\n\
+                     \x20\x20\x20\x20- Scan `serviceDescription` for expected fields: enumerated items (①②③, 1./2./3.), key phrases (\"需要提供\"/\"required\"/\"input\"/\"参数\"/\"示例\"/\"例如\"/\"example\"/\"e.g.\"), inline labels (\"名称/风格/数量\"). If none → treat entire serviceDescription as a single implicit requirement.\n\
+                     \x20\x20\x20\x20- For each field, search task description for a matching value (direct or contextual). Unmatched → mark `<待补充>`/`<to be provided>`.\n\
+                     \x20\x20\x20\x20- Format as natural-language `key：value` pairs (separated by `；` or `\\n`). No JSON.\n\
+                     \x20\x20\x20\x205. **Route by inference result:**\n\
+                     \x20\x20\x20\x20- **serviceDescription is empty OR all fields filled** (no `<待补充>` marks) → call `set-asp` directly:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '<inferred or empty>' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n\
+                     \x20\x20\x20\x20- **Some fields filled, some marked `<待补充>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20`--user-content` template (🌐 localize):\n\
+                     \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
+                     \x20\x20\x20\x20Service: <serviceDescription>\n\
+                     \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Pre-filled service params (please confirm or modify):\n\
+                     \x20\x20\x20\x20<inferred serviceParams with `<待补充>` marks>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Reply \"ok\" to confirm, or provide corrections.\n\
+                     \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount> inferredParams=<inferred serviceParams>]\n\
+                     \x20\x20\x20\x20- **Nothing extractable** (serviceDescription is vague, task description has no matching values) → ask user — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
+                     \x20\x20\x20\x20`--user-content` template (🌐 localize):\n\
                      \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
                      \x20\x20\x20\x20Service: <serviceDescription>\n\
                      \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
@@ -518,11 +580,6 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20Please describe the input for this service (serviceParams):\n\
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
                      \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
-                     \x20\x20\x20\x205. If `serviceDescription` is empty, skip the decision and call `set-asp` directly:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
-                     \x20\x20\x20\x20```\n\
-                     {success_line}\
                      \x20\x20\x20\x20⚠️ If user said A / specify but **did NOT include an agentId** (e.g. just `A`, `选A`, `换一个 ASP`): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event {source}`; `--user-content` and `--list-label` must be localized to the user's language; `--user-content` must ask for the agentId (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
                      \x20\x20• **B — Make public** — typical intents: B / 选B / `public` / `公开`. Action: `onchainos agent set-public {job_id}`.\n\
                      \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
@@ -551,11 +608,35 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`.\n\
-                     \x20\x20\x20\x204. Show `serviceDescription` to the user and ask for serviceParams — enqueue:\n\
+                     \x20\x20\x20\x204. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not available):\n\
+                     \x20\x20\x20\x20- Scan `serviceDescription` for expected fields: enumerated items (①②③, 1./2./3.), key phrases (\"需要提供\"/\"required\"/\"input\"/\"参数\"/\"示例\"/\"例如\"/\"example\"/\"e.g.\"), inline labels (\"名称/风格/数量\"). If none → treat entire serviceDescription as a single implicit requirement.\n\
+                     \x20\x20\x20\x20- For each field, search task description for a matching value (direct or contextual). Unmatched → mark `<待补充>`/`<to be provided>`.\n\
+                     \x20\x20\x20\x20- Format as natural-language `key：value` pairs (separated by `；` or `\\n`). No JSON.\n\
+                     \x20\x20\x20\x205. **Route by inference result:**\n\
+                     \x20\x20\x20\x20- **serviceDescription is empty OR all fields filled** (no `<待补充>` marks) → call `set-asp` directly:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '<inferred or empty>' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n\
+                     \x20\x20\x20\x20- **Some fields filled, some marked `<待补充>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20`--user-content` template (🌐 localize):\n\
+                     \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
+                     \x20\x20\x20\x20Service: <serviceDescription>\n\
+                     \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Pre-filled service params (please confirm or modify):\n\
+                     \x20\x20\x20\x20<inferred serviceParams with `<待补充>` marks>\n\
+                     \x20\x20\x20\x20\n\
+                     \x20\x20\x20\x20Reply \"ok\" to confirm, or provide corrections.\n\
+                     \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount> inferredParams=<inferred serviceParams>]\n\
+                     \x20\x20\x20\x20- **Nothing extractable** (serviceDescription is vague, task description has no matching values) → ask user — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20`--user-content` template (canonical English; 🌐 localize per user's language):\n\
+                     \x20\x20\x20\x20`--user-content` template (🌐 localize):\n\
                      \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
                      \x20\x20\x20\x20Service: <serviceDescription>\n\
                      \x20\x20\x20\x20Fee: <feeAmount> <feeTokenSymbol>\n\
@@ -563,11 +644,6 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20Please describe the input for this service (serviceParams):\n\
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
                      \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
-                     \x20\x20\x20\x205. If `serviceDescription` is empty, skip the decision and call `set-asp` directly:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
-                     \x20\x20\x20\x20```\n\
-                     {success_line}\
                      \x20\x20\x20\x20⚠️ If user said B / specify **without** an agentId: re-ask via `pending-decisions-v2 request --source-event negotiate_over_budget` asking for the agentId; **`--user-content` and `--list-label` must be localized to the user's language** (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
                      \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=view ASP list  B=specify another ASP (include the agentId)  C=close the job\".\n"
@@ -732,12 +808,15 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                     };
                     format!(
                     "[User decision relay] source_event=`set_asp_params`, user's verbatim reply: `{reply}`\n\n\
-                     The user was asked for serviceParams after selecting an ASP (via the set-asp flow). Their reply IS the serviceParams value.\n\n\
-                     Action:\n\
-                     1. From your conversation context, retrieve the service info in the `[SERVICE_CONTEXT]` block you included when enqueuing this decision: `providerAgentId`, `serviceId`, `serviceType`, `serviceTokenAddress`, `serviceTokenAmount`.\n\
-                     2. Call:\n\
+                     The user was asked for serviceParams after selecting an ASP. The decision may have included pre-filled (inferred) values in `inferredParams` inside the `[SERVICE_CONTEXT]` block.\n\n\
+                     **Step 1 — Determine serviceParams from user's reply:**\n\
+                     - **Confirm** — user says \"ok\" / \"确认\" / \"yes\" / \"好\" / \"可以\" / \"没问题\" → use `inferredParams` from `[SERVICE_CONTEXT]` as-is. If no `inferredParams` exists, use empty string.\n\
+                     - **Modify** — user corrects specific fields (e.g. \"名称改成 DOGE\", \"change name to DOGE\") → take `inferredParams` as base, apply user's corrections to the matching fields, keep other fields unchanged.\n\
+                     - **Full input** — user provides a complete new description (not referencing pre-filled values) → use user's reply verbatim as serviceParams.\n\n\
+                     **Step 2 — Retrieve service info** from `[SERVICE_CONTEXT]`: `providerAgentId`, `serviceId`, `serviceType`, `serviceTokenAddress`, `serviceTokenAmount`.\n\n\
+                     **Step 3 — Call set-asp:**\n\
                      ```bash\n\
-                     onchainos agent set-asp {job_id} --provider-agent-id <providerAgentId> --service-id <serviceId> --service-type <serviceType> --service-params '<verbatim reply from user>' --service-token-address <serviceTokenAddress> --service-token-amount <serviceTokenAmount>\n\
+                     onchainos agent set-asp {job_id} --provider-agent-id <providerAgentId> --service-id <serviceId> --service-type <serviceType> --service-params '<resolved serviceParams from Step 1>' --service-token-address <serviceTokenAddress> --service-token-amount <serviceTokenAmount>\n\
                      ```\n\
                      {step3_success}\
                      4. **Create sub session + SKILL_PREFETCH** (only after set-asp succeeds):\n\
