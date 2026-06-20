@@ -1141,10 +1141,31 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::run(c, ctx).await,
 
         AgentCommand::NextAction { agent_id, role, message } => {
-            // Parse the `--message` envelope (required). Bail hard on parse failure —
-            // it's the sole source of every routing field except `--role` / `--agentId`.
-            let parsed_message: serde_json::Value = serde_json::from_str(&message)
-                .map_err(|e| anyhow::anyhow!("--message must be a valid JSON object: {e}"))?;
+            // Parse the `--message` envelope (required). Try strict parse first;
+            // on failure, attempt a one-shot repair that escapes raw control chars
+            // (LF / CR / TAB) inside string scope and retries. This covers the
+            // most common LLM mistake: emitting a literal newline inside a JSON
+            // string value (e.g. for a long deliverable `text`) instead of the
+            // two-char escape `\n`. Outside strings, JSON allows whitespace so
+            // raw control chars survive untouched.
+            let parsed_message: serde_json::Value = match serde_json::from_str(&message) {
+                Ok(v) => v,
+                Err(strict_err) => {
+                    let repaired = escape_control_chars_in_strings(&message);
+                    match serde_json::from_str::<serde_json::Value>(&repaired) {
+                        Ok(v) => {
+                            eprintln!(
+                                "[next-action] --message had raw control chars inside string values; auto-repaired and parsed. \
+                                 Strict parse error was: {strict_err}"
+                            );
+                            v
+                        }
+                        Err(_) => return Err(anyhow::anyhow!(
+                            "--message must be a valid JSON object: {strict_err}"
+                        )),
+                    }
+                }
+            };
             if DEBUG_LOG {
                 eprintln!("[next-action] --message parsed: {} keys",
                     parsed_message.as_object().map(|o| o.len()).unwrap_or(0));
@@ -1519,6 +1540,88 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
 fn tx_failure_label(event: &str) -> &'static str {
     task::common::state_machine::Event::parse(event).failure_label()
+}
+
+/// Escape raw ASCII control chars (LF / CR / TAB) that appear inside JSON string
+/// scope, leaving everything else untouched. Tracks `"`/`\\` state to differentiate
+/// "inside string" from "outside string". Used as a one-shot repair for
+/// `--message` / `--service` / similar LLM-supplied payloads where the model
+/// emitted a literal newline inside a long string value instead of the two-char
+/// `\n` escape (the #1 LLM JSON mistake). Outside strings these bytes are
+/// already legal JSON whitespace, so leaving them is fine; inside strings they
+/// are illegal control chars, so escaping them produces the likely-intended
+/// valid JSON.
+pub(crate) fn escape_control_chars_in_strings(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in s.chars() {
+        if escaped {
+            // Inside a string, the previous char was `\`; emit this one verbatim
+            // (it forms an escape sequence like `\n` / `\"` / `\\` / `\u…`).
+            out.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_string => {
+                escaped = true;
+                out.push(ch);
+            }
+            '"' => {
+                in_string = !in_string;
+                out.push(ch);
+            }
+            '\n' if in_string => out.push_str("\\n"),
+            '\r' if in_string => out.push_str("\\r"),
+            '\t' if in_string => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod escape_control_chars_tests {
+    use super::escape_control_chars_in_strings;
+
+    #[test]
+    fn escapes_raw_lf_inside_string() {
+        let input = "{\"text\":\"line1\nline2\"}";
+        let out = escape_control_chars_in_strings(input);
+        assert_eq!(out, "{\"text\":\"line1\\nline2\"}");
+    }
+
+    #[test]
+    fn preserves_lf_outside_string() {
+        // Real newline between fields is legal JSON whitespace; leave it alone.
+        let input = "{\n\"k\":\"v\"\n}";
+        let out = escape_control_chars_in_strings(input);
+        assert_eq!(out, "{\n\"k\":\"v\"\n}");
+    }
+
+    #[test]
+    fn preserves_existing_escape_sequences() {
+        let input = "{\"text\":\"a\\nb\\\"c\"}";
+        let out = escape_control_chars_in_strings(input);
+        // `\n` and `\"` are already escapes; nothing to repair.
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn handles_cr_and_tab() {
+        let input = "{\"text\":\"a\rb\tc\"}";
+        let out = escape_control_chars_in_strings(input);
+        assert_eq!(out, "{\"text\":\"a\\rb\\tc\"}");
+    }
+
+    #[test]
+    fn repaired_json_round_trips_to_serde() {
+        let input = "{\"event\":\"deliverable_received\",\"text\":\"line1\nline2\"}";
+        let repaired = escape_control_chars_in_strings(input);
+        let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(parsed["text"], "line1\nline2");
+    }
 }
 
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).

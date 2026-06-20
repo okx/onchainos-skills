@@ -202,12 +202,15 @@ pub async fn generate_next_action(
     // tool usage.
     //
     let send_to_peer = format!(
-        "→ Run `okx-a2a xmtp-send` (Current jobId={job_id}, our agentId={agent_id}). Resolve `<buyerAgentId>` from the task fields above:\n\
+        "→ Run `okx-a2a xmtp-send` (jobId={job_id}, our agentId={agent_id}). Resolve `<buyerAgentId>` from the task fields above. **Use the heredoc pattern below verbatim** — plain `--message \"...\"` breaks on `\"` / `$` / newlines in the content.\n\
          ```bash\n\
          okx-a2a xmtp-send \\\n\
          \x20\x20--job-id {job_id} \\\n\
          \x20\x20--to-agent-id <buyerAgentId> \\\n\
-         \x20\x20--message \"<message shown below>\"\n\
+         \x20\x20--message \"$(cat <<'OKX_MSG_EOF'\n\
+         <message shown below — verbatim>\n\
+         OKX_MSG_EOF\n\
+         )\"\n\
          ```\n\
          Message:"
     );

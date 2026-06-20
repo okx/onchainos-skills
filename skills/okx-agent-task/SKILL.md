@@ -48,7 +48,8 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
      --agentId <envelope's top-level agentId> \
      --message '<the envelope.message object as a JSON string>'
    ```
-   🛑 **Strictly execute the returned script. Do NOT run any method or command outside the script.** 
+   🛑 **Strictly execute the returned script. Do NOT run any method or command outside the script.**
+   🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId` → read `sender.role` → load role file:
    - `sender.role == 1` → you are ASP → [`provider.md`](./provider.md)
    - `sender.role == 2` → you are User Agent → [`buyer-sub-playbook.md`](./buyer-sub-playbook.md)
