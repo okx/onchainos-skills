@@ -27,18 +27,16 @@ pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>, visibility: i64) -> 
      🛑 **This is not an auxiliary event; you MUST notify the user.**\n\n\
      [Your next action — call ONE command only, then END TURN]\n\n\
      {title_query_hint}\
-     🌐 **Localize first** — translate the canonical English notification below into the user's language (preserve every data value verbatim — jobId hex, AgentID digits, fee amounts, symbols).\n\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content to translate:\n\
+     okx-a2a user notify --content '<localized content>'\n\
+     ```\n\
+     Content:\n\
      \x20\x20{notify_content}\n\n\
      {public_only_warning}-> **end this turn**.\n"
     )
 }
 
 pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -60,7 +58,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
         let payment_escrow_notify = super::super::content::payment_mode_escrow_user_notify(job_id, title_display);
         out.push_str(&format!("\
      ━━━━━━━━━ escrow (paymentMode=1) ━━━━━━━━━\n\n\
-     **Step 2 - notify the user via `okx-a2a user notify`** ({l10n_dispatch}):\n\
+     **Step 2 - notify the user via `okx-a2a user notify`**:\n\
      \x20\x20```bash\n\
      \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
      \x20\x20```\n\
@@ -72,17 +70,13 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     if pm != Some(1) {
         let x402_paying = super::super::content::x402_paying_user_notify(job_id, title_display);
         let x402_replay_ok = super::super::content::x402_replay_success_user_notify(job_id);
-        let cmd_replay_input = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[x402 replay input {short_id}] field input"), "x402_replay_input");
+        let cmd_replay_input = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 replay input {short_id}] field input\" --source-event x402_replay_input");
 
         out.push_str(&format!("\
      ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\
-     [Shared rules]\n\
-     (R1) L10n: MUST translate `--user-content` / `--list-label` / `--content` to the user's language.\n\
-     (R2) Follow the playbook the CLI returns verbatim. Do NOT manually construct `--llm-content`.\n\
-     (R3) After the user replies (relayed as `event:\"user_decision_<source-event>\"`), call `next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"user_decision_<source-event>\",\"jobId\":\"{job_id}\",\"data\":\"<verbatim>\"}}'`. Do NOT keyword-match yourself.\n\n\
      Extract endpoint, acceptsJson, feeTokenSymbol, feeAmount, providerAgentId from the previous turn.\n\
      ⚠️ **If any parameter is missing** (context compaction): run `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` for providerAgentId, then `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json` for endpoint, then `onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}` for acceptsJson/feeTokenSymbol/feeAmount.\n\n\
-     **Step 2 — notify payment in progress** (apply R1):\n\
+     **Step 2 — notify payment in progress**:\n\
      \x20\x20```bash\n\
      \x20\x20okx-a2a user notify --content '<translated>'\n\
      \x20\x20```\n\
@@ -93,7 +87,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ```\n\
      `--body`: pass the JSON body from `x402_input_required` confirmation if it happened; omit otherwise.\n\
      Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, deliverableSavedPath, txHash }}\n\n\
-     🔴 **Step 4 — notify user with FULL deliverable** (apply R1):\n\
+     🔴 **Step 4 — notify user with FULL deliverable**:\n\
      `replayBodyDisplay` IS the deliverable the user paid for. Copy it **verbatim** into the notification.\n\
      ❌ Do NOT summarize/truncate `replayBodyDisplay` — the user paid but never receives the deliverable.\n\n\
      ▸ replaySuccess=true:\n\
@@ -103,7 +97,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ❌ Do NOT re-run this turn's commands (double payment) or skip next-action (job stuck).\n\n\
      ▸ replaySuccess=false:\n\
      Check `replayBody` for `requiredArgs` / `fields` / `status: \"input_required\"`.\n\n\
-     \x20\x20▸▸ **Endpoint needs business parameters** → push decision card (apply R1–R3):\n\
+     \x20\x20▸▸ **Endpoint needs business parameters** → push decision card:\n\
      \x20\x20```bash\n\
      \x20\x20{cmd_replay_input}\n\
      \x20\x20```\n\
@@ -195,7 +189,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         title = p.title,
     );
 
-    let cmd_no_asp = super::super::flow::pending_cmd(job_id, agent_id, None, "[No ASP] negotiate timeout — next-step decision", "no_asp_found");
+    let cmd_no_asp = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP] negotiate timeout — next-step decision\" --source-event no_asp_found");
 
     format!(
         "{task_block}\
@@ -226,7 +220,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
          ```bash\n\
          {cmd_no_asp}\n\
          ```\n\
-         `--user-content` template (translate to user's language):\n\
+         `--user-content` template:\n\
          Negotiation with ASP {provider_agent_id} did not reach agreement within 2 rounds.\n\n\
          What would you like to do next?\n\
          A. Browse the ASP list\n\
@@ -254,7 +248,6 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
     // visibility: 0 = public, 1 = private. The "make public" option only makes sense
     // when the task is currently private; otherwise drop the option and renumber close.
     let is_private = visibility == 1;
-    let option_count_num = if is_private { "4" } else { "3" };
     let close_label = if is_private { "D" } else { "C" };
     let option_public_line = if is_private {
         "C. Make the task public so any qualified ASP can apply\n         "
@@ -272,19 +265,20 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
 
     if let Err(e) = reset_result {
         return format!(
-            "[job_provider_reject] ❌ POST /priapi/v1/aieco/task/{job_id}/reset/asp failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+            "[job_provider_reject] ❌ POST reset/asp failed: {e}\n\n\
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         );
     }
 
-    let session_hint = super::super::flow::SESSION_STATUS_HINT;
-    let l10n_prompt = super::super::flow::L10N_PROMPT;
-    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
-    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
-    let cmd = super::super::flow::pending_cmd(
-        job_id,
-        agent_id,
-        None,
+    let user_content = format!(
+        "[Job {short_id} — you are the User Agent] ASP declined to take this task. What would you like to do next?\n\n\
+         A. Browse the ASP list\n\
+         B. Designate a specific ASP by agentId\n\
+         {option_public_line}{close_label}. Close the task"
+    );
+    let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+        job_id, "buyer", agent_id, None,
+        &user_content,
         &format!("[Reject {short_id}] next-step decision"),
         "job_provider_reject",
     );
@@ -292,20 +286,7 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
     format!(
     "[job_provider_reject] ✅ ASP binding reset (reset/asp) completed in-process.\n\n\
      🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
-     {session_hint}\n\
-     ```bash\n\
-     {cmd}\n\
-     ```\n\
-     {l10n_prompt}\n\
-     **`--user-content` template** (canonical English — translate to user's language; keep the {option_count_num} lettered options):\n\
-     ```\n\
-     [Job {short_id} — you are the User Agent] ASP declined to take this task. What would you like to do next?\n\n\
-     A. Browse the ASP list\n\
-     B. Designate a specific ASP by agentId\n\
-     {option_public_line}{close_label}. Close the task\n\
-     ```\n\n\
-     {follow_playbook}\n\
-     {route_hint}\n"
+     {request_block}\n"
     )
 }
 

@@ -12,7 +12,6 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
     // visibility: 0 = public, 1 = private. The "make public" option only makes sense
     // when the task is currently private; otherwise drop the option and renumber close.
     let is_private = visibility == 1;
-    let option_count_num = if is_private { "4" } else { "3" };
     let close_label = if is_private { "D" } else { "C" };
     let option_public_line = if is_private {
         "C. Make the task public so any qualified ASP can apply\n         "
@@ -27,43 +26,37 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         if let Err(e) = super::super::reject_apply::handle_reject_apply(&mut client, job_id, Some(agent_id)).await {
             return format!(
                 "[provider_applied/over_budget] ❌ reject-apply failed in-process: {e}\n\n\
-                 Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+                 See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
             );
         }
 
         let short_id = ctx.short_id;
-        let session_hint = super::super::flow::SESSION_STATUS_HINT;
-        let l10n_prompt = super::super::flow::L10N_PROMPT;
-        let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
-        let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
-        let cmd = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[Over budget {short_id}] next-step decision"), "apply_over_budget");
+        let user_content = format!(
+            "[Job {short_id} — you are the User Agent] The ASP's quote exceeded the maximum budget for this task. The apply has been rejected automatically.\n\n\
+             What would you like to do next?\n\
+             A. Browse the ASP list\n\
+             B. Designate a specific ASP by agentId\n\
+             {option_public_line}{close_label}. Close the task"
+        );
+        let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+            job_id, "buyer", agent_id, None,
+            &user_content,
+            &format!("[Over budget {short_id}] next-step decision"),
+            "apply_over_budget",
+        );
 
         return format!(
         "[provider_applied/over_budget] ✅ reject-apply completed in-process.\n\n\
          🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
-         {session_hint}\n\
-         ```bash\n\
-         {cmd}\n\
-         ```\n\
-         {l10n_prompt}\n\
-         **`--user-content` template** (canonical English — translate to user's language; keep the {option_count_num} lettered options):\n\
-         ```\n\
-         [Job {short_id} — you are the User Agent] The ASP's quote exceeded the maximum budget for this task. The apply has been rejected automatically.\n\n\
-         What would you like to do next?\n\
-         A. Browse the ASP list\n\
-         B. Designate a specific ASP by agentId\n\
-         {option_public_line}{close_label}. Close the task\n\
-         ```\n\n\
-         {follow_playbook}\n\
-         {route_hint}\n"
+         {request_block}\n"
         );
     }
 
     // ── Within-budget branch: confirm-accept on-chain (escrow funded; status → accepted) ──
-    if let Err(e) = super::super::accept::handle_confirm_accept(&mut client, job_id).await {
+    if let Err(e) = super::super::accept::handle_confirm_accept(&mut client, job_id, ctx.prefetched).await {
         return format!(
             "[provider_applied/confirm_accept] ❌ confirm-accept failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         );
     }
 
@@ -90,11 +83,10 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
     let escrow_section = if pm == Some(3) { String::new() } else { format!("\
      --------- Branch A: escrow ---------\n\n\
      Notify the user that accept succeeded via `okx-a2a user notify`:\n\
-     🌐 **Localize first** — translate the canonical English content below.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content:\n\
+     okx-a2a user notify --content '<localized content>'\n\
+     ```\n\
+     Content:\n\
      {accepted_escrow_notify}\n\n") };
 
     let x402_section = if pm == Some(1) { String::new() } else { format!("\
@@ -114,13 +106,12 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      🛑 **broadcast ≠ on-chain confirmed**: `complete` CLI success = transaction broadcast submitted, not on-chain confirmed.\n\
      ❌ Do NOT call `okx-a2a user notify` here — the final completion summary is owned by the `job_completed` event (fired after on-chain confirmation).\n\
      ❌ Do NOT say \"task complete\" / \"funds settled\" / \"任务完成\" — factually wrong at this point.\n\n\
-     ⚠️ **complete failure fallback**: if `onchainos agent complete` returns an error (CLI output contains `\"ok\": false` or stderr error),\n\
-     notify the user via `okx-a2a user notify` and provide a retry command:\n\
-     🌐 **Localize first** — translate the canonical English content below.\n\
+     ⚠️ **complete failure fallback**: if `onchainos agent complete` returns an error,\n\
+     notify the user via `okx-a2a user notify`:\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>'\n\
+     okx-a2a user notify --content '<localized content>'\n\
      ```\n\
-     Canonical English content: {complete_failed}\n\
+     Content: {complete_failed}\n\
      → **End this turn** and wait for user retry or a wakeup_notify event.\n\n\
      **B-Branch 2: replaySuccess=false (only take this branch when replaySuccess=false is explicitly found in context)**\n\n\
      ⚠️ **Do not run complete** -- the user did not receive the deliverable.\n\n\
@@ -132,21 +123,12 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20→ **End this turn.** Do nothing further.\n\n\
      \x20\x20▸ **If no** (generic replay failure, no pending decision):\n\
      \x20\x20\x20\x20Notify the user of replay failure via `okx-a2a user notify`:\n\
-     \x20\x20\x20\x20🌐 **Localize first** — translate the canonical English content below.\n\
      \x20\x20\x20\x20```bash\n\
-     \x20\x20\x20\x20okx-a2a user notify --content '<your translated content>'\n\
+     \x20\x20\x20\x20okx-a2a user notify --content '<localized content>'\n\
      \x20\x20\x20\x20```\n\
-     \x20\x20\x20\x20Canonical English content:\n\
+     \x20\x20\x20\x20Content:\n\
      \x20\x20\x20\x20{accepted_x402_fail}\n\n\
-     🛑🛑🛑 **job_completed MANDATORY rule**:\n\
-     After complete is settled on-chain, a `job_completed` system event will arrive.\n\
-     Upon receiving `job_completed`, you **MUST** call:\n\
-     ```bash\n\
-     onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_completed\",\"jobId\":\"{job_id}\"}}'\n\
-     ```\n\
-     Follow the returned playbook (it will guide you to notify the user that the job is complete).\n\
-     ❌ **NEVER** ignore the `job_completed` event -- ignoring it = user never learns the job is done.\n\
-     ❌ **NEVER** skip `next-action` and compose the completion notice yourself -- the playbook contains the full summary.\n") };
+     → Wait for `job_completed` system event; handle via `next-action`.\n") };
 
     let step1 = if ctx.prefetched.is_some() {
         format!("\
@@ -211,11 +193,11 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
        --token-symbol \"{sym_field}\" --token-amount \"{amt_field}\"\n\
      ```\n\
      For file type only, add `--file-key \"<fileKey>\"`. Record savedPath from output.\n\n\
-     **Step 3 — Notify user** (🌐 translate to user's language; keep data values verbatim)\n\
+     **Step 3 — Notify user**\n\
      ```bash\n\
-     okx-a2a user notify --content '<translated content>'\n\
+     okx-a2a user notify --content '<localized content>'\n\
      ```\n\
-     Canonical content:\n\
+     Content:\n\
      \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
      \x20\x20Provider: {provider_field}\n\
      \x20\x20Type: <file|text>\n\
@@ -375,8 +357,8 @@ pub(crate) fn deliverable_received_cli(
         "[deliverable_received_cli] ✓ {deliverable_type} deliverable downloaded and saved in-process.\n\
          savedPath: {saved_path}\n\
          originalName: {original_name}\n\n\
-         [Your next action] Translate the canonical English notification below to the user's language, then dispatch it. End the turn after notifying.\n\n\
-         Canonical content:\n\
+         [Your next action] Notify the user and end the turn.\n\n\
+         Content:\n\
          \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
          \x20\x20Provider: {provider_id}\n\
          \x20\x20Type: {deliverable_type}\n\
@@ -384,8 +366,8 @@ pub(crate) fn deliverable_received_cli(
          \x20\x20\n\
          \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\n\
          ```bash\n\
-         okx-a2a user notify --content '<your translated content>'\n\
-         ```\n\n\
+         okx-a2a user notify --content '<localized content>'\n\
+         ```\n\
          **End this turn** after notifying. Wait for `job_submitted`.\n\
          When it arrives, call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
     )
@@ -419,7 +401,6 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
 ///   → Step 3 (compose review user_content) → push pending-decisions-v2 review card.
 /// User must reply A (approve) / B (reject). Auto-approve is strictly forbidden.
 pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
-    let l10n_prompt_bold = super::super::flow::L10N_PROMPT_BOLD;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
@@ -431,14 +412,14 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         Some(p) => p,
         None => return format!(
             "[job_submitted_escrow] ❌ no prefetched task context for job {job_id}; cannot run the review flow.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let provider_field: &str = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
             "[job_submitted_escrow] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot run the review flow.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     // Inline-from-prefetched values used in Step 2b's task-deliverable-save commands.
@@ -552,8 +533,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ⚠️ The deliverable content MUST appear in Step 3's userContent — the user has not seen the body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\n\
      {step2}\
      --------- Step 3: escrow review — push the decision card to the user ---------\n\n\
-     **Step 3a — Compose `--user-content` from Step 2's deliverable variables** (English source — fill `<placeholder>` from runtime values, THEN localize per [Localization] rules):\n\n\
-     {l10n_prompt_bold}\n\n\
+     **Step 3a — Compose `--user-content` from Step 2's deliverable variables** (fill `<placeholder>` from runtime values):\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
      [Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (file); downloaded locally.\n\
@@ -613,14 +593,14 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
         Some(p) => p,
         None => return format!(
             "[job_submitted_x402] ❌ no prefetched task context for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let provider_field: &str = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
             "[job_submitted_x402] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
 
@@ -683,11 +663,10 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
      Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in B-Step 2.\n\n\
      **B-Step 2 — Notify the user with a SINGLE consolidated message via `okx-a2a user notify`:**\n\
-     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve every data value verbatim — jobId hex, paths, URLs, score, comment).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content — compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
+     okx-a2a user notify --content '<localized content>'\n\
+     ```\n\
+     Compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Deliverable received notice (always included; pick the sub-template that matches `deliverableType`):\n\n\
      \x20\x20deliverableType=file:\n\
      \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
@@ -737,7 +716,7 @@ pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
         ),
         Err(e) => format!(
             "[approve_review] ❌ `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     }
 }
@@ -770,7 +749,7 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
         ),
         Err(e) => format!(
             "[reject_review] ❌ `onchainos agent reject {job_id} --reason \"{reason}\"` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     }
 }
@@ -811,13 +790,11 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
      Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in A-Step 2.\n\n\
      **A-Step 2 — Notify the user with a SINGLE consolidated message via `okx-a2a user notify`:**\n\
-     🛑🛑🛑 You are in a **sub session (backup)**. Any text you output here is invisible to the user. The ONLY way to reach the user is `okx-a2a user notify`.\n\
-     ⚠️ txHash: find the txHash (format 0x...) from the earlier `onchainos agent complete` CLI output in this sub session context. If not in context (e.g. auto-complete scenarios), omit the on-chain receipt line.\n\
-     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve txHash / score / amounts / title verbatim).\n\
+     ⚠️ txHash: find the txHash (format 0x...) from the earlier `onchainos agent complete` CLI output. If not in context, omit the on-chain receipt line.\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content — compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
+     okx-a2a user notify --content '<localized content>'\n\
+     ```\n\
+     Compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Completion notice (always included):\n\
      \x20\x20{completed_escrow_notify}\n\n\
      ▸ Rating info (include ONLY if A-Step 1's feedback-submit succeeded; if it failed, omit this entire half):\n\
@@ -842,12 +819,10 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
      Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in B-Step 2.\n\n\
      **B-Step 2 — Notify the user with a SINGLE consolidated message via `okx-a2a user notify`:**\n\
-     🛑🛑🛑 You are in a **sub session (backup)**. Any text you output here is invisible to the user. The ONLY way to reach the user is `okx-a2a user notify`.\n\
-     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve score / amounts / title verbatim).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content — compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
+     okx-a2a user notify --content '<localized content>'\n\
+     ```\n\
+     Compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Completion notice (always included):\n\
      \x20\x20{completed_x402_notify}\n\n\
      ▸ Rating info (include ONLY if B-Step 1's feedback-submit succeeded; if it failed, omit this entire half):\n\

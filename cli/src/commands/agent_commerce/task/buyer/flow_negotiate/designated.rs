@@ -259,10 +259,10 @@ pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
 /// `Some`, values are filled directly into the playbook so the LLM does not
 /// need to "recall" them from a prior designated-route response.
 pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, route_data: Option<&serde_json::Value>) -> String {
-    let cmd_x402_invalid = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[x402 invalid {short_id}] next-step decision"), "x402_invalid");
-    let cmd_input_required = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[x402 input {short_id}] field confirmation"), "x402_input_required");
-    let cmd_x402_price = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[x402 price {short_id}] price decision"), "x402_price_mismatch");
-    let cmd_over_budget = super::super::flow::pending_cmd(job_id, agent_id, None, &format!("[Over budget {short_id}] budget decision"), "over_budget");
+    let cmd_x402_invalid = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 invalid {short_id}] next-step decision\" --source-event x402_invalid");
+    let cmd_input_required = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 input {short_id}] field confirmation\" --source-event x402_input_required");
+    let cmd_x402_price = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 price {short_id}] price decision\" --source-event x402_price_mismatch");
+    let cmd_over_budget = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Over budget {short_id}] budget decision\" --source-event over_budget");
 
     // Extract x402 fields from pre-fetched route data; fall back to placeholders.
     let (ep, fa, ft) = route_data.map(|rd| (
@@ -285,17 +285,12 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
     format!("\
          [Designated ASP route: x402] Provider {dp_id} has an x402 endpoint.\n\
          [Role] User (Buyer)\n\n\
-         [Shared rules for all branches below]\n\
-         (R1) Session: the daemon resolves the active session from `--job-id`; no sessionKey lookup needed.\n\
-         (R2) L10n: MUST translate `--user-content` AND `--list-label` to the user's language before running. Sending English to a non-English user is a violation.\n\
-         (R3) Follow the playbook the CLI returns verbatim. Do NOT manually construct `--llm-content` / call `okx-a2a session send`.\n\
-         (R4) After the user replies, the system relays it as `event:\"user_decision_<source-event>\"`. Call `next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"user_decision_<source-event>\",\"jobId\":\"{job_id}\",\"data\":\"<verbatim reply>\"}}'` and follow the returned playbook. Do NOT keyword-match yourself.\n\n\
          **DX-Step 1 — validate endpoint + price + budget (single CLI call):**\n\
          ```bash\n\
          {validate_cmd}\n\
          ```\n\
          {validate_hint}Response field `result` determines the branch:\n\n\
-         - **`result == \"x402_invalid\"`** -> run (apply R1–R4):\n\
+         - **`result == \"x402_invalid\"`** -> run:\n\
          \x20\x20```bash\n\
          \x20\x20{cmd_x402_invalid}\n\
          \x20\x20```\n\
@@ -313,7 +308,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          \x20\x20\x20\x20- If `serviceParams` is parseable as JSON, check whether a key matches the field `name` → pre-fill.\n\
          \x20\x20\x20\x20- If `serviceParams` is natural language, try to extract a value that semantically matches the field `description` → pre-fill.\n\
          \x20\x20\x20\x20- Otherwise → mark as \"pending user input\".\n\n\
-         \x20\x20**IR-Step 2 — Push confirmation form to the user** (🛑 even if all fields are pre-filled, the user MUST confirm). Run (apply R1–R4):\n\
+         \x20\x20**IR-Step 2 — Push confirmation form to the user** (🛑 even if all fields are pre-filled, the user MUST confirm). Run:\n\
          \x20\x20```bash\n\
          \x20\x20{cmd_input_required}\n\
          \x20\x20```\n\
@@ -336,7 +331,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          \x20\x20Pre-filled values: <list each pre-filled field=value pair>\n\
          \x20\x20```\n\
          \x20\x20-> **end this turn** and wait for the user's reply.\n\n\
-         - **`result == \"price_mismatch\"`** -> run (apply R1–R4):\n\
+         - **`result == \"price_mismatch\"`** -> run:\n\
          \x20\x20```bash\n\
          \x20\x20{cmd_x402_price}\n\
          \x20\x20```\n\
@@ -349,7 +344,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          \x20\x20[PRICE_CONTEXT] endpoint=<endpoint> amountHuman=<amountHuman> tokenSymbol=<tokenSymbol> acceptsJson=<acceptsJson>\n\
          \x20\x20```\n\
          \x20\x20-> **end this turn** and wait for the user's reply.\n\n\
-         - **`result == \"over_budget\"`** -> run (apply R1–R4):\n\
+         - **`result == \"over_budget\"`** -> run:\n\
          \x20\x20```bash\n\
          \x20\x20{cmd_over_budget}\n\
          \x20\x20```\n\
@@ -378,56 +373,45 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
 
 /// Phase 2c: error branch — not_provider or offline decision card.
 pub(crate) fn branch_error(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
-    let session_hint = super::super::flow::SESSION_STATUS_HINT;
-    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
-    let route_hint = super::super::flow::ROUTE_VIA_ENVELOPE;
-    let cmd_not_provider = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[Not ASP {short_id}] next-step decision"), "not_provider");
-    let cmd_offline = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[Offline {short_id}] next-step decision"), "provider_offline");
-    let cmd_endpoint_not_found = super::super::flow::pending_cmd(job_id, agent_id, Some(dp_id), &format!("[Endpoint gone {short_id}] next-step decision"), "endpoint_not_found");
     let not_provider = super::super::content::not_provider_user_prompt(job_id, short_id, dp_id);
     let provider_offline = super::super::content::provider_offline_user_prompt(job_id, short_id, dp_id);
+
+    let endpoint_not_found_content = format!(
+        "[Job {short_id} — you are the User Agent] The previously selected service endpoint (`requestedEndpoint` from the response) of ASP (agentId={dp_id}) is no longer available. Choose next step:\n\
+         A. Specify another ASP — provide the agentId\n\
+         B. Make the job public — let more ASPs discover it\n\
+         C. Close the job"
+    );
+    let block_endpoint = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+        job_id, "buyer", agent_id, Some(dp_id),
+        &endpoint_not_found_content,
+        &format!("[Endpoint gone {short_id}] next-step decision"),
+        "endpoint_not_found",
+    );
+    let block_not_provider = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+        job_id, "buyer", agent_id, Some(dp_id),
+        &not_provider,
+        &format!("[Not ASP {short_id}] next-step decision"),
+        "not_provider",
+    );
+    let block_offline = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+        job_id, "buyer", agent_id, Some(dp_id),
+        &provider_offline,
+        &format!("[Offline {short_id}] next-step decision"),
+        "provider_offline",
+    );
 
     format!("\
          [Designated ASP route: error] Provider {dp_id} encountered a routing error.\n\
          [Role] User (Buyer)\n\n\
          **Branch by `errorType` from the `designated-route` response above (earlier in this turn):**\n\n\
-         - **`errorType == \"endpoint_not_found\"`** -> the persisted endpoint no longer exists in the ASP's service list (the ASP may have removed or changed the service).\n\
-         \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
-         \x20\x20{session_hint}\n\
-         \x20\x20```bash\n\
-         \x20\x20{cmd_endpoint_not_found}\n\
-         \x20\x20```\n\
-         \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules**.\n\
-         \x20\x20`--user-content` template (canonical English):\n\
-         \x20\x20[Job {short_id} — you are the User Agent] The previously selected service endpoint (`requestedEndpoint` from the response) of ASP (agentId={dp_id}) is no longer available. Choose next step:\n\
-         \x20\x20A. Specify another ASP — provide the agentId\n\
-         \x20\x20B. Make the job public — let more ASPs discover it\n\
-         \x20\x20C. Close the job\n\
-         \x20\x20{follow_playbook}\n\
-         \x20\x20-> **end this turn** and wait for the user's reply.\n\
-         \x20\x20{route_hint}\n\n\
+         - **`errorType == \"endpoint_not_found\"`** -> the persisted endpoint no longer exists in the ASP's service list.\n\
+         \x20\x20{block_endpoint}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\n\
          - **`errorType == \"not_provider\"`** -> the designated agent does not exist or is not registered as an ASP.\n\
-         \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
-         \x20\x20{session_hint}\n\
-         \x20\x20```bash\n\
-         \x20\x20{cmd_not_provider}\n\
-         \x20\x20```\n\
-         \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules**.\n\
-         \x20\x20`--user-content` template (canonical English):\n\
-         \x20\x20{not_provider}\n\
-         \x20\x20{follow_playbook}\n\
-         \x20\x20-> **end this turn** and wait for the user's reply.\n\
-         \x20\x20{route_hint}\n\n\
+         \x20\x20{block_not_provider}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\n\
          - **`errorType == \"offline\"`** -> the ASP is offline and cannot negotiate.\n\
-         \x20\x20Enqueue the user decision via `pending-decisions-v2 request`:\n\
-         \x20\x20{session_hint}\n\
-         \x20\x20```bash\n\
-         \x20\x20{cmd_offline}\n\
-         \x20\x20```\n\
-         \x20\x20🌐 **Localize `--user-content` AND `--list-label` per [Localization] rules**.\n\
-         \x20\x20`--user-content` template (canonical English):\n\
-         \x20\x20{provider_offline}\n\
-         \x20\x20{follow_playbook}\n\
-         \x20\x20-> **end this turn** and wait for the user's reply.\n\
-         \x20\x20{route_hint}\n")
+         \x20\x20{block_offline}\n\
+         \x20\x20-> **end this turn** and wait for the user's reply.\n\n")
 }

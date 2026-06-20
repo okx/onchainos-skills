@@ -161,7 +161,7 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          --user-content \"<compose from template below>\" \
          --list-label \"[SetASP {short_id}] provide service params\"\n\
          ```\n\
-         `--user-content` template (canonical English; 🌐 localize per user's language):\n\
+         `--user-content` template:\n\
          You selected Agent {dp_id} — <serviceName>.\n\
          Service: <serviceDescription>\n\
          Fee: <feeAmount> <feeTokenSymbol>\n\n\
@@ -210,7 +210,6 @@ pub(crate) fn provider_conversation_cli_inner(
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let title = ctx.title_display;
-    let l10n_dispatch = super::super::flow::L10N_DISPATCH_SHORT;
 
     let is_after_reject = prefetched_items.is_some();
 
@@ -238,37 +237,32 @@ pub(crate) fn provider_conversation_cli_inner(
     if items.is_empty() {
         if is_after_reject {
             let no_sellers = super::super::content::no_more_sellers_user_notify(job_id);
-            let cmd_no_asp = super::super::flow::pending_cmd(
-                job_id, agent_id, None,
+            let user_content = format!(
+                "{no_sellers}\n\
+                 A. Specify an ASP — provide the ASP's agentId\n\
+                 B. Make the job public — let more ASPs discover it\n\
+                 C. Close the job — cancel and refund"
+            );
+            let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+                job_id, "buyer", agent_id, None,
+                &user_content,
                 &format!("[No ASP {short_id}] {title} next-step decision"),
                 "no_asp_found",
             );
-            let l10n_prompt = super::super::flow::L10N_PROMPT;
-            let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
             return format!(
                 "[provider_conversation_reject] All pending ASPs rejected; none remaining.\n\n\
                  🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
-                 ```bash\n\
-                 {cmd_no_asp}\n\
-                 ```\n\
-                 {l10n_prompt}\n\
-                 `--user-content` template (canonical English — translate to user's language):\n\
-                 {no_sellers}\n\
-                 A. Specify an ASP — provide the ASP's agentId\n\
-                 B. Make the job public — let more ASPs discover it\n\
-                 C. Close the job — cancel and refund\n\n\
-                 {follow_playbook}\n"
+                 {request_block}\n"
             );
         }
         let content = super::super::content::pending_list_empty_user_notify();
         return format!(
             "[provider_conversation] No pending ASPs.\n\n\
-             **Action — notify the user.** Translate the canonical English below to the user's chat language, then dispatch:\n\
-             Canonical: {content}\n\
+             **Action — notify the user:**\n\
+             Content: {content}\n\
              ```bash\n\
-             okx-a2a user notify --content '<your translated content>' --json\n\
+             okx-a2a user notify --content '<localized content>' --json\n\
              ```\n\
-             {l10n_dispatch}\n\
              🛑 End turn after notifying.\n"
         );
     }
@@ -294,13 +288,7 @@ pub(crate) fn provider_conversation_cli_inner(
         short_id, title, asp_agent_id, name,
     );
 
-    let cmd = super::super::flow::pending_cmd(
-        job_id, agent_id, None,
-        &format!("[ASP {short_id}] Accept provider?"),
-        "provider_pending",
-    );
-    let l10n_prompt = super::super::flow::L10N_PROMPT;
-    let follow_playbook = super::super::flow::FOLLOW_PLAYBOOK;
+    let cmd = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[ASP {short_id}] Accept provider?\" --source-event provider_pending");
 
     format!(
         "[Trigger] ASP pending contact — showing first of {} ASP(s)\n\
@@ -311,8 +299,7 @@ pub(crate) fn provider_conversation_cli_inner(
          ```bash\n\
          {cmd}\n\
          ```\n\
-         {l10n_prompt}\n\
-         `--user-content` template (canonical English — translate to user's language):\n\
+         `--user-content` template:\n\
          {card_content}\n\n\
          `--llm-content` block (keep English verbatim — consumed by user-session agent for routing):\n\
          ```\n\
@@ -324,14 +311,11 @@ pub(crate) fn provider_conversation_cli_inner(
          \x20\x20\x20\x20```bash\n\
          \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"{asp_agent_id}\"}}'\n\
          \x20\x20\x20\x20```\n\
-         \x20\x20\x20\x20Follow the returned playbook verbatim.\n\
          \x20\x20• 2 / \"reject\" / \"拒绝\" / \"no\" / \"不\" / \"换一个\" / \"next\"  → run:\n\
          \x20\x20\x20\x20```bash\n\
          \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"{group_id}\"}}'\n\
          \x20\x20\x20\x20```\n\
-         \x20\x20\x20\x20Follow the returned playbook (shows next ASP or close options).\n\
-         ```\n\n\
-         {follow_playbook}\n",
+         ```\n",
         items.len(),
     )
 }

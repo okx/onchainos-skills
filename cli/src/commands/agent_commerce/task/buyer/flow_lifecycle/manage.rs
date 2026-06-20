@@ -368,16 +368,12 @@ pub(crate) fn attachment_added_cli(
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if file_path.is_empty() {
-        let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
         return format!(
-            "[attachment_added_cli] ERROR: filePath missing in --message JSON. \
-             The caller must include filePath when dispatching attachment_added.\n\n\
-             [Your next action] Notify the user that the attachment could not be processed.\n\n\
+            "[attachment_added_cli] ERROR: filePath missing in --message JSON.\n\n\
+             [Your next action] Notify the user:\n\
              ```bash\n\
-             okx-a2a user notify --content '<translate: Attachment forwarding failed — file path was not provided. Please retry via task-attach.>'\n\
-             ```\n\
-             {l10n_short}\n\n\
-             **End this turn.**\n"
+             okx-a2a user notify --content '<localized: Attachment forwarding failed — file path was not provided. Please retry via task-attach.>'\n\
+             ```\n"
         );
     }
 
@@ -385,15 +381,12 @@ pub(crate) fn attachment_added_cli(
         .and_then(|p| p.provider_agent_id.as_deref())
         .unwrap_or("");
     if to_agent_id.is_empty() {
-        let l10n_short = super::super::flow::L10N_DISPATCH_SHORT;
         return format!(
             "[attachment_added_cli] ERROR: provider not assigned — cannot forward attachment.\n\n\
-             [Your next action] Notify the user that the attachment will be sent once a provider is matched.\n\n\
+             [Your next action] Notify the user:\n\
              ```bash\n\
-             okx-a2a user notify --content '<translate: [Job {short_id}] Attachment saved locally but no provider assigned yet. It will be forwarded automatically once a provider accepts the task.>'\n\
-             ```\n\
-             {l10n_short}\n\n\
-             **End this turn.**\n"
+             okx-a2a user notify --content '<localized: [Job {short_id}] Attachment saved locally but no provider assigned yet. It will be forwarded automatically once a provider accepts the task.>'\n\
+             ```\n"
         );
     }
 
@@ -403,12 +396,12 @@ pub(crate) fn attachment_added_cli(
                 .replace("<short_jobId>", short_id);
             format!(
                 "[attachment_added_cli] ✓ Attachment uploaded and forwarded to provider in-process.\n\n\
-                 [Your next action] Translate the notification below to the user's language, then dispatch it. End the turn after notifying.\n\n\
-                 Canonical content:\n\
+                 [Your next action] Notify the user and end turn.\n\n\
+                 Content:\n\
                  \x20\x20{att_sent}\n\n\
                  ```bash\n\
-                 okx-a2a user notify --content '<your translated content>'\n\
-                 ```\n\n\
+                 okx-a2a user notify --content '<localized content>'\n\
+                 ```\n\
                  **End this turn.**\n"
             )
         }

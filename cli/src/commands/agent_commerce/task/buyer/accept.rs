@@ -225,30 +225,61 @@ pub async fn handle_set_payment_mode(
 
 /// confirm-accept — confirm acceptance of the provider.
 ///
-/// All parameters (provider, token symbol, amount) are read from the task detail API.
+/// When `prefetched` is provided (called from the `provider_applied` event handler),
+/// wallet/task fields are read directly from the pre-fetched context, avoiding 3
+/// redundant GET /task/{jobId} calls.  When `None` (CLI subcommand), the original
+/// API-call path is used.
 pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
     job_id: &str,
+    prefetched: Option<&common::PreFetchedTaskContext>,
 ) -> Result<()> {
-    let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
+    let (account_id, address, agent_id, provider, token_symbol, token_amount, payment_mode, token_address) =
+        if let Some(p) = prefetched {
+            let buyer_addr = p.buyer_agent_address.as_deref()
+                .ok_or_else(|| anyhow::anyhow!("prefetched missing buyerAgentAddress"))?;
+            let agent_id = p.buyer_agent_id.as_deref()
+                .ok_or_else(|| anyhow::anyhow!("prefetched missing buyerAgentId"))?
+                .to_string();
+            let (acct, addr) = signing::resolve_wallet(None, Some(buyer_addr))?;
+            let prov = p.provider_agent_id.as_deref()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("task {job_id} has no providerAgentId; cannot confirm-accept"))?
+                .to_string();
+            let sym = if p.token_symbol == "?" || p.token_symbol.is_empty() {
+                bail!("task {job_id} has no tokenSymbol");
+            } else {
+                p.token_symbol.clone()
+            };
+            let amt = if p.token_amount.is_empty() {
+                bail!("task {job_id} has no tokenAmount");
+            } else {
+                p.token_amount.clone()
+            };
+            let pm = PaymentMode::from_int(p.payment_mode.unwrap_or(0) as i32);
+            let ta = p.token_address.clone();
+            (acct, addr, agent_id, prov, sym, amt, pm, ta)
+        } else {
+            let (acct, addr, aid) =
+                signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
+            let task_resp = client.get_with_identity(&client.task_path(job_id), &aid).await?;
+            let prov = task_resp["providerAgentId"].as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("task {job_id} has no providerAgentId; cannot confirm-accept"))?
+                .to_string();
+            let sym = task_resp["tokenSymbol"].as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenSymbol"))?
+                .to_string();
+            let amt = task_resp["tokenAmount"].as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenAmount"))?
+                .to_string();
+            let pm = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
+            let ta = task_resp["tokenAddress"].as_str().map(String::from);
+            (acct, addr, aid, prov, sym, amt, pm, ta)
+        };
 
-    let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-
-    let provider = task_resp["providerAgentId"].as_str()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("task {job_id} has no providerAgentId; cannot confirm-accept"))?
-        .to_string();
-    let token_symbol = task_resp["tokenSymbol"].as_str()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenSymbol"))?
-        .to_string();
-    let token_amount = task_resp["tokenAmount"].as_str()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenAmount"))?
-        .to_string();
-
-    let payment_mode = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
     if payment_mode == PaymentMode::None {
         bail!(
             "task has no payment mode set yet (paymentMode=0); first run:\n  \
@@ -274,6 +305,7 @@ pub async fn handle_confirm_accept(
     confirm_accept_escrow(
         client, job_id, &provider, Some(&token_symbol), Some(&token_amount),
         &account_id, &address, &agent_id,
+        token_address.as_deref(),
     ).await?;
 
     if let Err(e) = negotiate::cleanup(job_id) {
@@ -293,6 +325,7 @@ async fn confirm_accept_escrow(
     account_id: &str,
     address: &str,
     agent_id: &str,
+    prefetched_token_address: Option<&str>,
 ) -> Result<()> {
     let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, "escrow")?;
 
@@ -310,11 +343,12 @@ async fn confirm_accept_escrow(
         .to_string();
 
     // Validate `currency` matches the task's tokenAddress.
-    let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
-    let task_token_address = task_resp["tokenAddress"]
-        .as_str()
-        .unwrap_or("")
-        .to_lowercase();
+    let task_token_address = if let Some(ta) = prefetched_token_address {
+        ta.to_lowercase()
+    } else {
+        let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
+        task_resp["tokenAddress"].as_str().unwrap_or("").to_lowercase()
+    };
     if !task_token_address.is_empty() && currency.to_lowercase() != task_token_address {
         bail!(
             "token mismatch: providerConfirmStatus returned currency={currency} but task tokenAddress={task_token_address}. \

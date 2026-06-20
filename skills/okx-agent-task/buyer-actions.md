@@ -127,8 +127,7 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `P
    - Otherwise → A2A (step 3 below).
    - ⚠️ **Do NOT call `okx-a2a session create` directly.**
 3. **A2A path**: map fields (`description` ← ServiceTitle, `budget` ← Price, `currency` ← symbol), cache `designatedProvider = { agentId, serviceType }` → enter [`buyer-actions-publish.md`](./buyer-actions-publish.md) to publish the task (🛑 must run the full publishing flow including confirmation form).
-4. `job_created` arrives → detect `designatedProvider` → **skip `recommend`, keep it private** → directly create the group and negotiate.
-5. Negotiation fails → automatically run `recommend <jobId>` to display for user to choose.
+4. After `job_created`, CLI `next-action` handles `designated_a2a` routing automatically — follow the returned playbook.
 
 ---
 
@@ -156,17 +155,4 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
    - ⚠️ **Language matching**: field labels MUST match the user's language.
    - Display the full confirmation form (format see `buyer-actions-publish.md` Appendix A) → **end this turn** and wait for explicit confirmation. If refused, end.
    - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn.**
-4. **Create the task after user confirmation**: `create-task` → **end this turn**, wait for `job_created`, cache `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`.
-5. **set-payment-mode** (triggered by `job_created`): `set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>` → **end this turn**, wait for `job_payment_mode_changed`.
-6. **task-402-pay** (triggered by `job_payment_mode_changed`): `task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <ep> --token-symbol <sym> --token-amount <amt> [--body '<serviceBody JSON>']`
-   - `--body`: only when Step 2 returned `inputRequired=true` — pass the `serviceBody` JSON collected in Step 3. Omit when the endpoint does not require business parameters.
-   - Do NOT send `user notify` for either outcome — the `job_accepted` handler owns the notification (success → `complete` → `job_completed` final summary; failure → replay-failure notice). **End this turn** and wait for `job_accepted`.
-7. Wait for `job_accepted` → call `next-action --role buyer --agentId <yours> --message '{"event":"job_accepted","jobId":"<jobId>"}'`; follow the script to complete.
-
-### Error Handling
-
-| Error | Response |
-|---|---|
-| Provider not found / Endpoint invalid / tokenSymbol not USDT/USDG | Inform user with specific reason; do not proceed. |
-| Create-task failed | Check network; guide retry. |
-| Payment signing failed | Inspect `executeErrorMsg`. Do NOT default to "balance insufficient" — system is gas-free. |
+4. **Create the task after user confirmation**: `create-task` with `--body '<serviceBody JSON>'` (only when Step 2 returned `inputRequired=true`; omit otherwise). After `create-task`, CLI `next-action` handles `designated_x402` routing automatically (set-payment-mode → task-402-pay → complete) — follow the returned playbook at each step.

@@ -309,7 +309,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
         TaskCommand::ConfirmAccept { job_id } =>
-            accept::handle_confirm_accept(&mut client, &job_id).await,
+            accept::handle_confirm_accept(&mut client, &job_id, None).await,
         TaskCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             accept::handle_direct_accept(&mut client, &job_id, &provider_agent_id, token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body } =>

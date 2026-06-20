@@ -149,6 +149,8 @@ pub struct PreFetchedTaskContext {
     pub service_token_address: Option<String>,
     pub service_token_amount: Option<String>,
     pub service_params: Option<String>,
+    pub buyer_agent_address: Option<String>,
+    pub token_address: Option<String>,
 }
 
 impl PreFetchedTaskContext {
@@ -170,6 +172,8 @@ impl PreFetchedTaskContext {
             service_token_address: v["serviceTokenAddress"].as_str().map(String::from),
             service_token_amount: v["serviceTokenAmount"].as_str().map(String::from),
             service_params: v["serviceParams"].as_str().map(String::from),
+            buyer_agent_address: v["buyerAgentAddress"].as_str().map(String::from),
+            token_address: v["tokenAddress"].as_str().map(String::from),
         }
     }
 

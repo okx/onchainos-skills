@@ -1,13 +1,3 @@
----
-name: okx-agent-task
-description: "User-session entry for okx-agent-task (buyer role). Covers roles, field mapping, pre-flight, intent routing, communication boundary, task publishing, designated-provider flows, and decision relay. Sub sessions use buyer-sub-playbook.md instead."
-license: Apache-2.0
-metadata:
-  author: okx
-  version: "3.4.8-beta"
-  homepage: "https://web3.okx.com"
----
-
 > **CRITICAL — STOP AND CHECK BEFORE ANY RESPONSE**
 >
 > If the user **explicitly** wrote "USDT" or "USDG" (e.g. "1 USDT", "100 USDG"), use that token directly — no confirmation needed.
@@ -24,18 +14,6 @@ OKX AI Task Marketplace: decentralized task delegation on XLayer. Three roles: *
 > **Fully gas-free**: every on-chain action goes through the platform's paymaster — never prompt for gas.
 
 > 🌐 **[Localization]** — all user-facing content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure.
-
----
-
-## Roles
-
-| Role | Role code | CLI value |
-|---|---|---|
-| **User Agent** | `1` | `--role buyer` |
-| **ASP (Agent Service Provider)** | `2` | `--role provider` |
-| **Evaluator Agent** | `3` | `--role evaluator` |
-
-One wallet can hold multiple roles.
 
 ---
 
@@ -57,23 +35,9 @@ Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proce
 
 ---
 
-## ⚠️ Critical Field Mapping Table
-
-| Field | Mapping |
-|---|---|
-| `visibility` | `0` = PUBLIC / `1` = PRIVATE |
-| `paymentMode` | `0` = unset / `1` = escrow / `3` = x402 |
-| `sender.role` (a2a-agent-chat) | Counterparty: `1` = User Agent (you are ASP) / `2` = ASP (you are User Agent) |
-| `vote` (Evaluator) | `0` = Approve (buyer wins) / `1` = Reject (ASP wins) |
-| `status` (task) | `-1`=draft / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete / `7`=close / `8`=expired / `9`=failed |
-
-🛑 Before writing any semantic judgment about these fields, cross-check this table.
-
----
-
 ## Reading Order
 
-1. **This file**: roles, pre-flight, field mapping, intent routing, buyer flows, communication boundary — read once.
+1. **This file**: pre-flight, intent routing, communication boundary, decision relay — read once.
 2. **[`buyer-actions-publish.md`](./buyer-actions-publish.md)**: on demand — read when the user wants to publish a task or manage drafts.
 3. **[`buyer-actions.md`](./buyer-actions.md)**: on demand — read only the specific section needed (§2 attachment / §3 terms / §4 deliverables / §5-§6 designated-provider).
 4. **[`_shared/cli-reference.md`](./_shared/cli-reference.md)**: do NOT read full file. Use `grep` for the specific command you need.
@@ -93,6 +57,8 @@ Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proce
 | Add attachment / image | "补充附件 / attach file to task" | [`buyer-actions.md`](./buyer-actions.md) §2 |
 | Switch provider / stop task | "换服务商 / switch provider / 关闭任务 / stop task" | [`buyer-actions.md`](./buyer-actions.md) §3 |
 | View deliverables | "查看交付物 / view deliverables" | [`buyer-actions.md`](./buyer-actions.md) §4 |
+| Designated-provider A2A | "指定服务商 / use the service of Agent X / initiate a direct conversation with this provider" | [`buyer-actions.md`](./buyer-actions.md) §5 |
+| Designated-provider x402 | "send a request to this endpoint" | [`buyer-actions.md`](./buyer-actions.md) §6 |
 | Negotiate with provider | "negotiate with XXX / 找810接单" | Sub session handles automatically after task is published |
 | Find tasks (ASP) | "接单 / start accepting jobs" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
 | Take specific task (ASP) | "接 {jobId} / contact the buyer of {jobId}" | 🛑 `common context` → `okx-a2a session create` → negotiate. Do NOT directly `apply`. See [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md). |
@@ -120,12 +86,6 @@ Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proce
 - ❌ Never run `onchainos agent` task CLIs directly from user session (only sub sessions do that)
 - ❌ Never craft `source:"system"` envelopes
 - ❌ Never call `pending-decisions-v2 resolve/pick/cancel/list` proactively — only `resolve-prompt` after user replies
-
----
-
-## Designated-Provider flows → [`buyer-actions.md`](./buyer-actions.md) §5/§6
-
-**Trigger**: "Please initiate a direct conversation with this provider" (A2A §5) / "Please use onchainos to send a request to this endpoint" (x402 §6) / "指定服务商" / "use the service of Agent X"
 
 ---
 

@@ -16,11 +16,10 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
      **Step 1 — Notify the user the rejection is confirmed via `okx-a2a user notify`:**\n\
-     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve jobId hex, amounts, symbols verbatim).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content:\n\
+     okx-a2a user notify --content '<localized content>'\n\
+     ```\n\
+     Content:\n\
      {rejected_notify}\n\n\
      **Step 2 — Silently wait for the ASP's decision:**\n\n\
      ⚠️ **Do not send any message to the ASP**. The ASP will decide:\n\
@@ -46,14 +45,14 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
         Some(s) => s,
         None => return format!(
             "[job_disputed] ❌ prefetched.provider_agent_id missing for job {job_id}; cannot fetch chat history for dispute evidence.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` so they can decide how to proceed.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let messages = match okx_a2a::session_history(job_id, provider_id) {
         Ok(m) => m,
         Err(e) => return format!(
             "[job_disputed] ❌ `okx-a2a session history` failed: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let chat_block = if messages.is_empty() {
@@ -95,12 +94,11 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      onchainos agent dispute upload {job_id} --role buyer --agent-id {agent_id} --text \"<chat history block from Step 2>\"\n\
      ```\n\
      The CLI auto-attaches every entry under `~/.onchainos/deliverables/buyer/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
-     **Step 4 — Notify the user via `okx-a2a user notify` (after upload returns):**\n\n\
-     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve jobId / title verbatim).\n\
+     **Step 4 — Notify the user via `okx-a2a user notify` (after upload returns):**\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content:\n\
+     okx-a2a user notify --content '<localized content>'\n\
+     ```\n\
+     Content:\n\
      \x20\x20\x20\x20[Dispute opened] Arbitration for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the arbiter's verdict.\n\n\
      **Step 5 — End this turn.** Do NOT send any message to the ASP.\n\n\
 "
@@ -126,7 +124,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
         Some(p) => p,
         None => return format!(
             "[dispute_resolved] ❌ no prefetched task context for job {job_id}; cannot decide winner.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let user_won = match p.status {
@@ -134,18 +132,18 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
         Some(6) => false,
         Some(other) => return format!(
             "[dispute_resolved] ❌ unexpected prefetched status {other} for job {job_id}; expected 6 (completed/ASP wins) or 9 (failed/user wins).\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
         None => return format!(
             "[dispute_resolved] ❌ prefetched.status missing for job {job_id}; cannot decide winner.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
             "[dispute_resolved] ❌ prefetched.provider_agent_id missing for job {job_id}; auto-rate cannot run.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request`.\n"
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
 
@@ -180,11 +178,10 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in Step 3.\n\n\
      **Step 3 — Notify the user with a SINGLE consolidated message:**\n\
-     🌐 **Localize first** — translate the canonical English content below into the user's language (preserve score / title / amounts / description verbatim).\n\
      ```bash\n\
-     okx-a2a user notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content — compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
+     okx-a2a user notify --content '<localized content>'\n\
+     ```\n\
+     Compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Arbitration outcome (always included):\n\
      \x20\x20{dispatch_content}\n\n\
      ▸ Rating info (include ONLY if Step 2's feedback-submit succeeded; if it failed, omit this entire half):\n\

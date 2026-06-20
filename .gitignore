@@ -23,6 +23,7 @@ build/
 .build/
 out/
 target/
+target-pack/
 
 # Xcode / Swift
 xcuserdata/
