@@ -24,6 +24,13 @@ pub(super) const LOCALIZATION_PREFIX: &str = "\
 /// Shared switch-asp routing text for user_decision_* handlers.
 /// Covers: user-reject → asp-match → service extraction → set-asp (or set_asp_params decision).
 fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> String {
+    // CLI mode (Claude Code / Codex): drop the passive "Waiting for ASP to accept"
+    // phrase — it reads as a turn-end cue to LLM-driven watch loops and suppresses re-arm.
+    let success_line = if super::content::is_cli_mode() {
+        "\x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>.\"\n"
+    } else {
+        "\x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\"\n"
+    };
     format!("\
                      \x20\x20\x20\x201. Reject current ASP (safe even if none active):\n\
                      \x20\x20\x20\x20```bash\n\
@@ -50,7 +57,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\"\n\
+                     {success_line}\
                      \x20\x20\x20\x206. **Create sub session + SKILL_PREFETCH** (only after set-asp succeeds):\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id <agentId> --json\n\
@@ -419,7 +426,15 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      ⚠️ Do NOT execute any on-chain action that wasn't part of the original failed command — the user reply only authorizes retry/edit of the failed step, not unrelated new actions.\n\
                      ⚠️ If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event cli_failed`. **`--user-content` and `--list-label` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
                 ),
-                "asp_match_pick" => format!(
+                "asp_match_pick" => {
+                    // CLI mode (Claude Code / Codex): drop the passive "Waiting for ASP to accept"
+                    // phrase — it reads as a turn-end cue to LLM-driven watch loops and suppresses re-arm.
+                    let success_line = if super::content::is_cli_mode() {
+                        "\x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <X>.\" End the turn.\n"
+                    } else {
+                        "\x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <X>. Waiting for ASP to accept.\" End the turn.\n"
+                    };
+                    format!(
                     "[User decision relay] source_event=`asp_match_pick`, user's verbatim reply: `{reply}`\n\n\
                      The push was the ASP-match list. **Semantic mapping** — decide what the user means:\n\n\
                      \x20\x20• **Pick an ASP** — user gave an index (1/2/3/...) or a 3-digit agentId (e.g. `864`). Map index → agentId from the asp-match list shown in the source-scene; the user picked agentId=`<X>`. Action (set-asp flow):\n\
@@ -440,7 +455,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <X> --service-id <sid> --service-type <serviceType> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <X>. Waiting for ASP to accept.\" End the turn.\n\
+                     {success_line}\
                      \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent asp-match --job-id {job_id} --page <next_page>`. If results → re-push the asp_match_pick decision with the new list (`pending-decisions-v2 request --source-event asp_match_pick`; --list-label `[ASP <shortJobId>] <task title> ASP-pick decision`). **`--list-label` and all footer keywords must be localized** (e.g. Chinese: 回复\"更多\", NOT 回复\"more\"). If empty → enqueue the no-ASP next-step decision:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] <task title> next-step decision\" --source-event no_asp_found\n\
@@ -453,7 +468,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20• **Make public** — typical intents: B / 选B / `public` / `公开` / `公开任务`. Action: `onchainos agent set-public {job_id}`.\n\
                      \x20\x20• **Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
                      ⚠️ If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event asp_match_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or see more ASPs, list the task publicly, or cancel.\"\n"
-                ),
+                    )
+                },
                 "provider_pending" => format!(
                     "[User decision relay] source_event=`provider_pending`, user's verbatim reply: `{reply}`\n\n\
                      The push was a single-ASP accept/reject card. Extract `[asp: <agentId>]` and `[groupId: <gid>]` from the `--llm-content` block above. **Semantic mapping** — decide:\n\n\
@@ -469,7 +485,15 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20Follow the returned playbook (shows next ASP or close options if none remain).\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"Please reply 1 (accept) or 2 (reject).\"\n"
                 ),
-                "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => format!(
+                "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => {
+                    // CLI mode (Claude Code / Codex): drop the passive "Waiting for ASP to accept"
+                    // phrase — it reads as a turn-end cue to LLM-driven watch loops and suppresses re-arm.
+                    let success_line = if super::content::is_cli_mode() {
+                        "\x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>.\" End the turn.\n"
+                    } else {
+                        "\x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n"
+                    };
+                    format!(
                     "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
                      The push was an A/B/C choice (designated agent not a provider / no ASP available / designated provider offline / x402 endpoint invalid / quote over budget). **Semantic mapping** — decide:\n\n\
                      \x20\x20• **A — Specify another ASP** — typical intents: A / 选A / `specify` / `指定`, **with a 3-digit agentId in the reply** (e.g. `A 864` / `指定 864` / just `864`). Action (switch-asp flow):\n\
@@ -498,13 +522,22 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n\
+                     {success_line}\
                      \x20\x20\x20\x20⚠️ If user said A / specify but **did NOT include an agentId** (e.g. just `A`, `选A`, `换一个 ASP`): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event {source}`; `--user-content` and `--list-label` must be localized to the user's language; `--user-content` must ask for the agentId (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
                      \x20\x20• **B — Make public** — typical intents: B / 选B / `public` / `公开`. Action: `onchainos agent set-public {job_id}`.\n\
                      \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
                      ⚠️ If ambiguous (unrelated chitchat / non-committal `hmm` / `got it`): re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=specify another ASP (include the agentId)  B=make public  C=close the job\".\n"
-                ),
-                "negotiate_over_budget" => format!(
+                    )
+                },
+                "negotiate_over_budget" => {
+                    // CLI mode (Claude Code / Codex): drop the passive "Waiting for ASP to accept"
+                    // phrase — it reads as a turn-end cue to LLM-driven watch loops and suppresses re-arm.
+                    let success_line = if super::content::is_cli_mode() {
+                        "\x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>.\" End the turn.\n"
+                    } else {
+                        "\x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n"
+                    };
+                    format!(
                     "[User decision relay] source_event=`negotiate_over_budget`, user's verbatim reply: `{reply}`\n\n\
                      The push was during negotiation when the ASP's quote exceeded max_budget — different A/B/C from the designated-flow `over_budget` (this one offers `view ASP list` not `make public`). **Semantic mapping** — decide:\n\n\
                      \x20\x20• **A — View ASP list** — typical intents: A / 选A / `推荐` / `recommend` / `列表` / `list` / `看看有谁`. Action: `onchainos agent asp-match --job-id {job_id}` → compose the ASP list as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick`. **All footer keywords must be localized** (e.g. Chinese: 回复\"更多\", NOT 回复\"more\").\n\
@@ -534,11 +567,12 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <sid> --service-type <serviceType> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <agentId>. Waiting for ASP to accept.\" End the turn.\n\
+                     {success_line}\
                      \x20\x20\x20\x20⚠️ If user said B / specify **without** an agentId: re-ask via `pending-decisions-v2 request --source-event negotiate_over_budget` asking for the agentId; **`--user-content` and `--list-label` must be localized to the user's language** (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
                      \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=view ASP list  B=specify another ASP (include the agentId)  C=close the job\".\n"
-                ),
+                    )
+                },
                 "apply_over_budget" | "job_provider_reject" => {
                     let switch_asp = switch_asp_routing(job_id, agent_id, &source);
                     let scene_lead = if source == "apply_over_budget" {
@@ -688,7 +722,15 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20Re-push `pending-decisions-v2 request` with `--source-event x402_replay_input`, include the validation error in `--user-content` so the user can correct their input.\n\
                      \x20\x20\x20\x20→ **End this turn.** Wait for user's corrected reply.\n"
                 ),
-                "set_asp_params" => format!(
+                "set_asp_params" => {
+                    // CLI mode (Claude Code / Codex): drop the passive "Waiting for ASP to accept"
+                    // phrase — it reads as a turn-end cue to LLM-driven watch loops and suppresses re-arm.
+                    let step3_success = if super::content::is_cli_mode() {
+                        "3. On success → notify user (🌐 localize per user's language): \"ASP set to Agent <providerAgentId>.\"\n"
+                    } else {
+                        "3. On success → notify user (🌐 localize per user's language): \"ASP set to Agent <providerAgentId>. Waiting for ASP to accept the task.\"\n"
+                    };
+                    format!(
                     "[User decision relay] source_event=`set_asp_params`, user's verbatim reply: `{reply}`\n\n\
                      The user was asked for serviceParams after selecting an ASP (via the set-asp flow). Their reply IS the serviceParams value.\n\n\
                      Action:\n\
@@ -697,7 +739,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      ```bash\n\
                      onchainos agent set-asp {job_id} --provider-agent-id <providerAgentId> --service-id <serviceId> --service-type <serviceType> --service-params '<verbatim reply from user>' --service-token-address <serviceTokenAddress> --service-token-amount <serviceTokenAmount>\n\
                      ```\n\
-                     3. On success → notify user (🌐 localize per user's language): \"ASP set to Agent <providerAgentId>. Waiting for ASP to accept the task.\"\n\
+                     {step3_success}\
                      4. **Create sub session + SKILL_PREFETCH** (only after set-asp succeeds):\n\
                      ```bash\n\
                      okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id <providerAgentId> --json\n\
@@ -708,7 +750,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      ```\n\
                      5. On failure → relay the error to the user and re-ask via `pending-decisions-v2 request` with `--source-event set_asp_params`.\n\
                      6. End the turn.\n"
-                ),
+                    )
+                },
                 _ => format!(
                     "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n\n\
                      **Manual routing required** — inspect the scene context (call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if needed) and decide semantically which pseudo-event the user's reply maps to. Then call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"<chosen-pseudo-event>\",\"jobId\":\"{job_id}\"}}'`.\n"

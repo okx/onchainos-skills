@@ -263,7 +263,14 @@ pub async fn handle_set_asp(
         None,
     );
 
-    println!("✓ ASP and service updated (off-chain). Waiting for job_created event.");
+    // CLI mode: drop " Waiting for job_created event." — passive turn-end cue
+    // suppresses LLM-driven watch re-arm.
+    let waiting = if super::content::is_cli_mode() {
+        ""
+    } else {
+        " Waiting for job_created event."
+    };
+    println!("✓ ASP and service updated (off-chain).{waiting}");
     println!("  providerAgentId: {provider_agent_id}");
     println!("  serviceId: {service_id}");
     println!("  serviceType: {service_type}");

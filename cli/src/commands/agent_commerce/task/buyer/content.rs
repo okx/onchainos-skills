@@ -35,7 +35,13 @@ pub use crate::commands::agent_commerce::task::common::config::is_cli_mode;
 
 /// `Event::JobCreated` Step 0 — user notification (no designated provider).
 pub fn job_created_non_designated_user_notify() -> &'static str {
-    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain (public). Waiting for ASPs to discover and apply."
+    // CLI mode: drop "Waiting for ASPs to discover and apply." — passive
+    // turn-end cue suppresses LLM-driven watch re-arm. See job_accepted_escrow_user_notify.
+    if is_cli_mode() {
+        "[Job Created]【<title>】(<short_jobId>) confirmed on-chain (public)."
+    } else {
+        "[Job Created]【<title>】(<short_jobId>) confirmed on-chain (public). Waiting for ASPs to discover and apply."
+    }
 }
 
 /// `Event::JobCreated` Step 0 — user notification (with designated provider).
@@ -115,8 +121,14 @@ pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
 
 /// `Event::JobRejected` Step 1 — user notification that the rejection is confirmed on-chain.
 pub fn job_rejected_user_notify(job_id: &str, title: &str) -> String {
+    // CLI mode: drop "; waiting for the ASP to respond" — passive turn-end cue.
+    let lead = if is_cli_mode() {
+        format!("[Rejection Confirmed] The deliverable for【{title}】(`{job_id}`) has been rejected.")
+    } else {
+        format!("[Rejection Confirmed] The deliverable for【{title}】(`{job_id}`) has been rejected; waiting for the ASP to respond.")
+    };
     format!(
-        "[Rejection Confirmed] The deliverable for【{title}】(`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
+        "{lead}\n\
          The ASP will choose: file a dispute or agree to a refund.\n\
          If the ASP takes no action, funds will be auto-refunded to your wallet."
     )
@@ -223,7 +235,12 @@ pub fn job_closed_user_notify(job_id: &str, title: &str) -> String {
 
 /// `Event::JobVisibilityChanged` visibility=0 — public (B-7-3).
 pub fn visibility_public_user_notify(job_id: &str, title: &str) -> String {
-    format!("[Visibility Changed] {title} (`{job_id}`) is now public. Waiting for ASPs to reach out.")
+    // CLI mode: drop "Waiting for ASPs to reach out." — passive turn-end cue.
+    if is_cli_mode() {
+        format!("[Visibility Changed] {title} (`{job_id}`) is now public.")
+    } else {
+        format!("[Visibility Changed] {title} (`{job_id}`) is now public. Waiting for ASPs to reach out.")
+    }
 }
 
 /// `Event::JobVisibilityChanged` visibility=1 — private (B-7-4).
@@ -255,7 +272,12 @@ pub fn close_user_notify(job_id: &str) -> String {
 
 /// User notification after switching a job to public (B-7-12).
 pub fn set_public_user_notify(job_id: &str) -> String {
-    format!("Job `{job_id}` is now public. Waiting for ASPs to apply.")
+    // CLI mode: drop "Waiting for ASPs to apply." — passive turn-end cue.
+    if is_cli_mode() {
+        format!("Job `{job_id}` is now public.")
+    } else {
+        format!("Job `{job_id}` is now public. Waiting for ASPs to apply.")
+    }
 }
 
 // ── Event::SubmitExpired ───────────────────────────────────────────
@@ -293,9 +315,15 @@ pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String 
 
 /// `Event::ReviewExpired` — review window expired (B-7-8).
 pub fn review_expired_user_notify(job_id: &str) -> String {
+    // CLI mode: drop " Waiting for the ASP's action..." — passive turn-end cue.
+    let trailing = if is_cli_mode() {
+        ""
+    } else {
+        " Waiting for the ASP's action..."
+    };
     format!(
         "[Review Expired] Job `{job_id}` — the review window has expired; you did not decide before the deadline.\n\
-         The ASP can now claim the funds automatically. Waiting for the ASP's action..."
+         The ASP can now claim the funds automatically.{trailing}"
     )
 }
 
@@ -366,6 +394,12 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
 
 /// x402 replay success — deliverable received, awaiting on-chain confirmation.
 pub fn x402_replay_success_user_notify(job_id: &str) -> String {
+    // CLI mode: drop the trailing "Waiting for on-chain confirmation..." line — passive turn-end cue.
+    let trailing = if is_cli_mode() {
+        ""
+    } else {
+        "\n         Waiting for on-chain confirmation. The job will auto-complete once confirmed."
+    };
     format!(
         "[x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
          ASP agentId: <providerAgentId>\n\
@@ -373,8 +407,7 @@ pub fn x402_replay_success_user_notify(job_id: &str) -> String {
          Deliverable saved to: <deliverableSavedPath from CLI output>\n\
          ---Deliverable---\n\
          <replayBodyDisplay value from CLI output — pass through in full, do not truncate or summarize>\n\
-         ---End of deliverable---\n\
-         Waiting for on-chain confirmation. The job will auto-complete once confirmed."
+         ---End of deliverable---{trailing}"
     )
 }
 
