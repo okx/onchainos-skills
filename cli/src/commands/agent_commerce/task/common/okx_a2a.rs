@@ -7,7 +7,6 @@
 //! consumers should minimize calls in hot paths.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::process::Command;
 
 // ── User-facing notifications ──────────────────────────────────────────────
