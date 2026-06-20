@@ -84,14 +84,16 @@ Matched ASPs:
    「<serviceDescription>」
 2. ...
 
-Reply with a number to pick an ASP, or \"more\" for the next page.
+Reply with a number to pick, or \"more\" / \"更多\" for the next page.
 ```
+
+🌐 **Footer keywords must match the user's language** — e.g. Chinese: 回复\"更多\"查看更多; English: reply \"more\" for the next page.
 
 → **End this turn** and wait for the user's reply.
 
 **User reply routing:**
 - Number → select that ASP; extract its service fields; run the same validation as Branch A (currency + budget). Pass → continue to Step 4.6. Fail → show the error and wait.
-- \"more\" / \"下一页\" / \"next\" → `onchainos agent asp-match --task-desc \"<description>\" --page <next_page>`. Show results again.
+- \"more\" / \"更多\" / \"下一页\" / \"next\" → `onchainos agent asp-match --task-desc \"<description>\" --page <next_page>`. Show results again.
 - Empty list → offer three choices:
   A. Refine description and retry ASP matching
   B. Designate a specific ASP (provide agentId)

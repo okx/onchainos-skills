@@ -432,7 +432,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20onchainos agent set-asp {job_id} --provider-agent-id <X> --service-id <sid> --service-type <serviceType> --service-params '' --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20On success → notify user (🌐 localized): \"ASP set to Agent <X>. Waiting for ASP to accept.\" End the turn.\n\
-                     \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent asp-match --job-id {job_id} --next-page`. If results → the CLI writes a new card file (path printed as `Card file: <path>`); re-push the same asp_match_pick decision (`pending-decisions-v2 request --source-event asp_match_pick --user-content-file \"<card file path>\"`; --list-label `[ASP <shortJobId>] <task title> ASP-pick decision`). **`--list-label` must be localized to the user's language**. If the user's language is not English, read the card file, translate field labels + footer, and pass via `--user-content` instead. If empty → enqueue the no-ASP next-step decision:\n\
+                     \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent asp-match --job-id {job_id} --page <next_page>`. If results → re-push the asp_match_pick decision with the new list (`pending-decisions-v2 request --source-event asp_match_pick`; --list-label `[ASP <shortJobId>] <task title> ASP-pick decision`). **`--list-label` and all footer keywords must be localized** (e.g. Chinese: 回复\"更多\", NOT 回复\"more\"). If empty → enqueue the no-ASP next-step decision:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] <task title> next-step decision\" --source-event no_asp_found\n\
                      \x20\x20\x20\x20```\n\
@@ -498,7 +498,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 "negotiate_over_budget" => format!(
                     "[User decision relay] source_event=`negotiate_over_budget`, user's verbatim reply: `{reply}`\n\n\
                      The push was during negotiation when the ASP's quote exceeded max_budget — different A/B/C from the designated-flow `over_budget` (this one offers `view ASP list` not `make public`). **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **A — View ASP list** — typical intents: A / 选A / `推荐` / `recommend` / `列表` / `list` / `看看有谁`. Action: `onchainos agent asp-match --job-id {job_id}` — the CLI writes a card file (path printed as `Card file: <path>`); push the resulting list via `pending-decisions-v2 request --source-event asp_match_pick --user-content-file \"<card file path>\"`. If the user's language is not English, read the card file, translate field labels + footer, and pass via `--user-content` instead.\n\
+                     \x20\x20• **A — View ASP list** — typical intents: A / 选A / `推荐` / `recommend` / `列表` / `list` / `看看有谁`. Action: `onchainos agent asp-match --job-id {job_id}` → compose the ASP list as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick`. **All footer keywords must be localized** (e.g. Chinese: 回复\"更多\", NOT 回复\"more\").\n\
                      \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId in the reply** (e.g. `B 864` / `指定 864` / `换 864`). Action (switch-asp flow):\n\
                      \x20\x20\x20\x201. Reject current ASP (safe even if none active):\n\
                      \x20\x20\x20\x20```bash\n\
@@ -540,7 +540,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                     format!(
                     "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
                      {scene_lead} Options: A=browse / B=designate / (C=make public if private) / last=close. **Semantic mapping**:\n\n\
-                     \x20\x20• **A — Browse ASP list** — typical intents: A / 选A / `推荐` / `列表` / `list` / `浏览`. Action: `onchainos agent asp-match --job-id {job_id}` — push the card file via `pending-decisions-v2 request --source-event asp_match_pick --user-content-file \"<card file path>\"`. If non-English, translate field labels + footer and pass via `--user-content` instead.\n\
+                     \x20\x20• **A — Browse ASP list** — typical intents: A / 选A / `推荐` / `列表` / `list` / `浏览`. Action: `onchainos agent asp-match --job-id {job_id}` → compose the ASP list as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick`. **All footer keywords must be localized**.\n\
                      \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId** (e.g. `B 864` / `指定 864`). Action (switch-asp flow):\n\
                      {switch_asp}\
                      \x20\x20• **C — Make public** — typical intents: C / 选C / `public` / `公开`. Action: `onchainos agent set-public {job_id}`. (Harmless no-op if already public.)\n\
@@ -566,7 +566,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20\x20\x20- `\"alreadySet\": true` → call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
                      \x20\x20\x20\x20\x20\x20- `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
                      \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`.\n\
-                     \x20\x20\x20\x20Action: `onchainos agent mark-failed {job_id} --provider <designated agentId from context>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → the CLI writes a card file (path in stdout); push via `--source-event asp_match_pick --user-content-file \"<card file path>\"` (translate field labels if non-English); if empty → push via `--source-event no_asp_found`.\n\n\
+                     \x20\x20\x20\x20Action: `onchainos agent mark-failed {job_id} --provider <designated agentId from context>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → compose as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick` (**localize all footer keywords**); if empty → push via `--source-event no_asp_found`.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event x402_price_mismatch`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=accept this price  B=reject and switch ASP\".\n"
                 ),
                 "x402_input_required" => format!(
@@ -649,7 +649,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      \x20\x20\x20\x20\x20\x20- `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
                      \x20\x20\x20\x20⚠️ **Remember the `body` from PRICE_CONTEXT** — pass it to `task-402-pay --body` in the `job_payment_mode_changed` turn.\n\n\
                      \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`.\n\
-                     \x20\x20\x20\x20Action: `onchainos agent mark-failed {job_id} --provider <designated agentId from context>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → push via `--source-event asp_match_pick --user-content-file \"<card file path>\"` (translate if non-English); if empty → push via `--source-event no_asp_found`.\n\n\
+                     \x20\x20\x20\x20Action: `onchainos agent mark-failed {job_id} --provider <designated agentId from context>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → compose as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick` (**localize all footer keywords**); if empty → push via `--source-event no_asp_found`.\n\n\
                      ⚠️ If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event x402_ir_price_confirm`. **`--user-content` and `--list-label` must be localized**. Reference (English): \"I didn't catch your reply, please clarify: A=accept this price  B=reject and switch ASP\".\n"
                 ),
                 "x402_replay_input" => format!(
