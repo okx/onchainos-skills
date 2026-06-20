@@ -132,3 +132,20 @@ Triggers (only when there's no active `[USER_DECISION_REQUEST]` block the user m
 - English: `decision list` / `show decision list` / `list decisions` / `pending decisions` / `what's pending`
 
 **Action**: `onchainos agent pending-decisions-v2 list --format markdown` → **follow the CLI's returned playbook verbatim**. The playbook includes both the user-facing rendering instructions AND the routing rules for the user's subsequent reply. Do NOT improvise — only do what the playbook prints.
+
+---
+
+## Task watch / history / outstanding decisions
+
+When the user wants to monitor task progress, drain unread/missed events, or list un-replied decision cards → route to the dedicated **`okx-task-watch`** skill. Do NOT inline `okx-a2a user watch` / `okx-a2a user outdated-list` from here; load that SKILL.md and follow it.
+
+Triggers:
+- **Live monitor**: `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `继续监听` / `task watch` / `user watch` / `monitor task progress` / `watch tasks` / `keep me posted on tasks`
+- **History / backlog drain**: `历史消息` / `历史记录` / `过去消息` / `未读消息` / `show past messages` / `catch me up on tasks`
+- **Outstanding (un-replied) decisions**: `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `outstanding decisions` / `unhandled decisions` / `what am I missing`
+
+**Platform gate**: only Claude Code (`CLAUDECODE=1`) and Codex (`CODEX_THREAD_ID`); other platforms push natively and the skill stops with an unsupported-platform message.
+
+🛑 Watch is itself a long-poll — the long-poll IS the wait. Do NOT wrap it in `/loop` / Cron / `sleep` / any scheduler.
+
+⚠️ **Disambig — "decision list" vs "outstanding decisions"**: `决策列表` / `decision list` → §Decision list above (`pending-decisions-v2 list`, the full queue). `未决策` / `outstanding decisions` → this section (`outdated-list`, only un-`check`ed `decision_request` items).

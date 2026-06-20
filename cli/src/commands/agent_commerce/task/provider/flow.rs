@@ -311,9 +311,13 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent deliver {job_id} --file \"<local file path from Step 3a>\" --agent-id {agent_id}\n\
              ```\n\
-             ▸ Text deliverable — pass `--file \"\"` and `--deliverable-text \"<the full deliverable text content>\"` (the CLI auto-saves the text to persistent deliverable storage):\n\
+             ▸ Text deliverable — `--file \"\"` + heredoc-wrapped `--deliverable-text` (plain `\"...\"` breaks on `\"` / `$` / newlines). CLI auto-saves the text:\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"\" --deliverable-text \"<the full text deliverable content from Step 3b>\" --agent-id {agent_id}\n\
+             onchainos agent deliver {job_id} --file \"\" --agent-id {agent_id} \\\n\
+             \x20\x20--deliverable-text \"$(cat <<'OKX_TEXT_EOF'\n\
+             <full text deliverable content from Step 3b — verbatim>\n\
+             OKX_TEXT_EOF\n\
+             )\"\n\
              ```\n\
              CLI internals: POST submit API → sign uopHash → broadcast on-chain → auto-save deliverable (file via --file, text via --deliverable-text).\n\n\
              **Step 4 — After Step 3c ends this turn immediately** (the deliverable was already delivered to the User Agent in Step 3b; do NOT send any filler `okx-a2a xmtp-send` / `okx-a2a user notify` here).\n\n\
