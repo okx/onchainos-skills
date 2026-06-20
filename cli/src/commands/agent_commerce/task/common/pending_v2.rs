@@ -13,6 +13,7 @@
 //! - `pick`: user-session promotes selected entry from list to active.
 //! - `list`: query current queue (markdown / json), refreshes snapshot.
 
+pub use crate::commands::agent_commerce::task::common::config::is_cli_mode;
 use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use clap::{Subcommand, ValueEnum};
@@ -443,7 +444,7 @@ pub enum PendingDecisionsV2Command {
     /// (user-session, CLI-driver bypass) Resolve a decision without consulting
     /// the queue file — caller passes every routing field explicitly so the
     /// envelope can be built and dispatched. Pairs with `request`'s
-    /// OKX_A2A_IS_CLI=1 bypass; used when a CLI driver loop (Claude Code / Codex)
+    /// `is_cli_mode()` bypass; used when a CLI driver loop (Claude Code / Codex)
     /// owns turn-taking and never persists queue state to disk.
     #[command(name = "resolve-with-sessionkey")]
     ResolveWithSessionkey {
@@ -574,8 +575,8 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
 
 /// Synchronous direct-push variant of `Request`.
 ///
-/// Branches on `OKX_A2A_IS_CLI`:
-/// - `OKX_A2A_IS_CLI=1` (CLI driver mode) → no queue write, no playbook
+/// Branches on `is_cli_mode()`:
+/// - CLI driver mode (Claude Code / Codex) → no queue write, no playbook
 ///   emission; immediately invokes `okx-a2a user decision-request` from inside
 ///   the CLI. On return the card is already in the user session.
 /// - Otherwise (queue mode) → falls back to the same queue-write + playbook
@@ -593,12 +594,11 @@ fn handle_request_prompt(
     llm_content: Option<String>,
     source_event: Option<String>,
 ) -> Result<()> {
-    let cli_mode_env = std::env::var("OKX_A2A_IS_CLI").unwrap_or_default();
-    let cli_mode = cli_mode_env == "1";
+    let cli_mode = is_cli_mode();
     trace_log(&format!(
-        "handle_request_prompt {} (OKX_A2A_IS_CLI={:?}): job_id={} role={} agent_id={} to_agent_id={:?}",
+        "handle_request_prompt {}: job_id={} role={} agent_id={} to_agent_id={:?}",
         if cli_mode { "CLI_MODE" } else { "QUEUE_MODE" },
-        cli_mode_env, job_id, role, agent_id, to_agent_id,
+        job_id, role, agent_id, to_agent_id,
     ));
 
     if cli_mode {
@@ -1418,7 +1418,7 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
 }
 
 /// Variant of `resolve_llm_content_cli` for the `playbook_push_prompt_user`
-/// (non-OKX_A2A_IS_CLI) path. Adds a multi-decision disambiguation branch in
+/// (queue-mode, i.e. `!is_cli_mode()`) path. Adds a multi-decision disambiguation branch in
 /// Step 2 so that when multiple [USER_DECISION_REQUEST] blocks coexist in the
 /// LLM's context, the LLM first asks the user which jobId they're answering
 /// rather than guessing.
