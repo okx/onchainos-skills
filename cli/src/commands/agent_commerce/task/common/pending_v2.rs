@@ -1321,13 +1321,7 @@ pub fn request_command_block(
         None => String::new(),
     };
     format!(
-        "Execute these 3 sub-steps strictly in order. ALL THREE are mandatory; skipping any breaks the flow.\n\n\
-         **(1) Translate `--user-content` AND `--list-label` to the user's language BEFORE step (2)**. The bash in (2) shows English placeholders — the actual strings you pass MUST be localized per the rules below.\n\
-         \x20\x20• **Language signal** = user's OWN typed messages in THIS session ONLY. Task title / description / peer's message / playbook examples are NOT signals (even if they contain non-English text). Unsure → default English.\n\
-         \x20\x20• **Translate EVERY user-visible word** — outer prose, text inside single-quotes, placeholder words inside `<...>`, AND task title. The only thing kept verbatim is the shortJobId hex (it's an identifier, not language).\n\
-         \x20\x20• **No mixed-language in any single string**.\n\n\
-         **(2) Run `pending-decisions-v2 request`** with translated args from (1):\n\
-         ```bash\n\
+        "```bash\n\
          onchainos agent pending-decisions-v2 request \\\n\
          \x20\x20--job-id {job_id} --role {role} --agent-id {agent_id}{to_flag} \\\n\
          \x20\x20--user-content \"{content}\" \\\n\
