@@ -427,82 +427,48 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     let token_symbol = p.token_symbol.as_str();
     let token_amount = p.token_amount.as_str();
 
-    // Step 2 — one block, branched on whether the deliverable was already
-    // persisted. Some(d) → Step 2a only (saved); None → Step 2a + Step 2b
-    // (need to query + escrow download/save fallback).
     let step2 = if let Some(d) = p.deliverable.as_ref() {
         format!("\
-     **Step 2a — Deliverable already saved** (detected by CLI pre-fetch; no need to call `task-deliverable-list`):\n\
+     **Step 2 — Deliverable already saved**:\n\
      \x20\x20- localPath: {path}\n\
      \x20\x20- deliverableType: {dtype}\n\
-     \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\
-     \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
-     \x20\x20- **Skip Step 2b entirely**\n\
-     \x20\x20- Go to Step 3\n\n",
+     \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\n",
             path = d.path, dtype = d.deliverable_type,
         )
     } else {
         format!("\
-     **Step 2a — Check if deliverable was already saved** (by the earlier `deliverable_received` playbook):\n\
+     **Step 2a — Check saved deliverable:**\n\
      ```bash\n\
      onchainos agent task-deliverable-list --job-id {job_id} --role buyer\n\
      ```\n\
-     If `deliverables` array is non-empty → the deliverable has already been downloaded and saved:\n\
-     \x20\x20- Use the `path` from the first entry as `localPath`\n\
-     \x20\x20- Use the `deliverableType` from the first entry\n\
-     \x20\x20- For text deliverables, read the file content at `path` to get `deliverableText`\n\
-     \x20\x20- **Skip Step 2b entirely** (no need to re-download or re-save)\n\
-     \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
-     \x20\x20- Go to Step 3\n\n\
-     If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n\
-     **Step 2b — Fallback: fetch from chat history and save:**\n\
-     Run `okx-a2a session history` to fetch the chat history with the provider, then find the ASP message **carrying the `[intent:deliver]` suffix tag** (scan newest to oldest; first match is the deliverable):\n\
+     Non-empty `deliverables` → use first entry's `path` as localPath, `deliverableType`; skip Step 2b.\n\
+     Empty → fall through to Step 2b.\n\n\
+     **Step 2b — Fallback: fetch from chat history:**\n\
      ```bash\n\
      okx-a2a session history --job-id {job_id} --to-agent-id {provider_field} --json\n\
      ```\n\
-     Then branch on `deliverableType`:\n\n\
-     --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret decryption fields) ---\n\n\
-     Run `okx-a2a file download` to download + decrypt:\n\
+     Find the ASP message with `[intent:deliver]` suffix (newest first).\n\n\
+     ▸ Case A (file — message has fileKey/digest/salt/nonce/secret):\n\
      ```bash\n\
-     okx-a2a file download \\\n\
-     \x20\x20--file-key <fileKey> \\\n\
-     \x20\x20--agent-id {agent_id} \\\n\
-     \x20\x20--digest <digest> \\\n\
-     \x20\x20--salt <salt> \\\n\
-     \x20\x20--nonce <nonce> \\\n\
-     \x20\x20--secret <secret> \\\n\
-     \x20\x20[--filename <filename>]\n\
+     okx-a2a file download --file-key <fileKey> --agent-id {agent_id} --digest <digest> --salt <salt> --nonce <nonce> --secret <secret> [--filename <filename>]\n\
      ```\n\
-     Fill `<fileKey> / <digest> / <salt> / <nonce> / <secret>` from the ASP's message; `--filename` is optional.\n\
-     ⚠️ Before calling, print: `[buyer] file download: fileKey=<fileKey>, agentId={agent_id}`\n\
-     ⚠️ After calling, print: `[buyer] file download result: localPath=<stdout path>`\n\n\
-     stdout is the local saved path (either a plain path or a JSON `{{path: ...}}` wrapper); **it MUST be a full absolute path** (e.g. /Users/xxx/Downloads/task-staging.png).\n\
-     ⚠️ **Never show only the filename** -- the user cannot locate the file. Any later content shown to the user MUST include the full path.\n\
-     If download fails → note in the display: \"file download failed, please ask the ASP to resend\".\n\
-     ⚠️ If the ASP message contains text alongside the file, capture it into deliverableText as well.\n\n\
-     🛑 **IMMEDIATELY after download succeeds**, persist the deliverable (REQUIRED):\n\
+     stdout = localPath (must be full absolute path). Then persist:\n\
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
        --file \"<localPath>\" --deliverable-type file --title \"{title}\" \\\n\
        --short-id {short_id} --file-key \"<fileKey>\" \\\n\
        --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
        --token-symbol \"{token_symbol}\" --token-amount \"{token_amount}\"\n\
-     ```\n\
-     After save, update localPath to the path printed by the save command. If save fails, log but do NOT block the review flow.\n\n\
-     Deliverable display variables: deliverableType=file, localPath=<full path>, deliverableText=<note text, empty if none>\n\n\
-     --- Case B: deliverableType=text (body content between `- - -` separators) ---\n\n\
-     Extract the text between `- - -` separators in the `[intent:deliver]` message; **keep the original wording in full**.\n\n\
-     🛑 **IMMEDIATELY after extraction**, persist the text deliverable (REQUIRED):\n\
-     Write deliverableText to a temp .txt file, then:\n\
+     ```\n\n\
+     ▸ Case B (text — body between `- - -` separators):\n\
+     Extract full text → write to temp .txt → persist:\n\
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
-       --file \"<temp .txt path>\" --deliverable-type text \\\n\
-       --title \"{title}\" --short-id {short_id} \\\n\
-       --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"{token_symbol}\" --token-amount \"{token_amount}\"\n\
+       --file \"<temp .txt path>\" --deliverable-type text --title \"{title}\" \\\n\
+       --short-id {short_id} --counterparty-agent-id \"{provider_field}\" \\\n\
+       --counterparty-name \"<providerName>\" --token-symbol \"{token_symbol}\" --token-amount \"{token_amount}\"\n\
      ```\n\
-     After save, record the path printed by the save command as localPath.\n\n\
-     Deliverable display variables: deliverableType=text, deliverableText=<full original text>, localPath=<path from save command output>\n\n")
+     After save, update localPath from save command output.\n\n")
     };
 
     // Step 3 — compose review card user_content + push via pending-decisions-v2.
@@ -517,61 +483,40 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     );
 
     format!(
-    "[Current Status] job_submitted (ASP has submitted the deliverable) — paymentMode=escrow\n\
-     [Role] User (User Agent)\n\n\
-     🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the review decision to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT `okx-a2a user notify`)**.\n\
-     `okx-a2a user notify` is a pure one-way notification: user replies cannot be relayed back to the sub session → the review flow deadlocks. The correct flow handles this via `pending-decisions-v2 request` (which queues a decision card via the okx-a2a decision-request channel) so the user session can relay the review decision back.\n\
-     🔴 Real incident: a model received job_submitted, sent a plain notification with \"the ASP has submitted; awaiting your review\" — the user never saw the deliverable, could not relay a decision, and the task was stuck.\n\n\
-     🛑🛑🛑 **Even if you already processed the ASP's a2a-agent-chat deliverable message earlier in this turn (e.g. ran `okx-a2a file download`), upon receiving job_submitted you MUST still execute every Step below in full**.\n\
-     Handling a2a-agent-chat (file download) != the review flow — the review must be driven by the job_submitted playbook, and the deliverable content (file path / text) MUST be placed into the `--user-content` of `pending-decisions-v2 request` for the user to see.\n\n\
-     🛑 **Auto-approval is strictly forbidden**: wait for the user's relayed decision; the agent must not decide on behalf of the user, regardless of deliverable quality or how close to deadline.\n\n\
+    "🛑 MUST use `pending-decisions-v2 request` — NOT `okx-a2a user notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\
+     🛑 Even if deliverable was already downloaded this turn, execute ALL steps below.\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 1 — Task context (pre-fetched; no CLI call needed):**\n\
-     All task fields (paymentMode, tokenSymbol, providerAgentId, etc.) are in the `[Pre-fetched task context]` block above.\n\
-     qualityStandards: extract from the description field above (task creation time value is authoritative).\n\n\
-     **Step 2 — Obtain the deliverable content (check saved first, then fallback to chat history):**\n\n\
-     ⚠️ The deliverable content MUST appear in Step 3's userContent — the user has not seen the body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\n\
      {step2}\
-     --------- Step 3: escrow review — push the decision card to the user ---------\n\n\
-     **Step 3a — Compose `--user-content` from Step 2's deliverable variables** (fill `<placeholder>` from runtime values):\n\n\
+     **Step 3 — Compose `--user-content` and push decision card:**\n\n\
+     Compose `--user-content` from Step 2's deliverable variables (fill placeholders from runtime values):\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
-     [Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (file); downloaded locally.\n\
-     Deliverable file path: <localPath> (full absolute path, e.g. /Users/xxx/Downloads/task.png)\n\
-     <if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
-     Deliverable URL: <deliverableUrl>\n\
+     [Job {short_id}] The ASP has submitted the deliverable (file).\n\
+     File path: <localPath>\n\
+     <if deliverableText non-empty: ASP note: <deliverableText>>\n\
      Payment: escrow\n\
-     \n\
-     Choose:\n\
-     A. Approve the deliverable → reply 'A'\n\
-     B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
+     A. Approve → reply 'A'\n\
+     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
      ```\n\n\
-     ▸ deliverableType=text — branch by localPath availability:\n\n\
-     \x20\x20✅ localPath is available (save succeeded):\n\
-     \x20\x20```\n\
-     \x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
-     \x20\x20Deliverable saved at: <localPath> (full absolute path)\n\
-     \x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20Payment: escrow\n\
-     \x20\x20\n\
-     \x20\x20Choose:\n\
-     \x20\x20A. Approve the deliverable → reply 'A'\n\
-     \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
-     \x20\x20```\n\n\
-     \x20\x20⚠️ localPath is unavailable (save failed — fallback to inline full text):\n\
-     \x20\x20```\n\
-     \x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
-     \x20\x20---Deliverable---\n\
-     \x20\x20<deliverableText — full content, no truncation, no summarization>\n\
-     \x20\x20---End of deliverable---\n\
-     \x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20Payment: escrow\n\
-     \x20\x20\n\
-     \x20\x20Choose:\n\
-     \x20\x20A. Approve the deliverable → reply 'A'\n\
-     \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
-     \x20\x20```\n\n\
-     **Step 3b — Push to user via the 3-substep protocol** (use the localized `--user-content` from Step 3a; read ALL 3 sub-steps before running any command):\n\n\
+     ▸ deliverableType=text (localPath available):\n\
+     ```\n\
+     [Job {short_id}] The ASP has submitted the deliverable (text).\n\
+     Saved at: <localPath>\n\
+     Payment: escrow\n\
+     A. Approve → reply 'A'\n\
+     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
+     ```\n\n\
+     ▸ deliverableType=text (localPath unavailable — inline full text):\n\
+     ```\n\
+     [Job {short_id}] The ASP has submitted the deliverable (text).\n\
+     ---Deliverable---\n\
+     <deliverableText — full content, no truncation>\n\
+     ---End of deliverable---\n\
+     Payment: escrow\n\
+     A. Approve → reply 'A'\n\
+     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
+     ```\n\n\
+     Push to user (localize `--user-content` and `--list-label` to user's language first):\n\n\
      {request_block}\n"
     )
 }
@@ -604,96 +549,52 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
         ),
     };
 
-    // Step 2 (Step 2a + Step 2b combined) — branches on whether the deliverable
-    // was already persisted. Some(d) → Step 2a only ("already saved"); None →
-    // Step 2a ("need to query") + Step 2b (x402 replayBody recovery).
     let step2 = if let Some(d) = p.deliverable.as_ref() {
         format!("\
-     **Step 2a — Deliverable already saved** (detected by CLI pre-fetch; no need to call `task-deliverable-list`):\n\
+     **Step 2 — Deliverable already saved**:\n\
      \x20\x20- localPath: {path}\n\
      \x20\x20- deliverableType: {dtype}\n\
-     \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\
-     \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
-     \x20\x20- **Skip Step 2b entirely**\n\
-     \x20\x20- Go to Step 3\n\n",
+     \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\n",
             path = d.path, dtype = d.deliverable_type,
         )
     } else {
         format!("\
-     **Step 2a — Check if deliverable was already saved** (by the earlier `deliverable_received` playbook):\n\
+     **Step 2a — Check saved deliverable:**\n\
      ```bash\n\
      onchainos agent task-deliverable-list --job-id {job_id} --role buyer\n\
      ```\n\
-     If `deliverables` array is non-empty → the deliverable has already been downloaded and saved:\n\
-     \x20\x20- Use the `path` from the first entry as `localPath`\n\
-     \x20\x20- Use the `deliverableType` from the first entry\n\
-     \x20\x20- For text deliverables, read the file content at `path` to get `deliverableText`\n\
-     \x20\x20- **Skip Step 2b entirely** (no need to re-download or re-save)\n\
-     \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
-     \x20\x20- Go to Step 3\n\n\
-     If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n\
-     **Step 2b — Recover x402 deliverable from earlier task-402-pay output:**\n\
-     In x402, the deliverable was the `replayBody` returned by `task-402-pay` in the earlier `job_payment_mode_changed` turn.\n\
-     ✅ The CLI auto-saved the deliverable to disk during `task-402-pay` (no manual `task-deliverable-save` needed).\n\
-     Look for the `replayBodyDisplay` value in this sub session's context (it was printed when the CLI output was processed).\n\
-     Set deliverable display variables: deliverableType=text, deliverableText=<replayBodyDisplay content>, localPath=<path from Step 2a task-deliverable-list if available>.\n\n")
+     Non-empty `deliverables` → use first entry's `path`/`deliverableType`; skip Step 2b.\n\
+     Empty → fall through to Step 2b.\n\n\
+     **Step 2b — Recover from earlier task-402-pay output:**\n\
+     The deliverable was the `replayBody` from `task-402-pay` (auto-saved by CLI).\n\
+     Look for `replayBodyDisplay` in this sub session's context.\n\
+     Set: deliverableType=text, deliverableText=<replayBodyDisplay>, localPath=<path from Step 2a if available>.\n\n")
     };
 
     format!(
-    "[Current Status] job_submitted (ASP has submitted the deliverable) — paymentMode=x402\n\
-     [Role] User (User Agent)\n\n\
-     ⚠️ In x402 funds are already paid at job_accepted; the user **cannot reject the deliverable**, just notify + auto-rate.\n\
-     🛑 **Even if you already processed the ASP's a2a-agent-chat deliverable message earlier in this turn**, upon receiving job_submitted you MUST still execute every Step below in full.\n\n\
+    "⚠️ x402: funds already paid; user cannot reject — notify + auto-rate only.\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 1 — Task context (pre-fetched; no CLI call needed):**\n\
-     All task fields (paymentMode, tokenSymbol, providerAgentId, etc.) are in the `[Pre-fetched task context]` block above.\n\
-     qualityStandards: extract from the description field above (task creation time value is authoritative).\n\n\
-     **Step 2 — Obtain the deliverable content:**\n\n\
      {step2}\
-     --------- Step 3: x402 — auto-rate FIRST, then single consolidated notify ---------\n\n\
-     🛑 Auto-rate the ASP FIRST, then send ONE consolidated `okx-a2a user notify` that combines the deliverable notice and the rating info.\n\n\
-     **B-Step 1 — 🛑 Auto-rate the ASP FIRST (MANDATORY; must complete before B-Step 2):**\n\
-     Based on the deliverable content vs the task description and quality standards, generate:\n\
-     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
-     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
-     Then execute:\n\
+     **Step 3 — Auto-rate ASP, then notify user:**\n\n\
+     **3a — Rate the ASP (mandatory, before notify):**\n\
+     Score 0.00–5.00 based on deliverable vs description. Comment ≤100 chars.\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id {provider_field} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+     onchainos agent feedback-submit --agent-id {provider_field} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
      ```\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
-     Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in B-Step 2.\n\n\
-     **B-Step 2 — Notify the user with a SINGLE consolidated message via `okx-a2a user notify`:**\n\
+     `--agent-id` = ASP being rated; `--creator-id` = buyer's agent id.\n\n\
+     **3b — Notify user (single consolidated `okx-a2a user notify`):**\n\
      ```bash\n\
      okx-a2a user notify --content '<localized content>'\n\
      ```\n\
-     Compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
-     ▸ Deliverable received notice (always included; pick the sub-template that matches `deliverableType`):\n\n\
-     \x20\x20deliverableType=file:\n\
-     \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
-     \x20\x20Deliverable file path: <localPath> (full absolute path, e.g. /Users/xxx/Downloads/task.png)\n\
-     \x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
-     \x20\x20Deliverable URL: <deliverableUrl>\n\n\
-     \x20\x20deliverableType=text — branch by localPath availability:\n\n\
-     \x20\x20\x20\x20✅ localPath is available (save succeeded):\n\
-     \x20\x20\x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
-     \x20\x20\x20\x20Deliverable saved at: <localPath> (full absolute path)\n\
-     \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20\x20\x20---Deliverable (preview)---\n\
-     \x20\x20\x20\x20<first 200 characters of deliverableText; if total length ≤ 200, show full text and use ---Deliverable--- / ---End of deliverable--- headers instead>\n\
-     \x20\x20\x20\x20---End of preview---\n\
-     \x20\x20\x20\x20<if deliverableText was truncated, append: (… truncated; full content saved locally)>\n\n\
-     \x20\x20\x20\x20⚠️ localPath is unavailable (save failed — fallback to inline full text):\n\
-     \x20\x20\x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
-     \x20\x20\x20\x20---Deliverable---\n\
-     \x20\x20\x20\x20<deliverableText — full content, no truncation, no summarization>\n\
-     \x20\x20\x20\x20---End of deliverable---\n\
-     \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\n\
-     ▸ Rating info (include ONLY if B-Step 1's feedback-submit succeeded; if it failed, omit this entire half):\n\
-     \x20\x20{rating_notify}\n\
-     \x20\x20(fill `<score>` with the X.XX value used in B-Step 1, `<description>` with the comment from B-Step 1, `<title>` from task context)\n\n\
-     **B-Step 3 — Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     Task fully complete.\n"
+     Compose from two halves:\n\n\
+     ▸ Deliverable notice (always; pick matching template):\n\
+     \x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: <localPath>`\n\
+     \x20\x20text+path: `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>` + preview (first 200 chars)\n\
+     \x20\x20text-no-path: `[Deliverable Received] Job {job_id} — x402, payment settled.` + full deliverableText inline\n\n\
+     ▸ Rating info (only if feedback-submit succeeded):\n\
+     \x20\x20{rating_notify}\n\n\
+     **3c — Terminal wrap-up:**\n\
+     {terminal_session_hint}\n"
     )
 }
 
