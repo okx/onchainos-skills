@@ -605,11 +605,12 @@ pub async fn handle_draft_publish(
     if let Some(pid) = provider_id {
         super::negotiate::save_designated_provider(returned_job_id, pid)?;
     }
+    let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(returned_job_id).await;
 
     // ── Sign + Broadcast ─────────────────────────────────────────
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&buyer_agent_id).await?;
 
-    let tx_hash = signing::sign_uop_and_broadcast(
+    let tx_hash = match signing::sign_uop_and_broadcast(
         client,
         &resp["uopData"],
         &account_id,
@@ -619,7 +620,16 @@ pub async fn handle_draft_publish(
         &buyer_agent_id,
         None,
     )
-    .await?;
+    .await
+    {
+        Ok(tx_hash) => tx_hash,
+        Err(err) => {
+            if let Some(prebind) = &provider_prebind {
+                prebind.rollback_if_created().await;
+            }
+            return Err(err);
+        }
+    };
 
     audit::log(
         "cli",
