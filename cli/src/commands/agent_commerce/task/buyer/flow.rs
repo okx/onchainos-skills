@@ -237,10 +237,10 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
 
     let preamble_slim = "\
          🛑 Core rules:\n\
-         - Rule 0: Follow steps literally; do NOT skip / reorder / batch.\n\
+         - Rule 1: Follow steps literally; do NOT skip / reorder / batch.\n\
          - Rule 2: CLI error → do NOT retry; push `cli_failed` decision.\n\
-         - Rule 9: Sub/backup text is invisible to user → use `user notify` or `pending-decisions-v2 request`.\n\
-         - Rule 15: ≥1 tool_use block, ≤2 lines text per response.\n\n";
+         - Rule 3: Sub/backup text is invisible to user → use `user notify` or `pending-decisions-v2 request`.\n\
+         - Rule 4: ≥1 tool_use block, ≤2 lines text per response.\n\n";
 
     // Pre-fetched context block — when available, inlined at the top of the playbook so the agent
     // can skip the "Step 1: run common context" CLI round-trip.
