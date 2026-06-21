@@ -245,6 +245,18 @@ pub async fn handle_set_asp(
         )
         .await?;
 
+    let old_provider = super::negotiate::get_designated_provider(job_id)
+        .ok()
+        .flatten();
+    if let Some(ref old_pid) = old_provider {
+        if old_pid != provider_agent_id {
+            match super::super::common::okx_a2a::session_delete(job_id, Some(old_pid)) {
+                Ok(()) => println!("✓ Old job session deleted (provider {old_pid})."),
+                Err(e) => eprintln!("⚠ Old job session delete failed (provider {old_pid}): {e}"),
+            }
+        }
+    }
+
     super::negotiate::save_designated_provider(job_id, provider_agent_id)?;
 
     audit::log(
