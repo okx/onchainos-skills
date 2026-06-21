@@ -17,24 +17,6 @@ OKX AI Task Marketplace: decentralized task delegation on XLayer. Three roles: *
 
 ---
 
-## Pre-flight
-
-Before any task flow starts, run one command to check all three gates at once:
-
-```bash
-onchainos agent preflight --role buyer
-```
-
-Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proceed. Otherwise fix the failing gate:
-
-| Gate | `ok: false` | Fix |
-|------|-------------|-----|
-| `wallet` | Not logged in | Hand off to `okx-agentic-wallet` (`onchainos wallet login`) |
-| `identity` | No buyer agent | `onchainos agent register` with role=buyer |
-| `communication` | okx-a2a not running | Run [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) |
-
----
-
 ## Reading Order
 
 1. **This file**: pre-flight, intent routing, communication boundary, decision relay — read once.
