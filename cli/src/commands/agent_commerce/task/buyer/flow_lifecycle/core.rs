@@ -68,93 +68,66 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
 
 pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
-    let title_in_extract = ctx.title_in_extract;
 
-    let accepted_escrow_notify = super::super::content::job_accepted_escrow_user_notify(job_id, title_display);
+    let pm = ctx.payment_mode;
+
+    // ── Escrow: CLI fills all values, LLM just localizes + sends ──
+    if pm != Some(3) {
+        let (title, desc, provider_id, amount, symbol) = match ctx.prefetched {
+            Some(p) => (
+                p.title.as_str(),
+                if p.description.is_empty() { "<description>" } else { p.description.as_str() },
+                p.provider_agent_id.as_deref().unwrap_or("<providerAgentId>"),
+                p.token_amount.as_str(),
+                p.token_symbol.as_str(),
+            ),
+            None => ("<title>", "<description>", "<providerAgentId>", "<tokenAmount>", "<tokenSymbol>"),
+        };
+
+        let l10n = super::super::flow::LOCALIZATION_PREFIX;
+        return format!(
+            "{l10n}\
+             ✓ job_accepted (escrow). Notify the user:\n\
+             ```bash\n\
+             okx-a2a user notify --content '<job accepted, title={title}, description={desc}, ASP={provider_id}, escrow {amount} {symbol}, awaiting deliverable>'\n\
+             ```\n\
+             End turn after notifying.\n"
+        );
+    }
+
+    // ── x402: LLM needs to determine replaySuccess + run complete ──
+    let l10n = super::super::flow::LOCALIZATION_PREFIX;
     let accepted_x402_fail = super::super::content::job_accepted_x402_replay_fail_user_notify(job_id);
     let complete_failed = super::super::content::complete_failed_user_notify(job_id);
 
-    let pm = ctx.payment_mode;
-    let pm_extract = if pm.is_some() { "" } else { "paymentMode (int: 1=escrow, 3=x402), " };
-    let branch_header = if pm.is_none() { "**Step 2 -- Branch by payment mode:**\n\n" } else { "" };
-
-    let escrow_section = if pm == Some(3) { String::new() } else { format!("\
-     --------- Branch A: escrow ---------\n\n\
-     Notify the user that accept succeeded via `okx-a2a user notify`:\n\
-     ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
-     ```\n\
-     Content:\n\
-     {accepted_escrow_notify}\n\n") };
-
-    let x402_section = if pm == Some(1) { String::new() } else { format!("\
-     --------- Branch B: x402 ---------\n\n\
-     In x402 mode, accept has already been settled on-chain (funds paid); task-402-pay was executed in the previous turn (job_payment_mode_changed).\n\n\
-     **B-Step 1 -- Determine replaySuccess from the previous turn's task-402-pay:**\n\
+    format!(
+    "{l10n}\
+     [Current Status] job_accepted (x402 — funds already paid)\n\n\
+     **Step 1 -- Determine replaySuccess from the previous turn's task-402-pay:**\n\
      Look up the task-402-pay output in this sub session context.\n\
-     ⚠️ If it cannot be found (e.g. lost due to context compaction), **default to replaySuccess=true** --\n\
-     x402 funds are paid during accept, the user was already notified of the delivery result (success or failure) in the previous turn,\n\
-     and skipping complete would leave the task stuck in accepted forever.\n\n\
-     **B-Branch 1: replaySuccess=true (or default when context is missing)**\n\n\
-     **B-Step 2 -- Run complete (single sign):**\n\
+     ⚠️ If not found (e.g. context compaction), **default to replaySuccess=true** —\n\
+     skipping complete would leave the task stuck in accepted forever.\n\n\
+     **Branch 1: replaySuccess=true (or default)**\n\n\
      ```bash\n\
      onchainos agent complete {job_id}\n\
      ```\n\
-     (Internally: POST /priapi/v1/aieco/task/{job_id}/direct/complete → get calldata → sign uopHash → broadcast on-chain.)\n\n\
-     🛑 **broadcast ≠ on-chain confirmed**: `complete` CLI success = transaction broadcast submitted, not on-chain confirmed.\n\
-     ❌ Do NOT call `okx-a2a user notify` here — the final completion summary is owned by the `job_completed` event (fired after on-chain confirmation).\n\
-     ❌ Do NOT say \"task complete\" / \"funds settled\" / \"任务完成\" — factually wrong at this point.\n\n\
-     ⚠️ **complete failure fallback**: if `onchainos agent complete` returns an error,\n\
-     notify the user via `okx-a2a user notify`:\n\
+     🛑 broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
+     ⚠️ On error → notify user:\n\
      ```bash\n\
      okx-a2a user notify --content '<localized content>'\n\
      ```\n\
      Content: {complete_failed}\n\
-     → **End this turn** and wait for user retry or a wakeup_notify event.\n\n\
-     **B-Branch 2: replaySuccess=false (only take this branch when replaySuccess=false is explicitly found in context)**\n\n\
-     ⚠️ **Do not run complete** -- the user did not receive the deliverable.\n\n\
-     **B-Step 2 — Check whether a `x402_replay_input` pending decision was already pushed:**\n\
-     Look in this sub session's context for a `pending-decisions-v2 request ... --source-event x402_replay_input` call from the previous `job_payment_mode_changed` turn.\n\n\
-     \x20\x20▸ **If yes** (a `x402_replay_input` decision was already sent to the user session):\n\
-     \x20\x20\x20\x20**Skip notification.** The user will reply to the pending decision with the required parameters.\n\
-     \x20\x20\x20\x20The `user_decision_x402_replay_input` handler will re-run `task-402-pay --body` and call `complete` on success.\n\
-     \x20\x20\x20\x20→ **End this turn.** Do nothing further.\n\n\
-     \x20\x20▸ **If no** (generic replay failure, no pending decision):\n\
-     \x20\x20\x20\x20Notify the user of replay failure via `okx-a2a user notify`:\n\
-     \x20\x20\x20\x20```bash\n\
-     \x20\x20\x20\x20okx-a2a user notify --content '<localized content>'\n\
-     \x20\x20\x20\x20```\n\
-     \x20\x20\x20\x20Content:\n\
-     \x20\x20\x20\x20{accepted_x402_fail}\n\n\
-     → Wait for `job_completed` system event; handle via `next-action`.\n") };
-
-    let step1 = if ctx.prefetched.is_some() {
-        format!("\
-     **Step 1 -- Use pre-fetched task context above:**\n\
-     Read {title_in_extract}description, providerAgentId, {pm_extract}tokenAmount, tokenSymbol from the `[Pre-fetched task context]` block.\n\
-     ⚠️ If any field is missing, fall back to `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}`.\n\
-     [Failure fallback] If all sources fail, degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n")
-    } else {
-        format!("\
-     **Step 1 -- Fetch full task info:**\n\
+     → End turn, wait for retry or wakeup_notify.\n\n\
+     **Branch 2: replaySuccess=false (explicitly found in context)**\n\n\
+     Do not run complete.\n\
+     Check whether a `x402_replay_input` pending decision was already pushed in the previous turn:\n\
+     ▸ Yes → end turn (user will reply to the pending decision).\n\
+     ▸ No → notify user:\n\
      ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+     okx-a2a user notify --content '<localized content>'\n\
      ```\n\
-     Extract: {title_in_extract}description, providerAgentId, {pm_extract}tokenAmount, tokenSymbol.\n\
-     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n")
-    };
-
-    format!(
-    "[Current Status] job_accepted (user has confirmed accept; task enters execution stage)\n\
-     [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
-     [Your next actions (strict order)]\n\n\
-     {step1}\
-     {branch_header}\
-     {escrow_section}\
-     {x402_section}"
+     Content: {accepted_x402_fail}\n\
+     → Wait for `job_completed` system event.\n"
     )
 }
 
@@ -372,13 +345,15 @@ pub(crate) fn deliverable_received_cli(
         String::new()
     };
 
+    let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
-        "✓ {deliverable_type} deliverable saved.\n\
+        "{l10n}\
+         ✓ {deliverable_type} deliverable saved.\n\
          savedPath: {saved_path}\n\
          title: {title} | shortId: {short_id} | provider: {provider_id}{preview_block}\n\n\
-         Notify the user (🌐 localize):\n\
+         Notify the user:\n\
          ```bash\n\
-         okx-a2a user notify --content '<🌐 localize: deliverable received, type={deliverable_type}, saved at {saved_path}, awaiting on-chain confirmation>'\n\
+         okx-a2a user notify --content '<deliverable received, type={deliverable_type}, saved at {saved_path}, awaiting on-chain confirmation>'\n\
          ```\n\
          End turn after notifying.\n"
     )
@@ -675,65 +650,34 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
 pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
-    let title_in_extract = ctx.title_in_extract;
     let terminal_session_hint = &ctx.terminal_session_hint;
 
-    let completed_escrow_notify = super::super::content::job_completed_escrow_user_notify(job_id, title_display);
-    let completed_x402_notify = super::super::content::job_completed_x402_user_notify(job_id, title_display);
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+    let (title, provider_id, amount, symbol) = match ctx.prefetched {
+        Some(p) => (
+            p.title.as_str(),
+            p.provider_agent_id.as_deref().unwrap_or("<providerAgentId>"),
+            p.token_amount.as_str(),
+            p.token_symbol.as_str(),
+        ),
+        None => ("<title>", "<providerAgentId>", "<tokenAmount>", "<tokenSymbol>"),
+    };
 
     let pm = ctx.payment_mode;
-    let pm_extract = if pm.is_some() { "" } else { ", paymentMode (int: 1=escrow, 3=x402)" };
-    let branch_header = if pm.is_none() { "**Step 2 -- Branch by payment mode:**\n\n" } else { "" };
+    let payment_label = if pm == Some(3) { "x402" } else { "escrow" };
 
-    let escrow_section = if pm == Some(3) { String::new() } else { format!("\
-     --------- Branch A: escrow ---------\n\
-     Funds released from contract to ASP.\n\n\
-     **A-1 — Rate ASP (mandatory, before notify):**\n\
-     Score 0.00–5.00 (deliverable vs description). Comment ≤100 chars.\n\
-     ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
-     ```\n\n\
-     **A-2 — Notify user (completion + rating in one message):**\n\
-     ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
-     ```\n\
-     Compose from two halves (concatenate with two blank lines):\n\
-     \x20\x20▸ Completion (always): {completed_escrow_notify}\n\
-     \x20\x20▸ Rating (only if A-1 succeeded): {rating_notify}\n\n\
-     **A-3 — Wrap-up:**\n\
-     {terminal_session_hint}\n\n") };
-
-    let x402_section = if pm == Some(1) { String::new() } else { format!("\
-     --------- Branch B: x402 ---------\n\
-     Payment pipeline settled on-chain. Deliverable already sent during task-402-pay.\n\n\
-     **B-1 — Rate ASP (mandatory, before notify):**\n\
-     Score 0.00–5.00 (deliverable vs description). Comment ≤100 chars.\n\
-     ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
-     ```\n\n\
-     **B-2 — Notify user (completion + rating in one message):**\n\
-     ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
-     ```\n\
-     Compose from two halves (concatenate with two blank lines):\n\
-     \x20\x20▸ Completion (always): {completed_x402_notify}\n\
-     \x20\x20▸ Rating (only if B-1 succeeded): {rating_notify}\n\n\
-     **B-3 — Wrap-up:**\n\
-     {terminal_session_hint}\n\n") };
-
+    let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
-    "🚨 **job_completed — on-chain confirmed, task settled.**\n\
-     🔴 User has NOT been notified yet. Rate ASP first, then send one consolidated notification.\n\n\
-     **Step 1 — Task context:**\n\
-     Need {title_in_extract}providerAgentId, tokenAmount, tokenSymbol{pm_extract}. Fallback:\n\
-     ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\
-     If unavailable, degrade to `[Job Completed] Job {job_id} — completed; funds settled.`\n\n\
-     {branch_header}\
-     {escrow_section}\
-     {x402_section}"
+        "{l10n}\
+         ✓ job_completed ({payment_label}). Funds settled on-chain.\n\n\
+         **Step 1 — Rate ASP** (score 0.00–5.00, comment ≤100 chars):\n\
+         ```bash\n\
+         onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
+         ```\n\n\
+         **Step 2 — Notify user** (completion + rating in one message):\n\
+         ```bash\n\
+         okx-a2a user notify --content '<job completed, title={title}, spent {amount} {symbol}, payment={payment_label}, ASP={provider_id}. If Step 1 succeeded, append: rated <score>/5.00, comment: <comment>>'\n\
+         ```\n\n\
+         **Step 3 — Wrap-up:**\n\
+         {terminal_session_hint}\n"
     )
 }
