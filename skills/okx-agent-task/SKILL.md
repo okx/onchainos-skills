@@ -62,12 +62,23 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 
 ## Pre-flight
 
-> See `_shared/preflight.md` for full details. Before any task flow starts, pass these three gates; if any fails, stop and hand off to the corresponding skill:
->
-> 1. **Wallet is logged in**: `onchainos wallet status` — if not, hand off to `okx-agentic-wallet`.
-> 2. **Agent exists for required role**: `onchainos agent my-agents --role <buyer|provider|evaluator>` → empty = `agent create`. Evaluator additionally requires staking onboarding in `references/evaluator-staking.md §2`.
->    - ⚠️ `my-agents` only shows the current account's agents (Pre-flight scope). For envelope routing use `--role auto` on `next-action` (CLI resolves the envelope's agentId internally).
-> 3. **Communication channel**: **Run** [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) — verifies OKX A2A communication is ready. OpenClaw and Hermes use the plugin path; Node runtimes use the `okx-a2a` CLI.
+> See `_shared/preflight.md` for CLI environment checks (install, upgrade, integrity).
+
+Before any task flow starts, run one command to check all three business gates at once. Use the role resolved in the Activation step above.
+
+```bash
+onchainos agent preflight --role <buyer|provider|evaluator>
+```
+
+Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proceed. Otherwise fix the failing gate:
+
+| Gate | `ok: false` | Fix |
+|------|-------------|-----|
+| `wallet` | Not logged in | Hand off to `okx-agentic-wallet` (`onchainos wallet login`) |
+| `identity` | No agent for role | `onchainos agent register` with the required role. Evaluator additionally requires staking onboarding in `references/evaluator-staking.md §2`. |
+| `communication` | okx-a2a not running | Run [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) |
+
+> ⚠️ `preflight` only checks the current account's agents. For envelope routing use `--role auto` on `next-action` (CLI resolves the envelope's agentId internally).
 
 ## ⚠️ Critical Field Mapping Table (always look it up, don't guess)
 
