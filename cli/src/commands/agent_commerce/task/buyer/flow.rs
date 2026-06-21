@@ -852,7 +852,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     let use_cli_minimal = matches!(event_str,
             "job_created" | "provider_conversation_pick" |
             "negotiate_reply" |
-            "provider_applied" | "deliverable_received" | "approve_review" |
+            "provider_applied" | "job_accepted" | "deliverable_received" | "approve_review" | "job_completed" |
             "review_expired" | "job_expired" | "job_auto_refunded" |
             "submit_expired" | "reject_expired" |
             "close" | "set_public"
