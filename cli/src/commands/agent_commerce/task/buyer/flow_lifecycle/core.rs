@@ -89,8 +89,15 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
             "{l10n}\
              ✓ job_accepted (escrow). Notify the user:\n\
              ```bash\n\
-             okx-a2a user notify --content '<job accepted, title={title}, description={desc}, ASP={provider_id}, escrow {amount} {symbol}, awaiting deliverable>'\n\
+             okx-a2a user notify --content '<localized content>'\n\
              ```\n\
+             Template (translate to user's language, keep structure):\n\
+             \x20\x20[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
+             \x20\x20Title: {title}\n\
+             \x20\x20Description: {desc}\n\
+             \x20\x20ASP agentId: {provider_id}\n\
+             \x20\x20Payment: escrow\n\
+             \x20\x20Amount: {amount} {symbol}\n\n\
              End turn after notifying.\n"
         );
     }
@@ -353,8 +360,14 @@ pub(crate) fn deliverable_received_cli(
          title: {title} | shortId: {short_id} | provider: {provider_id}{preview_block}\n\n\
          Notify the user:\n\
          ```bash\n\
-         okx-a2a user notify --content '<deliverable received, type={deliverable_type}, saved at {saved_path}, awaiting on-chain confirmation>'\n\
+         okx-a2a user notify --content '<localized content>'\n\
          ```\n\
+         Template (translate to user's language, keep structure; path must be full absolute — never abbreviate):\n\
+         \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
+         \x20\x20Provider: {provider_id}\n\
+         \x20\x20Type: {deliverable_type}\n\
+         \x20\x20Saved at: {saved_path}{preview_block}\n\
+         \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\n\
          End turn after notifying.\n"
     )
 }
@@ -475,6 +488,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      {step2}\
      **Step 3 — Compose `--user-content` and push decision card:**\n\n\
      Compose `--user-content` from Step 2's deliverable variables (fill placeholders from runtime values):\n\n\
+     ⚠️ `<localPath>` must be the full absolute path (e.g. /Users/xxx/…). Never abbreviate or shorten.\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
      [Job {short_id}] The ASP has submitted the deliverable (file).\n\
@@ -650,33 +664,41 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
 pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
+    let title_display = ctx.title_display;
     let terminal_session_hint = &ctx.terminal_session_hint;
 
-    let (title, provider_id, amount, symbol) = match ctx.prefetched {
-        Some(p) => (
-            p.title.as_str(),
-            p.provider_agent_id.as_deref().unwrap_or("<providerAgentId>"),
-            p.token_amount.as_str(),
-            p.token_symbol.as_str(),
-        ),
-        None => ("<title>", "<providerAgentId>", "<tokenAmount>", "<tokenSymbol>"),
-    };
+    let provider_id = ctx.prefetched
+        .and_then(|p| p.provider_agent_id.as_deref())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("<providerAgentId>");
 
     let pm = ctx.payment_mode;
-    let payment_label = if pm == Some(3) { "x402" } else { "escrow" };
+
+    let completed_notify = if pm == Some(3) {
+        super::super::content::job_completed_x402_user_notify(job_id, title_display)
+    } else {
+        super::super::content::job_completed_escrow_user_notify(job_id, title_display)
+    };
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
 
     let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
         "{l10n}\
-         ✓ job_completed ({payment_label}). Funds settled on-chain.\n\n\
+         🚨 **job_completed — on-chain confirmed, task settled.**\n\
+         🔴 User has NOT been notified yet. Rate ASP first, then send one consolidated notification.\n\n\
          **Step 1 — Rate ASP** (score 0.00–5.00, comment ≤100 chars):\n\
          ```bash\n\
          onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
          ```\n\n\
          **Step 2 — Notify user** (completion + rating in one message):\n\
          ```bash\n\
-         okx-a2a user notify --content '<job completed, title={title}, spent {amount} {symbol}, payment={payment_label}, ASP={provider_id}. If Step 1 succeeded, append: rated <score>/5.00, comment: <comment>>'\n\
-         ```\n\n\
+         okx-a2a user notify --content '<localized content>'\n\
+         ```\n\
+         Compose from two halves (translate to user's language, keep structure):\n\
+         \x20\x20▸ Completion (always):\n\
+         \x20\x20\x20\x20{completed_notify}\n\
+         \x20\x20▸ Rating (only if Step 1 succeeded):\n\
+         \x20\x20\x20\x20{rating_notify}\n\n\
          **Step 3 — Wrap-up:**\n\
          {terminal_session_hint}\n"
     )
