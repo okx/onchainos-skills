@@ -10,7 +10,7 @@ pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] job_refunded (funds refunded to the user)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user that the refund completed; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     🛑 **You MUST notify the user that the refund completed; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
      [Your next actions (strict order)]\n\n\
      **Step 1 — Notify the user the refund completed via `okx-a2a user notify`:**\n\
      ```bash\n\
@@ -38,7 +38,7 @@ pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
     format!(
     "[System Notification] job_auto_refunded (claimAutoRefund tx receipt)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user the refund has arrived; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     🛑 **You MUST notify the user the refund has arrived; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
      **Step 1 — Notify the user the refund has arrived via `okx-a2a user notify`:**\n\
@@ -121,7 +121,7 @@ pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
         Ok(()) => format!(
-            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
              **Notify the user via `okx-a2a user notify`:**\n\
              🌐 **Localize first** — translate the canonical English content below.\n\
              ```bash\n\
@@ -145,7 +145,7 @@ pub(crate) async fn reject_expired(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
         Ok(()) => format!(
-            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
              **Notify the user via `okx-a2a user notify`:**\n\
              🌐 **Localize first** — translate the canonical English content below.\n\
              ```bash\n\
@@ -194,7 +194,7 @@ pub(crate) fn review_expired(ctx: &FlowContext<'_>) -> String {
     format!(
     "[System Notification] review_expired (review window expired; task is still submitted)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user the review window expired; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     🛑 **You MUST notify the user the review window expired; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
      [Your next actions]\n\n\
      **Step 1 — Notify the user via `okx-a2a user notify`:**\n\
      🌐 **Localize first** — translate the canonical English content below.\n\
@@ -299,7 +299,7 @@ pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     match super::super::close::handle_close(&mut client, job_id, Some(agent_id)).await {
         Ok(()) => format!(
-            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
              **Notify the user the task was closed via `okx-a2a user notify`:**\n\
              🌐 **Localize first** — translate the canonical English content below.\n\
              ```bash\n\
@@ -324,7 +324,7 @@ pub(crate) async fn set_public(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     match super::super::changepublic::handle_set_public(&mut client, job_id, Some(agent_id)).await {
         Ok(()) => format!(
-            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+            "🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
              **Notify the user the task is now public via `okx-a2a user notify`:**\n\
              🌐 **Localize first** — translate the canonical English content below.\n\
              ```bash\n\

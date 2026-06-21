@@ -149,7 +149,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] job_accepted (user has confirmed accept; task enters execution stage)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
      [Your next actions (strict order)]\n\n\
      {step1}\
      {branch_header}\
@@ -376,9 +376,9 @@ pub(crate) fn deliverable_received_cli(
         "✓ {deliverable_type} deliverable saved.\n\
          savedPath: {saved_path}\n\
          title: {title} | shortId: {short_id} | provider: {provider_id}{preview_block}\n\n\
-         Notify the user (localize to user's language):\n\
+         Notify the user (🌐 localize):\n\
          ```bash\n\
-         okx-a2a user notify --content '<localized: deliverable received, type={deliverable_type}, saved at {saved_path}, awaiting on-chain confirmation>'\n\
+         okx-a2a user notify --content '<🌐 localize: deliverable received, type={deliverable_type}, saved at {saved_path}, awaiting on-chain confirmation>'\n\
          ```\n\
          End turn after notifying.\n"
     )
@@ -593,20 +593,17 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      onchainos agent feedback-submit --agent-id {provider_field} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
      ```\n\
      `--agent-id` = ASP being rated; `--creator-id` = buyer's agent id.\n\n\
-     **3b — Notify user (deliverable received):**\n\
+     **3b — Notify user (deliverable + rating in one message):**\n\
      ```bash\n\
      okx-a2a user notify --content '<localized content>'\n\
      ```\n\
-     Pick matching template:\n\
-     \x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: <localPath>`\n\
-     \x20\x20text+path: `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>` + preview (first 200 chars)\n\
-     \x20\x20text-no-path: `[Deliverable Received] Job {job_id} — x402, payment settled.` + full deliverableText inline\n\n\
-     **3c — Notify user (rating result; only if feedback-submit succeeded):**\n\
-     ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
-     ```\n\
-     \x20\x20{rating_notify}\n\n\
-     **3d — Terminal wrap-up:**\n\
+     Compose from two halves (concatenate with two blank lines):\n\
+     \x20\x20▸ Deliverable (always; pick template):\n\
+     \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: <localPath>`\n\
+     \x20\x20\x20\x20text+path: `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>` + preview (first 200 chars)\n\
+     \x20\x20\x20\x20text-no-path: `[Deliverable Received] Job {job_id} — x402, payment settled.` + full deliverableText inline\n\
+     \x20\x20▸ Rating (only if feedback-submit succeeded): {rating_notify}\n\n\
+     **3c — Terminal wrap-up:**\n\
      {terminal_session_hint}\n"
     )
 }
@@ -698,17 +695,14 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
      ```\n\n\
-     **A-2 — Notify user (task completed):**\n\
+     **A-2 — Notify user (completion + rating in one message):**\n\
      ```bash\n\
      okx-a2a user notify --content '<localized content>'\n\
      ```\n\
-     \x20\x20{completed_escrow_notify}\n\n\
-     **A-3 — Notify user (rating; skip if A-1 failed):**\n\
-     ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
-     ```\n\
-     \x20\x20{rating_notify}\n\n\
-     **A-4 — Wrap-up:**\n\
+     Compose from two halves (concatenate with two blank lines):\n\
+     \x20\x20▸ Completion (always): {completed_escrow_notify}\n\
+     \x20\x20▸ Rating (only if A-1 succeeded): {rating_notify}\n\n\
+     **A-3 — Wrap-up:**\n\
      {terminal_session_hint}\n\n") };
 
     let x402_section = if pm == Some(1) { String::new() } else { format!("\
@@ -719,22 +713,19 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
      ```\n\n\
-     **B-2 — Notify user (task completed):**\n\
+     **B-2 — Notify user (completion + rating in one message):**\n\
      ```bash\n\
      okx-a2a user notify --content '<localized content>'\n\
      ```\n\
-     \x20\x20{completed_x402_notify}\n\n\
-     **B-3 — Notify user (rating; skip if B-1 failed):**\n\
-     ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
-     ```\n\
-     \x20\x20{rating_notify}\n\n\
-     **B-4 — Wrap-up:**\n\
+     Compose from two halves (concatenate with two blank lines):\n\
+     \x20\x20▸ Completion (always): {completed_x402_notify}\n\
+     \x20\x20▸ Rating (only if B-1 succeeded): {rating_notify}\n\n\
+     **B-3 — Wrap-up:**\n\
      {terminal_session_hint}\n\n") };
 
     format!(
     "🚨 **job_completed — on-chain confirmed, task settled.**\n\
-     🔴 User has NOT been notified yet. Rate ASP first, then send completion + rating as separate notifications.\n\n\
+     🔴 User has NOT been notified yet. Rate ASP first, then send one consolidated notification.\n\n\
      **Step 1 — Task context:**\n\
      Need {title_in_extract}providerAgentId, tokenAmount, tokenSymbol{pm_extract}. Fallback:\n\
      ```bash\n\
