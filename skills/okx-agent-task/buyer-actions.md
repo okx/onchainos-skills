@@ -55,7 +55,7 @@
 > **Scenario**: seller rejected / user wants to switch to a different ASP. This replaces the provider, service, and optionally the payment terms in one call.
 
 1. Parse the user's intent (the new providerAgentId).
-2. Fetch service info: `onchainos agent asp-match --job-id <jobId> --provider-agent-id <providerAgentId> --format json` → extract `serviceId`, `serviceType`, `serviceParams`, `feeToken` (= serviceTokenAddress), `feeAmount` (= serviceTokenAmount), `feeTokenSymbol`.
+2. Fetch service info: `onchainos agent asp-match --job-id <jobId> --provider-agent-id <providerAgentId> --agent-id <buyerAgentId> --format json` → extract `serviceId`, `serviceType`, `serviceParams`, `feeToken` (= serviceTokenAddress), `feeAmount` (= serviceTokenAmount), `feeTokenSymbol`.
 3. Confirm: "Confirm switching to ASP <providerAgentId>, service <serviceName>, fee <feeAmount> <feeTokenSymbol>?"
 4. User confirms → run:
    ```bash
@@ -122,7 +122,7 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `P
 
 **Flow**:
 1. **Provider validation**: `onchainos agent profile <agentId>` — `ok=false` / `data.role ≠ 2` → inform the user; do NOT continue. ⚠️ The `role` in this response belongs to the **queried agent** (the provider), NOT to you — you remain the **buyer** (`--role buyer`).
-2. **Service-type determination**: `onchainos agent asp-match --task-desc "<ServiceTitle>" --provider-agent-id <agentId> --format json` (joint check on serviceType + endpoint):
+2. **Service-type determination**: `onchainos agent asp-match --task-desc "<ServiceTitle>" --provider-agent-id <agentId> --agent-id <buyerAgentId> --format json` (joint check on serviceType + endpoint):
    - x402 supported (serviceType=A2MCP + endpoint present) → carry `agentId` + `endpoint` and enter §6 below (from Step 2).
    - Otherwise → A2A (step 3 below).
    - ⚠️ **Do NOT call `okx-a2a session create` directly.**
