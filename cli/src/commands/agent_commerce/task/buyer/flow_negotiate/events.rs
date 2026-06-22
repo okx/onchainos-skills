@@ -135,7 +135,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         None => {
             let is_public = p.visibility == Some(0) || p.service_id.is_none();
             if is_public {
-                return super::match_provider::provider_conversation_cli(ctx);
+                return super::match_provider::provider_conversation(ctx);
             }
             return format!(
                 "[negotiate_reply] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot send a reply.\n\n\
@@ -189,7 +189,13 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         title = p.title,
     );
 
-    let cmd_no_asp = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP] negotiate timeout — next-step decision\" --source-event no_asp_found");
+    let no_asp_prompt = super::super::content::negotiate_timeout_no_asp_user_prompt(provider_agent_id);
+    let block_no_asp = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+        job_id, "buyer", agent_id, None,
+        &no_asp_prompt,
+        "[No ASP] negotiate timeout — next-step decision",
+        "no_asp_found",
+    );
 
     format!(
         "{task_block}\
@@ -217,15 +223,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
          onchainos agent mark-failed {job_id} --provider {provider_agent_id}\n\
          ```\n\n\
          **Step 2** — push a decision card to the user:\n\
-         ```bash\n\
-         {cmd_no_asp}\n\
-         ```\n\
-         `--user-content` template:\n\
-         Negotiation with ASP {provider_agent_id} did not reach agreement within 2 rounds.\n\n\
-         What would you like to do next?\n\
-         A. Browse the ASP list\n\
-         B. Designate a specific ASP by agentId\n\
-         C. Close the task\n\n\
+         {block_no_asp}\n\n\
          → **End this turn.**\n",
         public_price_note = if is_public { ", and **price** (within max budget)" } else { "" },
     )
@@ -285,6 +283,8 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
 
     format!(
     "[job_provider_reject] ✅ ASP binding reset (reset/asp) completed in-process.\n\n\
+     🌐 **Localize first** — translate the `--user-content` value below into the user's language before executing. \
+     Keep `[Job {short_id}]` prefix and `A.` / `B.` / `C.` / `D.` option letters unchanged.\n\n\
      🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
      {request_block}\n"
     )

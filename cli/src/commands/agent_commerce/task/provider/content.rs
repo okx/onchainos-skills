@@ -24,20 +24,6 @@
 //! conversation state. To add new copy → add a new fn; to change copy → edit the
 //! fn body; flow.rs only ever calls into here and never embeds literals inline.
 
-/// `Event::JobAspSelected` APPLY path — user-facing notification pushed via
-/// `okx-a2a user notify --content <text>` after the on-chain apply.
-/// Placeholders the agent fills in: `<serviceName>` / `<offerAmount>` /
-/// `<tokenSymbol>`. The agent must localize the entire string to the user's
-/// language before sending (per LOCALIZATION_PREFIX rules).
-pub fn job_asp_selected_accepted_notify(job_id: &str) -> String {
-    format!(
-        "[Designated Task Accepted] Job {job_id} — you have been designated as the ASP and the apply is on-chain.\n\
-         \x20\x20- Service: <serviceName>\n\
-         \x20\x20- Price: <offerAmount> <tokenSymbol>\n\
-         \x20\x20Awaiting the buyer's confirm-accept to fund escrow."
-    )
-}
-
 /// `Event::JobAspSelected` no-serviceId fallback — user-facing notification
 /// pushed via `okx-a2a user notify --content <text>`. The playbook does NOT
 /// auto-start negotiation; it ends the turn and waits for the buyer to re-route
@@ -308,6 +294,10 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
 ///
 /// **Do not direct** the peer's CLI — once the User Agent's sub agent receives
 /// this, it follows its own `Event::JobSubmitted` script.
+///
+/// NOTE: No longer called from flow.rs — deliver.rs now uses `build_text_deliver_message`
+/// with actual values. Kept as protocol format reference.
+#[allow(dead_code)]
 pub fn deliver_text_to_buyer(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
@@ -325,6 +315,10 @@ pub fn deliver_text_to_buyer(job_id: &str) -> String {
 /// `secret` / `filename`) are protocol literals; the User Agent's sub agent
 /// parses them and downloads the local file via the file-attachment flow.
 /// **Do not direct** the peer's CLI.
+///
+/// NOTE: No longer called from flow.rs — deliver.rs now uses `build_file_deliver_message`
+/// with actual upload metadata. Kept as protocol format reference.
+#[allow(dead_code)]
 pub fn deliver_file_to_buyer(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
@@ -336,6 +330,38 @@ pub fn deliver_file_to_buyer(job_id: &str) -> String {
          secret: <secret returned from A-Step 1>\n\
          filename: <filename returned from A-Step 1>\n\
          [intent:deliver]"
+    )
+}
+
+/// Build the actual text-deliver XMTP message with real content (used by deliver.rs).
+pub fn build_text_deliver_message(job_id: &str, text: &str) -> String {
+    format!(
+        "jobId: {job_id}\n\
+         deliverableType: text\n\
+         - - -\n\
+         {text}\n\
+         - - -\n\
+         [intent:deliver]"
+    )
+}
+
+/// Build the actual file-deliver XMTP message with real upload metadata (used by deliver.rs).
+pub fn build_file_deliver_message(
+    job_id: &str,
+    upload: &crate::commands::agent_commerce::task::common::okx_a2a::FileUploadResult,
+) -> String {
+    format!(
+        "jobId: {job_id}\n\
+         deliverableType: file\n\
+         fileKey: {}\n\
+         digest: {}\n\
+         salt: {}\n\
+         nonce: {}\n\
+         secret: {}\n\
+         filename: {}\n\
+         [intent:deliver]",
+        upload.file_key, upload.digest, upload.salt,
+        upload.nonce, upload.secret, upload.filename,
     )
 }
 

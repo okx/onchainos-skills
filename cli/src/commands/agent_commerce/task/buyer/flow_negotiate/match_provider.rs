@@ -4,19 +4,19 @@ use super::super::flow::FlowContext;
 
 // --- Event handler functions ------------------------------------------------
 
-pub(crate) async fn job_created_cli(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn job_created(ctx: &FlowContext<'_>) -> String {
     // No designated provider → asp-match flow; designated → route_only flow.
     let has_designated = super::super::negotiate::get_designated_provider(ctx.job_id)
         .ok()
         .flatten()
         .is_some();
     if !has_designated {
-        return job_created_non_designated_provider_cli(ctx);
+        return job_created_non_designated_provider(ctx);
     }
-    job_created_with_designated_provider_cli(ctx).await
+    job_created_with_designated_provider(ctx).await
 }
 
-fn job_created_non_designated_provider_cli(ctx: &FlowContext<'_>) -> String {
+fn job_created_non_designated_provider(ctx: &FlowContext<'_>) -> String {
     let title = ctx.title_display;
     let short_id = ctx.short_id;
     let notify_tpl = super::super::content::job_created_non_designated_user_notify();
@@ -39,7 +39,7 @@ fn job_created_non_designated_provider_cli(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-async fn job_created_with_designated_provider_cli(ctx: &FlowContext<'_>) -> String {
+async fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
@@ -60,14 +60,13 @@ async fn job_created_with_designated_provider_cli(ctx: &FlowContext<'_>) -> Stri
         .replace("<title>", title)
         .replace("<short_jobId>", short_id)
         .replace("<provider_agentId>", &dp_id);
-    let notify_prelude = format!(
-        "**Action 0 — Notify the user the job is on-chain.** Translate the canonical English notification below to the user's chat language (per [Localization] rules), then dispatch it:\n\
-         Canonical content (placeholders already filled in):\n\
+    let notify_body = format!(
+        "Translate the canonical English notification below to the user's chat language, then dispatch it:\n\
+         Canonical content:\n\
          \x20\x20{notify_filled}\n\
          ```bash\n\
          okx-a2a user notify --content '<your translated content>'\n\
-         ```\n\n\
-         After Action 0 completes, follow the branch-specific playbook below:\n\n---\n\n"
+         ```\n\n"
     );
 
     // D-Step 1 — designated-route query (in-process).
@@ -87,14 +86,20 @@ async fn job_created_with_designated_provider_cli(ctx: &FlowContext<'_>) -> Stri
     // duplicate guard + create + SKILL_PREFETCH) via `branch_a2a_cli`.
     let route = route_json.get("route").and_then(|v| v.as_str()).unwrap_or("");
     let branch_playbook = match route {
-        "a2a" => super::designated::branch_a2a_cli(job_id, agent_id, short_id, &dp_id, title, ctx.prefetched),
-        "x402" => super::designated::branch_x402(job_id, agent_id, short_id, &dp_id, Some(&route_json)),
-        "error" => super::designated::branch_error(job_id, agent_id, short_id, &dp_id),
+        "a2a" => super::designated::branch_a2a_cli(job_id, agent_id, &dp_id),
+        "x402" => Some(super::designated::branch_x402(job_id, agent_id, short_id, &dp_id, Some(&route_json))),
+        "error" => Some(super::designated::branch_error(job_id, agent_id, short_id, &dp_id)),
         _ => return format!(
             "[job_created_cli] ERROR: unknown route value '{route}' in designated-route response: {route_json}\n"
         ),
     };
-    format!("{notify_prelude}{branch_playbook}")
+    match branch_playbook {
+        Some(p) => format!(
+            "**Action 0 — Notify the user the job is on-chain.** {notify_body}\
+             After Action 0 completes, follow the branch-specific playbook below:\n\n---\n\n{p}"
+        ),
+        None => notify_body,
+    }
 }
 
 
@@ -193,7 +198,7 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
 /// takes the first ASP, and pushes an accept/reject decision card to the user.
 /// Reject triggers `provider_conversation_reject` which auto-advances to the
 /// next ASP or pushes close options if none remain.
-pub(crate) fn provider_conversation_cli(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn provider_conversation(ctx: &FlowContext<'_>) -> String {
     provider_conversation_cli_inner(ctx, None)
 }
 
@@ -287,8 +292,16 @@ pub(crate) fn provider_conversation_cli_inner(
     let card_content = super::super::content::provider_pending_single_user_card(
         short_id, title, asp_agent_id, name,
     );
-
-    let cmd = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[ASP {short_id}] Accept provider?\" --source-event provider_pending");
+    let llm_content = super::super::content::provider_pending_llm_content(
+        job_id, agent_id, asp_agent_id, group_id, remaining,
+    );
+    let request_block = pending_v2::request_command_block_with_llm(
+        job_id, "buyer", agent_id, None,
+        &card_content,
+        &llm_content,
+        &format!("[ASP {short_id}] Accept provider?"),
+        "provider_pending",
+    );
 
     format!(
         "[Trigger] ASP pending contact — showing first of {} ASP(s)\n\
@@ -296,26 +309,7 @@ pub(crate) fn provider_conversation_cli_inner(
          🛑 Push the accept/reject decision card via `pending-decisions-v2 request`, then end turn.\n\n\
          ASP context (LLM-only; do NOT expose groupId to user):\n\
          \x20\x20agentId: {asp_agent_id} | groupId: {group_id} | name: {name} | remaining after this: {remaining}\n\n\
-         ```bash\n\
-         {cmd}\n\
-         ```\n\
-         `--user-content` template:\n\
-         {card_content}\n\n\
-         `--llm-content` block (keep English verbatim — consumed by user-session agent for routing):\n\
-         ```\n\
-         [USER_DECISION_REQUEST][source: provider_pending][job: {job_id}][role: buyer][agentId: {agent_id}]\n\
-         [asp: {asp_agent_id}][groupId: {group_id}][remaining: {remaining}]\n\n\
-         Step 1 — Card delivered. **END THE TURN NOW.**\n\
-         Step 2 — When the user replies, route by choice:\n\
-         \x20\x20• 1 / \"accept\" / \"接受\" / \"yes\" / \"好\"  → run:\n\
-         \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"{asp_agent_id}\"}}'\n\
-         \x20\x20\x20\x20```\n\
-         \x20\x20• 2 / \"reject\" / \"拒绝\" / \"no\" / \"不\" / \"换一个\" / \"next\"  → run:\n\
-         \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"{group_id}\"}}'\n\
-         \x20\x20\x20\x20```\n\
-         ```\n",
+         {request_block}\n",
         items.len(),
     )
 }

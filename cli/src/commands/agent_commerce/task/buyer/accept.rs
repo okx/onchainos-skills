@@ -377,7 +377,6 @@ async fn confirm_accept_escrow(
     let hook = json_str(escrow, "hook")?;
     let hook_data = json_str(escrow, "hookData")?;
     let salt = json_str(escrow, "salt")?;
-    println!("✓ providerConfirmStatus: provider has applied; escrow parameters fetched.");
 
     // sign_escrow — TEE signs the EIP-3009 ReceiveWithAuthorization.
     if DEBUG_LOG {
@@ -409,7 +408,6 @@ async fn confirm_accept_escrow(
         eprintln!("[debug] sign_escrow returned: signature={}, validAfter={}, validBefore={}",
             sign_output.signature, sign_output.authorization.valid_after, sign_output.authorization.valid_before);
     }
-    println!("✓ escrow payment signing complete.");
 
     // accept → calldata → sign → broadcast.
     let body = serde_json::json!({
@@ -464,8 +462,6 @@ async fn confirm_accept_escrow(
         ]),
         None,
     );
-    println!("✓ Provider {provider} accepted (escrow); funds are now in escrow.");
-    println!("  txHash: {tx_hash}");
     Ok(())
 }
 

@@ -220,7 +220,6 @@ pub(crate) async fn eip712_sign_raw(
     chain_index: &str,
     from_address: &str,
 ) -> Result<String> {
-    eprintln!("[debug][eip712_sign_raw] enter: chain={chain_index}, from={from_address}");
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = WalletApiClient::new()?;
 
@@ -252,7 +251,6 @@ pub(crate) async fn eip712_sign_raw(
     let msg_hash = hash_resp[0]["msgHash"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing msgHash in gen-msg-hash response"))?;
-    eprintln!("[debug][eip712_sign_raw] msgHash={msg_hash}");
 
     // Step 2: local sign with session key
     let session = wallet_store::load_session()?
@@ -301,8 +299,6 @@ pub(crate) async fn eip712_sign_raw(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing signature in sign-msg response"))?
         .to_string();
-
-    eprintln!("[debug][eip712_sign_raw] sign-msg 返回签名: {signature}");
 
     Ok(signature)
 }

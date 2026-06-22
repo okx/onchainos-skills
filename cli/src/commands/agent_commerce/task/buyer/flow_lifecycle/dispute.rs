@@ -12,7 +12,7 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] job_rejected (user rejection settled on-chain; awaiting ASP decision)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user that the rejection is settled; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
+     🛑 **You MUST notify the user that the rejection is settled; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
      **Step 1 — Notify the user the rejection is confirmed via `okx-a2a user notify`:**\n\

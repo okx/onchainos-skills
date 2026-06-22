@@ -619,7 +619,7 @@ fn handle_request_prompt(
         let llm_content = resolve_llm_content_cli(&entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
-        println!("Decision request submitted. ");
+        println!("OK");
         return Ok(());
     }
 
@@ -661,7 +661,7 @@ fn handle_request_prompt(
         let llm_content = resolve_llm_content_prompt_user(entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
-        println!("Decision request submitted (queued for tracking). ");
+        println!("OK");
         Ok(())
     }
 }
@@ -1312,6 +1312,88 @@ pub fn request_command_block(
     list_label_full: &str,
     source_event: &str,
 ) -> String {
+    build_pending_v2_command_block(
+        "request",
+        job_id,
+        role,
+        agent_id,
+        to_agent_id,
+        user_content,
+        None,
+        list_label_full,
+        source_event,
+    )
+}
+
+/// `request-prompt` variant of [`request_command_block`]. Same pre-assembled
+/// bash skeleton, but the CLI internally invokes the push instead of returning
+/// a playbook for the LLM to execute. Use this where the previous design
+/// hand-wrote a bash block and asked the LLM to translate + interpolate the
+/// `--user-content` body — that path lets the LLM emit literal `\n` escapes
+/// where real newlines were intended, so the user-facing card ends up
+/// rendering `\n` as text.
+pub fn request_prompt_command_block(
+    job_id: &str,
+    role: &str,
+    agent_id: &str,
+    to_agent_id: Option<&str>,
+    user_content: &str,
+    list_label_full: &str,
+    source_event: &str,
+) -> String {
+    build_pending_v2_command_block(
+        "request-prompt",
+        job_id,
+        role,
+        agent_id,
+        to_agent_id,
+        user_content,
+        None,
+        list_label_full,
+        source_event,
+    )
+}
+
+/// `request` variant that also emits `--llm-content`. Use when the user-session
+/// agent needs an English routing block to decode the user's reply (e.g. the
+/// `provider_pending` accept/reject card carries `[asp: …][groupId: …]` in
+/// `--llm-content` so the relay knows which next-action to invoke).
+#[allow(clippy::too_many_arguments)]
+pub fn request_command_block_with_llm(
+    job_id: &str,
+    role: &str,
+    agent_id: &str,
+    to_agent_id: Option<&str>,
+    user_content: &str,
+    llm_content: &str,
+    list_label_full: &str,
+    source_event: &str,
+) -> String {
+    build_pending_v2_command_block(
+        "request",
+        job_id,
+        role,
+        agent_id,
+        to_agent_id,
+        user_content,
+        Some(llm_content),
+        list_label_full,
+        source_event,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_pending_v2_command_block(
+    subcommand: &str,
+    job_id: &str,
+    role: &str,
+    agent_id: &str,
+    to_agent_id: Option<&str>,
+    user_content: &str,
+    llm_content: Option<&str>,
+    list_label_full: &str,
+    source_event: &str,
+) -> String {
     // Bash `--user-content "..."` uses double quotes; escape `\` and `"` inside.
     let user_content_escaped = user_content
         .replace('\\', "\\\\")
@@ -1320,19 +1402,20 @@ pub fn request_command_block(
         Some(t) => format!(" --to-agent-id \"{t}\""),
         None => String::new(),
     };
+    let llm_flag = match llm_content {
+        Some(c) => {
+            let escaped = c.replace('\\', "\\\\").replace('"', "\\\"");
+            format!(" \\\n         \x20\x20--llm-content \"{escaped}\"")
+        }
+        None => String::new(),
+    };
     format!(
-        "Execute these 3 sub-steps strictly in order. ALL THREE are mandatory; skipping any breaks the flow.\n\n\
-         **(1) Translate `--user-content` AND `--list-label` to the user's language BEFORE step (2)**. The bash in (2) shows English placeholders — the actual strings you pass MUST be localized per the rules below.\n\
-         \x20\x20• **Language signal** = user's OWN typed messages in THIS session ONLY. Task title / description / peer's message / playbook examples are NOT signals (even if they contain non-English text). Unsure → default English.\n\
-         \x20\x20• **Translate EVERY user-visible word** — outer prose, text inside single-quotes, placeholder words inside `<...>`, AND task title. The only thing kept verbatim is the shortJobId hex (it's an identifier, not language).\n\
-         \x20\x20• **No mixed-language in any single string**.\n\n\
-         **(2) Run `pending-decisions-v2 request`** with translated args from (1):\n\
-         ```bash\n\
-         onchainos agent pending-decisions-v2 request \\\n\
+        "```bash\n\
+         onchainos agent pending-decisions-v2 {subcommand} \\\n\
          \x20\x20--job-id {job_id} --role {role} --agent-id {agent_id}{to_flag} \\\n\
          \x20\x20--user-content \"{content}\" \\\n\
          \x20\x20--list-label \"{label}\" \\\n\
-         \x20\x20--source-event {source_event}\n\
+         \x20\x20--source-event {source_event}{llm_flag}\n\
          ```",
         job_id = job_id,
         role = role,
@@ -1341,6 +1424,7 @@ pub fn request_command_block(
         content = user_content_escaped,
         label = list_label_full,
         source_event = source_event,
+        llm_flag = llm_flag,
     )
 }
 

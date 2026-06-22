@@ -14,15 +14,11 @@ pub fn handle_session_cleanup(job_id: &str) -> Result<()> {
     }
 
     let mut out = String::new();
-    out.push_str(&format!(
-        "✓ session-cleanup: {cancelled} pending decision(s) cleared for job {job_id}.\n\n"
-    ));
-
     if super::config::keep_conversation_on_terminal() {
         out.push_str("ℹ️ KEEP_SESSION=true — conversation history retained. No further action needed.\n");
     } else {
         match okx_a2a::session_delete(job_id, None) {
-            Ok(()) => out.push_str(&"✓ sub session deleted\n".to_string()),
+            Ok(()) => out.push_str(&"OK".to_string()),
             Err(e) => out.push_str(&format!("⚠️ sub session delete failed: {e}\n")),
         }
         out.push_str("\n✅ All session cleanup steps completed by Rust. End the turn.\n");
