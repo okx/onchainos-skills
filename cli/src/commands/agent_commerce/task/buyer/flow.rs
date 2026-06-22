@@ -290,10 +290,10 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     let body = match event {
         // ─── Negotiation / matching phase → flow_negotiate ──────────────────────────
         Event::JobCreated => {
-            super::flow_negotiate::job_created_cli(&ctx).await
+            super::flow_negotiate::job_created(&ctx).await
         }
         Event::Other(ref s) if s == "provider_conversation" => {
-            super::flow_negotiate::provider_conversation_cli(&ctx)
+            super::flow_negotiate::provider_conversation(&ctx)
         }
         Event::Other(ref s) if s == "provider_conversation_reject" => {
             let gid = message

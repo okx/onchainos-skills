@@ -175,32 +175,29 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
 pub(crate) fn branch_a2a_cli(
     job_id: &str,
     agent_id: &str,
-    short_id: &str,
     dp_id: &str,
-    title_display: &str,
-    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
-) -> String {
+) -> Option<String> {
     use crate::commands::agent_commerce::task::common::okx_a2a;
 
     // B-Step 0 — duplicate guard: does this job already have a sub session
     // with this provider? If yes, the first inquiry was already sent in a
     // previous turn; bail out so we don't double-send.
     match okx_a2a::session_query_exists(job_id, agent_id, dp_id) {
-        Ok(true) => return format!(
+        Ok(true) => return Some(format!(
             "[Designated ASP route: A2A] Provider {dp_id}\n\n\
              🛑 Sub session already exists for this job; the first inquiry has already been sent in a prior turn. \
              End this turn immediately — do not create a group, do not send any message, do not run `okx-a2a session status` / `okx-a2a session create` / `okx-a2a xmtp-send`.\n"
-        ),
+        )),
         Ok(false) => { /* fall through to create */ }
-        Err(e) => return format!("[branch_a2a_cli] ERROR: okx-a2a session query failed: {e}\n"),
+        Err(e) => return Some(format!("[branch_a2a_cli] ERROR: okx-a2a session query failed: {e}\n")),
     }
 
     // B-Step 1 — create the sub session (group + session record). The CLI
     // helper returns the canonical sessionKey assembled from the three IDs;
     // we use it as <SUB_KEY> in the remaining playbook.
-    let session_key = match okx_a2a::session_create(job_id, agent_id, dp_id) {
+    match okx_a2a::session_create(job_id, agent_id, dp_id) {
         Ok(sk) => sk,
-        Err(e) => return format!("[branch_a2a_cli] ERROR: okx-a2a session create failed: {e}\n"),
+        Err(e) => return Some(format!("[branch_a2a_cli] ERROR: okx-a2a session create failed: {e}\n")),
     };
 
     // B-Step 1.5 — SKILL_PREFETCH: pre-load the buyer playbook into the
@@ -208,26 +205,18 @@ pub(crate) fn branch_a2a_cli(
     // correct context. Fire-and-forget (--no-wait baked into helper).
     let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via buyer-sub-playbook.md §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
     if let Err(e) = okx_a2a::session_send(job_id, Some(dp_id), prefetch) {
-        return format!("[branch_a2a_cli] ERROR: okx-a2a session send (SKILL_PREFETCH) failed: {e}\n");
+        return Some(format!("[branch_a2a_cli] ERROR: okx-a2a session send (SKILL_PREFETCH) failed: {e}\n"));
     }
 
     // B-Step 1.6 — Upload + forward any pending attachments (best-effort).
-    let att_count = super::super::flow_lifecycle::upload_and_forward_all_attachments(
+    super::super::flow_lifecycle::upload_and_forward_all_attachments(
         job_id, agent_id, dp_id,
     );
-    if att_count > 0 {
-        eprintln!("[branch_a2a_cli] {att_count} attachment(s) uploaded and forwarded to provider {dp_id}");
-    }
 
     // Sub session created + SKILL_PREFETCH sent. The ASP receives
     // `job_asp_selected` from the backend and independently decides to
     // apply on-chain. The buyer does NOTHING until `provider_applied`.
-    let _ = (short_id, title_display, session_key, prefetched);
-
-    format!(
-        "[Designated ASP route: A2A] Provider {dp_id} — session created, SKILL_PREFETCH sent. \
-         All setup done. 🛑 End this turn. Do NOT call any command.\n"
-    )
+    return None
 }
 
 /// Phase 2a: A2A branch — group creation + negotiation protocol.

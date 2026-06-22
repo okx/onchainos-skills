@@ -46,8 +46,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         );
 
         return format!(
-        "[provider_applied/over_budget] ✅ reject-apply completed in-process.\n\n\
-         🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
+        "🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
          {request_block}\n"
         );
     }
@@ -60,10 +59,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         );
     }
 
-    "[Current state] provider_applied (within max budget; confirm-accept completed in-process)\n\
-     [Role] User (User Agent)\n\n\
-     ✓ In-process: confirm-accept — escrow funded, on-chain accept submitted (see txHash printed above). Status is now `accepted`.\n\
-     → **End this turn** and wait for the `job_accepted` system notification.\n".to_string()
+    "OK".to_string()
 }
 
 pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {

@@ -135,7 +135,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         None => {
             let is_public = p.visibility == Some(0) || p.service_id.is_none();
             if is_public {
-                return super::match_provider::provider_conversation_cli(ctx);
+                return super::match_provider::provider_conversation(ctx);
             }
             return format!(
                 "[negotiate_reply] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot send a reply.\n\n\
