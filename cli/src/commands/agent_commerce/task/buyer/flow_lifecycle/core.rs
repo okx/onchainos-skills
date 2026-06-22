@@ -80,21 +80,18 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
             None => ("<title>", "<description>", "<providerAgentId>", "<tokenAmount>", "<tokenSymbol>"),
         };
 
-        let l10n = super::super::flow::LOCALIZATION_PREFIX;
         return format!(
-            "{l10n}\
-             ✓ job_accepted (escrow). Notify the user:\n\
-             ```bash\n\
-             okx-a2a user notify --content '<localized content>'\n\
-             ```\n\
-             Template (translate to user's language, keep structure):\n\
+            "Translate the canonical English notification below to the user's chat language(keep structure), then dispatch it:\n\
+             Canonical content:\n\
              \x20\x20[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
              \x20\x20Title: {title}\n\
              \x20\x20Description: {desc}\n\
              \x20\x20ASP agentId: {provider_id}\n\
              \x20\x20Payment: escrow\n\
-             \x20\x20Amount: {amount} {symbol}\n\n\
-             End turn after notifying.\n"
+             \x20\x20Amount: {amount} {symbol}\n\
+             ```bash\n\
+             okx-a2a user notify --content '<your translated content>'\n\
+             ```\n\n"
         );
     }
 
@@ -593,10 +590,7 @@ pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let mut client = TaskApiClient::new();
     match super::super::complete::handle_complete(&mut client, job_id).await {
-        Ok(()) => format!(
-            "[approve_review] ✅ `onchainos agent complete {job_id}` broadcast by Rust in-process. End the turn now.\n\n\
-             ⚠️ broadcast ≠ on-chain confirmed. The `job_completed` system event will fire after on-chain confirmation — handle it via `next-action` with `event=job_completed` in --message to notify the user.\n"
-        ),
+        Ok(()) => "OK".to_string(),
         Err(e) => format!(
             "[approve_review] ❌ `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"

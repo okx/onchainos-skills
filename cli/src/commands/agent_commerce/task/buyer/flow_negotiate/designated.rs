@@ -216,7 +216,7 @@ pub(crate) fn branch_a2a_cli(
     // Sub session created + SKILL_PREFETCH sent. The ASP receives
     // `job_asp_selected` from the backend and independently decides to
     // apply on-chain. The buyer does NOTHING until `provider_applied`.
-    return None
+    None
 }
 
 /// Phase 2a: A2A branch — group creation + negotiation protocol.

@@ -619,7 +619,7 @@ fn handle_request_prompt(
         let llm_content = resolve_llm_content_cli(&entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
-        println!("Decision request submitted. ");
+        println!("OK");
         return Ok(());
     }
 
@@ -661,7 +661,7 @@ fn handle_request_prompt(
         let llm_content = resolve_llm_content_prompt_user(entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
-        println!("Decision request submitted (queued for tracking). ");
+        println!("OK");
         Ok(())
     }
 }
