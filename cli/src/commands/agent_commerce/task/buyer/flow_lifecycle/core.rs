@@ -59,7 +59,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         );
     }
 
-    "OK".to_string()
+    "**End this turn** and wait for the `job_accepted` system notification.".to_string()
 }
 
 pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
@@ -640,7 +640,7 @@ pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let mut client = TaskApiClient::new();
     match super::super::complete::handle_complete(&mut client, job_id).await {
-        Ok(()) => "OK".to_string(),
+        Ok(()) => "**End this turn** and wait for the `job_completed` system notification.".to_string(),
         Err(e) => format!(
             "[approve_review] ❌ `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
