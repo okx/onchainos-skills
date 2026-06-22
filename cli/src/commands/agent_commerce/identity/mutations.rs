@@ -395,41 +395,39 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     // skill guides the user to supply any needed current values.
     //
     // agentId goes inside cardJson (the backend identifies the target via
-    // cardJson.AgentId), not at the request body top level. AgentId stays
-    // PascalCase; name / image / services use the new lowercase schema;
-    // ProfileDescription is also kept PascalCase as it was not renamed in spec.
+    // cardJson.agentId), not at the request body top level. All cardJson keys
+    // use the unified lowercase / camelCase schema (agentId / name / image /
+    // profileDescription / services) shared with the services-list response.
     let mut card = serde_json::Map::new();
-    card.insert("AgentId".into(), json!(agent_id));
+    card.insert("agentId".into(), json!(agent_id));
     let name = trim_or_empty(args.name.as_deref());
     if !name.is_empty() {
         card.insert("name".into(), json!(name));
     }
     let description = trim_or_empty(args.description.as_deref());
     if !description.is_empty() {
-        card.insert("ProfileDescription".into(), json!(description));
+        card.insert("profileDescription".into(), json!(description));
     }
     let picture = trim_or_empty(args.picture.as_deref());
     if !picture.is_empty() {
         card.insert("image".into(), json!(picture));
     }
-    // Service: backend treats absent `services` field as "clear all services",
-    // so we must always send the complete list. Fetch existing services first,
-    // then merge in any user-supplied changes.
-    let existing_raw = fetch_raw_services(agent_id, ctx).await?;
-    let existing: Vec<super::models::AgentService> = existing_raw
-        .iter()
-        .filter_map(raw_service_to_agent_service)
-        .collect();
-    let final_services = if args.service.is_some() {
-        let new_services = parse_services(args.service.as_deref())?;
-        merge_services(existing, new_services)
-    } else {
-        existing
-    };
-    card.insert(
-        "services".into(),
-        serde_json::to_value(&final_services).context("failed to serialize services list")?,
-    );
+    // Service: the update payload is a DELTA, not a full snapshot. `services`
+    // carries ONLY the entries to change, each tagged with an `operation`:
+    //   • `create` — a brand-new service, NO `id` (+ the other fields)
+    //   • `update` — change an existing service, carries its `id` (+ fields)
+    //   • `delete` — remove an existing service, carries its `id` (+ fields)
+    // The backend applies the delta against the current on-chain services, so
+    // the CLI no longer fetches the existing list or sends full coverage. When
+    // the user changes no service this call, `services` is omitted entirely
+    // (omission no longer means "clear all").
+    if args.service.is_some() {
+        let services = parse_services(args.service.as_deref())?;
+        card.insert(
+            "services".into(),
+            serde_json::to_value(&services).context("failed to serialize services list")?,
+        );
+    }
 
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
@@ -641,124 +639,6 @@ fn parse_agent_info_row(row: &Value) -> Option<AgentInfo> {
         .to_string();
 
     Some(AgentInfo { role, name, description })
-}
-
-/// Fetch the raw service items for an agent from GET /agent/services.
-/// Tolerates both response shapes:
-///   • live backend: array of `{ agentInfo, list:[service…] }` wrappers
-///   • legacy: single object with a flat `services` array
-async fn fetch_raw_services(agent_id: &str, ctx: &Context) -> Result<Vec<Value>> {
-    let access_token = ensure_tokens_refreshed().await?;
-    let mut client = wallet_client(ctx)?;
-
-    eprintln!(
-        "[agent-identity] activate service-fetch: agent-id={}",
-        agent_id
-    );
-
-    let raw = client
-        .get_authed(
-            "/priapi/v5/wallet/agentic/agent/services",
-            &access_token,
-            &[("agentId", agent_id)],
-        )
-        .await
-        .map_err(format_api_error)?;
-
-    eprintln!(
-        "[agent-identity] activate service-fetch response: {}",
-        serde_json::to_string(&raw).unwrap_or_else(|_| "<serialize failed>".to_string())
-    );
-
-    let mut services: Vec<Value> = Vec::new();
-    if let Some(wrappers) = raw.as_array() {
-        // Live backend shape: array of wrappers each carrying list:[…]
-        for wrapper in wrappers {
-            if let Some(items) = wrapper.get("list").and_then(Value::as_array) {
-                services.extend(items.iter().cloned());
-            }
-        }
-    } else if let Some(items) = raw.get("services").and_then(Value::as_array) {
-        // Legacy shape: { services:[…] }
-        services.extend(items.iter().cloned());
-    }
-    Ok(services)
-}
-
-/// Convert a raw service item from GET /agent/services into an `AgentService`.
-/// Returns `None` when the item has no usable service name (skip silently).
-fn raw_service_to_agent_service(svc: &Value) -> Option<super::models::AgentService> {
-    use super::models::AgentService;
-
-    let get_str = |keys: &[&str]| -> String {
-        for key in keys {
-            if let Some(s) = svc.get(*key).and_then(Value::as_str) {
-                let t = s.trim();
-                if !t.is_empty() {
-                    return t.to_string();
-                }
-            }
-        }
-        String::new()
-    };
-
-    let service_name = get_str(&["serviceName", "ServiceName", "name"]);
-    if service_name.is_empty() {
-        return None;
-    }
-
-    // Service ID: try string keys first, then numeric (backend may return as u64).
-    let id = ["serviceId", "ServiceId", "id"]
-        .iter()
-        .find_map(|k| svc.get(*k).and_then(Value::as_str).map(|s| s.trim().to_string()))
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            ["serviceId", "ServiceId", "id"]
-                .iter()
-                .find_map(|k| svc.get(*k).and_then(Value::as_u64).map(|n| n.to_string()))
-        });
-
-    let service_type = get_str(&["serviceType", "ServiceType", "servicetype"])
-        .to_ascii_uppercase();
-    let endpoint_str = get_str(&["endpoint", "Endpoint"]);
-    let endpoint = if endpoint_str.is_empty() || service_type == "A2A" {
-        None
-    } else {
-        Some(endpoint_str)
-    };
-
-    Some(AgentService {
-        id,
-        service_name,
-        service_description: get_str(&[
-            "serviceDescription",
-            "ServiceDescription",
-            "servicedescription",
-        ]),
-        fee: get_str(&["fee", "Fee", "feeAmount"]),
-        service_type,
-        endpoint,
-    })
-}
-
-/// Merge existing services with user-supplied updates:
-/// - updates with a matching existing ID → replace that entry
-/// - updates with no ID / unrecognized ID → append as new
-/// - existing services not referenced → kept unchanged
-fn merge_services(
-    mut existing: Vec<super::models::AgentService>,
-    updates: Vec<super::models::AgentService>,
-) -> Vec<super::models::AgentService> {
-    for update in updates {
-        if let Some(ref id) = update.id {
-            if let Some(pos) = existing.iter().position(|s| s.id.as_deref() == Some(id.as_str())) {
-                existing[pos] = update;
-                continue;
-            }
-        }
-        existing.push(update);
-    }
-    existing
 }
 
 async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<Value> {

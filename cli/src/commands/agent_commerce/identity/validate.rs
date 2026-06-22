@@ -462,9 +462,10 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     check_fee(index, svc, is_a2mcp, findings);
 
     // ── Description (D1-D7) on servicedescription ────────────────────────
-    if !svc.service_description.is_empty() {
-        check_service_description(index, &svc.service_description, findings);
-    }
+    // Always run: an empty / blank description is itself a D1 (handled by the
+    // empty branch inside check_service_description). Gating on non-empty here
+    // would skip that branch and let a blank description pass silently.
+    check_service_description(index, &svc.service_description, findings);
 }
 
 fn check_fee(index: usize, svc: &AgentService, is_a2mcp: bool, findings: &mut Vec<Finding>) {

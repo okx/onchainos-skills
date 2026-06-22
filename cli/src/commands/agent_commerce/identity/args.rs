@@ -35,16 +35,33 @@ pub struct ConsentArgs {
     pub agreed: Option<bool>,
 }
 
+/// `onchainos agent update`: edit an existing agent. Only `--agent-id` is
+/// required; every other flag is an optional partial change — omit a flag to
+/// leave that field untouched. `role` and CommunicationAddress are immutable
+/// and are not accepted here. The payload is a DELTA: agent-level fields are
+/// sent only when provided, and `--service` carries only the services to
+/// change (each tagged with an `operation`), never a full snapshot.
 #[derive(Args, Clone, Debug)]
 pub struct UpdateArgs {
+    /// REQUIRED. The target agent's id (becomes cardJson `agentId`). Missing →
+    /// `missing required parameter: --agent-id`.
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
+    /// Optional. New agent name. Omitted / empty → name left unchanged.
     #[arg(long)]
     pub name: Option<String>,
+    /// Optional. New agent-level description. Omitted / empty → unchanged; an
+    /// empty string does NOT clear an existing description.
     #[arg(long)]
     pub description: Option<String>,
+    /// Optional. New profile-picture URL. Omitted / empty → unchanged.
     #[arg(long)]
     pub picture: Option<String>,
+    /// Optional. Service DELTA as a JSON array — only the services to change,
+    /// each tagged with `operation`: `create` (new service, no `id`),
+    /// `update` / `delete` (carry the existing service `id`). Omitted → the
+    /// `services` field is left out entirely (omission does NOT clear
+    /// services). See the service-element key table in references/invariants.md.
     #[arg(long)]
     pub service: Option<String>,
 }
