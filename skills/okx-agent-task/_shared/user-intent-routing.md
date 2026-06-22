@@ -1,6 +1,6 @@
 # User Intent Routing
 
-User-session needs to forward free-form user instructions targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job", "remind seller 963 that the deliverable is overdue", "switch the payment token to USDG") to the **specific sub session that owns that task**, when there's no matching active pending decision.
+User-session needs to forward free-form user instructions targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job", "remind seller 963 that the deliverable is overdue", "switch to a different provider") to the **specific sub session that owns that task**, when there's no matching active pending decision.
 
 **Trigger phrases** — when the user says any of the following AND no matching entry exists in `pending-decisions-v2`, **MUST** enter this flow:
 
@@ -8,23 +8,34 @@ User-session needs to forward free-form user instructions targeting a specific t
 |---|---|---|
 | 重新提交 / 补充内容 | "重新提交 X / 再上传 / 重发 / 给我改 / 补充证据 / 改一下" | "re-submit / re-upload / resubmit / add more / append / change my X" |
 | 催促 / 让 sub 主动同步状态 | "提醒 / 催一下 / 让卖家知道一下 X / 跟买家说一下 X" | "remind / nudge / chase up / tell the seller X" |
-| 变更条款 | "换币种 / 改价 / 改 provider" | "switch token / change price / use a different provider" |
+| 变更条款 | "改 provider / 换服务商" | "use a different provider / switch provider" |
 
 🛑🛑🛑 **CRITICAL — do NOT make domain assumptions on behalf of the user**: when the queue is empty and the user issues a task-scoped instruction, your job is to **route**, not to **adjudicate**. **Do NOT** reply "the evidence phase is over" / "this state doesn't allow that". Only the sub session can query the chain and know for sure. Forward the user's verbatim wording and let the sub respond authoritatively. (🔴 I-15: user typed "重新提交证据" → user session refused with "证据阶段已结束"; correct path: route to sub.)
 
 **Decision tree** (apply in order, stop at first hit):
 
 1. `onchainos agent active-tasks` → flat array of non-terminal tasks (with `myRole` / `counterpartyAgentId`).
-2. `xmtp_dispatch_user` a numbered list (`shortJobId` + status + role + counterparty + title) → end turn, wait for user's pick.
+2. `okx-a2a user notify` a numbered list (`shortJobId` + status + role + counterparty + title) → end turn, wait for user's pick.
 3. **Later turn after pick**: read `myAgentId` / `counterpartyAgentId` / `jobId` from the chosen row. If `counterpartyAgentId == null` → ask the user for it, else proceed.
-4. `xmtp_sessions_query(myAgentId, toAgentId=counterpartyAgentId, jobId)` → returns `sessionKey`. Empty → notify "no active conversation" via `xmtp_dispatch_user` and end turn.
-5. `xmtp_dispatch_session(sessionKey, content=<user's verbatim> + "\n\n---\nReply to the user via `xmtp_dispatch_user(content=<your localized natural-language reply>)` — do NOT pass `sessionKey` (auto-resolved by the plugin). If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see §Session Comm Contract §4 Path 2b).")` — forward verbatim then append reply-path instruction. End turn.
+4. `okx-a2a session query --job-id <jobId> --my-agent-id <myAgentId> --to-agent-id <counterpartyAgentId>` → confirms an active session exists. Empty → notify "no active conversation" via `okx-a2a user notify` and end turn.
+5. Dispatch the user's instruction to the sub via `okx-a2a session send` — the daemon resolves the session from `--job-id` + `--to-agent-id`:
+
+   ```bash
+   okx-a2a session send --no-wait \
+     --job-id <jobId> --to-agent-id <counterpartyAgentId> \
+     --content '<user verbatim>
+
+   ---
+   Reply to the user via `okx-a2a user notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `buyer-sub-playbook.md` §Communication Contract).'
+   ```
+
+   Forward verbatim then append reply-path instruction. End turn.
 
 **Hard rules**:
-- ❌ Do NOT compose `sessionKey` by string concatenation — always go through `xmtp_sessions_query`.
+- ❌ Do NOT pass `--session-key` you composed by string concatenation — always let the daemon resolve from `--job-id` + `--to-agent-id`.
 - ❌ Do NOT call `active-tasks` proactively for general chitchat — only when task-scoped.
 - ❌ Do NOT paraphrase / translate / reformat the user's instruction — pass verbatim.
-- ❌ Do NOT call `xmtp_dispatch_session` multiple times in one turn.
+- ❌ Do NOT call `okx-a2a session send` multiple times in one turn.
 
 **Output schema of `active-tasks`**: see [`cli-reference.md → active-tasks`](./cli-reference.md#active-tasks).
 
@@ -80,16 +91,16 @@ Triggers (only when there's no active card the user might be answering):
 
 | Intent | Action | Detail |
 |---|---|---|
-| Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --jobid _ --event create_task --role buyer --agentId <X>` → follow script | buyer publish flow |
-| Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → Scene 1.7 | [`buyer.md`](../buyer.md) §3.2 |
-| Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs` | [`provider.md`](../provider.md) §2.1. Do NOT route to `task-search`. | provider.md §2.1 |
-| Take specific task (ASP) — `接 {jobId}` / `contact the buyer of {jobId}` | `common context <jobId> --role provider` → `xmtp_start_conversation` | provider.md §2 |
+| Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role buyer --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | buyer publish flow |
+| Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → designated-provider flow | [`buyer-actions.md`](../buyer-actions.md) §5 |
+| Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs` | [`provider-accept.md`](../provider-accept.md) §2 (Path A). Do NOT route to `task-search`. | provider-accept.md §2 |
+| Take specific task (ASP) — `接 {jobId}` / `contact the buyer of {jobId}` | `onchainos agent contact-buyer <jobId> --agent-id <chosen agentId>` (single CLI: session create + canonical opener) | provider-accept.md §3 |
 | Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务` | `onchainos agent task-search` | [`cli-reference.md#task-search`](./cli-reference.md#task-search) |
 | Stake (Evaluator) — `I want to stake` | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`evaluator-staking.md §2`](../references/evaluator-staking.md) |
-| Direct help — "help me check…" **without** hiring intent | Route to appropriate skill; do NOT suggest task creation | `## Cross-Skill Routing` in SKILL.md |
+| Direct help — "help me check…" **without** hiring intent | Route to appropriate skill; do NOT suggest task creation | — |
 
 ⚠️ **Disambig — `接单` vs `搜索任务`**: skill-profile match ("用 X 接单") → `recommend-task`; explicit filters → `task-search`.
-🛑 **ASP constraint**: "take task X" → must `xmtp_start_conversation` + negotiate first; do NOT directly `apply`.
+🛑 **ASP constraint**: "take task X" → must run `onchainos agent contact-buyer <jobId>` (cold-start opener) and wait for buyer designation; do NOT directly `apply` — `apply` is `JobAspSelected`-system-event-triggered only.
 
 ---
 
@@ -121,3 +132,20 @@ Triggers (only when there's no active `[USER_DECISION_REQUEST]` block the user m
 - English: `decision list` / `show decision list` / `list decisions` / `pending decisions` / `what's pending`
 
 **Action**: `onchainos agent pending-decisions-v2 list --format markdown` → **follow the CLI's returned playbook verbatim**. The playbook includes both the user-facing rendering instructions AND the routing rules for the user's subsequent reply. Do NOT improvise — only do what the playbook prints.
+
+---
+
+## Task watch / history / outstanding decisions
+
+When the user wants to monitor task progress, drain unread/missed events, or list un-replied decision cards → route to the dedicated **`okx-task-watch`** skill. Do NOT inline `okx-a2a user watch` / `okx-a2a user outdated-list` from here; load that SKILL.md and follow it.
+
+Triggers:
+- **Live monitor**: `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `继续监听` / `task watch` / `user watch` / `monitor task progress` / `watch tasks` / `keep me posted on tasks`
+- **History / backlog drain**: `历史消息` / `历史记录` / `过去消息` / `未读消息` / `show past messages` / `catch me up on tasks`
+- **Outstanding (un-replied) decisions**: `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `outstanding decisions` / `unhandled decisions` / `what am I missing`
+
+**Platform gate**: only Claude Code (`CLAUDECODE=1`) and Codex (`CODEX_THREAD_ID`); other platforms push natively and the skill stops with an unsupported-platform message.
+
+🛑 Watch is itself a long-poll — the long-poll IS the wait. Do NOT wrap it in `/loop` / Cron / `sleep` / any scheduler.
+
+⚠️ **Disambig — "decision list" vs "outstanding decisions"**: `决策列表` / `decision list` → §Decision list above (`pending-decisions-v2 list`, the full queue). `未决策` / `outstanding decisions` → this section (`outdated-list`, only un-`check`ed `decision_request` items).

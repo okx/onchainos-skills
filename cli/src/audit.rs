@@ -328,7 +328,6 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Competition { command } => format!("competition {}", competition_sub(command)),
-        Commands::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Strategy { command } => format!("strategy {}", strategy_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
@@ -362,7 +361,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
 
         // Task (buyer)
         AgentCommand::CreateTask { .. } => "create-task".into(),
-        AgentCommand::Recommend { .. } => "recommend".into(),
         AgentCommand::Status { .. } => "status".into(),
         AgentCommand::Tasks { .. } => "tasks".into(),
         AgentCommand::SetPaymentMode { .. } => "set-payment-mode".into(),
@@ -379,7 +377,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Payment { .. } => "payment".into(),
         AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
         AgentCommand::SetTokenAndBudget { .. } => "set-token-and-budget".into(),
-        AgentCommand::SetProvider { .. } => "set-provider".into(),
+        AgentCommand::RejectApply { .. } => "reject-apply".into(),
         AgentCommand::SetMaxBudget { .. } => "set-max-budget".into(),
         AgentCommand::TaskAttach { .. } => "task-attach".into(),
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
@@ -393,6 +391,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
+        AgentCommand::AspReject { .. } => "asp-reject".into(),
+        AgentCommand::ContactBuyer { .. } => "contact-buyer".into(),
         // Sub-groups
         AgentCommand::Draft(c) => format!("draft {:?}", std::mem::discriminant(c)),
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
@@ -418,9 +418,10 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SystemConfig => "system-config".into(),
         AgentCommand::Heartbeat { .. } => "heartbeat".into(),
         AgentCommand::WakeupNotify { .. } => "wakeup-notify".into(),
-        AgentCommand::SaveAgreed { .. } => "save-agreed".into(),
         AgentCommand::MarkFailed { .. } => "mark-failed".into(),
         AgentCommand::MyAgents { .. } => "my-agents".into(),
+        AgentCommand::Preflight { .. } => "preflight".into(),
+        AgentCommand::PrepareCreate { .. } => "prepare-create".into(),
         AgentCommand::ActiveTasks { .. } => "active-tasks".into(),
         AgentCommand::Profile { .. } => "profile".into(),
         AgentCommand::PendingDecisionsV2(_) => "pending-decisions-v2".into(),
@@ -429,7 +430,10 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::TaskSearch { .. } => "task-search".into(),
         AgentCommand::SessionCleanup { .. } => "session-cleanup".into(),
         AgentCommand::TaskInProgress { .. } => "task-in-progress".into(),
-        AgentCommand::TopAsps { .. } => "top-asps".into(),
+        AgentCommand::AspMatch { .. } => "asp-match".into(),
+        AgentCommand::SetAsp { .. } => "set-asp".into(),
+        AgentCommand::ResetAsp { .. } => "reset-asp".into(),
+        AgentCommand::UserReject { .. } => "user-reject".into(),
     }
 }
 

@@ -1,6 +1,6 @@
 ---
 name: okx-agent-payments-protocol
-description: "Unified payment dispatcher for agent-to-service payments. Covers x402 (`exact`, `exact+Permit2`, `upto`, `aggr_deferred` schemes), MPP (`charge` / `session` intents), and a2a-pay (`a2a_charge` paymentId flow). Detects HTTP 402 from response headers and routes to the matching scheme reference; also handles a2a paymentId mentions without a 402. Loads references/{exact,aggr_deferred,upto,charge,session,a2a_charge}.md. Returns a ready-to-paste authorization header (x402/MPP) or a tx-hash + status (a2a). Triggers (EN): 402, payment required, x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, permit2, upto, metered billing, open/close/topup/settle channel, voucher, session payment, channelId, channel_id, paymentId, a2a_, create payment link, payment link, payment status. Triggers (中文): 按量计费、支付上限、支付通道、关闭/充值/续费/结算通道、关闭会话、结算会话、凭证、会话支付、付款链接、创建支付、支付状态. Any close/topup/settle/voucher/refund near a channel_id or session context = MPP mid-session op → load references/session.md."
+description: "Unified payment dispatcher for agent-to-service payments. Covers x402 (`exact`, `exact+Permit2`, `upto`, `aggr_deferred` schemes), MPP (`charge` / `session` intents), and a2a-pay (`a2a_charge` paymentId flow). Detects HTTP 402 from response headers and routes to the matching scheme reference; also handles a2a paymentId mentions without a 402. Loads references/{exact,aggr_deferred,upto,charge,session,a2a_charge}.md. Returns a ready-to-paste authorization header (x402/MPP) or a tx-hash + status (a2a). Triggers (EN): 402, payment required, x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, permit2, upto, metered billing, open/close/topup/settle channel, voucher, session payment, channelId, channel_id, paymentId, a2a_, create payment link, payment link, payment status. Triggers (中文): 按量计费、支付上限、支付通道、关闭/充值/续费/结算通道、关闭会话、结算会话、凭证、会话支付、付款链接、创建支付、支付状态、A2MCP、A2MCP endpoint、向接口发送请求(with concrete endpoint URL)、调用Agent接口(with concrete endpoint URL). Any close/topup/settle/voucher/refund near a channel_id or session context = MPP mid-session op → load references/session.md."
 license: MIT
 metadata:
   author: okx
@@ -92,6 +92,8 @@ Unified entry point for three payment paths, distinguished by HTTP signature: **
 
 Make the HTTP request the user asked for. If status is **not 402**, return the body directly — no payment, no wallet check, no other tool calls.
 
+**Capture any request parameters the user's prompt supplies** (e.g. "查 San Francisco 的天气" → `city=San Francisco`, `token=0x…`, "翻译成中文" → `lang=zh`). Record each as `name → value` for the Step A3-Params plan — values given here are **never re-asked**, just shown in the confirmation card. Keep them even if the first request didn't need them; the seller may require them on the paid replay.
+
 ## Step A2: Detect the protocol
 
 ```
@@ -173,6 +175,38 @@ unitType            optional — "request" | "second" | "byte" etc.
 
 Convert `amount` from base units to human-readable using the token's decimals (typically 6 for USDC/USD₮, 18 for native).
 
+## Step A3-Params: Build the request-parameter plan
+
+> **Runs after Step A3 decode, before any confirmation card.** Beyond payment terms, the seller may declare which parameters the **paid replay** must carry and how. Build a **param plan** so the user confirms params alongside payment and the replay attaches them correctly.
+
+A param plan is a list of `{ name, value, carrier, required, source }`, `carrier ∈ {query, body, header, path}`. No seller-declared params and none named by the user → **empty plan**; replay unchanged.
+
+### Source 1 — Bazaar `outputSchema.input` (preferred)
+
+If the decoded 402 (or any `accepts[i]`) carries `outputSchema.input`, parse it:
+
+| Field | Use |
+|---|---|
+| `input.type` | `"http"` → handle here. `"mcp"` → out of scope, skip param assembly. |
+| `input.method` | Method to replay with (may differ from the original). `GET`/`HEAD`/`DELETE` → params go in **query**; `POST`/`PUT`/`PATCH` → in **body** (`input.bodyType`: `json`/`form-data`/`text`). |
+| `input.queryParams` / `input.body` / `input.pathParams` / `input.headers` | Params for that carrier (query / body / path / header). |
+
+The JSON Schema `properties` + `required` give each param's type and whether it's mandatory. One plan entry per declared param.
+
+### Source 2 — non-Bazaar (conservative)
+
+No `outputSchema.input` → add a param **only** on an explicit seller signal; **never invent one**:
+
+- response **body** lists requirements (`required` / `params` / `parameters` / `fields` / `inputSchema`), OR
+- an **error message** names a missing param (e.g. `missing required query param "city"`), OR
+- a documented response **header** asks for one.
+
+Ambiguous → add nothing, replay unchanged.
+
+### Fill values
+
+Per entry, resolve `value`: (1) user's prompt (Step A1) → `source=prompt`, don't re-ask; (2) conversation context → `source=context`; (3) still missing **and required** → ask the user, one grouped question for all of them (a legitimate gate, not narration — ZERO-TEXT-ON-TRIGGER doesn't forbid it). Optional + unresolved → drop.
+
 ## Step A3.5: Multi-scheme recommendation (when applicable)
 
 **Applies only when** the combined candidate pool contains **2 or more** of `{exact, aggr_deferred, charge}`. Otherwise skip straight to Step A4 with the single available candidate.
@@ -226,8 +260,11 @@ The survivor is the **recommended candidate**. The rest are **alternatives**.
 > - **Token**: `<symbol>` (`<token address>`)
 > - **Amount**: `<human> (<atomic>)`
 > - **Pay to**: `<recipient>`
+> - **Request parameters** (omit this line entirely if the Step A3-Params plan is empty): one row per param as `<name> = <value>` → `<carrier: query | body | header | path>`
 >
 > `<N == 0 ? "No other methods available." : "There are <N> other supported method(s) you could use instead.">` Use the recommended method? (yes / show others)
+
+The `Request parameters` block is not scheme info, so Rule 2's carve-out doesn't apply — show it whenever the plan is non-empty. A `yes` here confirms both payment and params, so skipping A4 is correct.
 
 **⚠️ Do NOT inline alternatives in the summary line.** Forbidden: ❌ "There are 2 other methods (exact 0.001 USD₮0, charge 0.0005 USD₮0)". Required: ✅ "There are 2 other supported methods you could use instead." Detail only appears after the user picks "show others".
 
@@ -243,7 +280,7 @@ Step A4 below now describes the **selected candidate**. Step A5's wallet-status 
 
 ## Step A4: Display payment details and STOP
 
-**🟢 Skip this step entirely if** the user accepted the recommendation in A3.5.5 with `yes`. The recommendation card already showed network / token / amount / recipient at the same fidelity A4 would — re-rendering them is pure redundancy. Go straight to Step A5 (a no-op if A3.5.2 already handled login) → A6.
+**🟢 Skip this step entirely if** the user accepted the recommendation in A3.5.5 with `yes`. The recommendation card already showed network / token / amount / recipient **and the request parameters** at the same fidelity A4 would — re-rendering them is pure redundancy. Go straight to Step A5 (a no-op if A3.5.2 already handled login) → A6.
 
 **🔴 Run this step normally if** either:
 - Step A3.5 did not run at all (single-candidate path — server only offered one scheme), OR
@@ -258,6 +295,7 @@ For **`accepts`-based 402** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v
 > - **Token**: `<token symbol>` (`<option.asset>`)
 > - **Amount**: `<human-readable amount>` (from `option.amount` for v2, or `option.maxAmountRequired` for v1; convert from minimal units using token decimals)
 > - **Pay to**: `<option.payTo>`
+> - **Request parameters** (omit this line entirely if the Step A3-Params plan is empty): one row per param as `<name> = <value>` → `<carrier: query | body | header | path>`
 >
 > Proceed with payment? (yes / no)
 
@@ -272,6 +310,7 @@ For **`WWW-Authenticate: Payment` 402**:
 > - **Who pays gas**: `<server (transaction mode) | you broadcast it yourself (hash mode)>`
 > - **Split recipients** (one-shot only, if present): `<N other parties also receive a share>`
 > - **Suggested prepaid balance** (session only, if present): `<human-readable>`
+> - **Request parameters** (omit this line entirely if the Step A3-Params plan is empty): one row per param as `<name> = <value>` → `<carrier: query | body | header | path>`
 >
 > Proceed with payment? (yes / no)
 
@@ -296,7 +335,7 @@ onchainos wallet status
 | **`WWW-Authenticate: Payment`, `intent="charge"`** | Load **`references/charge.md`** at "Decide mode". |
 | **`WWW-Authenticate: Payment`, `intent="session"`** | Load **`references/session.md`** at "Phase S1: Open Channel" (or jump to S2 / S2b / S3 if the user is mid-session with an active `channel_id`). |
 
-After the reference returns the assembled `X-PAYMENT` / `PAYMENT-SIGNATURE` header or `authorization_header`, replay the original request and surface the response to the user. Suggest follow-ups conversationally — never expose internal field names or skill IDs.
+After the reference returns the assembled `X-PAYMENT` / `PAYMENT-SIGNATURE` header or `authorization_header`, replay the request and surface the response. **Attach the auth header plus the Step A3-Params plan** — each param on its `carrier` (query / body / header / path), using the plan's `input.method` if Bazaar gave one. Empty plan → replay the original request unchanged. Suggest follow-ups conversationally — never expose internal field names or skill IDs.
 
 ---
 

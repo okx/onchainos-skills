@@ -6,12 +6,13 @@
 //!                 current active account (with `myRole` / `counterpartyAgentId`
 //!                 annotations; used by user-session to route ad-hoc user
 //!                 instructions to a specific sub session via
-//!                 `xmtp_sessions_query` → `xmtp_dispatch_session`)
+//!                 `okx-a2a session query` → `okx-a2a session send --no-wait`)
 
 use anyhow::Result;
 use serde_json::{json, Value};
 
 use super::network::task_api_client::TaskApiClient;
+use super::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
 
 /// Resolves agentId from the local identity list by role when --agent-id is omitted.
@@ -24,7 +25,7 @@ pub async fn resolve_agent_id(agent_id: &str, role: i64) -> String {
     let resolved = signing::resolve_agent_id_by_role(role)
         .await
         .unwrap_or_default();
-    if !resolved.is_empty() {
+    if !resolved.is_empty() && DEBUG_LOG {
         eprintln!(
             "⚠ --agent-id omitted; falling back to first local agent with role={role}: {resolved}. \
              If you have multiple agents of this role, pass --agent-id explicitly."
@@ -138,8 +139,8 @@ fn parse_role_arg(raw: &str) -> Option<i64> {
 ///   1. user-session calls `agent active-tasks` (this command)
 ///   2. user-session renders the returned JSON to the user, lets the user pick a jobId
 ///   3. take `myAgentId` + `counterpartyAgentId` from the chosen row
-///   4. `xmtp_sessions_query(myAgentId, toAgentId=counterpartyAgentId, jobId)` → sessionKey
-///   5. `xmtp_dispatch_session(sessionKey, content=<user's verbatim instruction>)`
+///   4. (optional) `okx-a2a session query --job-id <jobId> --my-agent-id <myAgentId> --to-agent-id <counterpartyAgentId>` to confirm an active session exists
+///   5. `okx-a2a session send --no-wait --job-id <jobId> --to-agent-id <counterpartyAgentId> --content <user's verbatim instruction>`
 ///
 /// Output schema (via `output::success`):
 ///
@@ -197,7 +198,7 @@ pub async fn handle_active_tasks(
         let resp = match client.get_with_identity(path, agent_id).await {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("[active-tasks] agent {agent_id} query failed: {e}");
+                if DEBUG_LOG { eprintln!("[active-tasks] agent {agent_id} query failed: {e}"); }
                 continue;
             }
         };

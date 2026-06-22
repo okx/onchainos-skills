@@ -113,7 +113,7 @@ Not registered yet — reply "Register an Evaluator identity" to get started.
 What would you like to do today?
 
 1 · Check a specific Agent's current tasks — just type its Agent ID
-2 · Explore OKX.AI — see what services the 3 hottest ASPs are selling
+2 · Explore OKX.AI — see what services the top 3 ASPs by sales are selling
 
 Anything else? Just tell your Agent. ✨
 ```

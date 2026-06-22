@@ -7,17 +7,17 @@ use anyhow::{bail, Result};
 use std::time::Duration;
 
 use crate::audit;
+
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::{
-    self, network::task_api_client::TaskApiClient,
+    self, network::task_api_client::TaskApiClient, DEBUG_LOG,
 };
 use crate::commands::agent_commerce::task::signing;
 
 use super::create::{
-    normalize_currency, parse_duration_secs, resolve_buyer_agent, validate_budget,
-    validate_budget_decimals, ACCEPT_MAX, ACCEPT_MIN,
+    normalize_currency, resolve_buyer_agent, validate_budget,
+    validate_budget_decimals,
     MAX_DESCRIPTION_CHARS, MAX_SUMMARY_CHARS, MAX_TITLE_CHARS, MIN_DESCRIPTION_CHARS,
-    SUBMIT_MAX, SUBMIT_MIN,
 };
 
 // ─── Draft API paths ────────────────────────────────────────────────────
@@ -78,40 +78,6 @@ fn validate_currency_opt(currency: Option<&str>) -> Result<Option<String>> {
     }
 }
 
-fn validate_deadline_open_opt(dl: Option<&str>) -> Result<Option<u64>> {
-    match dl {
-        Some(s) => {
-            let secs = parse_duration_secs(s)
-                .map_err(|e| anyhow::anyhow!("--deadline-open {e}"))?;
-            if secs < ACCEPT_MIN {
-                bail!("--deadline-open must be at least 10m; current value {s}, allowed range 10m ~ 180d");
-            }
-            if secs > ACCEPT_MAX {
-                bail!("--deadline-open must not exceed 180d; current value {s}, allowed range 10m ~ 180d");
-            }
-            Ok(Some(secs))
-        }
-        None => Ok(None),
-    }
-}
-
-fn validate_deadline_submit_opt(dl: Option<&str>) -> Result<Option<u64>> {
-    match dl {
-        Some(s) => {
-            let secs = parse_duration_secs(s)
-                .map_err(|e| anyhow::anyhow!("--deadline-submit {e}"))?;
-            if secs < SUBMIT_MIN {
-                bail!("--deadline-submit must be at least 1m; current value {s}, allowed range 1m ~ 180d");
-            }
-            if secs > SUBMIT_MAX {
-                bail!("--deadline-submit must not exceed 180d; current value {s}, allowed range 1m ~ 180d");
-            }
-            Ok(Some(secs))
-        }
-        None => Ok(None),
-    }
-}
-
 fn make_summary(description: Option<&str>) -> Option<String> {
     description.map(|d| d.chars().take(MAX_SUMMARY_CHARS).collect())
 }
@@ -152,16 +118,6 @@ fn validate_draft_for_publish(detail: &serde_json::Value) -> Result<()> {
         missing.push("paymentMostTokenAmount (max budget must be >= budget)");
     }
 
-    let expire = &detail["expireConfig"];
-    let accept_dl = expire["acceptDeadline"].as_u64().unwrap_or(0);
-    if !(ACCEPT_MIN..=ACCEPT_MAX).contains(&accept_dl) {
-        missing.push("expireConfig.acceptDeadline (10m ~ 180d)");
-    }
-    let submit_dl = expire["submittedDeadline"].as_u64().unwrap_or(0);
-    if !(SUBMIT_MIN..=SUBMIT_MAX).contains(&submit_dl) {
-        missing.push("expireConfig.submittedDeadline (1m ~ 180d)");
-    }
-
     if !missing.is_empty() {
         let list = missing
             .iter()
@@ -177,6 +133,102 @@ fn validate_draft_for_publish(detail: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+// ─── 0. validate-draft (pure local, no network) ───────────────────────
+
+pub(crate) fn validate_draft_fields(
+    description: Option<&str>,
+    title: Option<&str>,
+    budget: Option<f64>,
+    max_budget: Option<f64>,
+    currency: Option<&str>,
+) -> serde_json::Value {
+    let mut checks = Vec::<serde_json::Value>::new();
+    let mut errors = Vec::<String>::new();
+
+    if let Some(d) = description {
+        match validate_description_opt(Some(d)) {
+            Ok(()) => checks.push(serde_json::json!({"field": "description", "ok": true, "chars": d.chars().count()})),
+            Err(e) => {
+                let msg = e.to_string();
+                checks.push(serde_json::json!({"field": "description", "ok": false, "error": msg}));
+                errors.push(msg);
+            }
+        }
+    }
+
+    if let Some(t) = title {
+        match validate_title(t) {
+            Ok(()) => checks.push(serde_json::json!({"field": "title", "ok": true, "chars": t.chars().count()})),
+            Err(e) => {
+                let msg = e.to_string();
+                checks.push(serde_json::json!({"field": "title", "ok": false, "error": msg}));
+                errors.push(msg);
+            }
+        }
+    }
+
+    if let Some(c) = currency {
+        match normalize_currency(c) {
+            Ok(norm) => checks.push(serde_json::json!({"field": "currency", "ok": true, "normalized": norm})),
+            Err(e) => {
+                let msg = e.to_string();
+                checks.push(serde_json::json!({"field": "currency", "ok": false, "error": msg}));
+                errors.push(msg);
+            }
+        }
+    }
+
+    if let Some(b) = budget {
+        match validate_budget(b).and_then(|()| validate_budget_decimals(b)) {
+            Ok(()) => checks.push(serde_json::json!({"field": "budget", "ok": true, "value": b})),
+            Err(e) => {
+                let msg = e.to_string();
+                checks.push(serde_json::json!({"field": "budget", "ok": false, "error": msg}));
+                errors.push(msg);
+            }
+        }
+    }
+
+    if let Some(mb) = max_budget {
+        match validate_budget(mb).and_then(|()| validate_budget_decimals(mb)) {
+            Ok(()) => checks.push(serde_json::json!({"field": "max_budget", "ok": true, "value": mb})),
+            Err(e) => {
+                let msg = e.to_string();
+                checks.push(serde_json::json!({"field": "max_budget", "ok": false, "error": msg}));
+                errors.push(msg);
+            }
+        }
+    }
+
+    if let (Some(b), Some(mb)) = (budget, max_budget) {
+        if mb < b {
+            let msg = format!("max_budget ({mb}) must be >= budget ({b})");
+            checks.push(serde_json::json!({"field": "max_budget_vs_budget", "ok": false, "error": msg}));
+            errors.push(msg);
+        } else {
+            checks.push(serde_json::json!({"field": "max_budget_vs_budget", "ok": true}));
+        }
+    }
+
+    if errors.is_empty() {
+        serde_json::json!({"ok": true, "checks": checks})
+    } else {
+        serde_json::json!({"ok": false, "checks": checks, "errors": errors})
+    }
+}
+
+pub fn handle_validate_draft(
+    description: Option<&str>,
+    title: Option<&str>,
+    budget: Option<f64>,
+    max_budget: Option<f64>,
+    currency: Option<&str>,
+) -> Result<()> {
+    let result = validate_draft_fields(description, title, budget, max_budget, currency);
+    crate::output::success(result);
+    Ok(())
+}
+
 // ─── 1. draft create ────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -188,10 +240,12 @@ pub async fn handle_draft_create(
     budget: Option<f64>,
     max_budget: Option<f64>,
     currency: Option<&str>,
-    deadline_open: Option<&str>,
-    deadline_submit: Option<&str>,
     provider: Option<&str>,
     attachments: Option<&[String]>,
+    service_id: Option<&str>,
+    service_params: Option<&str>,
+    service_token_address: Option<&str>,
+    service_token_amount: Option<&str>,
 ) -> Result<()> {
     validate_title(title)?;
     validate_description_opt(description)?;
@@ -203,22 +257,22 @@ pub async fn handle_draft_create(
     }
     validate_budget_opt(max_budget)?;
     let currency_norm = validate_currency_opt(currency)?;
-    let open_secs = validate_deadline_open_opt(deadline_open)?;
-    let submit_secs = validate_deadline_submit_opt(deadline_submit)?;
 
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
-    eprintln!("[draft-create] buyer identity check passed (agentId: {buyer_agent_id})");
+    if DEBUG_LOG {
+        eprintln!("[draft-create] buyer identity check passed (agentId: {buyer_agent_id})");
+    }
 
     let balance_warning = if let (Some(b), Some(ref c)) = (budget, &currency_norm) {
         match common::ensure_sufficient_balance(b, c).await {
             Err(e) => {
-                eprintln!("[draft-create] ⚠ balance warning: {e}");
-                Some(format!(
-                    "⚠️ Insufficient {c} balance on XLayer (need {b} {c}). Draft saved, but payment may fail when publishing — please top up via swap."
-                ))
+                if DEBUG_LOG {
+                    eprintln!("[draft-create] ⚠ balance warning: {e}");
+                }
+                Some(format!("⚠️ {e}"))
             }
             Ok(()) => None,
         }
@@ -250,18 +304,20 @@ pub async fn handle_draft_create(
     if let Some(mb) = max_budget {
         obj.insert("paymentMostTokenAmount".into(), serde_json::json!(mb.to_string()));
     }
-    if open_secs.is_some() || submit_secs.is_some() {
-        let mut expire = serde_json::Map::new();
-        if let Some(o) = open_secs {
-            expire.insert("acceptDeadline".into(), serde_json::json!(o));
-        }
-        if let Some(s) = submit_secs {
-            expire.insert("submittedDeadline".into(), serde_json::json!(s));
-        }
-        obj.insert("expireConfig".into(), serde_json::Value::Object(expire));
-    }
     if let Some(pid) = provider {
         obj.insert("providerAgentId".into(), serde_json::json!(pid));
+    }
+    if let Some(sid) = service_id {
+        obj.insert("serviceId".into(), serde_json::json!(sid));
+    }
+    if let Some(sp) = service_params {
+        obj.insert("serviceParams".into(), serde_json::json!(sp));
+    }
+    if let Some(sta) = service_token_address {
+        obj.insert("serviceTokenAddress".into(), serde_json::json!(sta));
+    }
+    if let Some(stm) = service_token_amount {
+        obj.insert("serviceTokenAmount".into(), serde_json::json!(stm));
     }
 
     let resp = client.post_with_identity(DRAFT_CREATE, &body, &buyer_agent_id).await?;
@@ -372,12 +428,15 @@ pub async fn handle_draft_update(
     job_id: &str,
     title: Option<&str>,
     description: Option<&str>,
+    description_summary: Option<&str>,
     budget: Option<f64>,
     max_budget: Option<f64>,
     currency: Option<&str>,
-    deadline_open: Option<&str>,
-    deadline_submit: Option<&str>,
     provider: Option<&str>,
+    service_id: Option<&str>,
+    service_params: Option<&str>,
+    service_token_address: Option<&str>,
+    service_token_amount: Option<&str>,
 ) -> Result<()> {
     if let Some(t) = title {
         validate_title(t)?;
@@ -391,14 +450,14 @@ pub async fn handle_draft_update(
     }
     validate_budget_opt(max_budget)?;
     let currency_norm = validate_currency_opt(currency)?;
-    let open_secs = validate_deadline_open_opt(deadline_open)?;
-    let submit_secs = validate_deadline_submit_opt(deadline_submit)?;
 
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
-    eprintln!("[draft-update] buyer identity check passed (agentId: {buyer_agent_id})");
+    if DEBUG_LOG {
+        eprintln!("[draft-update] buyer identity check passed (agentId: {buyer_agent_id})");
+    }
 
     let mut body = serde_json::Map::new();
 
@@ -407,8 +466,13 @@ pub async fn handle_draft_update(
     }
     if let Some(d) = description {
         body.insert("description".into(), serde_json::json!(d));
-        let summary: String = d.chars().take(MAX_SUMMARY_CHARS).collect();
-        body.insert("descriptionSummary".into(), serde_json::json!(summary));
+        if description_summary.is_none() {
+            let summary: String = d.chars().take(MAX_SUMMARY_CHARS).collect();
+            body.insert("descriptionSummary".into(), serde_json::json!(summary));
+        }
+    }
+    if let Some(ds) = description_summary {
+        body.insert("descriptionSummary".into(), serde_json::json!(ds));
     }
     if let Some(ref c) = currency_norm {
         body.insert("paymentTokenSymbol".into(), serde_json::json!(c.to_uppercase()));
@@ -419,18 +483,20 @@ pub async fn handle_draft_update(
     if let Some(mb) = max_budget {
         body.insert("paymentMostTokenAmount".into(), serde_json::json!(mb.to_string()));
     }
-    if open_secs.is_some() || submit_secs.is_some() {
-        let mut expire = serde_json::Map::new();
-        if let Some(o) = open_secs {
-            expire.insert("acceptDeadline".into(), serde_json::json!(o));
-        }
-        if let Some(s) = submit_secs {
-            expire.insert("submittedDeadline".into(), serde_json::json!(s));
-        }
-        body.insert("expireConfig".into(), serde_json::Value::Object(expire));
-    }
     if let Some(pid) = provider {
         body.insert("providerAgentId".into(), serde_json::json!(pid));
+    }
+    if let Some(sid) = service_id {
+        body.insert("serviceId".into(), serde_json::json!(sid));
+    }
+    if let Some(sp) = service_params {
+        body.insert("serviceParams".into(), serde_json::json!(sp));
+    }
+    if let Some(sta) = service_token_address {
+        body.insert("serviceTokenAddress".into(), serde_json::json!(sta));
+    }
+    if let Some(stm) = service_token_amount {
+        body.insert("serviceTokenAmount".into(), serde_json::json!(stm));
     }
 
     if body.is_empty() {
@@ -501,7 +567,9 @@ pub async fn handle_draft_publish(
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
-    eprintln!("[draft-publish] buyer identity check passed (agentId: {buyer_agent_id})");
+    if DEBUG_LOG {
+        eprintln!("[draft-publish] buyer identity check passed (agentId: {buyer_agent_id})");
+    }
 
     // ── Fetch draft detail for pre-publish validation ────────────
     let detail = client
@@ -520,11 +588,7 @@ pub async fn handle_draft_publish(
         .unwrap_or("0")
         .parse().unwrap_or(0.0);
     if !token_sym.is_empty() && token_amount > 0.0 {
-        common::ensure_sufficient_balance(token_amount, token_sym).await
-            .map_err(|e| anyhow::anyhow!(
-                "Insufficient {token_sym} balance on XLayer (need {token_amount} {token_sym}): {e}. \
-                 Please top up via swap before publishing."
-            ))?;
+        common::ensure_sufficient_balance(token_amount, token_sym).await?;
     }
 
     // ── Publish API → uopData ────────────────────────────────────
@@ -541,11 +605,12 @@ pub async fn handle_draft_publish(
     if let Some(pid) = provider_id {
         super::negotiate::save_designated_provider(returned_job_id, pid)?;
     }
+    let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(returned_job_id).await;
 
     // ── Sign + Broadcast ─────────────────────────────────────────
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&buyer_agent_id).await?;
 
-    let tx_hash = signing::sign_uop_and_broadcast(
+    let tx_hash = match signing::sign_uop_and_broadcast(
         client,
         &resp["uopData"],
         &account_id,
@@ -555,7 +620,16 @@ pub async fn handle_draft_publish(
         &buyer_agent_id,
         None,
     )
-    .await?;
+    .await
+    {
+        Ok(tx_hash) => tx_hash,
+        Err(err) => {
+            if let Some(prebind) = &provider_prebind {
+                prebind.rollback_if_created().await;
+            }
+            return Err(err);
+        }
+    };
 
     audit::log(
         "cli",
@@ -583,17 +657,14 @@ pub async fn handle_draft_publish(
     // See create.rs: skip the "Next: wait ..." hint in CLI mode to avoid the
     // passive phrasing suppressing the [Watch] block that follows.
     if !super::content::is_cli_mode() {
-        if provider_id.is_some() {
-            println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
-        } else {
-            println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
-        }
+        println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
     }
     if super::content::is_cli_mode() {
-        println!("[Watch] Per `okx-task-watch` SKILL.md, start the monitor now:");
-        println!("okx-a2a user watch --once --json --poll-ms 1000 --limit 50 --job-id {returned_job_id}");
+        println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
         println!();
-        println!("If you haven't read `okx-task-watch/SKILL.md` in this session, read it first.");
+        println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-task-watch/SKILL.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
+        println!();
+        println!("**Step 2 — Execute the watch per `skills/okx-task-watch/SKILL.md` §Run watch, scoped to job-id `{returned_job_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read SKILL.md first.)");
     }
     Ok(())
 }
@@ -740,70 +811,6 @@ mod tests {
         assert!(validate_currency_opt(Some("BTC")).is_err());
     }
 
-    // ── validate_deadline_open_opt ──────────────────────────────────
-
-    #[test]
-    fn deadline_open_none_ok() {
-        assert_eq!(validate_deadline_open_opt(None).unwrap(), None);
-    }
-
-    #[test]
-    fn deadline_open_exact_min_ok() {
-        assert_eq!(validate_deadline_open_opt(Some("10m")).unwrap(), Some(600));
-    }
-
-    #[test]
-    fn deadline_open_below_min_rejected() {
-        assert!(validate_deadline_open_opt(Some("9m")).is_err());
-    }
-
-    #[test]
-    fn deadline_open_exact_max_ok() {
-        assert_eq!(validate_deadline_open_opt(Some("180d")).unwrap(), Some(180 * 86400));
-    }
-
-    #[test]
-    fn deadline_open_over_max_rejected() {
-        assert!(validate_deadline_open_opt(Some("181d")).is_err());
-    }
-
-    #[test]
-    fn deadline_open_hours_ok() {
-        assert_eq!(validate_deadline_open_opt(Some("2h")).unwrap(), Some(7200));
-    }
-
-    #[test]
-    fn deadline_open_invalid_format_rejected() {
-        assert!(validate_deadline_open_opt(Some("abc")).is_err());
-    }
-
-    // ── validate_deadline_submit_opt ────────────────────────────────
-
-    #[test]
-    fn deadline_submit_none_ok() {
-        assert_eq!(validate_deadline_submit_opt(None).unwrap(), None);
-    }
-
-    #[test]
-    fn deadline_submit_exact_min_ok() {
-        assert_eq!(validate_deadline_submit_opt(Some("1m")).unwrap(), Some(60));
-    }
-
-    #[test]
-    fn deadline_submit_below_min_rejected() {
-        assert!(validate_deadline_submit_opt(Some("30s")).is_err());
-    }
-
-    #[test]
-    fn deadline_submit_exact_max_ok() {
-        assert_eq!(validate_deadline_submit_opt(Some("180d")).unwrap(), Some(180 * 86400));
-    }
-
-    #[test]
-    fn deadline_submit_over_max_rejected() {
-        assert!(validate_deadline_submit_opt(Some("181d")).is_err());
-    }
-
     // ── make_summary ────────────────────────────────────────────────
 
     #[test]
@@ -847,11 +854,7 @@ mod tests {
             "description": "A sufficiently long description for testing purposes here.",
             "paymentTokenSymbol": "USDT",
             "paymentTokenAmount": "10",
-            "paymentMostTokenAmount": "20",
-            "expireConfig": {
-                "acceptDeadline": 3600,
-                "submittedDeadline": 3600
-            }
+            "paymentMostTokenAmount": "20"
         })
     }
 
@@ -910,22 +913,6 @@ mod tests {
     }
 
     #[test]
-    fn publish_missing_accept_deadline() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["acceptDeadline"] = serde_json::json!(0);
-        let err = validate_draft_for_publish(&d).unwrap_err().to_string();
-        assert!(err.contains("acceptDeadline"), "{err}");
-    }
-
-    #[test]
-    fn publish_missing_submit_deadline() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["submittedDeadline"] = serde_json::json!(0);
-        let err = validate_draft_for_publish(&d).unwrap_err().to_string();
-        assert!(err.contains("submittedDeadline"), "{err}");
-    }
-
-    #[test]
     fn publish_multiple_missing_fields() {
         let d = serde_json::json!({});
         let err = validate_draft_for_publish(&d).unwrap_err().to_string();
@@ -934,8 +921,6 @@ mod tests {
         assert!(err.contains("paymentTokenSymbol"));
         assert!(err.contains("paymentTokenAmount"));
         assert!(err.contains("paymentMostTokenAmount"));
-        assert!(err.contains("acceptDeadline"));
-        assert!(err.contains("submittedDeadline"));
     }
 
     #[test]
@@ -946,24 +931,9 @@ mod tests {
             "description": "A sufficiently long description for testing purposes here.",
             "tokenSymbol": "USDT",
             "tokenAmount": "10",
-            "paymentMostTokenAmount": "20",
-            "expireConfig": { "acceptDeadline": 3600, "submittedDeadline": 3600 }
+            "paymentMostTokenAmount": "20"
         });
         assert!(validate_draft_for_publish(&d).is_ok());
-    }
-
-    #[test]
-    fn publish_accept_deadline_out_of_range() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["acceptDeadline"] = serde_json::json!(1);
-        assert!(validate_draft_for_publish(&d).unwrap_err().to_string().contains("acceptDeadline"));
-    }
-
-    #[test]
-    fn publish_submit_deadline_out_of_range() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["submittedDeadline"] = serde_json::json!(180 * 86400 + 1);
-        assert!(validate_draft_for_publish(&d).unwrap_err().to_string().contains("submittedDeadline"));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1000,8 +970,6 @@ mod tests {
             "--budget", "50.5",
             "--max-budget", "100",
             "--currency", "USDT",
-            "--deadline-open", "3d",
-            "--deadline-submit", "7d",
             "--provider", "agent-123",
             "--file", "/tmp/a.pdf",
             "--file", "/tmp/b.png",
@@ -1009,16 +977,13 @@ mod tests {
         match cli.cmd {
             super::super::DraftCommand::Create {
                 title, description, budget, max_budget,
-                currency, deadline_open, deadline_submit,
-                provider, attachments, ..
+                currency, provider, attachments, ..
             } => {
                 assert_eq!(title, "full task");
                 assert_eq!(description.as_deref(), Some("a long description here"));
                 assert_eq!(budget, Some(50.5));
                 assert_eq!(max_budget, Some(100.0));
                 assert_eq!(currency.as_deref(), Some("USDT"));
-                assert_eq!(deadline_open.as_deref(), Some("3d"));
-                assert_eq!(deadline_submit.as_deref(), Some("7d"));
                 assert_eq!(provider.as_deref(), Some("agent-123"));
                 assert_eq!(attachments, Some(vec!["/tmp/a.pdf".to_string(), "/tmp/b.png".to_string()]));
             }
@@ -1084,22 +1049,6 @@ mod tests {
         match cli.cmd {
             super::super::DraftCommand::Update { max_budget, .. } => {
                 assert_eq!(max_budget, Some(200.0));
-            }
-            _ => panic!("expected Update"),
-        }
-    }
-
-    #[test]
-    fn cli_update_deadline_flags() {
-        let cli = TestCli::parse_from([
-            "test", "update", "j1",
-            "--deadline-open", "1h",
-            "--deadline-submit", "2d",
-        ]);
-        match cli.cmd {
-            super::super::DraftCommand::Update { deadline_open, deadline_submit, .. } => {
-                assert_eq!(deadline_open.as_deref(), Some("1h"));
-                assert_eq!(deadline_submit.as_deref(), Some("2d"));
             }
             _ => panic!("expected Update"),
         }
@@ -1204,75 +1153,6 @@ mod tests {
     }
 
     #[test]
-    fn publish_expire_config_missing_entirely() {
-        let mut d = full_draft_json();
-        d.as_object_mut().unwrap().remove("expireConfig");
-        let err = validate_draft_for_publish(&d).unwrap_err().to_string();
-        assert!(err.contains("acceptDeadline"), "{err}");
-        assert!(err.contains("submittedDeadline"), "{err}");
-    }
-
-    #[test]
-    fn publish_accept_deadline_exact_min_ok() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["acceptDeadline"] = serde_json::json!(ACCEPT_MIN);
-        assert!(validate_draft_for_publish(&d).is_ok());
-    }
-
-    #[test]
-    fn publish_accept_deadline_exact_max_ok() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["acceptDeadline"] = serde_json::json!(ACCEPT_MAX);
-        assert!(validate_draft_for_publish(&d).is_ok());
-    }
-
-    #[test]
-    fn publish_accept_deadline_below_min_rejected() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["acceptDeadline"] = serde_json::json!(ACCEPT_MIN - 1);
-        let err = validate_draft_for_publish(&d).unwrap_err().to_string();
-        assert!(err.contains("acceptDeadline"), "{err}");
-    }
-
-    #[test]
-    fn publish_accept_deadline_above_max_rejected() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["acceptDeadline"] = serde_json::json!(ACCEPT_MAX + 1);
-        let err = validate_draft_for_publish(&d).unwrap_err().to_string();
-        assert!(err.contains("acceptDeadline"), "{err}");
-    }
-
-    #[test]
-    fn publish_submit_deadline_exact_min_ok() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["submittedDeadline"] = serde_json::json!(SUBMIT_MIN);
-        assert!(validate_draft_for_publish(&d).is_ok());
-    }
-
-    #[test]
-    fn publish_submit_deadline_exact_max_ok() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["submittedDeadline"] = serde_json::json!(SUBMIT_MAX);
-        assert!(validate_draft_for_publish(&d).is_ok());
-    }
-
-    #[test]
-    fn publish_submit_deadline_below_min_rejected() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["submittedDeadline"] = serde_json::json!(SUBMIT_MIN - 1);
-        let err = validate_draft_for_publish(&d).unwrap_err().to_string();
-        assert!(err.contains("submittedDeadline"), "{err}");
-    }
-
-    #[test]
-    fn publish_submit_deadline_above_max_rejected() {
-        let mut d = full_draft_json();
-        d["expireConfig"]["submittedDeadline"] = serde_json::json!(SUBMIT_MAX + 1);
-        let err = validate_draft_for_publish(&d).unwrap_err().to_string();
-        assert!(err.contains("submittedDeadline"), "{err}");
-    }
-
-    #[test]
     #[allow(non_snake_case)]
     fn publish_accepts_tokenAmount_alias() {
         let d = serde_json::json!({
@@ -1280,8 +1160,7 @@ mod tests {
             "description": "A sufficiently long description for testing purposes here.",
             "tokenSymbol": "USDT",
             "tokenAmount": "10",
-            "paymentMostTokenAmount": "20",
-            "expireConfig": { "acceptDeadline": 3600, "submittedDeadline": 3600 }
+            "paymentMostTokenAmount": "20"
         });
         assert!(validate_draft_for_publish(&d).is_ok());
     }
@@ -1308,22 +1187,6 @@ mod tests {
         d["paymentTokenAmount"] = serde_json::json!(10);
         let err = validate_draft_for_publish(&d).unwrap_err().to_string();
         assert!(err.contains("paymentTokenAmount"), "{err}");
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // Additional format parsing
-    // ═══════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn deadline_open_days_format() {
-        let result = validate_deadline_open_opt(Some("7d")).unwrap();
-        assert_eq!(result, Some(7 * 86400));
-    }
-
-    #[test]
-    fn deadline_submit_hours_format() {
-        let result = validate_deadline_submit_opt(Some("2h")).unwrap();
-        assert_eq!(result, Some(7200));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1379,14 +1242,12 @@ mod tests {
             "--budget", "25",
             "--max-budget", "50",
             "--currency", "USDG",
-            "--deadline-open", "1d",
-            "--deadline-submit", "3d",
             "--provider", "prov-456",
         ]);
         match cli.cmd {
             super::super::DraftCommand::Update {
                 job_id, title, description, budget, max_budget,
-                currency, deadline_open, deadline_submit, provider,
+                currency, provider, ..
             } => {
                 assert_eq!(job_id, "j-99");
                 assert_eq!(title.as_deref(), Some("new"));
@@ -1394,8 +1255,6 @@ mod tests {
                 assert_eq!(budget, Some(25.0));
                 assert_eq!(max_budget, Some(50.0));
                 assert_eq!(currency.as_deref(), Some("USDG"));
-                assert_eq!(deadline_open.as_deref(), Some("1d"));
-                assert_eq!(deadline_submit.as_deref(), Some("3d"));
                 assert_eq!(provider.as_deref(), Some("prov-456"));
             }
             _ => panic!("expected Update"),
@@ -1408,15 +1267,13 @@ mod tests {
         match cli.cmd {
             super::super::DraftCommand::Update {
                 title, description, budget, max_budget,
-                currency, deadline_open, deadline_submit, provider, ..
+                currency, provider, ..
             } => {
                 assert!(title.is_none());
                 assert!(description.is_none());
                 assert!(budget.is_none());
                 assert!(max_budget.is_none());
                 assert!(currency.is_none());
-                assert!(deadline_open.is_none());
-                assert!(deadline_submit.is_none());
                 assert!(provider.is_none());
             }
             _ => panic!("expected Update"),
@@ -1431,6 +1288,236 @@ mod tests {
                 assert_eq!(page, 0);
             }
             _ => panic!("expected List"),
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // validate_draft_fields
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn vf(
+        desc: Option<&str>, title: Option<&str>,
+        budget: Option<f64>, max_budget: Option<f64>,
+        currency: Option<&str>,
+    ) -> serde_json::Value {
+        validate_draft_fields(desc, title, budget, max_budget, currency)
+    }
+
+    fn vf_ok(
+        desc: Option<&str>, title: Option<&str>,
+        budget: Option<f64>, max_budget: Option<f64>,
+        currency: Option<&str>,
+    ) -> bool {
+        vf(desc, title, budget, max_budget, currency)
+            ["ok"].as_bool().unwrap()
+    }
+
+    fn vf_errors(
+        desc: Option<&str>, title: Option<&str>,
+        budget: Option<f64>, max_budget: Option<f64>,
+        currency: Option<&str>,
+    ) -> Vec<String> {
+        let v = vf(desc, title, budget, max_budget, currency);
+        v["errors"].as_array()
+            .map(|a| a.iter().map(|e| e.as_str().unwrap().to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    fn vf_checks(
+        desc: Option<&str>, title: Option<&str>,
+        budget: Option<f64>, max_budget: Option<f64>,
+        currency: Option<&str>,
+    ) -> Vec<serde_json::Value> {
+        let v = vf(desc, title, budget, max_budget, currency);
+        v["checks"].as_array().unwrap().clone()
+    }
+
+    // ── all fields valid ───────────────────────────────────────────
+
+    #[test]
+    fn validate_all_fields_ok() {
+        assert!(vf_ok(
+            Some("查询河南省明天天气，包括温度、湿度、降雨概率"),
+            Some("查询河南天气"),
+            Some(0.01), Some(0.011),
+            Some("USDT"),
+        ));
+    }
+
+    // ── no fields → ok (nothing to check) ──────────────────────────
+
+    #[test]
+    fn validate_no_fields_ok() {
+        assert!(vf_ok(None, None, None, None, None));
+    }
+
+    #[test]
+    fn validate_no_fields_empty_checks() {
+        let checks = vf_checks(None, None, None, None, None);
+        assert!(checks.is_empty());
+    }
+
+    // ── description ────────────────────────────────────────────────
+
+    #[test]
+    fn validate_description_too_short() {
+        let errs = vf_errors(Some("短"), None, None, None, None);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("description"));
+    }
+
+    #[test]
+    fn validate_description_exact_min() {
+        let desc: String = "a".repeat(MIN_DESCRIPTION_CHARS);
+        assert!(vf_ok(Some(&desc), None, None, None, None));
+    }
+
+    #[test]
+    fn validate_description_over_max() {
+        let desc: String = "a".repeat(MAX_DESCRIPTION_CHARS + 1);
+        let errs = vf_errors(Some(&desc), None, None, None, None);
+        assert!(errs[0].contains("description"));
+    }
+
+    // ── title ──────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_title_empty() {
+        let errs = vf_errors(None, Some(""), None, None, None);
+        assert!(errs[0].contains("title"));
+    }
+
+    #[test]
+    fn validate_title_over_limit() {
+        let t: String = "x".repeat(MAX_TITLE_CHARS + 1);
+        let errs = vf_errors(None, Some(&t), None, None, None);
+        assert!(errs[0].contains("title"));
+    }
+
+    #[test]
+    fn validate_title_exact_limit() {
+        let t: String = "x".repeat(MAX_TITLE_CHARS);
+        assert!(vf_ok(None, Some(&t), None, None, None));
+    }
+
+    // ── currency ───────────────────────────────────────────────────
+
+    #[test]
+    fn validate_currency_usdt_normalized() {
+        let checks = vf_checks(None, None, None, None, Some("usdt"));
+        let c = checks.iter().find(|c| c["field"] == "currency").unwrap();
+        assert_eq!(c["ok"], true);
+        assert_eq!(c["normalized"], "USDT");
+    }
+
+    #[test]
+    fn validate_currency_unsupported() {
+        let errs = vf_errors(None, None, None, None, Some("BTC"));
+        assert!(errs[0].contains("unsupported"));
+    }
+
+    // ── budget ─────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_budget_zero() {
+        let errs = vf_errors(None, None, Some(0.0), None, None);
+        assert!(errs[0].contains("budget"));
+    }
+
+    #[test]
+    fn validate_budget_too_many_decimals() {
+        let errs = vf_errors(None, None, Some(1.123456), None, None);
+        assert!(errs[0].contains("decimal"));
+    }
+
+    #[test]
+    fn validate_budget_exceeds_max() {
+        let errs = vf_errors(None, None, Some(10_000_001.0), None, None);
+        assert!(errs[0].contains("budget"));
+    }
+
+    // ── max_budget vs budget ───────────────────────────────────────
+
+    #[test]
+    fn validate_max_budget_less_than_budget() {
+        let errs = vf_errors(None, None, Some(100.0), Some(50.0), None);
+        assert!(errs.iter().any(|e| e.contains("max_budget")));
+    }
+
+    #[test]
+    fn validate_max_budget_equal_ok() {
+        assert!(vf_ok(None, None, Some(10.0), Some(10.0), None));
+    }
+
+    // ── multiple errors collected ──────────────────────────────────
+
+    #[test]
+    fn validate_multiple_errors_all_collected() {
+        let errs = vf_errors(
+            Some("短"), Some(""), Some(0.0), Some(0.0), Some("ETH"),
+        );
+        assert!(errs.len() >= 4);
+        assert!(errs.iter().any(|e| e.contains("description")));
+        assert!(errs.iter().any(|e| e.contains("title")));
+        assert!(errs.iter().any(|e| e.contains("unsupported")));
+        assert!(errs.iter().any(|e| e.contains("budget")));
+    }
+
+    // ── clap: validate subcommand ──────────────────────────────────
+
+    #[test]
+    fn cli_validate_all_fields() {
+        let cli = TestCli::parse_from([
+            "test", "validate",
+            "--description", "a long description for testing",
+            "--title", "test title",
+            "--budget", "50",
+            "--max-budget", "100",
+            "--currency", "USDT",
+        ]);
+        match cli.cmd {
+            super::super::DraftCommand::Validate {
+                description, title, budget, max_budget, currency,
+            } => {
+                assert_eq!(description.as_deref(), Some("a long description for testing"));
+                assert_eq!(title.as_deref(), Some("test title"));
+                assert_eq!(budget, Some(50.0));
+                assert_eq!(max_budget, Some(100.0));
+                assert_eq!(currency.as_deref(), Some("USDT"));
+            }
+            _ => panic!("expected Validate"),
+        }
+    }
+
+    #[test]
+    fn cli_validate_no_fields() {
+        let cli = TestCli::parse_from(["test", "validate"]);
+        match cli.cmd {
+            super::super::DraftCommand::Validate {
+                description, title, budget, max_budget, currency,
+            } => {
+                assert!(description.is_none());
+                assert!(title.is_none());
+                assert!(budget.is_none());
+                assert!(max_budget.is_none());
+                assert!(currency.is_none());
+            }
+            _ => panic!("expected Validate"),
+        }
+    }
+
+    #[test]
+    fn cli_validate_partial_fields() {
+        let cli = TestCli::parse_from([
+            "test", "validate", "--description", "just checking description", "--currency", "usdg",
+        ]);
+        match cli.cmd {
+            super::super::DraftCommand::Validate { description, currency, budget, .. } => {
+                assert_eq!(description.as_deref(), Some("just checking description"));
+                assert_eq!(currency.as_deref(), Some("usdg"));
+                assert!(budget.is_none());
+            }
+            _ => panic!("expected Validate"),
         }
     }
 }

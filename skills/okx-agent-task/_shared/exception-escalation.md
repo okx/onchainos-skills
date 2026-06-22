@@ -1,6 +1,6 @@
 # Exception Escalation Rules (shared by buyer / provider)
 
-Each agent turn is stateless, with **no built-in loop protection**. The 4 rules below cover all a2a / CLI scenarios. `buyer.md` / `provider.md` stack role-specific exceptions on top (each writing their own §6).
+Each agent turn is stateless, with **no built-in loop protection**. The 4 rules below cover all a2a / CLI scenarios. `buyer-sub-playbook.md` / `provider.md` stack role-specific exceptions on top (each writing their own §6).
 
 > All rules share one principle: on entering an exception, **immediately push to the user session**, and **do not auto-retry inside the sub**.
 
@@ -11,8 +11,8 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 - The next inbound envelope from the counterpart **still repeats the same wrong demand** (e.g. backtracking on a negotiation field already confirmed, or repeatedly asking you to run a command that doesn't exist)
 
 **Action**:
-1. **Do not reply to the counterpart again** — do not call `xmtp_send` to explain a second round; that will only make the peer agent loop along with you
-2. Call `xmtp_dispatch_user` to push to the user:
+1. **Do not reply to the counterpart again** — do not call `okx-a2a xmtp-send` to explain a second round; that will only make the peer agent loop along with you
+2. Call `okx-a2a user notify` to push to the user:
    ```
    [⚠️ Protocol misalignment] Task <jobId> is stuck
    - Counterpart keeps demanding: <one-sentence summary of their demand>
@@ -28,12 +28,11 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 
 **Action**:
 1. **Do not retry inside the sub** — running the same command again will almost certainly produce the same result, just wasting a turn
-2. Get the current sessionKey via `session_status` (if not already cached this turn — see Hard Rule 6)
-3. Enqueue an error-decision via `pending-decisions-v2 request`, using the canonical `escalation_cli_failed_notify` template (localized to the user's language) as `--user-content`:
+2. Enqueue an error-decision via `pending-decisions-v2 request`, using the canonical `escalation_cli_failed_notify` template (localized to the user's language) as `--user-content`:
    ```bash
    onchainos agent pending-decisions-v2 request \
-     --sub-key "<sessionKey>" \
      --job-id <jobId> --role <role> --agent-id <agentId> \
+     [--to-agent-id <peer agentId — task sub only; omit for backup sub>] \
      --user-content "<localized error decision card — see template below>" \
      --list-label "[Error <short jobId>] CLI failed"
    ```
@@ -52,7 +51,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 4. Follow the playbook the CLI returns verbatim, then end the turn
 5. When the user-session relays the reply back as a system envelope (`event:"user_decision_cli_failed"`, `message.data:<user verbatim>`) in a later turn, call:
    ```bash
-   onchainos agent next-action --jobid <jobId> --event user_decision_cli_failed --role <buyer|provider> --agentId <your agentId> --data "<message.data verbatim>"
+   onchainos agent next-action --role <buyer|provider> --agentId <your agentId> --message '{"event":"user_decision_cli_failed","jobId":"<jobId>","data":"<message.data verbatim>"}'
    ```
    The CLI's `cli_failed` handler does the LLM semantic mapping (`A` / `retry` / `重试` → retry the failed command once; `B` / `dismiss` / `不再提示` → end the turn, user takes manual control; new-instruction in natural language → parse and execute the modified command). Do NOT keyword-match yourself — pass `--data` through and follow the handler's playbook.
 
@@ -65,7 +64,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 
 ## 3. ❌ Absolute prohibition: broadcasting technical errors to the counterpart
 
-CLI errors / protocol misalignment / any internal exception → **do NOT `xmtp_send` the error details to the counterpart**.
+CLI errors / protocol misalignment / any internal exception → **do NOT `okx-a2a xmtp-send` the error details to the counterpart**.
 
 **Prohibited behaviors**:
 - ❌ "The `deliver` command failed because the recipient field returned by the backend is empty" ← exposes CLI command name + backend field name
@@ -82,19 +81,19 @@ CLI errors / protocol misalignment / any internal exception → **do NOT `xmtp_s
 
 **Strict rule**: within the turn that pushes to the user session, send **at most one** generic "please wait" line to the counterpart; **never send a second**. Even if the counterpart pings you again afterward, still handle it via the §1 rule.
 
-## 4. ❌ Absolute prohibition: calling `xmtp_send` repeatedly to the same counterpart within a single turn
+## 4. ❌ Absolute prohibition: calling `okx-a2a xmtp-send` repeatedly to the same counterpart within a single turn
 
-Each agent turn has **no memory** and **no send-receipt feedback** — the tool returning "sent to 0x..." **counts as success**. LLMs often second-guess after the tool returns ("Did they receive that one? Should I send it again?"), causing 3-5 nearly identical `xmtp_send` calls to the same counterpart within a single turn.
+Each agent turn has **no memory** and **no send-receipt feedback** — the command exiting `0` **counts as success**. LLMs often second-guess after the tool returns ("Did they receive that one? Should I send it again?"), causing 3-5 nearly identical `okx-a2a xmtp-send` calls to the same counterpart within a single turn.
 
 **Iron rules**:
-- One next-action script lets you "send one xmtp_send" — **call it once and stop**, regardless of whether you think the message was clear or needs supplementing
-- Tool returning `sent to 0x...` ⇒ **treat as success**; do not resend just because the counterpart hasn't replied
+- One next-action script lets you "send one xmtp-send" — **call it once and stop**, regardless of whether you think the message was clear or needs supplementing
+- `okx-a2a xmtp-send` exiting `0` ⇒ **treat as success**; do not resend just because the counterpart hasn't replied
 - Want the counterpart to understand better? **Improve the next send** — not by resending in the same turn
-- When a script genuinely requires multiple xmtp_send calls (rare), the script will explicitly number them as **Step 1 / Step 2 / Step 3**
+- When a script genuinely requires multiple `okx-a2a xmtp-send` calls (rare), the script will explicitly number them as **Step 1 / Step 2 / Step 3**
 
 **Anti-pattern (real incident that happened)**:
 - After `deliver` completed, the script asked for one delivery notification, but the agent sent the same "deliverable submitted" message 5 times
 - After clarifying the escrow path, the agent sent the same duplicate message 3 times
 - Consequence: the peer agent mistakenly treated the messages as important / triggered its own loop / the user got spammed
 
-**Discriminator**: within the current turn, if you have **already** called `xmtp_send` once to a given sessionKey → **do not call it a second time in the current turn**. End the turn directly and wait for the next inbound envelope.
+**Discriminator**: within the current turn, if you have **already** called `okx-a2a xmtp-send` once to a given (jobId, toAgentId) pair → **do not call it a second time in the current turn**. End the turn directly and wait for the next inbound envelope.

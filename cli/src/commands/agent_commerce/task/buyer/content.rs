@@ -2,9 +2,9 @@
 //!
 //! Two categories of templates:
 //!
-//! 1. **User-facing** (`xmtp_dispatch_user(content)` / `xmtp_prompt_user(userContent)`)
-//!    Chat content shown directly to the user. Naming suffix: `_user_notify` / `_user_prompt`.
-//!    Rule: **no technical jargon** — tool names (`xmtp_*`) / event names (`provider_applied`/`job_*` etc.) /
+//! 1. **User-facing** — chat content shown directly to the user via `okx-a2a user notify` /
+//!    `okx-a2a user decision-request`. Naming suffix: `_user_notify` / `_user_prompt`.
+//!    Rule: **no technical jargon** — event names (`provider_applied`/`job_*` etc.) /
 //!    status names (English enums like `Open`/`accepted` are kept as doc-reserved literals) / CLI flags (`--*`) /
 //!    skill names (`okx-agent-identity` etc.) / backend method names (`claimAutoComplete` etc.).
 //!    **Literals in this file are English** (aligned with the PM Review translation baseline),
@@ -18,8 +18,8 @@
 //!    Decision prompts (❓) carry the `[Job {short_id} — you are the User Agent]` prefix.
 //!    User reply instructions use descriptive phrasing (naturally translatable by the sub agent).
 //!
-//! 2. **Peer-facing** (`xmtp_send` content, sent to the provider sub agent)
-//!    Agent-to-agent protocol messages. Naming suffix: `_to_seller`.
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
+//!    to the provider sub agent. Naming suffix: `_to_seller`.
 //!    Rule: may contain protocol literals (`[intent:*]` etc.);
 //!    **never instruct the peer to call CLI** (the peer has its own flow.rs and decides based on chain events;
 //!    issuing commands to the peer is overreach).
@@ -29,23 +29,23 @@
 
 // ── Platform detection ────────────────────────────────────────────
 
-pub fn is_cli_mode() -> bool {
-    std::env::var("CLAUDECODE").unwrap_or_default() == "1"
-        || std::env::var("CODEX_THREAD_ID")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .is_some()
-}
+pub use crate::commands::agent_commerce::task::common::config::is_cli_mode;
 
 // ── Event::JobCreated ──────────────────────────────────────────────
 
 /// `Event::JobCreated` Step 0 — user notification (no designated provider).
-pub fn job_created_public_user_notify() -> &'static str {
-    "[Job Created]【<title>】(<short_jobId>) confirmed on-chain. Auto-querying recommended ASPs."
+pub fn job_created_non_designated_user_notify() -> &'static str {
+    // CLI mode: drop "Waiting for ASPs to discover and apply." — passive
+    // turn-end cue suppresses LLM-driven watch re-arm. See job_accepted_escrow_user_notify.
+    if is_cli_mode() {
+        "[Job Created]【<title>】(<short_jobId>) confirmed on-chain (public)."
+    } else {
+        "[Job Created]【<title>】(<short_jobId>) confirmed on-chain (public). Waiting for ASPs to discover and apply."
+    }
 }
 
 /// `Event::JobCreated` Step 0 — user notification (with designated provider).
-/// Used both for first-time creation and re-entry (recommend_pick / no_asp_found designate).
+/// Used both for first-time creation and re-entry (asp_match_pick / no_asp_found designate).
 pub fn job_created_designated_user_notify() -> &'static str {
     "[Connecting ASP]【<title>】(<short_jobId>) — connecting to the designated ASP (<provider_agentId>)."
 }
@@ -101,7 +101,6 @@ pub fn job_accepted_escrow_user_notify(job_id: &str, _title: &str) -> String {
         "[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
          Title: <title>\n\
          Description: <description>\n\
-         Deliverable: <deliverable>\n\
          ASP agentId: <providerAgentId>\n\
          Payment: escrow\n\
          Amount: <tokenAmount> <tokenSymbol>{trailing}"
@@ -122,8 +121,14 @@ pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
 
 /// `Event::JobRejected` Step 1 — user notification that the rejection is confirmed on-chain.
 pub fn job_rejected_user_notify(job_id: &str, title: &str) -> String {
+    // CLI mode: drop "; waiting for the ASP to respond" — passive turn-end cue.
+    let lead = if is_cli_mode() {
+        format!("[Rejection Confirmed] The deliverable for【{title}】(`{job_id}`) has been rejected.")
+    } else {
+        format!("[Rejection Confirmed] The deliverable for【{title}】(`{job_id}`) has been rejected; waiting for the ASP to respond.")
+    };
     format!(
-        "[Rejection Confirmed] The deliverable for【{title}】(`{job_id}`) has been rejected; waiting for the ASP to respond.\n\
+        "{lead}\n\
          The ASP will choose: file a dispute or agree to a refund.\n\
          If the ASP takes no action, funds will be auto-refunded to your wallet."
     )
@@ -215,7 +220,7 @@ pub fn job_auto_refunded_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobExpired` — job expired (B-7-1).
 pub fn job_expired_user_notify(job_id: &str) -> String {
     format!(
-        "Job `{job_id}` has expired (no ASP accepted before the acceptance window expired, or no deliverable submitted before the delivery window expired). The job is now closed."
+        "[Job Expired] Job `{job_id}` has expired (no ASP accepted before the acceptance window expired, or no deliverable submitted before the delivery window expired). The job is now closed."
     )
 }
 
@@ -223,14 +228,19 @@ pub fn job_expired_user_notify(job_id: &str) -> String {
 
 /// `Event::JobClosed` — job closed (B-7-2).
 pub fn job_closed_user_notify(job_id: &str, title: &str) -> String {
-    format!("{title} (`{job_id}`) has been closed; funds have been returned.")
+    format!("[Job Closed] {title} (`{job_id}`) has been closed; funds have been returned.")
 }
 
 // ── Event::JobVisibilityChanged ────────────────────────────────────
 
 /// `Event::JobVisibilityChanged` visibility=0 — public (B-7-3).
 pub fn visibility_public_user_notify(job_id: &str, title: &str) -> String {
-    format!("[Visibility Changed] {title} (`{job_id}`) is now public. Waiting for ASPs to reach out.")
+    // CLI mode: drop "Waiting for ASPs to reach out." — passive turn-end cue.
+    if is_cli_mode() {
+        format!("[Visibility Changed] {title} (`{job_id}`) is now public.")
+    } else {
+        format!("[Visibility Changed] {title} (`{job_id}`) is now public. Waiting for ASPs to reach out.")
+    }
 }
 
 /// `Event::JobVisibilityChanged` visibility=1 — private (B-7-4).
@@ -242,7 +252,7 @@ pub fn visibility_private_user_notify(job_id: &str, title: &str) -> String {
 
 /// `Event::JobPaymentModeChanged` escrow branch — user notification (B-2-5).
 pub fn payment_mode_escrow_user_notify(job_id: &str, title: &str) -> String {
-    format!("{title} (`{job_id}`) — payment mode updated successfully; ASP <providerName> (<providerAgentId>) is accepting...")
+    format!("[Payment Mode Set] {title} (`{job_id}`) — payment mode updated successfully; ASP <providerName> (<providerAgentId>) is accepting...")
 }
 
 /// x402 set-payment-mode confirmed on-chain; transition notification before task-402-pay.
@@ -253,28 +263,21 @@ pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
     )
 }
 
-// ── Event::NegotiateReply (over budget) ────────────────────────────
-
-/// `Event::NegotiateReply` — decision prompt when the ASP's quote exceeds max_budget.
-pub fn over_budget_user_prompt(short_id: &str) -> String {
-    format!(
-        "[Job {short_id} — you are the User Agent] The ASP's quote exceeds the maximum budget; negotiation terminated. Choose next step:\n\
-         A. View recommended ASP list\n\
-         B. Designate another ASP — provide the agentId\n\
-         C. Close the job"
-    )
-}
-
 // ── Pseudo events (close / set_public) ─────────────────────────────
 
 /// User notification after closing a job (B-7-11).
 pub fn close_user_notify(job_id: &str) -> String {
-    format!("Job `{job_id}` has been closed.")
+    format!("[Job Closed] Job `{job_id}` has been closed.")
 }
 
 /// User notification after switching a job to public (B-7-12).
 pub fn set_public_user_notify(job_id: &str) -> String {
-    format!("Job `{job_id}` is now public. Waiting for ASPs to apply.")
+    // CLI mode: drop "Waiting for ASPs to apply." — passive turn-end cue.
+    if is_cli_mode() {
+        format!("Job `{job_id}` is now public.")
+    } else {
+        format!("Job `{job_id}` is now public. Waiting for ASPs to apply.")
+    }
 }
 
 // ── Event::SubmitExpired ───────────────────────────────────────────
@@ -297,7 +300,7 @@ pub fn reject_expired_user_notify(job_id: &str) -> String {
 
 // ── Event::ReviewDeadlineWarn ──────────────────────────────────────
 
-/// `Event::ReviewDeadlineWarn` — review deadline prompt (B-7-7, `xmtp_prompt_user.userContent`).
+/// `Event::ReviewDeadlineWarn` — review deadline prompt (B-7-7).
 pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String {
     format!(
         "[Job {short_id} — you are the User Agent] [⏰ Review Deadline Warning] Job {job_id} — the review deadline is approaching.\n\
@@ -312,9 +315,15 @@ pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String 
 
 /// `Event::ReviewExpired` — review window expired (B-7-8).
 pub fn review_expired_user_notify(job_id: &str) -> String {
+    // CLI mode: drop " Waiting for the ASP's action..." — passive turn-end cue.
+    let trailing = if is_cli_mode() {
+        ""
+    } else {
+        " Waiting for the ASP's action..."
+    };
     format!(
         "[Review Expired] Job `{job_id}` — the review window has expired; you did not decide before the deadline.\n\
-         The ASP can now claim the funds automatically. Waiting for the ASP's action..."
+         The ASP can now claim the funds automatically.{trailing}"
     )
 }
 
@@ -339,7 +348,7 @@ pub fn reward_claimed_user_notify(job_id: &str, title: &str) -> String {
 
 /// `Event::WakeupNotify` — resume notification (B-7-15).
 pub fn wakeup_resume_user_notify(job_id: &str) -> String {
-    format!("Job `{job_id}` is back online. Please continue your decision in the user session.")
+    format!("[Resumed] Job `{job_id}` is back online. Please continue when ready.")
 }
 
 // ── provider_conversation — no more ASPs ───────────────────────────
@@ -356,35 +365,20 @@ pub fn attachment_sent_user_notify() -> &'static str {
     "[Job <short_jobId>] Attachment sent to the ASP."
 }
 
-/// Attachment saved locally (no active session yet) — notify the user.
-pub fn attachment_saved_user_notify() -> &'static str {
-    "[Job <short_jobId>] Attachment saved. It will be forwarded to the ASP once a negotiation session is established."
-}
-
-/// Attachment rejected — task is in review/terminal phase.
-pub fn attachment_phase_blocked_user_notify() -> &'static str {
-    "[Job <short_jobId>] The task has entered the review/terminal phase — attachments can no longer be added."
-}
-
 // ── Attachment (buyer → provider) ──────────────────────────────────
 
-/// File attachment `xmtp_send` content sent from the buyer sub session
-/// to the provider sub session.
-///
-/// The 6 fields (`fileKey` / `digest` / `salt` / `nonce` / `secret` /
-/// `filename`) come from `xmtp_file_upload`; the provider sub agent
-/// parses them and calls `xmtp_file_download` to fetch the file.
+/// File attachment peer message sent from the buyer sub session to the provider sub session.
 pub fn attachment_file_to_seller(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
          attachmentType: file\n\
-         fileKey: <fileKey from xmtp_file_upload — FULL value, no truncation>\n\
+         fileKey: <fileKey from `okx-a2a file upload` — FULL value, no truncation>\n\
          digest: <digest — FULL hex string, no truncation>\n\
          salt: <salt — FULL base64 string, no truncation>\n\
          nonce: <nonce — FULL base64 string, no truncation>\n\
          secret: <secret — FULL base64 string, no truncation (can be 100+ chars)>\n\
-         filename: <filename from xmtp_file_upload>\n\
-         description: <brief one-line description of the attachment>\n\
+         filename: <filename from `okx-a2a file upload`>\n\
+         description: This is an attachment/reference material for the task. The ASP should download it for task execution.\n\
          [intent:attachment]"
     )
 }
@@ -400,25 +394,21 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
 
 /// x402 replay success — deliverable received, awaiting on-chain confirmation.
 pub fn x402_replay_success_user_notify(job_id: &str) -> String {
+    let trailing = if is_cli_mode() {
+        ""
+    } else {
+        "\n         Waiting for on-chain confirmation. The job will auto-complete once confirmed."
+    };
     format!(
         "[x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
          ASP agentId: <providerAgentId>\n\
-         Amount: <tokenAmount> <tokenSymbol>\n\
-         Deliverable saved to: <deliverableSavedPath from CLI output>\n\
-         ---Deliverable---\n\
-         <replayBodyDisplay value from CLI output — pass through in full, do not truncate or summarize>\n\
-         ---End of deliverable---\n\
-         Waiting for on-chain confirmation. The job will auto-complete once confirmed."
-    )
-}
-
-/// x402 replay failure — accepted but endpoint replay failed.
-pub fn x402_replay_fail_user_notify(job_id: &str) -> String {
-    format!(
-        "[x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
-         HTTP status: <replayStatus>\n\
-         Error: <replayBody>\n\
-         Auto-complete will not run. Please give a new instruction; the agent will not auto-retry."
+         Amount: <tokenAmount> <tokenSymbol>\n\n\
+         If CLI output contains `deliverableSavedPath`:\n\
+         \x20\x20Deliverable saved to: <deliverableSavedPath>\n\n\
+         If CLI output does NOT contain `deliverableSavedPath` (save failed):\n\
+         \x20\x20---Deliverable---\n\
+         \x20\x20<replayBodyDisplay in full>\n\
+         \x20\x20---End of deliverable---{trailing}"
     )
 }
 
@@ -434,10 +424,10 @@ pub fn complete_failed_user_notify(job_id: &str) -> String {
 
 // ── create_task notification ─────────────────────────────────────
 
-/// create_task success — no designated provider.
+/// create_task success — no designated provider (public task).
 pub fn create_task_public_user_notify() -> String {
-    "Job submitted; jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
-     Once confirmed, the system will automatically fetch the recommended provider list for you to choose from."
+    "Job submitted (public); jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
+     Once confirmed, ASPs will be able to discover and apply for this task."
         .to_string()
 }
 
@@ -456,22 +446,10 @@ pub fn draft_saved_user_notify() -> String {
         .to_string()
 }
 
-/// Draft updated — user notification.
-pub fn draft_updated_user_notify() -> String {
-    "Draft updated (jobId: <jobId>)."
-        .to_string()
-}
-
-/// Draft deleted — user notification.
-pub fn draft_deleted_user_notify() -> String {
-    "Draft deleted (jobId: <jobId>)."
-        .to_string()
-}
-
-/// Draft publish success — no designated provider (same downstream flow as create-task).
+/// Draft publish success — no designated provider (public task).
 pub fn draft_publish_public_user_notify() -> String {
-    "Draft published; jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
-     Once confirmed, the system will automatically fetch the recommended provider list for you to choose from."
+    "Draft published (public); jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
+     Once confirmed, ASPs will be able to discover and apply for this task."
         .to_string()
 }
 
@@ -482,11 +460,32 @@ pub fn draft_publish_designated_user_notify() -> String {
         .to_string()
 }
 
-// ── pending_list empty (provider_conversation) ───────────────────
+// ── provider_conversation — single ASP accept/reject card ────────
 
-/// provider_conversation — user chose "skip all" pending ASPs.
-pub fn skip_all_pending_user_notify(job_id: &str) -> String {
-    format!("Job `{job_id}` — all pending ASPs have been skipped. You can wait for new ASPs to reach out, or reply \"close\" to close the task.")
+/// Canonical user-facing card for a single ASP accept/reject decision.
+/// Placeholders are pre-filled; the LLM only needs to translate.
+pub fn provider_pending_single_user_card(
+    short_job_id: &str,
+    title: &str,
+    agent_id: &str,
+    name: &str,
+) -> String {
+    let name_line = if name.is_empty() {
+        String::new()
+    } else {
+        format!("Name: {name}\n")
+    };
+    format!(
+        "[Job {short_job_id}] 「{title}」\n\
+         \n\
+         A provider wants to work on your task:\n\
+         {name_line}\
+         Agent ID: {agent_id}\n\
+         \n\
+         Accept this provider?\n\
+         1. Accept\n\
+         2. Reject"
+    )
 }
 
 /// provider_conversation — pending list is empty; no ASPs to contact.
@@ -501,9 +500,9 @@ pub fn pending_list_empty_user_notify() -> String {
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
     format!(
         "[⚠️ Operation Failed] Job `{job_id}`\n\
-         - Action: <e.g. recommend providers / submit review / pay via x402>\n\
+         - Action: <e.g. match providers / submit review / pay via x402>\n\
          - Error: <one-sentence summary of stderr / error field>\n\
-         - Current status: <status>\n\
+         - Current status: <describe in plain language, e.g. waiting for provider / under review / payment pending>\n\
          \n\
          Choose how to proceed:\n\
          A. Retry → reply 'A' or 'retry'\n\

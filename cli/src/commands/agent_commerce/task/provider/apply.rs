@@ -25,22 +25,23 @@ pub async fn handle_apply(
     }
 
     // Guardrail: token_amount must be a positive number. Empty / "0" / non-parseable / non-positive
-    // means the agent forgot to read the locked value from [intent:confirm] / [intent:propose] —
     // submitting it would commit on-chain to do the work for free (irreversible). Hard reject early.
     let amt_trim = token_amount.trim();
     let parsed = amt_trim.parse::<f64>();
     if amt_trim.is_empty() || !matches!(parsed, Ok(n) if n > 0.0) {
         anyhow::bail!(
             "--token-amount must be a positive number; got `{token_amount}`. \
-             Read the locked `tokenAmount` from the `[intent:confirm]` message you just verified \
-             (or fall back to the `[intent:propose]` value if confirm omits it). Empty / 0 / negative \
-             = apply for free, irreversible — refusing to broadcast."
+             Read the locked `tokenAmount` from the task fields (set at accept time) \
+             — for a designated assignment use the `tokenAmount` carried by the `JobAspSelected` envelope. \
+             Empty / 0 / negative = apply for free, irreversible — refusing to broadcast."
         );
     }
     if token_symbol.trim().is_empty() {
         anyhow::bail!(
             "--token-symbol must not be empty; got `{token_symbol}`. \
-             Read the locked `tokenSymbol` from the `[intent:confirm]` (or `[intent:propose]`) — do NOT assume USDT."
+             Read the locked `tokenSymbol` from the task fields (set at accept time) \
+             — for a designated assignment use the `tokenSymbol` carried by the `JobAspSelected` envelope. \
+             Do NOT assume USDT."
         );
     }
 
@@ -80,9 +81,6 @@ pub async fn handle_apply(
     println!("  txHash: {tx_hash}");
     println!();
     println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
-    println!("    - Do NOT call `xmtp_send` to tell the buyer \"application submitted\" or similar");
     println!("    - You will receive a `provider_applied` system notification after on-chain confirmation");
-    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event provider_applied --role provider`,");
-    println!("      then follow the output to call `session_status` + `xmtp_send` to send the payment invoice");
     Ok(())
 }

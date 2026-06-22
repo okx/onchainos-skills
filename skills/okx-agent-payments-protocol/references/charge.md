@@ -57,6 +57,8 @@ Output is the same shape as transaction mode, but `mode: "hash"`. Save `authoriz
 Authorization: <authorization_header>
 ```
 
+**Non-empty Step A3-Params plan?** Also attach its params on their carriers (query / body / header / path), using the plan's `input.method` if it differs from the original. The `Authorization` header rides alongside.
+
 Expected: `HTTP 200` with the requested content + a `Payment-Receipt` header (base64-encoded JSON). Decode with:
 
 ```bash

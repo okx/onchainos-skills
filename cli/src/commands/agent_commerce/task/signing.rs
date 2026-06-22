@@ -16,7 +16,7 @@ use crate::audit;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    fetch_my_agent_by_id, fetch_my_agents, AGENT_ROLE_BUYER,
+    fetch_agent_by_id, fetch_my_agents, DEBUG_LOG, AGENT_ROLE_BUYER,
     XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
@@ -66,7 +66,7 @@ pub async fn resolve_wallet_by_agent_id(agent_id: &str) -> Result<(String, Strin
         bail!("agent_id must not be empty; pass the provider's own agentId");
     }
 
-    let wallet_address = fetch_my_agent_by_id(id)
+    let wallet_address = fetch_agent_by_id(id)
         .await
         .and_then(|a| {
             a.get("agentWalletAddress")
@@ -77,7 +77,7 @@ pub async fn resolve_wallet_by_agent_id(agent_id: &str) -> Result<(String, Strin
 
     if wallet_address.is_empty() {
         bail!(
-            "cannot resolve wallet for agentId={id}; agentWalletAddress not found in `onchainos agent get`"
+            "cannot resolve wallet for agentId={id}; agentWalletAddress not found in `onchainos agent get-agents`"
         );
     }
 
@@ -126,7 +126,7 @@ async fn query_agent_list() -> Vec<Value> {
     fetch_my_agents().await
 }
 
-/// Filter the `onchainos agent get` list by `role`, optionally constrained by `ownerAddress`.
+/// Filter the `onchainos agent get-my-agents` list by `role`, optionally constrained by `ownerAddress`.
 ///
 /// - `wallet_address`: pass `Some(addr)` to only match identities with matching `ownerAddress` (case-insensitive);
 ///   pass `None` to take the first matching role (for read-only scenarios that only need the agentId header).
@@ -167,7 +167,7 @@ async fn resolve_agent_by_role(
 
 /// Resolve wallet + evaluator agentId for signing.
 ///
-/// Call `fetch_my_agent_by_id` by `agent_id` (does a full `agent get` pull, then client-side
+/// Call `fetch_agent_by_id` by `agent_id` (does a `get-agents --agent-ids` lookup, then client-side
 /// filters by `agentId`) to get `agentWalletAddress` → find the corresponding account in wallet store.
 /// `agent_id` is required (from system message envelope's top-level `agentId`); it is the only
 /// correct path in multi-identity scenarios — the "default wallet reverse lookup" fallback is disabled to prevent mis-signing.
@@ -184,7 +184,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
         bail!("agent_id must not be empty (envelope top-level agentId required)");
     }
 
-    let owner = fetch_my_agent_by_id(id)
+    let owner = fetch_agent_by_id(id)
         .await
         .and_then(|a| {
             a.get("agentWalletAddress")
@@ -202,10 +202,10 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
                 format!("agentId={id}"),
                 "reason=missing_agent_wallet_address".into(),
             ]),
-            Some("fetch_my_agent_by_id returned no agentWalletAddress"),
+            Some("fetch_agent_by_id returned no agentWalletAddress"),
         );
         bail!(
-            "cannot get wallet address for agentId={id}; verify the agentId exists in `onchainos agent get`"
+            "cannot get wallet address for agentId={id}; verify the agentId exists in `onchainos agent get-my-agents`"
         );
     }
 
@@ -463,13 +463,17 @@ pub fn sign_digest_with_session_key(digest: &str) -> Result<String> {
 /// Sign EIP-712 typedData and return the final ECDSA signature hex.
 /// Delegates to `agentic_wallet::sign::eip712_sign_raw` (gen-msg-hash → ed25519 → sign-msg).
 pub async fn sign_typed_data(typed_data: &Value, from_address: &str) -> Result<String> {
-    eprintln!("[debug] sign_typed_data input: from={from_address}, typedData primaryType={}", typed_data["primaryType"]);
+    if DEBUG_LOG {
+        eprintln!("[debug] sign_typed_data input: from={from_address}, typedData primaryType={}", typed_data["primaryType"]);
+    }
     let sig = crate::commands::agentic_wallet::sign::eip712_sign_raw(
         typed_data,
         XLAYER_CHAIN_INDEX,
         from_address,
     ).await?;
-    eprintln!("[debug] sign_typed_data returned signature: {sig}");
+    if DEBUG_LOG {
+        eprintln!("[debug] sign_typed_data returned signature: {sig}");
+    }
     Ok(sig)
 }
 

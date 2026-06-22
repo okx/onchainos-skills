@@ -12,6 +12,8 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::commands::agent_commerce::task::common::DEBUG_LOG;
+
 // ─── Public types ───────────────────────────────────────────────────────
 
 /// Decoded 402 response.
@@ -235,10 +237,7 @@ pub async fn check_x402_endpoint(endpoint: &str, body: Option<&str>) -> Result<X
             .json(&parsed)
             .send().await
     } else {
-        http.post(endpoint)
-            .header("Content-Type", "application/json")
-            .json(&serde_json::json!({}))
-            .send().await
+        http.get(endpoint).send().await
     }.map_err(|e| anyhow!("endpoint request failed: {e}"))?;
 
     let status = resp.status().as_u16();
@@ -293,7 +292,19 @@ pub async fn check_x402_endpoint(endpoint: &str, body: Option<&str>) -> Result<X
     let body_text = resp.text().await
         .map_err(|e| anyhow!("failed to read 402 response body: {e}"))?;
 
-    let payload = decode_402_response(&headers, &body_text)?;
+    let payload = match decode_402_response(&headers, &body_text) {
+        Ok(p) => p,
+        Err(_) => {
+            return Ok(X402EndpointCheck {
+                valid: false,
+                status_code: 402,
+                pricing: None,
+                accepts_json: None,
+                x402_version: None,
+                input_required: None,
+            });
+        }
+    };
     if payload.accepts.is_empty() {
         return Ok(X402EndpointCheck {
             valid: false,
@@ -305,7 +316,36 @@ pub async fn check_x402_endpoint(endpoint: &str, body: Option<&str>) -> Result<X
         });
     }
 
-    let pricing = extract_x402_pricing(&payload.accepts)?;
+    let has_valid_entry = payload.accepts.iter().any(|entry| {
+        entry.get("asset").and_then(|v| v.as_str()).is_some()
+            && entry.get("payTo").and_then(|v| v.as_str()).is_some()
+            && entry.get("network").and_then(|v| v.as_str()).is_some()
+            && (entry.get("amount").is_some() || entry.get("maxAmountRequired").is_some())
+    });
+    if !has_valid_entry {
+        return Ok(X402EndpointCheck {
+            valid: false,
+            status_code: 402,
+            pricing: None,
+            accepts_json: None,
+            x402_version: Some(payload.x402_version),
+            input_required: None,
+        });
+    }
+
+    let pricing = match extract_x402_pricing(&payload.accepts) {
+        Ok(p) => p,
+        Err(_) => {
+            return Ok(X402EndpointCheck {
+                valid: false,
+                status_code: 402,
+                pricing: None,
+                accepts_json: None,
+                x402_version: Some(payload.x402_version),
+                input_required: None,
+            });
+        }
+    };
     let accepts_json = serde_json::to_string(&payload.accepts)?;
 
     Ok(X402EndpointCheck {
@@ -332,16 +372,22 @@ pub async fn resolve_token_by_asset(
     let asset_lower = asset.to_lowercase();
 
     for symbol in &["USDT", "USDG"] {
-        eprintln!("[resolve_token_by_asset] fetch_token_detail({symbol})");
+        if DEBUG_LOG {
+            eprintln!("[resolve_token_by_asset] fetch_token_detail({symbol})");
+        }
         match fetch_token_detail(client, symbol, agent_id).await {
             Ok((addr, decimals)) => {
-                eprintln!("[resolve_token_by_asset] {symbol} → addr={addr}, decimals={decimals}");
+                if DEBUG_LOG {
+                    eprintln!("[resolve_token_by_asset] {symbol} → addr={addr}, decimals={decimals}");
+                }
                 if addr.to_lowercase() == asset_lower {
                     return Ok((symbol.to_string(), decimals as u8));
                 }
             }
             Err(e) => {
-                eprintln!("[resolve_token_by_asset] {symbol} lookup failed: {e}");
+                if DEBUG_LOG {
+                    eprintln!("[resolve_token_by_asset] {symbol} lookup failed: {e}");
+                }
                 continue;
             }
         }
@@ -379,14 +425,16 @@ pub async fn enrich_pricing(
     pricing: &X402Pricing,
     agent_id: &str,
 ) -> Result<X402PricingResolved> {
-    eprintln!(
-        "[enrich_pricing] asset={}, network={}, amount_minimal={}, extra_decimals={:?}",
-        pricing.asset, pricing.network, pricing.amount_minimal, pricing.extra_decimals
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[enrich_pricing] asset={}, network={}, amount_minimal={}, extra_decimals={:?}",
+            pricing.asset, pricing.network, pricing.amount_minimal, pricing.extra_decimals
+        );
+    }
     let token_result = resolve_token_by_asset(client, &pricing.asset, agent_id).await;
     let (symbol, decimals) = match (&token_result, pricing.extra_decimals) {
         (Ok((sym, dec)), Some(extra_dec)) => {
-            if *dec != extra_dec {
+            if *dec != extra_dec && DEBUG_LOG {
                 eprintln!(
                     "⚠ decimals mismatch: accepts entry={extra_dec}, token info={dec}; using the accepts-entry value"
                 );
@@ -395,18 +443,22 @@ pub async fn enrich_pricing(
         }
         (Ok((sym, dec)), None) => (sym.clone(), *dec),
         (Err(e), Some(extra_dec)) => {
-            eprintln!("⚠ token-info lookup failed: {e}; using accepts entry decimals={extra_dec}");
+            if DEBUG_LOG {
+                eprintln!("⚠ token-info lookup failed: {e}; using accepts entry decimals={extra_dec}");
+            }
             ("UNKNOWN".to_string(), extra_dec)
         }
         (Err(e), None) => {
             bail!("cannot determine token decimals: token-info lookup failed ({e}) and the accepts entry does not provide a `decimals` field");
         }
     };
-    eprintln!(
-        "[enrich_pricing] result: symbol={symbol}, decimals={decimals}, extra_decimals={:?}, token_info={:?}",
-        pricing.extra_decimals,
-        token_result.as_ref().map(|(_, d)| *d).ok()
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[enrich_pricing] result: symbol={symbol}, decimals={decimals}, extra_decimals={:?}, token_info={:?}",
+            pricing.extra_decimals,
+            token_result.as_ref().map(|(_, d)| *d).ok()
+        );
+    }
     let amount_human = minimal_to_human(&pricing.amount_minimal, decimals)?;
 
     Ok(X402PricingResolved {

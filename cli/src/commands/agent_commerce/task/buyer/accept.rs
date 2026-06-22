@@ -18,7 +18,7 @@ use crate::commands::agent_commerce::task::common::util::{
     resolve_x402_params,
 };
 use crate::commands::agent_commerce::task::common::{
-    self, PaymentMode, XLAYER_CHAIN_ID,
+    self, PaymentMode, XLAYER_CHAIN_ID, DEBUG_LOG,
 };
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::payment::a2a_pay;
@@ -36,35 +36,18 @@ async fn resolve_token_for_validation(
     Ok((symbol.to_string(), token_address, decimals_u8))
 }
 
-/// Resolve `(symbol, amount)` from CLI flags / local negotiation record.
+/// Resolve `(symbol, amount)` from CLI flags (required).
 fn resolve_symbol_and_amount(
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
-    job_id: &str,
-    provider_agent_id: Option<&str>,
     mode_label: &str,
 ) -> Result<(String, String)> {
-    let agreed = negotiate::load_agreed(job_id, provider_agent_id)?;
-    let symbol = match token_symbol {
-        Some(s) => s.to_string(),
-        None => match &agreed {
-            Some((sym, _)) => {
-                eprintln!("ℹ --token-symbol not provided; using locally saved negotiation record: {sym}");
-                sym.clone()
-            }
-            None => bail!("{mode_label} requires --token-symbol, or run `save-agreed` first to persist the negotiation result"),
-        },
-    };
-    let amount = match token_amount {
-        Some(a) => a.to_string(),
-        None => match &agreed {
-            Some((_, amt)) => {
-                eprintln!("ℹ --token-amount not provided; using locally saved negotiation record: {amt}");
-                amt.clone()
-            }
-            None => bail!("{mode_label} requires --token-amount, or run `save-agreed` first to persist the negotiation result"),
-        },
-    };
+    let symbol = token_symbol
+        .ok_or_else(|| anyhow::anyhow!("{mode_label} requires --token-symbol"))?
+        .to_string();
+    let amount = token_amount
+        .ok_or_else(|| anyhow::anyhow!("{mode_label} requires --token-amount"))?
+        .to_string();
     Ok((symbol, amount))
 }
 
@@ -122,10 +105,10 @@ pub async fn handle_set_payment_mode(
             let current_int = task_resp["paymentMode"].as_i64().unwrap_or(0) as i32;
             let mode = PaymentMode::from_int(current_int);
             if mode == PaymentMode::None {
-                eprintln!("⚠ task paymentMode={current_int}; cannot recognize the payment mode, defaulting to escrow");
+                if DEBUG_LOG { eprintln!("⚠ task paymentMode={current_int}; cannot recognize the payment mode, defaulting to escrow"); }
                 PaymentMode::Escrow
             } else {
-                eprintln!("ℹ --payment-mode not provided; using task detail's paymentMode: {} ({current_int})", mode.as_str());
+                if DEBUG_LOG { eprintln!("ℹ --payment-mode not provided; using task detail's paymentMode: {} ({current_int})", mode.as_str()); }
                 mode
             }
         }
@@ -148,7 +131,7 @@ pub async fn handle_set_payment_mode(
         Some(resolved)
     } else {
         // Balance pre-check.
-        let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, None, "set-payment-mode")?;
+        let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, "set-payment-mode")?;
         let amt: f64 = amt_str.parse().unwrap_or(0.0);
         if amt > 0.0 {
             common::ensure_sufficient_balance(amt, &sym).await?;
@@ -227,7 +210,7 @@ pub async fn handle_set_payment_mode(
             crate::output::success(serde_json::json!({
                 "alreadySet": true,
                 "paymentMode": mode_str,
-                "next": "Payment mode already on-chain. Call next-action --event job_payment_mode_changed to get the script (escrow: send [intent:confirm] to provider; then wait for provider to apply before confirm-accept).",
+                "next": "Payment mode already on-chain. Call next-action with `event=job_payment_mode_changed` in --message to get the script; then wait for the provider to submit their apply on-chain before confirm-accept.",
             }));
         } else {
             println!("✓ Payment mode set to {mode_str}; awaiting on-chain confirmation...");
@@ -240,22 +223,63 @@ pub async fn handle_set_payment_mode(
     Ok(())
 }
 
-/// confirm-accept — confirm acceptance of the provider (setPaymentMode must already have run via set-payment-mode).
-#[allow(clippy::too_many_arguments)]
+/// confirm-accept — confirm acceptance of the provider.
+///
+/// When `prefetched` is provided (called from the `provider_applied` event handler),
+/// wallet/task fields are read directly from the pre-fetched context, avoiding 3
+/// redundant GET /task/{jobId} calls.  When `None` (CLI subcommand), the original
+/// API-call path is used.
 pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
     job_id: &str,
-    provider: &str,
-    _payment_mode: Option<&str>,
-    token_symbol: Option<&str>,
-    token_amount: Option<&str>,
+    prefetched: Option<&common::PreFetchedTaskContext>,
 ) -> Result<()> {
-    let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
+    let (account_id, address, agent_id, provider, token_symbol, token_amount, payment_mode, token_address) =
+        if let Some(p) = prefetched {
+            let buyer_addr = p.buyer_agent_address.as_deref()
+                .ok_or_else(|| anyhow::anyhow!("prefetched missing buyerAgentAddress"))?;
+            let agent_id = p.buyer_agent_id.as_deref()
+                .ok_or_else(|| anyhow::anyhow!("prefetched missing buyerAgentId"))?
+                .to_string();
+            let (acct, addr) = signing::resolve_wallet(None, Some(buyer_addr))?;
+            let prov = p.provider_agent_id.as_deref()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("task {job_id} has no providerAgentId; cannot confirm-accept"))?
+                .to_string();
+            let sym = if p.token_symbol == "?" || p.token_symbol.is_empty() {
+                bail!("task {job_id} has no tokenSymbol");
+            } else {
+                p.token_symbol.clone()
+            };
+            let amt = if p.token_amount.is_empty() {
+                bail!("task {job_id} has no tokenAmount");
+            } else {
+                p.token_amount.clone()
+            };
+            let pm = PaymentMode::from_int(p.payment_mode.unwrap_or(0) as i32);
+            let ta = p.token_address.clone();
+            (acct, addr, agent_id, prov, sym, amt, pm, ta)
+        } else {
+            let (acct, addr, aid) =
+                signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
+            let task_resp = client.get_with_identity(&client.task_path(job_id), &aid).await?;
+            let prov = task_resp["providerAgentId"].as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("task {job_id} has no providerAgentId; cannot confirm-accept"))?
+                .to_string();
+            let sym = task_resp["tokenSymbol"].as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenSymbol"))?
+                .to_string();
+            let amt = task_resp["tokenAmount"].as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenAmount"))?
+                .to_string();
+            let pm = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
+            let ta = task_resp["tokenAddress"].as_str().map(String::from);
+            (acct, addr, aid, prov, sym, amt, pm, ta)
+        };
 
-    // Pre-check: has setPaymentMode been confirmed on-chain?
-    let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-    let payment_mode = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
     if payment_mode == PaymentMode::None {
         bail!(
             "task has no payment mode set yet (paymentMode=0); first run:\n  \
@@ -268,26 +292,24 @@ pub async fn handle_confirm_accept(
         bail!("for the x402 flow, use `onchainos agent set-payment-mode` to set the payment mode, then `onchainos agent task-402-pay` for phase 2");
     }
 
-    // escrow is the only legal path for confirm-accept.
     if payment_mode != PaymentMode::Escrow {
         bail!("confirm-accept only supports the escrow payment mode; current paymentMode={}. For x402, use task-402-pay.", payment_mode.as_str());
     }
 
-    // Balance pre-check.
-    let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), payment_mode.as_str())?;
-    let amt: f64 = amt_str.parse().unwrap_or(0.0);
+    let amt: f64 = token_amount.parse().unwrap_or(0.0);
     if amt > 0.0 {
-        common::ensure_sufficient_balance(amt, &sym).await?;
+        common::ensure_sufficient_balance(amt, &token_symbol).await?;
     }
 
-    eprintln!("[debug] final payment_mode: '{}'", payment_mode.as_str());
+    if DEBUG_LOG { eprintln!("[debug] final payment_mode: '{}'", payment_mode.as_str()); }
     confirm_accept_escrow(
-        client, job_id, provider, token_symbol, token_amount,
+        client, job_id, &provider, Some(&token_symbol), Some(&token_amount),
         &account_id, &address, &agent_id,
+        token_address.as_deref(),
     ).await?;
 
     if let Err(e) = negotiate::cleanup(job_id) {
-        eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}");
+        if DEBUG_LOG { eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}"); }
     }
     Ok(())
 }
@@ -303,8 +325,9 @@ async fn confirm_accept_escrow(
     account_id: &str,
     address: &str,
     agent_id: &str,
+    prefetched_token_address: Option<&str>,
 ) -> Result<()> {
-    let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), "escrow")?;
+    let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, "escrow")?;
 
     // providerConfirmStatus confirms the provider has applied and returns the escrow parameters.
     let confirm_resp = fetch_provider_confirm_status(
@@ -320,11 +343,12 @@ async fn confirm_accept_escrow(
         .to_string();
 
     // Validate `currency` matches the task's tokenAddress.
-    let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
-    let task_token_address = task_resp["tokenAddress"]
-        .as_str()
-        .unwrap_or("")
-        .to_lowercase();
+    let task_token_address = if let Some(ta) = prefetched_token_address {
+        ta.to_lowercase()
+    } else {
+        let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
+        task_resp["tokenAddress"].as_str().unwrap_or("").to_lowercase()
+    };
     if !task_token_address.is_empty() && currency.to_lowercase() != task_token_address {
         bail!(
             "token mismatch: providerConfirmStatus returned currency={currency} but task tokenAddress={task_token_address}. \
@@ -356,12 +380,14 @@ async fn confirm_accept_escrow(
     println!("✓ providerConfirmStatus: provider has applied; escrow parameters fetched.");
 
     // sign_escrow — TEE signs the EIP-3009 ReceiveWithAuthorization.
-    eprintln!("[debug] sign_escrow inputs:");
-    eprintln!("  chain_id: {XLAYER_CHAIN_ID}, provider: {provider_addr}, receiver: {receiver}");
-    eprintln!("  arbitrator: {arbitrator}, currency: {currency}, escrow_contract: {escrow_contract}");
-    eprintln!("  amount: {amount_minimal}, submit_window: {submit_window}, dispute_window: {dispute_window}");
-    eprintln!("  arbitration_window: {arbitration_window}, termination_window: {termination_window}");
-    eprintln!("  hook: {hook}, hook_data: {hook_data}, salt: {salt}, expired_at: {expired_at}");
+    if DEBUG_LOG {
+        eprintln!("[debug] sign_escrow inputs:");
+        eprintln!("  chain_id: {XLAYER_CHAIN_ID}, provider: {provider_addr}, receiver: {receiver}");
+        eprintln!("  arbitrator: {arbitrator}, currency: {currency}, escrow_contract: {escrow_contract}");
+        eprintln!("  amount: {amount_minimal}, submit_window: {submit_window}, dispute_window: {dispute_window}");
+        eprintln!("  arbitration_window: {arbitration_window}, termination_window: {termination_window}");
+        eprintln!("  hook: {hook}, hook_data: {hook_data}, salt: {salt}, expired_at: {expired_at}");
+    }
     let sign_output = a2a_pay::sign_escrow(a2a_pay::SignEscrowParams {
         chain_id: XLAYER_CHAIN_ID as u64,
         provider: provider_addr.clone(),
@@ -379,8 +405,10 @@ async fn confirm_accept_escrow(
         salt,
         expired_at,
     }).await?;
-    eprintln!("[debug] sign_escrow returned: signature={}, validAfter={}, validBefore={}",
-        sign_output.signature, sign_output.authorization.valid_after, sign_output.authorization.valid_before);
+    if DEBUG_LOG {
+        eprintln!("[debug] sign_escrow returned: signature={}, validAfter={}, validBefore={}",
+            sign_output.signature, sign_output.authorization.valid_after, sign_output.authorization.valid_before);
+    }
     println!("✓ escrow payment signing complete.");
 
     // accept → calldata → sign → broadcast.
@@ -413,7 +441,7 @@ async fn confirm_accept_escrow(
         "tokenAddress": currency,
         "chainIndex": XLAYER_CHAIN_ID,
     });
-    eprintln!("[debug] paymentVerify: {}", serde_json::to_string_pretty(&payment_verify).unwrap_or_default());
+    if DEBUG_LOG { eprintln!("[debug] paymentVerify: {}", serde_json::to_string_pretty(&payment_verify).unwrap_or_default()); }
 
     let tx_hash = signing::sign_uop_and_broadcast_with_payment(
         client, &resp["uopData"], account_id, address,
@@ -458,7 +486,7 @@ pub async fn handle_direct_accept(
         "tokenSymbol": token_symbol.unwrap_or(""),
         "tokenAmount": token_amount.unwrap_or(""),
     });
-    eprintln!("[debug] direct-accept inputs: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+    if DEBUG_LOG { eprintln!("[debug] direct-accept inputs: {}", serde_json::to_string_pretty(&body).unwrap_or_default()); }
 
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "direct/accept"),
@@ -492,7 +520,7 @@ pub async fn handle_direct_accept(
     println!("  Wait for the on-chain confirmation before proceeding.");
 
     if let Err(e) = negotiate::cleanup(job_id) {
-        eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}");
+        if DEBUG_LOG { eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}"); }
     }
     Ok(())
 }
@@ -516,28 +544,45 @@ pub async fn handle_task_402_pay(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
-    // Step 0: amount validation — the amount in `402 accepts` must match the business-negotiated amount.
+    // Step 0: filter accepts by --token-symbol, then validate amount.
     let accepts_vec: Vec<serde_json::Value> = serde_json::from_str(accepts)
         .map_err(|e| anyhow::anyhow!("accepts JSON parse failed: {e}"))?;
-    let pricing = x402_flow::extract_x402_pricing(&accepts_vec)?;
 
     let (_, token_address, decimals) = match resolve_token_for_validation(client, token_symbol, &agent_id).await {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[task-402-pay] ⚠ token-info lookup failed; skipping amount validation: {e}");
+            if DEBUG_LOG { eprintln!("[task-402-pay] ⚠ token-info lookup failed; skipping token filter: {e}"); }
             (String::new(), String::new(), 0u8)
         }
     };
-    if decimals > 0 {
-        if !token_address.is_empty()
-            && !pricing.asset.is_empty()
-            && token_address.to_lowercase() != pricing.asset.to_lowercase()
-        {
+
+    let effective_accepts: Vec<serde_json::Value> = if !token_address.is_empty() {
+        let filtered: Vec<_> = accepts_vec.iter()
+            .filter(|e| {
+                e["asset"].as_str()
+                    .map(|a| a.eq_ignore_ascii_case(&token_address))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
+            let available: Vec<_> = accepts_vec.iter()
+                .filter_map(|e| e["asset"].as_str())
+                .collect();
             bail!(
-                "x402 token mismatch: 402 returned asset={}, expected tokenAddress={} ({})",
-                pricing.asset, token_address, token_symbol
+                "x402 token mismatch: no accepts entry matches {} ({}); available assets: {}",
+                token_address, token_symbol, available.join(", ")
             );
         }
+        if DEBUG_LOG { eprintln!("[task-402-pay] filtered accepts: {} → {} entries matching {}", accepts_vec.len(), filtered.len(), token_symbol); }
+        filtered
+    } else {
+        accepts_vec
+    };
+
+    let pricing = x402_flow::extract_x402_pricing(&effective_accepts)?;
+
+    if decimals > 0 {
         if !x402_flow::amounts_match(&pricing.amount_minimal, token_amount, decimals) {
             let expected_minimal = x402_flow::human_to_minimal(token_amount, decimals).unwrap_or_else(|_| "?".to_string());
             bail!(
@@ -545,19 +590,25 @@ pub async fn handle_task_402_pay(
                 pricing.amount_minimal, token_amount, token_symbol, expected_minimal
             );
         }
-        eprintln!("[task-402-pay] ✓ amount validation passed: {} {} ≈ {} (minimal units)", token_amount, token_symbol, pricing.amount_minimal);
+        if DEBUG_LOG { eprintln!("[task-402-pay] ✓ amount validation passed: {} {} ≈ {} (minimal units)", token_amount, token_symbol, pricing.amount_minimal); }
     }
 
+    let effective_accepts_str = serde_json::to_string(&effective_accepts)
+        .context("failed to serialize filtered accepts")?;
+
     // Step 1: x402_pay signing.
-    eprintln!("[task-402-pay] Step 1: x402_pay signing");
-    eprintln!("[task-402-pay] accepts: {accepts}");
-    let proof = payment_flow::x402_pay_from_accepts(accepts, from.map(|s| s.to_string())).await?;
+    if DEBUG_LOG {
+        eprintln!("[task-402-pay] Step 1: x402_pay signing");
+        eprintln!("[task-402-pay] accepts: {effective_accepts_str}");
+    }
+    let proof = payment_flow::x402_pay_from_accepts(&effective_accepts_str, from.map(|s| s.to_string())).await?;
     let (proof_signature, proof_authorization, proof_session_cert) = match proof {
         payment_flow::PaymentProof::Eip3009 {
             signature,
             authorization,
             session_cert,
         } => (signature, authorization, session_cert),
+        // TODO: support Permit2/Upto — replace x402_flow::assemble_payment_header with payment_flow::build_payment_header, pass (proof, entry) through
         payment_flow::PaymentProof::Permit2 { .. } | payment_flow::PaymentProof::Upto { .. } => {
             bail!(
                 "task-402-pay only supports the EIP-3009 (exact / aggr_deferred) x402 schemes; \
@@ -565,10 +616,10 @@ pub async fn handle_task_402_pay(
             );
         }
     };
-    eprintln!("[task-402-pay] x402_pay complete: signature={proof_signature}");
+    if DEBUG_LOG { eprintln!("[task-402-pay] x402_pay complete: signature={proof_signature}"); }
 
     // Step 2: direct/accept on-chain (tolerant: if already accepted, skip).
-    eprintln!("[task-402-pay] Step 2: direct/accept on-chain");
+    if DEBUG_LOG { eprintln!("[task-402-pay] Step 2: direct/accept on-chain"); }
 
     let body = serde_json::json!({
         "providerAgentId": provider,
@@ -591,22 +642,22 @@ pub async fn handle_task_402_pay(
 
     let tx_hash = match accept_result {
         Ok(hash) => {
-            eprintln!("[task-402-pay] direct/accept broadcast complete: txHash={hash}");
+            if DEBUG_LOG { eprintln!("[task-402-pay] direct/accept broadcast complete: txHash={hash}"); }
             hash
         }
         Err(e) => {
-            eprintln!("[task-402-pay] direct/accept failed (possibly already accepted); skipping to replay: {e}");
+            if DEBUG_LOG { eprintln!("[task-402-pay] direct/accept failed (possibly already accepted); skipping to replay: {e}"); }
             String::new()
         }
     };
 
     // Step 3: build payment header from the already-signed accepts[], then replay.
     // No re-fetch — avoids the double-GET inconsistency and supports body-required endpoints.
-    eprintln!("[task-402-pay] Step 3: assemble payment header from signed accepts[] → replay endpoint");
-    let x402_payload = match x402_flow::payload_from_accepts(accepts) {
+    if DEBUG_LOG { eprintln!("[task-402-pay] Step 3: assemble payment header from signed accepts[] → replay endpoint"); }
+    let x402_payload = match x402_flow::payload_from_accepts(&effective_accepts_str) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[task-402-pay] failed to build x402 payload from accepts: {e}");
+            if DEBUG_LOG { eprintln!("[task-402-pay] failed to build x402 payload from accepts: {e}"); }
             crate::output::success(serde_json::json!({
                 "replaySuccess": false,
                 "replayStatus": 0,
@@ -631,7 +682,7 @@ pub async fn handle_task_402_pay(
     let (header_name, header_value) = match x402_flow::assemble_payment_header(&x402_proof, &x402_payload) {
         Ok(hv) => hv,
         Err(e) => {
-            eprintln!("[task-402-pay] failed to assemble payment header: {e}");
+            if DEBUG_LOG { eprintln!("[task-402-pay] failed to assemble payment header: {e}"); }
             crate::output::success(serde_json::json!({
                 "replaySuccess": false,
                 "replayStatus": 0,
@@ -653,8 +704,10 @@ pub async fn handle_task_402_pay(
         .context("failed to build HTTP client")?;
 
     let has_body = business_body.filter(|s| !s.is_empty()).is_some();
-    eprintln!("[task-402-pay] replaying endpoint ({header_name}: ...) method={}",
-        if has_body { "POST" } else { "GET" });
+    if DEBUG_LOG {
+        eprintln!("[task-402-pay] replaying endpoint ({header_name}: ...) method={}",
+            if has_body { "POST" } else { "GET" });
+    }
 
     let replay_resp = if let Some(biz) = business_body.filter(|s| !s.is_empty()) {
         http.post(endpoint)
@@ -677,11 +730,11 @@ pub async fn handle_task_402_pay(
             let body: serde_json::Value = serde_json::from_str(&raw_text)
                 .unwrap_or_else(|_| serde_json::json!({ "raw": raw_text }));
             let success = (200..300).contains(&status);
-            eprintln!("[task-402-pay] replay result: HTTP {status}, success={success}");
+            if DEBUG_LOG { eprintln!("[task-402-pay] replay result: HTTP {status}, success={success}"); }
             (success, status, body)
         }
         Err(e) => {
-            eprintln!("[task-402-pay] replay request failed: {e}");
+            if DEBUG_LOG { eprintln!("[task-402-pay] replay request failed: {e}"); }
             (false, 0u16, serde_json::json!({ "error": e.to_string() }))
         }
     };
@@ -691,10 +744,10 @@ pub async fn handle_task_402_pay(
     if replay_success {
         match auto_save_x402_deliverable(client, job_id, &agent_id, provider, token_symbol, token_amount, &replay_body).await {
             Ok(p) => {
-                eprintln!("[task-402-pay] deliverable auto-saved: {p}");
+                if DEBUG_LOG { eprintln!("[task-402-pay] deliverable auto-saved: {p}"); }
                 saved_path = Some(p);
             }
-            Err(e) => eprintln!("[task-402-pay] deliverable auto-save failed (non-blocking): {e}"),
+            Err(e) => { if DEBUG_LOG { eprintln!("[task-402-pay] deliverable auto-save failed (non-blocking): {e}"); } }
         }
     }
 
@@ -731,7 +784,7 @@ pub async fn handle_task_402_pay(
     crate::output::success(result);
 
     if let Err(e) = negotiate::cleanup(job_id) {
-        eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}");
+        if DEBUG_LOG { eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}"); }
     }
     Ok(())
 }
@@ -847,7 +900,7 @@ pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str, agent
             data["decimals"] = serde_json::json!(r.decimals);
         }
         Err(e) => {
-            eprintln!("⚠ token resolution failed (does not affect validity): {e}");
+            if DEBUG_LOG { eprintln!("⚠ token resolution failed (does not affect validity): {e}"); }
             data["tokenResolveError"] = serde_json::json!(e.to_string());
         }
     }
