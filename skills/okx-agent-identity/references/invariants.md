@@ -60,19 +60,22 @@ Array fields: create/update/get/search → `list`; feedback-list → `items` or 
 
 ## Input contract — `--service` JSON + flag gotchas (single source of truth)
 
-`create` / `update` / `validate-listing` all parse `--service` into the **same** element shape, so the keys below are identical across the three. **Wrong keys silently break the call** → `validate-listing` returns a `service`/`PARSE` finding; `create`/`update` return `missing required field in --service: <field>` → a retry. Use these keys **exactly** — all lowercase, no camelCase, no underscores:
+`create` / `update` / `validate-listing` all parse `--service` into the **same** element shape, so the keys below are identical across the three. **Wrong keys silently break the call** → `validate-listing` returns a `service`/`PARSE` finding; `create`/`update` return `missing required field in --service: <field>` → a retry. Use these keys **exactly** — camelCase, matching the on-chain service schema (no lowercase, no underscores):
 
 | key | required | rule |
 |---|---|---|
-| `name` | ✅ | service name (5–30) |
-| `servicedescription` | ✅ | 2-part description on separate lines: ① core-capability summary (≤200 CJK chars) · ② what the user must provide (≤200 CJK chars). Total ≤400 CJK chars; no example prompts / links / tech-stack / disclaimers. Length is counted in **East-Asian display width** (CJK = 2, ASCII = 1) — matches the backend |
-| `servicetype` | ✅ | raw enum `A2MCP` (API service) or `A2A` (agent to agent) — never the localized label |
+| `serviceName` | ✅ | service name (5–30) |
+| `serviceDescription` | ✅ | 2-part description on separate lines: ① core-capability summary (≤200 CJK chars) · ② what the user must provide (≤200 CJK chars). Total ≤400 CJK chars; no example prompts / links / tech-stack / disclaimers. Length is counted in **East-Asian display width** (CJK = 2, ASCII = 1) — matches the backend |
+| `serviceType` | ✅ | raw enum `A2MCP` (API service) or `A2A` (agent to agent) — never the localized label |
 | `fee` | A2MCP ✅ / A2A optional | a **plain number as a JSON string**, e.g. `"10"` (quoted — never a bare number `10`). USDT is the implicit, only currency; **no currency suffix/symbol**, ≤6 dp. `"10 USDT"` / `"5元"` → rejected (P1) |
 | `endpoint` | A2MCP only | `https://…`; **omit entirely for A2A** |
+| `operation` | **`update` flow only** | one of `create` / `update` / `delete` — the per-service delta directive (see update.md §6). **Omit entirely on `create` / register** (services there are all new). |
+| `id` | optional | the existing service's id (from `agent service-list`) — used to target an existing service in the `update` flow. |
 
-Example: `--service '[{"name":"…","servicedescription":"…","servicetype":"A2MCP","fee":"10","endpoint":"https://…"}]'`
+Example (register / `create` — no `id`, no `operation`): `--service '[{"serviceName":"…","serviceDescription":"…","serviceType":"A2MCP","fee":"10","endpoint":"https://…"}]'`
+Example (`update` delta — modify one service): `--service '[{"operation":"update","id":"<existing-id>","serviceName":"…","serviceDescription":"…","serviceType":"A2MCP","fee":"10","endpoint":"https://…"}]'`
 
-**Agent-level vs service-level description (most common mix-up):** the *agent* description is the top-level `--description` flag; each *service* description is the `servicedescription` key **inside** the `--service` JSON. Different field, different place.
+**Agent-level vs service-level description (most common mix-up):** the *agent* description is the top-level `--description` flag; each *service* description is the `serviceDescription` key **inside** the `--service` JSON. Different field, different place.
 
 **Flag gotchas (case/shape-sensitive — getting these wrong forces a retry):**
 - `update` → `--agent-id` (singular); `get` → `--agent-ids` (plural). Don't swap them.
