@@ -182,7 +182,6 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      \x20\x20Provider: {provider_field}\n\
      \x20\x20Type: <file|text>\n\
      \x20\x20Saved at: <savedPath>\n\
-     \x20\x20(text only: show first 200 chars as preview)\n\
      \x20\x20Awaiting on-chain submission confirmation; review will follow.\n\n\
      **Step 4 — End turn**. Wait for `job_submitted` → `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
     )
@@ -229,7 +228,7 @@ pub(crate) fn deliverable_received_cli(
             .unwrap_or("")
     };
 
-    let (saved_path, deliverable_type, text_preview) = match dtype {
+    let (saved_path, deliverable_type) = match dtype {
         "file" => {
             let file_key = msg_str("fileKey");
             let digest = msg_str("digest");
@@ -269,7 +268,7 @@ pub(crate) fn deliverable_received_cli(
             });
 
             match save_result {
-                Ok(r) => (r.path, "file".to_string(), String::new()),
+                Ok(r) => (r.path, "file".to_string()),
                 Err(e) => {
                     eprintln!("[deliverable_received_cli] save failed: {e}");
                     return deliverable_received(ctx);
@@ -329,14 +328,8 @@ pub(crate) fn deliverable_received_cli(
                 counterparty_name: None,
             });
 
-            let preview = if text.len() <= 200 {
-                text.clone()
-            } else {
-                format!("{}…", &text[..text.char_indices().nth(200).map(|(i, _)| i).unwrap_or(text.len())])
-            };
-
             match save_result {
-                Ok(r) => (r.path, "text".to_string(), preview),
+                Ok(r) => (r.path, "text".to_string()),
                 Err(e) => {
                     eprintln!("[deliverable_received_cli] save failed: {e}");
                     return deliverable_received(ctx);
@@ -346,18 +339,12 @@ pub(crate) fn deliverable_received_cli(
         _ => return deliverable_received(ctx),
     };
 
-    let preview_block = if deliverable_type == "text" && !text_preview.is_empty() {
-        format!("\n  Preview: {text_preview}")
-    } else {
-        String::new()
-    };
-
     let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
         "{l10n}\
          ✓ {deliverable_type} deliverable saved.\n\
          savedPath: {saved_path}\n\
-         title: {title} | shortId: {short_id} | provider: {provider_id}{preview_block}\n\n\
+         title: {title} | shortId: {short_id} | provider: {provider_id}\n\n\
          Notify the user:\n\
          ```bash\n\
          okx-a2a user notify --content '<localized content>'\n\
@@ -366,7 +353,7 @@ pub(crate) fn deliverable_received_cli(
          \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
          \x20\x20Provider: {provider_id}\n\
          \x20\x20Type: {deliverable_type}\n\
-         \x20\x20Saved at: {saved_path}{preview_block}\n\
+         \x20\x20Saved at: {saved_path}\n\
          \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\n\
          End turn after notifying.\n"
     )
@@ -589,7 +576,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      Compose from two halves (concatenate with two blank lines):\n\
      \x20\x20▸ Deliverable (always; pick template):\n\
      \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: <localPath>`\n\
-     \x20\x20\x20\x20text+path: `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>` + preview (first 200 chars)\n\
+     \x20\x20\x20\x20text+path: `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>`\n\
      \x20\x20\x20\x20text-no-path: `[Deliverable Received] Job {job_id} — x402, payment settled.` + full deliverableText inline\n\
      \x20\x20▸ Rating (only if feedback-submit succeeded): {rating_notify}\n\n\
      **3c — Terminal wrap-up:**\n\
