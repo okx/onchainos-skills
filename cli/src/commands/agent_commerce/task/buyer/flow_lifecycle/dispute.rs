@@ -104,7 +104,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
 
     let dispute_won = super::super::content::dispute_won_user_notify(job_id, title_display);
     let dispute_lost = super::super::content::dispute_lost_user_notify(job_id, title_display);
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
 
     // dispute_resolved fires when the chain has settled the arbitration —
     // prefetched.status MUST be 6 (Completed, ASP wins) or 9 (Failed, user

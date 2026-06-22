@@ -559,8 +559,9 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
 pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
+    let title_display = ctx.title_display;
     let terminal_session_hint = &ctx.terminal_session_hint;
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
 
     // Prefetched task context + providerAgentId are required — without them we
     // cannot resolve deliverable / rating recipient.
@@ -621,7 +622,9 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: <localPath>`\n\
      \x20\x20\x20\x20text+path: `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>`\n\
      \x20\x20\x20\x20text-no-path: `[Deliverable Received] Job {job_id} — x402, payment settled.` + full deliverableText inline\n\
-     \x20\x20▸ Rating (only if feedback-submit succeeded): {rating_notify}\n\n\
+     \x20\x20▸ Rating (include ONLY if feedback-submit succeeded; if it failed or errored, **omit this entire half**):\n\
+     \x20\x20\x20\x20{rating_notify}\n\
+     \x20\x20\x20\x20(fill `<score>` with the X.XX value used in 3a, `<description>` with the comment from 3a)\n\n\
      **3c — Terminal wrap-up:**\n\
      {terminal_session_hint}\n"
     )
@@ -688,7 +691,7 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
 /// This event fires when the blockchain confirms the `complete` transaction.
 /// It is the ONLY place where "funds released" is factually true.
 /// `approve_review` only broadcasts; this event confirms.
-pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn job_completed(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -699,14 +702,24 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or("<providerAgentId>");
 
+    let (token_amount, token_symbol) = ctx.prefetched
+        .map(|p| (p.token_amount.as_str(), p.token_symbol.as_str()))
+        .unwrap_or(("<tokenAmount>", "<tokenSymbol>"));
+
+    let tx_hash = message
+        .and_then(|m| m.get("txHash"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("<txHash from the system event message>");
+
     let pm = ctx.payment_mode;
 
     let completed_notify = if pm == Some(3) {
         super::super::content::job_completed_x402_user_notify(job_id, title_display)
     } else {
-        super::super::content::job_completed_escrow_user_notify(job_id, title_display)
+        super::super::content::job_completed_escrow_user_notify(job_id, title_display, token_amount, token_symbol, tx_hash)
     };
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
 
     let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
@@ -722,10 +735,11 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
          okx-a2a user notify --content '<localized content>'\n\
          ```\n\
          Compose from two halves (translate to user's language, keep structure):\n\
-         \x20\x20▸ Completion (always):\n\
+         \x20\x20▸ Completion (always included):\n\
          \x20\x20\x20\x20{completed_notify}\n\
-         \x20\x20▸ Rating (only if Step 1 succeeded):\n\
-         \x20\x20\x20\x20{rating_notify}\n\n\
+         \x20\x20▸ Rating (include ONLY if Step 1's feedback-submit succeeded; if it failed or errored, **omit this entire half** — do NOT output any rating lines):\n\
+         \x20\x20\x20\x20{rating_notify}\n\
+         \x20\x20\x20\x20(fill `<score>` with the X.XX value used in Step 1, `<description>` with the comment from Step 1)\n\n\
          **Step 3 — Wrap-up:**\n\
          {terminal_session_hint}\n"
     )

@@ -216,8 +216,6 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let terminal_session_hint = &ctx.terminal_session_hint;
 
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
-
     // job_auto_completed fires on the claimAutoComplete tx receipt — the
     // chain has settled to Completed and a provider is guaranteed to exist.
     // Anything else (no prefetched / missing provider) is a data anomaly —
@@ -243,6 +241,7 @@ pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
     // ctx.title_display (which falls back to `<title>` placeholder when the
     // envelope lacks jobTitle and would force the LLM to query).
     let auto_completed_notify = super::super::content::job_auto_completed_user_notify(job_id, &p.title);
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, &p.title);
 
     format!(
     "[System Notification] job_auto_completed (claimAutoComplete tx receipt)\n\
