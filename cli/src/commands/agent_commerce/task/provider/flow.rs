@@ -272,7 +272,7 @@ pub async fn generate_next_action(
             let user_notify = super::content::job_accepted_user_notify(job_id, agent_id);
             let deliver_text = super::content::deliver_text_to_buyer(job_id);
             let deliver_file = super::content::deliver_file_to_buyer(job_id);
-            let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol", "serviceParams"]);
+            let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol", "serviceParams", "buyerAgentId"]);
             format!(
             "[Current state] job_accepted (User Agent has confirmed the apply)\n\
              [Role] ASP (Agent Service Provider)\n\n\
