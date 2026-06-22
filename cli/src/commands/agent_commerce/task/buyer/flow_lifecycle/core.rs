@@ -197,19 +197,28 @@ pub(crate) fn deliverable_received_cli(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
 ) -> String {
+    use crate::audit;
     use crate::commands::agent_commerce::task::common::{deliverables, okx_a2a};
+    use std::time::Duration;
 
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
+
+    let base_tags = vec![format!("jobId={job_id}"), format!("agentId={agent_id}")];
 
     let dtype = message
         .and_then(|m| m.get("deliverableType"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if dtype.is_empty() {
+        audit::log("cli", "buyer/deliverable_received_no_type", false, Duration::default(),
+            Some(base_tags.clone()), Some("deliverableType missing, fallback to LLM path"));
         return deliverable_received(ctx);
     }
+
+    audit::log("cli", "buyer/deliverable_received", true, Duration::default(),
+        Some([base_tags.clone(), vec![format!("type={dtype}")]].concat()), None);
 
     let (title, sym, amt, provider_id) = match ctx.prefetched {
         Some(p) => (
@@ -240,14 +249,25 @@ pub(crate) fn deliverable_received_cli(
             if file_key.is_empty() || digest.is_empty() || salt.is_empty()
                 || nonce.is_empty() || secret.is_empty()
             {
+                audit::log("cli", "buyer/deliverable_file_missing_metadata", false, Duration::default(),
+                    Some(base_tags.clone()), Some("encryption metadata incomplete, fallback to LLM path"));
                 return deliverable_received(ctx);
             }
+
+            audit::log("cli", "buyer/deliverable_file_download", true, Duration::default(),
+                Some([base_tags.clone(), vec![format!("fileKey={file_key}")]].concat()), None);
 
             let local_path = match okx_a2a::file_download(
                 file_key, agent_id, digest, salt, nonce, secret, filename,
             ) {
-                Ok(p) => p,
+                Ok(p) => {
+                    audit::log("cli", "buyer/deliverable_file_downloaded", true, Duration::default(),
+                        Some([base_tags.clone(), vec![format!("localPath={p}")]].concat()), None);
+                    p
+                }
                 Err(e) => {
+                    audit::log("cli", "buyer/deliverable_file_download_failed", false, Duration::default(),
+                        Some([base_tags.clone(), vec![format!("fileKey={file_key}")]].concat()), Some(&e.to_string()));
                     eprintln!("[deliverable_received_cli] file download failed: {e}");
                     return deliverable_received(ctx);
                 }
@@ -268,8 +288,14 @@ pub(crate) fn deliverable_received_cli(
             });
 
             match save_result {
-                Ok(r) => (r.path, "file".to_string()),
+                Ok(r) => {
+                    audit::log("cli", "buyer/deliverable_saved", true, Duration::default(),
+                        Some([base_tags.clone(), vec!["type=file".into(), format!("path={}", r.path)]].concat()), None);
+                    (r.path, "file".to_string())
+                }
                 Err(e) => {
+                    audit::log("cli", "buyer/deliverable_save_failed", false, Duration::default(),
+                        Some([base_tags.clone(), vec!["type=file".into()]].concat()), Some(&e.to_string()));
                     eprintln!("[deliverable_received_cli] save failed: {e}");
                     return deliverable_received(ctx);
                 }
@@ -278,17 +304,23 @@ pub(crate) fn deliverable_received_cli(
         "text" => {
             let file_path = msg_str("filePath");
             if file_path.is_empty() {
+                audit::log("cli", "buyer/deliverable_text_no_filepath", false, Duration::default(),
+                    Some(base_tags.clone()), Some("filePath missing, fallback to LLM path"));
                 return deliverable_received(ctx);
             }
             let fp = std::path::Path::new(file_path);
             let tmp_dir = std::env::temp_dir();
             if !fp.starts_with(&tmp_dir) {
+                audit::log("cli", "buyer/deliverable_text_path_rejected", false, Duration::default(),
+                    Some(base_tags.clone()), Some("filePath not under temp dir"));
                 eprintln!("[deliverable_received_cli] filePath must be under temp dir: {file_path}");
                 return deliverable_received(ctx);
             }
             let raw = match std::fs::read_to_string(fp) {
                 Ok(content) => content,
                 Err(e) => {
+                    audit::log("cli", "buyer/deliverable_text_read_failed", false, Duration::default(),
+                        Some(base_tags.clone()), Some(&e.to_string()));
                     eprintln!("[deliverable_received_cli] read filePath failed: {e}");
                     return deliverable_received(ctx);
                 }
@@ -308,8 +340,13 @@ pub(crate) fn deliverable_received_cli(
                 raw.trim().to_string()
             };
 
+            audit::log("cli", "buyer/deliverable_text_parsed", true, Duration::default(),
+                Some([base_tags.clone(), vec![format!("charCount={}", text.chars().count())]].concat()), None);
+
             let tmp_path = tmp_dir.join(format!("deliverable-text-{job_id}.txt"));
             if let Err(e) = std::fs::write(&tmp_path, &text) {
+                audit::log("cli", "buyer/deliverable_text_write_failed", false, Duration::default(),
+                    Some(base_tags.clone()), Some(&e.to_string()));
                 eprintln!("[deliverable_received_cli] write temp file failed: {e}");
                 return deliverable_received(ctx);
             }
@@ -329,14 +366,24 @@ pub(crate) fn deliverable_received_cli(
             });
 
             match save_result {
-                Ok(r) => (r.path, "text".to_string()),
+                Ok(r) => {
+                    audit::log("cli", "buyer/deliverable_saved", true, Duration::default(),
+                        Some([base_tags.clone(), vec!["type=text".into(), format!("path={}", r.path)]].concat()), None);
+                    (r.path, "text".to_string())
+                }
                 Err(e) => {
+                    audit::log("cli", "buyer/deliverable_save_failed", false, Duration::default(),
+                        Some([base_tags.clone(), vec!["type=text".into()]].concat()), Some(&e.to_string()));
                     eprintln!("[deliverable_received_cli] save failed: {e}");
                     return deliverable_received(ctx);
                 }
             }
         }
-        _ => return deliverable_received(ctx),
+        _ => {
+            audit::log("cli", "buyer/deliverable_received_unknown_type", false, Duration::default(),
+                Some([base_tags.clone(), vec![format!("type={dtype}")]].concat()), Some("unknown deliverableType, fallback to LLM path"));
+            return deliverable_received(ctx);
+        }
     };
 
     let l10n = super::super::flow::LOCALIZATION_PREFIX;

@@ -285,6 +285,8 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
 
     format!(
     "[job_provider_reject] ✅ ASP binding reset (reset/asp) completed in-process.\n\n\
+     🌐 **Localize first** — translate the `--user-content` value below into the user's language before executing. \
+     Keep `[Job {short_id}]` prefix and `A.` / `B.` / `C.` / `D.` option letters unchanged.\n\n\
      🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
      {request_block}\n"
     )

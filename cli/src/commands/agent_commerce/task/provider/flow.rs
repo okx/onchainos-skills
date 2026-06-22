@@ -201,19 +201,9 @@ pub async fn generate_next_action(
     // the agent **what content to send where** at each step; it does not re-explain
     // tool usage.
     //
-    let send_to_peer = format!(
-        "→ Run `okx-a2a xmtp-send` (jobId={job_id}, our agentId={agent_id}). Resolve `<buyerAgentId>` from the task fields above. **Use the heredoc pattern below verbatim** — plain `--message \"...\"` breaks on `\"` / `$` / newlines in the content.\n\
-         ```bash\n\
-         okx-a2a xmtp-send \\\n\
-         \x20\x20--job-id {job_id} \\\n\
-         \x20\x20--to-agent-id <buyerAgentId> \\\n\
-         \x20\x20--message \"$(cat <<'OKX_MSG_EOF'\n\
-         <message shown below — verbatim>\n\
-         OKX_MSG_EOF\n\
-         )\"\n\
-         ```\n\
-         Message:"
-    );
+    // NOTE: `send_to_peer` helper was removed — the deliver CLI now handles
+    // xmtp_send internally (upload + [intent:deliver] message + on-chain submit).
+    // Other events that need peer messaging construct the command inline.
 
     // Shared "execute task autonomously" guidance for escrow Step 2 — the script does
     // not prescribe how to do it; list a few examples so the agent knows "pick your own
@@ -289,38 +279,23 @@ pub async fn generate_next_action(
              ⚠️ Do NOT send `okx-a2a xmtp-send` `received apply confirmation` filler to the User Agent — the User Agent just ran confirm-accept; they already know.\n\n\
              **Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
              {execute_task}\n\n\
-             **Step 3 — Deliver** (first `okx-a2a xmtp-send` the deliverable to the User Agent, then deliver on-chain):\n\n\
-             ⚠️ **Order**: first `okx-a2a xmtp-send` the deliverable to the User Agent, then deliver on-chain. The on-chain deliver only advances the task state to submitted (giving the User Agent an acceptance entry point); the deliverable itself was already delivered via okx-a2a xmtp-send.\n\n\
-             **Step 3a — Prepare the deliverable (branch by type)**:\n\n\
-             ▸ **Plain text / URL deliverable**: assemble the text content directly, skip `okx-a2a file upload`, go to Step 3b.\n\n\
-             ▸ **File deliverable** (image / PDF / document): run `okx-a2a file upload`:\n\
-             \x20\x20```bash\n\
-             \x20\x20okx-a2a file upload --file-path \"<absolute local file path>\" --agent-id {agent_id} --job-id {job_id}\n\
-             \x20\x20```\n\
-             \x20\x20Record all five return fields (`fileKey` / `digest` / `salt` / `nonce` / `secret` — decryption metadata).\n\n\
-             **Step 3b — `okx-a2a xmtp-send` the deliverable to the User Agent** (in the same turn, immediately following Step 3a):\n\
-             ⚠️ content **MUST end with the `[intent:deliver]` line as a trailing suffix** — the User Agent routes by this suffix to recognize the deliverable. Missing suffix = the User Agent cannot recognize it as a deliverable = the flow stalls.\n\n\
-             Text-deliverable content:\n\
-             {send_to_peer}\n\
-             {deliver_text}\n\n\
-             File-deliverable content (paste all 5 fields verbatim):\n\
-             {send_to_peer}\n\
-             {deliver_file}\n\n\
-             **Step 3c — Run `deliver` CLI to go on-chain** (advances task state to submitted so the User Agent gets the complete entry point):\n\
-             ▸ File deliverable — pass `--file` with the **local file path** used in Step 3a (the CLI auto-saves it to persistent deliverable storage after on-chain success):\n\
+             **Step 3 — Deliver** (single CLI command — handles file upload, peer notification, on-chain submit, and local save internally):\n\n\
+             ⚠️ Do NOT call `okx-a2a file upload` or `okx-a2a xmtp-send` yourself — the `deliver` CLI handles all of this internally:\n\
+             \x20\x20- file_upload (when needed) → xmtp_send `[intent:deliver]` to the User Agent → on-chain submit → local persistent save.\n\
+             \x20\x20- Text deliverables >200 characters are auto-converted to a `.md` file and sent as file attachment.\n\n\
+             ▸ **File deliverable** — pass `--file` with the local file path:\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"<local file path from Step 3a>\" --agent-id {agent_id}\n\
-             ```\n\
-             ▸ Text deliverable — `--file \"\"` + heredoc-wrapped `--deliverable-text` (plain `\"...\"` breaks on `\"` / `$` / newlines). CLI auto-saves the text:\n\
+             onchainos agent deliver {job_id} --file \"<local file path>\" --agent-id {agent_id}\n\
+             ```\n\n\
+             ▸ **Text deliverable** — `--file \"\"` + heredoc-wrapped `--deliverable-text`:\n\
              ```bash\n\
              onchainos agent deliver {job_id} --file \"\" --agent-id {agent_id} \\\n\
              \x20\x20--deliverable-text \"$(cat <<'OKX_TEXT_EOF'\n\
-             <full text deliverable content from Step 3b — verbatim>\n\
+             <full text deliverable content>\n\
              OKX_TEXT_EOF\n\
              )\"\n\
-             ```\n\
-             CLI internals: POST submit API → sign uopHash → broadcast on-chain → auto-save deliverable (file via --file, text via --deliverable-text).\n\n\
-             **Step 4 — After Step 3c ends this turn immediately** (the deliverable was already delivered to the User Agent in Step 3b; do NOT send any filler `okx-a2a xmtp-send` / `okx-a2a user notify` here).\n\n\
+             ```\n\n\
+             **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `okx-a2a user notify` — the CLI already notified the User Agent).\n\n\
              🛑 **The next system events for this ASP are `job_completed` OR `job_rejected` — both are action-required, NEITHER is observer-only.** Provider does NOT receive a `job_submitted` envelope after deliver.\n\n\
              [Follow-up events]\n\
              - `job_completed` (buyer reviewed and accepted) — auto-rate the buyer + notify the user\n\
