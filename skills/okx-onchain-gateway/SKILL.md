@@ -4,7 +4,7 @@ description: "Onchain transaction gateway across XLayer, Solana, Ethereum, Base,
 license: MIT
 metadata:
   author: okx
-  version: "3.21.1-beta"
+  version: "3.21.2-beta"
   homepage: "https://web3.okx.com"
 ---
 

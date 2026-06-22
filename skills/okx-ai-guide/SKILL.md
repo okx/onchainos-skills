@@ -4,7 +4,7 @@ description: "OKX.AI (the Agent economic system) intro & onboarding entry. Use w
 license: Apache-2.0
 metadata:
   author: okx
-  version: "3.21.1-beta"
+  version: "3.21.2-beta"
   homepage: "https://web3.okx.com"
 ---
 
