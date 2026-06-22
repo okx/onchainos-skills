@@ -326,7 +326,8 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 format!("[Error] designated_* pseudo-event requires `provider` field. Call: onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"{s}\",\"jobId\":\"{job_id}\",\"provider\":\"<ASP agentId>\"}}'\n")
             } else {
                 match s.as_str() {
-                    "designated_a2a" => super::flow_negotiate::designated::branch_a2a(job_id, agent_id, &short_id, &dp_id, title_display),
+                    "designated_a2a" => super::flow_negotiate::designated::branch_a2a_cli(job_id, agent_id, &dp_id)
+                        .unwrap_or_else(|| "[Designated ASP route: A2A] Setup done. 🛑 End this turn.\n".to_string()),
                     "designated_x402" => super::flow_negotiate::designated::branch_x402(job_id, agent_id, &short_id, &dp_id, None),
                     _ => super::flow_negotiate::designated::branch_error(job_id, agent_id, &short_id, &dp_id),
                 }

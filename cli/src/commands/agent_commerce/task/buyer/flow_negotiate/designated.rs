@@ -2,10 +2,9 @@
 //!
 //! The full flow is split into two phases to reduce playbook output size:
 //!   Phase 1 (`route_only`): call `designated-route` → determine route → call next-action with the matching pseudo-event
-//!   Phase 2 (`branch_a2a` / `branch_x402` / `branch_error`): only the hit branch's playbook
+//!   Phase 2 (`branch_a2a_cli` / `branch_x402` / `branch_error`): only the hit branch's playbook
 
-/// Negotiation ground rules — static text shared by every A2A negotiation path
-/// (both `branch_a2a` and `branch_a2a_cli`). No format args here.
+/// Negotiation ground rules — static text shared by every A2A negotiation path.
 ///
 /// Negotiation is pure natural-language task-detail discussion; pricing is locked
 /// at accept time.
@@ -20,8 +19,7 @@ const HANDSHAKE_RULES_A2A: &str = "🛑 **Negotiation ground rules — natural l
     Once you've finished clarifying task details, end your turn. The ASP will independently decide when to submit their on-chain apply; you will then receive a `provider_applied` system notification.";
 
 /// Branch B title + B-Step 0 (duplicate guard) + B-Step 1 (group creation) +
-/// B-Step 1.5 (SKILL_PREFETCH). Used by the MCP path (`branch_a2a` →
-/// `designated_provider_negotiate`); the CLI path (`branch_a2a_cli`) skips
+/// B-Step 1.5 (SKILL_PREFETCH). The CLI path (`branch_a2a_cli`) skips
 /// this section because Rust already executes the setup steps inline.
 fn negotiate_section_pre_inquiry(job_id: &str, agent_id: &str, dp_id: &str) -> String {
     format!("━━━━━━━━━ Branch B: supportA2MCP=false -> A2A (negotiation required) ━━━━━━━━━\n\n\
@@ -164,7 +162,7 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
              **End this turn after executing the branch playbook returned by next-action.**\n")
 }
 
-/// CLI-mode variant of `branch_a2a`. Inlines the three calls that begin the A2A
+/// Inlines the three calls that begin the A2A
 /// negotiation flow:
 ///   - B-Step 0   (duplicate guard)        → okx_a2a::session_query_exists
 ///   - B-Step 1   (create sub session)     → okx_a2a::session_create
@@ -218,29 +216,6 @@ pub(crate) fn branch_a2a_cli(
     // apply on-chain. The buyer does NOTHING until `provider_applied`.
     None
 }
-
-/// Phase 2a: A2A branch — group creation + negotiation protocol.
-pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &str, _title_display: &str) -> String {
-    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via buyer-sub-playbook.md §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
-
-    format!("\
-         [Designated ASP route: A2A] Provider {dp_id} — create sub session only.\n\
-         [Role] User (Buyer)\n\n\
-         **B-Step 1 — Create the sub session (group + session record):**\n\
-         ```bash\n\
-         okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id {dp_id} --json\n\
-         ```\n\n\
-         **B-Step 1.5 — Send SKILL_PREFETCH to the sub session:**\n\
-         ```bash\n\
-         okx-a2a session send --session-key <sessionKey from step above> --content '{prefetch}'\n\
-         ```\n\n\
-         ✅ Sub session ready. The ASP will receive `job_asp_selected` from the backend and independently decide to apply on-chain.\n\n\
-         🛑 **End this turn immediately.** Your ONLY next action is to wait for the `provider_applied` system event.\n\
-         ❌ Do NOT send any message (`okx-a2a xmtp-send`) — no negotiation conversation is needed.\n\
-         ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\
-         ❌ Do NOT call `asp-match` / `apply` / `complete` / `reject`.\n")
-}
-
 /// Phase 2b: x402 branch — endpoint validation + set-payment-mode.
 ///
 /// `route_data`: pre-fetched JSON from `designated_route_inner` (when called

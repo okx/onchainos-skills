@@ -1417,7 +1417,6 @@ fn build_pending_v2_command_block(
          \x20\x20--list-label \"{label}\" \\\n\
          \x20\x20--source-event {source_event}{llm_flag}\n\
          ```",
-        subcommand = subcommand,
         job_id = job_id,
         role = role,
         agent_id = agent_id,
