@@ -60,7 +60,7 @@ pub(super) async fn open_identity_subscription(
     wallet_address: &str,
     ws_url: &str,
 ) -> Result<IdentitySubscription> {
-    eprintln!("[agent-identity] ws connect: url={ws_url}");
+    debug_log!("[agent-identity] ws connect: url={ws_url}");
     match timeout(OPEN_TIMEOUT, open_inner(wallet_address, ws_url)).await {
         Ok(Ok(sub)) => Ok(sub),
         Ok(Err(e)) => Err(e),
@@ -75,20 +75,20 @@ async fn open_inner(wallet_address: &str, ws_url: &str) -> Result<IdentitySubscr
     let (mut ws, _resp) = connect_async(ws_url)
         .await
         .with_context(|| format!("failed to connect to {ws_url}"))?;
-    eprintln!("[agent-identity] ws connected");
+    debug_log!("[agent-identity] ws connected");
 
     // ── login ─────────────────────────────────────────────────────────────
     // JSON key is "token" per push-platform contract; value is the wallet
     // address (public on-chain identifier, no redaction needed).
     let login = json!({ "op": "login", "args": [{ "token": wallet_address }] }).to_string();
-    eprintln!(
+    debug_log!(
         "[agent-identity] ws login request: op=login wallet_address={wallet_address}"
     );
     ws.send(Message::Text(login.into()))
         .await
         .context("ws login send failed")?;
     let login_resp = wait_for_event(&mut ws, "login").await?;
-    eprintln!("[agent-identity] ws login response: {login_resp}");
+    debug_log!("[agent-identity] ws login response: {login_resp}");
 
     // ── subscribe ─────────────────────────────────────────────────────────
     let sub = json!({
@@ -96,14 +96,14 @@ async fn open_inner(wallet_address: &str, ws_url: &str) -> Result<IdentitySubscr
         "args": [{ "channel": SUBSCRIBE_CHANNEL }],
     })
     .to_string();
-    eprintln!("[agent-identity] ws subscribe request: {sub}");
+    debug_log!("[agent-identity] ws subscribe request: {sub}");
     ws.send(Message::Text(sub.into()))
         .await
         .context("ws subscribe send failed")?;
     let sub_resp = wait_for_event(&mut ws, "subscribe").await?;
-    eprintln!("[agent-identity] ws subscribe response: {sub_resp}");
+    debug_log!("[agent-identity] ws subscribe response: {sub_resp}");
 
-    eprintln!("[agent-identity] ws subscribed: channel={SUBSCRIBE_CHANNEL}");
+    debug_log!("[agent-identity] ws subscribed: channel={SUBSCRIBE_CHANNEL}");
     Ok(IdentitySubscription { ws })
 }
 
@@ -152,11 +152,11 @@ impl IdentitySubscription {
                     if !push_hash.is_empty() && push_hash == target {
                         return Ok(Some(payload));
                     }
-                    eprintln!(
+                    debug_log!(
                         "[agent-identity] ws push skipped: txHash={push_hash} target={target}"
                     );
                 } else {
-                    eprintln!("[agent-identity] ws frame ignored: {text}");
+                    debug_log!("[agent-identity] ws frame ignored: {text}");
                 }
             }
         })
@@ -169,7 +169,7 @@ impl IdentitySubscription {
             Ok(Ok(payload)) => Ok(payload),
             Ok(Err(e)) => Err(e),
             Err(_) => {
-                eprintln!(
+                debug_log!(
                     "[agent-identity] ws wait timed out after {}s",
                     wait.as_secs()
                 );
@@ -231,7 +231,7 @@ async fn wait_for_event(ws: &mut WsStream, expected: &str) -> Result<String> {
         let v: Value = match serde_json::from_str(&text_str) {
             Ok(v) => v,
             Err(_) => {
-                eprintln!(
+                debug_log!(
                     "[agent-identity] ws ack skipped (non-json) while waiting for {expected}: {text_str}"
                 );
                 continue;
@@ -268,7 +268,7 @@ async fn wait_for_event(ws: &mut WsStream, expected: &str) -> Result<String> {
                 bail!("ws error during {expected}: {msg_field} raw={text_str}");
             }
             other => {
-                eprintln!(
+                debug_log!(
                     "[agent-identity] ws ack skipped (event={other:?}) while waiting for {expected}: {text_str}"
                 );
                 continue;

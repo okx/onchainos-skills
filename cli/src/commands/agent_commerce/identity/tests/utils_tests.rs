@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::json;
-use super::super::models::{AgentCard, AgentService};
+use super::super::models::{AgentCard, AgentService, ServiceOperation};
 use crate::client::DEFAULT_BASE_URL;
 use crate::commands::Context;
 use crate::config::AppConfig;
@@ -1251,7 +1251,7 @@ fn parse_services_none_returns_empty_vec() {
 
 #[test]
 fn parse_services_valid_a2mcp() {
-    let raw = r#"[{"name":"TVL Query","servicedescription":"desc","servicetype":"A2MCP","fee":"10","endpoint":"https://x"}]"#;
+    let raw = r#"[{"serviceName":"TVL Query","serviceDescription":"desc","serviceType":"A2MCP","fee":"10","endpoint":"https://x"}]"#;
     let svcs = parse_services(Some(raw)).unwrap();
     assert_eq!(svcs.len(), 1);
     assert_eq!(svcs[0].service_name,              "TVL Query");
@@ -1263,7 +1263,7 @@ fn parse_services_valid_a2mcp() {
 #[test]
 fn parse_services_valid_a2a_endpoint_cleared() {
     // A2A services must not carry an endpoint (normalize_service clears it).
-    let raw = r#"[{"name":"Yield","servicedescription":"yields","servicetype":"A2A","fee":"5","endpoint":"https://should-be-cleared"}]"#;
+    let raw = r#"[{"serviceName":"Yield","serviceDescription":"yields","serviceType":"A2A","fee":"5","endpoint":"https://should-be-cleared"}]"#;
     let svcs = parse_services(Some(raw)).unwrap();
     assert_eq!(svcs[0].service_type, "A2A");
     assert!(svcs[0].endpoint.is_none(), "A2A endpoint must be cleared");
@@ -1271,39 +1271,93 @@ fn parse_services_valid_a2a_endpoint_cleared() {
 
 #[test]
 fn parse_services_uppercases_servicetype() {
-    let raw = r#"[{"name":"S","servicedescription":"d","servicetype":"a2a","fee":"1"}]"#;
+    let raw = r#"[{"serviceName":"S","serviceDescription":"d","serviceType":"a2a","fee":"1"}]"#;
     let svcs = parse_services(Some(raw)).unwrap();
     assert_eq!(svcs[0].service_type, "A2A");
 }
 
 #[test]
 fn parse_services_a2mcp_missing_endpoint_is_err() {
-    let raw = r#"[{"name":"S","servicedescription":"desc","servicetype":"A2MCP","fee":"5"}]"#;
+    let raw = r#"[{"serviceName":"S","serviceDescription":"desc","serviceType":"A2MCP","fee":"5"}]"#;
     assert!(parse_services(Some(raw)).is_err());
 }
 
 #[test]
 fn parse_services_unknown_servicetype_is_err() {
-    let raw = r#"[{"name":"S","servicedescription":"desc","servicetype":"REST","fee":"5"}]"#;
+    let raw = r#"[{"serviceName":"S","serviceDescription":"desc","serviceType":"REST","fee":"5"}]"#;
     assert!(parse_services(Some(raw)).is_err());
 }
 
 #[test]
 fn parse_services_missing_name_is_err() {
-    let raw = r#"[{"servicedescription":"desc","servicetype":"A2A","fee":"1"}]"#;
+    let raw = r#"[{"serviceDescription":"desc","serviceType":"A2A","fee":"1"}]"#;
     assert!(parse_services(Some(raw)).is_err());
 }
 
 #[test]
 fn parse_services_missing_description_is_err() {
-    let raw = r#"[{"name":"S","servicetype":"A2A","fee":"1"}]"#;
-    // serde requires `servicedescription` field (no default) → deserialization error.
+    let raw = r#"[{"serviceName":"S","serviceType":"A2A","fee":"1"}]"#;
+    // serde requires `serviceDescription` field (no default) → deserialization error.
     assert!(parse_services(Some(raw)).is_err());
 }
 
 #[test]
 fn parse_services_invalid_json_is_err() {
     assert!(parse_services(Some("{not json}")).is_err());
+}
+
+// ─── operation × id consistency (update-flow delta directive) ──────────────
+
+#[test]
+fn parse_services_operation_create_without_id_ok() {
+    let raw = r#"[{"operation":"create","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs[0].operation, Some(ServiceOperation::Create));
+    assert!(svcs[0].id.is_none());
+}
+
+#[test]
+fn parse_services_operation_create_with_id_is_err() {
+    // create = brand-new service → must NOT carry an id.
+    let raw = r#"[{"operation":"create","id":"5","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_operation_update_with_id_ok() {
+    let raw = r#"[{"operation":"update","id":"7","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs[0].operation, Some(ServiceOperation::Update));
+    assert_eq!(svcs[0].id.as_deref(), Some("7"));
+}
+
+#[test]
+fn parse_services_operation_update_without_id_is_err() {
+    let raw = r#"[{"operation":"update","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_operation_delete_without_id_is_err() {
+    let raw = r#"[{"operation":"delete","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_operation_delete_with_id_ok() {
+    let raw = r#"[{"operation":"delete","id":"9","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs[0].operation, Some(ServiceOperation::Delete));
+    assert_eq!(svcs[0].id.as_deref(), Some("9"));
+}
+
+#[test]
+fn parse_services_no_operation_ok_register_path() {
+    // register / create-agent services carry no operation and no id → unconstrained.
+    let raw = r#"[{"serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert!(svcs[0].operation.is_none());
+    assert!(svcs[0].id.is_none());
 }
 
 // ─── ensure_provider_has_service ──────────────────────────────────────
@@ -1315,6 +1369,7 @@ fn make_a2a_service() -> AgentService {
         service_description: "d".to_string(),
         fee: "1".to_string(),
         service_type: "A2A".to_string(),
+        operation: None,
         endpoint: None,
     }
 }
@@ -1650,6 +1705,7 @@ fn normalize_service_a2mcp_empty_fee_is_err() {
         service_description: "desc".to_string(),
         fee: "".to_string(),
         service_type: "A2MCP".to_string(),
+        operation: None,
         endpoint: Some("https://example.com/mcp".to_string()),
     };
     let result = normalize_service(svc);
@@ -1666,6 +1722,7 @@ fn normalize_service_a2mcp_whitespace_only_fee_is_err() {
         service_description: "desc".to_string(),
         fee: "   ".to_string(),
         service_type: "A2MCP".to_string(),
+        operation: None,
         endpoint: Some("https://example.com/mcp".to_string()),
     };
     let result = normalize_service(svc);

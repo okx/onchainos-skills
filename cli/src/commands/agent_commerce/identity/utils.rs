@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::commands::Context;
 use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 
-use super::models::{AgentCard, AgentService};
+use super::models::{AgentCard, AgentService, ServiceOperation};
 
 // ─── HTTP client ──────────────────────────────────────────────────────────
 
@@ -180,10 +180,10 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
         .filter(|value| !value.is_empty());
 
     if service.service_name.is_empty() {
-        bail!("missing required field in --service: name");
+        bail!("missing required field in --service: serviceName");
     }
     if service.service_description.is_empty() {
-        bail!("missing required field in --service: servicedescription");
+        bail!("missing required field in --service: serviceDescription");
     }
     match service.service_type.as_str() {
         "A2A" => {
@@ -198,7 +198,7 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
                 bail!("missing required field in --service for A2MCP: endpoint");
             }
         }
-        other => bail!("invalid servicetype in --service: {other}"),
+        other => bail!("invalid serviceType in --service: {other}"),
     }
 
     // Fee is a PLAIN NUMBER only — USDT is the implicit, only currency. A
@@ -207,6 +207,24 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
     // we enforce it here too). Empty A2A fee already returned above as allowed.
     if !service.fee.is_empty() && !is_plain_number(&service.fee) {
         bail!("invalid fee in --service: must be a plain number (USDT is the default currency)");
+    }
+
+    // operation × id consistency (update-only directive). `operation` is set
+    // only on `update`-flow service entries; register / create-agent services
+    // omit it (None) and are unconstrained here. Per the update delta contract:
+    //   • create → a brand-new service, must NOT carry an id
+    //   • update / delete → target an existing service, must carry its id
+    match service.operation {
+        Some(ServiceOperation::Create) if service.id.is_some() => {
+            bail!("invalid --service: operation 'create' must not carry an id");
+        }
+        Some(ServiceOperation::Update) if service.id.is_none() => {
+            bail!("invalid --service: operation 'update' requires an id");
+        }
+        Some(ServiceOperation::Delete) if service.id.is_none() => {
+            bail!("invalid --service: operation 'delete' requires an id");
+        }
+        _ => {}
     }
 
     Ok(service)

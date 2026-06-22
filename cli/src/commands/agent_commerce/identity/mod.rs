@@ -16,6 +16,17 @@
 //! Dependency direction: `models` ← `utils` ← `signing` ← `queries` /
 //! `mutations` ← `mod.rs`.
 
+/// `eprintln!` gated behind the `debug-log` feature so production builds stay
+/// quiet. Defined before the submodule declarations below so it is in scope
+/// (textually) for every child module in this directory — no `use` needed.
+macro_rules! debug_log {
+    ($($arg:tt)*) => {
+        if cfg!(feature = "debug-log") {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
 mod args;
 mod models;
 mod mutations;

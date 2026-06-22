@@ -10,7 +10,7 @@ fn svc(name: &str, desc: &str, stype: &str, fee: &str, endpoint: Option<&str>) -
     // may pass "\n" (real newline char). Both end up as a JSON \n escape after this replace.
     let desc_json = desc.replace('\n', "\\n");
     format!(
-            "[{{\"name\":\"{name}\",\"servicedescription\":\"{desc_json}\",\"servicetype\":\"{stype}\",\"fee\":\"{fee}\"{ep}}}]"
+            "[{{\"serviceName\":\"{name}\",\"serviceDescription\":\"{desc_json}\",\"serviceType\":\"{stype}\",\"fee\":\"{fee}\"{ep}}}]"
         )
 }
 
