@@ -133,7 +133,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         "sessionCert": &signing_session.session_cert,
         "cardJson": serde_json::to_string(&card).context("failed to serialize cardJson")?,
     });
-    eprintln!(
+    debug_log!(
         "[agent-identity] create request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(
             ctx,
@@ -150,7 +150,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
             &body,
         )
         .await?;
-    eprintln!(
+    debug_log!(
         "[agent-identity] create response: {}",
         serde_json::to_string(&response)
             .unwrap_or_else(|_| "<serialize failed>".to_string())
@@ -179,7 +179,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         match open_identity_subscription(&from_addr, &identity_ws_url()).await {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!(
+            debug_log!(
                 "[agent-identity] ws subscribe failed, falling through to broadcast-only: {e:#}"
             );
             None
@@ -232,7 +232,7 @@ async fn consent_impl(args: &ConsentArgs, ctx: &Context) -> Result<Value> {
         body["agreed"] = json!(agreed);
     }
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] consent request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(
             ctx,
@@ -252,12 +252,12 @@ async fn consent_impl(args: &ConsentArgs, ctx: &Context) -> Result<Value> {
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] consent response: {}",
             serde_json::to_string(data)
                 .unwrap_or_else(|_| "<serialize failed>".to_string())
         ),
-        Err(e) => eprintln!("[agent-identity] consent response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] consent response err: {:#}", e),
     }
 
     let response = result.map_err(format_api_error)?;
@@ -435,7 +435,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
         "cardJson": serde_json::to_string(&Value::Object(card))
             .context("failed to serialize cardJson")?,
     });
-    eprintln!(
+    debug_log!(
         "[agent-identity] update request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(
             ctx,
@@ -453,12 +453,12 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
         )
         .await;
     match &update_result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] update response: {}",
             serde_json::to_string(data)
                 .unwrap_or_else(|_| "<serialize failed>".to_string())
         ),
-        Err(e) => eprintln!("[agent-identity] update response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] update response err: {:#}", e),
     }
     let response = update_result?;
     let unsigned = parse_agent_unsigned(response)?;
@@ -478,7 +478,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!(
+            debug_log!(
                 "[agent-identity] ws subscribe failed, falling through to broadcast-only: {e:#}"
             );
             None
@@ -575,7 +575,7 @@ async fn fetch_agent_info_by_id(agent_id: &str, ctx: &Context) -> Result<Option<
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
 
-    eprintln!("[agent-identity] activate info-fetch: agent-id={}", agent_id);
+    debug_log!("[agent-identity] activate info-fetch: agent-id={}", agent_id);
 
     let raw = client
         .get_authed(
@@ -589,7 +589,7 @@ async fn fetch_agent_info_by_id(agent_id: &str, ctx: &Context) -> Result<Option<
         .await
         .map_err(format_api_error)?;
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] activate info-fetch response: {}",
         serde_json::to_string(&raw).unwrap_or_else(|_| "<serialize failed>".to_string())
     );
@@ -657,7 +657,7 @@ async fn agent_status_impl(agent_id_opt: Option<&str>, status: u32, ctx: &Contex
         "status": status,
     });
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] agent-status request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent-status"),
         access_token.len(),
@@ -674,12 +674,12 @@ async fn agent_status_impl(agent_id_opt: Option<&str>, status: u32, ctx: &Contex
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] agent-status response: {}",
             serde_json::to_string(data)
                 .unwrap_or_else(|_| "<serialize failed>".to_string())
         ),
-        Err(e) => eprintln!("[agent-identity] agent-status response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] agent-status response err: {:#}", e),
     }
 
     result.map_err(format_api_error)
@@ -701,7 +701,7 @@ async fn submit_approval_impl(
         body["preferredLanguage"] = Value::String(lang);
     }
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] submit-approval request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/submit-approval"),
         access_token.len(),
@@ -718,12 +718,12 @@ async fn submit_approval_impl(
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] submit-approval response: {}",
             serde_json::to_string(data)
                 .unwrap_or_else(|_| "<serialize failed>".to_string())
         ),
-        Err(e) => eprintln!("[agent-identity] submit-approval response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] submit-approval response err: {:#}", e),
     }
 
     result.map_err(format_api_error)
@@ -753,7 +753,7 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
         ctx,
         "/priapi/v5/wallet/agentic/pre-transaction/upload-picture",
     );
-    eprintln!(
+    debug_log!(
         "[agent-identity] upload request: url={} access_token_len={} access_token_prefix={} file_path={} filename={} bytes_len={}",
         upload_url,
         access_token.len(),
@@ -773,12 +773,12 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] upload response: {}",
             serde_json::to_string(data)
                 .unwrap_or_else(|_| "<serialize failed>".to_string())
         ),
-        Err(e) => eprintln!("[agent-identity] upload response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] upload response err: {:#}", e),
     }
 
     let data = result?;
@@ -845,7 +845,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         body["taskId"] = json!(task_id);
     }
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] feedback-submit request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(
             ctx,
@@ -865,12 +865,12 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] feedback-submit response: {}",
             serde_json::to_string(data)
                 .unwrap_or_else(|_| "<serialize failed>".to_string())
         ),
-        Err(e) => eprintln!("[agent-identity] feedback-submit response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] feedback-submit response err: {:#}", e),
     }
 
     let response = result?;
@@ -919,7 +919,7 @@ async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
         "message": message,
     });
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] xmtp-sign request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(
             ctx,
@@ -939,12 +939,12 @@ async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] xmtp-sign response: {}",
             serde_json::to_string(data)
                 .unwrap_or_else(|_| "<serialize failed>".to_string())
         ),
-        Err(e) => eprintln!("[agent-identity] xmtp-sign response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] xmtp-sign response err: {:#}", e),
     }
 
     let data = result.map_err(format_api_error)?;
@@ -977,7 +977,7 @@ async fn wait_for_identity_push(
     match sub.wait_for_match(tx_hash, PUSH_WAIT_TIMEOUT).await {
         Ok(opt) => opt,
         Err(e) => {
-            eprintln!("[agent-identity] ws wait failed: {e:#}");
+            debug_log!("[agent-identity] ws wait failed: {e:#}");
             None
         }
     }

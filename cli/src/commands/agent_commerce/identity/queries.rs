@@ -165,7 +165,7 @@ async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Val
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] get-my-agents request: url={} access_token_len={} access_token_prefix={} query={:?}",
         reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/agent-list", &query_refs),
         access_token.len(),
@@ -182,14 +182,14 @@ async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Val
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] get-my-agents response: {}",
             {
                 let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
                 if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
             }
         ),
-        Err(e) => eprintln!("[agent-identity] get-my-agents response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] get-my-agents response err: {:#}", e),
     }
 
     let mut out = normalize_singleton_object(result?);
@@ -228,7 +228,7 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] get request: url={} access_token_len={} access_token_prefix={} query={:?}",
         reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/agent-list", &query_refs),
         access_token.len(),
@@ -245,7 +245,7 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
         .await;
 
     match &result {
-        Ok(data) => eprintln!("[agent-identity] get response: {}", {
+        Ok(data) => debug_log!("[agent-identity] get response: {}", {
             let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
             if s.chars().count() > 256 {
                 format!("{}...", s.chars().take(256).collect::<String>())
@@ -253,7 +253,7 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
                 s
             }
         }),
-        Err(e) => eprintln!("[agent-identity] get response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] get response err: {:#}", e),
     }
 
     let mut out = normalize_singleton_object(result?);
@@ -305,7 +305,7 @@ async fn get_agents_impl(args: &GetAgentsArgs, ctx: &Context) -> Result<Value> {
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] get-agents request: url={} access_token_len={} access_token_prefix={} query={:?}",
         reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/batch-list", &query_refs),
         access_token.len(),
@@ -322,7 +322,7 @@ async fn get_agents_impl(args: &GetAgentsArgs, ctx: &Context) -> Result<Value> {
         .await;
 
     match &result {
-        Ok(data) => eprintln!("[agent-identity] get-agents response: {}", {
+        Ok(data) => debug_log!("[agent-identity] get-agents response: {}", {
             let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
             if s.chars().count() > 256 {
                 format!("{}...", s.chars().take(256).collect::<String>())
@@ -330,7 +330,7 @@ async fn get_agents_impl(args: &GetAgentsArgs, ctx: &Context) -> Result<Value> {
                 s
             }
         }),
-        Err(e) => eprintln!("[agent-identity] get-agents response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] get-agents response err: {:#}", e),
     }
 
     // batch-list returns a BARE array of agent objects (get_authed unwraps
@@ -366,7 +366,7 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] search request: url={} access_token_len={} access_token_prefix={} query={:?}",
         reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/search/agent-search", &query_refs),
         access_token.len(),
@@ -383,14 +383,14 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] search response: {}",
             {
                 let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
                 if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
             }
         ),
-        Err(e) => eprintln!("[agent-identity] search response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] search response err: {:#}", e),
     }
 
     // Additive: add a ready-to-render `cells` array per search row (the §6
@@ -413,7 +413,7 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] service-list request: url={} access_token_len={} access_token_prefix={} query={:?}",
         reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/services", &query_refs),
         access_token.len(),
@@ -430,14 +430,14 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] service-list response: {}",
             {
                 let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
                 if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
             }
         ),
-        Err(e) => eprintln!("[agent-identity] service-list response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] service-list response err: {:#}", e),
     }
 
     // Additive: add a ready-to-render `cells` array per service (§4 columns).
@@ -477,7 +477,7 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] feedback-list request: url={} access_token_len={} access_token_prefix={} query={:?}",
         reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/reviews", &query_refs),
         access_token.len(),
@@ -494,14 +494,14 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] feedback-list response: {}",
             {
                 let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
                 if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
             }
         ),
-        Err(e) => eprintln!("[agent-identity] feedback-list response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] feedback-list response err: {:#}", e),
     }
 
     // Convert backend 0–100 scores to 0.00–5.00 stars before surfacing to
@@ -546,7 +546,7 @@ async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<V
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    eprintln!(
+    debug_log!(
         "[agent-identity] get-by-address request: url={} access_token_len={} access_token_prefix={} query={:?}",
         reconstruct_get_url_for_log(
             ctx,
@@ -567,14 +567,14 @@ async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<V
         .await;
 
     match &result {
-        Ok(data) => eprintln!(
+        Ok(data) => debug_log!(
             "[agent-identity] get-by-address response: {}",
             {
                 let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
                 if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
             }
         ),
-        Err(e) => eprintln!("[agent-identity] get-by-address response err: {:#}", e),
+        Err(e) => debug_log!("[agent-identity] get-by-address response err: {:#}", e),
     }
 
     Ok(normalize_singleton_object(result?))
