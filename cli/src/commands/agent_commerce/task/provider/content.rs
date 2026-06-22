@@ -2,11 +2,10 @@
 //!
 //! Two categories of templates:
 //!
-//! 1. **User-facing** (`xmtp_dispatch_user(content)` / `xmtp_prompt_user(userContent)`)
-//!    Chat content shown to the user. Naming suffix: `_user_notify` / `_user_prompt`.
-//!    Rule: **no technical jargon** — tool names (`xmtp_*`) / event names
-//!    (`provider_applied`/`job_*` etc.) / status enums (`open`/`accepted` etc.) /
-//!    CLI flags (`--*`) / skill names (`okx-agent-identity` etc.) /
+//! 1. **User-facing** — chat content shown to the user via `okx-a2a user notify` /
+//!    Rule: **no technical jargon** — event names (`provider_applied`/`job_*` etc.) /
+//!    status enums (`open`/`accepted` etc.) / CLI flags (`--*`) /
+//!    skill names (`okx-agent-identity` etc.) /
 //!    status field names (`jobStatus`/`paymentMode`) are all banned.
 //!    **The string literals in this file are English** (escrow/x402, review window
 //!    expired, task completed, etc.) and serve as the source-of-truth that the sub
@@ -15,8 +14,8 @@
 //!    users see the equivalent of "escrow/x402, review window expired, task completed"). The no-technical-jargon
 //!    rule applies to all languages, not just English.
 //!
-//! 2. **Peer-facing** (`xmtp_send` content, sent to the User Agent's sub agent)
-//!    Agent-to-agent protocol messages. Naming suffix: `_to_buyer`.
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
+//!    to the User Agent's sub agent. Naming suffix: `_to_buyer`.
 //!    Rule: protocol literals are allowed (`[intent:*]` / `fileKey`/`digest` etc.);
 //!    **do NOT instruct the peer to run CLIs** — the peer has its own flow.rs and
 //!    decides for itself based on chain events; giving direct CLI orders is overreach.
@@ -24,6 +23,94 @@
 //! Field-value placeholders use `<...>`; the agent fills them from `common context` /
 //! conversation state. To add new copy → add a new fn; to change copy → edit the
 //! fn body; flow.rs only ever calls into here and never embeds literals inline.
+
+/// `Event::JobAspSelected` APPLY path — user-facing notification pushed via
+/// `okx-a2a user notify --content <text>` after the on-chain apply.
+/// Placeholders the agent fills in: `<serviceName>` / `<offerAmount>` /
+/// `<tokenSymbol>`. The agent must localize the entire string to the user's
+/// language before sending (per LOCALIZATION_PREFIX rules).
+pub fn job_asp_selected_accepted_notify(job_id: &str) -> String {
+    format!(
+        "[Designated Task Accepted] Job {job_id} — you have been designated as the ASP and the apply is on-chain.\n\
+         \x20\x20- Service: <serviceName>\n\
+         \x20\x20- Price: <offerAmount> <tokenSymbol>\n\
+         \x20\x20Awaiting the buyer's confirm-accept to fund escrow."
+    )
+}
+
+/// `Event::JobAspSelected` no-serviceId fallback — user-facing notification
+/// pushed via `okx-a2a user notify --content <text>`. The playbook does NOT
+/// auto-start negotiation; it ends the turn and waits for the buyer to re-route
+/// (designate a specific service / list the task publicly). Localize before sending.
+pub fn job_asp_selected_no_service_notify(job_id: &str) -> String {
+    format!(
+        "[Designated Task — Skipped] Job {job_id} — the buyer designated you as the ASP without pinning a specific service.\n\
+         \x20\x20No action taken; waiting for the buyer to re-route with a specific service or list the task publicly."
+    )
+}
+
+/// `Event::JobAspSelected` incomplete-terms guard — pushed when the inbound
+/// envelope is missing `tokenAmount` and/or `tokenSymbol`. Same shape as the
+/// no-service notify: user is informed; the ASP takes no on-chain action.
+/// `missing_field` is interpolated (e.g. `"tokenAmount"` / `"tokenSymbol"` /
+/// `"tokenAmount + tokenSymbol"`). Localize before sending.
+pub fn job_asp_selected_missing_terms_notify(job_id: &str, missing_field: &str) -> String {
+    format!(
+        "[Designated Task — Skipped] Job {job_id} — the buyer's designation envelope is missing `{missing_field}`; cannot determine the apply terms.\n\
+         \x20\x20No action taken; waiting for the buyer to re-send the designation with complete terms."
+    )
+}
+
+/// `Event::JobUserReject` — user-facing notification pushed via
+/// `okx-a2a user notify --content <text>` when the buyer refuses to fund /
+/// confirm-accept after the provider applied. Terminal for this round; the
+/// designation is over. Localize before sending.
+pub fn job_user_reject_notify(job_id: &str) -> String {
+    format!(
+        "[Buyer Declined Payment] Job {job_id} — the buyer refused to fund / confirm-accept after your apply.\n\
+         \x20\x20This designation is over; no further action is needed on this side."
+    )
+}
+
+/// `Event::ProviderApplied` — user-facing notification pushed via
+/// `okx-a2a user notify --content <text>` after the apply has been recorded
+/// on-chain (escrow path). Localize before sending.
+pub fn provider_applied_user_notify(job_id: &str, agent_id: &str) -> String {
+    format!(
+        "[Apply Submitted] Job {job_id} — your apply has been recorded on-chain.\n\
+         \x20\x20- ASP agentId: {agent_id}\n\
+         \x20\x20Awaiting the buyer's confirm-accept to fund escrow."
+    )
+}
+
+/// `Event::JobAspSelected` APPLY failure — pushed when the on-chain `apply`
+/// command returns non-zero. `error_summary` is interpolated directly (caller
+/// passes either the stderr / one-line error message, or a placeholder for the
+/// LLM to fill). Localize before sending.
+pub fn job_asp_selected_apply_failed_notify(job_id: &str, error_summary: &str) -> String {
+    format!(
+        "[Designated Task — Apply Failed] Job {job_id} — the on-chain apply did not go through.\n\
+         \x20\x20- Error: {error_summary}\n\
+         \x20\x20The designated assignment was NOT recorded; please retry or contact the buyer."
+    )
+}
+
+/// `Event::JobAspSelected` REJECT path — user-facing notification pushed via
+/// `okx-a2a user notify --content <text>` after the off-chain `asp-reject`.
+/// `reason` is interpolated directly (caller passes either a fixed string for
+/// code-determined rejections — `"designated service not registered"` /
+/// `"price below registered floor"` — or the literal `<reason>` placeholder
+/// when the LLM picks the wording). Localize the full string before sending.
+pub fn job_asp_selected_rejected_notify(job_id: &str, reason: &str) -> String {
+    format!(
+        "[Designated Task Declined] Job {job_id} — the designated assignment was declined.\n\
+         \x20\x20- Reason: {reason}\n\
+         \x20\x20The buyer can now re-route to another ASP or list the task publicly."
+    )
+}
+
+pub(super) const L10N_DISPATCH_SHORT: &str = "\
+🌐🛑 **MUST translate** the content below to the user's language before passing to `okx-a2a user notify` (rule 5: non-English → faithful translation; rule 4: English → verbatim). Sending English content to a Chinese user is a violation.";
 
 /// `Event::JobAccepted` Step 1 — job-accepted notice pushed to the user.
 ///
@@ -35,15 +122,32 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
         "\x20\x20\x20\x20[Job Accepted] Job {job_id} has been accepted.\n\
          \x20\x20\x20\x20- Title: <title>\n\
          \x20\x20\x20\x20- Description: <description>\n\
-         \x20\x20\x20\x20- Negotiated price: <amount> <tokenSymbol>\n\
+         \x20\x20\x20\x20- Negotiated price: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20- Payment: <escrow>\n\
          \x20\x20\x20\x20- ASP: {agent_id}\n\
          \x20\x20\x20\x20Funds are now escrowed; the ASP has started execution."
     )
 }
 
-/// `Event::JobRejected` Step 1 — decision prompt shown to the user
-/// (`xmtp_prompt_user.userContent`).
+/// `Event::JobAccepted` — x402 / A2MCP variant. Different from the escrow
+/// version: there is no negotiation (price is fixed by service registration),
+/// funds were paid up-front via the A2MCP endpoint (not escrowed), and the
+/// deliverable was already returned at request time. The agent fills in the
+/// `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` placeholders from
+/// the prefetched task context. Localize before sending.
+pub fn job_accepted_user_notify_a2mcp(job_id: &str, agent_id: &str) -> String {
+    format!(
+        "\x20\x20\x20\x20[Service Request Received] Job {job_id} — request received and paid via the A2MCP endpoint.\n\
+         \x20\x20\x20\x20- Title: <title>\n\
+         \x20\x20\x20\x20- Description: <description>\n\
+         \x20\x20\x20\x20- Price: <tokenAmount> <tokenSymbol>\n\
+         \x20\x20\x20\x20- Payment: A2MCP (paid at request time)\n\
+         \x20\x20\x20\x20- ASP: {agent_id}\n\
+         \x20\x20\x20\x20Deliverable was returned by the service endpoint at request time; awaiting on-chain completion receipt."
+    )
+}
+
+/// `Event::JobRejected` Step 1 — decision prompt shown to the user.
 ///
 /// The short jobId prefix lets the user tell tasks apart at a glance when
 /// multiple prompts are in flight concurrently.
@@ -52,6 +156,17 @@ pub fn job_rejected_user_decision_prompt(short_id: &str) -> String {
         "\x20\x20\x20\x20[Job {short_id} — you are the ASP] The User Agent rejected the deliverable. Choose:\n\
          \x20\x20\x20\x20A. File a dispute → reply 'file dispute, reason: <reason>'\n\
          \x20\x20\x20\x20B. Agree to refund → reply 'agree to refund'"
+    )
+}
+
+/// `Event::JobSubmitted` — notify the user (ASP's owner) that the deliverable
+/// is on-chain (deliver tx confirmed) and the buyer's review window has begun.
+/// Provider has no further peer-side action; this is a milestone status update
+/// only. Localize before sending.
+pub fn job_submitted_user_notify(job_id: &str) -> String {
+    format!(
+        "[Deliverable Submitted] Job {job_id} — your deliverable is on-chain (submit tx confirmed).\n\
+         \x20\x20Waiting for the buyer's review (approve or reject)."
     )
 }
 
@@ -122,12 +237,6 @@ pub fn reward_claimed_user_notify(job_id: &str) -> String {
     format!("[Reward Claimed] Job {job_id} — reward successfully claimed to your wallet.")
 }
 
-/// `Event::WakeupNotify` — resume notice pushed to the user after a network
-/// restart when a pending entry already exists for this jobId.
-pub fn wakeup_resume_user_notify(job_id: &str) -> String {
-    format!("Job {job_id} is back online. Please continue your previous decision.")
-}
-
 /// Preamble exception-escalation hard rule 1) protocol misalignment — content template.
 pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
     format!("[⚠️ Protocol Misalignment] Job {job_id} — repeated clarifications on the same flow, and the remote agent still repeats. Replies have stopped. Please intervene or give a new instruction.")
@@ -159,8 +268,7 @@ pub fn job_auto_completed_user_notify(job_id: &str) -> String {
     )
 }
 
-/// `Event::SubmitDeadlineWarn` — decision prompt shown to the user
-/// (`xmtp_prompt_user.userContent`).
+/// `Event::SubmitDeadlineWarn` — decision prompt shown to the user.
 ///
 /// The short jobId prefix lets the user tell tasks apart at a glance (same as
 /// `job_rejected_user_decision_prompt`). If the user replies `submit now` →
@@ -196,8 +304,7 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
     )
 }
 
-/// `Event::JobAccepted` Step 3 branch A (escrow text deliverable) — `xmtp_send`
-/// content sent to the User Agent.
+/// `Event::JobAccepted` Step 3 branch A (escrow text deliverable) — peer message sent to the User Agent.
 ///
 /// **Do not direct** the peer's CLI — once the User Agent's sub agent receives
 /// this, it follows its own `Event::JobSubmitted` script.
@@ -212,12 +319,11 @@ pub fn deliver_text_to_buyer(job_id: &str) -> String {
     )
 }
 
-/// `Event::JobAccepted` Step 3 branch A (escrow file deliverable) — `xmtp_send`
-/// content sent to the User Agent.
+/// `Event::JobAccepted` Step 3 branch A (escrow file deliverable) — peer message sent to the User Agent.
 ///
 /// The 5 decryption-metadata fields (`fileKey` / `digest` / `salt` / `nonce` /
 /// `secret` / `filename`) are protocol literals; the User Agent's sub agent
-/// parses them and calls `xmtp_file_download` to fetch the local file.
+/// parses them and downloads the local file via the file-attachment flow.
 /// **Do not direct** the peer's CLI.
 pub fn deliver_file_to_buyer(job_id: &str) -> String {
     format!(
@@ -231,5 +337,10 @@ pub fn deliver_file_to_buyer(job_id: &str) -> String {
          filename: <filename returned from A-Step 1>\n\
          [intent:deliver]"
     )
+}
+
+/// Buyer attachment received — notify the provider's user.
+pub fn buyer_attachment_received_user_notify(job_id: &str) -> String {
+    format!("[Job `{job_id}`] The buyer sent an attachment (reference material for this task). File downloaded and saved locally.")
 }
 

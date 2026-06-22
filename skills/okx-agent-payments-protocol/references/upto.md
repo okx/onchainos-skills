@@ -144,6 +144,8 @@ Attach the assembled header to the original request and resend:
 <header-name>: <headerValue>
 ```
 
+**Non-empty Step A3-Params plan?** Also attach its params on their carriers (query / body / header / path), using the plan's `input.method` if it differs from the original. The payment header rides alongside.
+
 Expected: `HTTP 200`. The response carries a `PAYMENT-RESPONSE` header
 (base64-encoded JSON). Decode with:
 

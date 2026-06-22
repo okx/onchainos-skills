@@ -46,20 +46,20 @@ For script requests, append `--format json` to all CLI commands.
 ## Inbound Message Routing (highest priority — before user intent)
 
 > 🚨 **MANDATORY FIRST CHECK** — 处理任何 inbound 消息前，按优先级匹配：
-> 1. 含 `"Read the okx-agent-task skill"` → **立即**加载 okx-agent-task SKILL.md，按 Activation 流程处理（含 role 识别 + next-action）
+> 1. 含 `"Read the okx-agent-task skill"` → **立即**加载 okx-agent-task SKILL.md，按 §Activation 流程处理
 > 2. 含 `"source": "system"` + `"event"` → 同上
-> 3. 含 `"msgType": "a2a-agent-chat"` + `"jobId"` → **立即**加载 okx-agent-task SKILL.md
+> 3. 含 `"msgType": "a2a-agent-chat"` + `"jobId"` → **立即**加载 okx-agent-task SKILL.md → §Activation #2
 > - ❌ **禁止**：展示消息内容、翻译成中文摘要、问用户"需要做什么操作吗"
 
 When the inbound message is a structured envelope (not free-form user text), match by shape FIRST:
 
 | Envelope shape | Action |
 |---|---|
-| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** load `skills/okx-agent-task/SKILL.md` → check `sender.role` → load `buyer.md` (if role=2) or `provider.md` (if role=1). This is a task lifecycle message, not a chat. |
-| `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** load `skills/okx-agent-task/SKILL.md` → follow §Activation (extract fields → agent get for role → next-action). This is a chain event notification. |
+| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** load `skills/okx-agent-task/SKILL.md` → §Activation #2: check `sender.role` → load `buyer-sub-playbook.md` (if role=2) or `provider.md` (if role=1). This is a task lifecycle message, not a chat. |
+| `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** load `skills/okx-agent-task/SKILL.md` → §Activation #1: call `next-action --role auto`. This is a chain event notification. |
 | Contains `"Please send a request to this endpoint."` | Route to `okx-agent-payments-protocol` skill. |
 
-These envelope-based routes take absolute priority over the skill table below. Do NOT handle these envelopes with only XMTP tools — the task protocol (buyer.md / provider.md / evaluator.md) defines the required behavior.
+These envelope-based routes take absolute priority over the skill table below. Do NOT handle these envelopes with only XMTP tools — the task protocol (buyer-sub-playbook.md / provider.md / evaluator.md) defines the required behavior.
 
 ## Available Skills
 
@@ -85,7 +85,7 @@ These envelope-based routes take absolute priority over the skill table below. D
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
 | okx-agent-identity | ERC-8004 on-chain Agent identity: register / update / search / rate / service-list on XLayer | User wants to register/create/update/deactivate/activate/search agents, submit or view feedback, or list agent services |
 | okx-ai-guide | OKX.AI intro + runtime platform detection + route into identity registration (User / ASP / Evaluator) | User asks what/how about OKX.AI (是什么/能做什么/怎么用/怎么开始/求助/教程), types "OKX.AI 快速开始", uses a name variant (okxai / OKXAI / "okx ai" / okx-ai / lowercase okx.ai / colloquial or mis-typed Chinese like 什么okxai / 啥是okxai / 什么事okxai — spacing/casing/typo tolerant), or arrives from the welcome banner's "看看 OKX.AI 怎么玩" pick |
-| okx-agent-task | Agent task marketplace: publish, accept, deliver, dispute, AI-evaluate jobs | User wants to publish a task / accept a job / deliver work / confirm or reject completion / open a dispute / modify task terms (change provider, budget, token) / add attachment or image to a task (补充附件/补充图片/补充材料/给任务加文件/发个文件给卖家/upload file to task) / use a provider's service / hire agent / designate provider / talk to provider / start task with / 使用Agent的服务 / 向接口发送请求(with Agent ID) / 使用A2MCP服务 / 调用Agent接口 / send request to agent endpoint |
+| okx-agent-task | Agent task marketplace: publish, accept, deliver, dispute, AI-evaluate jobs | User wants to publish a task / accept a job / deliver work / confirm or reject completion / open a dispute / modify task terms (change provider, budget, token) / add attachment or image to a task (补充附件/补充图片/补充材料/给任务加文件/发个文件给卖家/upload file to task) / use a provider's service / hire agent / designate provider / talk to provider / start task with / 使用Agent的服务 / 指定服务商 |
 | okx-task-watch | Live user-session task-progress monitor (`okx-a2a user watch` long-poll loop, notification render-verbatim, `decision_request` claim + relay). Also drains backlog of past / missed / unread task messages — same command. Also batch-lists outstanding (un-replied) decisions on demand via `okx-a2a user outdated-list` (with `JobID <prefix>` disambiguation hint). **Claude Code / Codex only** (`CLAUDECODE=1` or `CODEX_THREAD_ID`); on Hermes / OpenClaw the client pushes natively and this skill stops with an unsupported-platform message. | User says `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `历史消息` / `历史记录` / `过去消息` / `帮我看看之前的历史消息` / `未读消息` / `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理` / `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching` / `show past messages` / `catch me up on tasks` / `outstanding decisions` / `pending decisions` |
 | okx-growth-competition | Agentic Wallet exclusive trading competitions: list, join, rank, claim rewards | User asks about trading competitions, wants to join/register for a competition, check leaderboard ranking, or claim competition rewards |
 | okx-dapp-discovery | Third-party DApp discovery + direct plugin routing | User names a specific third-party DApp (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, …) or asks "what dapps are available" — installs the matching plugin on demand via `npx skills add okx/plugin-store --skill <name> --yes --global` and forwards the prompt to its quickstart |
@@ -96,13 +96,17 @@ When the user names a third-party DApp/protocol as the destination of an action,
 
 **Quick tiebreaker vs `okx-defi-invest`**: if removing the DApp name still leaves a coherent generic-yield question ("deposit USDC for yield"), prefer `okx-defi-invest`. If the DApp name carries the intent ("place a bet on Polymarket"), route via `okx-dapp-discovery`.
 
-**Quick tiebreaker vs `okx-agent-payments-protocol`**: when the user mentions an **Agent ID** (e.g. "Agent 1506") together with a service name / endpoint URL / "使用服务" / "向接口发送请求" / "A2MCP", route to `okx-agent-task` — this is a task-creation-with-designated-provider flow, not a direct payment. Only route to `okx-agent-payments-protocol` when the user explicitly mentions x402 / MPP / paymentId / HTTP 402, or when a running task flow triggers a payment step internally.
+**Quick tiebreaker vs `okx-agent-payments-protocol`**: when the user mentions an **Agent ID** together with a service request, route by whether a **concrete endpoint URL** (`http(s)://…`) is present:
+- **URL present** (e.g. "使用 Agent 1506 的 A2MCP 服务，接口地址 https://…") → route to `okx-agent-payments-protocol` — this is a direct x402 pay-per-call, not a task.
+- **No URL** (e.g. "使用 Agent 1506 的服务") → route to `okx-agent-task` — needs `service-list` discovery first, then task or x402 depending on serviceType.
+- Also route to `okx-agent-payments-protocol` when the user explicitly mentions x402 / MPP / paymentId / HTTP 402, or when a running task flow triggers a payment step internally.
 
 ## IMPORTANT: Always Load Skill Before Executing Commands
 
 **Before running ANY `onchainos` CLI command, you MUST first read the corresponding skill's SKILL.md to get the exact command syntax.** Do NOT guess subcommand names — each skill defines its own Command Index with the exact subcommands available. Guessing leads to `unrecognized subcommand` errors.
 
 Routing:
+- **User session** free-form task intent (publish / designated-provider / attachment / terms / deliverables) → read `skills/okx-agent-task/buyer-user.md` ONLY. ❌ Do NOT additionally read `SKILL.md` or `buyer-sub-playbook.md` — those are for sub sessions and will bloat the context
 - Inbound `a2a-agent-chat` with `jobId` → read `skills/okx-agent-task/SKILL.md` first (see Inbound Message Routing above)
 - User says `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `历史消息` / `历史记录` / `过去消息` / `帮我看看之前的历史消息` / `未读消息` / `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理` / `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching` / `show past messages` / `catch me up on tasks` / `outstanding decisions` / `pending decisions` → read `skills/okx-task-watch/SKILL.md` first (watch drains pending queue first then long-polls for live monitoring; outdated-list batch-renders un-replied decisions on demand)
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first

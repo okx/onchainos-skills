@@ -1,7 +1,7 @@
 //! Start finding jobs — auto-discover available jobs (loop-match for every online Provider Agent).
 //!
 //! Flow:
-//! 1. Call `onchainos agent get` (subprocess) → fetch all of the user's Agents.
+//! 1. Call `onchainos agent get-my-agents` (subprocess) → fetch all of the user's Agents.
 //! 2. Filter by status=1 (online) + role=2 (provider).
 //! 3. For each Agent, call `recommend-task` (POST /priapi/v1/aieco/task/job/match).
 //! 4. Print matched results grouped by agent.
@@ -19,7 +19,7 @@ const STATUS_ONLINE: i64 = 1;
 
 pub async fn handle_find_jobs() -> Result<()> {
     // Step 1: fetch the current active account's agents — `fetch_my_agents`
-    // shells out to `onchainos agent get` and filters by XLayer ownerAddress.
+    // shells out to `onchainos agent get-my-agents` and filters by XLayer ownerAddress.
     let agent_list = fetch_my_agents().await;
     if agent_list.is_empty() {
         println!("⚠ No registered Agents found for the current wallet. Please create one first with `onchainos agent create --role provider --name <agent name> --description <agent description>`.");

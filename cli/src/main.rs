@@ -127,12 +127,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::competition::CompetitionCommand,
     },
-    /// A2A Pay — Buyer ↔ Seller charge / escrow flow (Smart-Account backend)
-    #[command(name = "a2a-pay")]
-    A2aPay {
-        #[command(subcommand)]
-        command: commands::payment::a2a_pay::A2aPayCommand,
-    },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
@@ -238,7 +232,6 @@ async fn run() {
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::payment::execute(command).await,
         Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
-        Commands::A2aPay { command } => commands::payment::a2a_pay::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Strategy { command } => commands::strategy::execute(&ctx, *command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,

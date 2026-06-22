@@ -55,6 +55,22 @@ pub async fn handle_complete(
         println!("✓ Task review approved (escrow); status → complete; funds released.");
         println!("  txHash: {}", result.tx_hash);
     } else {
+        // ── x402: deliverable gate — block complete if replay never delivered. ────
+        let has_deliverable = crate::commands::agent_commerce::task::common::deliverables::read_manifest("buyer", job_id)
+            .ok()
+            .flatten()
+            .map(|m| !m.entries.is_empty())
+            .unwrap_or(false);
+        if !has_deliverable {
+            crate::output::success(serde_json::json!({
+                "ok": false,
+                "error": "x402_no_deliverable",
+                "message": "Cannot complete: no deliverable received. The x402 endpoint replay likely failed (replaySuccess=false). Resolve the replay issue before completing.",
+                "jobId": job_id,
+            }));
+            return Ok(());
+        }
+
         // ── x402: /direct/complete single-signature (funds were already paid during accept). ────
         let resp = client.post_with_identity(
             &client.endpoint(job_id, "direct/complete"),

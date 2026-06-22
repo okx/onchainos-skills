@@ -30,13 +30,6 @@ impl Role {
         }
     }
 
-    pub fn as_canonical_str(&self) -> &'static str {
-        match self {
-            Role::Buyer     => "buyer",
-            Role::Provider    => "provider",
-            Role::Evaluator => "evaluator",
-        }
-    }
 }
 
 // ─── Status ─────────────────────────────────────────────────────────────
@@ -190,6 +183,15 @@ pub enum Event {
     JobCreated,
     /// Provider apply on-chain (status remains created; pass-through event; notifies the provider that just applied).
     ProviderApplied,
+    /// ASP declined a buyer-designated assignment via `asp/reject` API (off-chain;
+    /// notifies the buyer to re-route to another ASP or fall back to public).
+    JobProviderReject,
+    /// Buyer rejected the current ASP via `user/reject` API (off-chain;
+    /// notifies the ASP that they are no longer needed for this task).
+    JobUserReject,
+    /// Buyer designated a specific ASP for the task (private-task path; status remains created;
+    /// notifies the chosen provider that they have been selected and should start negotiation).
+    JobAspSelected,
     /// Buyer confirm-accept on-chain (status enters accepted; notifies provider).
     JobAccepted,
     /// Provider deliver on-chain (status enters submitted; notifies buyer to review).
@@ -285,18 +287,14 @@ pub enum Event {
     // ── Buyer terms-change tx receipts (no status change, stays created) ─
     /// setTokenAndBudget tx on-chain success (notifies all sub sessions on the buyer side; if none, notifies backup).
     TaskTokenBudgetChange,
-    /// setProviderAndAgentId tx on-chain success (notifies all sub sessions on the buyer side; if none, notifies backup).
-    TaskProviderChange,
 
-    // ── User-session pseudo events (triggered by user command, no status change) ──
-    /// After set-provider succeeds, the user session immediately kicks off the new-provider flow
-    /// (without waiting for the on-chain task_provider_change confirmation).
-    SwitchProvider,
-
-    // ── Attachment relay event (buyer-local dispatch, no status change) ─
+    // ── Attachment relay events (local dispatch, no status change) ──────
     /// User session dispatched `[ATTACHMENT_ADDED]`; sub session uploads + forwards the file to the provider.
     /// Can fire in Created (with active sub session) or Accepted — multi-status, so freshness check is skipped.
     AttachmentAdded,
+    /// Provider receives `[intent:attachment]` from the buyer; downloads + saves the file locally.
+    /// Can fire in Created (negotiation phase) or Accepted (mid-task) — multi-status.
+    BuyerAttachmentReceived,
 
     // ── Deliverable relay event (buyer-local dispatch, no status change) ─
     /// Buyer receives provider's `[intent:deliver]` P2P message; downloads + saves the deliverable
@@ -304,12 +302,8 @@ pub enum Event {
     DeliverableReceived,
 
     // ── Negotiation relay events (buyer-local dispatch, no status change) ─
-    /// Provider's natural-language reply (no [intent:*] marker); buyer.md Route 4 → negotiate_reply.
+    /// Provider's natural-language reply; buyer-sub-playbook.md Route 6 → negotiate_reply.
     NegotiateReply,
-    /// Provider replied with [intent:ack] (accepts PROPOSE); buyer.md Route 3 → negotiate_ack.
-    NegotiateAck,
-    /// Provider replied with [intent:counter] (counter-proposal); buyer.md Route 3 → negotiate_counter.
-    NegotiateCounter,
 
     // ── Network / restart recovery events (pass-through, no status change) ─
     /// After a network / machine restart, the backend notifies the agent to resume this task's script.
@@ -334,6 +328,9 @@ impl Event {
             // Main task flow
             "job_created"               => Event::JobCreated,
             "provider_applied"          => Event::ProviderApplied,
+            "job_provider_reject"       => Event::JobProviderReject,
+            "job_user_reject"           => Event::JobUserReject,
+            "job_asp_selected"          => Event::JobAspSelected,
             "job_accepted"              => Event::JobAccepted,
             "job_submitted"             => Event::JobSubmitted,
             "job_completed"             => Event::JobCompleted,
@@ -375,17 +372,13 @@ impl Event {
             "cooldown_entered"          => Event::CooldownEntered,
             // Buyer terms-change tx receipts
             "task_token_budget_change"  => Event::TaskTokenBudgetChange,
-            "task_provider_change"      => Event::TaskProviderChange,
-            // User-session pseudo events
-            "switch_provider"           => Event::SwitchProvider,
-            // Attachment relay (buyer-local dispatch)
+            // Attachment relay (local dispatch)
             "attachment_added"          => Event::AttachmentAdded,
+            "buyer_attachment_received" => Event::BuyerAttachmentReceived,
             // Deliverable relay (buyer-local dispatch)
             "deliverable_received"      => Event::DeliverableReceived,
             // Negotiation relay (buyer-local dispatch)
             "negotiate_reply"           => Event::NegotiateReply,
-            "negotiate_ack"             => Event::NegotiateAck,
-            "negotiate_counter"         => Event::NegotiateCounter,
             // Network / restart recovery
             "wakeup_notify"             => Event::WakeupNotify,
             other                       => Event::Other(other.to_string()),
@@ -396,6 +389,9 @@ impl Event {
         match self {
             Event::JobCreated             => "job_created",
             Event::ProviderApplied        => "provider_applied",
+            Event::JobProviderReject       => "job_provider_reject",
+            Event::JobUserReject          => "job_user_reject",
+            Event::JobAspSelected         => "job_asp_selected",
             Event::JobAccepted            => "job_accepted",
             Event::JobSubmitted           => "job_submitted",
             Event::JobCompleted           => "job_completed",
@@ -430,13 +426,10 @@ impl Event {
             Event::StakeStopped           => "stake_stopped",
             Event::CooldownEntered        => "cooldown_entered",
             Event::TaskTokenBudgetChange  => "task_token_budget_change",
-            Event::TaskProviderChange    => "task_provider_change",
-            Event::SwitchProvider         => "switch_provider",
             Event::AttachmentAdded        => "attachment_added",
+            Event::BuyerAttachmentReceived => "buyer_attachment_received",
             Event::DeliverableReceived    => "deliverable_received",
             Event::NegotiateReply         => "negotiate_reply",
-            Event::NegotiateAck           => "negotiate_ack",
-            Event::NegotiateCounter       => "negotiate_counter",
             Event::WakeupNotify           => "wakeup_notify",
             Event::Other(s)               => s.as_str(),
         }
@@ -449,10 +442,10 @@ impl Event {
             Event::JobVisibilityChanged  => "visibility toggle failed",
             Event::JobPaymentModeChanged => "payment mode switch failed",
             Event::TaskTokenBudgetChange => "payment terms change failed",
-            Event::TaskProviderChange    => "provider change failed",
             Event::JobAutoCompleted   => "auto-complete failed",
             Event::RewardClaimed      => "reward claim failed",
             Event::DisputeApproved    => "dispute initiation failed",
+            Event::JobProviderReject   => "asp reject failed",
             Event::Staked             => "staking failed",
             Event::UnstakeRequested   => "unstake failed",
             Event::UnstakeClaimed     => "unstake claim failed",
@@ -475,10 +468,10 @@ impl Event {
 pub fn status_when_event(e: &Event) -> Status {
     match e {
         // Main flow
-        Event::JobCreated | Event::ProviderApplied
-        | Event::TaskTokenBudgetChange | Event::TaskProviderChange
-        | Event::SwitchProvider
-        | Event::NegotiateReply | Event::NegotiateAck | Event::NegotiateCounter => Status::Created,
+        Event::JobCreated | Event::ProviderApplied | Event::JobAspSelected
+        | Event::JobProviderReject | Event::JobUserReject
+        | Event::TaskTokenBudgetChange
+        | Event::NegotiateReply => Status::Created,
         Event::JobAccepted | Event::DeliverableReceived                       => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
         Event::JobRejected | Event::RejectExpired                             => Status::Rejected,
@@ -517,6 +510,9 @@ pub fn status_when_event(e: &Event) -> Status {
         // attachment_added is dispatched by the user session; can fire at Created or Accepted —
         // multi-status, so freshness check is skipped via PSEUDO_EVENTS; placeholder here.
         Event::AttachmentAdded                                                  => Status::Other("attachment".to_string()),
+        // buyer_attachment_received fires on the provider when it receives [intent:attachment];
+        // can occur in Created (negotiation) or Accepted (mid-task) — multi-status placeholder.
+        Event::BuyerAttachmentReceived                                          => Status::Other("attachment".to_string()),
         // wake-up is a pass-through event; the real status lives in envelope.message.jobStatus.
         // Return a placeholder status here — agents must not drive next-action with wakeup_notify.
         Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),
@@ -588,5 +584,34 @@ mod tests {
     fn provider_applied_keeps_status_created() {
         // Pass-through event does not change status.
         assert_eq!(status_when_event(&Event::ProviderApplied), Status::Created);
+    }
+
+    #[test]
+    fn parse_new_asp_events() {
+        assert_eq!(Event::parse("job_provider_reject"), Event::JobProviderReject);
+        assert_eq!(Event::parse("job_user_reject"), Event::JobUserReject);
+        assert_eq!(Event::parse("job_asp_selected"), Event::JobAspSelected);
+    }
+
+    #[test]
+    fn new_asp_events_as_str_roundtrip() {
+        for evt in [Event::JobProviderReject, Event::JobUserReject, Event::JobAspSelected] {
+            let s = evt.as_str();
+            assert_eq!(Event::parse(s), evt, "roundtrip failed for {s}");
+        }
+    }
+
+    #[test]
+    fn new_asp_events_keep_status_created() {
+        assert_eq!(status_when_event(&Event::JobProviderReject), Status::Created);
+        assert_eq!(status_when_event(&Event::JobUserReject), Status::Created);
+        assert_eq!(status_when_event(&Event::JobAspSelected), Status::Created);
+    }
+
+    #[test]
+    fn parse_status_or_event_new_asp_events() {
+        assert_eq!(parse_status_or_event("job_provider_reject"), Event::JobProviderReject);
+        assert_eq!(parse_status_or_event("job_user_reject"), Event::JobUserReject);
+        assert_eq!(parse_status_or_event("job_asp_selected"), Event::JobAspSelected);
     }
 }

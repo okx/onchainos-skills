@@ -9,6 +9,7 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::payment_mode::PaymentMode;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
+use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
 
 /// deliver — submit deliverable
@@ -52,7 +53,7 @@ pub async fn handle_deliver(
         bail!(
             "Deliver rejected: current task status = {} ({}), must be accepted (1) before delivery.\n\
              If you just applied, wait for the buyer to confirm-accept on-chain and receive the `job_accepted` system notification before delivering.\n\
-             Do NOT call xmtp_send to rush the buyer — confirm-accept is a user decision driven by the buyer's session.",
+             Do NOT call `okx-a2a xmtp-send` to rush the buyer — confirm-accept is a user decision driven by the buyer's session.",
             status_int,
             status.as_str(),
         );
@@ -145,8 +146,8 @@ pub async fn handle_deliver(
                 counterparty_name: None,
             };
             match super::super::common::deliverables::handle_save(&params) {
-                Ok(r) => eprintln!("[deliver] deliverable auto-saved: {}", r.path),
-                Err(e) => eprintln!("[deliver] deliverable auto-save failed (non-blocking): {e}"),
+                Ok(r) => { if DEBUG_LOG { eprintln!("[deliver] deliverable auto-saved: {}", r.path); } }
+                Err(e) => { if DEBUG_LOG { eprintln!("[deliver] deliverable auto-save failed (non-blocking): {e}"); } }
             }
         }
     } else if !deliverable_text.is_empty() {
@@ -169,8 +170,8 @@ pub async fn handle_deliver(
                 counterparty_name: None,
             };
             match super::super::common::deliverables::handle_save(&params) {
-                Ok(r) => eprintln!("[deliver] text deliverable auto-saved: {}", r.path),
-                Err(e) => eprintln!("[deliver] text deliverable auto-save failed (non-blocking): {e}"),
+                Ok(r) => { if DEBUG_LOG { eprintln!("[deliver] text deliverable auto-saved: {}", r.path); } }
+                Err(e) => { if DEBUG_LOG { eprintln!("[deliver] text deliverable auto-save failed (non-blocking): {e}"); } }
             }
         }
     }
@@ -179,8 +180,6 @@ pub async fn handle_deliver(
     println!("  txHash: {tx_hash}");
     println!();
     println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
-    println!("    - Do NOT call `xmtp_send` to tell the buyer \"deliverable is on-chain, please review\" or similar");
     println!("    - You will receive a `job_submitted` system notification after on-chain confirmation");
-    println!("    - Once notified, run `onchainos agent next-action --jobid {job_id} --event job_submitted --role provider`");
     Ok(())
 }

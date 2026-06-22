@@ -2,17 +2,19 @@
 //!
 //! User action: publish a task — `onchainos agent create-task`.
 //!
-//! Identity check: invokes the identity-module CLI (`onchainos agent get`) to verify
+//! Identity check: invokes the identity-module CLI (`onchainos agent get-my-agents`) to verify
 //! that the current user has a buyer identity (role=1) before running the publish flow.
 
 use anyhow::{bail, Result};
 use std::time::Duration;
 
 use crate::audit;
+
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::{
-    self, fetch_my_agents, network::task_api_client::TaskApiClient,
-    AGENT_ROLE_BUYER, XLAYER_CHAIN_ID,
+    self, fetch_my_agents_by_role, network::task_api_client::TaskApiClient,
+    payment_mode::PaymentMode,
+    AGENT_ROLE_BUYER, XLAYER_CHAIN_ID, DEBUG_LOG,
 };
 use crate::commands::agent_commerce::task::signing;
 
@@ -23,10 +25,6 @@ pub const MIN_DESCRIPTION_CHARS: usize = 20;
 pub const MAX_DESCRIPTION_CHARS: usize = 2000;
 pub const MAX_BUDGET_DECIMALS: usize = 5;
 pub const MAX_SUMMARY_CHARS: usize = 200;
-pub const ACCEPT_MIN: u64 = 10 * 60;
-pub const ACCEPT_MAX: u64 = 180 * 86400;
-pub const SUBMIT_MIN: u64 = 60;
-pub const SUBMIT_MAX: u64 = 180 * 86400;
 pub const MAX_TITLE_CHARS: usize = 30;
 
 // ─── Parameter struct ────────────────────────────────────────────────────
@@ -37,20 +35,22 @@ pub struct CreateTaskParams {
     pub budget: f64,
     pub max_budget: f64,
     pub currency: String,
-    pub deadline_open: String,
-    pub deadline_submit: String,
     pub title: Option<String>,
     pub provider: Option<String>,
     pub attachments: Option<Vec<String>>,
     pub endpoint: Option<String>,
+    pub payment_mode: Option<String>,
+    pub service_id: Option<String>,
+    pub service_params: Option<String>,
+    pub service_token_address: Option<String>,
+    pub service_token_amount: Option<String>,
+    pub visibility: i32,
 }
 
 struct ValidatedParams {
     currency: String,
     title: String,
     summary: String,
-    open_secs: u64,
-    submit_secs: u64,
 }
 
 impl CreateTaskParams {
@@ -76,24 +76,6 @@ impl CreateTaskParams {
         validate_budget(self.max_budget)?;
         validate_budget_decimals(self.max_budget)?;
 
-        let open_secs = parse_duration_secs(&self.deadline_open)
-            .map_err(|e| anyhow::anyhow!("--deadline-open {e}"))?;
-        if open_secs < ACCEPT_MIN {
-            bail!("--deadline-open must be at least 10m (10 minutes); current value {}, allowed range 10m ~ 180d", self.deadline_open);
-        }
-        if open_secs > ACCEPT_MAX {
-            bail!("--deadline-open must not exceed 180d (6 months); current value {}, allowed range 10m ~ 180d", self.deadline_open);
-        }
-
-        let submit_secs = parse_duration_secs(&self.deadline_submit)
-            .map_err(|e| anyhow::anyhow!("--deadline-submit {e}"))?;
-        if submit_secs < SUBMIT_MIN {
-            bail!("--deadline-submit must be at least 1m (1 minute); current value {}, allowed range 1m ~ 180d", self.deadline_submit);
-        }
-        if submit_secs > SUBMIT_MAX {
-            bail!("--deadline-submit must not exceed 180d (6 months); current value {}, allowed range 1m ~ 180d", self.deadline_submit);
-        }
-
         let title = match &self.title {
             Some(t) if t.chars().count() > MAX_TITLE_CHARS => t.chars().take(MAX_TITLE_CHARS).collect(),
             Some(t) => t.clone(),
@@ -105,6 +87,10 @@ impl CreateTaskParams {
             None => self.description.chars().take(MAX_SUMMARY_CHARS).collect(),
         };
 
+        if self.visibility == 1 && self.provider.is_none() {
+            bail!("visibility=1 (private) requires --provider; either set a provider or use --visibility 0 (public)");
+        }
+
         if let Some(ref files) = self.attachments {
             for f in files {
                 if !std::path::Path::new(f).exists() {
@@ -113,26 +99,11 @@ impl CreateTaskParams {
             }
         }
 
-        Ok(ValidatedParams { currency, title, summary, open_secs, submit_secs })
+        Ok(ValidatedParams { currency, title, summary })
     }
 }
 
 // ─── Validation helpers ─────────────────────────────────────────────────
-
-pub fn parse_duration_secs(s: &str) -> Result<u64> {
-    let s = s.trim();
-    if let Some(d) = s.strip_suffix('d') {
-        Ok(d.parse::<u64>()? * 86400)
-    } else if let Some(h) = s.strip_suffix('h') {
-        Ok(h.parse::<u64>()? * 3600)
-    } else if let Some(m) = s.strip_suffix('m') {
-        Ok(m.parse::<u64>()? * 60)
-    } else if let Some(sec) = s.strip_suffix('s') {
-        Ok(sec.parse::<u64>()?)
-    } else {
-        bail!("please specify a time unit, e.g. 3d (days), 72h (hours), 30m (minutes), 3600s (seconds)")
-    }
-}
 
 pub fn normalize_currency(currency: &str) -> Result<String> {
     let normalized: String = currency.chars()
@@ -173,10 +144,7 @@ pub fn validate_budget_decimals(budget: f64) -> Result<()> {
 // ─── Identity check ─────────────────────────────────────────────────────
 
 pub(crate) async fn resolve_buyer_agent() -> Result<(String, String)> {
-    // fetch_my_agents() spawns `onchainos agent get` and filters to the current
-    // active account's XLayer ownerAddress — the new response shape returns
-    // multiple ownerAddress groups, so this filter is now mandatory client-side.
-    let agents = fetch_my_agents().await;
+    let agents = fetch_my_agents_by_role("buyer").await;
 
     let buyer = agents.iter()
         .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))
@@ -201,15 +169,16 @@ pub async fn handle_create(
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (buyer_agent_id, _) = resolve_buyer_agent().await?;
-    eprintln!("[task-create] buyer identity check passed (agentId: {buyer_agent_id})");
+    if DEBUG_LOG {
+        eprintln!("[task-create] buyer identity check passed (agentId: {buyer_agent_id})");
+    }
 
     let balance_warning = match common::ensure_sufficient_balance(params.budget, &validated.currency).await {
         Err(e) => {
-            eprintln!("[task-create] ⚠ balance warning: {e}");
-            Some(format!(
-                "⚠️ Insufficient {} balance on XLayer (need {} {}). Task created, but payment may fail later — please top up via swap.",
-                validated.currency, params.budget, validated.currency,
-            ))
+            if DEBUG_LOG {
+                eprintln!("[task-create] ⚠ balance warning: {e}");
+            }
+            Some(format!("⚠️ {e}"))
         }
         Ok(()) => None,
     };
@@ -224,15 +193,28 @@ pub async fn handle_create(
         "paymentTokenAmount": params.budget.to_string(),
         "paymentMostTokenAmount": params.max_budget.to_string(),
         "chainId":            XLAYER_CHAIN_ID,
-        "expireConfig": {
-            "acceptDeadline":    validated.open_secs,
-            "submittedDeadline": validated.submit_secs
+        "paymentMode":        match params.payment_mode.as_deref() {
+            None => 0,
+            Some("escrow") => PaymentMode::Escrow.as_int(),
+            Some("x402") => PaymentMode::X402.as_int(),
+            Some(other) => bail!("unsupported --payment-mode \"{other}\"; valid values: escrow, x402"),
         },
-        "paymentMode":        0,
-        "visibility":         1
+        "visibility":         params.visibility
     });
     if let Some(ref provider_id) = params.provider {
         body["providerAgentId"] = serde_json::json!(provider_id);
+    }
+    if let Some(ref sid) = params.service_id {
+        body["serviceId"] = serde_json::json!(sid);
+    }
+    if let Some(ref sp) = params.service_params {
+        body["serviceParams"] = serde_json::json!(sp);
+    }
+    if let Some(ref sta) = params.service_token_address {
+        body["serviceTokenAddress"] = serde_json::json!(sta);
+    }
+    if let Some(ref stm) = params.service_token_amount {
+        body["serviceTokenAmount"] = serde_json::json!(stm);
     }
 
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
@@ -252,12 +234,21 @@ pub async fn handle_create(
     if let Some(ref provider_id) = params.provider {
         super::negotiate::save_designated_provider_with_endpoint(&job_id, provider_id, params.endpoint.as_deref())?;
     }
+    let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(&job_id).await;
 
-    let tx_hash = signing::sign_uop_and_broadcast(
+    let tx_hash = match signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
         &job_id, 1, &buyer_agent_id,
         None,
-    ).await?;
+    ).await {
+        Ok(tx_hash) => tx_hash,
+        Err(err) => {
+            if let Some(prebind) = &provider_prebind {
+                prebind.rollback_if_created().await;
+            }
+            return Err(err);
+        }
+    };
 
     audit::log(
         "cli",
@@ -271,6 +262,7 @@ pub async fn handle_create(
             format!("budget={}", params.budget),
             format!("maxBudget={}", params.max_budget),
             format!("designatedProvider={}", params.provider.as_deref().unwrap_or("")),
+            format!("paymentMode={}", params.payment_mode.as_deref().unwrap_or("unset")),
             format!("txHash={tx_hash}"),
         ]),
         None,
@@ -296,14 +288,15 @@ pub async fn handle_create(
         if params.provider.is_some() {
             println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
         } else {
-            println!("Next: wait for the on-chain confirmation; provider recommendations will be generated automatically.");
+            println!("Next: wait for the on-chain confirmation; the task is public — ASPs will discover it and apply.");
         }
     }
     if super::content::is_cli_mode() {
-        println!("[Watch] Per `okx-task-watch` SKILL.md, start the monitor now:");
-        println!("okx-a2a user watch --once --json --poll-ms 1000 --limit 50 --job-id {job_id}");
+        println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
         println!();
-        println!("If you haven't read `okx-task-watch/SKILL.md` in this session, read it first.");
+        println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-task-watch/SKILL.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
+        println!();
+        println!("**Step 2 — Execute the watch per `skills/okx-task-watch/SKILL.md` §Run watch, scoped to job-id `{job_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read SKILL.md first.)");
     }
     println!("🛑 Do NOT call set-payment-mode.");
     Ok(())

@@ -7,6 +7,8 @@ use clap::Subcommand;
 
 use crate::commands::Context;
 
+use task::common::DEBUG_LOG;
+
 /// Shared `agent` namespace for identity + task-system commands.
 #[derive(Subcommand)]
 pub enum AgentCommand {
@@ -78,47 +80,78 @@ pub enum AgentCommand {
         #[arg(long)] budget: f64,
         #[arg(long = "max-budget")] max_budget: f64,
         #[arg(long)] currency: String,
-        #[arg(long = "deadline-open")]  deadline_open: String,
-        #[arg(long = "deadline-submit")] deadline_submit: String,
         #[arg(long)] title: Option<String>,
-        /// Specified provider agentId (skip recommend, negotiate directly with this provider or x402 accept)
+        /// Specified provider agentId (skip asp-match, negotiate directly with this provider or x402 accept)
         #[arg(long)] provider: Option<String>,
         /// Designated service endpoint (persisted for multi-service providers)
         #[arg(long)] endpoint: Option<String>,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")] attachments: Option<Vec<String>>,
+        /// Payment mode to set at creation time (escrow / x402).
+        #[arg(long = "payment-mode")] payment_mode: Option<String>,
+        /// Service ID from asp/match response
+        #[arg(long = "service-id")] service_id: Option<String>,
+        /// Service input parameters (natural language string)
+        #[arg(long = "service-params")] service_params: Option<String>,
+        /// Service token contract address
+        #[arg(long = "service-token-address")] service_token_address: Option<String>,
+        /// Service price (from asp/match feeAmount)
+        #[arg(long = "service-token-amount")] service_token_amount: Option<String>,
+        /// Task visibility: 1 = private (requires --provider), 0 = public
+        #[arg(long, default_value = "1")] visibility: i32,
+        /// Accepted for compatibility but ignored — buyer identity is auto-resolved.
+        #[arg(long = "agentId", alias = "agent-id", hide = true)]
+        _agent_id: Option<String>,
     },
 
-    /// Get recommended providers for a task
-    Recommend {
+    /// Search matching ASPs (pre-publish or post-publish)
+    #[command(name = "asp-match")]
+    AspMatch {
+        /// Task description (required when no --job-id)
+        #[arg(long = "task-desc", default_value = "")] task_desc: String,
+        /// Job ID (required when task already exists)
+        #[arg(long = "job-id")] job_id: Option<String>,
+        /// Narrow to this ASP's services
+        #[arg(long = "provider-agent-id")] provider_agent_id: Option<String>,
+        /// Page number
+        #[arg(long, default_value = "1")] page: usize,
+        /// Buyer agent ID
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+        /// Output format: "json" for raw JSON (no formatted list)
+        #[arg(long, default_value = "")] format: String,
+    },
+
+    /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
+    #[command(name = "set-asp")]
+    SetAsp {
+        job_id: String,
+        #[arg(long = "provider-agent-id")] provider_agent_id: String,
+        #[arg(long = "service-id")] service_id: String,
+        #[arg(long = "service-type")] service_type: String,
+        #[arg(long = "service-params")] service_params: String,
+        #[arg(long = "service-token-address")] service_token_address: String,
+        #[arg(long = "service-token-amount")] service_token_amount: String,
+        #[arg(long = "payment-token-symbol")] payment_token_symbol: Option<String>,
+        #[arg(long = "payment-token-amount")] payment_token_amount: Option<String>,
+        #[arg(long = "payment-most-token-amount")] payment_most_token_amount: Option<String>,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
+
+    /// Clear ASP + service fields (off-chain)
+    #[command(name = "reset-asp")]
+    ResetAsp {
         job_id: String,
         #[arg(long = "agent-id")] agent_id: Option<String>,
-        #[arg(long)] next: bool,
-        #[arg(long)] current: bool,
-        #[arg(long)] page: Option<usize>,
-        #[arg(long = "next-page")] next_page: bool,
-        /// Enqueue the recommendation card as a `pending-decisions-v2`
-        /// `recommend_pick` decision and emit the standard "push card via
-        /// xmtp_prompt_user" playbook. Requires `--sub-key`. By default the
-        /// CLI reuses the canonical English card written to
-        /// `~/.onchainos/task/<jobId>/recommend-cards.txt`; pass
-        /// `--user-content "<localized text>"` to enqueue a sub-prepared
-        /// (e.g. translated) version instead.
-        #[arg(long = "emit-decision")] emit_decision: bool,
-        /// Full XMTP sessionKey (from `session_status`). Required with
-        /// `--emit-decision`.
-        #[arg(long = "sub-key")] sub_key: Option<String>,
-        /// Task title for the decision label (optional). Defaults to
-        /// `<title>` placeholder.
-        #[arg(long = "job-title")] job_title: Option<String>,
-        /// Pre-localized card body to enqueue instead of the auto-written
-        /// canonical English card file. Use when the sub session needs to
-        /// translate fields the user-session runtime cannot localize at
-        /// render time.
-        #[arg(long = "user-content")] user_content: Option<String>,
     },
 
-    /// Mark a provider as failed negotiation (excluded from future recommend lists)
+    /// Reject current ASP (off-chain, triggers job_user_reject)
+    #[command(name = "user-reject")]
+    UserReject {
+        job_id: String,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
+
+    /// Mark a provider as failed negotiation (excluded from future asp-match lists)
     #[command(name = "mark-failed")]
     MarkFailed {
         job_id: String,
@@ -143,7 +176,7 @@ pub enum AgentCommand {
     /// Aggregated non-terminal tasks across **all agents under the current
     /// active account**, with `myRole` / `counterpartyAgentId` annotations so
     /// the user-session can route ad-hoc user instructions to the correct sub
-    /// session (via `xmtp_sessions_query` → `xmtp_dispatch_session`).
+    /// session (via `okx-a2a session query` → `okx-a2a session send --no-wait`).
     /// Status filter: includes 0 created / 1 accepted / 2 submitted / 3 refused
     /// / 4 disputed by default; pass `--include-terminal` to also list 5-9.
     #[command(name = "active-tasks")]
@@ -167,17 +200,11 @@ pub enum AgentCommand {
         #[arg(long)] endpoint: Option<String>,
     },
 
-    /// Client confirms provider and executes payment (setPaymentMode must be done first)
+    /// Client confirms provider and executes payment (setPaymentMode must be done first).
+    /// All parameters are auto-resolved from the task detail API.
     #[command(name = "confirm-accept")]
     ConfirmAccept {
         job_id: String,
-        #[arg(long = "provider-agent-id")] provider_agent_id: String,
-        /// If unspecified, auto-fetched from the task detail's paymentType
-        #[arg(long = "payment-mode")] payment_mode: Option<String>,
-        /// Negotiated payment token symbol (e.g. USDT); required for escrow
-        #[arg(long = "token-symbol")] token_symbol: Option<String>,
-        /// Negotiated payment amount (human-readable, e.g. "50"); required for escrow
-        #[arg(long = "token-amount")] token_amount: Option<String>,
     },
 
     /// x402 Phase 2b: direct/accept after job_payment_mode_changed + x402 endpoint interaction
@@ -297,11 +324,37 @@ pub enum AgentCommand {
         #[arg(long)] role: Option<String>,
     },
 
+    /// Pre-flight readiness check: wallet login + agent identity + communication channel.
+    /// Pure read-only diagnostic — does not modify any state.
+    #[command(name = "preflight")]
+    Preflight {
+        /// Role to check identity for: buyer | provider | evaluator (also accepts 1/2/3)
+        #[arg(long)] role: String,
+    },
+
+    /// Prepare-create: validate fields + preflight + designated-route in one call.
+    /// Returns structured JSON for the confirmation form. Does NOT create the task.
+    #[command(name = "prepare-create")]
+    PrepareCreate {
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        budget: Option<f64>,
+        #[arg(long = "max-budget")]
+        max_budget: Option<f64>,
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
     /// Look up a single agent's profile by `agentId` (any owner, not limited
-    /// to current account). Wrapper over `agent get --agent-ids` that flattens
+    /// to current account). Wrapper over `agent get-agents --agent-ids` that flattens
     /// the `list[].agentList[]` nesting and returns the matched agent as a
     /// single flat object. Used for verifying peer / designated provider
-    /// identities (e.g. buyer.md §3.4 Provider validation).
+    /// identities (e.g. buyer-sub-playbook.md Provider validation).
     ///
     /// `ok: false` when not found / agentId malformed; otherwise `data` is
     /// the agent object `{agentId, name, role, status, ownerAddress,
@@ -320,17 +373,17 @@ pub enum AgentCommand {
         agent_id: String,
     },
 
-    /// Start accepting jobs: call `agent get` to pull all online provider agents and loop recommend-task over each
+    /// Start accepting jobs: call `agent get-my-agents` to pull all online provider agents and loop recommend-task over each
     #[command(name = "find-jobs")]
     FindJobs,
 
     /// Provider applies for a task (apply API → sign → broadcast)
     Apply {
         job_id: String,
-        /// Negotiated token amount from `[intent:confirm]`. **Required**; must be > 0 (empty / 0 = apply for free, irreversible — CLI rejects).
+        /// Negotiated token amount. **Required**; must be > 0 (empty / 0 = apply for free, irreversible — CLI rejects).
         #[arg(long = "token-amount")]
         token_amount: String,
-        /// Actual task currency (USDT / USDG); read from `[intent:confirm]` / `[intent:propose]`, do not assume USDT
+        /// Actual task currency (USDT / USDG); read from negotiation context, do not assume USDT
         #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "agent-id")]
@@ -357,22 +410,30 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: String,
     },
 
-
-
-    /// Save negotiated payment params locally (agent calls after negotiation)
-    #[command(name = "save-agreed")]
-    SaveAgreed {
+    /// Provider declines a buyer-designated task (off-chain backend call, no signing).
+    /// Used by the `job_asp_selected` flow when capability / price gate fails.
+    #[command(name = "asp-reject")]
+    AspReject {
         job_id: String,
-        #[arg(long = "provider")]
-        provider_agent_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        /// Buyer agent ID (used to query task detail and validate budget ceiling)
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        /// Provider agentId (required)
+        #[arg(long = "agent-id")] agent_id: String,
+        /// Optional decline reason recorded by the backend.
+        #[arg(long, default_value = "")] reason: String,
     },
+
+    /// Provider cold-start: contact the buyer in one shot.
+    /// Combines `okx-a2a session create` (group + session create) + `okx-a2a xmtp-send`
+    /// (the canonical self-intro / interest opener) so the LLM only runs ONE
+    /// command instead of chaining two CLI calls. Opener content is fixed;
+    /// no customization flag.
+    #[command(name = "contact-buyer")]
+    ContactBuyer {
+        job_id: String,
+        /// Provider agentId (required)
+        #[arg(long = "agent-id")] agent_id: String,
+    },
+
+
 
     /// Client claims auto-refund after provider timeout
     #[command(name = "claim-auto-refund")]
@@ -389,12 +450,10 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Change provider (on-chain, does not wait for confirmation)
-    #[command(name = "set-provider")]
-    SetProvider {
+    /// Reject a provider's apply (on-chain pass-through; status stays `created`)
+    #[command(name = "reject-apply")]
+    RejectApply {
         job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
@@ -408,13 +467,13 @@ pub enum AgentCommand {
         agent_id: Option<String>,
     },
 
-    /// Attach a local file to a task
+    /// Attach local file(s) to a task
     #[command(name = "task-attach")]
     TaskAttach {
         job_id: String,
-        /// Path to the file to attach
-        #[arg(long = "file")]
-        file_path: String,
+        /// Path(s) to the file(s) to attach (repeatable, at least one required)
+        #[arg(long = "file", required = true)]
+        file_paths: Vec<String>,
     },
     /// List attachments for a task
     #[command(name = "list-attachments")]
@@ -621,45 +680,33 @@ pub enum AgentCommand {
     #[command(subcommand)]
     Common(task::common::CommonCommand),
 
-    /// Get next-step instruction prompt for current job state
+    /// Get next-step instruction prompt for current job state.
+    ///
+    /// Invocation contract — exactly **three** flags:
+    ///   `--role <buyer|provider|evaluator|auto>` — playbook routing role
+    ///   `--agentId <agentId>`                    — receiving agent
+    ///   `--message <envelope JSON>`              — the full `message` object
+    ///                                              from the inbound notification
+    ///
+    /// All other inputs (`jobId`, `event`, `code`, `jobTitle`, `provider`, `data`,
+    /// `peerTaskMinVersion`, etc.) are extracted from inside the `--message` JSON.
+    /// This keeps the LLM-facing surface minimal: copy the envelope through, the
+    /// CLI parses out whatever it needs.
     #[command(name = "next-action")]
     NextAction {
-        /// Accepts both `--jobid` (legacy camelCase) and `--job-id` (kebab)
-        #[arg(long = "jobid", alias = "job-id")] job_id: String,
-        /// envelope `message.event` — required. Drives playbook routing for all roles
-        /// (buyer / provider / evaluator). Pass the envelope's `message.event` value here.
-        #[arg(long = "event")] event: String,
-        /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab)
+        /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab).
         #[arg(long = "agentId", alias = "agent-id")] agent_id: String,
         /// Role: `buyer` / `provider` / `evaluator`, or `auto` to let the CLI
-        /// resolve the role from `--agentId` (saves a separate `agent profile`
-        /// round-trip).
+        /// resolve the role from `--agentId` (saves a separate `agent profile` round-trip).
         #[arg(long)] role: String,
-        /// envelope message.code (tx receipt); non-zero = tx failed
-        #[arg(long, default_value_t = 0)]
-        code: i32,
-        /// envelope message.title (task title from system notification);
-        /// accepts both `--jobTitle` (legacy) and `--job-title` (kebab)
-        #[arg(long = "jobTitle", alias = "job-title")]
-        job_title: Option<String>,
-        /// Target provider agentId (for job_created: skip recommend, go straight to this provider)
+        /// Full system event envelope as a JSON string — the entire `message` object.
+        /// Required. Must contain at least `event` and `jobId`; optional fields the
+        /// CLI reads: `code` / `jobTitle` / `provider` / `data` / `taskMinVersion`
+        /// (plus any task-detail fields like `paymentMode` / `visibility` /
+        /// `tokenAmount` / `tokenSymbol` / `serviceParams` that downstream scenes
+        /// may consume directly).
         #[arg(long)]
-        provider: Option<String>,
-        /// Peer's required minimum task-system version, extracted from inbound
-        /// `xmtp_send` envelope's `payload.taskMinVersion`. If present and
-        /// greater than this binary's `TASK_MIN_VERSION`, next-action prepends
-        /// a `[Protocol version mismatch — non-blocking]` directive that tells the agent
-        /// to push an upgrade prompt to the user, **without** halting the flow
-        /// — the scene below still runs normally. Omit for chain-event /
-        /// pseudo events that don't originate from a peer envelope.
-        #[arg(long = "peerTaskMinVersion", alias = "peer-task-min-version")]
-        peer_task_min_version: Option<u32>,
-        /// User's decision payload from a `user_decision_*` relay envelope's
-        /// `message.data` field (the user's verbatim reply to a pending decision,
-        /// e.g. `A` / `approve` / `通过` / `agree to refund`). Required when
-        /// `--event` starts with `user_decision_`; ignored otherwise.
-        #[arg(long)]
-        data: Option<String>,
+        message: String,
     },
 
     // Chat
@@ -781,15 +828,12 @@ pub enum AgentCommand {
     },
 
     /// Terminal-state session cleanup: cancel pending decisions + output
-    /// xmtp_delete_conversation instructions. Replaces the multi-step
+    /// `okx-a2a session delete` instructions. Replaces the multi-step
     /// manual cleanup in terminal playbooks.
     #[command(name = "session-cleanup")]
     SessionCleanup {
         #[arg(long = "job-id")]
-        job_id: String,
-        /// buyer | provider
-        #[arg(long)]
-        role: String,
+        job_id: String
     },
 
     /// Query a single Agent's (or up to 20 Agents') in-progress tasks & disputes
@@ -808,16 +852,6 @@ pub enum AgentCommand {
         /// Agent IDs to query (comma-separated, or repeat --agent-ids). Max 20.
         #[arg(long = "agent-ids", value_delimiter = ',')]
         agent_ids: Vec<String>,
-    },
-
-    /// List the marketplace's top ASPs by sales (soldCount), highest first.
-    /// Pulls the full ASP list and returns the top `--limit` (default 3; fewer
-    /// if the marketplace has fewer).
-    #[command(name = "top-asps")]
-    TopAsps {
-        /// How many to return, highest sales first. Default 3.
-        #[arg(long, default_value_t = 3)]
-        limit: usize,
     },
 }
 
@@ -846,16 +880,28 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, provider, endpoint, attachments,
+            title, provider, endpoint, attachments, payment_mode,
+            service_id, service_params, service_token_address, service_token_amount, visibility,
+            _agent_id: _,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider, endpoint, attachments,
+                title, provider, endpoint, attachments, payment_mode,
+                service_id, service_params, service_token_address, service_token_amount, visibility,
             }, ctx,
         ).await,
 
-        AgentCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } =>
-            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content }, ctx).await,
+        AgentCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format } =>
+            task::buyer::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format }, ctx).await,
+
+        AgentCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
+            task::buyer::run_task(T::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id }, ctx).await,
+
+        AgentCommand::ResetAsp { job_id, agent_id } =>
+            task::buyer::run_task(T::ResetAsp { job_id, agent_id }, ctx).await,
+
+        AgentCommand::UserReject { job_id, agent_id } =>
+            task::buyer::run_task(T::UserReject { job_id, agent_id }, ctx).await,
 
         AgentCommand::MarkFailed { job_id, provider_agent_id } =>
             task::buyer::run_task(T::MarkFailed { job_id, provider_agent_id }, ctx).await,
@@ -879,8 +925,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             task::buyer::run_task(T::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
 
-        AgentCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount } =>
-            task::buyer::run_task(T::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount }, ctx).await,
+
+        AgentCommand::ConfirmAccept { job_id } =>
+            task::buyer::run_task(T::ConfirmAccept { job_id }, ctx).await,
 
         AgentCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             task::buyer::run_task(T::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
@@ -912,21 +959,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Payment { job_id, agent_id } =>
             task::buyer::run_task(T::Payment { job_id, agent_id }, ctx).await,
 
-        AgentCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
-            task::buyer::run_task(T::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
 
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
 
         AgentCommand::SetTokenAndBudget { job_id, token_symbol, budget, agent_id } =>
             task::buyer::run_task(T::SetTokenAndBudget { job_id, token_symbol, budget, agent_id }, ctx).await,
-        AgentCommand::SetProvider { job_id, provider_agent_id, agent_id } =>
-            task::buyer::run_task(T::SetProvider { job_id, provider_agent_id, agent_id }, ctx).await,
+        AgentCommand::RejectApply { job_id, agent_id } =>
+            task::buyer::run_task(T::RejectApply { job_id, agent_id }, ctx).await,
         AgentCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
             task::buyer::run_task(T::SetMaxBudget { job_id, max_budget, agent_id }, ctx).await,
 
-        AgentCommand::TaskAttach { job_id, file_path } =>
-            task::buyer::run_task(T::TaskAttach { job_id, file_path }, ctx).await,
+        AgentCommand::TaskAttach { job_id, file_paths } =>
+            task::buyer::run_task(T::TaskAttach { job_id, file_paths }, ctx).await,
         AgentCommand::ListAttachments { job_id } =>
             task::buyer::run_task(T::ListAttachments { job_id }, ctx).await,
 
@@ -977,6 +1022,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::MyAgents { role } =>
             task::common::handle_my_agents(role.as_deref()).await,
 
+        AgentCommand::Preflight { role } =>
+            task::common::handle_preflight(&role).await,
+
+        AgentCommand::PrepareCreate {
+            description, title, budget, max_budget,
+            currency, provider,
+        } => task::common::handle_prepare_create(
+            description.as_deref(), title.as_deref(),
+            budget, max_budget,
+            currency.as_deref(),
+            provider.as_deref(),
+        ).await,
+
         AgentCommand::Profile { agent_id } =>
             task::common::handle_profile(&agent_id).await,
 
@@ -1005,6 +1063,16 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::provider::ProviderCommand::AgreeRefund { job_id, agent_id }, ctx,
             ).await,
 
+        AgentCommand::AspReject { job_id, agent_id, reason } =>
+            task::provider::run_provider(
+                task::provider::ProviderCommand::AspReject { job_id, agent_id, reason }, ctx,
+            ).await,
+
+        AgentCommand::ContactBuyer { job_id, agent_id } =>
+            task::provider::run_provider(
+                task::provider::ProviderCommand::ContactBuyer { job_id, agent_id }, ctx,
+            ).await,
+
 
         // ── Sub-groups ──────────────────────────────────────────────
         AgentCommand::Draft(c) =>
@@ -1016,8 +1084,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::PendingDecisionsV2(c) =>
             task::common::pending_v2::run(c).await,
 
-        AgentCommand::SessionCleanup { job_id, role } =>
-            task::common::session_cleanup::handle_session_cleanup(&job_id, &role),
+        AgentCommand::SessionCleanup { job_id } =>
+            task::common::session_cleanup::handle_session_cleanup(&job_id),
 
         // ── Evaluator Agent flat dispatch ───────────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {
@@ -1072,16 +1140,79 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { job_id, event, agent_id, role, code, job_title, provider, peer_task_min_version, data } => {
-            if let Err(msg) = task::common::util::validate_job_id(&job_id) {
-                anyhow::bail!(msg);
+        AgentCommand::NextAction { agent_id, role, message } => {
+            // Parse the `--message` envelope (required). Try strict parse first;
+            // on failure, attempt a one-shot repair that escapes raw control chars
+            // (LF / CR / TAB) inside string scope and retries. This covers the
+            // most common LLM mistake: emitting a literal newline inside a JSON
+            // string value (e.g. for a long deliverable `text`) instead of the
+            // two-char escape `\n`. Outside strings, JSON allows whitespace so
+            // raw control chars survive untouched.
+            let parsed_message: serde_json::Value = match serde_json::from_str(&message) {
+                Ok(v) => v,
+                Err(strict_err) => {
+                    let repaired = escape_control_chars_in_strings(&message);
+                    match serde_json::from_str::<serde_json::Value>(&repaired) {
+                        Ok(v) => {
+                            eprintln!(
+                                "[next-action] --message had raw control chars inside string values; auto-repaired and parsed. \
+                                 Strict parse error was: {strict_err}"
+                            );
+                            v
+                        }
+                        Err(_) => return Err(anyhow::anyhow!(
+                            "--message must be a valid JSON object: {strict_err}"
+                        )),
+                    }
+                }
+            };
+            if DEBUG_LOG {
+                eprintln!("[next-action] --message parsed: {} keys",
+                    parsed_message.as_object().map(|o| o.len()).unwrap_or(0));
             }
-            eprintln!(
-                "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
-                title = job_title.as_deref().unwrap_or("(none)"),
-                provider = provider.as_deref().unwrap_or("(none)"),
-                peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
-            );
+
+            // Field extractors — all routing inputs live inside `--message`.
+            let msg_str = |key: &str| -> Option<String> {
+                parsed_message.get(key)
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            };
+            let msg_i64 = |key: &str| -> Option<i64> {
+                parsed_message.get(key).and_then(|v| v.as_i64())
+            };
+
+            let event: String = msg_str("event")
+                .ok_or_else(|| anyhow::anyhow!("--message.event is required"))?;
+            let job_id: String = match msg_str("jobId") {
+                Some(j) => j,
+                None if event == "reward_claimed" => String::new(),
+                None => anyhow::bail!("--message.jobId is required"),
+            };
+            let code: i32 = msg_i64("code").and_then(|v| i32::try_from(v).ok()).unwrap_or(0);
+            let job_title: Option<String> = msg_str("jobTitle");
+            let provider: Option<String> = msg_str("provider");
+            let data: Option<String> = msg_str("data");
+            let peer_task_min_version: Option<u32> = parsed_message.get("taskMinVersion")
+                .and_then(|v| v.as_u64())
+                .and_then(|v| u32::try_from(v).ok())
+                .or_else(|| parsed_message.get("payload")
+                    .and_then(|p| p.get("taskMinVersion"))
+                    .and_then(|v| v.as_u64())
+                    .and_then(|v| u32::try_from(v).ok()));
+            let parsed_message = Some(parsed_message);
+            if !job_id.is_empty() {
+                if let Err(msg) = task::common::util::validate_job_id(&job_id) {
+                    anyhow::bail!(msg);
+                }
+            }
+            if DEBUG_LOG {
+                eprintln!(
+                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
+                    title = job_title.as_deref().unwrap_or("(none)"),
+                    provider = provider.as_deref().unwrap_or("(none)"),
+                    peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
+                );
+            }
 
             // Version handshake: when peer's required minimum version is higher than the local TASK_MIN_VERSION,
             // only prepend a notice line at the top of the script (so the agent can push an upgrade suggestion to the user);
@@ -1091,17 +1222,23 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 let local = task::common::config::TASK_MIN_VERSION;
                 if local < peer_min {
                     if task::common::version_notice::should_show() {
-                        eprintln!(
-                            "[next-action] version notice (non-blocking): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                        );
+                        if DEBUG_LOG {
+                            eprintln!(
+                                "[next-action] version notice (non-blocking): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
+                            );
+                        }
                         task::common::version_notice::mark_shown();
-                        Some("Before executing the scene below, call `xmtp_dispatch_user` to notify the user (recommend upgrade but do **not** halt the flow). The `content:` template below is a sample — translate it to the user's language before sending:\n\
-                             content: Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.\n\
+                        Some("Before executing the scene below, run `okx-a2a user notify` to notify the user (recommend upgrade but do **not** halt the flow). The `--content` template below is a sample — translate it to the user's language before sending:\n\
+                             ```bash\n\
+                             okx-a2a user notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.'\n\
+                             ```\n\
                              Then proceed to the scene below normally.\n\n".to_string())
                     } else {
-                        eprintln!(
-                            "[next-action] version notice suppressed (last shown within 48h): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                        );
+                        if DEBUG_LOG {
+                            eprintln!(
+                                "[next-action] version notice suppressed (last shown within 48h): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
+                            );
+                        }
                         None
                     }
                 } else {
@@ -1114,7 +1251,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             // When --provider is passed, write the designated-provider file so generate_next_action takes the specified-provider path
             if let Some(ref pid) = provider {
                 if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
-                    eprintln!("[next-action] save_designated_provider failed: {e}");
+                    if DEBUG_LOG {
+                        eprintln!("[next-action] save_designated_provider failed: {e}");
+                    }
                 }
             }
 
@@ -1127,8 +1266,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 };
                 println!(
                     "【交易失败】{label}（code={code}）\n\n\
-                     调用 `xmtp_dispatch_user` 通知用户：\n\
-                     content: [{label}]{title_part}（{job_id}）交易执行失败（code={code}）。\n\
+                     运行 `okx-a2a user notify` 通知用户：\n\
+                     ```bash\n\
+                     okx-a2a user notify --content '[{label}]{title_part}（{job_id}）交易执行失败（code={code}）。'\n\
+                     ```\n\
                      → 结束 turn。"
                 );
                 return Ok(());
@@ -1156,7 +1297,22 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             } else {
                 role.clone()
             };
-            eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
+            // Event-level role override: some events are always buyer-side
+            // regardless of the agent's registered role (e.g. a provider-role
+            // agent that also publishes tasks as a buyer).
+            let resolved_role = match event.as_str() {
+                "provider_conversation" | "provider_conversation_pick" | "provider_conversation_reject" => {
+                    if resolved_role != "buyer" && DEBUG_LOG {
+                        eprintln!("[next-action] event-level override: {event} forces role buyer (was {resolved_role})");
+                    }
+                    "buyer".to_string()
+                }
+                _ => resolved_role,
+            };
+
+            if DEBUG_LOG {
+                eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
+            }
 
             // ── job_created API fallback: when --provider is absent and no local file exists,
             // query the task detail API for providerAgentId and persist it.
@@ -1169,9 +1325,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 let mut fb_client = task::common::network::task_api_client::TaskApiClient::new();
                 if let Ok(resp) = fb_client.get_with_identity(&fb_client.task_path(&job_id), &agent_id).await {
                     if let Some(pid) = resp["providerAgentId"].as_str().filter(|s| !s.is_empty()) {
-                        eprintln!("[next-action] job_created fallback: API providerAgentId={pid}, persisting");
+                        if DEBUG_LOG {
+                            eprintln!("[next-action] job_created fallback: API providerAgentId={pid}, persisting");
+                        }
                         if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
-                            eprintln!("[next-action] save_designated_provider (fallback) failed: {e}");
+                            if DEBUG_LOG {
+                                eprintln!("[next-action] save_designated_provider (fallback) failed: {e}");
+                            }
                         }
                     }
                 }
@@ -1182,38 +1342,17 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             if matches!(resolved_role.as_str(), "buyer" | "client") {
                 if event == "job_submitted" {
                     if let Err(e) = task::common::review_gate::mark_pending(&job_id) {
-                        eprintln!("[next-action] review_gate mark_pending failed: {e}");
+                        if DEBUG_LOG {
+                            eprintln!("[next-action] review_gate mark_pending failed: {e}");
+                        }
                     }
                 } else if event == "approve_review" {
                     if let Err(e) = task::common::review_gate::mark_approved(&job_id) {
-                        eprintln!("[next-action] review_gate mark_approved failed: {e}");
+                        if DEBUG_LOG {
+                            eprintln!("[next-action] review_gate mark_approved failed: {e}");
+                        }
                     }
                 }
-            }
-
-            // Duplicate-event short-circuit: several chain events (job_created in
-            // particular) can fire into both the task sub and the backup sub for the
-            // same (jobId, role) pair. If a pending decision already exists for this
-            // pair, the user has already been notified — emit a no-op playbook so the
-            // current turn ends without re-notifying.
-            //
-            // Only dedup events that push a decision/notification to the user;
-            // negotiation / handshake / lifecycle-only events have no user-visible
-            // side effect and must always run their playbook.
-            let dedup_eligible = matches!(
-                event.as_str(),
-                "job_created" | "job_submitted" | "review_deadline_warn" | "job_disputed" | "job_rejected"
-            );
-            if dedup_eligible
-                && task::common::pending_v2::has_pending_for_job(&job_id, &resolved_role)
-            {
-                eprintln!(
-                    "[next-action] duplicate event short-circuit: jobId={job_id} role={resolved_role} event={event} (pending entry already exists)"
-                );
-                println!(
-                    "[Duplicate event] An entry for jobId={job_id} role={resolved_role} is already in the pending-decisions queue. The user has been notified already. **End the turn without re-notifying.** No tool calls required."
-                );
-                return Ok(());
             }
 
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
@@ -1237,10 +1376,20 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                             format!("agentId={agent_id}"),
                             format!("event={event}"),
                             format!("code={code}"),
+                            format!("paymentMode={:?}", payment_mode),
                         ]),
                         None,
                     );
-                    task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref())
+                    // x402 (paymentMode=3): the buyer paid the ASP at request time via
+                    // the A2MCP service endpoint, so the on-chain events are pure
+                    // receipts — provider has no business action for any of them.
+                    // Route every x402 event to the observer-only a2mcp playbook.
+                    let use_a2mcp = matches!(payment_mode, Some(3));
+                    if use_a2mcp {
+                        task::provider::flow::generate_a2mcp_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
+                    } else {
+                        task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
+                    }
                 }
                 "buyer" | "client" => {
                     crate::audit::log(
@@ -1256,7 +1405,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode, prefetched.as_ref())
+                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode, prefetched.as_ref(), parsed_message.as_ref()).await
                 }
                 "evaluator" => {
                     crate::audit::log(
@@ -1272,7 +1421,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id)
+                    task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id, parsed_message.as_ref()).await
                 }
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };
@@ -1359,12 +1508,93 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::common::in_progress::handle_in_progress(&mut client, &agent_ids).await
         }
-        AgentCommand::TopAsps { limit } => identity::top_asps(limit, ctx).await,
     }
 }
 
 fn tx_failure_label(event: &str) -> &'static str {
     task::common::state_machine::Event::parse(event).failure_label()
+}
+
+/// Escape raw ASCII control chars (LF / CR / TAB) that appear inside JSON string
+/// scope, leaving everything else untouched. Tracks `"`/`\\` state to differentiate
+/// "inside string" from "outside string". Used as a one-shot repair for
+/// `--message` / `--service` / similar LLM-supplied payloads where the model
+/// emitted a literal newline inside a long string value instead of the two-char
+/// `\n` escape (the #1 LLM JSON mistake). Outside strings these bytes are
+/// already legal JSON whitespace, so leaving them is fine; inside strings they
+/// are illegal control chars, so escaping them produces the likely-intended
+/// valid JSON.
+pub(crate) fn escape_control_chars_in_strings(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in s.chars() {
+        if escaped {
+            // Inside a string, the previous char was `\`; emit this one verbatim
+            // (it forms an escape sequence like `\n` / `\"` / `\\` / `\u…`).
+            out.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_string => {
+                escaped = true;
+                out.push(ch);
+            }
+            '"' => {
+                in_string = !in_string;
+                out.push(ch);
+            }
+            '\n' if in_string => out.push_str("\\n"),
+            '\r' if in_string => out.push_str("\\r"),
+            '\t' if in_string => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod escape_control_chars_tests {
+    use super::escape_control_chars_in_strings;
+
+    #[test]
+    fn escapes_raw_lf_inside_string() {
+        let input = "{\"text\":\"line1\nline2\"}";
+        let out = escape_control_chars_in_strings(input);
+        assert_eq!(out, "{\"text\":\"line1\\nline2\"}");
+    }
+
+    #[test]
+    fn preserves_lf_outside_string() {
+        // Real newline between fields is legal JSON whitespace; leave it alone.
+        let input = "{\n\"k\":\"v\"\n}";
+        let out = escape_control_chars_in_strings(input);
+        assert_eq!(out, "{\n\"k\":\"v\"\n}");
+    }
+
+    #[test]
+    fn preserves_existing_escape_sequences() {
+        let input = "{\"text\":\"a\\nb\\\"c\"}";
+        let out = escape_control_chars_in_strings(input);
+        // `\n` and `\"` are already escapes; nothing to repair.
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn handles_cr_and_tab() {
+        let input = "{\"text\":\"a\rb\tc\"}";
+        let out = escape_control_chars_in_strings(input);
+        assert_eq!(out, "{\"text\":\"a\\rb\\tc\"}");
+    }
+
+    #[test]
+    fn repaired_json_round_trips_to_serde() {
+        let input = "{\"event\":\"deliverable_received\",\"text\":\"line1\nline2\"}";
+        let repaired = escape_control_chars_in_strings(input);
+        let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(parsed["text"], "line1\nline2");
+    }
 }
 
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).
@@ -1380,15 +1610,17 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // (they have a valid jobId and their handlers currently run `common context` as Step 0/1).
     const PREFETCH_ONLY_EVENTS: &[&str] = &[
         "deliverable_received",
+        "job_provider_reject",
+        "attachment_added",
     ];
 
     // Events that skip both freshness validation AND pre-fetching (no jobId yet, or irrelevant).
     const SKIP_ALL_EVENTS: &[&str] = &[
-        "create_task", "switch_provider",
-        "approve_review", "reject_review", "attachment_added", "close", "set_public",
+        "create_task",
+        "approve_review", "reject_review", "buyer_attachment_received", "close", "set_public", "job_user_reject",
         "dispute_raise", "agree_refund",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
-        "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",
+        "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",
         "reward_claimed",
         "wakeup_notify",
     ];
@@ -1403,7 +1635,9 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     let event = parse_status_or_event(job_status_or_event);
     let expected = status_when_event(&event);
     if !is_prefetch_only && matches!(expected, Status::Other(ref s) if s == "unknown") {
-        eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
+        if DEBUG_LOG {
+            eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
+        }
         return (None, None);
     }
 
@@ -1448,11 +1682,13 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     let dispute_resolved_ok = matches!(event, Event::DisputeResolved)
         && matches!(actual, Status::Completed | Status::Failed);
 
-    eprintln!(
-        "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",
-        expected.as_str(),
-        actual == expected || dispute_resolved_ok,
-    );
+    if DEBUG_LOG {
+        eprintln!(
+            "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",
+            expected.as_str(),
+            actual == expected || dispute_resolved_ok,
+        );
+    }
 
     if actual == expected || dispute_resolved_ok {
         return (None, prefetched);
@@ -1462,9 +1698,9 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
          - 你传的 event = `{job_status_or_event}`，对应任务状态应为 `{expected_str}`\n\
          - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\n\
          **必须做**（二选一）：\n\
-         1. 如果当前 inbound 是 **P2P 消息**（a2a-agent-chat）→ 你很可能用错了 event。回到 buyer.md / provider.md §3 Inbound Message Routing 重新匹配正确的事件（例如 `[intent:deliver]` → `deliverable_received`，自然语言报价 → `negotiate_reply`，`[intent:ack]` → `negotiate_ack`）。这些伪事件不受 freshness 限制。\n\
-         2. 如果当前 inbound 是 **system event** → 重调 next-action 并传 `--event {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
-         **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 xmtp_dispatch_user 推用户。\n",
+         1. 如果当前 inbound 是 **P2P 消息**（a2a-agent-chat）→ 你很可能用错了 event。回到 buyer-sub-playbook.md / provider.md §3 Inbound Message Routing 重新匹配正确的事件（例如 `[intent:deliver]` → `deliverable_received`，自然语言报价 → `negotiate_reply`）。这些伪事件不受 freshness 限制。\n\
+         2. 如果当前 inbound 是 **system event** → 重调 next-action，并在 `--message` JSON 里把 `event` 字段改成 `{actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
+         **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 `okx-a2a user notify` 推用户。\n",
         expected_str = expected.as_str(),
     )), prefetched)
 }

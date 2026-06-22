@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::TimeZone;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 use crate::commands::agent_commerce::task::evaluator::staking_types;
 
 /// Render a unix-seconds timestamp. `0` means "not applicable".
@@ -52,10 +53,8 @@ pub async fn handle_my_stake(
         fmt_unix_seconds(s.cooldown_ends_at, "not in slashing cooldown")
     );
 
-    if !s.registered {
-        eprintln!(
-            "registered false"
-        );
+    if DEBUG_LOG && !s.registered {
+        eprintln!("registered false");
     }
     Ok(())
 }

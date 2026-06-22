@@ -2,7 +2,7 @@
 //!
 //! Files split by user action:
 //! - `create.rs`       — publish task (scene 1)
-//! - `recommend.rs`    — fetch recommended providers (scene 1)
+//! - `asp_ops.rs`      — ASP match + set-asp (scene 1)
 //! - `negotiate.rs`    — negotiation (scene 2, agent sub session)
 //! - `accept.rs`       — confirm accept + fund (scene 3)
 //! - `complete.rs`     — confirm completion (scene 5)
@@ -14,7 +14,8 @@
 //! - `query.rs`        — read-only queries (status, list, pay)
 
 mod accept;
-mod attachments;
+mod asp_ops;
+pub(crate) mod attachments;
 mod changepublic;
 mod claim_auto_refund;
 mod close;
@@ -27,8 +28,8 @@ mod flow_lifecycle;
 mod flow_negotiate;
 pub(crate) mod negotiate;
 mod query;
-mod recommend;
 mod reject;
+mod reject_apply;
 mod set_terms;
 mod x402_flow;
 
@@ -54,13 +55,9 @@ pub enum TaskCommand {
         max_budget: f64,
         #[arg(long)]
         currency: String,
-        #[arg(long = "deadline-open")]
-        deadline_open: String,
-        #[arg(long = "deadline-submit")]
-        deadline_submit: String,
         #[arg(long)]
         title: Option<String>,
-        /// Designated provider agentId (skip recommend; negotiate or x402-accept with this provider directly).
+        /// Designated provider agentId (skip asp-match; negotiate or x402-accept with this provider directly).
         #[arg(long)]
         provider: Option<String>,
         /// Local file paths to attach to the task after creation.
@@ -69,43 +66,83 @@ pub enum TaskCommand {
         /// Designated service endpoint (persisted for multi-service providers)
         #[arg(long)]
         endpoint: Option<String>,
+        /// Payment mode to set at creation time (escrow / x402). When omitted the task is created with paymentMode=0 (unset).
+        #[arg(long = "payment-mode")]
+        payment_mode: Option<String>,
+        /// Service ID from asp/match response
+        #[arg(long = "service-id")]
+        service_id: Option<String>,
+        /// Service input parameters (natural language string)
+        #[arg(long = "service-params")]
+        service_params: Option<String>,
+        /// Service token contract address
+        #[arg(long = "service-token-address")]
+        service_token_address: Option<String>,
+        /// Service price (from asp/match feeAmount)
+        #[arg(long = "service-token-amount")]
+        service_token_amount: Option<String>,
+        /// Task visibility: 1 = private (requires --provider), 0 = public
+        #[arg(long, default_value = "1")]
+        visibility: i32,
     },
-    /// Get recommended providers for a task
-    Recommend {
-        job_id: String,
-        /// Agent identity (agenticId header)
+    /// Search matching ASPs (pre-publish or post-publish)
+    AspMatch {
+        /// Task description (required when no --job-id)
+        #[arg(long = "task-desc", default_value = "")]
+        task_desc: String,
+        /// Job ID (required when task already exists)
+        #[arg(long = "job-id")]
+        job_id: Option<String>,
+        /// Narrow to this ASP's services
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: Option<String>,
+        /// Page number
+        #[arg(long, default_value = "1")]
+        page: usize,
+        /// Buyer agent ID
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
-        /// Show next provider (advance index) from cached list
-        #[arg(long)]
-        next: bool,
-        /// Show current provider from cached list
-        #[arg(long)]
-        current: bool,
-        /// Specify page number (0-based)
-        #[arg(long)]
-        page: Option<usize>,
-        /// Advance to next page
-        #[arg(long = "next-page")]
-        next_page: bool,
-        /// Emit a pending-decisions-v2 recommend_pick decision after fetching
-        /// the list. Requires `--sub-key`. By default uses the auto-written
-        /// canonical English card; pass `--user-content` to override with a
-        /// sub-localized version.
-        #[arg(long = "emit-decision")]
-        emit_decision: bool,
-        /// Full XMTP sessionKey (from `session_status`). Required with `--emit-decision`.
-        #[arg(long = "sub-key")]
-        sub_key: Option<String>,
-        /// Task title used in the decision list label (defaults to `<title>`).
-        #[arg(long = "job-title")]
-        job_title: Option<String>,
-        /// Pre-localized card body to enqueue instead of the auto-written
-        /// canonical English card file.
-        #[arg(long = "user-content")]
-        user_content: Option<String>,
+        /// Output format: "json" for raw JSON (no formatted list)
+        #[arg(long, default_value = "")]
+        format: String,
     },
-    /// Mark a provider as failed negotiation (excluded from future recommend lists)
+    /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
+    SetAsp {
+        job_id: String,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "service-id")]
+        service_id: String,
+        #[arg(long = "service-type")]
+        service_type: String,
+        #[arg(long = "service-params")]
+        service_params: String,
+        #[arg(long = "service-token-address")]
+        service_token_address: String,
+        #[arg(long = "service-token-amount")]
+        service_token_amount: String,
+        #[arg(long = "payment-token-symbol")]
+        payment_token_symbol: Option<String>,
+        #[arg(long = "payment-token-amount")]
+        payment_token_amount: Option<String>,
+        #[arg(long = "payment-most-token-amount")]
+        payment_most_token_amount: Option<String>,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Clear ASP + service fields (off-chain)
+    ResetAsp {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Reject current ASP (off-chain, clears asp + service fields, triggers job_user_reject)
+    UserReject {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// Mark a provider as failed negotiation (excluded from future asp-match lists)
     MarkFailed {
         job_id: String,
         #[arg(long = "provider")]
@@ -122,24 +159,14 @@ pub enum TaskCommand {
         token_symbol: Option<String>,
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
-        /// x402 service endpoint URL (when omitted, fetched from the recommend cache or service-list API).
+        /// x402 service endpoint URL (when omitted, fetched from the negotiate cache or service-list API).
         #[arg(long)]
         endpoint: Option<String>,
     },
-    /// Client confirms provider and executes payment (setPaymentMode must be done first)
+    /// Client confirms provider and executes payment (setPaymentMode must be done first).
+    /// Provider, token symbol, and amount are read from the task detail API.
     ConfirmAccept {
         job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        /// When omitted, auto-fetched from the task detail's paymentType.
-        #[arg(long = "payment-mode")]
-        payment_mode: Option<String>,
-        /// Payment token symbol agreed during negotiation (e.g. USDT); required for escrow.
-        #[arg(long = "token-symbol")]
-        token_symbol: Option<String>,
-        /// Payment amount agreed during negotiation (human-readable, e.g. "50"); required for escrow.
-        #[arg(long = "token-amount")]
-        token_amount: Option<String>,
     },
     /// Client confirms task complete and releases payment
     Complete {
@@ -228,11 +255,9 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Change provider (on-chain, does not wait for confirmation)
-    SetProvider {
+    /// Reject a provider's apply (on-chain pass-through; status stays `created`)
+    RejectApply {
         job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
@@ -244,24 +269,12 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Save negotiated payment params locally (agent calls after negotiation)
-    SaveAgreed {
-        job_id: String,
-        #[arg(long = "provider")]
-        provider_agent_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
-    /// Attach a local file to a task
+    /// Attach local file(s) to a task
     TaskAttach {
         job_id: String,
-        /// Path to the file to attach
-        #[arg(long = "file")]
-        file_path: String,
+        /// Path(s) to the file(s) to attach (repeatable, at least one required)
+        #[arg(long = "file", required = true)]
+        file_paths: Vec<String>,
     },
     /// List attachments for a task
     ListAttachments {
@@ -276,42 +289,27 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, provider, attachments, endpoint } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount, visibility } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, provider, attachments, endpoint,
+                title, provider, attachments, endpoint, payment_mode,
+                service_id, service_params, service_token_address, service_token_amount, visibility,
             }).await,
-        TaskCommand::Recommend { job_id, agent_id, next, current, page, next_page, emit_decision, sub_key, job_title, user_content } => {
-            if next {
-                recommend::handle_recommend_next(&job_id)
-            } else if current {
-                recommend::handle_recommend_current(&job_id)
-            } else if next_page {
-                recommend::handle_recommend_next_page(&mut client, &job_id).await
-            } else {
-                let p = page.unwrap_or(0);
-                recommend::handle_recommend(
-                    &mut client,
-                    &job_id,
-                    agent_id.as_deref().unwrap_or(""),
-                    p,
-                    recommend::EmitDecisionOpts {
-                        enabled: emit_decision,
-                        sub_key,
-                        job_title,
-                        user_content,
-                    },
-                )
-                .await
-            }
-        }
+        TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format } =>
+            asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), page, agent_id.as_deref(), &format).await,
+        TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
+            asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), payment_token_amount.as_deref(), payment_most_token_amount.as_deref(), agent_id.as_deref()).await,
+        TaskCommand::ResetAsp { job_id, agent_id } =>
+            asp_ops::handle_reset_asp(&mut client, &job_id, agent_id.as_deref()).await,
+        TaskCommand::UserReject { job_id, agent_id } =>
+            asp_ops::handle_user_reject(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::MarkFailed { job_id, provider_agent_id } => {
             negotiate::mark_failed(&job_id, &provider_agent_id)
         }
         TaskCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
-        TaskCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount } =>
-            accept::handle_confirm_accept(&mut client, &job_id, &provider_agent_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
+        TaskCommand::ConfirmAccept { job_id } =>
+            accept::handle_confirm_accept(&mut client, &job_id, None).await,
         TaskCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             accept::handle_direct_accept(&mut client, &job_id, &provider_agent_id, token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body } =>
@@ -330,15 +328,18 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
         TaskCommand::SetTokenAndBudget { job_id, token_symbol, budget, agent_id } =>
             set_terms::handle_set_token_and_budget(&mut client, &job_id, &token_symbol, &budget, agent_id.as_deref()).await,
-        TaskCommand::SetProvider { job_id, provider_agent_id, agent_id } =>
-            set_terms::handle_set_provider(&mut client, &job_id, &provider_agent_id, agent_id.as_deref()).await,
+        TaskCommand::RejectApply { job_id, agent_id } =>
+            reject_apply::handle_reject_apply(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
             set_terms::handle_set_max_budget(&mut client, &job_id, &max_budget, agent_id.as_deref()).await,
-        TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {
-            negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await
-        }
-        TaskCommand::TaskAttach { job_id, file_path } => {
-            attachments::handle_task_attach(&mut client, &job_id, &file_path).await
+        TaskCommand::TaskAttach { job_id, file_paths } => {
+            if file_paths.is_empty() {
+                anyhow::bail!("at least one --file <path> is required");
+            }
+            for fp in &file_paths {
+                attachments::handle_task_attach(&mut client, &job_id, fp).await?;
+            }
+            Ok(())
         }
         TaskCommand::ListAttachments { job_id } => {
             attachments::handle_task_attachments(&job_id)
@@ -369,14 +370,18 @@ pub enum DraftCommand {
         max_budget: Option<f64>,
         #[arg(long)]
         currency: Option<String>,
-        #[arg(long = "deadline-open")]
-        deadline_open: Option<String>,
-        #[arg(long = "deadline-submit")]
-        deadline_submit: Option<String>,
         #[arg(long)]
         provider: Option<String>,
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
+        #[arg(long = "service-id")]
+        service_id: Option<String>,
+        #[arg(long = "service-params")]
+        service_params: Option<String>,
+        #[arg(long = "service-token-address")]
+        service_token_address: Option<String>,
+        #[arg(long = "service-token-amount")]
+        service_token_amount: Option<String>,
     },
     /// List my drafts
     List {
@@ -392,18 +397,24 @@ pub enum DraftCommand {
         title: Option<String>,
         #[arg(long)]
         description: Option<String>,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
         #[arg(long)]
         budget: Option<f64>,
         #[arg(long = "max-budget")]
         max_budget: Option<f64>,
         #[arg(long)]
         currency: Option<String>,
-        #[arg(long = "deadline-open")]
-        deadline_open: Option<String>,
-        #[arg(long = "deadline-submit")]
-        deadline_submit: Option<String>,
         #[arg(long)]
         provider: Option<String>,
+        #[arg(long = "service-id")]
+        service_id: Option<String>,
+        #[arg(long = "service-params")]
+        service_params: Option<String>,
+        #[arg(long = "service-token-address")]
+        service_token_address: Option<String>,
+        #[arg(long = "service-token-amount")]
+        service_token_amount: Option<String>,
     },
     /// Delete a draft
     Delete {
@@ -413,6 +424,20 @@ pub enum DraftCommand {
     Publish {
         job_id: String,
     },
+    /// Pure local validation of task fields — no network calls.
+    /// Returns structured JSON with per-field pass/fail.
+    Validate {
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        budget: Option<f64>,
+        #[arg(long = "max-budget")]
+        max_budget: Option<f64>,
+        #[arg(long)]
+        currency: Option<String>,
+    },
 }
 
 pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
@@ -421,7 +446,8 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         DraftCommand::Create {
             title, description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, provider, attachments,
+            provider, attachments,
+            service_id, service_params, service_token_address, service_token_amount,
         } => {
             draft::handle_draft_create(
                 &mut client,
@@ -431,30 +457,35 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
                 budget,
                 max_budget,
                 currency.as_deref(),
-                deadline_open.as_deref(),
-                deadline_submit.as_deref(),
                 provider.as_deref(),
                 attachments.as_deref(),
+                service_id.as_deref(),
+                service_params.as_deref(),
+                service_token_address.as_deref(),
+                service_token_amount.as_deref(),
             ).await
         }
         DraftCommand::List { page, limit } => {
             draft::handle_draft_list(&mut client, page, limit).await
         }
         DraftCommand::Update {
-            job_id, title, description, budget, max_budget, currency,
-            deadline_open, deadline_submit, provider,
+            job_id, title, description, description_summary, budget, max_budget, currency,
+            provider, service_id, service_params, service_token_address, service_token_amount,
         } => {
             draft::handle_draft_update(
                 &mut client,
                 &job_id,
                 title.as_deref(),
                 description.as_deref(),
+                description_summary.as_deref(),
                 budget,
                 max_budget,
                 currency.as_deref(),
-                deadline_open.as_deref(),
-                deadline_submit.as_deref(),
                 provider.as_deref(),
+                service_id.as_deref(),
+                service_params.as_deref(),
+                service_token_address.as_deref(),
+                service_token_amount.as_deref(),
             ).await
         }
         DraftCommand::Delete { job_id } => {
@@ -462,6 +493,17 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
         }
         DraftCommand::Publish { job_id } => {
             draft::handle_draft_publish(&mut client, &job_id).await
+        }
+        DraftCommand::Validate {
+            description, title, budget, max_budget, currency,
+        } => {
+            draft::handle_validate_draft(
+                description.as_deref(),
+                title.as_deref(),
+                budget,
+                max_budget,
+                currency.as_deref(),
+            )
         }
     }
 }

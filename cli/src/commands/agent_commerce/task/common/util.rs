@@ -9,7 +9,7 @@ use anyhow::{bail, Result};
 use chrono::{TimeZone, Utc};
 
 use super::network::task_api_client::TaskApiClient;
-use super::{PaymentMode, XLAYER_CHAIN_INDEX};
+use super::{PaymentMode, XLAYER_CHAIN_INDEX, DEBUG_LOG};
 
 /// unix seconds -> display string. 0 / negative are treated as unset; positive values are converted to RFC 3339.
 pub fn fmt_unix_secs(secs: Option<i64>) -> String {
@@ -81,10 +81,14 @@ pub async fn resolve_payment_mode(
             let payment_mode_int = task_resp["paymentMode"].as_i64().unwrap_or(0) as i32;
             let mode = PaymentMode::from_int(payment_mode_int);
             if mode == PaymentMode::None {
-                eprintln!("⚠ task paymentMode={payment_mode_int}, unrecognized payment mode, defaulting to escrow");
+                if DEBUG_LOG {
+                    eprintln!("⚠ task paymentMode={payment_mode_int}, unrecognized payment mode, defaulting to escrow");
+                }
                 Ok(PaymentMode::Escrow)
             } else {
-                eprintln!("ℹ --payment-mode not provided, using task detail paymentMode: {} ({payment_mode_int})", mode.as_str());
+                if DEBUG_LOG {
+                    eprintln!("ℹ --payment-mode not provided, using task detail paymentMode: {} ({payment_mode_int})", mode.as_str());
+                }
                 Ok(mode)
             }
         }
@@ -127,7 +131,7 @@ pub struct X402ServiceParams {
     pub fee_token_symbol: String,
 }
 
-/// Resolve x402 service params: CLI flag > recommend cache > identity service-list API > error.
+/// Resolve x402 service params: CLI flag > negotiate cache > identity service-list API > error.
 pub async fn resolve_x402_params(
     job_id: &str,
     provider_agent_id: Option<&str>,
@@ -139,7 +143,9 @@ pub async fn resolve_x402_params(
     if let (Some(ep), Some(sym), Some(amt_str)) = (cli_endpoint, cli_token_symbol, cli_token_amount) {
         let amt: f64 = amt_str.parse()
             .map_err(|_| anyhow::anyhow!("--token-amount format error: {amt_str}"))?;
-        eprintln!("ℹ x402: using CLI params endpoint={ep}, token={sym}, amount={amt}");
+        if DEBUG_LOG {
+            eprintln!("ℹ x402: using CLI params endpoint={ep}, token={sym}, amount={amt}");
+        }
         return Ok(X402ServiceParams {
             endpoint: ep.to_string(),
             fee_amount: amt,
@@ -147,15 +153,17 @@ pub async fn resolve_x402_params(
         });
     }
 
-    // Tier 2: recommend cache.
+    // Tier 2: negotiate cache.
     let mut cached_provider_agent_id = String::new();
     match crate::commands::agent_commerce::task::buyer::negotiate::current(job_id) {
         Ok(Some(pi)) => {
             cached_provider_agent_id = pi.provider_agent_id.clone();
             if let Some(svc) = pi.services.first() {
                 if !svc.endpoint.is_empty() && svc.fee_amount > 0.0 && !svc.fee_token_symbol.is_empty() {
-                    eprintln!("ℹ x402: using recommend cache endpoint={}, token={}, amount={}",
-                        svc.endpoint, svc.fee_token_symbol, svc.fee_amount);
+                    if DEBUG_LOG {
+                        eprintln!("ℹ x402: using negotiate cache endpoint={}, token={}, amount={}",
+                            svc.endpoint, svc.fee_token_symbol, svc.fee_amount);
+                    }
                     return Ok(X402ServiceParams {
                         endpoint: cli_endpoint.unwrap_or(&svc.endpoint).to_string(),
                         fee_amount: cli_token_amount
@@ -167,10 +175,20 @@ pub async fn resolve_x402_params(
                     });
                 }
             }
-            eprintln!("⚠ x402: recommend cache services empty or fields missing, falling back to service-list API");
+            if DEBUG_LOG {
+                eprintln!("⚠ x402: negotiate cache services empty or fields missing, falling back to service-list API");
+            }
         }
-        Ok(None) => eprintln!("⚠ x402: recommend cache has no current provider, falling back to service-list API"),
-        Err(e) => eprintln!("⚠ x402: failed to read recommend cache ({e}), falling back to service-list API"),
+        Ok(None) => {
+            if DEBUG_LOG {
+                eprintln!("⚠ x402: negotiate cache has no current provider, falling back to service-list API");
+            }
+        }
+        Err(e) => {
+            if DEBUG_LOG {
+                eprintln!("⚠ x402: failed to read negotiate cache ({e}), falling back to service-list API");
+            }
+        }
     }
 
     // Tier 3: identity service-list API (prefer the input arg, otherwise the cached provider_agent_id).
@@ -179,7 +197,7 @@ pub async fn resolve_x402_params(
         .map(|s| s.to_string())
         .unwrap_or(cached_provider_agent_id);
     if resolved_id.is_empty() {
-        anyhow::bail!("unable to determine provider agentId: recommend cache is empty and --provider-agent-id was not provided");
+        anyhow::bail!("unable to determine provider agentId: negotiate cache is empty and --provider-agent-id was not provided");
     }
     let params = fetch_x402_service_from_identity(&resolved_id).await?;
     Ok(X402ServiceParams {
@@ -202,7 +220,9 @@ pub(crate) async fn resolve_symbol_from_svc(svc: &serde_json::Value) -> Result<S
     let addr = svc["contractAddress"].as_str()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow::anyhow!("x402: service entry missing contractAddress, cannot resolve token symbol"))?;
-    eprintln!("ℹ x402: feeTokenSymbol missing, resolving from chain={chain} address={addr}");
+    if DEBUG_LOG {
+        eprintln!("ℹ x402: feeTokenSymbol missing, resolving from chain={chain} address={addr}");
+    }
     resolve_token_symbol_by_address(&chain, addr).await
 }
 
@@ -273,7 +293,9 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
         }
     };
 
-    eprintln!("ℹ x402: retrieved from service-list API endpoint={endpoint}, token={fee_token_symbol}, amount={fee_amount}");
+    if DEBUG_LOG {
+        eprintln!("ℹ x402: retrieved from service-list API endpoint={endpoint}, token={fee_token_symbol}, amount={fee_amount}");
+    }
     Ok(X402ServiceParams { endpoint, fee_amount, fee_token_symbol })
 }
 
@@ -353,10 +375,16 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
                             .or_else(|| asset["balance"].as_f64())
                             .unwrap_or(0.0);
                         if balance < required {
+                            let shortfall = required - balance;
                             bail!(
-                                "Insufficient business token balance (USDT/USDG): current XLayer {symbol} balance is {balance}, \
-                                 need {required} {currency}. Please top up {currency} via okx-dex-swap. \
-                                 Note: gas is paid by the platform paymaster, no OKB / native required"
+                                "Insufficient {currency} balance on XLayer (current: {balance}, need: {required}, shortfall: {shortfall})\n\
+                                 \n\
+                                 Fund your wallet — pick one:\n\
+                                 1. Swap on XLayer — \"swap <token> to {shortfall} {currency} on xlayer\"\n\
+                                 2. Bridge from another chain — \"bridge {shortfall} {currency} from <chain> to xlayer\"\n\
+                                 3. Send from OKX exchange — withdraw {currency} to your wallet address on XLayer network\n\
+                                 \n\
+                                 Note: gas is paid by the platform paymaster, no OKB / native required."
                             );
                         }
                         return Ok(());
@@ -367,8 +395,14 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
     }
 
     bail!(
-        "Business token {currency} balance not found on XLayer. Please confirm the account holds this token and top up via okx-dex-swap before retrying. \
-         Note: gas is paid by the platform paymaster, no OKB / native required"
+        "{currency} balance not found on XLayer (need {required} {currency})\n\
+         \n\
+         Fund your wallet — pick one:\n\
+         1. Swap on XLayer — \"swap <token> to {required} {currency} on xlayer\"\n\
+         2. Bridge from another chain — \"bridge {required} {currency} from <chain> to xlayer\"\n\
+         3. Send from OKX exchange — withdraw {currency} to your wallet address on XLayer network\n\
+         \n\
+         Note: gas is paid by the platform paymaster, no OKB / native required."
     );
 }
 

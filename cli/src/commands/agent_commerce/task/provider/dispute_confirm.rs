@@ -61,7 +61,6 @@ pub async fn handle_dispute_confirm(
     println!("  txHash: {dispute_tx}");
     println!();
     println!("⚠️  Stage 2 complete — **end this turn** and wait for the on-chain `job_disputed` system notification:");
-    println!("    - Do NOT call xmtp_send to tell the buyer \"dispute raised\" or similar");
     println!("    - Once you receive the `job_disputed` notification, proceed with the evidence upload script");
     Ok(())
 }
