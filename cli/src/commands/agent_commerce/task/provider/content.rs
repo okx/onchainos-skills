@@ -24,20 +24,6 @@
 //! conversation state. To add new copy → add a new fn; to change copy → edit the
 //! fn body; flow.rs only ever calls into here and never embeds literals inline.
 
-/// `Event::JobAspSelected` APPLY path — user-facing notification pushed via
-/// `okx-a2a user notify --content <text>` after the on-chain apply.
-/// Placeholders the agent fills in: `<serviceName>` / `<offerAmount>` /
-/// `<tokenSymbol>`. The agent must localize the entire string to the user's
-/// language before sending (per LOCALIZATION_PREFIX rules).
-pub fn job_asp_selected_accepted_notify(job_id: &str) -> String {
-    format!(
-        "[Designated Task Accepted] Job {job_id} — you have been designated as the ASP and the apply is on-chain.\n\
-         \x20\x20- Service: <serviceName>\n\
-         \x20\x20- Price: <offerAmount> <tokenSymbol>\n\
-         \x20\x20Awaiting the buyer's confirm-accept to fund escrow."
-    )
-}
-
 /// `Event::JobAspSelected` no-serviceId fallback — user-facing notification
 /// pushed via `okx-a2a user notify --content <text>`. The playbook does NOT
 /// auto-start negotiation; it ends the turn and waits for the buyer to re-route

@@ -773,22 +773,14 @@ pub async fn generate_next_action(
 
                         // Deterministic apply command — uses buyer's token symbol (per spec).
                         // After apply, push a user-facing notification via `okx-a2a user notify`.
-                        let apply_user_notify = super::content::job_asp_selected_accepted_notify(job_id);
                         let apply_failed_notify = super::content::job_asp_selected_apply_failed_notify(job_id, "<one-line error from apply's stderr>");
                         let apply_template = format!(
                             "**APPLY path** — run apply, then branch by exit code:\n\
                              ```bash\n\
                              onchainos agent apply {job_id} --agent-id {agent_id} --token-amount {offer_amount} --token-symbol {buyer_token_symbol}\n\
                              ```\n\n\
-                             ✅ **On success** (exit code 0 + `txHash` in stdout) — notify the user:\n\n\
-                             🌐 **Localize first** — fill `<serviceName>` / `<offerAmount>` / `<tokenSymbol>` from the [Auto-decision context] above, then rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                             ```bash\n\
-                             okx-a2a user notify --content \"<localized content shown below>\"\n\
-                             ```\n\
-                             content:\n\
-                             {apply_user_notify}\n\n\
-                             Then end the turn; wait for the `provider_applied` system event.\n\n\
-                             ❌ **On failure** (non-zero exit / stderr / no txHash) — DO NOT proceed to the success notify. Push a failure notification instead:\n\n\
+                             ✅ **On success** (exit code 0 + `txHash` in stdout) — end the turn directly; wait for the `provider_applied` system event. \n\n\
+                             ❌ **On failure** (non-zero exit / stderr / no txHash) — push a failure notification instead:\n\n\
                              🌐 **Localize first** — fill `<one-line error from apply's stderr>`, then rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
                              ```bash\n\
                              okx-a2a user notify --content \"<localized content shown below>\"\n\
@@ -808,14 +800,7 @@ pub async fn generate_next_action(
                              ```\n\
                              ⚠️ `<YOUR_FAIR_PRICE>` — substitute a numeric value YOU judge fair for this workload (e.g. `0.05`). Same token as the buyer's offer ({buyer_token_symbol}); do NOT change the symbol.\n\
                              ⚠️ Do NOT self-discount to 0 / free. Do NOT throw a wildly inflated number (e.g. 100×). Stay within the tier the workload actually fits.\n\n\
-                             ✅ **On success** (exit 0 + `txHash`) — notify the user (the message MUST clarify this is a counter-offer at YOUR_FAIR_PRICE — so they know the price differs from buyer's original offer):\n\n\
-                             🌐 **Localize first** — fill `<serviceName>` / `<offerAmount>` / `<tokenSymbol>` from the [Auto-decision context] above (use YOUR_FAIR_PRICE for `<offerAmount>`, NOT the buyer's offer), then rewrite the content below in the user's language before sending; explicitly state in the localized text that this is a counter-offer and the price differs from the buyer's original offer. Do NOT pass the English template verbatim to a non-English user.\n\
-                             ```bash\n\
-                             okx-a2a user notify --content \"<localized content shown below>\"\n\
-                             ```\n\
-                             content:\n\
-                             {apply_user_notify}\n\n\
-                             Then end the turn; wait for the `provider_applied` system event. Buyer will see your apply at YOUR_FAIR_PRICE and choose to confirm-accept (escrow funds at that price) or decline.\n\n\
+                             ✅ **On success** (exit 0 + `txHash`) — end the turn directly; wait for the `provider_applied` system event. \n\n\
                              ❌ **On failure** — same as APPLY path: push failure notification, do NOT auto-retry.\n"
                         );
 
