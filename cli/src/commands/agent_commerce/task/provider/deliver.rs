@@ -1,22 +1,46 @@
 //! Provider submits deliverable.
 //!
 //! Provider action: deliver — onchainos agent deliver
+//!
+//! Full pipeline (all handled internally):
+//!   1. Precondition checks (status, payment mode)
+//!   2. file_upload (if file or long text) → xmtp_send to buyer
+//!   3. On-chain submit (POST /submit → sign → broadcast)
+//!   4. Local persistent save
 
 use anyhow::{bail, Result};
 use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::okx_a2a;
 use crate::commands::agent_commerce::task::common::payment_mode::PaymentMode;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
 
+const LONG_TEXT_THRESHOLD: usize = 200;
+
+/// Deliverable preparation result — carries the info needed by later stages
+/// (xmtp message was already sent; this tracks what to save locally).
+enum Prepared {
+    /// Native file or long-text-converted-to-md: local path + upload metadata.
+    File {
+        local_path: String,
+        file_key: String,
+    },
+    /// Short inline text (≤ threshold).
+    Text {
+        tmp_path: String,
+    },
+}
+
 /// deliver — submit deliverable
 ///
-/// 1. Precondition: job must be in accepted state (status=1) — i.e. the buyer has confirm-accept on-chain
-/// 2. POST submit API (with identity headers) → fetch uopData
-/// 3. Sign uopData + broadcast on-chain
+/// 1. Precondition: job must be in accepted state (status=1)
+/// 2. Prepare deliverable + xmtp_send to buyer
+/// 3. POST submit API (with identity headers) → sign uopData → broadcast on-chain
+/// 4. Auto-save deliverable locally
 pub async fn handle_deliver(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -28,8 +52,8 @@ pub async fn handle_deliver(
         bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
     }
 
-    // Precondition: job must be accepted (buyer has confirm-accept, on-chain job_accepted notification received) before delivery.
-    // Prevents the agent from racing to deliver right after apply without waiting for buyer confirmation — backend rejects this, but an early bail makes the error clearer.
+    // ── 1. Precondition checks ──────────────────────────────────────────
+
     let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
     let status_int = task_resp["status"]
         .as_i64()
@@ -86,9 +110,151 @@ pub async fn handle_deliver(
         );
     }
 
+    // Extract fields needed by later stages (available from task_resp already fetched above).
+    let buyer_agent_id = task_resp["buyerAgentId"]
+        .as_str()
+        .unwrap_or("");
+    let title = task_resp["title"].as_str().unwrap_or("(untitled)");
+    let token_symbol = task_resp["tokenSymbol"].as_str();
+    let token_amount = task_resp["tokenAmount"].as_str();
+    let short_id = if job_id.len() > 12 {
+        format!("{}…", &job_id[..8])
+    } else {
+        job_id.to_string()
+    };
+
+    // ── 2. Prepare deliverable + xmtp_send ──────────────────────────────
+
+    let base_tags = vec![format!("jobId={job_id}"), format!("agentId={agent_id}")];
+
+    let prepared = if !file.is_empty() {
+        // ▸ Native file (image / PDF / document)
+        let src = std::path::Path::new(file);
+        if !src.exists() {
+            bail!("file not found: {file}");
+        }
+        audit::log("cli", "provider/deliver_file_upload", true, Duration::default(),
+            Some([base_tags.clone(), vec![format!("path={file}")]].concat()), None);
+        let upload = okx_a2a::file_upload(file, agent_id, job_id, None, None)?;
+        audit::log("cli", "provider/deliver_file_uploaded", true, Duration::default(),
+            Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key)]].concat()), None);
+
+        let msg = super::content::build_file_deliver_message(job_id, &upload);
+        if !buyer_agent_id.is_empty() {
+            match okx_a2a::xmtp_send(job_id, buyer_agent_id, &msg) {
+                Ok(()) => {
+                    audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
+                        Some([base_tags.clone(), vec!["type=file".into()]].concat()), None);
+                }
+                Err(e) => {
+                    audit::log("cli", "provider/deliver_xmtp_failed", false, Duration::default(),
+                        Some([base_tags.clone(), vec!["type=file".into()]].concat()), Some(&e.to_string()));
+                }
+            }
+        }
+        Prepared::File {
+            local_path: file.to_string(),
+            file_key: upload.file_key,
+        }
+    } else if !deliverable_text.is_empty() {
+        let text_len = deliverable_text.chars().count();
+        let is_long = text_len > LONG_TEXT_THRESHOLD;
+        audit::log("cli", "provider/deliver_text_prepare", true, Duration::default(),
+            Some([base_tags.clone(), vec![format!("charCount={text_len}"), format!("isLong={is_long}")]].concat()), None);
+
+        if is_long {
+            // ▸ Long text → write .md → file_upload → file-format xmtp
+            //   Fallback: if tmp write or file_upload fails, degrade to inline text.
+            let file_result = (|| -> Result<Prepared> {
+                let tmp_dir = std::env::temp_dir();
+                let tmp_path = tmp_dir.join(format!("deliverable_{}.md", job_id));
+                std::fs::write(&tmp_path, deliverable_text)?;
+                let tmp_str = tmp_path.display().to_string();
+                let upload = okx_a2a::file_upload(&tmp_str, agent_id, job_id, None, None)?;
+                audit::log("cli", "provider/deliver_long_text_uploaded", true, Duration::default(),
+                    Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key), format!("path={tmp_str}")]].concat()), None);
+
+                let msg = super::content::build_file_deliver_message(job_id, &upload);
+                if !buyer_agent_id.is_empty() {
+                    match okx_a2a::xmtp_send(job_id, buyer_agent_id, &msg) {
+                        Ok(()) => {
+                            audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
+                                Some([base_tags.clone(), vec!["type=file_from_long_text".into()]].concat()), None);
+                        }
+                        Err(e) => {
+                            audit::log("cli", "provider/deliver_xmtp_failed", false, Duration::default(),
+                                Some([base_tags.clone(), vec!["type=file_from_long_text".into()]].concat()), Some(&e.to_string()));
+                        }
+                    }
+                }
+                Ok(Prepared::File {
+                    local_path: tmp_str,
+                    file_key: upload.file_key,
+                })
+            })();
+            match file_result {
+                Ok(p) => p,
+                Err(e) => {
+                    audit::log("cli", "provider/deliver_long_text_fallback", false, Duration::default(),
+                        Some([base_tags.clone(), vec![format!("charCount={text_len}")]].concat()), Some(&e.to_string()));
+
+                    let msg = super::content::build_text_deliver_message(job_id, deliverable_text);
+                    if !buyer_agent_id.is_empty() {
+                        match okx_a2a::xmtp_send(job_id, buyer_agent_id, &msg) {
+                            Ok(()) => {
+                                audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
+                                    Some([base_tags.clone(), vec!["type=text_fallback".into()]].concat()), None);
+                            }
+                            Err(e) => {
+                                audit::log("cli", "provider/deliver_xmtp_failed", false, Duration::default(),
+                                    Some([base_tags.clone(), vec!["type=text_fallback".into()]].concat()), Some(&e.to_string()));
+                            }
+                        }
+                    }
+                    let tmp_dir = std::env::temp_dir();
+                    let tmp_path = tmp_dir.join(format!(
+                        "deliverable_{}.txt",
+                        chrono::Local::now().format("%Y%m%d%H%M%S")
+                    ));
+                    let _ = std::fs::write(&tmp_path, deliverable_text);
+                    Prepared::Text {
+                        tmp_path: tmp_path.display().to_string(),
+                    }
+                }
+            }
+        } else {
+            // ▸ Short text → inline text-format xmtp
+            let msg = super::content::build_text_deliver_message(job_id, deliverable_text);
+            if !buyer_agent_id.is_empty() {
+                match okx_a2a::xmtp_send(job_id, buyer_agent_id, &msg) {
+                    Ok(()) => {
+                        audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
+                            Some([base_tags.clone(), vec!["type=text".into()]].concat()), None);
+                    }
+                    Err(e) => {
+                        audit::log("cli", "provider/deliver_xmtp_failed", false, Duration::default(),
+                            Some([base_tags.clone(), vec!["type=text".into()]].concat()), Some(&e.to_string()));
+                    }
+                }
+            }
+            // Write text to temp file for local persistent save.
+            let tmp_dir = std::env::temp_dir();
+            let tmp_path = tmp_dir.join(format!(
+                "deliverable_{}.txt",
+                chrono::Local::now().format("%Y%m%d%H%M%S")
+            ));
+            let _ = std::fs::write(&tmp_path, deliverable_text);
+            Prepared::Text {
+                tmp_path: tmp_path.display().to_string(),
+            }
+        }
+    } else {
+        bail!("Either --file or --deliverable-text must be provided");
+    };
+
+    // ── 3. On-chain submit ──────────────────────────────────────────────
+
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
-    // Backend spec: submit endpoint accepts an `evidenceHash` field; for now pass an empty string placeholder (offchain
-    // evidence is uploaded multipart via /evidence/upload — no hash is provided at submit stage).
     let body = serde_json::json!({
         "evidenceHash": "",
     });
@@ -116,62 +282,49 @@ pub async fn handle_deliver(
         None,
     );
 
-    // Auto-save deliverable to persistent storage.
-    // Runs after on-chain success so a failed save never blocks the deliver flow.
-    let title = task_resp["title"].as_str().unwrap_or("(untitled)");
-    let token_symbol = task_resp["tokenSymbol"].as_str();
-    let token_amount = task_resp["tokenAmount"].as_str();
-    let buyer_agent_id = task_resp["buyerAgentId"].as_str();
-    let short_id = if job_id.len() > 12 {
-        format!("{}…", &job_id[..8])
-    } else {
-        job_id.to_string()
-    };
+    // ── 4. Local persistent save ────────────────────────────────────────
 
-    if !file.is_empty() {
-        // File deliverable: move the file to persistent storage.
-        let src = std::path::Path::new(file);
-        if src.exists() {
-            let params = super::super::common::deliverables::SaveParams {
-                job_id,
-                role: "provider",
-                file_path: file,
-                deliverable_type: "file",
-                title,
-                short_id: &short_id,
-                file_key: None,
-                token_symbol,
-                token_amount,
-                counterparty_agent_id: buyer_agent_id,
-                counterparty_name: None,
-            };
-            match super::super::common::deliverables::handle_save(&params) {
-                Ok(r) => { if DEBUG_LOG { eprintln!("[deliver] deliverable auto-saved: {}", r.path); } }
-                Err(e) => { if DEBUG_LOG { eprintln!("[deliver] deliverable auto-save failed (non-blocking): {e}"); } }
+    match &prepared {
+        Prepared::File { local_path, file_key } => {
+            if std::path::Path::new(local_path).exists() {
+                let params = super::super::common::deliverables::SaveParams {
+                    job_id,
+                    role: "provider",
+                    file_path: local_path,
+                    deliverable_type: "file",
+                    title,
+                    short_id: &short_id,
+                    file_key: Some(file_key),
+                    token_symbol,
+                    token_amount,
+                    counterparty_agent_id: Some(buyer_agent_id).filter(|s| !s.is_empty()),
+                    counterparty_name: None,
+                };
+                match super::super::common::deliverables::handle_save(&params) {
+                    Ok(r) => { if DEBUG_LOG { eprintln!("[deliver] deliverable auto-saved: {}", r.path); } }
+                    Err(e) => { if DEBUG_LOG { eprintln!("[deliver] deliverable auto-save failed (non-blocking): {e}"); } }
+                }
             }
         }
-    } else if !deliverable_text.is_empty() {
-        // Text deliverable: write deliverable_text content to a temp file and save.
-        let tmp_dir = std::env::temp_dir();
-        let tmp_path = tmp_dir.join(format!("deliverable_{}.txt", chrono::Local::now().format("%Y%m%d%H%M%S")));
-        if let Ok(()) = std::fs::write(&tmp_path, deliverable_text) {
-            let tmp_str = tmp_path.display().to_string();
-            let params = super::super::common::deliverables::SaveParams {
-                job_id,
-                role: "provider",
-                file_path: &tmp_str,
-                deliverable_type: "text",
-                title,
-                short_id: &short_id,
-                file_key: None,
-                token_symbol,
-                token_amount,
-                counterparty_agent_id: buyer_agent_id,
-                counterparty_name: None,
-            };
-            match super::super::common::deliverables::handle_save(&params) {
-                Ok(r) => { if DEBUG_LOG { eprintln!("[deliver] text deliverable auto-saved: {}", r.path); } }
-                Err(e) => { if DEBUG_LOG { eprintln!("[deliver] text deliverable auto-save failed (non-blocking): {e}"); } }
+        Prepared::Text { tmp_path } => {
+            if std::path::Path::new(tmp_path).exists() {
+                let params = super::super::common::deliverables::SaveParams {
+                    job_id,
+                    role: "provider",
+                    file_path: tmp_path,
+                    deliverable_type: "text",
+                    title,
+                    short_id: &short_id,
+                    file_key: None,
+                    token_symbol,
+                    token_amount,
+                    counterparty_agent_id: Some(buyer_agent_id).filter(|s| !s.is_empty()),
+                    counterparty_name: None,
+                };
+                match super::super::common::deliverables::handle_save(&params) {
+                    Ok(r) => { if DEBUG_LOG { eprintln!("[deliver] text deliverable auto-saved: {}", r.path); } }
+                    Err(e) => { if DEBUG_LOG { eprintln!("[deliver] text deliverable auto-save failed (non-blocking): {e}"); } }
+                }
             }
         }
     }

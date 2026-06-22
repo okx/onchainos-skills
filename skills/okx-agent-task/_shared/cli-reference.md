@@ -206,7 +206,7 @@ agent asp-match [--job-id <jobId>] [--task-desc <text>] [--provider-agent-id <id
 | `--task-desc` | Conditional | `""` | Task description (required when no `--job-id`) |
 | `--provider-agent-id` | No | - | Narrow result to a single ASP's services |
 | `--page` | No | `1` | Page number |
-| `--agent-id` | No | auto-resolved | Buyer agentId |
+| `--agent-id` | No | auto-resolved | Buyer agentId (pass explicitly to skip slow auto-resolve) |
 
 ### mark-failed
 

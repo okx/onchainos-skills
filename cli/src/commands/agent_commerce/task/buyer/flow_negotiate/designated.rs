@@ -2,10 +2,9 @@
 //!
 //! The full flow is split into two phases to reduce playbook output size:
 //!   Phase 1 (`route_only`): call `designated-route` → determine route → call next-action with the matching pseudo-event
-//!   Phase 2 (`branch_a2a` / `branch_x402` / `branch_error`): only the hit branch's playbook
+//!   Phase 2 (`branch_a2a_cli` / `branch_x402` / `branch_error`): only the hit branch's playbook
 
-/// Negotiation ground rules — static text shared by every A2A negotiation path
-/// (both `branch_a2a` and `branch_a2a_cli`). No format args here.
+/// Negotiation ground rules — static text shared by every A2A negotiation path.
 ///
 /// Negotiation is pure natural-language task-detail discussion; pricing is locked
 /// at accept time.
@@ -20,8 +19,7 @@ const HANDSHAKE_RULES_A2A: &str = "🛑 **Negotiation ground rules — natural l
     Once you've finished clarifying task details, end your turn. The ASP will independently decide when to submit their on-chain apply; you will then receive a `provider_applied` system notification.";
 
 /// Branch B title + B-Step 0 (duplicate guard) + B-Step 1 (group creation) +
-/// B-Step 1.5 (SKILL_PREFETCH). Used by the MCP path (`branch_a2a` →
-/// `designated_provider_negotiate`); the CLI path (`branch_a2a_cli`) skips
+/// B-Step 1.5 (SKILL_PREFETCH). The CLI path (`branch_a2a_cli`) skips
 /// this section because Rust already executes the setup steps inline.
 fn negotiate_section_pre_inquiry(job_id: &str, agent_id: &str, dp_id: &str) -> String {
     format!("━━━━━━━━━ Branch B: supportA2MCP=false -> A2A (negotiation required) ━━━━━━━━━\n\n\
@@ -164,7 +162,7 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
              **End this turn after executing the branch playbook returned by next-action.**\n")
 }
 
-/// CLI-mode variant of `branch_a2a`. Inlines the three calls that begin the A2A
+/// Inlines the three calls that begin the A2A
 /// negotiation flow:
 ///   - B-Step 0   (duplicate guard)        → okx_a2a::session_query_exists
 ///   - B-Step 1   (create sub session)     → okx_a2a::session_create
@@ -175,32 +173,29 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
 pub(crate) fn branch_a2a_cli(
     job_id: &str,
     agent_id: &str,
-    short_id: &str,
     dp_id: &str,
-    title_display: &str,
-    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
-) -> String {
+) -> Option<String> {
     use crate::commands::agent_commerce::task::common::okx_a2a;
 
     // B-Step 0 — duplicate guard: does this job already have a sub session
     // with this provider? If yes, the first inquiry was already sent in a
     // previous turn; bail out so we don't double-send.
     match okx_a2a::session_query_exists(job_id, agent_id, dp_id) {
-        Ok(true) => return format!(
+        Ok(true) => return Some(format!(
             "[Designated ASP route: A2A] Provider {dp_id}\n\n\
              🛑 Sub session already exists for this job; the first inquiry has already been sent in a prior turn. \
              End this turn immediately — do not create a group, do not send any message, do not run `okx-a2a session status` / `okx-a2a session create` / `okx-a2a xmtp-send`.\n"
-        ),
+        )),
         Ok(false) => { /* fall through to create */ }
-        Err(e) => return format!("[branch_a2a_cli] ERROR: okx-a2a session query failed: {e}\n"),
+        Err(e) => return Some(format!("[branch_a2a_cli] ERROR: okx-a2a session query failed: {e}\n")),
     }
 
     // B-Step 1 — create the sub session (group + session record). The CLI
     // helper returns the canonical sessionKey assembled from the three IDs;
     // we use it as <SUB_KEY> in the remaining playbook.
-    let session_key = match okx_a2a::session_create(job_id, agent_id, dp_id) {
+    match okx_a2a::session_create(job_id, agent_id, dp_id) {
         Ok(sk) => sk,
-        Err(e) => return format!("[branch_a2a_cli] ERROR: okx-a2a session create failed: {e}\n"),
+        Err(e) => return Some(format!("[branch_a2a_cli] ERROR: okx-a2a session create failed: {e}\n")),
     };
 
     // B-Step 1.5 — SKILL_PREFETCH: pre-load the buyer playbook into the
@@ -208,50 +203,19 @@ pub(crate) fn branch_a2a_cli(
     // correct context. Fire-and-forget (--no-wait baked into helper).
     let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via buyer-sub-playbook.md §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
     if let Err(e) = okx_a2a::session_send(job_id, Some(dp_id), prefetch) {
-        return format!("[branch_a2a_cli] ERROR: okx-a2a session send (SKILL_PREFETCH) failed: {e}\n");
+        return Some(format!("[branch_a2a_cli] ERROR: okx-a2a session send (SKILL_PREFETCH) failed: {e}\n"));
     }
 
     // B-Step 1.6 — Upload + forward any pending attachments (best-effort).
-    let att_count = super::super::flow_lifecycle::upload_and_forward_all_attachments(
+    super::super::flow_lifecycle::upload_and_forward_all_attachments(
         job_id, agent_id, dp_id,
     );
-    if att_count > 0 {
-        eprintln!("[branch_a2a_cli] {att_count} attachment(s) uploaded and forwarded to provider {dp_id}");
-    }
 
     // Sub session created + SKILL_PREFETCH sent. The ASP receives
     // `job_asp_selected` from the backend and independently decides to
     // apply on-chain. The buyer does NOTHING until `provider_applied`.
-    let _ = (short_id, title_display, session_key, prefetched);
-
-    format!(
-        "[Designated ASP route: A2A] Provider {dp_id} — session created, SKILL_PREFETCH sent. \
-         All setup done. 🛑 End this turn. Do NOT call any command.\n"
-    )
+    None
 }
-
-/// Phase 2a: A2A branch — group creation + negotiation protocol.
-pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &str, _title_display: &str) -> String {
-    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via buyer-sub-playbook.md §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
-
-    format!("\
-         [Designated ASP route: A2A] Provider {dp_id} — create sub session only.\n\
-         [Role] User (Buyer)\n\n\
-         **B-Step 1 — Create the sub session (group + session record):**\n\
-         ```bash\n\
-         okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id {dp_id} --json\n\
-         ```\n\n\
-         **B-Step 1.5 — Send SKILL_PREFETCH to the sub session:**\n\
-         ```bash\n\
-         okx-a2a session send --session-key <sessionKey from step above> --content '{prefetch}'\n\
-         ```\n\n\
-         ✅ Sub session ready. The ASP will receive `job_asp_selected` from the backend and independently decide to apply on-chain.\n\n\
-         🛑 **End this turn immediately.** Your ONLY next action is to wait for the `provider_applied` system event.\n\
-         ❌ Do NOT send any message (`okx-a2a xmtp-send`) — no negotiation conversation is needed.\n\
-         ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n\
-         ❌ Do NOT call `asp-match` / `apply` / `complete` / `reject`.\n")
-}
-
 /// Phase 2b: x402 branch — endpoint validation + set-payment-mode.
 ///
 /// `route_data`: pre-fetched JSON from `designated_route_inner` (when called
@@ -259,7 +223,13 @@ pub(crate) fn branch_a2a(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
 /// `Some`, values are filled directly into the playbook so the LLM does not
 /// need to "recall" them from a prior designated-route response.
 pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, route_data: Option<&serde_json::Value>) -> String {
-    let cmd_x402_invalid = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 invalid {short_id}] next-step decision\" --source-event x402_invalid");
+    let x402_invalid_prompt = super::super::content::x402_invalid_user_prompt(job_id, short_id, dp_id);
+    let block_x402_invalid = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+        job_id, "buyer", agent_id, None,
+        &x402_invalid_prompt,
+        &format!("[x402 invalid {short_id}] next-step decision"),
+        "x402_invalid",
+    );
     let cmd_input_required = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 input {short_id}] field confirmation\" --source-event x402_input_required");
     let cmd_x402_price = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 price {short_id}] price decision\" --source-event x402_price_mismatch");
     let cmd_over_budget = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Over budget {short_id}] budget decision\" --source-event over_budget");
@@ -290,15 +260,8 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          {validate_cmd}\n\
          ```\n\
          {validate_hint}Response field `result` determines the branch:\n\n\
-         - **`result == \"x402_invalid\"`** -> run:\n\
-         \x20\x20```bash\n\
-         \x20\x20{cmd_x402_invalid}\n\
-         \x20\x20```\n\
-         \x20\x20`--user-content` template:\n\
-         \x20\x20[Job {short_id} — you are the User Agent] The x402 endpoint of the designated ASP (agentId={dp_id}) is invalid and cannot be used. Choose next step:\n\
-         \x20\x20A. Specify another ASP — provide the agentId\n\
-         \x20\x20B. Make the job public — let more ASPs discover it\n\
-         \x20\x20C. Close the job\n\
+         - **`result == \"x402_invalid\"`** -> push the next-step decision card:\n\
+         \x20\x20{block_x402_invalid}\n\
          \x20\x20-> **end this turn** and wait for the user's reply.\n\n\
          - **`result == \"input_required\"`** -> the endpoint needs business parameters before payment.\n\
          \x20\x20The response includes `fields` / `requiredAnyOf` describing what the endpoint needs.\n\n\

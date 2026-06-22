@@ -52,8 +52,6 @@ pub async fn handle_complete(
             ]),
             None,
         );
-        println!("✓ Task review approved (escrow); status → complete; funds released.");
-        println!("  txHash: {}", result.tx_hash);
     } else {
         // ── x402: deliverable gate — block complete if replay never delivered. ────
         let has_deliverable = crate::commands::agent_commerce::task::common::deliverables::read_manifest("buyer", job_id)

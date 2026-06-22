@@ -201,19 +201,9 @@ pub async fn generate_next_action(
     // the agent **what content to send where** at each step; it does not re-explain
     // tool usage.
     //
-    let send_to_peer = format!(
-        "→ Run `okx-a2a xmtp-send` (jobId={job_id}, our agentId={agent_id}). Resolve `<buyerAgentId>` from the task fields above. **Use the heredoc pattern below verbatim** — plain `--message \"...\"` breaks on `\"` / `$` / newlines in the content.\n\
-         ```bash\n\
-         okx-a2a xmtp-send \\\n\
-         \x20\x20--job-id {job_id} \\\n\
-         \x20\x20--to-agent-id <buyerAgentId> \\\n\
-         \x20\x20--message \"$(cat <<'OKX_MSG_EOF'\n\
-         <message shown below — verbatim>\n\
-         OKX_MSG_EOF\n\
-         )\"\n\
-         ```\n\
-         Message:"
-    );
+    // NOTE: `send_to_peer` helper was removed — the deliver CLI now handles
+    // xmtp_send internally (upload + [intent:deliver] message + on-chain submit).
+    // Other events that need peer messaging construct the command inline.
 
     // Shared "execute task autonomously" guidance for escrow Step 2 — the script does
     // not prescribe how to do it; list a few examples so the agent knows "pick your own
@@ -270,8 +260,6 @@ pub async fn generate_next_action(
         // ─── Scene 4: User Agent has confirmed the apply; execute and deliver ──
         Event::JobAccepted => {
             let user_notify = super::content::job_accepted_user_notify(job_id, agent_id);
-            let deliver_text = super::content::deliver_text_to_buyer(job_id);
-            let deliver_file = super::content::deliver_file_to_buyer(job_id);
             let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol", "serviceParams", "buyerAgentId"]);
             format!(
             "[Current state] job_accepted (User Agent has confirmed the apply)\n\
@@ -289,38 +277,23 @@ pub async fn generate_next_action(
              ⚠️ Do NOT send `okx-a2a xmtp-send` `received apply confirmation` filler to the User Agent — the User Agent just ran confirm-accept; they already know.\n\n\
              **Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
              {execute_task}\n\n\
-             **Step 3 — Deliver** (first `okx-a2a xmtp-send` the deliverable to the User Agent, then deliver on-chain):\n\n\
-             ⚠️ **Order**: first `okx-a2a xmtp-send` the deliverable to the User Agent, then deliver on-chain. The on-chain deliver only advances the task state to submitted (giving the User Agent an acceptance entry point); the deliverable itself was already delivered via okx-a2a xmtp-send.\n\n\
-             **Step 3a — Prepare the deliverable (branch by type)**:\n\n\
-             ▸ **Plain text / URL deliverable**: assemble the text content directly, skip `okx-a2a file upload`, go to Step 3b.\n\n\
-             ▸ **File deliverable** (image / PDF / document): run `okx-a2a file upload`:\n\
-             \x20\x20```bash\n\
-             \x20\x20okx-a2a file upload --file-path \"<absolute local file path>\" --agent-id {agent_id} --job-id {job_id}\n\
-             \x20\x20```\n\
-             \x20\x20Record all five return fields (`fileKey` / `digest` / `salt` / `nonce` / `secret` — decryption metadata).\n\n\
-             **Step 3b — `okx-a2a xmtp-send` the deliverable to the User Agent** (in the same turn, immediately following Step 3a):\n\
-             ⚠️ content **MUST end with the `[intent:deliver]` line as a trailing suffix** — the User Agent routes by this suffix to recognize the deliverable. Missing suffix = the User Agent cannot recognize it as a deliverable = the flow stalls.\n\n\
-             Text-deliverable content:\n\
-             {send_to_peer}\n\
-             {deliver_text}\n\n\
-             File-deliverable content (paste all 5 fields verbatim):\n\
-             {send_to_peer}\n\
-             {deliver_file}\n\n\
-             **Step 3c — Run `deliver` CLI to go on-chain** (advances task state to submitted so the User Agent gets the complete entry point):\n\
-             ▸ File deliverable — pass `--file` with the **local file path** used in Step 3a (the CLI auto-saves it to persistent deliverable storage after on-chain success):\n\
+             **Step 3 — Deliver** (single CLI command — handles file upload, peer notification, on-chain submit, and local save internally):\n\n\
+             ⚠️ Do NOT call `okx-a2a file upload` or `okx-a2a xmtp-send` yourself — the `deliver` CLI handles all of this internally:\n\
+             \x20\x20- file_upload (when needed) → xmtp_send `[intent:deliver]` to the User Agent → on-chain submit → local persistent save.\n\
+             \x20\x20- Text deliverables >200 characters are auto-converted to a `.md` file and sent as file attachment.\n\n\
+             ▸ **File deliverable** — pass `--file` with the local file path:\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"<local file path from Step 3a>\" --agent-id {agent_id}\n\
-             ```\n\
-             ▸ Text deliverable — `--file \"\"` + heredoc-wrapped `--deliverable-text` (plain `\"...\"` breaks on `\"` / `$` / newlines). CLI auto-saves the text:\n\
+             onchainos agent deliver {job_id} --file \"<local file path>\" --agent-id {agent_id}\n\
+             ```\n\n\
+             ▸ **Text deliverable** — `--file \"\"` + heredoc-wrapped `--deliverable-text`:\n\
              ```bash\n\
              onchainos agent deliver {job_id} --file \"\" --agent-id {agent_id} \\\n\
              \x20\x20--deliverable-text \"$(cat <<'OKX_TEXT_EOF'\n\
-             <full text deliverable content from Step 3b — verbatim>\n\
+             <full text deliverable content>\n\
              OKX_TEXT_EOF\n\
              )\"\n\
-             ```\n\
-             CLI internals: POST submit API → sign uopHash → broadcast on-chain → auto-save deliverable (file via --file, text via --deliverable-text).\n\n\
-             **Step 4 — After Step 3c ends this turn immediately** (the deliverable was already delivered to the User Agent in Step 3b; do NOT send any filler `okx-a2a xmtp-send` / `okx-a2a user notify` here).\n\n\
+             ```\n\n\
+             **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `okx-a2a user notify` — the CLI already notified the User Agent).\n\n\
              🛑 **The next system events for this ASP are `job_completed` OR `job_rejected` — both are action-required, NEITHER is observer-only.** Provider does NOT receive a `job_submitted` envelope after deliver.\n\n\
              [Follow-up events]\n\
              - `job_completed` (buyer reviewed and accepted) — auto-rate the buyer + notify the user\n\
@@ -356,30 +329,23 @@ pub async fn generate_next_action(
         // ─── Scene 6: User Agent rejected the deliverable ─────────────────────────────────
         Event::JobRejected => {
             let user_prompt = super::content::job_rejected_user_decision_prompt(&short_id);
-            let to_flag = prefetched
-                .and_then(|p| p.buyer_agent_id.as_deref())
-                .filter(|s| !s.is_empty())
-                .map(|b| format!(" --to-agent-id {b}"))
-                .unwrap_or_default();
+            let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_prompt_command_block(
+                job_id,
+                "provider",
+                agent_id,
+                prefetched.and_then(|p| p.buyer_agent_id.as_deref()),
+                &user_prompt,
+                &format!("[Decision {short_id}] {title_display} dispute decision"),
+                "job_rejected",
+            );
             format!(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              🛑 **MUST push the dispute/refund decision via `pending-decisions-v2 request-prompt`** — `okx-a2a user notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = 24h timeout → auto-refund.\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\
-             ⚠️ **24h hard deadline** — if the user does not decide within 24h, funds are auto-refunded to the User Agent. (Agent-side context; do NOT include in `--user-content` unless the localized template already mentions it.)\n\n\
-             **Step 1 — Push the decision to the user via `pending-decisions-v2 request-prompt`**:\n\n\
-             🌐 **Localize first** — translate the source template below to the user's language before passing to `--user-content`. Keep `[Job <shortId>]`, the `A.` / `B.` letters, the shortId hex.\n\
-             ```bash\n\
-             onchainos agent pending-decisions-v2 request-prompt \\\n\
-             \x20\x20--job-id {job_id} --role provider --agent-id {agent_id}{to_flag} \\\n\
-             \x20\x20--user-content \"<localized content shown below>\" \\\n\
-             \x20\x20--list-label \"[Decision {short_id}] {title_display} dispute decision\" \\\n\
-             \x20\x20--source-event job_rejected\n\
-             ```\n\
-             content (only the lines between `=== BEGIN ===` and `=== END ===` — translate before passing; do NOT include the markers themselves, do NOT append anything else):\n\
-             === BEGIN ===\n\
-             {user_prompt}\n\
-             === END ===\n",
+             ⚠️ **24h hard deadline** — if the user does not decide within 24h, funds are auto-refunded to the User Agent.\n\n\
+             **Push the decision to the user (run the bash block below verbatim — do NOT rewrite `--user-content`; the CLI handles push internally)**:\n\n\
+             {request_block}\n",
             )
         }
 

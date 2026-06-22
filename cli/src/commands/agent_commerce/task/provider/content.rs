@@ -294,6 +294,10 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
 ///
 /// **Do not direct** the peer's CLI — once the User Agent's sub agent receives
 /// this, it follows its own `Event::JobSubmitted` script.
+///
+/// NOTE: No longer called from flow.rs — deliver.rs now uses `build_text_deliver_message`
+/// with actual values. Kept as protocol format reference.
+#[allow(dead_code)]
 pub fn deliver_text_to_buyer(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
@@ -311,6 +315,10 @@ pub fn deliver_text_to_buyer(job_id: &str) -> String {
 /// `secret` / `filename`) are protocol literals; the User Agent's sub agent
 /// parses them and downloads the local file via the file-attachment flow.
 /// **Do not direct** the peer's CLI.
+///
+/// NOTE: No longer called from flow.rs — deliver.rs now uses `build_file_deliver_message`
+/// with actual upload metadata. Kept as protocol format reference.
+#[allow(dead_code)]
 pub fn deliver_file_to_buyer(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
@@ -322,6 +330,38 @@ pub fn deliver_file_to_buyer(job_id: &str) -> String {
          secret: <secret returned from A-Step 1>\n\
          filename: <filename returned from A-Step 1>\n\
          [intent:deliver]"
+    )
+}
+
+/// Build the actual text-deliver XMTP message with real content (used by deliver.rs).
+pub fn build_text_deliver_message(job_id: &str, text: &str) -> String {
+    format!(
+        "jobId: {job_id}\n\
+         deliverableType: text\n\
+         - - -\n\
+         {text}\n\
+         - - -\n\
+         [intent:deliver]"
+    )
+}
+
+/// Build the actual file-deliver XMTP message with real upload metadata (used by deliver.rs).
+pub fn build_file_deliver_message(
+    job_id: &str,
+    upload: &crate::commands::agent_commerce::task::common::okx_a2a::FileUploadResult,
+) -> String {
+    format!(
+        "jobId: {job_id}\n\
+         deliverableType: file\n\
+         fileKey: {}\n\
+         digest: {}\n\
+         salt: {}\n\
+         nonce: {}\n\
+         secret: {}\n\
+         filename: {}\n\
+         [intent:deliver]",
+        upload.file_key, upload.digest, upload.salt,
+        upload.nonce, upload.secret, upload.filename,
     )
 }
 

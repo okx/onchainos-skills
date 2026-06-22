@@ -46,8 +46,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         );
 
         return format!(
-        "[provider_applied/over_budget] ✅ reject-apply completed in-process.\n\n\
-         🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
+        "🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
          {request_block}\n"
         );
     }
@@ -60,101 +59,78 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         );
     }
 
-    "[Current state] provider_applied (within max budget; confirm-accept completed in-process)\n\
-     [Role] User (User Agent)\n\n\
-     ✓ In-process: confirm-accept — escrow funded, on-chain accept submitted (see txHash printed above). Status is now `accepted`.\n\
-     → **End this turn** and wait for the `job_accepted` system notification.\n".to_string()
+    "**End this turn** and wait for the `job_accepted` system notification.".to_string()
 }
 
 pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
-    let title_in_extract = ctx.title_in_extract;
 
-    let accepted_escrow_notify = super::super::content::job_accepted_escrow_user_notify(job_id, title_display);
+    let pm = ctx.payment_mode;
+
+    // ── Escrow: CLI fills all values, LLM just localizes + sends ──
+    if pm != Some(3) {
+        let (title, desc, provider_id, amount, symbol) = match ctx.prefetched {
+            Some(p) => (
+                p.title.as_str(),
+                if p.description.is_empty() { "<description>" } else { p.description.as_str() },
+                p.provider_agent_id.as_deref().unwrap_or("<providerAgentId>"),
+                p.token_amount.as_str(),
+                p.token_symbol.as_str(),
+            ),
+            None => ("<title>", "<description>", "<providerAgentId>", "<tokenAmount>", "<tokenSymbol>"),
+        };
+
+        let l10n = super::super::flow::LOCALIZATION_PREFIX;
+        return format!(
+            "{l10n}\
+             ✓ job_accepted (escrow). Notify the user:\n\
+             ```bash\n\
+             okx-a2a user notify --content '<localized content>'\n\
+             ```\n\
+             Template (translate to user's language, keep structure):\n\
+             \x20\x20[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
+             \x20\x20Title: {title}\n\
+             \x20\x20Description: {desc}\n\
+             \x20\x20ASP agentId: {provider_id}\n\
+             \x20\x20Payment: escrow\n\
+             \x20\x20Amount: {amount} {symbol}\n\n\
+             End turn after notifying.\n"
+        );
+    }
+
+    // ── x402: LLM needs to determine replaySuccess + run complete ──
+    let l10n = super::super::flow::LOCALIZATION_PREFIX;
     let accepted_x402_fail = super::super::content::job_accepted_x402_replay_fail_user_notify(job_id);
     let complete_failed = super::super::content::complete_failed_user_notify(job_id);
 
-    let pm = ctx.payment_mode;
-    let pm_extract = if pm.is_some() { "" } else { "paymentMode (int: 1=escrow, 3=x402), " };
-    let branch_header = if pm.is_none() { "**Step 2 -- Branch by payment mode:**\n\n" } else { "" };
-
-    let escrow_section = if pm == Some(3) { String::new() } else { format!("\
-     --------- Branch A: escrow ---------\n\n\
-     Notify the user that accept succeeded via `okx-a2a user notify`:\n\
-     ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
-     ```\n\
-     Content:\n\
-     {accepted_escrow_notify}\n\n") };
-
-    let x402_section = if pm == Some(1) { String::new() } else { format!("\
-     --------- Branch B: x402 ---------\n\n\
-     In x402 mode, accept has already been settled on-chain (funds paid); task-402-pay was executed in the previous turn (job_payment_mode_changed).\n\n\
-     **B-Step 1 -- Determine replaySuccess from the previous turn's task-402-pay:**\n\
+    format!(
+    "{l10n}\
+     [Current Status] job_accepted (x402 — funds already paid)\n\n\
+     **Step 1 -- Determine replaySuccess from the previous turn's task-402-pay:**\n\
      Look up the task-402-pay output in this sub session context.\n\
-     ⚠️ If it cannot be found (e.g. lost due to context compaction), **default to replaySuccess=true** --\n\
-     x402 funds are paid during accept, the user was already notified of the delivery result (success or failure) in the previous turn,\n\
-     and skipping complete would leave the task stuck in accepted forever.\n\n\
-     **B-Branch 1: replaySuccess=true (or default when context is missing)**\n\n\
-     **B-Step 2 -- Run complete (single sign):**\n\
+     ⚠️ If not found (e.g. context compaction), **default to replaySuccess=true** —\n\
+     skipping complete would leave the task stuck in accepted forever.\n\n\
+     **Branch 1: replaySuccess=true (or default)**\n\n\
      ```bash\n\
      onchainos agent complete {job_id}\n\
      ```\n\
-     (Internally: POST /priapi/v1/aieco/task/{job_id}/direct/complete → get calldata → sign uopHash → broadcast on-chain.)\n\n\
-     🛑 **broadcast ≠ on-chain confirmed**: `complete` CLI success = transaction broadcast submitted, not on-chain confirmed.\n\
-     ❌ Do NOT call `okx-a2a user notify` here — the final completion summary is owned by the `job_completed` event (fired after on-chain confirmation).\n\
-     ❌ Do NOT say \"task complete\" / \"funds settled\" / \"任务完成\" — factually wrong at this point.\n\n\
-     ⚠️ **complete failure fallback**: if `onchainos agent complete` returns an error,\n\
-     notify the user via `okx-a2a user notify`:\n\
+     🛑 broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
+     ⚠️ On error → notify user:\n\
      ```bash\n\
      okx-a2a user notify --content '<localized content>'\n\
      ```\n\
      Content: {complete_failed}\n\
-     → **End this turn** and wait for user retry or a wakeup_notify event.\n\n\
-     **B-Branch 2: replaySuccess=false (only take this branch when replaySuccess=false is explicitly found in context)**\n\n\
-     ⚠️ **Do not run complete** -- the user did not receive the deliverable.\n\n\
-     **B-Step 2 — Check whether a `x402_replay_input` pending decision was already pushed:**\n\
-     Look in this sub session's context for a `pending-decisions-v2 request ... --source-event x402_replay_input` call from the previous `job_payment_mode_changed` turn.\n\n\
-     \x20\x20▸ **If yes** (a `x402_replay_input` decision was already sent to the user session):\n\
-     \x20\x20\x20\x20**Skip notification.** The user will reply to the pending decision with the required parameters.\n\
-     \x20\x20\x20\x20The `user_decision_x402_replay_input` handler will re-run `task-402-pay --body` and call `complete` on success.\n\
-     \x20\x20\x20\x20→ **End this turn.** Do nothing further.\n\n\
-     \x20\x20▸ **If no** (generic replay failure, no pending decision):\n\
-     \x20\x20\x20\x20Notify the user of replay failure via `okx-a2a user notify`:\n\
-     \x20\x20\x20\x20```bash\n\
-     \x20\x20\x20\x20okx-a2a user notify --content '<localized content>'\n\
-     \x20\x20\x20\x20```\n\
-     \x20\x20\x20\x20Content:\n\
-     \x20\x20\x20\x20{accepted_x402_fail}\n\n\
-     → Wait for `job_completed` system event; handle via `next-action`.\n") };
-
-    let step1 = if ctx.prefetched.is_some() {
-        format!("\
-     **Step 1 -- Use pre-fetched task context above:**\n\
-     Read {title_in_extract}description, providerAgentId, {pm_extract}tokenAmount, tokenSymbol from the `[Pre-fetched task context]` block.\n\
-     ⚠️ If any field is missing, fall back to `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}`.\n\
-     [Failure fallback] If all sources fail, degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n")
-    } else {
-        format!("\
-     **Step 1 -- Fetch full task info:**\n\
+     → End turn, wait for retry or wakeup_notify.\n\n\
+     **Branch 2: replaySuccess=false (explicitly found in context)**\n\n\
+     Do not run complete.\n\
+     Check whether a `x402_replay_input` pending decision was already pushed in the previous turn:\n\
+     ▸ Yes → end turn (user will reply to the pending decision).\n\
+     ▸ No → notify user:\n\
      ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+     okx-a2a user notify --content '<localized content>'\n\
      ```\n\
-     Extract: {title_in_extract}description, providerAgentId, {pm_extract}tokenAmount, tokenSymbol.\n\
-     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Accepted] Job `{job_id}` has been accepted; execution begins.` — the user MUST still receive a notification.\n\n")
-    };
-
-    format!(
-    "[Current Status] job_accepted (user has confirmed accept; task enters execution stage)\n\
-     [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user; do not produce a plain text reply inside the sub session** (see Hard Rule 9).\n\n\
-     [Your next actions (strict order)]\n\n\
-     {step1}\
-     {branch_header}\
-     {escrow_section}\
-     {x402_section}"
+     Content: {accepted_x402_fail}\n\
+     → Wait for `job_completed` system event.\n"
     )
 }
 
@@ -202,7 +178,6 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      \x20\x20Provider: {provider_field}\n\
      \x20\x20Type: <file|text>\n\
      \x20\x20Saved at: <savedPath>\n\
-     \x20\x20(text only: show first 200 chars as preview)\n\
      \x20\x20Awaiting on-chain submission confirmation; review will follow.\n\n\
      **Step 4 — End turn**. Wait for `job_submitted` → `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
     )
@@ -218,19 +193,28 @@ pub(crate) fn deliverable_received_cli(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
 ) -> String {
+    use crate::audit;
     use crate::commands::agent_commerce::task::common::{deliverables, okx_a2a};
+    use std::time::Duration;
 
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
+
+    let base_tags = vec![format!("jobId={job_id}"), format!("agentId={agent_id}")];
 
     let dtype = message
         .and_then(|m| m.get("deliverableType"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if dtype.is_empty() {
+        audit::log("cli", "buyer/deliverable_received_no_type", false, Duration::default(),
+            Some(base_tags.clone()), Some("deliverableType missing, fallback to LLM path"));
         return deliverable_received(ctx);
     }
+
+    audit::log("cli", "buyer/deliverable_received", true, Duration::default(),
+        Some([base_tags.clone(), vec![format!("type={dtype}")]].concat()), None);
 
     let (title, sym, amt, provider_id) = match ctx.prefetched {
         Some(p) => (
@@ -249,7 +233,7 @@ pub(crate) fn deliverable_received_cli(
             .unwrap_or("")
     };
 
-    let (saved_path, original_name, deliverable_type, text_preview) = match dtype {
+    let (saved_path, deliverable_type) = match dtype {
         "file" => {
             let file_key = msg_str("fileKey");
             let digest = msg_str("digest");
@@ -261,14 +245,25 @@ pub(crate) fn deliverable_received_cli(
             if file_key.is_empty() || digest.is_empty() || salt.is_empty()
                 || nonce.is_empty() || secret.is_empty()
             {
+                audit::log("cli", "buyer/deliverable_file_missing_metadata", false, Duration::default(),
+                    Some(base_tags.clone()), Some("encryption metadata incomplete, fallback to LLM path"));
                 return deliverable_received(ctx);
             }
+
+            audit::log("cli", "buyer/deliverable_file_download", true, Duration::default(),
+                Some([base_tags.clone(), vec![format!("fileKey={file_key}")]].concat()), None);
 
             let local_path = match okx_a2a::file_download(
                 file_key, agent_id, digest, salt, nonce, secret, filename,
             ) {
-                Ok(p) => p,
+                Ok(p) => {
+                    audit::log("cli", "buyer/deliverable_file_downloaded", true, Duration::default(),
+                        Some([base_tags.clone(), vec![format!("localPath={p}")]].concat()), None);
+                    p
+                }
                 Err(e) => {
+                    audit::log("cli", "buyer/deliverable_file_download_failed", false, Duration::default(),
+                        Some([base_tags.clone(), vec![format!("fileKey={file_key}")]].concat()), Some(&e.to_string()));
                     eprintln!("[deliverable_received_cli] file download failed: {e}");
                     return deliverable_received(ctx);
                 }
@@ -289,27 +284,65 @@ pub(crate) fn deliverable_received_cli(
             });
 
             match save_result {
-                Ok(r) => (
-                    r.path,
-                    filename.unwrap_or("deliverable").to_string(),
-                    "file".to_string(),
-                    String::new(),
-                ),
+                Ok(r) => {
+                    audit::log("cli", "buyer/deliverable_saved", true, Duration::default(),
+                        Some([base_tags.clone(), vec!["type=file".into(), format!("path={}", r.path)]].concat()), None);
+                    (r.path, "file".to_string())
+                }
                 Err(e) => {
+                    audit::log("cli", "buyer/deliverable_save_failed", false, Duration::default(),
+                        Some([base_tags.clone(), vec!["type=file".into()]].concat()), Some(&e.to_string()));
                     eprintln!("[deliverable_received_cli] save failed: {e}");
                     return deliverable_received(ctx);
                 }
             }
         }
         "text" => {
-            let text = msg_str("text");
-            if text.is_empty() {
+            let file_path = msg_str("filePath");
+            if file_path.is_empty() {
+                audit::log("cli", "buyer/deliverable_text_no_filepath", false, Duration::default(),
+                    Some(base_tags.clone()), Some("filePath missing, fallback to LLM path"));
                 return deliverable_received(ctx);
             }
-
+            let fp = std::path::Path::new(file_path);
             let tmp_dir = std::env::temp_dir();
+            if !fp.starts_with(&tmp_dir) {
+                audit::log("cli", "buyer/deliverable_text_path_rejected", false, Duration::default(),
+                    Some(base_tags.clone()), Some("filePath not under temp dir"));
+                eprintln!("[deliverable_received_cli] filePath must be under temp dir: {file_path}");
+                return deliverable_received(ctx);
+            }
+            let raw = match std::fs::read_to_string(fp) {
+                Ok(content) => content,
+                Err(e) => {
+                    audit::log("cli", "buyer/deliverable_text_read_failed", false, Duration::default(),
+                        Some(base_tags.clone()), Some(&e.to_string()));
+                    eprintln!("[deliverable_received_cli] read filePath failed: {e}");
+                    return deliverable_received(ctx);
+                }
+            };
+
+            // Extract text between first and last `- - -`. Use rfind for the
+            // closing separator so deliverable text containing `- - -` is preserved.
+            let text = if let Some(start) = raw.find("- - -") {
+                let after = start + 5;
+                let body = if let Some(rel_end) = raw[after..].rfind("- - -") {
+                    &raw[after..after + rel_end]
+                } else {
+                    &raw[after..]
+                };
+                body.trim().to_string()
+            } else {
+                raw.trim().to_string()
+            };
+
+            audit::log("cli", "buyer/deliverable_text_parsed", true, Duration::default(),
+                Some([base_tags.clone(), vec![format!("charCount={}", text.chars().count())]].concat()), None);
+
             let tmp_path = tmp_dir.join(format!("deliverable-text-{job_id}.txt"));
-            if let Err(e) = std::fs::write(&tmp_path, text) {
+            if let Err(e) = std::fs::write(&tmp_path, &text) {
+                audit::log("cli", "buyer/deliverable_text_write_failed", false, Duration::default(),
+                    Some(base_tags.clone()), Some(&e.to_string()));
                 eprintln!("[deliverable_received_cli] write temp file failed: {e}");
                 return deliverable_received(ctx);
             }
@@ -328,48 +361,44 @@ pub(crate) fn deliverable_received_cli(
                 counterparty_name: None,
             });
 
-            let preview = if text.len() <= 200 {
-                text.to_string()
-            } else {
-                format!("{}…", &text[..text.char_indices().nth(200).map(|(i, _)| i).unwrap_or(text.len())])
-            };
-
             match save_result {
-                Ok(r) => (r.path, "deliverable.txt".to_string(), "text".to_string(), preview),
+                Ok(r) => {
+                    audit::log("cli", "buyer/deliverable_saved", true, Duration::default(),
+                        Some([base_tags.clone(), vec!["type=text".into(), format!("path={}", r.path)]].concat()), None);
+                    (r.path, "text".to_string())
+                }
                 Err(e) => {
+                    audit::log("cli", "buyer/deliverable_save_failed", false, Duration::default(),
+                        Some([base_tags.clone(), vec!["type=text".into()]].concat()), Some(&e.to_string()));
                     eprintln!("[deliverable_received_cli] save failed: {e}");
                     return deliverable_received(ctx);
                 }
             }
         }
-        _ => return deliverable_received(ctx),
+        _ => {
+            audit::log("cli", "buyer/deliverable_received_unknown_type", false, Duration::default(),
+                Some([base_tags.clone(), vec![format!("type={dtype}")]].concat()), Some("unknown deliverableType, fallback to LLM path"));
+            return deliverable_received(ctx);
+        }
     };
 
-    let preview_block = if deliverable_type == "text" && !text_preview.is_empty() {
-        format!(
-            "\n  ---Preview---\n  {text_preview}\n  ---End of preview---"
-        )
-    } else {
-        String::new()
-    };
-
+    let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
-        "[deliverable_received_cli] ✓ {deliverable_type} deliverable downloaded and saved in-process.\n\
+        "{l10n}\
+         ✓ {deliverable_type} deliverable saved.\n\
          savedPath: {saved_path}\n\
-         originalName: {original_name}\n\n\
-         [Your next action] Notify the user and end the turn.\n\n\
-         Content:\n\
-         \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
-         \x20\x20Provider: {provider_id}\n\
-         \x20\x20Type: {deliverable_type}\n\
-         \x20\x20Saved at: {saved_path}{preview_block}\n\
-         \x20\x20\n\
-         \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\n\
+         title: {title} | shortId: {short_id} | provider: {provider_id}\n\n\
+         Notify the user:\n\
          ```bash\n\
          okx-a2a user notify --content '<localized content>'\n\
          ```\n\
-         **End this turn** after notifying. Wait for `job_submitted`.\n\
-         When it arrives, call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
+         Template (translate to user's language, keep structure; path must be full absolute — never abbreviate):\n\
+         \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
+         \x20\x20Provider: {provider_id}\n\
+         \x20\x20Type: {deliverable_type}\n\
+         \x20\x20Saved at: {saved_path}\n\
+         \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\n\
+         End turn after notifying.\n"
     )
 }
 
@@ -427,82 +456,48 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     let token_symbol = p.token_symbol.as_str();
     let token_amount = p.token_amount.as_str();
 
-    // Step 2 — one block, branched on whether the deliverable was already
-    // persisted. Some(d) → Step 2a only (saved); None → Step 2a + Step 2b
-    // (need to query + escrow download/save fallback).
     let step2 = if let Some(d) = p.deliverable.as_ref() {
         format!("\
-     **Step 2a — Deliverable already saved** (detected by CLI pre-fetch; no need to call `task-deliverable-list`):\n\
+     **Step 2 — Deliverable already saved**:\n\
      \x20\x20- localPath: {path}\n\
      \x20\x20- deliverableType: {dtype}\n\
-     \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\
-     \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
-     \x20\x20- **Skip Step 2b entirely**\n\
-     \x20\x20- Go to Step 3\n\n",
+     \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\n",
             path = d.path, dtype = d.deliverable_type,
         )
     } else {
         format!("\
-     **Step 2a — Check if deliverable was already saved** (by the earlier `deliverable_received` playbook):\n\
+     **Step 2a — Check saved deliverable:**\n\
      ```bash\n\
      onchainos agent task-deliverable-list --job-id {job_id} --role buyer\n\
      ```\n\
-     If `deliverables` array is non-empty → the deliverable has already been downloaded and saved:\n\
-     \x20\x20- Use the `path` from the first entry as `localPath`\n\
-     \x20\x20- Use the `deliverableType` from the first entry\n\
-     \x20\x20- For text deliverables, read the file content at `path` to get `deliverableText`\n\
-     \x20\x20- **Skip Step 2b entirely** (no need to re-download or re-save)\n\
-     \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
-     \x20\x20- Go to Step 3\n\n\
-     If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n\
-     **Step 2b — Fallback: fetch from chat history and save:**\n\
-     Run `okx-a2a session history` to fetch the chat history with the provider, then find the ASP message **carrying the `[intent:deliver]` suffix tag** (scan newest to oldest; first match is the deliverable):\n\
+     Non-empty `deliverables` → use first entry's `path` as localPath, `deliverableType`; skip Step 2b.\n\
+     Empty → fall through to Step 2b.\n\n\
+     **Step 2b — Fallback: fetch from chat history:**\n\
      ```bash\n\
      okx-a2a session history --job-id {job_id} --to-agent-id {provider_field} --json\n\
      ```\n\
-     Then branch on `deliverableType`:\n\n\
-     --- Case A: deliverableType=file (message contains fileKey / digest / salt / nonce / secret decryption fields) ---\n\n\
-     Run `okx-a2a file download` to download + decrypt:\n\
+     Find the ASP message with `[intent:deliver]` suffix (newest first).\n\n\
+     ▸ Case A (file — message has fileKey/digest/salt/nonce/secret):\n\
      ```bash\n\
-     okx-a2a file download \\\n\
-     \x20\x20--file-key <fileKey> \\\n\
-     \x20\x20--agent-id {agent_id} \\\n\
-     \x20\x20--digest <digest> \\\n\
-     \x20\x20--salt <salt> \\\n\
-     \x20\x20--nonce <nonce> \\\n\
-     \x20\x20--secret <secret> \\\n\
-     \x20\x20[--filename <filename>]\n\
+     okx-a2a file download --file-key <fileKey> --agent-id {agent_id} --digest <digest> --salt <salt> --nonce <nonce> --secret <secret> [--filename <filename>]\n\
      ```\n\
-     Fill `<fileKey> / <digest> / <salt> / <nonce> / <secret>` from the ASP's message; `--filename` is optional.\n\
-     ⚠️ Before calling, print: `[buyer] file download: fileKey=<fileKey>, agentId={agent_id}`\n\
-     ⚠️ After calling, print: `[buyer] file download result: localPath=<stdout path>`\n\n\
-     stdout is the local saved path (either a plain path or a JSON `{{path: ...}}` wrapper); **it MUST be a full absolute path** (e.g. /Users/xxx/Downloads/task-staging.png).\n\
-     ⚠️ **Never show only the filename** -- the user cannot locate the file. Any later content shown to the user MUST include the full path.\n\
-     If download fails → note in the display: \"file download failed, please ask the ASP to resend\".\n\
-     ⚠️ If the ASP message contains text alongside the file, capture it into deliverableText as well.\n\n\
-     🛑 **IMMEDIATELY after download succeeds**, persist the deliverable (REQUIRED):\n\
+     stdout = localPath (must be full absolute path). Then persist:\n\
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
        --file \"<localPath>\" --deliverable-type file --title \"{title}\" \\\n\
        --short-id {short_id} --file-key \"<fileKey>\" \\\n\
        --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
        --token-symbol \"{token_symbol}\" --token-amount \"{token_amount}\"\n\
-     ```\n\
-     After save, update localPath to the path printed by the save command. If save fails, log but do NOT block the review flow.\n\n\
-     Deliverable display variables: deliverableType=file, localPath=<full path>, deliverableText=<note text, empty if none>\n\n\
-     --- Case B: deliverableType=text (body content between `- - -` separators) ---\n\n\
-     Extract the text between `- - -` separators in the `[intent:deliver]` message; **keep the original wording in full**.\n\n\
-     🛑 **IMMEDIATELY after extraction**, persist the text deliverable (REQUIRED):\n\
-     Write deliverableText to a temp .txt file, then:\n\
+     ```\n\n\
+     ▸ Case B (text — body between `- - -` separators):\n\
+     Extract full text → write to temp .txt → persist:\n\
      ```bash\n\
      onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
-       --file \"<temp .txt path>\" --deliverable-type text \\\n\
-       --title \"{title}\" --short-id {short_id} \\\n\
-       --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"{token_symbol}\" --token-amount \"{token_amount}\"\n\
+       --file \"<temp .txt path>\" --deliverable-type text --title \"{title}\" \\\n\
+       --short-id {short_id} --counterparty-agent-id \"{provider_field}\" \\\n\
+       --counterparty-name \"<providerName>\" --token-symbol \"{token_symbol}\" --token-amount \"{token_amount}\"\n\
      ```\n\
-     After save, record the path printed by the save command as localPath.\n\n\
-     Deliverable display variables: deliverableType=text, deliverableText=<full original text>, localPath=<path from save command output>\n\n")
+     After save, update localPath from save command output.\n\n")
     };
 
     // Step 3 — compose review card user_content + push via pending-decisions-v2.
@@ -517,61 +512,41 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     );
 
     format!(
-    "[Current Status] job_submitted (ASP has submitted the deliverable) — paymentMode=escrow\n\
-     [Role] User (User Agent)\n\n\
-     🛑🛑🛑 **ABSOLUTE REQUIREMENT — you MUST push the review decision to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT `okx-a2a user notify`)**.\n\
-     `okx-a2a user notify` is a pure one-way notification: user replies cannot be relayed back to the sub session → the review flow deadlocks. The correct flow handles this via `pending-decisions-v2 request` (which queues a decision card via the okx-a2a decision-request channel) so the user session can relay the review decision back.\n\
-     🔴 Real incident: a model received job_submitted, sent a plain notification with \"the ASP has submitted; awaiting your review\" — the user never saw the deliverable, could not relay a decision, and the task was stuck.\n\n\
-     🛑🛑🛑 **Even if you already processed the ASP's a2a-agent-chat deliverable message earlier in this turn (e.g. ran `okx-a2a file download`), upon receiving job_submitted you MUST still execute every Step below in full**.\n\
-     Handling a2a-agent-chat (file download) != the review flow — the review must be driven by the job_submitted playbook, and the deliverable content (file path / text) MUST be placed into the `--user-content` of `pending-decisions-v2 request` for the user to see.\n\n\
-     🛑 **Auto-approval is strictly forbidden**: wait for the user's relayed decision; the agent must not decide on behalf of the user, regardless of deliverable quality or how close to deadline.\n\n\
+    "🛑 MUST use `pending-decisions-v2 request` — NOT `okx-a2a user notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\
+     🛑 Even if deliverable was already downloaded this turn, execute ALL steps below.\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 1 — Task context (pre-fetched; no CLI call needed):**\n\
-     All task fields (paymentMode, tokenSymbol, providerAgentId, etc.) are in the `[Pre-fetched task context]` block above.\n\
-     qualityStandards: extract from the description field above (task creation time value is authoritative).\n\n\
-     **Step 2 — Obtain the deliverable content (check saved first, then fallback to chat history):**\n\n\
-     ⚠️ The deliverable content MUST appear in Step 3's userContent — the user has not seen the body yet. **Do not omit, summarize, or just write \"already sent to you\".**\n\n\
      {step2}\
-     --------- Step 3: escrow review — push the decision card to the user ---------\n\n\
-     **Step 3a — Compose `--user-content` from Step 2's deliverable variables** (fill `<placeholder>` from runtime values):\n\n\
+     **Step 3 — Compose `--user-content` and push decision card:**\n\n\
+     Compose `--user-content` from Step 2's deliverable variables (fill placeholders from runtime values):\n\n\
+     ⚠️ `<localPath>` must be the full absolute path (e.g. /Users/xxx/…). Never abbreviate or shorten.\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
-     [Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (file); downloaded locally.\n\
-     Deliverable file path: <localPath> (full absolute path, e.g. /Users/xxx/Downloads/task.png)\n\
-     <if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
-     Deliverable URL: <deliverableUrl>\n\
+     [Job {short_id}] The ASP has submitted the deliverable (file).\n\
+     File path: <localPath>\n\
+     <if deliverableText non-empty: ASP note: <deliverableText>>\n\
      Payment: escrow\n\
-     \n\
-     Choose:\n\
-     A. Approve the deliverable → reply 'A'\n\
-     B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
+     A. Approve → reply 'A'\n\
+     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
      ```\n\n\
-     ▸ deliverableType=text — branch by localPath availability:\n\n\
-     \x20\x20✅ localPath is available (save succeeded):\n\
-     \x20\x20```\n\
-     \x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
-     \x20\x20Deliverable saved at: <localPath> (full absolute path)\n\
-     \x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20Payment: escrow\n\
-     \x20\x20\n\
-     \x20\x20Choose:\n\
-     \x20\x20A. Approve the deliverable → reply 'A'\n\
-     \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
-     \x20\x20```\n\n\
-     \x20\x20⚠️ localPath is unavailable (save failed — fallback to inline full text):\n\
-     \x20\x20```\n\
-     \x20\x20[Job {short_id} — you are the User Agent] The ASP has submitted the deliverable (text).\n\
-     \x20\x20---Deliverable---\n\
-     \x20\x20<deliverableText — full content, no truncation, no summarization>\n\
-     \x20\x20---End of deliverable---\n\
-     \x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20Payment: escrow\n\
-     \x20\x20\n\
-     \x20\x20Choose:\n\
-     \x20\x20A. Approve the deliverable → reply 'A'\n\
-     \x20\x20B. Reject the deliverable (please state your reason; if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator) → reply 'B reason: …'\n\
-     \x20\x20```\n\n\
-     **Step 3b — Push to user via the 3-substep protocol** (use the localized `--user-content` from Step 3a; read ALL 3 sub-steps before running any command):\n\n\
+     ▸ deliverableType=text (localPath available):\n\
+     ```\n\
+     [Job {short_id}] The ASP has submitted the deliverable (text).\n\
+     Saved at: <localPath>\n\
+     Payment: escrow\n\
+     A. Approve → reply 'A'\n\
+     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
+     ```\n\n\
+     ▸ deliverableType=text (localPath unavailable — inline full text):\n\
+     ```\n\
+     [Job {short_id}] The ASP has submitted the deliverable (text).\n\
+     ---Deliverable---\n\
+     <deliverableText — full content, no truncation>\n\
+     ---End of deliverable---\n\
+     Payment: escrow\n\
+     A. Approve → reply 'A'\n\
+     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
+     ```\n\n\
+     Push to user (localize `--user-content` and `--list-label` to user's language first):\n\n\
      {request_block}\n"
     )
 }
@@ -604,96 +579,51 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
         ),
     };
 
-    // Step 2 (Step 2a + Step 2b combined) — branches on whether the deliverable
-    // was already persisted. Some(d) → Step 2a only ("already saved"); None →
-    // Step 2a ("need to query") + Step 2b (x402 replayBody recovery).
     let step2 = if let Some(d) = p.deliverable.as_ref() {
         format!("\
-     **Step 2a — Deliverable already saved** (detected by CLI pre-fetch; no need to call `task-deliverable-list`):\n\
+     **Step 2 — Deliverable already saved**:\n\
      \x20\x20- localPath: {path}\n\
      \x20\x20- deliverableType: {dtype}\n\
-     \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\
-     \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
-     \x20\x20- **Skip Step 2b entirely**\n\
-     \x20\x20- Go to Step 3\n\n",
+     \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\n",
             path = d.path, dtype = d.deliverable_type,
         )
     } else {
         format!("\
-     **Step 2a — Check if deliverable was already saved** (by the earlier `deliverable_received` playbook):\n\
+     **Step 2a — Check saved deliverable:**\n\
      ```bash\n\
      onchainos agent task-deliverable-list --job-id {job_id} --role buyer\n\
      ```\n\
-     If `deliverables` array is non-empty → the deliverable has already been downloaded and saved:\n\
-     \x20\x20- Use the `path` from the first entry as `localPath`\n\
-     \x20\x20- Use the `deliverableType` from the first entry\n\
-     \x20\x20- For text deliverables, read the file content at `path` to get `deliverableText`\n\
-     \x20\x20- **Skip Step 2b entirely** (no need to re-download or re-save)\n\
-     \x20\x20- Extract `qualityStandards` from the `[Pre-fetched task context]` description above; if empty, skip that line\n\
-     \x20\x20- Go to Step 3\n\n\
-     If `deliverables` array is empty → the `deliverable_received` playbook did not fire or failed; fall through to Step 2b.\n\n\
-     **Step 2b — Recover x402 deliverable from earlier task-402-pay output:**\n\
-     In x402, the deliverable was the `replayBody` returned by `task-402-pay` in the earlier `job_payment_mode_changed` turn.\n\
-     ✅ The CLI auto-saved the deliverable to disk during `task-402-pay` (no manual `task-deliverable-save` needed).\n\
-     Look for the `replayBodyDisplay` value in this sub session's context (it was printed when the CLI output was processed).\n\
-     Set deliverable display variables: deliverableType=text, deliverableText=<replayBodyDisplay content>, localPath=<path from Step 2a task-deliverable-list if available>.\n\n")
+     Non-empty `deliverables` → use first entry's `path`/`deliverableType`; skip Step 2b.\n\
+     Empty → fall through to Step 2b.\n\n\
+     **Step 2b — Recover from earlier task-402-pay output:**\n\
+     The deliverable was the `replayBody` from `task-402-pay` (auto-saved by CLI).\n\
+     Look for `replayBodyDisplay` in this sub session's context.\n\
+     Set: deliverableType=text, deliverableText=<replayBodyDisplay>, localPath=<path from Step 2a if available>.\n\n")
     };
 
     format!(
-    "[Current Status] job_submitted (ASP has submitted the deliverable) — paymentMode=x402\n\
-     [Role] User (User Agent)\n\n\
-     ⚠️ In x402 funds are already paid at job_accepted; the user **cannot reject the deliverable**, just notify + auto-rate.\n\
-     🛑 **Even if you already processed the ASP's a2a-agent-chat deliverable message earlier in this turn**, upon receiving job_submitted you MUST still execute every Step below in full.\n\n\
+    "⚠️ x402: funds already paid; user cannot reject — notify + auto-rate only.\n\n\
      [Your next actions (strict order)]\n\n\
-     **Step 1 — Task context (pre-fetched; no CLI call needed):**\n\
-     All task fields (paymentMode, tokenSymbol, providerAgentId, etc.) are in the `[Pre-fetched task context]` block above.\n\
-     qualityStandards: extract from the description field above (task creation time value is authoritative).\n\n\
-     **Step 2 — Obtain the deliverable content:**\n\n\
      {step2}\
-     --------- Step 3: x402 — auto-rate FIRST, then single consolidated notify ---------\n\n\
-     🛑 Auto-rate the ASP FIRST, then send ONE consolidated `okx-a2a user notify` that combines the deliverable notice and the rating info.\n\n\
-     **B-Step 1 — 🛑 Auto-rate the ASP FIRST (MANDATORY; must complete before B-Step 2):**\n\
-     Based on the deliverable content vs the task description and quality standards, generate:\n\
-     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
-     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
-     Then execute:\n\
+     **Step 3 — Auto-rate ASP, then notify user:**\n\n\
+     **3a — Rate the ASP (mandatory, before notify):**\n\
+     Score 0.00–5.00 based on deliverable vs description. Comment ≤100 chars.\n\
      ```bash\n\
-     onchainos agent feedback-submit --agent-id {provider_field} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
+     onchainos agent feedback-submit --agent-id {provider_field} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
      ```\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
-     Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in B-Step 2.\n\n\
-     **B-Step 2 — Notify the user with a SINGLE consolidated message via `okx-a2a user notify`:**\n\
+     `--agent-id` = ASP being rated; `--creator-id` = buyer's agent id.\n\n\
+     **3b — Notify user (deliverable + rating in one message):**\n\
      ```bash\n\
      okx-a2a user notify --content '<localized content>'\n\
      ```\n\
-     Compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
-     ▸ Deliverable received notice (always included; pick the sub-template that matches `deliverableType`):\n\n\
-     \x20\x20deliverableType=file:\n\
-     \x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
-     \x20\x20Deliverable file path: <localPath> (full absolute path, e.g. /Users/xxx/Downloads/task.png)\n\
-     \x20\x20<if deliverableText is non-empty, append: ASP note: <deliverableText>>\n\
-     \x20\x20Deliverable URL: <deliverableUrl>\n\n\
-     \x20\x20deliverableType=text — branch by localPath availability:\n\n\
-     \x20\x20\x20\x20✅ localPath is available (save succeeded):\n\
-     \x20\x20\x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
-     \x20\x20\x20\x20Deliverable saved at: <localPath> (full absolute path)\n\
-     \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\
-     \x20\x20\x20\x20---Deliverable (preview)---\n\
-     \x20\x20\x20\x20<first 200 characters of deliverableText; if total length ≤ 200, show full text and use ---Deliverable--- / ---End of deliverable--- headers instead>\n\
-     \x20\x20\x20\x20---End of preview---\n\
-     \x20\x20\x20\x20<if deliverableText was truncated, append: (… truncated; full content saved locally)>\n\n\
-     \x20\x20\x20\x20⚠️ localPath is unavailable (save failed — fallback to inline full text):\n\
-     \x20\x20\x20\x20[Deliverable Received] Job `{job_id}` — the ASP has submitted the deliverable (x402 mode; payment already settled).\n\
-     \x20\x20\x20\x20---Deliverable---\n\
-     \x20\x20\x20\x20<deliverableText — full content, no truncation, no summarization>\n\
-     \x20\x20\x20\x20---End of deliverable---\n\
-     \x20\x20\x20\x20Deliverable URL: <deliverableUrl>\n\n\
-     ▸ Rating info (include ONLY if B-Step 1's feedback-submit succeeded; if it failed, omit this entire half):\n\
-     \x20\x20{rating_notify}\n\
-     \x20\x20(fill `<score>` with the X.XX value used in B-Step 1, `<description>` with the comment from B-Step 1, `<title>` from task context)\n\n\
-     **B-Step 3 — Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     Task fully complete.\n"
+     Compose from two halves (concatenate with two blank lines):\n\
+     \x20\x20▸ Deliverable (always; pick template):\n\
+     \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: <localPath>`\n\
+     \x20\x20\x20\x20text+path: `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>`\n\
+     \x20\x20\x20\x20text-no-path: `[Deliverable Received] Job {job_id} — x402, payment settled.` + full deliverableText inline\n\
+     \x20\x20▸ Rating (only if feedback-submit succeeded): {rating_notify}\n\n\
+     **3c — Terminal wrap-up:**\n\
+     {terminal_session_hint}\n"
     )
 }
 
@@ -710,10 +640,7 @@ pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let mut client = TaskApiClient::new();
     match super::super::complete::handle_complete(&mut client, job_id).await {
-        Ok(()) => format!(
-            "[approve_review] ✅ `onchainos agent complete {job_id}` broadcast by Rust in-process. End the turn now.\n\n\
-             ⚠️ broadcast ≠ on-chain confirmed. The `job_completed` system event will fire after on-chain confirmation — handle it via `next-action` with `event=job_completed` in --message to notify the user.\n"
-        ),
+        Ok(()) => "**End this turn** and wait for the `job_completed` system notification.".to_string(),
         Err(e) => format!(
             "[approve_review] ❌ `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
@@ -765,97 +692,41 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
-    let title_in_extract = ctx.title_in_extract;
     let terminal_session_hint = &ctx.terminal_session_hint;
 
-    let completed_escrow_notify = super::super::content::job_completed_escrow_user_notify(job_id, title_display);
-    let completed_x402_notify = super::super::content::job_completed_x402_user_notify(job_id, title_display);
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+    let provider_id = ctx.prefetched
+        .and_then(|p| p.provider_agent_id.as_deref())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("<providerAgentId>");
 
     let pm = ctx.payment_mode;
-    let pm_extract = if pm.is_some() { "" } else { ", paymentMode (int: 1=escrow, 3=x402)" };
-    let branch_header = if pm.is_none() { "**Step 2 -- Branch by payment mode:**\n\n" } else { "" };
 
-    let escrow_section = if pm == Some(3) { String::new() } else { format!("\
-     --------- Branch A: escrow -- flow ends ---------\n\n\
-     In escrow mode, job_completed means the ASP has delivered and the user has approved; funds are released from contract to the ASP.\n\n\
-     **A-Step 1 — 🛑 Auto-rate the ASP FIRST (MANDATORY; must complete before A-Step 2):**\n\
-     Based on the deliverable that was reviewed vs the task description and quality standards, generate:\n\
-     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
-     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
-     Then execute:\n\
-     ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-     ```\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
-     Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in A-Step 2.\n\n\
-     **A-Step 2 — Notify the user with a SINGLE consolidated message via `okx-a2a user notify`:**\n\
-     ⚠️ txHash: find the txHash (format 0x...) from the earlier `onchainos agent complete` CLI output. If not in context, omit the on-chain receipt line.\n\
-     ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
-     ```\n\
-     Compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
-     ▸ Completion notice (always included):\n\
-     \x20\x20{completed_escrow_notify}\n\n\
-     ▸ Rating info (include ONLY if A-Step 1's feedback-submit succeeded; if it failed, omit this entire half):\n\
-     \x20\x20{rating_notify}\n\
-     \x20\x20(fill `<score>` with the X.XX value used in A-Step 1, `<description>` with the comment from A-Step 1, `<title>` from task context)\n\n\
-     **A-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     Task fully complete.\n\n") };
+    let completed_notify = if pm == Some(3) {
+        super::super::content::job_completed_x402_user_notify(job_id, title_display)
+    } else {
+        super::super::content::job_completed_escrow_user_notify(job_id, title_display)
+    };
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
 
-    let x402_section = if pm == Some(1) { String::new() } else { format!("\
-     --------- Branch B: x402 -- final summary + auto-rate ---------\n\n\
-     ⚠️ In x402, job_completed means the payment pipeline (accept + complete) is settled on-chain.\n\
-     The deliverable was already sent to the user during task-402-pay; this step rates the ASP and emits the final summary.\n\n\
-     **B-Step 1 — 🛑 Auto-rate the ASP FIRST (MANDATORY; must complete before B-Step 2):**\n\
-     Based on the deliverable (the `replayBody` from task-402-pay in this sub session context) vs the task description and quality standards, generate:\n\
-     \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = exceeds expectations, 4.00 = fully meets, 3.00 = acceptable with minor gaps, 2.00 = partially meets, 1.00 = mostly inadequate, 0.00 = did not deliver.\n\
-     \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
-     Then execute:\n\
-     ```bash\n\
-     onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-     ```\n\
-     ⚠️ `--agent-id` is the ASP being rated (providerAgentId from Step 1 context); `--creator-id` is the buyer's own agent id ({agent_id}).\n\
-     Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in B-Step 2.\n\n\
-     **B-Step 2 — Notify the user with a SINGLE consolidated message via `okx-a2a user notify`:**\n\
-     ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
-     ```\n\
-     Compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
-     ▸ Completion notice (always included):\n\
-     \x20\x20{completed_x402_notify}\n\n\
-     ▸ Rating info (include ONLY if B-Step 1's feedback-submit succeeded; if it failed, omit this entire half):\n\
-     \x20\x20{rating_notify}\n\
-     \x20\x20(fill `<score>` with the X.XX value used in B-Step 1, `<description>` with the comment from B-Step 1, `<title>` from task context)\n\n\
-     **B-Step 3 -- Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     Task fully complete.\n\n") };
-
+    let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
-    "🚨🚨🚨 **NEW SYSTEM EVENT — ON-CHAIN CONFIRMATION** 🚨🚨🚨\n\
-     This is `job_completed` — the blockchain has **confirmed** the complete transaction.\n\
-     ⚠️ You may have called `onchainos agent complete` earlier — that was only the **broadcast**.\n\
-     This event is NOT a duplicate or confirmation of your previous action — it is a **new mandatory event** carrying the on-chain result.\n\
-     🔴 **The user has NOT received the completion summary yet.** If you skip this playbook, the user will never know the task is done.\n\n\
-     [Current Status] job_completed (on-chain confirmed — task settled)\n\
-     [Role] User (User Agent)\n\n\
-     🛑 You are inside a sub/backup session. Execute the steps below verbatim, in order — auto-rate FIRST, then send a single consolidated `okx-a2a user notify`. Do NOT add steps, do NOT skip.\n\n\
-     **Step 1 -- Fetch task context (if needed):**\n\
-     Extract {title_in_extract}providerAgentId, tokenAmount, tokenSymbol{pm_extract} from this sub session's context.\n\
-     If not available, run:\n\
-     ```bash\n\
-     onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-     ```\n\
-     [common context failure fallback] If the command fails or fields are missing, drop dynamic fields and degrade to `[Job Completed] Job `{job_id}` — completed; funds settled.` — the user MUST still receive a notification.\n\n\
-     {branch_header}\
-     {escrow_section}\
-     {x402_section}\
-     🛑 Forbidden: `sessions_spawn`, `sessions_yield`, sending any message to provider, plain text replies inside the sub session.\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST include the following tool calls, in order:\n\
-     1. One `onchainos agent feedback-submit` call — auto-rate the ASP (A/B-Step 1)\n\
-     2. One `okx-a2a user notify` bash call — consolidated completion + rating notification (A/B-Step 2)\n\
-     Skipping the rating or sending the notification before rating is a **critical failure** — the user will never see their rating.\n"
+        "{l10n}\
+         🚨 **job_completed — on-chain confirmed, task settled.**\n\
+         🔴 User has NOT been notified yet. Rate ASP first, then send one consolidated notification.\n\n\
+         **Step 1 — Rate ASP** (score 0.00–5.00, comment ≤100 chars):\n\
+         ```bash\n\
+         onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
+         ```\n\n\
+         **Step 2 — Notify user** (completion + rating in one message):\n\
+         ```bash\n\
+         okx-a2a user notify --content '<localized content>'\n\
+         ```\n\
+         Compose from two halves (translate to user's language, keep structure):\n\
+         \x20\x20▸ Completion (always):\n\
+         \x20\x20\x20\x20{completed_notify}\n\
+         \x20\x20▸ Rating (only if Step 1 succeeded):\n\
+         \x20\x20\x20\x20{rating_notify}\n\n\
+         **Step 3 — Wrap-up:**\n\
+         {terminal_session_hint}\n"
     )
 }
