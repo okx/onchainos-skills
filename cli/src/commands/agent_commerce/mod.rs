@@ -446,6 +446,13 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
+
+    /// Send a user-facing notification via okx-a2a (fire-and-forget)
+    #[command(name = "user-notify")]
+    UserNotify {
+        #[arg(long)]
+        content: String,
+    },
     /// Attach local file(s) to a task
     #[command(name = "task-attach")]
     TaskAttach {
@@ -944,6 +951,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::RejectApply { job_id, agent_id } =>
             task::buyer::run_task(T::RejectApply { job_id, agent_id }, ctx).await,
+
+        AgentCommand::UserNotify { content } =>
+            task::common::okx_a2a::user_notify(&content),
 
         AgentCommand::TaskAttach { job_id, file_paths } =>
             task::buyer::run_task(T::TaskAttach { job_id, file_paths }, ctx).await,
