@@ -1312,88 +1312,6 @@ pub fn request_command_block(
     list_label_full: &str,
     source_event: &str,
 ) -> String {
-    build_pending_v2_command_block(
-        "request",
-        job_id,
-        role,
-        agent_id,
-        to_agent_id,
-        user_content,
-        None,
-        list_label_full,
-        source_event,
-    )
-}
-
-/// `request-prompt` variant of [`request_command_block`]. Same pre-assembled
-/// bash skeleton, but the CLI internally invokes the push instead of returning
-/// a playbook for the LLM to execute. Use this where the previous design
-/// hand-wrote a bash block and asked the LLM to translate + interpolate the
-/// `--user-content` body — that path lets the LLM emit literal `\n` escapes
-/// where real newlines were intended, so the user-facing card ends up
-/// rendering `\n` as text.
-pub fn request_prompt_command_block(
-    job_id: &str,
-    role: &str,
-    agent_id: &str,
-    to_agent_id: Option<&str>,
-    user_content: &str,
-    list_label_full: &str,
-    source_event: &str,
-) -> String {
-    build_pending_v2_command_block(
-        "request-prompt",
-        job_id,
-        role,
-        agent_id,
-        to_agent_id,
-        user_content,
-        None,
-        list_label_full,
-        source_event,
-    )
-}
-
-/// `request` variant that also emits `--llm-content`. Use when the user-session
-/// agent needs an English routing block to decode the user's reply (e.g. the
-/// `provider_pending` accept/reject card carries `[asp: …][groupId: …]` in
-/// `--llm-content` so the relay knows which next-action to invoke).
-#[allow(clippy::too_many_arguments)]
-pub fn request_command_block_with_llm(
-    job_id: &str,
-    role: &str,
-    agent_id: &str,
-    to_agent_id: Option<&str>,
-    user_content: &str,
-    llm_content: &str,
-    list_label_full: &str,
-    source_event: &str,
-) -> String {
-    build_pending_v2_command_block(
-        "request",
-        job_id,
-        role,
-        agent_id,
-        to_agent_id,
-        user_content,
-        Some(llm_content),
-        list_label_full,
-        source_event,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_pending_v2_command_block(
-    subcommand: &str,
-    job_id: &str,
-    role: &str,
-    agent_id: &str,
-    to_agent_id: Option<&str>,
-    user_content: &str,
-    llm_content: Option<&str>,
-    list_label_full: &str,
-    source_event: &str,
-) -> String {
     // Bash `--user-content "..."` uses double quotes; escape `\` and `"` inside.
     let user_content_escaped = user_content
         .replace('\\', "\\\\")
@@ -1402,20 +1320,13 @@ fn build_pending_v2_command_block(
         Some(t) => format!(" --to-agent-id \"{t}\""),
         None => String::new(),
     };
-    let llm_flag = match llm_content {
-        Some(c) => {
-            let escaped = c.replace('\\', "\\\\").replace('"', "\\\"");
-            format!(" \\\n         \x20\x20--llm-content \"{escaped}\"")
-        }
-        None => String::new(),
-    };
     format!(
         "```bash\n\
-         onchainos agent pending-decisions-v2 {subcommand} \\\n\
+         onchainos agent pending-decisions-v2 request \\\n\
          \x20\x20--job-id {job_id} --role {role} --agent-id {agent_id}{to_flag} \\\n\
          \x20\x20--user-content \"{content}\" \\\n\
          \x20\x20--list-label \"{label}\" \\\n\
-         \x20\x20--source-event {source_event}{llm_flag}\n\
+         \x20\x20--source-event {source_event}\n\
          ```",
         job_id = job_id,
         role = role,
@@ -1424,7 +1335,6 @@ fn build_pending_v2_command_block(
         content = user_content_escaped,
         label = list_label_full,
         source_event = source_event,
-        llm_flag = llm_flag,
     )
 }
 

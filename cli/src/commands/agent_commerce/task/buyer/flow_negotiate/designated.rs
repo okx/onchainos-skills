@@ -223,13 +223,7 @@ pub(crate) fn branch_a2a_cli(
 /// `Some`, values are filled directly into the playbook so the LLM does not
 /// need to "recall" them from a prior designated-route response.
 pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, route_data: Option<&serde_json::Value>) -> String {
-    let x402_invalid_prompt = super::super::content::x402_invalid_user_prompt(job_id, short_id, dp_id);
-    let block_x402_invalid = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-        job_id, "buyer", agent_id, None,
-        &x402_invalid_prompt,
-        &format!("[x402 invalid {short_id}] next-step decision"),
-        "x402_invalid",
-    );
+    let cmd_x402_invalid = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 invalid {short_id}] next-step decision\" --source-event x402_invalid");
     let cmd_input_required = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 input {short_id}] field confirmation\" --source-event x402_input_required");
     let cmd_x402_price = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 price {short_id}] price decision\" --source-event x402_price_mismatch");
     let cmd_over_budget = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Over budget {short_id}] budget decision\" --source-event over_budget");
@@ -260,8 +254,15 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          {validate_cmd}\n\
          ```\n\
          {validate_hint}Response field `result` determines the branch:\n\n\
-         - **`result == \"x402_invalid\"`** -> push the next-step decision card:\n\
-         \x20\x20{block_x402_invalid}\n\
+         - **`result == \"x402_invalid\"`** -> run:\n\
+         \x20\x20```bash\n\
+         \x20\x20{cmd_x402_invalid}\n\
+         \x20\x20```\n\
+         \x20\x20`--user-content` template:\n\
+         \x20\x20[Job {short_id} — you are the User Agent] The x402 endpoint of the designated ASP (agentId={dp_id}) is invalid and cannot be used. Choose next step:\n\
+         \x20\x20A. Specify another ASP — provide the agentId\n\
+         \x20\x20B. Make the job public — let more ASPs discover it\n\
+         \x20\x20C. Close the job\n\
          \x20\x20-> **end this turn** and wait for the user's reply.\n\n\
          - **`result == \"input_required\"`** -> the endpoint needs business parameters before payment.\n\
          \x20\x20The response includes `fields` / `requiredAnyOf` describing what the endpoint needs.\n\n\

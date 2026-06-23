@@ -329,23 +329,30 @@ pub async fn generate_next_action(
         // ─── Scene 6: User Agent rejected the deliverable ─────────────────────────────────
         Event::JobRejected => {
             let user_prompt = super::content::job_rejected_user_decision_prompt(&short_id);
-            let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_prompt_command_block(
-                job_id,
-                "provider",
-                agent_id,
-                prefetched.and_then(|p| p.buyer_agent_id.as_deref()),
-                &user_prompt,
-                &format!("[Decision {short_id}] {title_display} dispute decision"),
-                "job_rejected",
-            );
+            let to_flag = prefetched
+                .and_then(|p| p.buyer_agent_id.as_deref())
+                .filter(|s| !s.is_empty())
+                .map(|b| format!(" --to-agent-id {b}"))
+                .unwrap_or_default();
             format!(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              🛑 **MUST push the dispute/refund decision via `pending-decisions-v2 request-prompt`** — `okx-a2a user notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = 24h timeout → auto-refund.\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\
-             ⚠️ **24h hard deadline** — if the user does not decide within 24h, funds are auto-refunded to the User Agent.\n\n\
-             **Push the decision to the user (run the bash block below verbatim — do NOT rewrite `--user-content`; the CLI handles push internally)**:\n\n\
-             {request_block}\n",
+             ⚠️ **24h hard deadline** — if the user does not decide within 24h, funds are auto-refunded to the User Agent. (Agent-side context; do NOT include in `--user-content` unless the localized template already mentions it.)\n\n\
+             **Step 1 — Push the decision to the user via `pending-decisions-v2 request-prompt`**:\n\n\
+             🌐 **Localize first** — translate the source template below to the user's language before passing to `--user-content`. Keep `[Job <shortId>]`, the `A.` / `B.` letters, the shortId hex.\n\
+             ```bash\n\
+             onchainos agent pending-decisions-v2 request-prompt \\\n\
+             \x20\x20--job-id {job_id} --role provider --agent-id {agent_id}{to_flag} \\\n\
+             \x20\x20--user-content \"<localized content shown below>\" \\\n\
+             \x20\x20--list-label \"[Decision {short_id}] {title_display} dispute decision\" \\\n\
+             \x20\x20--source-event job_rejected\n\
+             ```\n\
+             content (only the lines between `=== BEGIN ===` and `=== END ===` — translate before passing; do NOT include the markers themselves, do NOT append anything else):\n\
+             === BEGIN ===\n\
+             {user_prompt}\n\
+             === END ===\n",
             )
         }
 

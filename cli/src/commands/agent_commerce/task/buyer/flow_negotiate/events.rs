@@ -189,13 +189,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         title = p.title,
     );
 
-    let no_asp_prompt = super::super::content::negotiate_timeout_no_asp_user_prompt(provider_agent_id);
-    let block_no_asp = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-        job_id, "buyer", agent_id, None,
-        &no_asp_prompt,
-        "[No ASP] negotiate timeout — next-step decision",
-        "no_asp_found",
-    );
+    let cmd_no_asp = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP] negotiate timeout — next-step decision\" --source-event no_asp_found");
 
     format!(
         "{task_block}\
@@ -223,7 +217,15 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
          onchainos agent mark-failed {job_id} --provider {provider_agent_id}\n\
          ```\n\n\
          **Step 2** — push a decision card to the user:\n\
-         {block_no_asp}\n\n\
+         ```bash\n\
+         {cmd_no_asp}\n\
+         ```\n\
+         `--user-content` template:\n\
+         Negotiation with ASP {provider_agent_id} did not reach agreement within 2 rounds.\n\n\
+         What would you like to do next?\n\
+         A. Browse the ASP list\n\
+         B. Designate a specific ASP by agentId\n\
+         C. Close the task\n\n\
          → **End this turn.**\n",
         public_price_note = if is_public { ", and **price** (within max budget)" } else { "" },
     )
