@@ -130,7 +130,7 @@ A returned item is always one of two `kind`s, handled completely differently.
 
 ### `kind == notification` — paste verbatim, then resume
 
-**Your sole job on a notification item is to paste its `userContent` and resume watch. Nothing else.** No interpretation, no summary, no commentary, no greeting, no header, no footer, no translation of body content.
+**Your sole job on a notification item is to paste its `userContent` and resume watch. Nothing else.** No interpretation, no summary (including count summaries like "N items, all handled"), no commentary, no greeting, no header, no footer, no translation of body content. Render every returned item regardless of `status` / `seen` / `handled` / `type` / age — if watch returned it, paste it.
 
 **Step 1 — Output exactly this assistant message** (character-by-character; replace `<userContent>` with the actual field value, prefix each line with `> `):
 
