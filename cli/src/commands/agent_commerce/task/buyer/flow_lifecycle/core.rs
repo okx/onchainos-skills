@@ -724,22 +724,18 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, message: Option<&serde_json::
     let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
         "{l10n}\
-         🚨 **job_completed — on-chain confirmed, task settled.**\n\
-         🔴 User has NOT been notified yet. Rate ASP first, then send one consolidated notification.\n\n\
-         **Step 1 — Rate ASP** (score 0.00–5.00, comment ≤100 chars):\n\
+         ✓ job_completed — on-chain confirmed. Rate ASP, then notify user in one message.\n\n\
+         **Step 1 — Rate ASP** (0.00–5.00, comment ≤100 chars):\n\
          ```bash\n\
          onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
          ```\n\n\
-         **Step 2 — Notify user** (completion + rating in one message):\n\
+         **Step 2 — Notify user** (completion + rating):\n\
          ```bash\n\
          okx-a2a user notify --content '<localized content>'\n\
          ```\n\
-         Compose from two halves (translate to user's language, keep structure):\n\
-         \x20\x20▸ Completion (always included):\n\
-         \x20\x20\x20\x20{completed_notify}\n\
-         \x20\x20▸ Rating (include ONLY if Step 1's feedback-submit succeeded; if it failed or errored, **omit this entire half** — do NOT output any rating lines):\n\
-         \x20\x20\x20\x20{rating_notify}\n\
-         \x20\x20\x20\x20(fill `<score>` with the X.XX value used in Step 1, `<description>` with the comment from Step 1)\n\n\
+         Template:\n\
+         \x20\x20{completed_notify}\n\
+         \x20\x20{rating_notify}  ← omit if Step 1 failed\n\n\
          **Step 3 — Wrap-up:**\n\
          {terminal_session_hint}\n"
     )
