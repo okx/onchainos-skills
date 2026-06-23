@@ -125,9 +125,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent direct-accept {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt>  # x402 phase 2b: call after endpoint interaction"),
             format!("  onchainos agent close {job_id}          # Close task"),
             format!("  onchainos agent set-public {job_id}     # Convert to public task"),
-            format!("  onchainos agent set-token-and-budget {job_id} --token-symbol <USDT|USDG> --budget <amount>  # Change payment token and amount (on-chain)"),
             format!("  onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params '<params>' --service-token-address <addr> --service-token-amount <amt>  # Re-set ASP + service (off-chain, triggers job_created)"),
-            format!("  onchainos agent set-max-budget {job_id} --max-budget <amount>  # Change max budget (off-chain)"),
             format!("  onchainos agent reject-apply {job_id}  # Reject the current provider's apply (off-chain)"),
         ],
         Status::Accepted => vec![
@@ -222,11 +220,12 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     //
     // Three communication CLI commands:
     //   - okx-a2a xmtp-send: send to provider (peer sub session), params --job-id + --to-agent-id + --message
-    //   - okx-a2a user notify: notify the user (no user decision needed), params: --content
-    //   - okx-a2a user decision-request: needs user interaction (confirm / decide), params: --llm-content + --user-content
-    //     --llm-content = instructions injected into the user session LLM (invisible to the user, contains
-    //                     (jobId, role, agentId, toAgentId?) routing fields so the user agent can relay the decision back to the sub)
+    //   - onchainos agent user-notify: notify the user (no user decision needed), params: --content
+    //   - onchainos agent pending-decisions-v2 request: needs user interaction (confirm / decide), params: --user-content + --list-label + --source-event
+    //     (internally pushes via the okx-a2a user_attention table; the user-session agent then renders + relays the user's reply back to the sub)
     //     --user-content = visible message sent to the user
+    //     --list-label   = short label shown in the outstanding-decisions list
+    //     --source-event = event token the user-session uses to route the relayed reply back to the sub
     // ──────────────────────────────────────────────────────────────────────
     let terminal_session_hint = format!("\
 ℹ️ Task is at a terminal state — run the cleanup command (handles pending-decision cancellation automatically):\n\
@@ -271,13 +270,13 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                 Event::JobCreated => "okx-a2a session create (create group) → okx-a2a xmtp-send (send negotiation message)",
                 Event::ProviderApplied => "in-process branch by over_most_budget: confirm-accept (within budget) OR reject-apply + 3/4-option card (over budget)",
                 Event::JobProviderReject => "in-process POST /reset/asp → playbook tells agent to localize + 3/4-option card",
-                Event::JobAccepted => "okx-a2a user notify (notify accept success)",
+                Event::JobAccepted => "onchainos agent user-notify (notify accept success)",
                 Event::JobSubmitted => "pending-decisions-v2 request (forward deliverable, request review decision)",
-                Event::JobRejected => "okx-a2a user notify (notify rejection on-chain) → wait for provider decision",
-                Event::JobDisputed => "okx-a2a session history → dispute upload (auto-submit chat history + manifest deliverables) → okx-a2a user notify (notify)",
-                Event::DisputeResolved => "okx-a2a user notify (notify arbitration result)",
-                Event::JobRefunded => "okx-a2a user notify (notify refund complete)",
-                Event::JobAutoRefunded => "okx-a2a user notify (claimAutoRefund tx receipt)",
+                Event::JobRejected => "onchainos agent user-notify (notify rejection on-chain) → wait for provider decision",
+                Event::JobDisputed => "okx-a2a session history → dispute upload (auto-submit chat history + manifest deliverables) → onchainos agent user-notify (notify)",
+                Event::DisputeResolved => "onchainos agent user-notify (notify arbitration result)",
+                Event::JobRefunded => "onchainos agent user-notify (notify refund complete)",
+                Event::JobAutoRefunded => "onchainos agent user-notify (claimAutoRefund tx receipt)",
                 Event::NegotiateReply =>
                     "natural-language reply (max 2 rounds; over-limit → mark-failed + user decision card)",
                 Event::AttachmentAdded => "okx-a2a file upload → okx-a2a xmtp-send (upload + forward attachment to provider)",
@@ -398,7 +397,6 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::AttachmentAdded => {
             super::flow_lifecycle::attachment_added_cli(&ctx, message)
         }
-        Event::TaskTokenBudgetChange => super::flow_lifecycle::task_token_budget_change(&ctx),
         // ─── Events the buyer never receives + unknown fallback ──────────────────────────
         Event::Staked
         | Event::UnstakeRequested
@@ -785,7 +783,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
                      ⚠️ `task-402-pay` will re-sign (new EIP-3009 proof) and skip direct/accept (already accepted on-chain). The endpoint replay now includes the body.\n\n\
                      **Step 3 — Branch on result:**\n\n\
                      \x20\x20▸ replaySuccess=true:\n\
-                     \x20\x20\x20\x20**3a** — Notify user with the FULL deliverable via `okx-a2a user notify`:\n\
+                     \x20\x20\x20\x20**3a** — Notify user with the FULL deliverable via `onchainos agent user-notify`:\n\
                      \x20\x20\x20\x20🌐 Localize. Copy `replayBodyDisplay` verbatim into the notification (do NOT summarize or truncate).\n\
                      \x20\x20\x20\x20**3b** — Run `complete` immediately (the `job_accepted` event already passed):\n\
                      \x20\x20\x20\x20```bash\n\

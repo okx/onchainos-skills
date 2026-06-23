@@ -2,7 +2,7 @@
 //!
 //! Two categories of templates:
 //!
-//! 1. **User-facing** — chat content shown to the user via `okx-a2a user notify` /
+//! 1. **User-facing** — chat content shown to the user via `onchainos agent user-notify` /
 //!    Rule: **no technical jargon** — event names (`provider_applied`/`job_*` etc.) /
 //!    status enums (`open`/`accepted` etc.) / CLI flags (`--*`) /
 //!    skill names (`okx-agent-identity` etc.) /
@@ -25,7 +25,7 @@
 //! fn body; flow.rs only ever calls into here and never embeds literals inline.
 
 /// `Event::JobAspSelected` no-serviceId fallback — user-facing notification
-/// pushed via `okx-a2a user notify --content <text>`. The playbook does NOT
+/// pushed via `onchainos agent user-notify --content <text>`. The playbook does NOT
 /// auto-start negotiation; it ends the turn and waits for the buyer to re-route
 /// (designate a specific service / list the task publicly). Localize before sending.
 pub fn job_asp_selected_no_service_notify(job_id: &str) -> String {
@@ -48,7 +48,7 @@ pub fn job_asp_selected_missing_terms_notify(job_id: &str, missing_field: &str) 
 }
 
 /// `Event::JobUserReject` — user-facing notification pushed via
-/// `okx-a2a user notify --content <text>` when the buyer refuses to fund /
+/// `onchainos agent user-notify --content <text>` when the buyer refuses to fund /
 /// confirm-accept after the provider applied. Terminal for this round; the
 /// designation is over. Localize before sending.
 pub fn job_user_reject_notify(job_id: &str) -> String {
@@ -59,7 +59,7 @@ pub fn job_user_reject_notify(job_id: &str) -> String {
 }
 
 /// `Event::ProviderApplied` — user-facing notification pushed via
-/// `okx-a2a user notify --content <text>` after the apply has been recorded
+/// `onchainos agent user-notify --content <text>` after the apply has been recorded
 /// on-chain (escrow path). Localize before sending.
 pub fn provider_applied_user_notify(job_id: &str, agent_id: &str) -> String {
     format!(
@@ -82,7 +82,7 @@ pub fn job_asp_selected_apply_failed_notify(job_id: &str, error_summary: &str) -
 }
 
 /// `Event::JobAspSelected` REJECT path — user-facing notification pushed via
-/// `okx-a2a user notify --content <text>` after the off-chain `asp-reject`.
+/// `onchainos agent user-notify --content <text>` after the off-chain `asp-reject`.
 /// `reason` is interpolated directly (caller passes either a fixed string for
 /// code-determined rejections — `"designated service not registered"` /
 /// `"price below registered floor"` — or the literal `<reason>` placeholder
@@ -96,7 +96,7 @@ pub fn job_asp_selected_rejected_notify(job_id: &str, reason: &str) -> String {
 }
 
 pub(super) const L10N_DISPATCH_SHORT: &str = "\
-🌐🛑 **MUST translate** the content below to the user's language before passing to `okx-a2a user notify` (rule 5: non-English → faithful translation; rule 4: English → verbatim). Sending English content to a Chinese user is a violation.";
+🌐🛑 **MUST translate** the content below to the user's language before passing to `onchainos agent user-notify` (rule 5: non-English → faithful translation; rule 4: English → verbatim). Sending English content to a Chinese user is a violation.";
 
 /// `Event::JobAccepted` Step 1 — job-accepted notice pushed to the user.
 ///

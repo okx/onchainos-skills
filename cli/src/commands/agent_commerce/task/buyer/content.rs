@@ -2,8 +2,8 @@
 //!
 //! Two categories of templates:
 //!
-//! 1. **User-facing** — chat content shown directly to the user via `okx-a2a user notify` /
-//!    `okx-a2a user decision-request`. Naming suffix: `_user_notify` / `_user_prompt`.
+//! 1. **User-facing** — chat content shown directly to the user via `onchainos agent user-notify` /
+//!    `onchainos agent pending-decisions-v2 request`. Naming suffix: `_user_notify` / `_user_prompt`.
 //!    Rule: **no technical jargon** — event names (`provider_applied`/`job_*` etc.) /
 //!    status names (English enums like `Open`/`accepted` are kept as doc-reserved literals) / CLI flags (`--*`) /
 //!    skill names (`okx-agent-identity` etc.) / backend method names (`claimAutoComplete` etc.).
@@ -74,32 +74,6 @@ pub fn provider_offline_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -
     designated_asp_abc_prompt(
         short_id, dp_id, job_id,
         "is currently offline. Negotiation requires the ASP to be online.",
-    )
-}
-
-/// Prompt shown when the designated ASP's x402 endpoint failed validation
-/// (DX-Step 1 result == "x402_invalid"). Same A/B/C shape as the other
-/// designated-route errors so the decision relay can reuse the existing
-/// `not_provider | no_asp_found | provider_offline | x402_invalid | over_budget`
-/// branch in flow.rs.
-pub fn x402_invalid_user_prompt(job_id: &str, short_id: &str, dp_id: &str) -> String {
-    designated_asp_abc_prompt(
-        short_id, dp_id, job_id,
-        "has an x402 endpoint that is invalid and cannot be used.",
-    )
-}
-
-/// Prompt shown when natural-language negotiation with the current ASP did
-/// not converge within the 2-round limit (`negotiate_reply` over-limit branch).
-/// A/B/C options here differ from the designated-route error template — `B`
-/// is "designate" rather than "make public", and there is no `[Job …]` prefix.
-pub fn negotiate_timeout_no_asp_user_prompt(provider_agent_id: &str) -> String {
-    format!(
-        "Negotiation with ASP {provider_agent_id} did not reach agreement within 2 rounds.\n\n\
-         What would you like to do next?\n\
-         A. Browse the ASP list\n\
-         B. Designate a specific ASP by agentId\n\
-         C. Close the task"
     )
 }
 
@@ -511,33 +485,6 @@ pub fn provider_pending_single_user_card(
          Accept this provider?\n\
          1. Accept\n\
          2. Reject"
-    )
-}
-
-/// `--llm-content` routing block paired with [`provider_pending_single_user_card`].
-/// Consumed by the user-session agent to decode the user's reply (1/accept vs.
-/// 2/reject) and dispatch the matching next-action. Stays English — only the
-/// user-session agent reads it, not the end user.
-pub fn provider_pending_llm_content(
-    job_id: &str,
-    agent_id: &str,
-    asp_agent_id: &str,
-    group_id: &str,
-    remaining: usize,
-) -> String {
-    format!(
-        "[USER_DECISION_REQUEST][source: provider_pending][job: {job_id}][role: buyer][agentId: {agent_id}]\n\
-         [asp: {asp_agent_id}][groupId: {group_id}][remaining: {remaining}]\n\n\
-         Step 1 — Card delivered. **END THE TURN NOW.**\n\
-         Step 2 — When the user replies, route by choice:\n\
-         \x20\x20• 1 / \"accept\" / \"接受\" / \"yes\" / \"好\"  → run:\n\
-         \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"{asp_agent_id}\"}}'\n\
-         \x20\x20\x20\x20```\n\
-         \x20\x20• 2 / \"reject\" / \"拒绝\" / \"no\" / \"不\" / \"换一个\" / \"next\"  → run:\n\
-         \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"{group_id}\"}}'\n\
-         \x20\x20\x20\x20```"
     )
 }
 
