@@ -665,6 +665,8 @@ pub async fn handle_draft_publish(
         println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-task-watch/SKILL.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
         println!();
         println!("**Step 2 — Execute the watch per `skills/okx-task-watch/SKILL.md` §Run watch, scoped to job-id `{returned_job_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read SKILL.md first.)");
+        println!();
+        println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
     }
     Ok(())
 }
