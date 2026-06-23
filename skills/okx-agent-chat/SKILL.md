@@ -1,10 +1,10 @@
 ---
 name: okx-agent-chat
-description: "Routing stub — any a2a-agent-chat envelope / agent-task system message is handled by `okx-agent-task`. This skill itself contains no flows; jump straight to `skills/okx-agent-task/SKILL.md`."
+description: "Routing stub — any a2a-agent-chat envelope / agent-task system message is handled by `okx-agent-task`. For missing or uninitialized OKX A2A communication runtime/plugin, read `skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md`."
 license: MIT
 metadata:
   author: okx
-  version: "3.21.1-beta"
+  version: "3.21.2-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -15,6 +15,19 @@ metadata:
 > **Read [`skills/okx-agent-task/SKILL.md`](../okx-agent-task/SKILL.md) now** — that file has the routing table, role files (`buyer-sub-playbook.md` / `provider.md` / `evaluator.md`), and the full state-machine handling.
 >
 > Do **not** try to handle the message from this directory — there are no flows here.
+
+## Communication Readiness Fallback
+
+This directory does own one bootstrap helper: [`ensure-okx-a2a-communication-ready.md`](./ensure-okx-a2a-communication-ready.md).
+
+Read and execute that helper when the communication environment appears unavailable or uninitialized, including these cases:
+
+- `okx-a2a` is missing, too old, or does not support `setup`.
+- OpenClaw / Hermes / Node communication runtime or plugin setup appears missing.
+- `okx-a2a setup`, `switch-runtime`, `agent refresh`, `session create`, `session send`, `xmtp-send`, or `user notify` fails with a communication/runtime/plugin initialization error.
+- A task flow needs communication but the user already has an existing ASP / buyer / evaluator agent, so normal post-agent-create communication setup may not have run in this environment.
+
+Do not duplicate the install commands here. The helper owns the Node.js check, `okx-a2a` bootstrap, runtime/plugin setup, runtime switch, and agent communication refresh contract.
 
 ## When you landed here
 
@@ -31,9 +44,9 @@ For all of them, the correct entry is `skills/okx-agent-task/SKILL.md`. After re
 
 ## Sub-docs in this directory
 
-Internal helpers — only invoke when explicitly told to:
+Internal helpers:
 
 - `ensure-okx-a2a-communication-ready.md` — ensure OKX A2A plugin install and communication initialization through `okx-a2a`: bootstrap the CLI if missing, install latest version `@okxweb3/a2a-node` only when `setup` is unsupported, use `okx-a2a setup --json` for runtime/plugin setup, use `okx-a2a switch-runtime --json` for runtime readiness, then use `okx-a2a agent refresh --json` as the communication refresh contract.
 - `file-attachment.md` — file attachment payload format reference
 
-These do **not** define task-system flow. For flow, always defer to `okx-agent-task/SKILL.md`.
+These do **not** define task-system flow. For flow, always defer to `okx-agent-task/SKILL.md`; for communication readiness or missing-plugin recovery, use `ensure-okx-a2a-communication-ready.md`.
