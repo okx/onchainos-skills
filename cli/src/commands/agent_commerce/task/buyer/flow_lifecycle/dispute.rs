@@ -15,9 +15,9 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
      🛑 **You MUST notify the user that the rejection is settled; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
-     **Step 1 — Notify the user the rejection is confirmed via `okx-a2a user notify`:**\n\
+     **Step 1 — Notify the user the rejection is confirmed via `onchainos agent user-notify`:**\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Content:\n\
      {rejected_notify}\n\n\
@@ -69,7 +69,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
      The agent does NOT ask the user for evidence; it formats the chat history, calls `dispute upload`\n\
      (which also auto-attaches every saved deliverable from `~/.onchainos/deliverables/buyer/{job_id}/`),\n\
-     and then notifies the user via `okx-a2a user notify`. **Do NOT** use `pending-decisions-v2 request`\n\
+     and then notifies the user via `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request`\n\
      for this event. **Do NOT** send any message to the ASP — both sides see the arbitration via on-chain events.\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
@@ -85,9 +85,9 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      onchainos agent dispute upload {job_id} --role buyer --agent-id {agent_id} --text \"<chat history block from Step 2>\"\n\
      ```\n\
      The CLI auto-attaches every entry under `~/.onchainos/deliverables/buyer/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
-     **Step 4 — Notify the user via `okx-a2a user notify` (after upload returns):**\n\
+     **Step 4 — Notify the user via `onchainos agent user-notify` (after upload returns):**\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Content:\n\
      \x20\x20\x20\x20[Dispute opened] Arbitration for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the arbiter's verdict.\n\n\
@@ -153,7 +153,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] dispute_resolved (arbitration ruling issued)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user of the arbitration result + auto-rating in ONE consolidated message** — auto-rate FIRST, then send a single `okx-a2a user notify` combining both pieces.\n\n\
+     🛑 **You MUST notify the user of the arbitration result + auto-rating in ONE consolidated message** — auto-rate FIRST, then send a single `onchainos agent user-notify` combining both pieces.\n\n\
      {winner_line}\
      **Step 1 — Task fields (pre-fetched; do NOT call `common context`):**\n\
      \x20\x20- title: {title}\n\
@@ -170,7 +170,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in Step 3.\n\n\
      **Step 3 — Notify the user with a SINGLE consolidated message:**\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Compose by merging the two halves below (concatenate with two blank lines between them):\n\n\
      ▸ Arbitration outcome (always included):\n\

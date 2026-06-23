@@ -33,7 +33,7 @@ fn job_created_non_designated_provider(ctx: &FlowContext<'_>) -> String {
          Canonical content (`<title>` and `<short_jobId>` already filled in):\n\
          \x20\x20{notify_filled}\n\
          ```bash\n\
-         okx-a2a user notify --content '<your translated content>'\n\
+         onchainos agent user-notify --content '<your translated content>'\n\
          ```\n\n\
          🛑 End the turn after notifying. Do NOT call `asp-match` — public tasks wait for ASPs to apply.\n"
     )
@@ -65,7 +65,7 @@ async fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
          Canonical content:\n\
          \x20\x20{notify_filled}\n\
          ```bash\n\
-         okx-a2a user notify --content '<your translated content>'\n\
+         onchainos agent user-notify --content '<your translated content>'\n\
          ```\n\n"
     );
 
@@ -266,7 +266,7 @@ pub(crate) fn provider_conversation_cli_inner(
              **Action — notify the user:**\n\
              Content: {content}\n\
              ```bash\n\
-             okx-a2a user notify --content '<localized content>' --json\n\
+             onchainos agent user-notify --content '<localized content>'\n\
              ```\n\
              🛑 End turn after notifying.\n"
         );

@@ -154,7 +154,7 @@ If the user included file(s)/image(s) as task material → for each: `onchainos 
 
 ================================================
 
-After success, tell the user directly (you are in the user session, no `okx-a2a user notify` needed):\n\
+After success, tell the user directly (you are in the user session, no `onchainos agent user-notify` needed):\n\
 ".to_string()
     + &format!("\
 - Private: \"{create_designated}\"\n\
@@ -200,7 +200,7 @@ Backend validates all required fields, checks balance, signs the transaction, an
 Step 2 -- Notify user
 ================================================
 
-After success, tell the user directly (do NOT call `okx-a2a user notify` — you are already in the user session):
+After success, tell the user directly (do NOT call `onchainos agent user-notify` — you are already in the user session):
 - No designated provider → \"{publish_public}\"
 - With designated provider → \"{publish_designated}\"
 ⚠️ If the CLI output contains a `⚠️ Insufficient ... balance` warning line, append it to the message above.
@@ -306,7 +306,7 @@ pub(crate) fn attachment_added_cli(
             "[attachment_added_cli] ERROR: filePath missing in --message JSON.\n\n\
              [Your next action] Notify the user:\n\
              ```bash\n\
-             okx-a2a user notify --content '<localized: Attachment forwarding failed — file path was not provided. Please retry via task-attach.>'\n\
+             onchainos agent user-notify --content '<localized: Attachment forwarding failed — file path was not provided. Please retry via task-attach.>'\n\
              ```\n"
         );
     }
@@ -319,7 +319,7 @@ pub(crate) fn attachment_added_cli(
             "[attachment_added_cli] ERROR: provider not assigned — cannot forward attachment.\n\n\
              [Your next action] Notify the user:\n\
              ```bash\n\
-             okx-a2a user notify --content '<localized: [Job {short_id}] Attachment saved locally but no provider assigned yet. It will be forwarded automatically once a provider accepts the task.>'\n\
+             onchainos agent user-notify --content '<localized: [Job {short_id}] Attachment saved locally but no provider assigned yet. It will be forwarded automatically once a provider accepts the task.>'\n\
              ```\n"
         );
     }
@@ -334,7 +334,7 @@ pub(crate) fn attachment_added_cli(
                  Content:\n\
                  \x20\x20{att_sent}\n\n\
                  ```bash\n\
-                 okx-a2a user notify --content '<localized content>'\n\
+                 onchainos agent user-notify --content '<localized content>'\n\
                  ```\n\
                  **End this turn.**\n"
             )
@@ -345,7 +345,7 @@ pub(crate) fn attachment_added_cli(
                 "[attachment_added_cli] ERROR: upload/forward failed: {e}\n\n\
                  [Your next action] Notify the user that the attachment could not be sent.\n\n\
                  ```bash\n\
-                 okx-a2a user notify --content '<translate: [Job {short_id}] Attachment forwarding failed. Please retry later.>'\n\
+                 onchainos agent user-notify --content '<translate: [Job {short_id}] Attachment forwarding failed. Please retry later.>'\n\
                  ```\n\n\
                  **End this turn.**\n"
             )

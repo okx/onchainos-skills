@@ -2,7 +2,7 @@
 //!
 //! Two categories of templates:
 //!
-//! 1. **User-facing** — chat content shown directly to the user via `okx-a2a user notify` /
+//! 1. **User-facing** — chat content shown directly to the user via `onchainos agent user-notify` /
 //!    `okx-a2a user decision-request`. Naming suffix: `_user_notify` / `_user_prompt`.
 //!    Rule: **no technical jargon** — event names (`provider_applied`/`job_*` etc.) /
 //!    status names (English enums like `Open`/`accepted` are kept as doc-reserved literals) / CLI flags (`--*`) /

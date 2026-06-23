@@ -80,7 +80,7 @@ pub(crate) fn negotiate_section_step2_onwards(
     format!("**B-Step 2 - first inquiry to the designated ASP (task-detail discussion only):**\n\
              🛑 **Within the same turn after creating the group you MUST call `okx-a2a xmtp-send` to send the first inquiry** - creating the group only opens the channel; not sending a message = the ASP receives no signal = the flow stalls.\n\
              ❌ Absolutely forbidden: creating the group and ending the turn without sending a message.\n\
-             ❌ Absolutely forbidden: using `okx-a2a user notify` / `okx-a2a session send` instead of `okx-a2a xmtp-send` - after the group is created use `xmtp-send` uniformly.\n\n\
+             ❌ Absolutely forbidden: using `onchainos agent user-notify` / `okx-a2a session send` instead of `okx-a2a xmtp-send` - after the group is created use `xmtp-send` uniformly.\n\n\
              Negotiation scope (task-detail discussion only):\n\
              \x20\x20• Scope / requirements / deliverable format\n\
              \x20\x20• Timeline / clarifying questions\n\

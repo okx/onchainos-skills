@@ -85,7 +85,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
             "{l10n}\
              ✓ job_accepted (escrow). Notify the user:\n\
              ```bash\n\
-             okx-a2a user notify --content '<localized content>'\n\
+             onchainos agent user-notify --content '<localized content>'\n\
              ```\n\
              Template (translate to user's language, keep structure):\n\
              \x20\x20[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
@@ -117,7 +117,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      🛑 broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
      ⚠️ On error → notify user:\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Content: {complete_failed}\n\
      → End turn, wait for retry or wakeup_notify.\n\n\
@@ -127,7 +127,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ▸ Yes → end turn (user will reply to the pending decision).\n\
      ▸ No → notify user:\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Content: {accepted_x402_fail}\n\
      → Wait for `job_completed` system event.\n"
@@ -171,7 +171,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      For file type only, add `--file-key \"<fileKey>\"`. Record savedPath from output.\n\n\
      **Step 3 — Notify user**\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Content:\n\
      \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
@@ -390,7 +390,7 @@ pub(crate) fn deliverable_received_cli(
          title: {title} | shortId: {short_id} | provider: {provider_id}\n\n\
          Notify the user:\n\
          ```bash\n\
-         okx-a2a user notify --content '<localized content>'\n\
+         onchainos agent user-notify --content '<localized content>'\n\
          ```\n\
          Template (translate to user's language, keep structure; path must be full absolute — never abbreviate):\n\
          \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
@@ -512,7 +512,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     );
 
     format!(
-    "🛑 MUST use `pending-decisions-v2 request` — NOT `okx-a2a user notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\
+    "🛑 MUST use `pending-decisions-v2 request` — NOT `onchainos agent user-notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\
      🛑 Even if deliverable was already downloaded this turn, execute ALL steps below.\n\n\
      [Your next actions (strict order)]\n\n\
      {step2}\
@@ -614,7 +614,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      `--agent-id` = ASP being rated; `--creator-id` = buyer's agent id.\n\n\
      **3b — Notify user (deliverable + rating in one message):**\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Compose from two halves (concatenate with two blank lines):\n\
      \x20\x20▸ Deliverable (always; pick template):\n\
@@ -630,7 +630,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
 /// Directly runs `onchainos agent complete` in-process. The single-arg bash
 /// command provides no LLM decision-making value — Rust just broadcasts and
 /// returns. Iron rules from the previous LLM-driven version ("don't notify
-/// user via okx-a2a user notify / don't auto-rate / don't say funds released
+/// user via onchainos agent user-notify / don't auto-rate / don't say funds released
 /// before job_completed") all become moot — Rust cannot misbehave.
 ///
 /// Failure path: the playbook emitted on error directs the LLM into the
@@ -719,7 +719,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
          ```\n\n\
          **Step 2 — Notify user** (completion + rating in one message):\n\
          ```bash\n\
-         okx-a2a user notify --content '<localized content>'\n\
+         onchainos agent user-notify --content '<localized content>'\n\
          ```\n\
          Compose from two halves (translate to user's language, keep structure):\n\
          \x20\x20▸ Completion (always):\n\

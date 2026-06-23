@@ -55,10 +55,10 @@ pub async fn generate_a2mcp_next_action(
                 "[Current state] job_accepted (x402 / A2MCP flow — buyer's request received, payment confirmed at the A2MCP endpoint)\n\
                  [Role] ASP (Agent Service Provider)\n\n\
                  {task_fields_inline}\n\
-                 **Notify the user via `okx-a2a user notify`** — no on-chain `deliver`, no `okx-a2a xmtp-send` (the deliverable was already returned by the A2MCP service endpoint at request time):\n\n\
+                 **Notify the user via `onchainos agent user-notify`** — no on-chain `deliver`, no `okx-a2a xmtp-send` (the deliverable was already returned by the A2MCP service endpoint at request time):\n\n\
                  🌐 **Localize first** — rewrite the content below in the user's language before sending. Fill `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` from the **Task fields** block above. Do NOT pass the English template verbatim to a non-English user.\n\
                  ```bash\n\
-                 okx-a2a user notify --content \"<localized content shown below>\"\n\
+                 onchainos agent user-notify --content \"<localized content shown below>\"\n\
                  ```\n\
                  content:\n\
                  {user_notify}\n\n\
@@ -73,10 +73,10 @@ pub async fn generate_a2mcp_next_action(
                  [Role] ASP (Agent Service Provider)\n\n\
                  ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
                  {task_fields_inline}\n\
-                 **Step 1 — Notify the user of task completion via `okx-a2a user notify`**:\n\n\
+                 **Step 1 — Notify the user of task completion via `onchainos agent user-notify`**:\n\n\
                  🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
                  ```bash\n\
-                 okx-a2a user notify --content \"<localized content shown below>\"\n\
+                 onchainos agent user-notify --content \"<localized content shown below>\"\n\
                  ```\n\
                  content:\n\
                  {user_notify}\n\n\
@@ -92,10 +92,10 @@ pub async fn generate_a2mcp_next_action(
                  ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block above); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
                  **Step 2.5 — Notify the user of the submitted rating**:\n\
                  🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                 After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
+                 After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
                  - ✅ **Success** (output contains `txHash`):\n\
                  ```bash\n\
-                 okx-a2a user notify --content \"<localized content shown below>\"\n\
+                 onchainos agent user-notify --content \"<localized content shown below>\"\n\
                  ```\n\
                  content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
                  {rating_notify}\n\
@@ -243,10 +243,10 @@ pub async fn generate_next_action(
             "[Current state] provider_applied (apply has been recorded on-chain)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              ❌ Do NOT communicate with the buyer. ❌ Do NOT deliver directly.\n\n\
-             **Step 1 — Use `okx-a2a user notify` to push the apply-submitted notification to the user**:\n\n\
+             **Step 1 — Use `onchainos agent user-notify` to push the apply-submitted notification to the user**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content (only the lines between `=== BEGIN ===` and `=== END ===` — do NOT add / drop fields, do NOT include the markers themselves, do NOT include anything below END):\n\
              === BEGIN ===\n\
@@ -266,10 +266,10 @@ pub async fn generate_next_action(
              [Role] ASP (Agent Service Provider)\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
              {task_fields}\n\
-             **Step 1 — Notify the user (apply accepted) via `okx-a2a user notify`**:\n\n\
+             **Step 1 — Notify the user (apply accepted) via `onchainos agent user-notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content:\n\
              {user_notify}\n\n\
@@ -293,7 +293,7 @@ pub async fn generate_next_action(
              OKX_TEXT_EOF\n\
              )\"\n\
              ```\n\n\
-             **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `okx-a2a user notify` — the CLI already notified the User Agent).\n\n\
+             **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
              🛑 **The next system events for this ASP are `job_completed` OR `job_rejected` — both are action-required, NEITHER is observer-only.** Provider does NOT receive a `job_submitted` envelope after deliver.\n\n\
              [Follow-up events]\n\
              - `job_completed` (buyer reviewed and accepted) — auto-rate the buyer + notify the user\n\
@@ -311,10 +311,10 @@ pub async fn generate_next_action(
             "[System notification] job_submitted (deliverable confirmed on-chain; task state is now submitted)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              ⚠️ **observer-only toward the User Agent (peer)** — the deliverable was already sent in the `job_accepted` script (Step 3); this event **must NOT trigger a second okx-a2a xmtp-send** to the User Agent (duplicating would cause loop). The user-side notify in Step 1 below targets your OWN user (the ASP wallet owner), NOT the buyer-peer.\n\n\
-             **Step 1 — Notify the user of the submit milestone via `okx-a2a user notify`**:\n\n\
+             **Step 1 — Notify the user of the submit milestone via `onchainos agent user-notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content:\n\
              {user_notify}\n\n\
@@ -337,7 +337,7 @@ pub async fn generate_next_action(
             format!(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             🛑 **MUST push the dispute/refund decision via `pending-decisions-v2 request-prompt`** — `okx-a2a user notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = 24h timeout → auto-refund.\n\
+             🛑 **MUST push the dispute/refund decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = 24h timeout → auto-refund.\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\
              ⚠️ **24h hard deadline** — if the user does not decide within 24h, funds are auto-refunded to the User Agent. (Agent-side context; do NOT include in `--user-content` unless the localized template already mentions it.)\n\n\
              **Step 1 — Push the decision to the user via `pending-decisions-v2 request-prompt`**:\n\n\
@@ -400,7 +400,7 @@ pub async fn generate_next_action(
              ```\n\n\
              After Step 1 → **end this turn**.\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` `agreed to refund` filler to the User Agent — both sides receive the `job_refunded` system event.\n\
-             ⚠️ Do NOT push to the user with `okx-a2a user notify`.\n"
+             ⚠️ Do NOT push to the user with `onchainos agent user-notify`.\n"
         ),
 
         // ─── Scene 7: Task completed (review passed / arbitration won) ────────────────
@@ -414,10 +414,10 @@ pub async fn generate_next_action(
              [Your next action]\n\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
              {task_fields}\n\
-             **Step 1 — Notify the user of task completion via `okx-a2a user notify`**:\n\n\
+             **Step 1 — Notify the user of task completion via `onchainos agent user-notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content:\n\
              {user_notify}\n\n\
@@ -433,10 +433,10 @@ pub async fn generate_next_action(
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 2.5 — Notify the user of the submitted rating**:\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
+             After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
              {rating_notify}\n\
@@ -474,12 +474,12 @@ pub async fn generate_next_action(
              onchainos agent provider-claim-rewards --agent-id {agent_id}\n\
              ```\n\
              Record stdout's txHash + the actual amount / token claimed (used to notify the user in the next step).\n\n\
-             **A-Step 3 — Notify the user of the win + claim result via `okx-a2a user notify`**:\n\n\
+             **A-Step 3 — Notify the user of the win + claim result via `onchainos agent user-notify`**:\n\n\
              Field values for the content template come from the **Task fields** block above.\n\
              ⚠️ content is the **chat the user will see** — plain natural language; **do NOT use** skill names / event names / state names / CLI flags or other technical jargon.\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content (choose based on whether A-Step 2 actually claimed):\n\
              \x20\x20\x20\x20Claimed:\n\
@@ -498,21 +498,21 @@ pub async fn generate_next_action(
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **A-Step 4.5 — Notify the user of the submitted rating**:\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
+             After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in A-Step 4; fill `<title>` from task context):\n\
              {rating_notify}\n\
              - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
              ━━━━━━━━━━━━━ Branch B: jobStatus=failed (ASP lost) ━━━━━━━━━━━━━\n\n\
-             **B-Step 1 — Notify the user of the loss via `okx-a2a user notify`**:\n\n\
+             **B-Step 1 — Notify the user of the loss via `onchainos agent user-notify`**:\n\n\
              Field values for the content template come from the **Task fields** block above (same fields as Branch A).\n\
              ⚠️ Same as A-Step 3 — content plain natural language; no technical jargon.\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content:\n\
              {dispute_lost}\n\n\
@@ -528,10 +528,10 @@ pub async fn generate_next_action(
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **B-Step 2.5 — Notify the user of the submitted rating**:\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
+             After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in B-Step 2; fill `<title>` from task context):\n\
              {rating_notify}\n\
@@ -561,7 +561,7 @@ pub async fn generate_next_action(
              The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
              session, calls `dispute upload` (which also auto-attaches the deliverable copy saved under\n\
              `~/.onchainos/deliverables/provider/{job_id}/`), and then notifies the user via\n\
-             `okx-a2a user notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
+             `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
              **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the arbitration via on-chain events.\n\n\
              {task_fields}\n\
              **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
@@ -644,7 +644,7 @@ pub async fn generate_next_action(
                      **Notify the user, then end the turn**:\n\n\
                      🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
                      ```bash\n\
-                     okx-a2a user notify --content \"<localized content shown below>\"\n\
+                     onchainos agent user-notify --content \"<localized content shown below>\"\n\
                      ```\n\
                      content:\n\
                      {user_notify}\n"
@@ -679,7 +679,7 @@ pub async fn generate_next_action(
                          Then notify the user:\n\n\
                          🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
                          ```bash\n\
-                         okx-a2a user notify --content \"<localized content shown below>\"\n\
+                         onchainos agent user-notify --content \"<localized content shown below>\"\n\
                          ```\n\
                          content (only the lines between `=== BEGIN ===` and `=== END ===` — do NOT include the markers themselves, do NOT append anything else):\n\
                          === BEGIN ===\n\
@@ -745,7 +745,7 @@ pub async fn generate_next_action(
                         };
 
                         // Deterministic apply command — uses buyer's token symbol (per spec).
-                        // After apply, push a user-facing notification via `okx-a2a user notify`.
+                        // After apply, push a user-facing notification via `onchainos agent user-notify`.
                         let apply_failed_notify = super::content::job_asp_selected_apply_failed_notify(job_id, "<one-line error from apply's stderr>");
                         let apply_template = format!(
                             "**APPLY path** — run apply, then branch by exit code:\n\
@@ -756,7 +756,7 @@ pub async fn generate_next_action(
                              ❌ **On failure** (non-zero exit / stderr / no txHash) — push a failure notification instead:\n\n\
                              🌐 **Localize first** — fill `<one-line error from apply's stderr>`, then rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
                              ```bash\n\
-                             okx-a2a user notify --content \"<localized content shown below>\"\n\
+                             onchainos agent user-notify --content \"<localized content shown below>\"\n\
                              ```\n\
                              content:\n\
                              {apply_failed_notify}\n\n\
@@ -869,7 +869,7 @@ pub async fn generate_next_action(
              CLI internals: POST /claimAutoComplete → uopData → sign uopHash → broadcast. Wait for the on-chain `job_auto_completed` notification.\n\n\
              ⚠️ **After claim-auto-complete, end the turn directly**:\n\
              - Do NOT send any okx-a2a xmtp-send to the User Agent (filler in between; wait until the job_auto_completed on-chain receipt arrives)\n\
-             - Do NOT push to the user with `okx-a2a user notify`\n\n\
+             - Do NOT push to the user with `onchainos agent user-notify`\n\n\
              [Follow-up events]\n\
              - `job_auto_completed` (status=success) → next-action provides the funds-received script (push to user; conversation retained)\n\
              - `job_auto_completed` (status=failed)  → retry claim-auto-complete per errorCode\n"
@@ -886,16 +886,16 @@ pub async fn generate_next_action(
              [Role] ASP (Agent Service Provider)\n\n\
              {task_fields}\n\
              **Step 1 — Check the envelope's `message.code` field:**\n\
-             - `code` non-zero (failed) → run `okx-a2a user notify`, then end the turn:\n\
+             - `code` non-zero (failed) → run `onchainos agent user-notify`, then end the turn:\n\
              \x20\x20```bash\n\
-             \x20\x20okx-a2a user notify --content \"{failed_notify}\"\n\
+             \x20\x20onchainos agent user-notify --content \"{failed_notify}\"\n\
              \x20\x20```\n\
              - `code` = 0 (success) → continue to Step 2.\n\n\
-             **Step 2 — Notify the user of fund arrival via `okx-a2a user notify`**:\n\n\
+             **Step 2 — Notify the user of fund arrival via `onchainos agent user-notify`**:\n\n\
              Field values for the content template come from the **Task fields** block above.\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content:\n\
              {user_notify}\n\n\
@@ -912,10 +912,10 @@ pub async fn generate_next_action(
              ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
              **Step 3.5 — Notify the user of the submitted rating:**\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, run `okx-a2a user notify` to notify the user:\n\
+             After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
              - ✅ **Success** (output contains `txHash`):\n\
              ```bash\n\
-             okx-a2a user notify --content \"<localized content shown below>\"\n\
+             onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
              content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
              {rating_notify}\n\
@@ -941,7 +941,7 @@ pub async fn generate_next_action(
             format!(
             "[System notification] submit_deadline_warn (deadline for submitting the deliverable is approaching)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             🛑 **MUST push the submit-now/let-timeout decision via `pending-decisions-v2 request`** — `okx-a2a user notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = the deadline silently expires → auto-refund to the User Agent.\n\
+             🛑 **MUST push the submit-now/let-timeout decision via `pending-decisions-v2 request`** — `onchainos agent user-notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = the deadline silently expires → auto-refund to the User Agent.\n\
              ❌ Do NOT `okx-a2a xmtp-send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
              **Push the decision to the user (3-substep protocol; read ALL 3 before running any command)**:\n\n\
              {request_block}\n\
@@ -989,14 +989,14 @@ pub async fn generate_next_action(
             "[System notification] reward_claimed (claimRewards tx receipt)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              **Step 1 — Check the envelope's `message.code` field:**\n\
-             - `code` non-zero (failed) → run `okx-a2a user notify` to notify the user, then end the turn:\n\
+             - `code` non-zero (failed) → run `onchainos agent user-notify` to notify the user, then end the turn:\n\
              \x20\x20```bash\n\
-             \x20\x20okx-a2a user notify --content \"{failed_notify}\"\n\
+             \x20\x20onchainos agent user-notify --content \"{failed_notify}\"\n\
              \x20\x20```\n\n\
              - `code` = 0 (success) → continue to Step 2.\n\n\
-             **Step 2 — Notify the user that the reward has arrived via `okx-a2a user notify`:**\n\
+             **Step 2 — Notify the user that the reward has arrived via `onchainos agent user-notify`:**\n\
              \x20\x20```bash\n\
-             \x20\x20okx-a2a user notify --content \"{claimed_notify}\"\n\
+             \x20\x20onchainos agent user-notify --content \"{claimed_notify}\"\n\
              \x20\x20```\n"
             )
         }
@@ -1092,7 +1092,7 @@ pub async fn generate_next_action(
                  {user_notify}\n\
                  {l10n}\n\n\
                  ```bash\n\
-                 okx-a2a user notify --content \"<translated text>\"\n\
+                 onchainos agent user-notify --content \"<translated text>\"\n\
                  ```\n\
                  ❌ Do NOT okx-a2a xmtp-send the buyer. ❌ Do NOT retry apply.\n\n\
                  {terminal_session_hint}\n"
@@ -1142,7 +1142,7 @@ fn buyer_attachment_received_cli(
              The caller must include all 6 fields (fileKey/digest/salt/nonce/secret/filename) in --message JSON.\n\n\
              [Your next action] Notify the user that the attachment could not be downloaded.\n\n\
              ```bash\n\
-             okx-a2a user notify --content '<translate: [Job {short_id}] Buyer attachment download failed — encryption metadata incomplete. The buyer may need to re-send.>'\n\
+             onchainos agent user-notify --content '<translate: [Job {short_id}] Buyer attachment download failed — encryption metadata incomplete. The buyer may need to re-send.>'\n\
              ```\n\n\
              ❌ Do NOT reply to the buyer via okx-a2a xmtp-send.\n\
              **End this turn.**\n"
@@ -1159,7 +1159,7 @@ fn buyer_attachment_received_cli(
                 "[buyer_attachment_received_cli] ERROR: file download failed: {e}\n\n\
                  [Your next action] Notify the user that the attachment could not be downloaded.\n\n\
                  ```bash\n\
-                 okx-a2a user notify --content '<translate: [Job {short_id}] Buyer attachment download failed. Please check network and retry.>'\n\
+                 onchainos agent user-notify --content '<translate: [Job {short_id}] Buyer attachment download failed. Please check network and retry.>'\n\
                  ```\n\n\
                  ❌ Do NOT reply to the buyer via okx-a2a xmtp-send.\n\
                  **End this turn.**\n"
@@ -1198,7 +1198,7 @@ fn buyer_attachment_received_cli(
          Canonical content:\n\
          \x20\x20{att_notify}\n\n\
          ```bash\n\
-         okx-a2a user notify --content '<your translated content>'\n\
+         onchainos agent user-notify --content '<your translated content>'\n\
          ```\n\n\
          ❌ Do NOT reply to the buyer via okx-a2a xmtp-send.\n\
          **End this turn.**\n"

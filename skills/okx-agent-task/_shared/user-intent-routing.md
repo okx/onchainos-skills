@@ -15,9 +15,9 @@ User-session needs to forward free-form user instructions targeting a specific t
 **Decision tree** (apply in order, stop at first hit):
 
 1. `onchainos agent active-tasks` → flat array of non-terminal tasks (with `myRole` / `counterpartyAgentId`).
-2. `okx-a2a user notify` a numbered list (`shortJobId` + status + role + counterparty + title) → end turn, wait for user's pick.
+2. `onchainos agent user-notify` a numbered list (`shortJobId` + status + role + counterparty + title) → end turn, wait for user's pick.
 3. **Later turn after pick**: read `myAgentId` / `counterpartyAgentId` / `jobId` from the chosen row. If `counterpartyAgentId == null` → ask the user for it, else proceed.
-4. `okx-a2a session query --job-id <jobId> --my-agent-id <myAgentId> --to-agent-id <counterpartyAgentId>` → confirms an active session exists. Empty → notify "no active conversation" via `okx-a2a user notify` and end turn.
+4. `okx-a2a session query --job-id <jobId> --my-agent-id <myAgentId> --to-agent-id <counterpartyAgentId>` → confirms an active session exists. Empty → notify "no active conversation" via `onchainos agent user-notify` and end turn.
 5. Dispatch the user's instruction to the sub via `okx-a2a session send` — the daemon resolves the session from `--job-id` + `--to-agent-id`:
 
    ```bash
@@ -26,7 +26,7 @@ User-session needs to forward free-form user instructions targeting a specific t
      --content '<user verbatim>
 
    ---
-   Reply to the user via `okx-a2a user notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `buyer-sub-playbook.md` §Communication Contract).'
+   Reply to the user via `onchainos agent user-notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `buyer-sub-playbook.md` §Communication Contract).'
    ```
 
    Forward verbatim then append reply-path instruction. End turn.

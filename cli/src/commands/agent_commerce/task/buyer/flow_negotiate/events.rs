@@ -28,7 +28,7 @@ pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>, visibility: i64) -> 
      [Your next action — call ONE command only, then END TURN]\n\n\
      {title_query_hint}\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Content:\n\
      \x20\x20{notify_content}\n\n\
@@ -58,9 +58,9 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
         let payment_escrow_notify = super::super::content::payment_mode_escrow_user_notify(job_id, title_display);
         out.push_str(&format!("\
      ━━━━━━━━━ escrow (paymentMode=1) ━━━━━━━━━\n\n\
-     **Step 2 - notify the user via `okx-a2a user notify`**:\n\
+     **Step 2 - notify the user via `onchainos agent user-notify`**:\n\
      \x20\x20```bash\n\
-     \x20\x20okx-a2a user notify --content '<translated content from the template below>'\n\
+     \x20\x20onchainos agent user-notify --content '<translated content from the template below>'\n\
      \x20\x20```\n\
      \x20\x20content template: {payment_escrow_notify}\n\n\
      -> **end this turn** and wait for provider_applied.\n\n"));
@@ -78,7 +78,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ⚠️ **If any parameter is missing** (context compaction): run `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` for providerAgentId, then `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json` for endpoint, then `onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}` for acceptsJson/feeTokenSymbol/feeAmount.\n\n\
      **Step 2 — notify payment in progress**:\n\
      \x20\x20```bash\n\
-     \x20\x20okx-a2a user notify --content '<translated>'\n\
+     \x20\x20onchainos agent user-notify --content '<translated>'\n\
      \x20\x20```\n\
      \x20\x20content template: {x402_paying}\n\n\
      **Step 3 — sign + accept + replay (atomic):**\n\
@@ -200,7 +200,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
          - Rounds sent ≥ 2 → negotiation exceeded the 2-round limit. **Do NOT reply.** Jump to **[Over-limit]** below.\n\n\
          **Reply about**: scope, requirements, deliverable format, timeline, clarifying questions{public_price_note}.\n\n\
          🚫 **Forbidden in this event:**\n\
-         \x20\x20❌ `okx-a2a user notify` / `pending-decisions-v2 request` to ask the user about the ASP's message — negotiation is autonomous in this sub session.\n\
+         \x20\x20❌ `onchainos agent user-notify` / `pending-decisions-v2 request` to ask the user about the ASP's message — negotiation is autonomous in this sub session.\n\
          \x20\x20❌ `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
          [Normal reply — single CLI call, then end the turn]\n\n\
          ```bash\n\

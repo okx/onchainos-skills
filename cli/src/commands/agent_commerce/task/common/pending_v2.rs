@@ -1287,7 +1287,7 @@ fn strip_label_prefix(label: &str) -> &str {
 ///
 /// The "follow the playbook the CLI returns" line is hardened here vs. the previous
 /// hand-written copies: it spells out the three possible stdout shapes
-/// (`okx-a2a user decision-request` / `okx-a2a user notify` / end-turn) and explicitly
+/// (`okx-a2a user decision-request` / `onchainos agent user-notify` / end-turn) and explicitly
 /// warns that stdout IS the next-action playbook (not log output). Without this, smaller models
 /// tend to stop after the bash call — the user-facing tool invocation never happens,
 /// the card never surfaces, the flow stalls (24h auto-refund / mistaken auto-decline).
@@ -1462,7 +1462,7 @@ fn playbook_wait_with_reprompt(
 ) -> String {
     let total_pending = queued_position + 1;
     // Canonical English notification. The user-session LLM translates the entire
-    // body to match the user's language before `okx-a2a user notify`. We do NOT
+    // body to match the user's language before `onchainos agent user-notify`. We do NOT
     // embed the active card content here — the user is already partway through
     // answering it; re-surfacing the full card would be noisy. The user can
     // ask for the decision list to switch focus.
@@ -1487,9 +1487,9 @@ fn playbook_wait_with_reprompt(
          \x20\x20• Hex jobIds (`0x...`) and numeric agent IDs (the digits after `Agent #`).\n\
          \x20\x20• The sub-provided `<title>` field (may already be in user's language).\n\
          Everything else — `Decision`, the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`), the role token (`User` / `ASP` / `Evaluator`), surrounding prose, AND quoted user-facing keywords like `\"decision list\"` — gets translated to a natural localized form (skill routing accepts both English and translated keywords). No mixed-language content.\n\n\
-         **Step 2 — Run `okx-a2a user notify` with the localized content from Step 1**:\n\
+         **Step 2 — Run `onchainos agent user-notify` with the localized content from Step 1**:\n\
          ```bash\n\
-         okx-a2a user notify --content '<the localized Step 1 output>'\n\
+         onchainos agent user-notify --content '<the localized Step 1 output>'\n\
          ```\n\n\
          End the turn after the command returns. Do NOT call any other tool first or after.\n",
         pos = queued_position,
