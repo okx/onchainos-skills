@@ -153,6 +153,24 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
             "<providerAgentId>".to_string(),
         ),
     };
+
+    // When the review marker exists, job_submitted already arrived. After manual
+    // download + save succeeds, the LLM should re-trigger job_submitted (which will
+    // now find the manifest) instead of waiting for an event that already came.
+    let marker_exists = crate::commands::agent_commerce::task::common::deliverables::has_review_marker(job_id);
+    let step4 = if marker_exists {
+        format!(
+            "**Step 4 — Re-trigger review** (job_submitted already arrived before this deliverable):\n\
+             ```bash\n\
+             onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'\n\
+             ```\n"
+        )
+    } else {
+        format!(
+            "**Step 4 — End turn**. Wait for `job_submitted` → `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
+        )
+    };
+
     format!(
     "[Current action] deliverable_received — download → save → notify\n\
      [Role] Buyer\n\n\
@@ -179,7 +197,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      \x20\x20Type: <file|text>\n\
      \x20\x20Saved at: <savedPath>\n\
      \x20\x20Awaiting on-chain submission confirmation; review will follow.\n\n\
-     **Step 4 — End turn**. Wait for `job_submitted` → `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
+     {step4}"
     )
 }
 
@@ -382,6 +400,58 @@ pub(crate) fn deliverable_received_cli(
         }
     };
 
+    // Out-of-order handling: if the review marker exists, job_submitted already arrived
+    // before this deliverable. Delete marker → directly output the review prompt so the
+    // sub doesn't wait for a job_submitted that already came.
+    if deliverables::has_review_marker(job_id) {
+        deliverables::delete_review_marker(job_id);
+        audit::log("cli", "buyer/deliverable_received_marker_found", true, Duration::default(),
+            Some(base_tags.clone()), Some("job_submitted arrived first; merging into review flow"));
+
+        // Reconstruct prefetched with the just-saved deliverable so job_submitted_escrow
+        // sees it in Step 2 ("Deliverable already saved").
+        let mut patched = ctx.prefetched.cloned().unwrap_or_else(|| {
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+                title: title.to_string(),
+                description: String::new(),
+                token_symbol: sym.to_string(),
+                token_amount: amt.to_string(),
+                payment_mode: ctx.payment_mode,
+                max_budget: None,
+                provider_agent_id: if provider_id.is_empty() { None } else { Some(provider_id.to_string()) },
+                buyer_agent_id: None,
+                visibility: None,
+                status: None,
+                deliverable: None,
+                service_id: None,
+                service_token_address: None,
+                service_token_amount: None,
+                service_params: None,
+                buyer_agent_address: None,
+                token_address: None,
+            }
+        });
+        patched.deliverable = Some(crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
+            path: saved_path.clone(),
+            deliverable_type: deliverable_type.clone(),
+            original_name: String::new(),
+        });
+
+        let merged_ctx = super::super::flow::FlowContext {
+            job_id: ctx.job_id,
+            agent_id: ctx.agent_id,
+            short_id: ctx.short_id,
+            title_display: ctx.title_display,
+            title_query_hint: ctx.title_query_hint,
+            title_in_extract: ctx.title_in_extract,
+            terminal_session_hint: ctx.terminal_session_hint.clone(),
+            payment_mode: ctx.payment_mode,
+            prefetched: Some(&patched),
+            data: ctx.data,
+        };
+        return job_submitted_escrow(&merged_ctx);
+    }
+
     let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
         "{l10n}\
@@ -451,6 +521,18 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
+    // Out-of-order handling: if the review marker exists, deliverable_received hasn't
+    // arrived yet (this is the first job_submitted with no deliverable). Return a
+    // lightweight "wait" prompt — deliverable_received_cli will detect the marker and
+    // output the review flow when it arrives.
+    if p.deliverable.is_none() && crate::commands::agent_commerce::task::common::deliverables::has_review_marker(job_id) {
+        return format!(
+            "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
+             The review flow will auto-trigger when the deliverable is received.\n\
+             No action required — end this turn and wait.\n"
+        );
+    }
+
     // Inline-from-prefetched values used in Step 2b's task-deliverable-save commands.
     let title = p.title.as_str();
     let token_symbol = p.token_symbol.as_str();

@@ -1650,6 +1650,10 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
 
     // For job_submitted: check local deliverable manifest to avoid an extra CLI round-trip.
+    // Also manages the review-awaiting-deliverable marker for out-of-order event handling:
+    //   manifest present         → populate ctx.deliverable (normal path)
+    //   manifest empty + no marker → write marker (first job_submitted, deliverable not yet received)
+    //   manifest empty + marker    → delete marker, leave ctx.deliverable=None (retry: fall through to Step 2b chat history)
     if job_status_or_event == "job_submitted" {
         if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("buyer", job_id) {
             if let Some(entry) = manifest.entries.first() {
@@ -1661,7 +1665,19 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
                     deliverable_type: entry.deliverable_type.clone(),
                     original_name: entry.original_name.clone(),
                 });
+                task::common::deliverables::delete_review_marker(job_id);
             }
+        } else if task::common::deliverables::has_review_marker(job_id) {
+            task::common::deliverables::delete_review_marker(job_id);
+            if DEBUG_LOG {
+                eprintln!("[check-freshness] job_submitted retry: marker found, deleted — will fall through to Step 2b chat history");
+            }
+        } else if let Err(e) = task::common::deliverables::write_review_marker(job_id) {
+            if DEBUG_LOG {
+                eprintln!("[check-freshness] failed to write review marker: {e}");
+            }
+        } else if DEBUG_LOG {
+            eprintln!("[check-freshness] job_submitted: no deliverable, marker written — waiting for deliverable_received");
         }
     }
 
