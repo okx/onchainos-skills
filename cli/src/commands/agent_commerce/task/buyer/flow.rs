@@ -221,10 +221,11 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     // Three communication CLI commands:
     //   - okx-a2a xmtp-send: send to provider (peer sub session), params --job-id + --to-agent-id + --message
     //   - onchainos agent user-notify: notify the user (no user decision needed), params: --content
-    //   - okx-a2a user decision-request: needs user interaction (confirm / decide), params: --llm-content + --user-content
-    //     --llm-content = instructions injected into the user session LLM (invisible to the user, contains
-    //                     (jobId, role, agentId, toAgentId?) routing fields so the user agent can relay the decision back to the sub)
+    //   - onchainos agent pending-decisions-v2 request: needs user interaction (confirm / decide), params: --user-content + --list-label + --source-event
+    //     (internally pushes via the okx-a2a user_attention table; the user-session agent then renders + relays the user's reply back to the sub)
     //     --user-content = visible message sent to the user
+    //     --list-label   = short label shown in the outstanding-decisions list
+    //     --source-event = event token the user-session uses to route the relayed reply back to the sub
     // ──────────────────────────────────────────────────────────────────────
     let terminal_session_hint = format!("\
 ℹ️ Task is at a terminal state — run the cleanup command (handles pending-decision cancellation automatically):\n\

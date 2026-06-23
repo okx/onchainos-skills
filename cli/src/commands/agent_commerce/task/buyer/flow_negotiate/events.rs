@@ -236,7 +236,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
 ///   Step 0 (in-process): POST `/priapi/v1/aieco/task/{jobId}/reset/asp` to clear the rejected
 ///                        ASP binding on the task record (no request body).
 ///   Step 1 (LLM playbook): the agent must localize the `--user-content` payload into the
-///                          user's language, then run `okx-a2a user decision-request` to
+///                          user's language, then run `pending-decisions-v2 request` to
 ///                          deliver the 4-option card. The `--llm-content` routing block
 ///                          stays English (consumed only by the user-session agent).
 pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> String {

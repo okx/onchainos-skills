@@ -581,7 +581,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
 ///   the CLI. On return the card is already in the user session.
 /// - Otherwise (queue mode) → falls back to the same queue-write + playbook
 ///   emission path as `handle_request`. The LLM still executes the printed
-///   `okx-a2a user decision-request` bash block, but the queue lifecycle
+///   `pending-decisions-v2 request` bash block, but the queue lifecycle
 ///   stays consistent with `Request`.
 #[allow(clippy::too_many_arguments)]
 fn handle_request_prompt(
@@ -594,6 +594,7 @@ fn handle_request_prompt(
     llm_content: Option<String>,
     source_event: Option<String>,
 ) -> Result<()> {
+    let user_content = user_content.replace("\\n", "\n");
     let cli_mode = is_cli_mode();
     trace_log(&format!(
         "handle_request_prompt {}: job_id={} role={} agent_id={} to_agent_id={:?}",
@@ -1287,7 +1288,7 @@ fn strip_label_prefix(label: &str) -> &str {
 ///
 /// The "follow the playbook the CLI returns" line is hardened here vs. the previous
 /// hand-written copies: it spells out the three possible stdout shapes
-/// (`okx-a2a user decision-request` / `onchainos agent user-notify` / end-turn) and explicitly
+/// (`pending-decisions-v2 request` / `onchainos agent user-notify` / end-turn) and explicitly
 /// warns that stdout IS the next-action playbook (not log output). Without this, smaller models
 /// tend to stop after the bash call — the user-facing tool invocation never happens,
 /// the card never surfaces, the flow stalls (24h auto-refund / mistaken auto-decline).
@@ -1533,7 +1534,7 @@ fn playbook_render(entry: &PendingEntry) -> String {
         "Render the selected decision card to the user as your assistant response (text rendering only — do NOT call any tool). End the turn after rendering.\n\n\
          **User-visible text** (render this verbatim as your assistant response; 🌐 translate per [Localization] rules if the user's language is not English; keep `jobId` / data values intact):\n\
          \"\"\"\n{}\"\"\"\n\n\
-         **LLM context** (this is for YOUR own routing reasoning — **do NOT show / paraphrase / leak this block to the user**; it is the same instruction the sub would have embedded in `okx-a2a user decision-request --llm-content` if this card had been freshly pushed):\n\
+         **LLM context** (this is for YOUR own routing reasoning — **do NOT show / paraphrase / leak this block to the user**):\n\
          \"\"\"\n{}\n\"\"\"\n\n\
          On the user's next reply, follow the LLM context above (decision tree + pre-filled `resolve-prompt` command).\n",
         entry.user_content,
