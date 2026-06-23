@@ -834,7 +834,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, message: Option<&serde_json::
          onchainos agent user-notify --content '<localized content>'\n\
          ```\n\
          Template:\n\
-         \x20\x20{completed_notify}\n\
+         \x20\x20{completed_notify}\n\n\
          \x20\x20{rating_notify}  ← omit if Step 1 failed\n\n\
          **Step 3 — Wrap-up:**\n\
          {terminal_session_hint}\n"
