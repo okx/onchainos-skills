@@ -439,17 +439,6 @@ pub enum AgentCommand {
     #[command(name = "claim-auto-refund")]
     ClaimAutoRefund { job_id: String },
 
-    /// Change payment token and amount (on-chain, wait for task_token_budget_change)
-    #[command(name = "set-token-and-budget")]
-    SetTokenAndBudget {
-        job_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long)]
-        budget: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
     /// Reject a provider's apply (on-chain pass-through; status stays `created`)
     #[command(name = "reject-apply")]
     RejectApply {
@@ -457,16 +446,13 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Change max budget (off-chain, succeeds immediately)
-    #[command(name = "set-max-budget")]
-    SetMaxBudget {
-        job_id: String,
-        #[arg(long = "max-budget")]
-        max_budget: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
 
+    /// Send a user-facing notification via okx-a2a (fire-and-forget)
+    #[command(name = "user-notify")]
+    UserNotify {
+        #[arg(long)]
+        content: String,
+    },
     /// Attach local file(s) to a task
     #[command(name = "task-attach")]
     TaskAttach {
@@ -963,12 +949,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
 
-        AgentCommand::SetTokenAndBudget { job_id, token_symbol, budget, agent_id } =>
-            task::buyer::run_task(T::SetTokenAndBudget { job_id, token_symbol, budget, agent_id }, ctx).await,
         AgentCommand::RejectApply { job_id, agent_id } =>
             task::buyer::run_task(T::RejectApply { job_id, agent_id }, ctx).await,
-        AgentCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
-            task::buyer::run_task(T::SetMaxBudget { job_id, max_budget, agent_id }, ctx).await,
+
+        AgentCommand::UserNotify { content } =>
+            task::common::okx_a2a::user_notify(&content),
 
         AgentCommand::TaskAttach { job_id, file_paths } =>
             task::buyer::run_task(T::TaskAttach { job_id, file_paths }, ctx).await,
@@ -1228,9 +1213,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                             );
                         }
                         task::common::version_notice::mark_shown();
-                        Some("Before executing the scene below, run `okx-a2a user notify` to notify the user (recommend upgrade but do **not** halt the flow). The `--content` template below is a sample — translate it to the user's language before sending:\n\
+                        Some("Before executing the scene below, run `onchainos agent user-notify` to notify the user (recommend upgrade but do **not** halt the flow). The `--content` template below is a sample — translate it to the user's language before sending:\n\
                              ```bash\n\
-                             okx-a2a user notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.'\n\
+                             onchainos agent user-notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.'\n\
                              ```\n\
                              Then proceed to the scene below normally.\n\n".to_string())
                     } else {
@@ -1266,9 +1251,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 };
                 println!(
                     "【交易失败】{label}（code={code}）\n\n\
-                     运行 `okx-a2a user notify` 通知用户：\n\
+                     运行 `onchainos agent user-notify` 通知用户：\n\
                      ```bash\n\
-                     okx-a2a user notify --content '[{label}]{title_part}（{job_id}）交易执行失败（code={code}）。'\n\
+                     onchainos agent user-notify --content '[{label}]{title_part}（{job_id}）交易执行失败（code={code}）。'\n\
                      ```\n\
                      → 结束 turn。"
                 );
@@ -1650,6 +1635,10 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
 
     // For job_submitted: check local deliverable manifest to avoid an extra CLI round-trip.
+    // Also manages the review-awaiting-deliverable marker for out-of-order event handling:
+    //   manifest present         → populate ctx.deliverable (normal path)
+    //   manifest empty + no marker → write marker (first job_submitted, deliverable not yet received)
+    //   manifest empty + marker    → delete marker, leave ctx.deliverable=None (retry: fall through to Step 2b chat history)
     if job_status_or_event == "job_submitted" {
         if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("buyer", job_id) {
             if let Some(entry) = manifest.entries.first() {
@@ -1661,7 +1650,19 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
                     deliverable_type: entry.deliverable_type.clone(),
                     original_name: entry.original_name.clone(),
                 });
+                task::common::deliverables::delete_review_marker(job_id);
             }
+        } else if task::common::deliverables::has_review_marker(job_id) {
+            task::common::deliverables::delete_review_marker(job_id);
+            if DEBUG_LOG {
+                eprintln!("[check-freshness] job_submitted retry: marker found, deleted — will fall through to Step 2b chat history");
+            }
+        } else if let Err(e) = task::common::deliverables::write_review_marker(job_id) {
+            if DEBUG_LOG {
+                eprintln!("[check-freshness] failed to write review marker: {e}");
+            }
+        } else if DEBUG_LOG {
+            eprintln!("[check-freshness] job_submitted: no deliverable, marker written — waiting for deliverable_received");
         }
     }
 
@@ -1700,7 +1701,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
          **必须做**（二选一）：\n\
          1. 如果当前 inbound 是 **P2P 消息**（a2a-agent-chat）→ 你很可能用错了 event。回到 buyer-sub-playbook.md / provider.md §3 Inbound Message Routing 重新匹配正确的事件（例如 `[intent:deliver]` → `deliverable_received`，自然语言报价 → `negotiate_reply`）。这些伪事件不受 freshness 限制。\n\
          2. 如果当前 inbound 是 **system event** → 重调 next-action，并在 `--message` JSON 里把 `event` 字段改成 `{actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
-         **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 `okx-a2a user notify` 推用户。\n",
+         **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 `onchainos agent user-notify` 推用户。\n",
         expected_str = expected.as_str(),
     )), prefetched)
 }

@@ -12,7 +12,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 
 **Action**:
 1. **Do not reply to the counterpart again** — do not call `okx-a2a xmtp-send` to explain a second round; that will only make the peer agent loop along with you
-2. Call `okx-a2a user notify` to push to the user:
+2. Call `onchainos agent user-notify` to push to the user:
    ```
    [⚠️ Protocol misalignment] Task <jobId> is stuck
    - Counterpart keeps demanding: <one-sentence summary of their demand>

@@ -154,7 +154,7 @@ If the user included file(s)/image(s) as task material → for each: `onchainos 
 
 ================================================
 
-After success, tell the user directly (you are in the user session, no `okx-a2a user notify` needed):\n\
+After success, tell the user directly (you are in the user session, no `onchainos agent user-notify` needed):\n\
 ".to_string()
     + &format!("\
 - Private: \"{create_designated}\"\n\
@@ -200,7 +200,7 @@ Backend validates all required fields, checks balance, signs the transaction, an
 Step 2 -- Notify user
 ================================================
 
-After success, tell the user directly (do NOT call `okx-a2a user notify` — you are already in the user session):
+After success, tell the user directly (do NOT call `onchainos agent user-notify` — you are already in the user session):
 - No designated provider → \"{publish_public}\"
 - With designated provider → \"{publish_designated}\"
 ⚠️ If the CLI output contains a `⚠️ Insufficient ... balance` warning line, append it to the message above.
@@ -306,7 +306,7 @@ pub(crate) fn attachment_added_cli(
             "[attachment_added_cli] ERROR: filePath missing in --message JSON.\n\n\
              [Your next action] Notify the user:\n\
              ```bash\n\
-             okx-a2a user notify --content '<localized: Attachment forwarding failed — file path was not provided. Please retry via task-attach.>'\n\
+             onchainos agent user-notify --content '<localized: Attachment forwarding failed — file path was not provided. Please retry via task-attach.>'\n\
              ```\n"
         );
     }
@@ -319,7 +319,7 @@ pub(crate) fn attachment_added_cli(
             "[attachment_added_cli] ERROR: provider not assigned — cannot forward attachment.\n\n\
              [Your next action] Notify the user:\n\
              ```bash\n\
-             okx-a2a user notify --content '<localized: [Job {short_id}] Attachment saved locally but no provider assigned yet. It will be forwarded automatically once a provider accepts the task.>'\n\
+             onchainos agent user-notify --content '<localized: [Job {short_id}] Attachment saved locally but no provider assigned yet. It will be forwarded automatically once a provider accepts the task.>'\n\
              ```\n"
         );
     }
@@ -334,7 +334,7 @@ pub(crate) fn attachment_added_cli(
                  Content:\n\
                  \x20\x20{att_sent}\n\n\
                  ```bash\n\
-                 okx-a2a user notify --content '<localized content>'\n\
+                 onchainos agent user-notify --content '<localized content>'\n\
                  ```\n\
                  **End this turn.**\n"
             )
@@ -345,7 +345,7 @@ pub(crate) fn attachment_added_cli(
                 "[attachment_added_cli] ERROR: upload/forward failed: {e}\n\n\
                  [Your next action] Notify the user that the attachment could not be sent.\n\n\
                  ```bash\n\
-                 okx-a2a user notify --content '<translate: [Job {short_id}] Attachment forwarding failed. Please retry later.>'\n\
+                 onchainos agent user-notify --content '<translate: [Job {short_id}] Attachment forwarding failed. Please retry later.>'\n\
                  ```\n\n\
                  **End this turn.**\n"
             )
@@ -353,22 +353,3 @@ pub(crate) fn attachment_added_cli(
     }
 }
 
-// --- Term-change events ------------------------------------------------
-
-pub(crate) fn task_token_budget_change(ctx: &super::super::flow::FlowContext<'_>) -> String {
-    let _job_id = ctx.job_id;
-
-    format!(
-    "[System Notification] task_token_budget_change (payment token / amount change settled on-chain)\n\
-     [Role] User (User Agent)\n\n\
-     ⚠️ This event is triggered by the user session calling `set-token-and-budget`. The terms are now updated on-chain.\n\n\
-     [Receiving-scenario decision -- 🛑 MANDATORY]\n\
-     This event is broadcast to all user-side sub sessions.\n\
-     - If you are the **backup session** → **ignore this event, end the turn immediately, do not call any tool**\n\
-     - If you are a **sub session (a negotiation session with a specific provider)** → **also ignore this event, end the turn**\n\n\
-     Rationale: price is locked at accept time, not negotiated in chat. The on-chain tokenSymbol / tokenAmount update is visible to the ASP via task-detail queries; no `okx-a2a xmtp-send` propagation is needed.\n\n\
-     ❌ Do not run `okx-a2a xmtp-send` to the provider (price talk is forbidden in chat).\n\
-     ❌ Do not run `okx-a2a user notify` (the user already knows about the change in the user session).\n\
-     ❌ Do not call set-token-and-budget / set-asp / set-max-budget (the user session already did).\n"
-    )
-}

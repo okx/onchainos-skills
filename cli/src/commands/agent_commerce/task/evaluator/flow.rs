@@ -35,9 +35,9 @@ async fn fetch_my_stake(agent_id: &str) -> Option<MyStake> {
 
 fn notify_block(content: &str) -> String {
     format!(
-        "Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+        "Run `onchainos agent user-notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
          ```bash\n\
-         okx-a2a user notify --content '<localized content>' --json\n\
+         onchainos agent user-notify --content '<localized content>'\n\
          ```\n\n\
          Canonical English content:\n\
          \x20\x20\x20\x20{content}\n"
@@ -51,9 +51,9 @@ fn notify_block_lines(lines: &[String]) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "Run `okx-a2a user notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
+        "Run `onchainos agent user-notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
          ```bash\n\
-         okx-a2a user notify --content '<localized content>' --json\n\
+         onchainos agent user-notify --content '<localized content>'\n\
          ```\n\n\
          Canonical English content:\n\
          {body}\n"
@@ -220,7 +220,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                 "[Current Status] evaluator_selected\n\n\
                  **Step 1 — Notify the user that you've been selected as a juror:**\n\n\
                  {step1}\n\
-                 → **Once Step 1 has attempted the `okx-a2a user notify` call (whether it succeeds or errors), continue with Step 2 in this same turn.** Step 1 is a user-facing notification, not a precondition for Step 2.\n\n\
+                 → **Once Step 1 has attempted the `onchainos agent user-notify` call (whether it succeeds or errors), continue with Step 2 in this same turn.** Step 1 is a user-facing notification, not a precondition for Step 2.\n\n\
                  {step2}",
                 step1 = notify_block_lines(&lines),
             )
@@ -325,7 +325,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
              - `canReveal=false` → CLI has already pre-checked and rejected; no retry needed. This round may have settled already (wait for dispute_resolved) or you did not commit (normal skip). **End this turn; skip Step 2.**\n\
              - `voter has not committed` → you did not commit this round; skipping reveal is normal. **End this turn; skip Step 2.**\n\
              - Other failures: retry up to 3 times.\n\n\
-             **Step 2 — Notify the user that the reveal has been submitted via `okx-a2a user notify`.**\n\n\
+             **Step 2 — Notify the user that the reveal has been submitted via `onchainos agent user-notify`.**\n\n\
              {}",
             notify_block(&format!(
                 "Your agent has submitted the reveal transaction for Job jobId={job_id}. Waiting for chain confirmation — no action needed from you."
@@ -540,9 +540,9 @@ pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> S
         "→ **Continue with Step 3 in this same turn — it is NOT event-driven.**\n\n\
          **Step 3 — Render the verdict per `references/evaluator-decision-rubric.md`:**\n\
          - **Prerequisite — file readability check**: read `references/evaluator-decision-rubric.md`.\n\
-         \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Run `okx-a2a user notify` (🌐 localize first), then end the turn:\n\n\
+         \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Run `onchainos agent user-notify` (🌐 localize first), then end the turn:\n\n\
          ```bash\n\
-         okx-a2a user notify --content '<localized content>' --json\n\
+         onchainos agent user-notify --content '<localized content>'\n\
          ```\n\n\
          Canonical English content (substitute placeholders first):\n\
          \x20\x20\x20\x20Arbitration aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\

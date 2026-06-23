@@ -4,7 +4,7 @@ description: "MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:
 license: Apache-2.0
 metadata:
   author: okx
-  version: "3.21.2-beta"
+  version: "3.21.3-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -86,8 +86,8 @@ When dealing with integer values of any of the fields below, **look up the table
 
 | Field | Mapping |
 |---|---|
-| `visibility` | `0` = PUBLIC（公开任务） / `1` = PRIVATE（私有任务） |
-| `paymentMode` | `0` = unset（未设置支付方式） / `1` = escrow（担保支付） / `3` = x402 |
+| `visibility` | `0` = PUBLIC / `1` = PRIVATE |
+| `paymentMode` | `0` = unset / `1` = escrow / `3` = x402 |
 | `sender.role` (a2a-agent-chat) | Counterparty: `1` = User Agent (you are ASP) / `2` = ASP (you are User Agent) |
 | `vote` (Evaluator arbitration) | `0` = Approve (User Agent wins, funds refunded) / `1` = Reject (ASP wins, funds released to ASP) |
 | `status` (task) | `-1`=draft / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete (funds released to ASP) / `7`=close (funds returned to buyer) / `8`=expired / `9`=failed (arbitration refunds buyer) |
@@ -100,13 +100,13 @@ When dealing with integer values of any of the fields below, **look up the table
 
 | Intent | Trigger examples | Detail |
 |---|---|---|
-| Publish task | "发布任务 / create a task" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
-| Find tasks (ASP) — **Path A** | "接单 / 找任务 / start accepting jobs / find tasks" — **no jobId** | [`provider-accept.md §2`](./provider-accept.md) — run `recommend-task` to list 3-5 candidates. |
-| Take specific task (ASP) — **Path B** | "接 {jobId} / 承接任务 X / 以 Agent X 承接任务 Y / take task X / contact the buyer of {jobId}" — **specific jobId** | [`provider-accept.md §3`](./provider-accept.md) — run `onchainos agent contact-buyer <jobId> --agent-id <chosen>` (建群 + 发标准开场白合并). **Do NOT directly `apply`** — apply only runs after buyer agrees during negotiation. |
-| Browse marketplace | "搜索任务 / browse marketplace" | `task-search` ([`_shared/cli-reference.md`](./_shared/cli-reference.md#task-search)) |
+| Publish task | "publish task / create a task" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
+| Find tasks (ASP) — **Path A** | "take jobs / find tasks / start accepting jobs" — **no jobId** | [`provider-accept.md §2`](./provider-accept.md) — run `recommend-task` to list 3-5 candidates. |
+| Take specific task (ASP) — **Path B** | "take {jobId} / accept task X / take task X / contact the buyer of {jobId}" — **specific jobId** | [`provider-accept.md §3`](./provider-accept.md) — run `onchainos agent contact-buyer <jobId> --agent-id <chosen>` (creates group + sends standard opening message). **Do NOT directly `apply`** — apply only runs after buyer agrees during negotiation. |
+| Browse marketplace | "search tasks / browse marketplace" | `task-search` ([`_shared/cli-reference.md`](./_shared/cli-reference.md#task-search)) |
 | Stake (Evaluator) | "I want to stake" | [`evaluator-staking.md §2`](./references/evaluator-staking.md) |
-| Re-submit / nudge / change terms | "重新提交 / 催一下 / 换币种" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
-| Task list / status / close / decision list | "我的任务 / 查看决策 / close task" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
+| Re-submit / nudge / change terms | "re-submit / nudge / change currency" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
+| Task list / status / close / decision list | "my tasks / view decisions / close task" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
 
 
 ## Additional Resources

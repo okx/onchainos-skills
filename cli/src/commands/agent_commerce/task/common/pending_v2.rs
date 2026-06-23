@@ -581,7 +581,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
 ///   the CLI. On return the card is already in the user session.
 /// - Otherwise (queue mode) → falls back to the same queue-write + playbook
 ///   emission path as `handle_request`. The LLM still executes the printed
-///   `okx-a2a user decision-request` bash block, but the queue lifecycle
+///   `pending-decisions-v2 request` bash block, but the queue lifecycle
 ///   stays consistent with `Request`.
 #[allow(clippy::too_many_arguments)]
 fn handle_request_prompt(
@@ -594,6 +594,7 @@ fn handle_request_prompt(
     llm_content: Option<String>,
     source_event: Option<String>,
 ) -> Result<()> {
+    let user_content = user_content.replace("\\n", "\n");
     let cli_mode = is_cli_mode();
     trace_log(&format!(
         "handle_request_prompt {}: job_id={} role={} agent_id={} to_agent_id={:?}",
@@ -1287,7 +1288,7 @@ fn strip_label_prefix(label: &str) -> &str {
 ///
 /// The "follow the playbook the CLI returns" line is hardened here vs. the previous
 /// hand-written copies: it spells out the three possible stdout shapes
-/// (`okx-a2a user decision-request` / `okx-a2a user notify` / end-turn) and explicitly
+/// (`pending-decisions-v2 request` / `onchainos agent user-notify` / end-turn) and explicitly
 /// warns that stdout IS the next-action playbook (not log output). Without this, smaller models
 /// tend to stop after the bash call — the user-facing tool invocation never happens,
 /// the card never surfaces, the flow stalls (24h auto-refund / mistaken auto-decline).
@@ -1312,88 +1313,6 @@ pub fn request_command_block(
     list_label_full: &str,
     source_event: &str,
 ) -> String {
-    build_pending_v2_command_block(
-        "request",
-        job_id,
-        role,
-        agent_id,
-        to_agent_id,
-        user_content,
-        None,
-        list_label_full,
-        source_event,
-    )
-}
-
-/// `request-prompt` variant of [`request_command_block`]. Same pre-assembled
-/// bash skeleton, but the CLI internally invokes the push instead of returning
-/// a playbook for the LLM to execute. Use this where the previous design
-/// hand-wrote a bash block and asked the LLM to translate + interpolate the
-/// `--user-content` body — that path lets the LLM emit literal `\n` escapes
-/// where real newlines were intended, so the user-facing card ends up
-/// rendering `\n` as text.
-pub fn request_prompt_command_block(
-    job_id: &str,
-    role: &str,
-    agent_id: &str,
-    to_agent_id: Option<&str>,
-    user_content: &str,
-    list_label_full: &str,
-    source_event: &str,
-) -> String {
-    build_pending_v2_command_block(
-        "request-prompt",
-        job_id,
-        role,
-        agent_id,
-        to_agent_id,
-        user_content,
-        None,
-        list_label_full,
-        source_event,
-    )
-}
-
-/// `request` variant that also emits `--llm-content`. Use when the user-session
-/// agent needs an English routing block to decode the user's reply (e.g. the
-/// `provider_pending` accept/reject card carries `[asp: …][groupId: …]` in
-/// `--llm-content` so the relay knows which next-action to invoke).
-#[allow(clippy::too_many_arguments)]
-pub fn request_command_block_with_llm(
-    job_id: &str,
-    role: &str,
-    agent_id: &str,
-    to_agent_id: Option<&str>,
-    user_content: &str,
-    llm_content: &str,
-    list_label_full: &str,
-    source_event: &str,
-) -> String {
-    build_pending_v2_command_block(
-        "request",
-        job_id,
-        role,
-        agent_id,
-        to_agent_id,
-        user_content,
-        Some(llm_content),
-        list_label_full,
-        source_event,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_pending_v2_command_block(
-    subcommand: &str,
-    job_id: &str,
-    role: &str,
-    agent_id: &str,
-    to_agent_id: Option<&str>,
-    user_content: &str,
-    llm_content: Option<&str>,
-    list_label_full: &str,
-    source_event: &str,
-) -> String {
     // Bash `--user-content "..."` uses double quotes; escape `\` and `"` inside.
     let user_content_escaped = user_content
         .replace('\\', "\\\\")
@@ -1402,20 +1321,14 @@ fn build_pending_v2_command_block(
         Some(t) => format!(" --to-agent-id \"{t}\""),
         None => String::new(),
     };
-    let llm_flag = match llm_content {
-        Some(c) => {
-            let escaped = c.replace('\\', "\\\\").replace('"', "\\\"");
-            format!(" \\\n         \x20\x20--llm-content \"{escaped}\"")
-        }
-        None => String::new(),
-    };
     format!(
-        "```bash\n\
-         onchainos agent pending-decisions-v2 {subcommand} \\\n\
+        "🌐 **Localize first** — translate the `--user-content` and `--list-label` values below to the user's language before running. Keep the bash structure / flags / source-event token unchanged.\n\n\
+         ```bash\n\
+         onchainos agent pending-decisions-v2 request \\\n\
          \x20\x20--job-id {job_id} --role {role} --agent-id {agent_id}{to_flag} \\\n\
          \x20\x20--user-content \"{content}\" \\\n\
          \x20\x20--list-label \"{label}\" \\\n\
-         \x20\x20--source-event {source_event}{llm_flag}\n\
+         \x20\x20--source-event {source_event}\n\
          ```",
         job_id = job_id,
         role = role,
@@ -1424,7 +1337,6 @@ fn build_pending_v2_command_block(
         content = user_content_escaped,
         label = list_label_full,
         source_event = source_event,
-        llm_flag = llm_flag,
     )
 }
 
@@ -1551,7 +1463,7 @@ fn playbook_wait_with_reprompt(
 ) -> String {
     let total_pending = queued_position + 1;
     // Canonical English notification. The user-session LLM translates the entire
-    // body to match the user's language before `okx-a2a user notify`. We do NOT
+    // body to match the user's language before `onchainos agent user-notify`. We do NOT
     // embed the active card content here — the user is already partway through
     // answering it; re-surfacing the full card would be noisy. The user can
     // ask for the decision list to switch focus.
@@ -1576,9 +1488,9 @@ fn playbook_wait_with_reprompt(
          \x20\x20• Hex jobIds (`0x...`) and numeric agent IDs (the digits after `Agent #`).\n\
          \x20\x20• The sub-provided `<title>` field (may already be in user's language).\n\
          Everything else — `Decision`, the `<type>` token (`acceptance` / `dispute` / `submit` / `ASP-pick` / `ASP-contact` / `next-step` / `price` / `budget` / `error`), the role token (`User` / `ASP` / `Evaluator`), surrounding prose, AND quoted user-facing keywords like `\"decision list\"` — gets translated to a natural localized form (skill routing accepts both English and translated keywords). No mixed-language content.\n\n\
-         **Step 2 — Run `okx-a2a user notify` with the localized content from Step 1**:\n\
+         **Step 2 — Run `onchainos agent user-notify` with the localized content from Step 1**:\n\
          ```bash\n\
-         okx-a2a user notify --content '<the localized Step 1 output>'\n\
+         onchainos agent user-notify --content '<the localized Step 1 output>'\n\
          ```\n\n\
          End the turn after the command returns. Do NOT call any other tool first or after.\n",
         pos = queued_position,
@@ -1622,7 +1534,7 @@ fn playbook_render(entry: &PendingEntry) -> String {
         "Render the selected decision card to the user as your assistant response (text rendering only — do NOT call any tool). End the turn after rendering.\n\n\
          **User-visible text** (render this verbatim as your assistant response; 🌐 translate per [Localization] rules if the user's language is not English; keep `jobId` / data values intact):\n\
          \"\"\"\n{}\"\"\"\n\n\
-         **LLM context** (this is for YOUR own routing reasoning — **do NOT show / paraphrase / leak this block to the user**; it is the same instruction the sub would have embedded in `okx-a2a user decision-request --llm-content` if this card had been freshly pushed):\n\
+         **LLM context** (this is for YOUR own routing reasoning — **do NOT show / paraphrase / leak this block to the user**):\n\
          \"\"\"\n{}\n\"\"\"\n\n\
          On the user's next reply, follow the LLM context above (decision tree + pre-filled `resolve-prompt` command).\n",
         entry.user_content,
