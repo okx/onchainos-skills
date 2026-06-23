@@ -251,7 +251,7 @@ pub(crate) fn deliverable_received_cli(
             .unwrap_or("")
     };
 
-    let (saved_path, deliverable_type) = match dtype {
+    let (saved_path, deliverable_type, text_content) = match dtype {
         "file" => {
             let file_key = msg_str("fileKey");
             let digest = msg_str("digest");
@@ -305,7 +305,7 @@ pub(crate) fn deliverable_received_cli(
                 Ok(r) => {
                     audit::log("cli", "buyer/deliverable_saved", true, Duration::default(),
                         Some([base_tags.clone(), vec!["type=file".into(), format!("path={}", r.path)]].concat()), None);
-                    (r.path, "file".to_string())
+                    (r.path, "file".to_string(), None)
                 }
                 Err(e) => {
                     audit::log("cli", "buyer/deliverable_save_failed", false, Duration::default(),
@@ -383,7 +383,7 @@ pub(crate) fn deliverable_received_cli(
                 Ok(r) => {
                     audit::log("cli", "buyer/deliverable_saved", true, Duration::default(),
                         Some([base_tags.clone(), vec!["type=text".into(), format!("path={}", r.path)]].concat()), None);
-                    (r.path, "text".to_string())
+                    (r.path, "text".to_string(), Some(text))
                 }
                 Err(e) => {
                     audit::log("cli", "buyer/deliverable_save_failed", false, Duration::default(),
@@ -435,6 +435,7 @@ pub(crate) fn deliverable_received_cli(
             path: saved_path.clone(),
             deliverable_type: deliverable_type.clone(),
             original_name: String::new(),
+            text_content: text_content.clone(),
         });
 
         let merged_ctx = super::super::flow::FlowContext {
@@ -539,13 +540,26 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     let token_amount = p.token_amount.as_str();
 
     let step2 = if let Some(d) = p.deliverable.as_ref() {
-        format!("\
+        if d.deliverable_type == "text" {
+            let content = d.text_content.as_deref().unwrap_or("<content unavailable>");
+            format!("\
      **Step 2 — Deliverable already saved**:\n\
      \x20\x20- localPath: {path}\n\
-     \x20\x20- deliverableType: {dtype}\n\
-     \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\n",
-            path = d.path, dtype = d.deliverable_type,
-        )
+     \x20\x20- deliverableType: text\n\
+     \x20\x20- deliverableText:\n\
+     ```\n\
+     {content}\n\
+     ```\n\n",
+                path = d.path,
+            )
+        } else {
+            format!("\
+     **Step 2 — Deliverable already saved**:\n\
+     \x20\x20- localPath: {path}\n\
+     \x20\x20- deliverableType: file\n\n",
+                path = d.path,
+            )
+        }
     } else {
         format!("\
      **Step 2a — Check saved deliverable:**\n\
@@ -594,8 +608,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     );
 
     format!(
-    "🛑 MUST use `pending-decisions-v2 request` — NOT `onchainos agent user-notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\
-     🛑 Even if deliverable was already downloaded this turn, execute ALL steps below.\n\n\
+    "🛑 MUST use `pending-decisions-v2 request` — NOT `onchainos agent user-notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\n\
      [Your next actions (strict order)]\n\n\
      {step2}\
      **Step 3 — Compose `--user-content` and push decision card:**\n\n\
@@ -605,24 +618,16 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ```\n\
      [Job {short_id}] The ASP has submitted the deliverable (file).\n\
      File path: <localPath>\n\
-     <if deliverableText non-empty: ASP note: <deliverableText>>\n\
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
      B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
      ```\n\n\
-     ▸ deliverableType=text (localPath available):\n\
+     ▸ deliverableType=text:\n\
      ```\n\
      [Job {short_id}] The ASP has submitted the deliverable (text).\n\
      Saved at: <localPath>\n\
-     Payment: escrow\n\
-     A. Approve → reply 'A'\n\
-     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
-     ```\n\n\
-     ▸ deliverableType=text (localPath unavailable — inline full text):\n\
-     ```\n\
-     [Job {short_id}] The ASP has submitted the deliverable (text).\n\
      ---Deliverable---\n\
-     <deliverableText — full content, no truncation>\n\
+     <deliverableText from Step 2 — full content, no truncation>\n\
      ---End of deliverable---\n\
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
@@ -663,13 +668,26 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
     };
 
     let step2 = if let Some(d) = p.deliverable.as_ref() {
-        format!("\
+        if d.deliverable_type == "text" {
+            let content = d.text_content.as_deref().unwrap_or("<content unavailable>");
+            format!("\
      **Step 2 — Deliverable already saved**:\n\
      \x20\x20- localPath: {path}\n\
-     \x20\x20- deliverableType: {dtype}\n\
-     \x20\x20- For text deliverables, read the file content at localPath to get `deliverableText`\n\n",
-            path = d.path, dtype = d.deliverable_type,
-        )
+     \x20\x20- deliverableType: text\n\
+     \x20\x20- deliverableText:\n\
+     ```\n\
+     {content}\n\
+     ```\n\n",
+                path = d.path,
+            )
+        } else {
+            format!("\
+     **Step 2 — Deliverable already saved**:\n\
+     \x20\x20- localPath: {path}\n\
+     \x20\x20- deliverableType: file\n\n",
+                path = d.path,
+            )
+        }
     } else {
         format!("\
      **Step 2a — Check saved deliverable:**\n\
@@ -702,8 +720,8 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      Compose from two halves (concatenate with two blank lines):\n\
      \x20\x20▸ Deliverable (always; pick template):\n\
      \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: <localPath>`\n\
-     \x20\x20\x20\x20text+path: `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>`\n\
-     \x20\x20\x20\x20text-no-path: `[Deliverable Received] Job {job_id} — x402, payment settled.` + full deliverableText inline\n\
+     \x20\x20\x20\x20text (localPath available): `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>` + deliverableText from Step 2\n\
+     \x20\x20\x20\x20text (no localPath): `[Deliverable Received] Job {job_id} — x402, payment settled.` + deliverableText from Step 2 inline\n\
      \x20\x20▸ Rating (include ONLY if feedback-submit succeeded; if it failed or errored, **omit this entire half**):\n\
      \x20\x20\x20\x20{rating_notify}\n\
      \x20\x20\x20\x20(fill `<score>` with the X.XX value used in 3a, `<description>` with the comment from 3a)\n\n\

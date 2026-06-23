@@ -1645,10 +1645,16 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
                 let dir = task::common::deliverables::deliverables_dir("buyer", job_id)
                     .map(|d| d.join(&entry.filename).display().to_string())
                     .unwrap_or_default();
+                let text_content = if entry.deliverable_type == "text" {
+                    std::fs::read_to_string(&dir).ok()
+                } else {
+                    None
+                };
                 ctx.deliverable = Some(task::common::PreFetchedDeliverable {
                     path: dir,
                     deliverable_type: entry.deliverable_type.clone(),
                     original_name: entry.original_name.clone(),
+                    text_content,
                 });
                 task::common::deliverables::delete_review_marker(job_id);
             }
