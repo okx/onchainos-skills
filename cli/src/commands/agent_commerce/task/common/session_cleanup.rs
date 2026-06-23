@@ -21,7 +21,6 @@ pub fn handle_session_cleanup(job_id: &str) -> Result<()> {
             Ok(()) => out.push_str(&"OK".to_string()),
             Err(e) => out.push_str(&format!("⚠️ sub session delete failed: {e}\n")),
         }
-        out.push_str("\n✅ All session cleanup steps completed by Rust. End the turn.\n");
     }
 
     print!("{out}");
