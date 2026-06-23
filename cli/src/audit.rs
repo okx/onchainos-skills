@@ -377,7 +377,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Payment { .. } => "payment".into(),
         AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
         AgentCommand::RejectApply { .. } => "reject-apply".into(),
-        AgentCommand::SetMaxBudget { .. } => "set-max-budget".into(),
         AgentCommand::TaskAttach { .. } => "task-attach".into(),
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),

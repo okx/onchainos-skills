@@ -30,7 +30,6 @@ pub(crate) mod negotiate;
 mod query;
 mod reject;
 mod reject_apply;
-mod set_terms;
 mod x402_flow;
 
 use anyhow::Result;
@@ -251,14 +250,6 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Change max budget (off-chain, succeeds immediately)
-    SetMaxBudget {
-        job_id: String,
-        #[arg(long = "max-budget")]
-        max_budget: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
     /// Attach local file(s) to a task
     TaskAttach {
         job_id: String,
@@ -318,8 +309,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
         TaskCommand::RejectApply { job_id, agent_id } =>
             reject_apply::handle_reject_apply(&mut client, &job_id, agent_id.as_deref()).await,
-        TaskCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
-            set_terms::handle_set_max_budget(&mut client, &job_id, &max_budget, agent_id.as_deref()).await,
         TaskCommand::TaskAttach { job_id, file_paths } => {
             if file_paths.is_empty() {
                 anyhow::bail!("at least one --file <path> is required");

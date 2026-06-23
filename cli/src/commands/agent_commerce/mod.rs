@@ -446,16 +446,6 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Change max budget (off-chain, succeeds immediately)
-    #[command(name = "set-max-budget")]
-    SetMaxBudget {
-        job_id: String,
-        #[arg(long = "max-budget")]
-        max_budget: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
-
     /// Attach local file(s) to a task
     #[command(name = "task-attach")]
     TaskAttach {
@@ -954,8 +944,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::RejectApply { job_id, agent_id } =>
             task::buyer::run_task(T::RejectApply { job_id, agent_id }, ctx).await,
-        AgentCommand::SetMaxBudget { job_id, max_budget, agent_id } =>
-            task::buyer::run_task(T::SetMaxBudget { job_id, max_budget, agent_id }, ctx).await,
 
         AgentCommand::TaskAttach { job_id, file_paths } =>
             task::buyer::run_task(T::TaskAttach { job_id, file_paths }, ctx).await,
