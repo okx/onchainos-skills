@@ -956,14 +956,6 @@ pub async fn generate_next_action(
             event = event.as_str()
         ),
 
-        // ─── Buyer terms-change on-chain receipt — provider does not receive this event; fallback ignore ─────
-        Event::TaskTokenBudgetChange => format!(
-            "[System notification] {event} (User Agent terms-change receipt; provider does not handle directly)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
-             Silently ignore; end this turn.\n",
-            event = event.as_str()
-        ),
-
         // ─── Buyer attachment received — download + save, no reply ─────
         Event::BuyerAttachmentReceived => {
             buyer_attachment_received_cli(job_id, agent_id, &short_id, message)

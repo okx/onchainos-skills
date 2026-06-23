@@ -125,7 +125,6 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent direct-accept {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt>  # x402 phase 2b: call after endpoint interaction"),
             format!("  onchainos agent close {job_id}          # Close task"),
             format!("  onchainos agent set-public {job_id}     # Convert to public task"),
-            format!("  onchainos agent set-token-and-budget {job_id} --token-symbol <USDT|USDG> --budget <amount>  # Change payment token and amount (on-chain)"),
             format!("  onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params '<params>' --service-token-address <addr> --service-token-amount <amt>  # Re-set ASP + service (off-chain, triggers job_created)"),
             format!("  onchainos agent set-max-budget {job_id} --max-budget <amount>  # Change max budget (off-chain)"),
             format!("  onchainos agent reject-apply {job_id}  # Reject the current provider's apply (off-chain)"),
@@ -398,7 +397,6 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
         Event::AttachmentAdded => {
             super::flow_lifecycle::attachment_added_cli(&ctx, message)
         }
-        Event::TaskTokenBudgetChange => super::flow_lifecycle::task_token_budget_change(&ctx),
         // ─── Events the buyer never receives + unknown fallback ──────────────────────────
         Event::Staked
         | Event::UnstakeRequested

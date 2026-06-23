@@ -439,17 +439,6 @@ pub enum AgentCommand {
     #[command(name = "claim-auto-refund")]
     ClaimAutoRefund { job_id: String },
 
-    /// Change payment token and amount (on-chain, wait for task_token_budget_change)
-    #[command(name = "set-token-and-budget")]
-    SetTokenAndBudget {
-        job_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long)]
-        budget: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
     /// Reject a provider's apply (on-chain pass-through; status stays `created`)
     #[command(name = "reject-apply")]
     RejectApply {
@@ -963,8 +952,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
 
-        AgentCommand::SetTokenAndBudget { job_id, token_symbol, budget, agent_id } =>
-            task::buyer::run_task(T::SetTokenAndBudget { job_id, token_symbol, budget, agent_id }, ctx).await,
         AgentCommand::RejectApply { job_id, agent_id } =>
             task::buyer::run_task(T::RejectApply { job_id, agent_id }, ctx).await,
         AgentCommand::SetMaxBudget { job_id, max_budget, agent_id } =>

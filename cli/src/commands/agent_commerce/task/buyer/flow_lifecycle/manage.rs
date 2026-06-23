@@ -353,22 +353,3 @@ pub(crate) fn attachment_added_cli(
     }
 }
 
-// --- Term-change events ------------------------------------------------
-
-pub(crate) fn task_token_budget_change(ctx: &super::super::flow::FlowContext<'_>) -> String {
-    let _job_id = ctx.job_id;
-
-    format!(
-    "[System Notification] task_token_budget_change (payment token / amount change settled on-chain)\n\
-     [Role] User (User Agent)\n\n\
-     ⚠️ This event is triggered by the user session calling `set-token-and-budget`. The terms are now updated on-chain.\n\n\
-     [Receiving-scenario decision -- 🛑 MANDATORY]\n\
-     This event is broadcast to all user-side sub sessions.\n\
-     - If you are the **backup session** → **ignore this event, end the turn immediately, do not call any tool**\n\
-     - If you are a **sub session (a negotiation session with a specific provider)** → **also ignore this event, end the turn**\n\n\
-     Rationale: price is locked at accept time, not negotiated in chat. The on-chain tokenSymbol / tokenAmount update is visible to the ASP via task-detail queries; no `okx-a2a xmtp-send` propagation is needed.\n\n\
-     ❌ Do not run `okx-a2a xmtp-send` to the provider (price talk is forbidden in chat).\n\
-     ❌ Do not run `okx-a2a user notify` (the user already knows about the change in the user session).\n\
-     ❌ Do not call set-token-and-budget / set-asp / set-max-budget (the user session already did).\n"
-    )
-}
