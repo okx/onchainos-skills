@@ -1321,7 +1321,8 @@ pub fn request_command_block(
         None => String::new(),
     };
     format!(
-        "```bash\n\
+        "🌐 **Localize first** — translate the `--user-content` and `--list-label` values below to the user's language before running. Keep the bash structure / flags / source-event token unchanged.\n\n\
+         ```bash\n\
          onchainos agent pending-decisions-v2 request \\\n\
          \x20\x20--job-id {job_id} --role {role} --agent-id {agent_id}{to_flag} \\\n\
          \x20\x20--user-content \"{content}\" \\\n\

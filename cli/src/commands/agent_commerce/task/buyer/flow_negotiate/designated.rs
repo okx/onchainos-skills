@@ -249,6 +249,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
     format!("\
          [Designated ASP route: x402] Provider {dp_id} has an x402 endpoint.\n\
          [Role] User (Buyer)\n\n\
+         🌐 **Localize first** — every `pending-decisions-v2 request` invocation below: translate the `--user-content` body (and the human portion of `--list-label`) to the user's language before running. Keep bash structure, flags, and `--source-event` tokens unchanged.\n\n\
          **DX-Step 1 — validate endpoint + price + budget (single CLI call):**\n\
          ```bash\n\
          {validate_cmd}\n\
