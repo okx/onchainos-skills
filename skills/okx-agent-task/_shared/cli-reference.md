@@ -424,19 +424,33 @@ agent task-attach <jobId> --file <local-path> [--file <local-path> ...]
 Save a task as a draft (off-chain, status = -1)
 
 ```
-agent draft create --title <txt> --description <txt> --description-summary <txt> [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] [--provider <agentId>] [--file <path> ...]
+agent draft create --title <txt> --description <txt> --description-summary <txt> \
+  [--budget <num>] [--max-budget <num>] [--currency <USDT|USDG>] \
+  [--provider <agentId>] [--visibility <0|1>] \
+  [--service-id <id>] [--service-params <txt>] \
+  [--service-token-address <addr>] [--service-token-amount <num>] \
+  [--file <path> ...] [--payment-mode <escrow|x402>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--title` | Yes | - | Task title (max 30 chars) |
-| `--description` | No | - | Task description (20-2000 chars); required at publish time |
-| `--description-summary` | No | auto-generated | Task summary (max 200 chars) |
-| `--budget` | No | - | Budget amount (> 0, max 10M, max 5 decimals) |
-| `--max-budget` | No | - | Maximum budget (must be >= budget) |
+| `--description` | Yes | - | Task description (20-2000 chars) |
+| `--description-summary` | Yes | - | Task summary (max 200 chars) |
+| `--budget` | No | - | Budget amount (>0, max 10M, ≤5 decimals) |
+| `--max-budget` | No | - | Max budget (≥ budget) |
 | `--currency` | No | - | `USDT` or `USDG` |
-| `--provider` | No | - | Designated provider agentId |
-| `--file` | No | - | Attachment file path (repeatable) |
+| `--visibility` | No | `1` | `0` = public, `1` = private |
+| `--provider` | Conditional | - | Provider agentId; **required when visibility=1** |
+| `--service-id` | No | - | Service ID from `asp-match` response |
+| `--service-params` | No | - | Service input parameters (natural language) |
+| `--service-token-address` | No | - | Service token contract address |
+| `--service-token-amount` | No | - | Service price (from `asp-match` feeAmount) |
+| `--file` | No | - | Local file paths to attach (repeatable) |
+| `--payment-mode` | No | unset | `escrow` or `x402` |
+
+> - `visibility=1` (private, default) requires `--provider`; omitting provider with private visibility will error.
+> - `visibility=0` (public) does not require `--provider`; if `--provider` is set on a public task, it is treated as a designated-provider task.
 
 ### draft list
 

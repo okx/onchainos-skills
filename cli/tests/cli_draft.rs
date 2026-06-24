@@ -17,12 +17,31 @@ use predicates::prelude::*;
 // ═══════════════════════════════════════════════════════════════════
 
 #[test]
-fn draft_create_missing_title_flag_fails() {
+fn draft_create_missing_required_flags_fails() {
+    // missing all three required flags: --title, --description, --description-summary
     onchainos()
         .args(["agent", "draft", "create"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("--title"));
+}
+
+#[test]
+fn draft_create_missing_description_flag_fails() {
+    onchainos()
+        .args(["agent", "draft", "create", "--title", "ok", "--description-summary", "sum"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--description"));
+}
+
+#[test]
+fn draft_create_missing_description_summary_flag_fails() {
+    onchainos()
+        .args(["agent", "draft", "create", "--title", "ok", "--description", "a description that is long enough"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--description-summary"));
 }
 
 #[test]
@@ -53,10 +72,19 @@ fn draft_publish_missing_job_id_fails() {
 // No-auth: input validation (handler validates before auth call)
 // ═══════════════════════════════════════════════════════════════════
 
+// Minimal valid base args for draft create (description must be ≥20 chars)
+const DRAFT_DESC: &str = "A valid description that is long enough for validation";
+const DRAFT_SUMMARY: &str = "Valid summary";
+
 #[test]
 fn draft_create_empty_title_rejected() {
     onchainos()
-        .args(["agent", "draft", "create", "--title", ""])
+        .args([
+            "agent", "draft", "create",
+            "--title", "",
+            "--description", DRAFT_DESC,
+            "--description-summary", DRAFT_SUMMARY,
+        ])
         .assert()
         .failure()
         .stdout(predicate::str::contains("title must not be empty"));
@@ -66,7 +94,12 @@ fn draft_create_empty_title_rejected() {
 fn draft_create_title_too_long_rejected() {
     let long_title: String = "x".repeat(31);
     onchainos()
-        .args(["agent", "draft", "create", "--title", &long_title])
+        .args([
+            "agent", "draft", "create",
+            "--title", &long_title,
+            "--description", DRAFT_DESC,
+            "--description-summary", DRAFT_SUMMARY,
+        ])
         .assert()
         .failure()
         .stdout(predicate::str::contains("may not exceed"));
@@ -79,6 +112,7 @@ fn draft_create_description_too_short_rejected() {
             "agent", "draft", "create",
             "--title", "ok",
             "--description", "short",
+            "--description-summary", DRAFT_SUMMARY,
         ])
         .assert()
         .failure()
@@ -91,6 +125,8 @@ fn draft_create_invalid_currency_rejected() {
         .args([
             "agent", "draft", "create",
             "--title", "ok",
+            "--description", DRAFT_DESC,
+            "--description-summary", DRAFT_SUMMARY,
             "--currency", "ETH",
         ])
         .assert()
@@ -104,6 +140,8 @@ fn draft_create_budget_too_many_decimals_rejected() {
         .args([
             "agent", "draft", "create",
             "--title", "ok",
+            "--description", DRAFT_DESC,
+            "--description-summary", DRAFT_SUMMARY,
             "--budget", "1.123456",
         ])
         .assert()
@@ -117,36 +155,12 @@ fn draft_create_budget_negative_rejected() {
         .args([
             "agent", "draft", "create",
             "--title", "ok",
+            "--description", DRAFT_DESC,
+            "--description-summary", DRAFT_SUMMARY,
             "--budget", "-1",
         ])
         .assert()
         .failure();
-}
-
-#[test]
-fn draft_create_deadline_open_too_short_rejected() {
-    onchainos()
-        .args([
-            "agent", "draft", "create",
-            "--title", "ok",
-            "--deadline-open", "1s",
-        ])
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("deadline-open"));
-}
-
-#[test]
-fn draft_create_deadline_submit_too_short_rejected() {
-    onchainos()
-        .args([
-            "agent", "draft", "create",
-            "--title", "ok",
-            "--deadline-submit", "5s",
-        ])
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("deadline-submit"));
 }
 
 #[test]
@@ -155,6 +169,8 @@ fn draft_create_max_budget_less_than_budget_rejected() {
         .args([
             "agent", "draft", "create",
             "--title", "ok",
+            "--description", DRAFT_DESC,
+            "--description-summary", DRAFT_SUMMARY,
             "--budget", "100",
             "--max-budget", "50",
         ])
@@ -169,10 +185,43 @@ fn draft_create_budget_exceeds_max_rejected() {
         .args([
             "agent", "draft", "create",
             "--title", "ok",
+            "--description", DRAFT_DESC,
+            "--description-summary", DRAFT_SUMMARY,
             "--budget", "10000001",
         ])
         .assert()
         .failure();
+}
+
+#[test]
+fn draft_create_visibility_private_requires_provider() {
+    onchainos()
+        .args([
+            "agent", "draft", "create",
+            "--title", "ok",
+            "--description", DRAFT_DESC,
+            "--description-summary", DRAFT_SUMMARY,
+            "--visibility", "1",
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("requires --provider"));
+}
+
+#[test]
+fn draft_create_invalid_payment_mode_rejected() {
+    onchainos()
+        .args([
+            "agent", "draft", "create",
+            "--title", "ok",
+            "--description", DRAFT_DESC,
+            "--description-summary", DRAFT_SUMMARY,
+            "--visibility", "0",
+            "--payment-mode", "invalid",
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("unsupported --payment-mode"));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -197,11 +246,11 @@ fn draft_lifecycle_create_list_update_delete() {
             "agent", "draft", "create",
             "--title", "IntegTest draft",
             "--description", "Integration test draft — will be deleted automatically after test run.",
+            "--description-summary", "Integration test draft",
             "--budget", "1",
             "--max-budget", "2",
             "--currency", "USDT",
-            "--deadline-open", "1h",
-            "--deadline-submit", "2h",
+            "--visibility", "0",
         ])
         .output()
         .expect("failed to execute draft create");
@@ -297,9 +346,15 @@ fn draft_lifecycle_create_list_update_delete() {
 #[test]
 #[ignore]
 fn draft_publish_incomplete_draft_fails() {
-    // create a minimal draft (title only, missing required publish fields)
+    // create a minimal draft (no budget/currency — publish should fail)
     let output = onchainos()
-        .args(["agent", "draft", "create", "--title", "IntegTest publish-fail"])
+        .args([
+            "agent", "draft", "create",
+            "--title", "IntegTest publish-fail",
+            "--description", "This draft is incomplete and should fail to publish.",
+            "--description-summary", "Incomplete draft",
+            "--visibility", "0",
+        ])
         .output()
         .expect("failed to execute draft create");
 
@@ -338,7 +393,13 @@ fn draft_publish_incomplete_draft_fails() {
 fn draft_update_no_fields_rejected() {
     // create a draft to get a valid job_id
     let output = onchainos()
-        .args(["agent", "draft", "create", "--title", "IntegTest no-fields"])
+        .args([
+            "agent", "draft", "create",
+            "--title", "IntegTest no-fields",
+            "--description", "A description long enough for validation to pass.",
+            "--description-summary", "No-fields test",
+            "--visibility", "0",
+        ])
         .output()
         .expect("failed to execute draft create");
 

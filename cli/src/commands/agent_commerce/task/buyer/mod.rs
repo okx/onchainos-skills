@@ -338,9 +338,9 @@ pub enum DraftCommand {
         #[arg(long)]
         title: String,
         #[arg(long)]
-        description: Option<String>,
+        description: String,
         #[arg(long = "description-summary")]
-        description_summary: Option<String>,
+        description_summary: String,
         #[arg(long)]
         budget: Option<f64>,
         #[arg(long = "max-budget")]
@@ -359,6 +359,12 @@ pub enum DraftCommand {
         service_token_address: Option<String>,
         #[arg(long = "service-token-amount")]
         service_token_amount: Option<String>,
+        /// Payment mode: escrow or x402. When omitted the draft is created with paymentMode=0 (unset).
+        #[arg(long = "payment-mode")]
+        payment_mode: Option<String>,
+        /// Task visibility: 1 = private (requires --provider), 0 = public
+        #[arg(long, default_value = "1")]
+        visibility: i32,
     },
     /// List my drafts
     List {
@@ -425,12 +431,13 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
             title, description, description_summary, budget, max_budget, currency,
             provider, attachments,
             service_id, service_params, service_token_address, service_token_amount,
+            payment_mode, visibility,
         } => {
             draft::handle_draft_create(
                 &mut client,
                 &title,
-                description.as_deref(),
-                description_summary.as_deref(),
+                &description,
+                &description_summary,
                 budget,
                 max_budget,
                 currency.as_deref(),
@@ -440,6 +447,8 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
                 service_params.as_deref(),
                 service_token_address.as_deref(),
                 service_token_amount.as_deref(),
+                payment_mode.as_deref(),
+                visibility,
             ).await
         }
         DraftCommand::List { page, limit } => {
