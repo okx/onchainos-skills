@@ -452,10 +452,14 @@ pub async fn handle_draft_update(
     max_budget: Option<f64>,
     currency: Option<&str>,
     provider: Option<&str>,
+    attachments: Option<&[String]>,
     service_id: Option<&str>,
     service_params: Option<&str>,
     service_token_address: Option<&str>,
     service_token_amount: Option<&str>,
+    endpoint: Option<&str>,
+    payment_mode: Option<&str>,
+    visibility: Option<i32>,
 ) -> Result<()> {
     if let Some(t) = title {
         validate_title(t)?;
@@ -472,6 +476,21 @@ pub async fn handle_draft_update(
     }
     validate_budget_opt(max_budget)?;
     let currency_norm = validate_currency_opt(currency)?;
+
+    if let Some(v) = visibility {
+        if v != 0 && v != 1 {
+            bail!("--visibility must be 0 (public) or 1 (private), got {v}");
+        }
+        if v == 1 && provider.is_none() {
+            bail!("visibility=1 (private) requires --provider; either set a provider or use --visibility 0 (public)");
+        }
+    }
+
+    let payment_mode_int = if let Some(pm) = payment_mode {
+        Some(PaymentMode::parse_flag(Some(pm))?)
+    } else {
+        None
+    };
 
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
@@ -520,6 +539,15 @@ pub async fn handle_draft_update(
     if let Some(stm) = service_token_amount {
         body.insert("serviceTokenAmount".into(), serde_json::json!(stm));
     }
+    if let Some(ep) = endpoint {
+        body.insert("endpoint".into(), serde_json::json!(ep));
+    }
+    if let Some(pm) = payment_mode_int {
+        body.insert("paymentMode".into(), serde_json::json!(pm));
+    }
+    if let Some(v) = visibility {
+        body.insert("visibility".into(), serde_json::json!(v));
+    }
 
     if body.is_empty() {
         bail!("no fields specified for update; pass at least one of --title, --description, --budget, etc.");
@@ -527,6 +555,12 @@ pub async fn handle_draft_update(
 
     let body_val = serde_json::Value::Object(body);
     client.post_with_identity(&draft_update_path(job_id), &body_val, &buyer_agent_id).await?;
+
+    if let Some(files) = attachments {
+        if !files.is_empty() {
+            super::attachments::copy_attachments_to_job(job_id, files)?;
+        }
+    }
 
     audit::log(
         "cli",

@@ -390,6 +390,8 @@ pub enum DraftCommand {
         currency: Option<String>,
         #[arg(long)]
         provider: Option<String>,
+        #[arg(long = "file")]
+        attachments: Option<Vec<String>>,
         #[arg(long = "service-id")]
         service_id: Option<String>,
         #[arg(long = "service-params")]
@@ -398,6 +400,12 @@ pub enum DraftCommand {
         service_token_address: Option<String>,
         #[arg(long = "service-token-amount")]
         service_token_amount: Option<String>,
+        #[arg(long)]
+        endpoint: Option<String>,
+        #[arg(long = "payment-mode")]
+        payment_mode: Option<String>,
+        #[arg(long)]
+        visibility: Option<i32>,
     },
     /// Delete a draft
     Delete {
@@ -456,7 +464,8 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
         }
         DraftCommand::Update {
             job_id, title, description, description_summary, budget, max_budget, currency,
-            provider, service_id, service_params, service_token_address, service_token_amount,
+            provider, attachments, service_id, service_params, service_token_address,
+            service_token_amount, endpoint, payment_mode, visibility,
         } => {
             draft::handle_draft_update(
                 &mut client,
@@ -468,10 +477,14 @@ pub async fn run_draft(cmd: DraftCommand, _ctx: &Context) -> Result<()> {
                 max_budget,
                 currency.as_deref(),
                 provider.as_deref(),
+                attachments.as_deref(),
                 service_id.as_deref(),
                 service_params.as_deref(),
                 service_token_address.as_deref(),
                 service_token_amount.as_deref(),
+                endpoint.as_deref(),
+                payment_mode.as_deref(),
+                visibility,
             ).await
         }
         DraftCommand::Delete { job_id } => {
