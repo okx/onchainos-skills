@@ -284,18 +284,30 @@ pub fn set_public_user_notify(job_id: &str) -> String {
 
 /// `Event::SubmitExpired` — ASP missed the submit deadline (B-7-5).
 pub fn submit_expired_user_notify(job_id: &str) -> String {
-    format!(
-        "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund has been requested; funds will return to your wallet."
-    )
+    if is_cli_mode() {
+        format!(
+            "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund is in progress; funds will return to your wallet and a final refund-settled notice will follow shortly."
+        )
+    } else {
+        format!(
+            "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund has been requested; funds will return to your wallet."
+        )
+    }
 }
 
 // ── Event::RejectExpired ───────────────────────────────────────────
 
 /// `Event::RejectExpired` — ASP missed the dispute deadline (B-7-6).
 pub fn reject_expired_user_notify(job_id: &str) -> String {
-    format!(
-        "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund has been requested; funds will return to your wallet."
-    )
+    if is_cli_mode() {
+        format!(
+            "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund is in progress; funds will return to your wallet and a final refund-settled notice will follow shortly."
+        )
+    } else {
+        format!(
+            "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund has been requested; funds will return to your wallet."
+        )
+    }
 }
 
 // ── Event::ReviewDeadlineWarn ──────────────────────────────────────
@@ -351,7 +363,7 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
 /// x402 replay success — deliverable received, awaiting on-chain confirmation.
 pub fn x402_replay_success_user_notify(job_id: &str) -> String {
     let trailing = if is_cli_mode() {
-        ""
+        "\n         On-chain confirmation is in progress. The job will auto-complete and a final completion notice will follow shortly."
     } else {
         "\n         Waiting for on-chain confirmation. The job will auto-complete once confirmed."
     };
