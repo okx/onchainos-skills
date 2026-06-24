@@ -11,7 +11,7 @@
 |---|---|
 | §1 Publishing | **Moved** → [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
 | §2 Mid-task attachment | User wants to add files to an active task |
-| §3 Terms changes | Switch provider (set-asp) / stop task |
+| §3 Terms changes | Switch provider (set-asp) / set public / stop task |
 | §4 View deliverables | User wants to see submitted deliverables |
 | §5–§6 Designated-Provider | **Moved** → [`buyer-actions-publish.md`](./buyer-actions-publish.md) §5 and §6 |
 
@@ -73,6 +73,17 @@
 6. **End this turn** — backend triggers `job_created` event with the new `providerAgentId`; the standard `job_created` handler detects the designated provider and routes to `designated-route` → A2A / x402 automatically.
 
 > ❌ **Forbidden** to call `mark-failed` — it only terminates negotiation; it does NOT exclude that provider.
+
+### 3.2 Set public (convert private → public)
+
+> **Pre-condition**: task is in **Created** state and currently private (has a designated provider).
+
+**Trigger**: "set public" / "make it public" / "convert to public task" / "remove provider"
+
+1. Confirm which task (ask for jobId if ambiguous).
+2. Confirm: "Convert task <jobId> to public? This will remove the current designated provider and open the task to all ASPs."
+3. User confirms → `onchainos agent set-public <jobId>`
+4. CLI internally resets ASP fields + sets visibility=0 (off-chain, no gas).
 
 ### 3.3 Stop task
 
