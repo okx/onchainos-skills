@@ -994,7 +994,7 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
                 "role": role_label,
                 "agentId": first.get("agentId").and_then(|v| v.as_str()).unwrap_or(""),
                 "name": first.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                "onlineStatus": first.get("onlineStatus"),
+                "status": first.get("status"),
             });
         }
     }
