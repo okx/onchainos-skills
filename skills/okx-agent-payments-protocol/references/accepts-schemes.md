@@ -2,7 +2,7 @@
 
 > Loaded from `../SKILL.md` **only on a failure or legacy path**. On the success path `onchainos payment pay` returns a ready `authorization_header` — you replay it directly (SKILL.md Step A6) and do **not** load this file. Load it when: `pay` returns `Permit2 allowance insufficient` (one-time approve), a legacy x402 v1 raw proof, or you need to interpret a scheme-specific settlement result.
 
-All three schemes share one signing surface: `onchainos payment pay --payload '<base64 PAYMENT-REQUIRED>' [--selected-index <n>]` decodes the payload, signs the chosen `accepts` entry via TEE, **assembles the header itself** (embedding `sessionCert` into `accepted.extra` for `aggr_deferred` / `upto` without clobbering `name` / `version`), and returns `{authorization_header, header_name, scheme, wallet}`. You never assemble or merge anything. The local-key fallback `pay-local` is **`exact` only** — no `aggr_deferred` / Permit2.
+All three schemes share one signing surface: `onchainos payment pay --payload '<base64 PAYMENT-REQUIRED>' [--selected-index <n>]` decodes the payload, signs the chosen `accepts` entry via TEE, **assembles the header itself** (embedding `sessionCert` into `accepted.extra` for `aggr_deferred` only — without clobbering `name` / `version`), and returns `{authorization_header, header_name, scheme, wallet}`. You never assemble or merge anything. The local-key fallback `pay-local` signs **`exact + EIP-3009`, `exact + Permit2`, and `upto`** locally — only `aggr_deferred` is unsupported (it needs a TEE-resident session key).
 
 ## Interpreting the settlement result (after Replay)
 
@@ -31,13 +31,13 @@ If not yet approved, `payment pay` fails with `Permit2 allowance insufficient on
 
 Validation: 数字 < required → reject;数字 > 1e15 → 提示是否手滑想给 MAX;0 → 二次确认是撤销。`feedback_x402_no_confirm` 不覆盖 approve 类持续授权，此处仍需询问。After approve, all future Permit2 payments for that token are off-chain signatures only — retry `onchainos payment pay --payload '<raw>'`.
 
-## Local-key fallback (`pay-local`, `exact` only)
+## Local-key fallback (`pay-local` — `exact + EIP-3009` / `exact + Permit2` / `upto`)
 
 ```bash
 onchainos payment pay-local --payload '<base64 ...>'
 ```
 
-Reads `EVM_PRIVATE_KEY` (env var or `~/.onchainos/.env`), derives the payer, generates the nonce, computes `validBefore = now + maxTimeoutSeconds`, and signs `exact` locally — no TEE, no JWT. Returns the same `{authorization_header, ...}` shape (v2). Rejects `aggr_deferred` / Permit2. Prerequisites: the payer holds enough of the `asset` token on the target chain; the token supports EIP-3009 `transferWithAuthorization`; `accepts[].extra.name` (EIP-712 domain name) is present (`version` optional, defaults `"2"`). ⚠️ Signs with your local key (NOT TEE-protected) — `chmod 600 ~/.onchainos/.env`; the recommended path is always TEE `payment pay`.
+Reads `EVM_PRIVATE_KEY` (env var or `~/.onchainos/.env`), derives the payer, generates the nonce, computes the time window from `maxTimeoutSeconds`, and signs locally — no TEE, no JWT. Auto-selects the scheme by the same rules as `payment pay` (`accepts[].scheme` + `accepts[].extra.assetTransferMethod`) and returns the same `{authorization_header, ...}` shape (v2). Output is a standard secp256k1 EIP-712 / EIP-3009 signature — identical wire shape to the TEE path, with **no `sessionCert`** for `upto`. Supports `exact + EIP-3009`, `exact + Permit2`, and `upto`; **rejects `aggr_deferred`** (TEE-resident session key required). Prerequisites: the payer holds enough of the `asset` token on the target chain; for `exact + EIP-3009` the token supports `transferWithAuthorization` and `accepts[].extra.name` (EIP-712 domain name) is present (`version` optional, defaults `"2"`); for `Permit2` / `upto` the one-time Permit2 approve is done (see above), and `upto` additionally requires `accepts[].extra.facilitatorAddress`. ⚠️ Signs with your local key (NOT TEE-protected) — `chmod 600 ~/.onchainos/.env`; the recommended path is always TEE `payment pay`.
 
 ## Legacy: x402 v1 (`X-PAYMENT`)
 
@@ -52,7 +52,7 @@ X-PAYMENT: btoa(JSON.stringify(paymentPayload))
 
 ```bash
 onchainos payment pay --payload '<base64 of the decoded 402 payload / raw PAYMENT-REQUIRED>' [--selected-index <n>]
-onchainos payment pay-local --payload '<base64 ...>'      # exact only
+onchainos payment pay-local --payload '<base64 ...>'      # exact+EIP-3009 / exact+Permit2 / upto (not aggr_deferred)
 ```
 
 | Param | Required | Description |
@@ -69,7 +69,10 @@ Signs from the currently selected wallet account.
 - **Replay returns 402 again** — typically a stale signature; re-fetch a fresh 402 → re-sign. Never reuse a stale signature.
 - **Wrong proxy in signature (upto)** — facilitator rejects with an `invalid_permit2_spender`-class `invalidReason`; this is a CLI / SDK bug, not user error — surface the message and stop.
 - **Network error on replay** — retry once, then prompt the user.
-- **TEE signing failure / session expired** — re-login or fall back to `pay-local` (`exact` only); ask the user, don't silently cancel.
+- **TEE signing failure / session expired** — re-login or fall back to `pay-local` (`exact + EIP-3009` / `exact + Permit2` / `upto`, not `aggr_deferred`); ask the user, don't silently cancel.
+- **`insufficient_allowance`** (facilitator error code) — same as `Permit2 allowance insufficient`: surface the one-time Permit2 approve prompt and retry.
+- **`invalid_eoa_signature`** (facilitator error code) — the `signature` field is not `0x`-prefixed or is not 65 bytes; this is a CLI / SDK bug, not user error — surface the message and stop.
+- **`upto_signature_route_conflict`** (facilitator error code) — the request carried both a `sessionCert` and an EOA secp256k1 signature route, an invalid combination; CLI / SDK bug — surface and stop.
 - **Unsupported / non-EVM network** — EVM only (CAIP-2 `eip155:<chainId>`); a non-EVM `network` → stop and tell the user the resource is unsupported.
 - **No wallet for chain** — the logged-in account needs an address on the target chain; if missing, add it via `okx-agentic-wallet`.
 
