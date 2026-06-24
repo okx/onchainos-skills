@@ -25,7 +25,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         // ── Over-budget branch: reject the apply, mirror job_provider_reject's playbook ──
         if let Err(e) = super::super::reject_apply::handle_reject_apply(&mut client, job_id, Some(agent_id)).await {
             return format!(
-                "[provider_applied/over_budget] ❌ reject-apply failed in-process: {e}\n\n\
+                "[provider_applied/over_budget] reject-apply failed in-process: {e}\n\n\
                  See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
             );
         }
@@ -46,7 +46,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         );
 
         return format!(
-        "🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
+        "Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
          {request_block}\n"
         );
     }
@@ -54,7 +54,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
     // ── Within-budget branch: confirm-accept on-chain (escrow funded; status → accepted) ──
     if let Err(e) = super::super::accept::handle_confirm_accept(&mut client, job_id, ctx.prefetched).await {
         return format!(
-            "[provider_applied/confirm_accept] ❌ confirm-accept failed in-process: {e}\n\n\
+            "[provider_applied/confirm_accept] confirm-accept failed in-process: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         );
     }
@@ -108,14 +108,14 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      [Current Status] job_accepted (x402 — funds already paid)\n\n\
      **Step 1 -- Determine replaySuccess from the previous turn's task-402-pay:**\n\
      Look up the task-402-pay output in this sub session context.\n\
-     ⚠️ If not found (e.g. context compaction), **default to replaySuccess=true** —\n\
+     If not found (e.g. context compaction), **default to replaySuccess=true** —\n\
      skipping complete would leave the task stuck in accepted forever.\n\n\
      **Branch 1: replaySuccess=true (or default)**\n\n\
      ```bash\n\
      onchainos agent complete {job_id}\n\
      ```\n\
-     🛑 broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
-     ⚠️ On error → notify user:\n\
+     broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
+     On error → notify user:\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -484,7 +484,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
         Some(1) => job_submitted_escrow(ctx),
         Some(3) => job_submitted_x402(ctx),
         _ => format!(
-            "⚠️ paymentMode could not be pre-fetched. Run `onchainos agent status {job}` first to determine paymentMode (1=escrow, 3=x402), then follow the matching branch below.\n\n\
+            "paymentMode could not be pre-fetched. Run `onchainos agent status {job}` first to determine paymentMode (1=escrow, 3=x402), then follow the matching branch below.\n\n\
              ━━━━━━━━━ paymentMode=1 (escrow) ━━━━━━━━━\n\n\
              {escrow}\n\n\
              ━━━━━━━━━ paymentMode=3 (x402) ━━━━━━━━━\n\n\
@@ -511,14 +511,14 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     let p = match ctx.prefetched {
         Some(p) => p,
         None => return format!(
-            "[job_submitted_escrow] ❌ no prefetched task context for job {job_id}; cannot run the review flow.\n\n\
+            "[job_submitted_escrow] no prefetched task context for job {job_id}; cannot run the review flow.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let provider_field: &str = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
-            "[job_submitted_escrow] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot run the review flow.\n\n\
+            "[job_submitted_escrow] prefetched task context has no providerAgentId for job {job_id}; cannot run the review flow.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
@@ -608,12 +608,12 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     );
 
     format!(
-    "🛑 MUST use `pending-decisions-v2 request` — NOT `onchainos agent user-notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\n\
+    "MUST use `pending-decisions-v2 request` — NOT `onchainos agent user-notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\n\
      [Your next actions (strict order)]\n\n\
      {step2}\
      **Step 3 — Compose `--user-content` and push decision card:**\n\n\
      Compose `--user-content` from Step 2's deliverable variables (fill placeholders from runtime values):\n\n\
-     ⚠️ `<localPath>` must be the full absolute path (e.g. /Users/xxx/…). Never abbreviate or shorten.\n\n\
+     `<localPath>` must be the full absolute path (e.g. /Users/xxx/…). Never abbreviate or shorten.\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
      [Job {short_id}] The ASP has submitted the deliverable (file).\n\
@@ -655,14 +655,14 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
     let p = match ctx.prefetched {
         Some(p) => p,
         None => return format!(
-            "[job_submitted_x402] ❌ no prefetched task context for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
+            "[job_submitted_x402] no prefetched task context for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let provider_field: &str = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
-            "[job_submitted_x402] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
+            "[job_submitted_x402] prefetched task context has no providerAgentId for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
@@ -703,7 +703,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
     };
 
     format!(
-    "⚠️ x402: funds already paid; user cannot reject — notify + auto-rate only.\n\n\
+    "x402: funds already paid; user cannot reject — notify + auto-rate only.\n\n\
      [Your next actions (strict order)]\n\n\
      {step2}\
      **Step 3 — Auto-rate ASP, then notify user:**\n\n\
@@ -745,7 +745,7 @@ pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
     match super::super::complete::handle_complete(&mut client, job_id).await {
         Ok(()) => "**End this turn** and wait for the `job_completed` system notification.".to_string(),
         Err(e) => format!(
-            "[approve_review] ❌ `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
+            "[approve_review] `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     }
@@ -773,12 +773,12 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     match super::super::reject::handle_reject(&mut client, job_id, reason).await {
         Ok(()) => format!(
-            "[reject_review] ✅ `onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
-             ⚠️ broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (arbitration) or agree to a refund. The buyer cannot initiate arbitration.\n\
-             ❌ Do NOT send any message to the ASP about the rejection — they learn via on-chain events.\n"
+            "[reject_review] [OK]`onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
+             broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (arbitration) or agree to a refund. The buyer cannot initiate arbitration.\n\
+             Do NOT send any message to the ASP about the rejection — they learn via on-chain events.\n"
         ),
         Err(e) => format!(
-            "[reject_review] ❌ `onchainos agent reject {job_id} --reason \"{reason}\"` failed in-process: {e}\n\n\
+            "[reject_review] `onchainos agent reject {job_id} --reason \"{reason}\"` failed in-process: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     }

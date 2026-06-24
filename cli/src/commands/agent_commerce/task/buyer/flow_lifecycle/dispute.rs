@@ -12,7 +12,7 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] job_rejected (user rejection settled on-chain; awaiting ASP decision)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user that the rejection is settled; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
+     **You MUST notify the user that the rejection is settled; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
      **Step 1 — Notify the user the rejection is confirmed via `onchainos agent user-notify`:**\n\
@@ -22,11 +22,11 @@ pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
      Content:\n\
      {rejected_notify}\n\n\
      **Step 2 — Silently wait for the ASP's decision:**\n\n\
-     ⚠️ **Do not send any message to the ASP**. The ASP will decide:\n\
+     **Do not send any message to the ASP**. The ASP will decide:\n\
      - Open a dispute → you will receive job_disputed\n\
      - Agree to refund → you will receive job_refunded\n\
      - Timeout → system auto-refunds, you will receive job_refunded\n\n\
-     ⚠️ **The buyer cannot initiate arbitration** — only the ASP can open a dispute. If the user asks \"can I start a dispute?\", reply: the buyer side does not support initiating arbitration; please wait for the ASP's decision.\n\n\
+     **The buyer cannot initiate arbitration** — only the ASP can open a dispute. If the user asks \"can I start a dispute?\", reply: the buyer side does not support initiating arbitration; please wait for the ASP's decision.\n\n\
      After Step 1 → **end this turn** and wait for the next system event.\n\n\
 "
     )
@@ -44,7 +44,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     {
         Some(s) => s,
         None => return format!(
-            "[job_disputed] ❌ prefetched.provider_agent_id missing for job {job_id}; cannot fetch chat history for dispute evidence.\n\n\
+            "[job_disputed] prefetched.provider_agent_id missing for job {job_id}; cannot fetch chat history for dispute evidence.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
@@ -58,7 +58,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
             }
         }
         Err(e) => return format!(
-            "[job_disputed] ❌ `okx-a2a session history` failed: {e}\n\n\
+            "[job_disputed] `okx-a2a session history` failed: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
@@ -66,7 +66,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] job_disputed (arbitration opened; CLI auto-submits evidence on this event)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
+     **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
      The agent does NOT ask the user for evidence; it formats the chat history, calls `dispute upload`\n\
      (which also auto-attaches every saved deliverable from `~/.onchainos/deliverables/buyer/{job_id}/`),\n\
      and then notifies the user via `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request`\n\
@@ -114,7 +114,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     let p = match ctx.prefetched {
         Some(p) => p,
         None => return format!(
-            "[dispute_resolved] ❌ no prefetched task context for job {job_id}; cannot decide winner.\n\n\
+            "[dispute_resolved] no prefetched task context for job {job_id}; cannot decide winner.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
@@ -122,18 +122,18 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
         Some(9) => true,
         Some(6) => false,
         Some(other) => return format!(
-            "[dispute_resolved] ❌ unexpected prefetched status {other} for job {job_id}; expected 6 (completed/ASP wins) or 9 (failed/user wins).\n\n\
+            "[dispute_resolved] unexpected prefetched status {other} for job {job_id}; expected 6 (completed/ASP wins) or 9 (failed/user wins).\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
         None => return format!(
-            "[dispute_resolved] ❌ prefetched.status missing for job {job_id}; cannot decide winner.\n\n\
+            "[dispute_resolved] prefetched.status missing for job {job_id}; cannot decide winner.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
-            "[dispute_resolved] ❌ prefetched.provider_agent_id missing for job {job_id}; auto-rate cannot run.\n\n\
+            "[dispute_resolved] prefetched.provider_agent_id missing for job {job_id}; auto-rate cannot run.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
@@ -153,13 +153,13 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     format!(
     "[Current Status] dispute_resolved (arbitration ruling issued)\n\
      [Role] User (User Agent)\n\n\
-     🛑 **You MUST notify the user of the arbitration result + auto-rating in ONE consolidated message** — auto-rate FIRST, then send a single `onchainos agent user-notify` combining both pieces.\n\n\
+     **You MUST notify the user of the arbitration result + auto-rating in ONE consolidated message** — auto-rate FIRST, then send a single `onchainos agent user-notify` combining both pieces.\n\n\
      {winner_line}\
      **Step 1 — Task fields (pre-fetched; do NOT call `common context`):**\n\
      \x20\x20- title: {title}\n\
      \x20\x20- tokenAmount: {amt} | tokenSymbol: {sym}\n\
      \x20\x20- providerAgentId: {provider_id}\n\n\
-     **Step 2 — 🛑 Auto-rate the ASP FIRST (MANDATORY; must complete before Step 3):**\n\
+     **Step 2 — Auto-rate the ASP FIRST (MANDATORY; must complete before Step 3):**\n\
      Based on the deliverable vs the task description, quality standards, and the arbitration outcome, generate:\n\
      \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: {score_guide}. Adjust within the range based on specific circumstances.\n\
      \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
