@@ -9,11 +9,9 @@
 
 | Section | When to read |
 |---|---|
-| §1 Publishing | **Moved** → [`buyer-actions-publish.md`](./buyer-actions-publish.md) |
 | §2 Mid-task attachment | User wants to add files to an active task |
 | §3 Terms changes | Switch provider (set-asp) / set public / stop task |
 | §4 View deliverables | User wants to see submitted deliverables |
-| §5–§6 Designated-Provider | **Moved** → [`buyer-actions-publish.md`](./buyer-actions-publish.md) §5 and §6 |
 
 ---
 
@@ -120,8 +118,3 @@ The user wants to see saved deliverables from completed or in-progress tasks.
 - Empty → "No saved deliverables found."
 - ⚠️ File paths MUST be absolute.
 
----
-
-## 5–6. Designated-Provider flows
-
-**Moved** → [`buyer-actions-publish.md`](./buyer-actions-publish.md) §5 and §6.
