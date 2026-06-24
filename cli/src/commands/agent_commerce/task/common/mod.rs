@@ -131,6 +131,7 @@ pub struct PreFetchedDeliverable {
     pub path: String,
     pub deliverable_type: String,
     pub original_name: String,
+    pub text_content: Option<String>,
 }
 
 #[derive(Debug, Clone)]
