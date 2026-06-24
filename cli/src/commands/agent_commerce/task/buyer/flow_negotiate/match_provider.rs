@@ -189,7 +189,16 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          ```bash\n\
          okx-a2a session send --session-key <sessionKey from above> --content '{prefetch}'\n\
          ```\n\n\
-         🛑 **End this turn after Step 4.** Wait for the `provider_applied` system event.\n\
+         **Step 5 — upload pending attachments (if any):**\n\
+         ```bash\n\
+         onchainos agent list-attachments {job_id}\n\
+         ```\n\
+         If the output is a non-empty JSON array, iterate over each file path:\n\
+         a) `okx-a2a file upload --file-path <path> --agent-id {agent_id} --job-id {job_id}` → obtain fileKey + decryption-metadata fields.\n\
+         b) `okx-a2a xmtp-send --job-id {job_id} --to-agent-id {dp_id}` with the attachment content (all fields verbatim from the upload output).\n\
+         ⚠️ Attachment upload failure MUST NOT block the flow — skip failed files and continue.\n\
+         If empty (`[]`), skip this step.\n\n\
+         🛑 **End this turn after Step 5.** Wait for the `provider_applied` system event.\n\
          ❌ Do NOT call `confirm-accept` / `set-payment-mode` — the ASP has not applied yet.\n"
     )
 }

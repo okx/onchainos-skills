@@ -267,7 +267,7 @@ pub enum Event {
     /// Review timeout (after provider submit, the buyer did not confirm; notifies provider to call claimAutoComplete).
     ReviewExpired,
     // ── Auto-complete / auto-refund tx receipts ──────────────────────
-    /// Provider's claimAutoComplete tx on-chain result (after review timeout the provider pulls funds; notifies provider).
+    /// Provider's claimAutoComplete tx on-chain result (after review timeout the provider pulls funds; notifies both sides).
     JobAutoCompleted,
     /// Buyer's claimAutoRefund tx on-chain result (after submit/reject timeout the buyer pulls funds back; notifies buyer).
     JobAutoRefunded,

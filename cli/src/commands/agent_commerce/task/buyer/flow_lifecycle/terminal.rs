@@ -187,30 +187,6 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-pub(crate) fn review_expired(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-
-    let review_expired = super::super::content::review_expired_user_notify(job_id);
-    format!(
-    "[System Notification] review_expired (review window expired; task is still submitted)\n\
-     [Role] User (User Agent)\n\n\
-     **You MUST notify the user the review window expired; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
-     [Your next actions]\n\n\
-     **Step 1 — Notify the user via `onchainos agent user-notify`:**\n\
-     **Localize first** — translate the canonical English content below.\n\
-     ```bash\n\
-     onchainos agent user-notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content:\n\
-     {review_expired}\n\n\
-     **Step 2** — Wait for the `job_auto_completed` system notification and then wrap up.\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent user-notify` bash call with the localized content above\n\
-     No other text or tool calls. End turn after the call completes.\n"
-    )
-}
-
 pub(crate) fn job_auto_completed(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;

@@ -85,6 +85,15 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content '[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context.'\n\
                      \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x207. **Upload pending attachments (if any):**\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent list-attachments {job_id}\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20If non-empty JSON array, iterate each file:\n\
+                     \x20\x20\x20\x20a) `okx-a2a file upload --file-path <path> --agent-id {agent_id} --job-id {job_id}` → obtain fileKey + decryption-metadata.\n\
+                     \x20\x20\x20\x20b) `okx-a2a xmtp-send --job-id {job_id} --to-agent-id <agentId>` with attachment content (all fields verbatim from upload output).\n\
+                     \x20\x20\x20\x20⚠️ Failure MUST NOT block — skip failed files.\n\
+                     \x20\x20\x20\x20If empty (`[]`), skip.\n\
                      \x20\x20\x20\x20End the turn. Wait for `provider_applied`.\n\
                      \x20\x20\x20\x20If user said specify but **did NOT include an agentId**: re-ask via `pending-decisions-v2 request --source-event {source_event}` asking for the agentId; **`--user-content` and `--list-label` must be localized to the user's language** (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n")
 }
@@ -379,7 +388,6 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::SubmitExpired => super::flow_lifecycle::submit_expired(&ctx).await,
         Event::RejectExpired => super::flow_lifecycle::reject_expired(&ctx).await,
         Event::ReviewDeadlineWarn => super::flow_lifecycle::review_deadline_warn(&ctx),
-        Event::ReviewExpired => super::flow_lifecycle::review_expired(&ctx),
         Event::JobAutoCompleted => super::flow_lifecycle::job_auto_completed(&ctx),
         Event::SubmitDeadlineWarn => super::flow_lifecycle::submit_deadline_warn(),
         Event::EvaluatorSelected
@@ -823,8 +831,17 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```bash\n\
                      okx-a2a session send --session-key <sessionKey from above> --content '[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context.'\n\
                      ```\n\
-                     5. On failure → relay the error to the user and re-ask via `pending-decisions-v2 request` with `--source-event set_asp_params`.\n\
-                     6. End the turn.\n"
+                     5. **Upload pending attachments (if any):**\n\
+                     ```bash\n\
+                     onchainos agent list-attachments {job_id}\n\
+                     ```\n\
+                     If non-empty JSON array, iterate each file:\n\
+                     a) `okx-a2a file upload --file-path <path> --agent-id {agent_id} --job-id {job_id}` → obtain fileKey + decryption-metadata.\n\
+                     b) `okx-a2a xmtp-send --job-id {job_id} --to-agent-id <providerAgentId>` with attachment content (all fields verbatim from upload output).\n\
+                     ⚠️ Failure MUST NOT block — skip failed files.\n\
+                     If empty (`[]`), skip.\n\
+                     6. On failure → relay the error to the user and re-ask via `pending-decisions-v2 request` with `--source-event set_asp_params`.\n\
+                     7. End the turn.\n"
                     )
                 },
                 _ => format!(
@@ -852,7 +869,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             "job_created" | "provider_conversation_pick" |
             "negotiate_reply" |
             "provider_applied" | "job_accepted" | "deliverable_received" | "approve_review" | "job_completed" |
-            "review_expired" | "job_expired" | "job_auto_refunded" |
+            "job_expired" | "job_auto_refunded" |
             "submit_expired" | "reject_expired" |
             "close" | "set_public"
         );

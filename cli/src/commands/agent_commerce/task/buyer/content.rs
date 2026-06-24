@@ -311,22 +311,6 @@ pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String 
     )
 }
 
-// ── Event::ReviewExpired ───────────────────────────────────────────
-
-/// `Event::ReviewExpired` — review window expired (B-7-8).
-pub fn review_expired_user_notify(job_id: &str) -> String {
-    // CLI mode: drop " Waiting for the ASP's action..." — passive turn-end cue.
-    let trailing = if is_cli_mode() {
-        ""
-    } else {
-        " Waiting for the ASP's action..."
-    };
-    format!(
-        "[Review Expired] Job `{job_id}` — the review window has expired; you did not decide before the deadline.\n\
-         The ASP can now claim the funds automatically.{trailing}"
-    )
-}
-
 // ── Event::JobAutoCompleted ────────────────────────────────────────
 
 /// `Event::JobAutoCompleted` — job auto-completed (B-7-9).
@@ -363,24 +347,6 @@ pub fn no_more_sellers_user_notify(job_id: &str) -> String {
 /// Attachment sent successfully — notify the user.
 pub fn attachment_sent_user_notify() -> &'static str {
     "[Job <short_jobId>] Attachment sent to the ASP."
-}
-
-// ── Attachment (buyer → provider) ──────────────────────────────────
-
-/// File attachment peer message sent from the buyer sub session to the provider sub session.
-pub fn attachment_file_to_seller(job_id: &str) -> String {
-    format!(
-        "jobId: {job_id}\n\
-         attachmentType: file\n\
-         fileKey: <fileKey from `okx-a2a file upload` — FULL value, no truncation>\n\
-         digest: <digest — FULL hex string, no truncation>\n\
-         salt: <salt — FULL base64 string, no truncation>\n\
-         nonce: <nonce — FULL base64 string, no truncation>\n\
-         secret: <secret — FULL base64 string, no truncation (can be 100+ chars)>\n\
-         filename: <filename from `okx-a2a file upload`>\n\
-         description: This is an attachment/reference material for the task. The ASP should download it for task execution.\n\
-         [intent:attachment]"
-    )
 }
 
 // ── Escalation (preamble anomaly escalation) ───────────────────────
