@@ -128,12 +128,21 @@ pub enum PaymentProof {
     },
     /// `upto` scheme using the Permit2 + x402UptoPermit2Proxy flow.
     Upto {
-        /// Hex-encoded 65-byte secp256k1 signature with `0x` prefix.
+        /// **Base64** Ed25519 session-key signature over the upto Permit2
+        /// EIP-712 digest. The facilitator backend verifies this with the
+        /// `sessionCert` it gets back through `extra.sessionCert`, then
+        /// produces the on-chain secp256k1 signature itself via TEE
+        /// `eip712Hash` — the buyer never holds the EOA secp256k1 key.
         signature: String,
         /// Full `UptoPermit2Authorization` object — same shape as the exact
         /// variant but with `witness.facilitator` populated and a different
         /// EIP-712 typehash baked in.
         permit2_authorization: Value,
+        /// Session cert — required (backend rejects with
+        /// `param_mismatch: upto requires sessionCert in accepted.extra`
+        /// otherwise). Embedded into `accepted.extra.sessionCert` by
+        /// [`build_payment_header`].
+        session_cert: String,
     },
 }
 
@@ -167,9 +176,11 @@ impl PaymentProof {
             PaymentProof::Upto {
                 signature,
                 permit2_authorization,
+                session_cert,
             } => json!({
                 "signature": signature,
                 "permit2Authorization": permit2_authorization,
+                "sessionCert": session_cert,
             }),
         }
     }
@@ -364,87 +375,6 @@ pub(crate) fn prepare_resolved_entry(
     Ok((entry, params))
 }
 
-/// Classify a resolved accepts entry into a Permit2 routing decision.
-/// Returns `(is_upto, is_exact_permit2)`; `(false, false)` means the
-/// entry should follow a non-Permit2 code path (e.g. exact + EIP-3009).
-pub(crate) fn detect_permit2_route(entry: &Value, params: &ResolvedEntry) -> (bool, bool) {
-    let scheme_lower = params
-        .scheme
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let asset_transfer_method = entry
-        .get("extra")
-        .and_then(|e| e.get("assetTransferMethod"))
-        .and_then(|v| v.as_str())
-        .map(str::to_ascii_lowercase);
-    let is_upto = scheme_lower == "upto";
-    let is_exact_permit2 =
-        scheme_lower == "exact" && asset_transfer_method.as_deref() == Some("permit2");
-    (is_upto, is_exact_permit2)
-}
-
-/// Pre-check Permit2 allowance for a Permit2/upto payment. Bails with
-/// an actionable error if allowance < `required_amount`; degrades to a
-/// warning + Ok if the RPC probe itself fails (so probe outages don't
-/// block payment — the on-chain settle path still reverts).
-pub(crate) async fn preflight_permit2_allowance(
-    chain_index: &str,
-    asset: &str,
-    payer: &str,
-    required_amount: &str,
-) -> Result<()> {
-    let required: alloy_primitives::U256 = required_amount.parse().with_context(|| {
-        format!("invalid required amount (decimal uint256): {required_amount}")
-    })?;
-    match crate::permit2_rpc::fetch_permit2_allowance(chain_index, asset, payer).await {
-        Ok(allowance) if allowance < required => bail!(
-            "Permit2 allowance insufficient on token {} for chain {}. \
-             Current allowance is {}, but this payment needs {}. \
-             The buyer must first call \
-             IERC20.approve({}, MAX) once \
-             before any x402 Permit2 payment can be settled.",
-            asset,
-            chain_index,
-            allowance,
-            required,
-            crate::chains::PERMIT2_ADDRESS
-        ),
-        Ok(_) => Ok(()),
-        Err(e) => {
-            eprintln!(
-                "Warning: Permit2 allowance pre-check unavailable on chain {chain_index} ({e:#}); falling back to on-chain settle revert"
-            );
-            Ok(())
-        }
-    }
-}
-
-/// Time-bounded fields + 256-bit random nonce shared by all Permit2 /
-/// upto sign paths. Returns `(valid_after, deadline, nonce)` as decimal
-/// strings ready to embed in `*Permit2Input`.
-pub(crate) fn permit2_timing_and_nonce(
-    max_timeout_seconds: u64,
-) -> Result<(String, String, String)> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs();
-    let valid_after = now
-        .saturating_sub(crate::permit2_types::CLOCK_SKEW_BACKDATE_SECS)
-        .to_string();
-    let deadline = now
-        .checked_add(max_timeout_seconds)
-        .ok_or_else(|| anyhow!("Permit2 deadline overflow"))?
-        .to_string();
-    let nonce = {
-        use rand::RngCore;
-        let mut bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
-        alloy_primitives::U256::from_be_slice(&bytes).to_string()
-    };
-    Ok((valid_after, deadline, nonce))
-}
-
 /// Variant of `sign_payment` that signs exactly what the caller's
 /// `accepts` says, without consulting the saved default asset. Used by
 /// the manual `onchainos payment pay` command so the user-supplied
@@ -483,13 +413,64 @@ pub async fn sign_payment_with_preference(
     // Permit2 / upto branch — both require a prior PERMIT2 approve; we
     // pre-check allowance so an insufficient approval surfaces here rather
     // than as an on-chain settle revert.
-    let (is_upto, is_exact_permit2) = detect_permit2_route(&entry, &params);
+    let scheme_lower = params.scheme.as_deref().unwrap_or("").to_ascii_lowercase();
+    let asset_transfer_method = entry
+        .get("extra")
+        .and_then(|e| e.get("assetTransferMethod"))
+        .and_then(|v| v.as_str())
+        .map(str::to_ascii_lowercase);
+    let is_upto = scheme_lower == "upto";
+    let is_exact_permit2 =
+        scheme_lower == "exact" && asset_transfer_method.as_deref() == Some("permit2");
 
     if is_upto || is_exact_permit2 {
-        preflight_permit2_allowance(&chain_index, &params.asset, payer_addr, &params.amount)
-            .await?;
-        let (valid_after, deadline, nonce) =
-            permit2_timing_and_nonce(params.max_timeout_seconds)?;
+        let required: alloy_primitives::U256 = params.amount.parse().with_context(|| {
+            format!(
+                "invalid required amount (decimal uint256): {}",
+                params.amount
+            )
+        })?;
+        match crate::permit2_rpc::fetch_permit2_allowance(
+            &chain_index,
+            &params.asset,
+            payer_addr,
+        )
+        .await
+        {
+            Ok(allowance) if allowance < required => bail!(
+                "Permit2 allowance insufficient on token {} for chain {}. \
+                 Current allowance is {}, but this payment needs {}. \
+                 The buyer must first call \
+                 IERC20.approve({}, MAX) once \
+                 before any x402 Permit2 payment can be settled.",
+                params.asset,
+                chain_index,
+                allowance,
+                required,
+                crate::chains::PERMIT2_ADDRESS
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!(
+                "Warning: Permit2 allowance pre-check unavailable on chain {chain_index} ({e:#}); falling back to on-chain settle revert"
+            ),
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let valid_after = now
+            .saturating_sub(crate::permit2_types::CLOCK_SKEW_BACKDATE_SECS)
+            .to_string();
+        let deadline = now
+            .checked_add(params.max_timeout_seconds)
+            .ok_or_else(|| anyhow!("Permit2 deadline overflow"))?
+            .to_string();
+        let nonce = {
+            use rand::RngCore;
+            let mut bytes = [0u8; 32];
+            rand::rngs::OsRng.fill_bytes(&mut bytes);
+            alloy_primitives::U256::from_be_slice(&bytes).to_string()
+        };
         let chain_id = real_chain_id;
 
         if is_exact_permit2 {
@@ -540,13 +521,15 @@ pub async fn sign_payment_with_preference(
             witness_valid_after: &valid_after,
             chain_id,
         };
-        let payload =
-            crate::permit2_sign::sign_upto_permit2(&chain_index, payer_addr, &input).await?;
+        let (payload, session_cert) =
+            crate::permit2_sign::sign_upto_permit2_session(&chain_index, payer_addr, &input)
+                .await?;
         return Ok((
             PaymentProof::Upto {
                 signature: payload.signature,
                 permit2_authorization: serde_json::to_value(&payload.permit2_authorization)
                     .context("serialize UptoPermit2Authorization")?,
+                session_cert,
             },
             entry,
         ));
@@ -692,10 +675,12 @@ pub async fn sign_payment_local(
 /// asset when one is supplied.
 ///
 /// Shares scheme selection + amount resolution with the TEE path via
-/// `prepare_resolved_entry`. If the first pick is `aggr_deferred` (which
-/// we can't sign locally), retries against an accepts list with all
-/// `aggr_deferred` entries filtered out — so any signable scheme
-/// (`exact` / `upto`) is selected instead of failing.
+/// `prepare_resolved_entry`. If `preferred` matches an accepts entry
+/// whose scheme is `aggr_deferred` (a scheme we can't sign locally),
+/// this falls back to scheme priority to pick any available `exact`
+/// entry rather than failing — so the saved default wins when possible,
+/// but never blocks progress when the only matching offering is a
+/// scheme we can't use.
 ///
 /// Returns `(PaymentProof, Value)` with `session_cert = None`, matching
 /// the TEE `exact` branch so the downstream `build_payment_header` path
@@ -714,30 +699,15 @@ pub async fn sign_payment_local_with_preference(
             .unwrap_or(false)
     };
 
-    // First pass honors the saved default. If it lands on aggr_deferred
-    // (preferred matched a deferred entry, or accepts contains deferred
-    // alongside upto with no exact), retry with deferred entries filtered
-    // out so any signable scheme wins.
+    // First pass honors the saved default. If that picks an
+    // aggr_deferred-only entry (either because the default points at one,
+    // or because the server only offered aggr_deferred for that asset),
+    // retry without the preference so scheme priority finds any exact
+    // entry elsewhere in `accepts`.
     let (entry, params) = {
         let (e, p) = prepare_resolved_entry(accepts, tier, preferred)?;
-        if is_deferred(&p.scheme) {
-            let filtered: Vec<Value> = accepts
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|a| {
-                    a["scheme"]
-                        .as_str()
-                        .map(|s| !s.eq_ignore_ascii_case("aggr_deferred"))
-                        .unwrap_or(true)
-                })
-                .cloned()
-                .collect();
-            if !filtered.is_empty() {
-                prepare_resolved_entry(&Value::Array(filtered), tier, preferred)?
-            } else {
-                (e, p)
-            }
+        if is_deferred(&p.scheme) && preferred.is_some() {
+            prepare_resolved_entry(accepts, tier, None)?
         } else {
             (e, p)
         }
@@ -745,15 +715,10 @@ pub async fn sign_payment_local_with_preference(
 
     if is_deferred(&params.scheme) {
         bail!(
-            "aggr_deferred requires a TEE session key — not supported in local-key mode. \
+            "local private-key signing requires an 'exact' scheme accepts entry, \
+             but the server only offered 'aggr_deferred' (session key required). \
              Run `onchainos wallet login` to enable TEE signing."
         );
-    }
-
-    // Permit2 / upto → dedicated local signer (same wire shape as TEE path).
-    let (is_upto, is_exact_permit2) = detect_permit2_route(&entry, &params);
-    if is_upto || is_exact_permit2 {
-        return sign_permit2_local_inner(&entry, &params, is_upto).await;
     }
 
     // EIP-712 domain is on the selected entry's `extra`, not in ResolvedEntry.
@@ -842,104 +807,6 @@ pub async fn sign_payment_local_with_preference(
             session_cert: None,
         },
         entry,
-    ))
-}
-
-/// Local-key signing for `exact + Permit2` / `upto`. Wire shape matches
-/// TEE path; runs the same Permit2 allowance preflight upfront.
-async fn sign_permit2_local_inner(
-    entry: &Value,
-    params: &ResolvedEntry,
-    is_upto: bool,
-) -> Result<(PaymentProof, Value)> {
-    use alloy_signer_local::PrivateKeySigner;
-
-    let pk_hex = Zeroizing::new(read_private_key()?);
-    let pk_trimmed = pk_hex.trim();
-    let pk_clean = pk_trimmed.strip_prefix("0x").unwrap_or(pk_trimmed);
-    let pk_bytes =
-        Zeroizing::new(hex::decode(pk_clean).context("EVM_PRIVATE_KEY is not valid hex")?);
-    if pk_bytes.len() != 32 {
-        bail!(
-            "EVM_PRIVATE_KEY must be 32 bytes (64 hex chars), got {}",
-            pk_bytes.len()
-        );
-    }
-    // sign_*_permit2_local takes raw pk_bytes; we only need the signer to derive `from`.
-    let signer = PrivateKeySigner::from_slice(&pk_bytes)
-        .map_err(|e| anyhow!("invalid secp256k1 private key: {e}"))?;
-    let payer_addr = format!("{:#x}", signer.address());
-    drop(signer);
-
-    let real_chain_id = parse_eip155_chain_id(&params.network)?;
-    let chain_entry = crate::commands::agentic_wallet::chain::get_chain_by_real_chain_index(
-        &real_chain_id.to_string(),
-    )
-    .await?
-    .ok_or_else(|| anyhow!("chain not found for realChainIndex {}", real_chain_id))?;
-    let chain_index = chain_entry["chainIndex"]
-        .as_str()
-        .map(|s| s.to_string())
-        .or_else(|| chain_entry["chainIndex"].as_u64().map(|n| n.to_string()))
-        .ok_or_else(|| anyhow!("missing chainIndex in chain entry"))?;
-
-    preflight_permit2_allowance(&chain_index, &params.asset, &payer_addr, &params.amount).await?;
-    let (valid_after, deadline, nonce) = permit2_timing_and_nonce(params.max_timeout_seconds)?;
-
-    if is_upto {
-        // upto requires extra.facilitatorAddress (enforced on-chain).
-        let facilitator_addr = entry
-            .get("extra")
-            .and_then(|e| e.get("facilitatorAddress"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                anyhow!(
-                    "upto scheme requires extra.facilitatorAddress in the accepts entry, \
-                     but it is missing or not a string"
-                )
-            })?
-            .to_string();
-
-        let input = crate::permit2_eip712::UptoPermit2Input {
-            token: &params.asset,
-            amount: &params.amount, // cap, not exact charge
-            spender: crate::chains::X402_UPTO_PERMIT2_PROXY,
-            nonce: &nonce,
-            deadline: &deadline,
-            witness_to: &params.pay_to,
-            witness_facilitator: &facilitator_addr,
-            witness_valid_after: &valid_after,
-            chain_id: real_chain_id,
-        };
-        let payload = crate::permit2_sign::sign_upto_permit2_local(&pk_bytes, &payer_addr, &input)?;
-        return Ok((
-            PaymentProof::Upto {
-                signature: payload.signature,
-                permit2_authorization: serde_json::to_value(&payload.permit2_authorization)
-                    .context("serialize UptoPermit2Authorization")?,
-            },
-            entry.clone(),
-        ));
-    }
-
-    let input = crate::permit2_eip712::ExactPermit2Input {
-        token: &params.asset,
-        amount: &params.amount,
-        spender: crate::chains::X402_EXACT_PERMIT2_PROXY,
-        nonce: &nonce,
-        deadline: &deadline,
-        witness_to: &params.pay_to,
-        witness_valid_after: &valid_after,
-        chain_id: real_chain_id,
-    };
-    let payload = crate::permit2_sign::sign_exact_permit2_local(&pk_bytes, &payer_addr, &input)?;
-    Ok((
-        PaymentProof::Permit2 {
-            signature: payload.signature,
-            permit2_authorization: serde_json::to_value(&payload.permit2_authorization)
-                .context("serialize Permit2Authorization")?,
-        },
-        entry.clone(),
     ))
 }
 
@@ -1078,10 +945,22 @@ pub fn assemble_v2_payment_header(
         PaymentProof::Upto {
             signature,
             permit2_authorization,
-        } => json!({
-            "signature": signature,
-            "permit2Authorization": permit2_authorization,
-        }),
+            session_cert,
+        } => {
+            // upto verify is Ed25519 against the session key — the
+            // backend pulls the public key out of sessionCert, so the
+            // cert has to ride along inside `accepted.extra`.
+            if let Some(obj) = accepted.as_object_mut() {
+                let extra = obj.entry("extra".to_string()).or_insert_with(|| json!({}));
+                if let Some(extra_obj) = extra.as_object_mut() {
+                    extra_obj.insert("sessionCert".into(), json!(session_cert));
+                }
+            }
+            json!({
+                "signature": signature,
+                "permit2Authorization": permit2_authorization,
+            })
+        }
     };
 
     let body = json!({
@@ -1211,102 +1090,6 @@ mod tests {
         let (entry, scheme) = select_accept_with_preference(&accepts, Some(&pref)).unwrap();
         assert_eq!(entry["asset"].as_str(), Some("0xDAI"));
         assert_eq!(scheme.as_deref(), Some("exact"));
-    }
-
-    fn resolved_entry_with_scheme(scheme: &str) -> ResolvedEntry {
-        ResolvedEntry {
-            network: "eip155:196".into(),
-            amount: "1".into(),
-            pay_to: "0xP".into(),
-            asset: "0xA".into(),
-            max_timeout_seconds: 600,
-            scheme: Some(scheme.into()),
-        }
-    }
-
-    #[test]
-    fn detect_permit2_route_classifies_three_branches() {
-        // upto → upto branch regardless of assetTransferMethod
-        let upto_entry = json!({"extra": {"assetTransferMethod": "permit2"}});
-        assert_eq!(
-            detect_permit2_route(&upto_entry, &resolved_entry_with_scheme("upto")),
-            (true, false)
-        );
-
-        // exact + assetTransferMethod=permit2 → exact_permit2 branch
-        let exact_p2 = json!({"extra": {"assetTransferMethod": "Permit2"}});
-        assert_eq!(
-            detect_permit2_route(&exact_p2, &resolved_entry_with_scheme("EXACT")),
-            (false, true),
-            "scheme + assetTransferMethod should both be case-insensitive"
-        );
-
-        // exact without permit2 marker → non-Permit2 (EIP-3009 path)
-        let exact_eip3009 = json!({"extra": {"assetTransferMethod": "eip3009"}});
-        assert_eq!(
-            detect_permit2_route(&exact_eip3009, &resolved_entry_with_scheme("exact")),
-            (false, false)
-        );
-
-        // Missing extra → non-Permit2
-        let bare = json!({});
-        assert_eq!(
-            detect_permit2_route(&bare, &resolved_entry_with_scheme("exact")),
-            (false, false)
-        );
-    }
-
-    #[test]
-    fn permit2_timing_and_nonce_yields_consistent_window_and_random_nonce() {
-        let (va1, dl1, n1) = permit2_timing_and_nonce(600).unwrap();
-        let (_, _, n2) = permit2_timing_and_nonce(600).unwrap();
-        let va: u64 = va1.parse().unwrap();
-        let dl: u64 = dl1.parse().unwrap();
-        assert!(dl > va, "deadline must be after valid_after");
-        assert!(
-            dl - va >= 600,
-            "deadline - valid_after must cover max_timeout (got {})",
-            dl - va
-        );
-        assert_ne!(n1, n2, "nonce must be random across calls");
-        let _: alloy_primitives::U256 = n1.parse().expect("nonce must parse as decimal U256");
-    }
-
-    #[test]
-    fn local_path_filters_out_aggr_deferred_when_upto_is_signable() {
-        // Reproduces the bug fixed in `sign_payment_local_with_preference`:
-        // accepts = [aggr_deferred, upto], no exact, no preferred.
-        // Raw selection picks aggr_deferred by scheme priority; after
-        // filtering deferred entries out, the second pass picks upto.
-        let accepts: Vec<Value> = serde_json::from_str(
-            r#"[
-                {"scheme":"aggr_deferred","network":"eip155:196","asset":"0xA","payTo":"0xP"},
-                {"scheme":"upto","network":"eip155:196","asset":"0xA","payTo":"0xP",
-                 "extra":{"assetTransferMethod":"permit2"}}
-            ]"#,
-        )
-        .unwrap();
-
-        let (_, scheme) = select_accept_with_preference(&accepts, None).unwrap();
-        assert_eq!(
-            scheme.as_deref(),
-            Some("aggr_deferred"),
-            "raw select must reproduce the pre-fix behavior"
-        );
-
-        let filtered: Vec<Value> = accepts
-            .iter()
-            .filter(|a| {
-                a["scheme"]
-                    .as_str()
-                    .map(|s| !s.eq_ignore_ascii_case("aggr_deferred"))
-                    .unwrap_or(true)
-            })
-            .cloned()
-            .collect();
-        let (entry, scheme) = select_accept_with_preference(&filtered, None).unwrap();
-        assert_eq!(scheme.as_deref(), Some("upto"));
-        assert_eq!(entry["scheme"], "upto");
     }
 
     #[test]
@@ -1492,20 +1275,23 @@ mod tests {
     }
 
     #[test]
-    fn to_pay_json_upto_emits_permit2authorization_no_session_cert() {
+    fn to_pay_json_upto_emits_permit2authorization_and_sessioncert() {
         let proof = PaymentProof::Upto {
-            signature: "0xdeadbeef".into(),
+            signature: "base64sig".into(),
             permit2_authorization: json!({"witness": {"facilitator": "0xF"}}),
+            session_cert: "cert-upto".into(),
         };
         let v = proof.to_pay_json();
-        assert_eq!(v["signature"], "0xdeadbeef");
+        assert_eq!(v["signature"], "base64sig");
         assert_eq!(v["permit2Authorization"]["witness"]["facilitator"], "0xF");
-        assert!(v.get("sessionCert").is_none(), "upto no longer emits sessionCert");
+        assert_eq!(v["sessionCert"], "cert-upto");
         let obj = v.as_object().expect("top-level must be an object");
         let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
         keys.sort();
-        // upto wire shape == exact+Permit2 (no sessionCert).
-        assert_eq!(keys, ["permit2Authorization", "signature"]);
+        // Skill dispatcher routes upto via `permit2Authorization` (checked
+        // before `sessionCert`); both must be present at the top level so
+        // either qualifier resolves correctly.
+        assert_eq!(keys, ["permit2Authorization", "sessionCert", "signature"]);
     }
 
     #[test]

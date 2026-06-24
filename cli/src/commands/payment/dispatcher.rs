@@ -32,10 +32,9 @@ pub enum PaymentCommand {
         #[arg(long)]
         selected_index: Option<usize>,
     },
-    /// Sign an x402 payment locally with a hex private key (reads EVM_PRIVATE_KEY env var).
-    /// Supports `exact + EIP-3009`, `exact + Permit2`, and `upto`; `aggr_deferred` is TEE-only.
-    /// Same base64 `--payload` as `payment pay`; domain name/version are read from the
-    /// selected entry's `extra.name` / `extra.version` for the EIP-3009 path.
+    /// Sign an EIP-3009 TransferWithAuthorization locally with a hex private key
+    /// (reads EVM_PRIVATE_KEY env var). Same base64 `--payload` as `payment pay`;
+    /// domain name/version are read from the selected entry's `extra.name` / `extra.version`.
     #[command(name = "pay-local")]
     Eip3009Sign {
         /// base64 of the decoded 402 payload (same as `payment pay --payload`).
@@ -241,12 +240,20 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             selected_index,
         } => cmd_pay(&payload, selected_index).await,
         PaymentCommand::Eip3009Sign { payload } => {
-            // Local-key supports `exact + EIP-3009`, `exact + Permit2`, and `upto`
-            // (no `aggr_deferred` — that needs a TEE-resident session key).
             let (accepts_val, resource_val) = decode_pay_payload(&payload)?;
             let (proof, entry) = payment_flow::sign_payment_local(&accepts_val, None).await?;
-            output::success(emit_pay_result(&proof, &entry, resource_val.as_ref())?);
-            Ok(())
+            // Local-key path only supports EIP-3009 (no TEE session).
+            match &proof {
+                payment_flow::PaymentProof::Eip3009 { .. } => {
+                    output::success(emit_pay_result(&proof, &entry, resource_val.as_ref())?);
+                    Ok(())
+                }
+                payment_flow::PaymentProof::Permit2 { .. }
+                | payment_flow::PaymentProof::Upto { .. } => Err(anyhow!(
+                    "eip3009-sign produced a Permit2/upto proof, which it should never do — \
+                         this debug command only supports EIP-3009 local signing"
+                )),
+            }
         }
         PaymentCommand::Default { action } => cmd_default(action),
         PaymentCommand::A2aPay { command } => a2a_pay::execute(command).await,
