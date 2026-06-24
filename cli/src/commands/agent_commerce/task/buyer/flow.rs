@@ -388,7 +388,6 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::SubmitExpired => super::flow_lifecycle::submit_expired(&ctx).await,
         Event::RejectExpired => super::flow_lifecycle::reject_expired(&ctx).await,
         Event::ReviewDeadlineWarn => super::flow_lifecycle::review_deadline_warn(&ctx),
-        Event::JobAutoCompleted => super::flow_lifecycle::job_auto_completed(&ctx),
         Event::SubmitDeadlineWarn => super::flow_lifecycle::submit_deadline_warn(),
         Event::EvaluatorSelected
         | Event::RevealStarted

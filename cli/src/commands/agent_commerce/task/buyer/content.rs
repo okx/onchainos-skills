@@ -311,16 +311,6 @@ pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String 
     )
 }
 
-// ── Event::JobAutoCompleted ────────────────────────────────────────
-
-/// `Event::JobAutoCompleted` — job auto-completed (B-7-9).
-pub fn job_auto_completed_user_notify(job_id: &str, title: &str) -> String {
-    format!(
-        "[Job Auto-Completed] {title} (`{job_id}`) — the review window expired and the ASP has claimed the funds.\n\
-         Status: completed."
-    )
-}
-
 // ── Event::RewardClaimed ───────────────────────────────────────────
 
 /// `Event::RewardClaimed` — reward claimed (B-7-10).
