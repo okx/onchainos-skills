@@ -13,8 +13,7 @@
 | §2 Mid-task attachment | User wants to add files to an active task |
 | §3 Terms changes | Switch provider (set-asp) / stop task |
 | §4 View deliverables | User wants to see submitted deliverables |
-| §5 Designated-Provider A2A | User designates a specific provider (A2A path) |
-| §6 Designated-Provider x402 | User designates a provider with x402 endpoint |
+| §5–§6 Designated-Provider | **Moved** → [`buyer-actions-publish.md`](./buyer-actions-publish.md) §5 and §6 |
 
 ---
 
@@ -112,47 +111,6 @@ The user wants to see saved deliverables from completed or in-progress tasks.
 
 ---
 
-## 5. Designated-Provider A2A flow
+## 5–6. Designated-Provider flows
 
-**Trigger**: user message contains "Please initiate a direct conversation with this provider to discuss the task details."
-
-> ⚠️ **A2MCP with known endpoint → NOT this skill** — concrete URL + A2MCP serviceType → `okx-agent-payments-protocol`. "Please send a request to this endpoint" without "use onchainos" → also NOT this skill. "Please use onchainos to send a request to this endpoint" + non-A2MCP → **§6** below.
-
-Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `Price` / `symbol` (mutable).
-
-**Flow**:
-1. **Provider validation**: `onchainos agent profile <agentId>` — `ok=false` / `data.role ≠ 2` → inform the user; do NOT continue. ⚠️ The `role` in this response belongs to the **queried agent** (the provider), NOT to you — you remain the **buyer** (`--role buyer`).
-2. **Service-type determination**: `onchainos agent asp-match --task-desc "<ServiceTitle>" --provider-agent-id <agentId> --agent-id <buyerAgentId> --format json` (joint check on serviceType + endpoint):
-   - x402 supported (serviceType=A2MCP + endpoint present) → carry `agentId` + `endpoint` and enter §6 below (from Step 2).
-   - Otherwise → A2A (step 3 below).
-   - ⚠️ **Do NOT call `okx-a2a session create` directly.**
-3. **A2A path**: map fields (`description` ← ServiceTitle, `budget` ← Price, `currency` ← symbol), cache `designatedProvider = { agentId, serviceType }` → enter [`buyer-actions-publish.md`](./buyer-actions-publish.md) to publish the task (🛑 must run the full publishing flow including confirmation form).
-4. After `job_created`, CLI `next-action` handles `designated_a2a` routing automatically — follow the returned playbook.
-
----
-
-## 6. Designated-Provider x402 flow
-
-**Trigger**: user message contains "Please use onchainos to send a request to this endpoint".
-
-Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (all required; no Price — pricing is fetched from the endpoint).
-
-**Flow**:
-1. **Provider validation**: same as §5 step 1.
-2. **Endpoint validation**: `onchainos agent x402-check --endpoint <endpoint>`
-   - `valid=false` + `inputRequired=true` → the endpoint needs business parameters. Cache the `fields` / `requiredAnyOf` list for Step 3. **Continue** (this is not a real failure).
-   - `valid=false` + no `inputRequired` → inform "invalid endpoint"; stop.
-   - `tokenSymbol` not USDT/USDG → inform "unsupported token"; stop.
-3. **Field collection & confirmation form** (🛑🛑🛑 may NOT be skipped):
-   - The agent auto-generates `title` (≤30 chars), `description` (≥10 chars), `description-summary` (≤200 chars) based on the ServiceTitle.
-   - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
-   - `currency` = `tokenSymbol`.
-   - 🛑 **`inputRequired` field collection** — if Step 2 returned `inputRequired=true`:
-     - Display each field from `fields` / `requiredAnyOf` to the user with its `name`, `type`, and `description`.
-     - The user MUST fill in or explicitly confirm every field value. Do NOT auto-generate or infer values on behalf of the user.
-     - After the user provides all required fields, assemble them into a JSON object and cache as `serviceBody`.
-   - Acceptance / delivery deadlines are now managed by the server — do NOT pass `--deadline-open` / `--deadline-submit`.
-   - ⚠️ **Language matching**: field labels MUST match the user's language.
-   - Display the full confirmation form (format see `buyer-actions-publish.md` Appendix A) → **end this turn** and wait for explicit confirmation. If refused, end.
-   - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn.**
-4. **Create the task after user confirmation**: `create-task` with `--body '<serviceBody JSON>'` (only when Step 2 returned `inputRequired=true`; omit otherwise). After `create-task`, CLI `next-action` handles `designated_x402` routing automatically (set-payment-mode → task-402-pay → complete) — follow the returned playbook at each step.
+**Moved** → [`buyer-actions-publish.md`](./buyer-actions-publish.md) §5 and §6.
