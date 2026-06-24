@@ -85,7 +85,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
             "{l10n}\
              ✓ job_accepted (escrow). Notify the user:\n\
              ```bash\n\
-             okx-a2a user notify --content '<localized content>'\n\
+             onchainos agent user-notify --content '<localized content>'\n\
              ```\n\
              Template (translate to user's language, keep structure):\n\
              \x20\x20[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
@@ -117,7 +117,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      🛑 broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
      ⚠️ On error → notify user:\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Content: {complete_failed}\n\
      → End turn, wait for retry or wakeup_notify.\n\n\
@@ -127,7 +127,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ▸ Yes → end turn (user will reply to the pending decision).\n\
      ▸ No → notify user:\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Content: {accepted_x402_fail}\n\
      → Wait for `job_completed` system event.\n"
@@ -153,6 +153,24 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
             "<providerAgentId>".to_string(),
         ),
     };
+
+    // When the review marker exists, job_submitted already arrived. After manual
+    // download + save succeeds, the LLM should re-trigger job_submitted (which will
+    // now find the manifest) instead of waiting for an event that already came.
+    let marker_exists = crate::commands::agent_commerce::task::common::deliverables::has_review_marker(job_id);
+    let step4 = if marker_exists {
+        format!(
+            "**Step 4 — Re-trigger review** (job_submitted already arrived before this deliverable):\n\
+             ```bash\n\
+             onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'\n\
+             ```\n"
+        )
+    } else {
+        format!(
+            "**Step 4 — End turn**. Wait for `job_submitted` → `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
+        )
+    };
+
     format!(
     "[Current action] deliverable_received — download → save → notify\n\
      [Role] Buyer\n\n\
@@ -171,7 +189,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      For file type only, add `--file-key \"<fileKey>\"`. Record savedPath from output.\n\n\
      **Step 3 — Notify user**\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Content:\n\
      \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
@@ -179,7 +197,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      \x20\x20Type: <file|text>\n\
      \x20\x20Saved at: <savedPath>\n\
      \x20\x20Awaiting on-chain submission confirmation; review will follow.\n\n\
-     **Step 4 — End turn**. Wait for `job_submitted` → `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
+     {step4}"
     )
 }
 
@@ -382,6 +400,58 @@ pub(crate) fn deliverable_received_cli(
         }
     };
 
+    // Out-of-order handling: if the review marker exists, job_submitted already arrived
+    // before this deliverable. Delete marker → directly output the review prompt so the
+    // sub doesn't wait for a job_submitted that already came.
+    if deliverables::has_review_marker(job_id) {
+        deliverables::delete_review_marker(job_id);
+        audit::log("cli", "buyer/deliverable_received_marker_found", true, Duration::default(),
+            Some(base_tags.clone()), Some("job_submitted arrived first; merging into review flow"));
+
+        // Reconstruct prefetched with the just-saved deliverable so job_submitted_escrow
+        // sees it in Step 2 ("Deliverable already saved").
+        let mut patched = ctx.prefetched.cloned().unwrap_or_else(|| {
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+                title: title.to_string(),
+                description: String::new(),
+                token_symbol: sym.to_string(),
+                token_amount: amt.to_string(),
+                payment_mode: ctx.payment_mode,
+                max_budget: None,
+                provider_agent_id: if provider_id.is_empty() { None } else { Some(provider_id.to_string()) },
+                buyer_agent_id: None,
+                visibility: None,
+                status: None,
+                deliverable: None,
+                service_id: None,
+                service_token_address: None,
+                service_token_amount: None,
+                service_params: None,
+                buyer_agent_address: None,
+                token_address: None,
+            }
+        });
+        patched.deliverable = Some(crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
+            path: saved_path.clone(),
+            deliverable_type: deliverable_type.clone(),
+            original_name: String::new(),
+        });
+
+        let merged_ctx = super::super::flow::FlowContext {
+            job_id: ctx.job_id,
+            agent_id: ctx.agent_id,
+            short_id: ctx.short_id,
+            title_display: ctx.title_display,
+            title_query_hint: ctx.title_query_hint,
+            title_in_extract: ctx.title_in_extract,
+            terminal_session_hint: ctx.terminal_session_hint.clone(),
+            payment_mode: ctx.payment_mode,
+            prefetched: Some(&patched),
+            data: ctx.data,
+        };
+        return job_submitted_escrow(&merged_ctx);
+    }
+
     let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
         "{l10n}\
@@ -390,7 +460,7 @@ pub(crate) fn deliverable_received_cli(
          title: {title} | shortId: {short_id} | provider: {provider_id}\n\n\
          Notify the user:\n\
          ```bash\n\
-         okx-a2a user notify --content '<localized content>'\n\
+         onchainos agent user-notify --content '<localized content>'\n\
          ```\n\
          Template (translate to user's language, keep structure; path must be full absolute — never abbreviate):\n\
          \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
@@ -451,6 +521,18 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
+    // Out-of-order handling: if the review marker exists, deliverable_received hasn't
+    // arrived yet (this is the first job_submitted with no deliverable). Return a
+    // lightweight "wait" prompt — deliverable_received_cli will detect the marker and
+    // output the review flow when it arrives.
+    if p.deliverable.is_none() && crate::commands::agent_commerce::task::common::deliverables::has_review_marker(job_id) {
+        return format!(
+            "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
+             The review flow will auto-trigger when the deliverable is received.\n\
+             No action required — end this turn and wait.\n"
+        );
+    }
+
     // Inline-from-prefetched values used in Step 2b's task-deliverable-save commands.
     let title = p.title.as_str();
     let token_symbol = p.token_symbol.as_str();
@@ -512,7 +594,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     );
 
     format!(
-    "🛑 MUST use `pending-decisions-v2 request` — NOT `okx-a2a user notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\
+    "🛑 MUST use `pending-decisions-v2 request` — NOT `onchainos agent user-notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\
      🛑 Even if deliverable was already downloaded this turn, execute ALL steps below.\n\n\
      [Your next actions (strict order)]\n\n\
      {step2}\
@@ -559,8 +641,9 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
 pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
+    let title_display = ctx.title_display;
     let terminal_session_hint = &ctx.terminal_session_hint;
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
 
     // Prefetched task context + providerAgentId are required — without them we
     // cannot resolve deliverable / rating recipient.
@@ -614,14 +697,16 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      `--agent-id` = ASP being rated; `--creator-id` = buyer's agent id.\n\n\
      **3b — Notify user (deliverable + rating in one message):**\n\
      ```bash\n\
-     okx-a2a user notify --content '<localized content>'\n\
+     onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
      Compose from two halves (concatenate with two blank lines):\n\
      \x20\x20▸ Deliverable (always; pick template):\n\
      \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: <localPath>`\n\
      \x20\x20\x20\x20text+path: `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>`\n\
      \x20\x20\x20\x20text-no-path: `[Deliverable Received] Job {job_id} — x402, payment settled.` + full deliverableText inline\n\
-     \x20\x20▸ Rating (only if feedback-submit succeeded): {rating_notify}\n\n\
+     \x20\x20▸ Rating (include ONLY if feedback-submit succeeded; if it failed or errored, **omit this entire half**):\n\
+     \x20\x20\x20\x20{rating_notify}\n\
+     \x20\x20\x20\x20(fill `<score>` with the X.XX value used in 3a, `<description>` with the comment from 3a)\n\n\
      **3c — Terminal wrap-up:**\n\
      {terminal_session_hint}\n"
     )
@@ -630,7 +715,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
 /// Directly runs `onchainos agent complete` in-process. The single-arg bash
 /// command provides no LLM decision-making value — Rust just broadcasts and
 /// returns. Iron rules from the previous LLM-driven version ("don't notify
-/// user via okx-a2a user notify / don't auto-rate / don't say funds released
+/// user via onchainos agent user-notify / don't auto-rate / don't say funds released
 /// before job_completed") all become moot — Rust cannot misbehave.
 ///
 /// Failure path: the playbook emitted on error directs the LLM into the
@@ -688,7 +773,7 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
 /// This event fires when the blockchain confirms the `complete` transaction.
 /// It is the ONLY place where "funds released" is factually true.
 /// `approve_review` only broadcasts; this event confirms.
-pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn job_completed(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -699,33 +784,40 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or("<providerAgentId>");
 
+    let (token_amount, token_symbol) = ctx.prefetched
+        .map(|p| (p.token_amount.as_str(), p.token_symbol.as_str()))
+        .unwrap_or(("<tokenAmount>", "<tokenSymbol>"));
+
+    let tx_hash = message
+        .and_then(|m| m.get("txHash"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("<txHash from the system event message>");
+
     let pm = ctx.payment_mode;
 
     let completed_notify = if pm == Some(3) {
         super::super::content::job_completed_x402_user_notify(job_id, title_display)
     } else {
-        super::super::content::job_completed_escrow_user_notify(job_id, title_display)
+        super::super::content::job_completed_escrow_user_notify(job_id, title_display, token_amount, token_symbol, tx_hash)
     };
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id);
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
 
     let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
         "{l10n}\
-         🚨 **job_completed — on-chain confirmed, task settled.**\n\
-         🔴 User has NOT been notified yet. Rate ASP first, then send one consolidated notification.\n\n\
-         **Step 1 — Rate ASP** (score 0.00–5.00, comment ≤100 chars):\n\
+         ✓ job_completed — on-chain confirmed. Rate ASP, then notify user in one message.\n\n\
+         **Step 1 — Rate ASP** (0.00–5.00, comment ≤100 chars):\n\
          ```bash\n\
          onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
          ```\n\n\
-         **Step 2 — Notify user** (completion + rating in one message):\n\
+         **Step 2 — Notify user** (completion + rating):\n\
          ```bash\n\
-         okx-a2a user notify --content '<localized content>'\n\
+         onchainos agent user-notify --content '<localized content>'\n\
          ```\n\
-         Compose from two halves (translate to user's language, keep structure):\n\
-         \x20\x20▸ Completion (always):\n\
-         \x20\x20\x20\x20{completed_notify}\n\
-         \x20\x20▸ Rating (only if Step 1 succeeded):\n\
-         \x20\x20\x20\x20{rating_notify}\n\n\
+         Template:\n\
+         \x20\x20{completed_notify}\n\
+         \x20\x20{rating_notify}  ← omit if Step 1 failed\n\n\
          **Step 3 — Wrap-up:**\n\
          {terminal_session_hint}\n"
     )

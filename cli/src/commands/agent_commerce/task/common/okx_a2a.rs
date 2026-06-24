@@ -17,15 +17,21 @@ use std::process::Command;
 /// our parent's stdout and contaminate the playbook that `agent next-action`
 /// prints to its caller (host runtime / LLM).
 /// `--job-id` / `--session-key` are not passed — the CLI falls back to env vars.
+///
+/// `content` literal `\n` sequences are converted to real newlines so callers
+/// can pass shell-safe single-line strings.
+/// On success, prints `OK` to stdout for CLI callers.
 pub fn user_notify(content: &str) -> Result<()> {
+    let content = content.replace("\\n", "\n");
     let out = Command::new("okx-a2a")
-        .args(["user", "notify", "--content", content, "--json"])
+        .args(["user", "notify", "--content", &content, "--json"])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!("okx-a2a user notify exit {status}: {stderr}", status = out.status);
     }
+    println!("OK");
     Ok(())
 }
 

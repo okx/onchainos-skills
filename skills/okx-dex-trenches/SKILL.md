@@ -4,7 +4,7 @@ description: "Read-only on-chain research for pump.fun and other meme-token laun
 license: MIT
 metadata:
   author: okx
-  version: "3.21.2-beta"
+  version: "3.21.3-beta"
   homepage: "https://web3.okx.com"
 ---
 

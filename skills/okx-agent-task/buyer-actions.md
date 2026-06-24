@@ -107,7 +107,7 @@ The user wants to see saved deliverables from completed or in-progress tasks.
 
 - Single job: list each entry with `originalName`, `deliverableType`, `sizeBytes` (human-readable), absolute `path`, `savedAt`.
 - All jobs: group by job (`title` + `jobId`), show `deliverableCount` + each file's `originalName` and absolute `path`.
-- Empty → "No saved deliverables found." / "没有已保存的交付物。"
+- Empty → "No saved deliverables found."
 - ⚠️ File paths MUST be absolute.
 
 ---
