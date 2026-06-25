@@ -46,17 +46,18 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
 
 **Confirmation requirement for any reformat/draft (non-overridable):** reformatting or drafting is a *draft*, never an authorization to commit silently. Whenever you reshape the user's words into the 2-part description, you MUST (1) flag every affected row on the confirmation card / diff card with an explicit marker — e.g. ` ✏️ drafted from your words — please review` — so the user can tell Claude-rewritten content from their own verbatim input, and (2) wait for the normal card confirm (Reply **1**) before the write. Never let reformatted/drafted content reach the chain presented as the user's literal input. If the user flags any drafted row as wrong, re-collect that field from their own words and redraw — do not argue or keep your draft.
 
-## Commands (10 `onchainos agent` subcommands — you invoke them, never show them)
+## Commands (12 `onchainos agent` subcommands — you invoke them, never show them)
 
-`create · pre-check · update · get · activate · deactivate · upload · search · service-list · feedback-submit · feedback-list`.
+`create · pre-check · update · get-my-agents · get-agents · activate · deactivate · upload · search · service-list · feedback-submit · feedback-list`.
+(`get` is a hidden dual-mode read alias — prefer `get-my-agents` for list and `get-agents --agent-ids` for detail.)
 
 - `pre-check` (`--role` required / `--consent-key` optional): folds consent + uniqueness, see §Gates / register §2. Auto/internal — never shown; outputs (`canCreate` etc.) rendered inline.
-- `validate-listing` (QA — register §4, called internally by activate): auto/internal.
+- `validate-listing` (QA — runs only at register §4 / update §4; `activate` does NOT run it): auto/internal.
 - `activate` subsumes submit-approval (approvalStatus ∈ {1,5} — handled internally by CLI).
 - `consent` has no public subcommand — driven by `pre-check`.
 - Never suggest `xmtp-sign`; no `--address` (signs with current wallet).
 
-Array fields: create/update/get/search → `list`; feedback-list → `items` or `list` (backend inconsistent; CLI normalizes both); service-list → nested `services`.
+Array fields: create/update/get-agents/get-my-agents/search → `list`; feedback-list → `items` or `list` (backend inconsistent; CLI normalizes both); service-list → nested `services`.
 
 ## Input contract — `--service` JSON + flag gotchas (single source of truth)
 
