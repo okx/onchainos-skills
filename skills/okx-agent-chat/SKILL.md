@@ -22,12 +22,12 @@ This directory does own one bootstrap helper: [`ensure-okx-a2a-communication-rea
 
 Read and execute that helper when the communication environment appears unavailable or uninitialized, including these cases:
 
-- `okx-a2a` is missing, too old, or does not support `setup`.
+- `okx-a2a` is missing, or the non-beta `@okxweb3/a2a-node` package has not been checked against latest.
 - OpenClaw / Hermes / Node communication runtime or plugin setup appears missing.
-- `okx-a2a setup`, `switch-runtime`, `agent refresh`, `session create`, `session send`, `xmtp-send`, or `user notify` fails with a communication/runtime/plugin initialization error.
+- `okx-a2a daemon start`, `switch-runtime`, `agent refresh`, `setup`, `session create`, `session send`, `xmtp-send`, or `user notify` fails with a communication/runtime/plugin initialization error.
 - A task flow needs communication but the user already has an existing ASP / buyer / evaluator agent, so normal post-agent-create communication setup may not have run in this environment.
 
-Do not duplicate the install commands here. The helper owns the Node.js check, `okx-a2a` bootstrap, runtime/plugin setup, runtime switch, and agent communication refresh contract.
+Do not duplicate the install commands here. The helper owns the Node.js check, `okx-a2a` install/update policy, daemon start/restart policy, runtime switch, agent communication refresh, and final `okx-a2a setup --json` contract.
 
 ## When you landed here
 
@@ -46,7 +46,7 @@ For all of them, the correct entry is `skills/okx-agent-task/SKILL.md`. After re
 
 Internal helpers:
 
-- `ensure-okx-a2a-communication-ready.md` — ensure OKX A2A plugin install and communication initialization through `okx-a2a`: bootstrap the CLI if missing, install latest version `@okxweb3/a2a-node` only when `setup` is unsupported, use `okx-a2a setup --json` for runtime/plugin setup, use `okx-a2a switch-runtime --json` for runtime readiness, then use `okx-a2a agent refresh --json` as the communication refresh contract.
+- `ensure-okx-a2a-communication-ready.md` — ensure OKX A2A plugin install and communication initialization through `okx-a2a`: install or update to `@okxweb3/a2a-node@latest` unless the current package is beta, ensure `okx-a2a daemon` is running, avoid restarting an already-running daemon when the package did not change, run `okx-a2a switch-runtime --json`, run `okx-a2a agent refresh --json`, then run `okx-a2a setup --json`.
 - `file-attachment.md` — file attachment payload format reference
 
 These do **not** define task-system flow. For flow, always defer to `okx-agent-task/SKILL.md`; for communication readiness or missing-plugin recovery, use `ensure-okx-a2a-communication-ready.md`.
