@@ -16,6 +16,17 @@ impl PaymentMode {
         }
     }
 
+    /// Parse an optional CLI `--payment-mode` flag into its backend int.
+    /// Returns 0 (unset) when `flag` is `None`; errors on unknown values.
+    pub fn parse_flag(flag: Option<&str>) -> anyhow::Result<i32> {
+        match flag {
+            None => Ok(0),
+            Some("escrow") => Ok(Self::Escrow.as_int()),
+            Some("x402") => Ok(Self::X402.as_int()),
+            Some(other) => anyhow::bail!("unsupported --payment-mode \"{other}\"; valid values: escrow, x402"),
+        }
+    }
+
     /// Backend int -> enum
     pub fn from_int(i: i32) -> Self {
         match i {

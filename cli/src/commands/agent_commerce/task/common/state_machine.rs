@@ -266,9 +266,7 @@ pub enum Event {
     RejectExpired,
     /// Review timeout (after provider submit, the buyer did not confirm; notifies provider to call claimAutoComplete).
     ReviewExpired,
-    // ── Auto-complete / auto-refund tx receipts ──────────────────────
-    /// Provider's claimAutoComplete tx on-chain result (after review timeout the provider pulls funds; notifies provider).
-    JobAutoCompleted,
+    // ── Auto-refund tx receipt ────────────────────────────────────────
     /// Buyer's claimAutoRefund tx on-chain result (after submit/reject timeout the buyer pulls funds back; notifies buyer).
     JobAutoRefunded,
 
@@ -357,8 +355,7 @@ impl Event {
             "submit_expired"            => Event::SubmitExpired,
             "reject_expired"            => Event::RejectExpired,
             "review_expired"            => Event::ReviewExpired,
-            // Auto-complete / auto-refund tx receipts
-            "job_auto_completed"        => Event::JobAutoCompleted,
+            // Auto-refund tx receipt
             "job_auto_refunded"         => Event::JobAutoRefunded,
             // Reminders
             "submit_deadline_warn"      => Event::SubmitDeadlineWarn,
@@ -413,7 +410,6 @@ impl Event {
             Event::SubmitExpired          => "submit_expired",
             Event::RejectExpired          => "reject_expired",
             Event::ReviewExpired          => "review_expired",
-            Event::JobAutoCompleted       => "job_auto_completed",
             Event::JobAutoRefunded        => "job_auto_refunded",
             Event::SubmitDeadlineWarn     => "submit_deadline_warn",
             Event::ReviewDeadlineWarn     => "review_deadline_warn",
@@ -434,7 +430,6 @@ impl Event {
             Event::JobClosed          => "close failed",
             Event::JobVisibilityChanged  => "visibility toggle failed",
             Event::JobPaymentModeChanged => "payment mode switch failed",
-            Event::JobAutoCompleted   => "auto-complete failed",
             Event::RewardClaimed      => "reward claim failed",
             Event::DisputeApproved    => "dispute initiation failed",
             Event::JobProviderReject   => "asp reject failed",
@@ -476,7 +471,7 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::ReviewExpired                                                => Status::Submitted,
         // Backend TaskStatusEnum: 6=COMPLETE (funds released to provider), 9=FAILED (funds returned to buyer).
         // The two terminal states are distinguished directly by the event.
-        Event::JobCompleted | Event::JobAutoCompleted                       => Status::Completed,
+        Event::JobCompleted                                                 => Status::Completed,
         Event::JobRefunded | Event::JobAutoRefunded                         => Status::Failed,
         // DisputeResolved depends on the verdict (buyer-wins → Failed; seller-wins → Completed);
         // not determinable from the event alone — default to Completed and callers should prefer `agent status`.

@@ -205,12 +205,6 @@ pub fn dispute_won_no_claim_user_notify(job_id: &str) -> String {
     )
 }
 
-/// `Event::JobAutoCompleted` Step 1 — failure notice pushed to the user when
-/// code != 0 (auto-complete tx failed).
-pub fn job_auto_completed_failed_user_notify(job_id: &str) -> String {
-    format!("[Auto-Complete Failed] Job {job_id} — the auto-complete transaction failed. Please review and retry manually; the agent will not auto-retry.")
-}
-
 /// `Event::RewardClaimed` Step 1 — failure notice pushed to the user when
 /// code != 0 (reward-claim tx failed).
 pub fn reward_claim_failed_user_notify(job_id: &str) -> String {
@@ -240,17 +234,6 @@ pub fn escalation_cli_failed_notify(job_id: &str) -> String {
          A. Retry → reply 'A' or 'retry'\n\
          B. Don't prompt again (you'll handle manually) → reply 'B' or 'dismiss'\n\
          C. Provide a new instruction → describe what to change (e.g. 'change --token-symbol to USDT and retry')"
-    )
-}
-
-/// `Event::JobAutoCompleted` Step 2 — auto-complete settled notice pushed to
-/// the user (the User Agent's review window expired, and the ASP recovered the
-/// funds via claimAutoComplete).
-pub fn job_auto_completed_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[Job Auto-Completed] Job {job_id} (<title>) — the User Agent's review window expired; funds were auto-settled.\n\
-         \x20\x20\x20\x20  - Income: <tokenAmount> <tokenSymbol>\n\
-         \x20\x20\x20\x20This job is complete."
     )
 }
 
