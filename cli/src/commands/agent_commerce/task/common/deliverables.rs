@@ -18,8 +18,63 @@ fn deliverables_root() -> Result<PathBuf> {
     Ok(home.join(".onchainos").join("deliverables"))
 }
 
+fn sanitize_title(title: &str, job_id: &str) -> String {
+    let cleaned: String = title
+        .trim()
+        .chars()
+        .take(20)
+        .map(|c| {
+            if "/\\:*?\"<>|\r\n\t".contains(c) || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let mut result = String::new();
+    let mut prev_underscore = false;
+    for c in cleaned.chars() {
+        if c == '_' {
+            if !prev_underscore {
+                result.push('_');
+            }
+            prev_underscore = true;
+        } else {
+            result.push(c);
+            prev_underscore = false;
+        }
+    }
+    let result = result.trim_matches('_').to_string();
+    if result.is_empty() {
+        let end = job_id.len().min(10);
+        format!("job_{}", &job_id[..end])
+    } else {
+        result
+    }
+}
+
+/// Resolve the deliverables directory for a job. Supports both old-style
+/// (`<jobId>/`) and new-style (`<jobId>_<title>/`) layouts via prefix scan.
 pub(crate) fn deliverables_dir(role: &str, job_id: &str) -> Result<PathBuf> {
-    Ok(deliverables_root()?.join(role).join(job_id))
+    let role_dir = deliverables_root()?.join(role);
+    let exact = role_dir.join(job_id);
+    if exact.exists() {
+        return Ok(exact);
+    }
+    if role_dir.exists() {
+        let prefix = format!("{}_", job_id);
+        if let Ok(entries) = std::fs::read_dir(&role_dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with(&prefix) {
+                        return Ok(entry.path());
+                    }
+                }
+            }
+        }
+    }
+    Ok(exact)
 }
 
 fn manifest_path(role: &str, job_id: &str) -> Result<PathBuf> {
@@ -131,11 +186,21 @@ pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "deliverable".to_string());
 
+    let sanitized = sanitize_title(params.title, params.job_id);
     let now = chrono::Local::now();
-    let timestamp = now.format("%Y%m%d-%H%M%S").to_string();
-    let dest_name = format!("{timestamp}_{original_name}");
+    let timestamp = format!("{}{:03}", now.format("%Y%m%d_%H%M%S"), now.timestamp_subsec_millis());
+    let ext = src.extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_else(|| ".txt".to_string());
+    let dest_name = format!("{sanitized}_{timestamp}{ext}");
 
-    let dir = deliverables_dir(role, params.job_id)?;
+    let existing = deliverables_dir(role, params.job_id)?;
+    let dir = if existing.exists() {
+        existing
+    } else {
+        let dir_name = format!("{}_{sanitized}", params.job_id);
+        deliverables_root()?.join(role).join(dir_name)
+    };
     std::fs::create_dir_all(&dir)?;
     let dest = dir.join(&dest_name);
 
@@ -300,5 +365,48 @@ pub fn handle_list_all(role: &str, search: Option<&str>) -> Result<()> {
 
     crate::output::success(json!({ "results": results }));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_normal_title() {
+        assert_eq!(sanitize_title("Polymarket聪明钱信号", "0xabc"), "Polymarket聪明钱信号");
+    }
+
+    #[test]
+    fn sanitize_strips_illegal_chars() {
+        assert_eq!(sanitize_title("ETH/BTC 分析: 2026", "0xabc"), "ETH_BTC 分析_ 2026");
+    }
+
+    #[test]
+    fn sanitize_collapses_underscores() {
+        assert_eq!(sanitize_title("a/*?b", "0xabc"), "a_b");
+    }
+
+    #[test]
+    fn sanitize_empty_fallback() {
+        assert_eq!(sanitize_title("", "0xabcdef1234"), "job_0xabcdef12");
+    }
+
+    #[test]
+    fn sanitize_all_illegal_fallback() {
+        assert_eq!(sanitize_title("/:*?", "0xabcdef1234"), "job_0xabcdef12");
+    }
+
+    #[test]
+    fn sanitize_truncates_to_20_chars() {
+        let long = "一二三四五六七八九十一二三四五六七八九十额外的字";
+        let result = sanitize_title(long, "0xabc");
+        assert_eq!(result.chars().count(), 20);
+        assert_eq!(result, "一二三四五六七八九十一二三四五六七八九十");
+    }
+
+    #[test]
+    fn sanitize_trims_whitespace() {
+        assert_eq!(sanitize_title("  hello  ", "0xabc"), "hello");
+    }
 }
 
