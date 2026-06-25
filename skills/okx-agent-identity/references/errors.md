@@ -27,6 +27,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | `invalid serviceType` | "Type must be API service or agent to agent." → re-render numbered type prompt. Never echo `A2MCP`/`A2A`. |
 | `invalid value for --role` | "Role must be User Agent / ASP / Evaluator Agent." → re-render numbered role prompt. Never echo the enum. |
 | `provider agents require at least one service` | "An ASP needs at least one service." → return to service Q&A. No raw `provider`. |
+| `provider agents require an avatar` | "An ASP must set an avatar." → return to Step 1 §5: ask for an image file (no default option), upload it, then re-render the identity card. No raw `provider`/`--picture`. |
 | `failed to read file` | "Can't read that file." → recheck path; offer send-image / keep-default. |
 | `upload response missing url` | "Upload succeeded but no URL came back." → retry once; if persists, surface and ask. |
 
