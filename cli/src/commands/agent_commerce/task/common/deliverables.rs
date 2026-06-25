@@ -194,12 +194,17 @@ pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
         .unwrap_or_else(|| ".txt".to_string());
     let dest_name = format!("{sanitized}_{timestamp}{ext}");
 
+    let target_dir_name = format!("{}_{sanitized}", params.job_id);
+    let target_dir = deliverables_root()?.join(role).join(&target_dir_name);
     let existing = deliverables_dir(role, params.job_id)?;
-    let dir = if existing.exists() {
+    let dir = if existing == target_dir && existing.exists() {
         existing
+    } else if existing.exists() {
+        // Rename old-style bare-jobId dir to new-style <jobId>_<title>
+        let _ = std::fs::rename(&existing, &target_dir);
+        target_dir
     } else {
-        let dir_name = format!("{}_{sanitized}", params.job_id);
-        deliverables_root()?.join(role).join(dir_name)
+        target_dir
     };
     std::fs::create_dir_all(&dir)?;
     let dest = dir.join(&dest_name);
