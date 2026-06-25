@@ -13,7 +13,7 @@ Load this file when: rendering a card / diff / detail view, resolving `#<id>`, t
 
 ## Card skeleton (every confirmation / diff / detail card uses THIS)
 
-Two-column pipe table `| Field | Value |`, one row per field. Role row uses localized label (never enum); photo row = uploaded CDN URL or `default` — never a user-pasted link (rejected; see register §5).
+Two-column pipe table `| Field | Value |`, one row per field. Role row uses localized label (never enum); photo row = uploaded CDN URL or `default` (providers require a URL; `default` only for requester/evaluator — see register §5) — never a user-pasted link (rejected).
 
 - **Confirmation variant** (create only): ends with `> Reply **1** to confirm and run.` (localized). No bash shown.
 - **Diff variant** (update only): 3 columns `| Field | Current | New |`; unchanged fields → `(unchanged)`; changed New cell **bold**. Show real before→after values.

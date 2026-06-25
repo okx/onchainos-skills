@@ -1409,6 +1409,44 @@ fn ensure_provider_has_service_ok_for_evaluator_without_services() {
     assert!(ensure_provider_has_service(&card).is_ok());
 }
 
+// ─── ensure_provider_has_avatar ───────────────────────────────────────
+
+fn make_card_with_avatar(role: &str, picture: &str) -> AgentCard {
+    let mut card = make_card(role, vec![]);
+    card.profile_picture = picture.to_string();
+    card
+}
+
+#[test]
+fn ensure_provider_has_avatar_ok_when_picture_present() {
+    let card = make_card_with_avatar("provider", "https://cdn.okx.com/avatar/x.png");
+    assert!(ensure_provider_has_avatar(&card).is_ok());
+}
+
+#[test]
+fn ensure_provider_has_avatar_err_when_provider_picture_empty() {
+    let card = make_card_with_avatar("provider", "");
+    assert!(ensure_provider_has_avatar(&card).is_err());
+}
+
+#[test]
+fn ensure_provider_has_avatar_err_when_provider_picture_blank() {
+    let card = make_card_with_avatar("provider", "   ");
+    assert!(ensure_provider_has_avatar(&card).is_err());
+}
+
+#[test]
+fn ensure_provider_has_avatar_ok_for_requester_without_picture() {
+    let card = make_card_with_avatar("requester", "");
+    assert!(ensure_provider_has_avatar(&card).is_ok());
+}
+
+#[test]
+fn ensure_provider_has_avatar_ok_for_evaluator_without_picture() {
+    let card = make_card_with_avatar("evaluator", "");
+    assert!(ensure_provider_has_avatar(&card).is_ok());
+}
+
 // ─── parse_u32_arg ────────────────────────────────────────────────────
 
 #[test]
