@@ -386,6 +386,170 @@ ensure_in_path() {
   echo "Or simply open a new terminal window."
 }
 
+# ── Optional companion tools ─────────────────────────────────
+update_okx_a2a_if_present() {
+  if ! command -v okx-a2a >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo ""
+  echo "Detected okx-a2a. Updating @okxweb3/a2a-node to latest..."
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "Warning: npm is not available; skipping okx-a2a update (non-fatal)" >&2
+    return 0
+  fi
+
+  echo "Updating okx-a2a CLI package..."
+  output=""
+  if ! output=$(npm i -g @okxweb3/a2a-node@latest 2>&1); then
+    echo "Warning: could not update @okxweb3/a2a-node (non-fatal)" >&2
+    [ -n "$output" ] && printf '%s\n' "$output" >&2
+    return 0
+  fi
+  echo "okx-a2a CLI update completed."
+
+  restart_okx_a2a_daemon
+}
+
+restart_okx_a2a_daemon() {
+  if ! command -v okx-a2a >/dev/null 2>&1; then
+    return 0
+  fi
+
+  daemon_status=""
+  if ! daemon_status=$(okx-a2a daemon status 2>&1); then
+    return 0
+  fi
+
+  daemon_state=$(printf '%s\n' "$daemon_status" | awk 'NR==1 {print $1}')
+  if [ "$daemon_state" != "running" ]; then
+    return 0
+  fi
+
+  echo "Restarting okx-a2a daemon..."
+
+  if ! okx-a2a daemon restart; then
+    echo "Warning: could not restart okx-a2a daemon (non-fatal)" >&2
+    return 0
+  fi
+  echo "okx-a2a daemon restart completed."
+}
+
+detect_okx_a2a_runtime() {
+  if [ "${_HERMES_GATEWAY:-}" = "1" ]; then
+    echo "hermes-gateway"
+    return 0
+  fi
+
+  if [ -n "${HERMES_SESSION_ID:-}" ] || [ -n "${HERMES_DESKTOP_CWD:-}" ]; then
+    echo "hermes"
+    return 0
+  fi
+
+  if [ -n "${OPENCLAW_SHELL:-}" ] || [ -n "${OPENCLAW_CLI:-}" ]; then
+    echo "openclaw"
+    return 0
+  fi
+
+  pid=$PPID
+  for _ in 1 2 3 4 5 6 7 8; do
+    if [ -z "$pid" ] || [ "$pid" = "0" ] || [ "$pid" = "1" ]; then
+      break
+    fi
+
+    comm=$(ps -p "$pid" -o comm= 2>/dev/null | tr -d ' ')
+    case "$comm" in
+      *openclaw*|*OpenClaw*)
+        echo "openclaw"
+        return 0
+        ;;
+    esac
+
+    pid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+  done
+
+  return 1
+}
+
+update_runtime_okx_a2a_plugin_if_present() {
+  if ! command -v okx-a2a >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if is_openclaw_okx_a2a_plugin_installed; then
+    update_okx_a2a_gateway_plugin_if_installed "openclaw" "true"
+  fi
+
+  if is_hermes_okx_a2a_plugin_installed; then
+    if [ "$(detect_okx_a2a_runtime 2>/dev/null || true)" = "hermes-gateway" ]; then
+      update_okx_a2a_gateway_plugin_if_installed "hermes" "false"
+      restart_okx_a2a_daemon
+    else
+      update_okx_a2a_gateway_plugin_if_installed "hermes" "true"
+    fi
+  fi
+}
+
+update_okx_a2a_gateway_plugin_if_installed() {
+  target="$1"
+  restart_gateway="$2"
+  output=""
+
+  if [ "$target" = "hermes" ] && [ "$restart_gateway" != "true" ]; then
+    echo "Updating Hermes okx-a2a plugin to latest without Gateway restart..."
+  else
+    echo "Updating ${target} okx-a2a plugin to latest..."
+  fi
+
+  if [ "$restart_gateway" = "true" ]; then
+    output=$(okx-a2a update "$target" --release latest --restart --yes 2>&1)
+  else
+    output=$(okx-a2a update "$target" --release latest 2>&1)
+  fi
+  status=$?
+
+  if [ "$status" -eq 0 ]; then
+    echo "${target} okx-a2a plugin update completed."
+    return 0
+  fi
+
+  if printf '%s\n' "$output" | grep -qi "plugin is not installed"; then
+    return 0
+  fi
+
+  echo "Warning: could not update okx-a2a ${target} plugin (non-fatal)" >&2
+  [ -n "$output" ] && printf '%s\n' "$output" >&2
+  return 0
+}
+
+is_openclaw_okx_a2a_plugin_installed() {
+  command -v openclaw >/dev/null 2>&1 || return 1
+
+  output=$(openclaw plugins list --json 2>/dev/null || openclaw plugins list 2>/dev/null || true)
+  [ -n "$output" ] || return 1
+
+  printf '%s\n' "$output" | grep -Eq '@okxweb3/a2a-openclaw|(^|[^[:alnum:]_/-])okx-a2a([^[:alnum:]_-]|$)|/okx-a2a'
+}
+
+is_hermes_okx_a2a_plugin_installed() {
+  hermes_home="${HERMES_HOME:-$HOME/.hermes}"
+  if [ -f "$hermes_home/plugins/platforms/okx-a2a/plugin.yaml" ]; then
+    return 0
+  fi
+
+  if command -v npm >/dev/null 2>&1; then
+    npm list -g @okxweb3/a2a-hermes --depth=0 >/dev/null 2>&1 && return 0
+  fi
+
+  return 1
+}
+
+finish_install() {
+  update_okx_a2a_if_present
+  update_runtime_okx_a2a_plugin_if_present
+}
+
 # ── Main ─────────────────────────────────────────────────────
 main() {
   local_ver=$(get_local_version)
@@ -400,6 +564,7 @@ main() {
         sync_workflows "v${local_ver}"
       fi
       write_cache
+      finish_install
       return 0
     fi
   else
@@ -411,6 +576,7 @@ main() {
       if [ ! -d "$CACHE_DIR/workflows" ]; then
         sync_workflows "v${local_ver}"
       fi
+      finish_install
       return 0
     fi
 
@@ -425,6 +591,7 @@ main() {
         sync_workflows "v${local_ver}"
       fi
       write_cache
+      finish_install
       return 0
     else
       if semver_gt "$latest_stable" "$local_ver"; then
@@ -436,6 +603,7 @@ main() {
           sync_workflows "v${local_ver}"
         fi
         write_cache
+        finish_install
         return 0
       fi
     fi
@@ -449,6 +617,7 @@ main() {
   sync_workflows "v${target_ver}"
   write_cache
   ensure_in_path
+  finish_install
 }
 
 main
