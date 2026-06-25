@@ -62,12 +62,16 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 
 ## Pre-flight
 
-> See `_shared/preflight.md` for CLI environment checks (install, upgrade, integrity).
+Before any task flow starts, execute **both steps in order**.
 
-Before any task flow starts, run one command to check all three business gates at once. Use the role resolved in the Activation step above.
+### Step 1 — Environment check
+
+Follow [`./_shared/preflight.md`](./_shared/preflight.md) to ensure the onchainos binary is installed, up-to-date, and integrity-verified. Do NOT skip this step.
+
+### Step 2 — Business gate-check
 
 ```bash
-onchainos agent preflight --role <buyer|provider|evaluator>
+onchainos agent gate-check --role <buyer|provider|evaluator>
 ```
 
 Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proceed. Otherwise fix the failing gate:
@@ -78,7 +82,7 @@ Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proce
 | `identity` | No agent for role | `onchainos agent register` with the required role. Evaluator additionally requires staking onboarding in `references/evaluator-staking.md §2`. |
 | `communication` | okx-a2a not running | Run [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) |
 
-> ⚠️ `preflight` only checks the current account's agents. For envelope routing use `--role auto` on `next-action` (CLI resolves the envelope's agentId internally).
+> ⚠️ `gate-check` only checks the current account's agents. For envelope routing use `--role auto` on `next-action` (CLI resolves the envelope's agentId internally).
 
 ## ⚠️ Critical Field Mapping Table (always look it up, don't guess)
 
@@ -115,7 +119,7 @@ When dealing with integer values of any of the fields below, **look up the table
 - [`cli-reference.md`](./_shared/cli-reference.md) — full CLI argument table
 - [`state-machine.md`](./_shared/state-machine.md) — 37 events + 8 statuses
 - [`exception-escalation.md`](./_shared/exception-escalation.md) — shared exception rules
-- [`preflight.md`](./_shared/preflight.md) — wallet + agent pre-flight
+- [`preflight.md`](./_shared/preflight.md) — environment check (install, upgrade, integrity)
 - [`user-intent-routing.md`](./_shared/user-intent-routing.md) — user session free-form text routing
 
 **`references/`**:

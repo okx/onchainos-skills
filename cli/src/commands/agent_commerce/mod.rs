@@ -324,15 +324,15 @@ pub enum AgentCommand {
         #[arg(long)] role: Option<String>,
     },
 
-    /// Pre-flight readiness check: wallet login + agent identity + communication channel.
+    /// Business gate-check: wallet login + agent identity + communication channel.
     /// Pure read-only diagnostic — does not modify any state.
-    #[command(name = "preflight")]
-    Preflight {
+    #[command(name = "gate-check")]
+    GateCheck {
         /// Role to check identity for: buyer | provider | evaluator (also accepts 1/2/3)
         #[arg(long)] role: String,
     },
 
-    /// Prepare-create: validate fields + preflight + designated-route in one call.
+    /// Prepare-create: validate fields + gate-check + designated-route in one call.
     /// Returns structured JSON for the confirmation form. Does NOT create the task.
     #[command(name = "prepare-create")]
     PrepareCreate {
@@ -1007,7 +1007,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::MyAgents { role } =>
             task::common::handle_my_agents(role.as_deref()).await,
 
-        AgentCommand::Preflight { role } =>
+        AgentCommand::GateCheck { role } =>
             task::common::handle_preflight(&role).await,
 
         AgentCommand::PrepareCreate {

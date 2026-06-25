@@ -1103,7 +1103,7 @@ pub async fn handle_prepare_create(
         return Ok(());
     }
 
-    // ── 2. Preflight (wallet + identity + communication) ─────────
+    // ── 2. Gate-check (wallet + identity + communication) ─────────
     let preflight = preflight_inner("buyer").await?;
     let pf_ok = preflight.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
     if !pf_ok {
