@@ -19,32 +19,12 @@ fn deliverables_root() -> Result<PathBuf> {
 }
 
 fn sanitize_title(title: &str, job_id: &str) -> String {
-    let cleaned: String = title
+    let result: String = title
         .trim()
         .chars()
+        .filter(|c| c.is_alphanumeric())
         .take(20)
-        .map(|c| {
-            if "/\\:*?\"<>|\r\n\t".contains(c) || c.is_control() {
-                '_'
-            } else {
-                c
-            }
-        })
         .collect();
-    let mut result = String::new();
-    let mut prev_underscore = false;
-    for c in cleaned.chars() {
-        if c == '_' {
-            if !prev_underscore {
-                result.push('_');
-            }
-            prev_underscore = true;
-        } else {
-            result.push(c);
-            prev_underscore = false;
-        }
-    }
-    let result = result.trim_matches('_').to_string();
     if result.is_empty() {
         let end = job_id.len().min(10);
         format!("job_{}", &job_id[..end])
@@ -382,13 +362,13 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_strips_illegal_chars() {
-        assert_eq!(sanitize_title("ETH/BTC 分析: 2026", "0xabc"), "ETH_BTC 分析_ 2026");
+    fn sanitize_strips_non_alphanumeric() {
+        assert_eq!(sanitize_title("ETH/BTC 分析: 2026", "0xabc"), "ETHBTC分析2026");
     }
 
     #[test]
-    fn sanitize_collapses_underscores() {
-        assert_eq!(sanitize_title("a/*?b", "0xabc"), "a_b");
+    fn sanitize_removes_symbols() {
+        assert_eq!(sanitize_title("a/*?b", "0xabc"), "ab");
     }
 
     #[test]
@@ -410,8 +390,8 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_trims_whitespace() {
-        assert_eq!(sanitize_title("  hello  ", "0xabc"), "hello");
+    fn sanitize_strips_spaces() {
+        assert_eq!(sanitize_title("  hello world  ", "0xabc"), "helloworld");
     }
 }
 
