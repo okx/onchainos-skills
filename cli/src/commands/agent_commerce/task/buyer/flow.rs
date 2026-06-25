@@ -115,6 +115,31 @@ pub(super) struct FlowContext<'a> {
     pub data: Option<&'a str>,
 }
 
+/// Minimal 3-line playbook: LLM translates the canonical English content and
+/// calls `onchainos agent user-notify` once. No multi-step ceremony.
+pub(super) fn notify_and_end(canonical_content: &str) -> String {
+    format!(
+        "Translate the content below into the user's language, then run:\n\
+         ```bash\n\
+         onchainos agent user-notify --content '<translated content>'\n\
+         ```\n\
+         Content: {canonical_content}\n\n\
+         End turn after the call.\n"
+    )
+}
+
+/// Same as `notify_and_end` but appends a terminal session hint.
+pub(super) fn notify_and_end_terminal(canonical_content: &str, terminal_hint: &str) -> String {
+    format!(
+        "Translate the content below into the user's language, then run:\n\
+         ```bash\n\
+         onchainos agent user-notify --content '<translated content>'\n\
+         ```\n\
+         Content: {canonical_content}\n\n\
+         {terminal_hint}\n"
+    )
+}
+
 /// List of CLI commands the buyer can execute under a given status (used in the menu at the tail of `agent common context` output).
 ///
 /// Each status lists the primary action + one index line pointing back to the full `next-action` playbook (
@@ -388,14 +413,6 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::SubmitExpired => super::flow_lifecycle::submit_expired(&ctx).await,
         Event::RejectExpired => super::flow_lifecycle::reject_expired(&ctx).await,
         Event::ReviewDeadlineWarn => super::flow_lifecycle::review_deadline_warn(&ctx),
-        Event::SubmitDeadlineWarn => super::flow_lifecycle::submit_deadline_warn(),
-        Event::EvaluatorSelected
-        | Event::RevealStarted
-        | Event::VoteCommitted
-        | Event::VoteRevealed
-        | Event::RoundFailed
-        | Event::VoteCommitDeadlineWarn
-        | Event::VoteRevealDeadlineWarn => super::flow_lifecycle::evaluator_events(event.as_str()),
         Event::RewardClaimed => super::flow_lifecycle::reward_claimed(&ctx),
         Event::WakeupNotify => super::flow_lifecycle::wakeup_notify(&ctx),
         Event::Other(ref s) if s == "create_task" => super::flow_lifecycle::create_task(),
@@ -410,8 +427,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         | Event::UnstakeClaimed
         | Event::UnstakeCancelled
         | Event::StakeStopped
-        | Event::CooldownEntered
-        | Event::DisputeApproved => super::flow_lifecycle::staked_and_unknown(event.as_str(), job_id),
+        | Event::CooldownEntered => super::flow_lifecycle::staked_and_unknown(event.as_str(), job_id),
 
         // ─── user_decision_* relay router (buyer-side scenes) ───
         // User-decision relays arrive as system-shaped envelopes with

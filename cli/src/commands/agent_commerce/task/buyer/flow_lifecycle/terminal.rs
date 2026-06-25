@@ -1,110 +1,25 @@
 //! Terminal states, timeouts, auto-completion, and fallback prompt generators.
 
-use super::super::flow::FlowContext;
+use super::super::flow::{FlowContext, notify_and_end, notify_and_end_terminal};
 
 pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let terminal_session_hint = &ctx.terminal_session_hint;
-
-    let refunded_notify = super::super::content::job_refunded_user_notify(job_id);
-    format!(
-    "[Current Status] job_refunded (funds refunded to the user)\n\
-     [Role] User (User Agent)\n\n\
-     **You MUST notify the user that the refund completed; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
-     [Your next actions (strict order)]\n\n\
-     **Step 1 — Notify the user the refund completed via `onchainos agent user-notify`:**\n\
-     ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
-     ```\n\
-     Content:\n\
-     {refunded_notify}\n\n\
-     **Step 2 — Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     Refund flow fully complete.\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent user-notify` bash call with the localized content above\n\
-     No other text or tool calls. End turn after the call completes.\n"
-    )
+    let content = super::super::content::job_refunded_user_notify(ctx.job_id);
+    notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
 
 pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let title_display = ctx.title_display;
-    let title_query_hint = ctx.title_query_hint;
-    let terminal_session_hint = &ctx.terminal_session_hint;
-
-    let auto_refunded_notify = super::super::content::job_auto_refunded_user_notify(job_id, title_display);
-    format!(
-    "[System Notification] job_auto_refunded (claimAutoRefund tx receipt)\n\
-     [Role] User (User Agent)\n\n\
-     **You MUST notify the user the refund has arrived; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
-     [Your next actions (strict order)]\n\n\
-     {title_query_hint}\
-     **Step 1 — Notify the user the refund has arrived via `onchainos agent user-notify`:**\n\
-     **Localize first** — translate the canonical English content below into the user's language.\n\
-     ```bash\n\
-     onchainos agent user-notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content:\n\
-     {auto_refunded_notify}\n\n\
-     **Step 2 — Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     Refund flow fully complete.\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent user-notify` bash call with the localized content above\n\
-     No other text or tool calls. End turn after the call completes.\n"
-    )
+    let content = super::super::content::job_auto_refunded_user_notify(ctx.job_id, ctx.title_display);
+    notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
 
 pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-
-    let expired_notify = super::super::content::job_expired_user_notify(job_id);
-    format!(
-    "[Current Status] job_expired (task expired; no ASP accepted or no submission)\n\
-     [Role] User (User Agent)\n\n\
-     [Your next actions]\n\n\
-     **Step 1 — Notify the user the task expired via `onchainos agent user-notify`:**\n\
-     **Localize first** — translate the canonical English content below.\n\
-     ```bash\n\
-     onchainos agent user-notify --content '<your translated content>'\n\
-     ```\n\n\
-     Canonical English content: {expired_notify}\n\n\
-     This task reached a terminal state; the flow ends.\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent user-notify` bash call with the localized content above\n\
-     No other text or tool calls. End turn after the call completes.\n"
-    )
+    let content = super::super::content::job_expired_user_notify(ctx.job_id);
+    notify_and_end(&content)
 }
 
 pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let title_display = ctx.title_display;
-    let title_query_hint = ctx.title_query_hint;
-    let terminal_session_hint = &ctx.terminal_session_hint;
-
-    let closed_notify = super::super::content::job_closed_user_notify(job_id, title_display);
-    format!(
-    "[Current Status] job_closed (close tx result notification)\n\
-     [Role] User (User Agent)\n\n\
-     [Your next actions]\n\n\
-     {title_query_hint}\
-     **Step 1 — Notify the user via `onchainos agent user-notify`:**\n\
-     ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
-     ```\n\
-     Content: {closed_notify}\n\n\
-     **Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     Close flow ends.\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent user-notify` bash call with the localized content above\n\
-     No other text or tool calls. End turn after the call completes.\n"
-    )
+    let content = super::super::content::job_closed_user_notify(ctx.job_id, ctx.title_display);
+    notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
 
 // --- Timeouts / auto-completion ---------------------------------------
@@ -113,22 +28,12 @@ pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
 
-    let submit_expired = super::super::content::submit_expired_user_notify(job_id);
-
-    // Rust in-process claim-auto-refund — symmetric to approve_review /
-    // reject_review (each broadcasts a tx in-process and tells the LLM to
-    // just notify the user). Failure → cli_failed bail.
     let mut client = TaskApiClient::new();
     match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
-        Ok(()) => format!(
-            "**You MUST notify the user; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
-             **Notify the user via `onchainos agent user-notify`:**\n\
-             **Localize first** — translate the canonical English content below.\n\
-             ```bash\n\
-             onchainos agent user-notify --content '<your translated content>'\n\
-             ```\n\
-             Canonical English content: \"{submit_expired}\"\n"
-        ),
+        Ok(()) => {
+            let content = super::super::content::submit_expired_user_notify(job_id);
+            notify_and_end(&content)
+        }
         Err(e) => format!(
             "[submit_expired] `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
              Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
@@ -140,19 +45,12 @@ pub(crate) async fn reject_expired(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
 
-    let reject_expired = super::super::content::reject_expired_user_notify(job_id);
-
     let mut client = TaskApiClient::new();
     match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
-        Ok(()) => format!(
-            "**You MUST notify the user; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
-             **Notify the user via `onchainos agent user-notify`:**\n\
-             **Localize first** — translate the canonical English content below.\n\
-             ```bash\n\
-             onchainos agent user-notify --content '<your translated content>'\n\
-             ```\n\
-             Canonical English content: \"{reject_expired}\"\n"
-        ),
+        Ok(()) => {
+            let content = super::super::content::reject_expired_user_notify(job_id);
+            notify_and_end(&content)
+        }
         Err(e) => format!(
             "[reject_expired] `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
              Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
@@ -241,45 +139,9 @@ pub(crate) async fn set_public(ctx: &FlowContext<'_>) -> String {
 
 // --- Other events ------------------------------------------------------
 
-pub(crate) fn submit_deadline_warn() -> String {
-    "[System Notification] submit_deadline_warn (provider-side deadline reminder)\n\
-     [Role] User (User Agent)\n\n\
-     [Advice] Stay silent and observe; wait for the provider to submit the deliverable (job_submitted notification) before acting.\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     End turn immediately with no tool calls or text output.\n".to_string()
-}
-
-pub(crate) fn evaluator_events(event_str: &str) -> String {
-    format!(
-    "[System Notification] {event_str} (internal arbitration event, handled by evaluator)\n\
-     [Role] User (User Agent)\n\n\
-     [Advice] Stay silent and observe. After `dispute_resolved` arrives, call next-action to wrap up.\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     End turn immediately with no tool calls or text output.\n"
-    )
-}
-
 pub(crate) fn reward_claimed(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let title_display = ctx.title_display;
-    let title_query_hint = ctx.title_query_hint;
-
-    let reward_claimed = super::super::content::reward_claimed_user_notify(job_id, title_display);
-    format!(
-    "[System Notification] reward_claimed (claimRewards tx receipt)\n\
-     [Role] User (User Agent)\n\n\
-     [Your next actions]\n\n\
-     {title_query_hint}\
-     **Step 1 — Notify the user the reward has arrived via `onchainos agent user-notify`:**\n\
-     ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
-     ```\n\
-     Content: {reward_claimed}\n\n\
-     [OUTPUT_TEMPLATE]\n\
-     Your entire response for this event MUST be exactly:\n\
-     1. One `onchainos agent user-notify` bash call with the localized content above\n\
-     No other text or tool calls. End turn after the call completes.\n"
-    )
+    let content = super::super::content::reward_claimed_user_notify(ctx.job_id, ctx.title_display);
+    notify_and_end(&content)
 }
 
 pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {

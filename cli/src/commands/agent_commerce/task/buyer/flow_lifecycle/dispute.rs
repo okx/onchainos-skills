@@ -1,35 +1,11 @@
 //! Rejection / arbitration prompt generators.
 
-use super::super::flow::FlowContext;
+use super::super::flow::{FlowContext, notify_and_end};
 use crate::commands::agent_commerce::task::common::okx_a2a;
 
 pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let title_display = ctx.title_display;
-    let title_query_hint = ctx.title_query_hint;
-
-    let rejected_notify = super::super::content::job_rejected_user_notify(job_id, title_display);
-    format!(
-    "[Current Status] job_rejected (user rejection settled on-chain; awaiting ASP decision)\n\
-     [Role] User (User Agent)\n\n\
-     **You MUST notify the user that the rejection is settled; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
-     [Your next actions (strict order)]\n\n\
-     {title_query_hint}\
-     **Step 1 — Notify the user the rejection is confirmed via `onchainos agent user-notify`:**\n\
-     ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
-     ```\n\
-     Content:\n\
-     {rejected_notify}\n\n\
-     **Step 2 — Silently wait for the ASP's decision:**\n\n\
-     **Do not send any message to the ASP**. The ASP will decide:\n\
-     - Open a dispute → you will receive job_disputed\n\
-     - Agree to refund → you will receive job_refunded\n\
-     - Timeout → system auto-refunds, you will receive job_refunded\n\n\
-     **The buyer cannot initiate arbitration** — only the ASP can open a dispute. If the user asks \"can I start a dispute?\", reply: the buyer side does not support initiating arbitration; please wait for the ASP's decision.\n\n\
-     After Step 1 → **end this turn** and wait for the next system event.\n\n\
-"
-    )
+    let content = super::super::content::job_rejected_user_notify(ctx.job_id, ctx.title_display);
+    notify_and_end(&content)
 }
 
 pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
