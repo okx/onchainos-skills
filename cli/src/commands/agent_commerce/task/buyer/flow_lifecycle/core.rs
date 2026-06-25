@@ -570,10 +570,12 @@ pub(crate) fn deliverable_received_cli(
                 job_id, rating_title, "<tokenAmount>", "<tokenSymbol>",
             );
             let prefetch_batch = format!(
-                "Pre-decide the ASP rating, then pre-translate two notifications for job `{job_id}`. \
+                "[PREFETCH — internal cache only, NOT a user-facing flow]\n\
+             Pre-decide the ASP rating, then pre-translate two notifications for job `{job_id}`. \
              Execute all steps in one turn.\n\
              ⚠️ The triple-backtick fence markers are NOT part of the content — do not include them.\n\
-             ⚠️ Keep EVERY angle-bracket placeholder (e.g. `<tokenAmount>`, `<tokenSymbol>`) verbatim in your translation — CLI will fill them at dispatch time.\n\n\
+             ⚠️ Keep EVERY angle-bracket placeholder (e.g. `<tokenAmount>`, `<tokenSymbol>`) verbatim in your translation — CLI will fill them at dispatch time.\n\
+             🛑 **Output discipline (strict):** the THREE `cache-*` commands below are the ONLY commands you may run in this turn.\n\
              Task description:\n\
              ```\n\
              {task_description}\n\
@@ -1087,7 +1089,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
                     let _ = okx_a2a::user_notify(&combined, false);
                     let _ = session_cleanup::handle_session_cleanup(job_id, false);
 
-                    return "Task is at a terminal state, End the turn.".to_string();
+                    return "Task is at a terminal state. User has been notified by the CLI. Do NOT run any further command.".to_string();
                 }
                 // Placeholder missing or amount/symbol unknown → fall through to LLM playbook.
             }
