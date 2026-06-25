@@ -172,6 +172,7 @@ fn recommend_from_probe(probe: &crate::wallet_api::UnsignedInfoResponse) -> &'st
         GasStationStatus::ReenableOnly => "REENABLE_GAS_STATION",
         GasStationStatus::InsufficientAll => "INSUFFICIENT_ALL",
         GasStationStatus::HasPendingTx => "HAS_PENDING_TX",
+        GasStationStatus::NotSupportIntention => "NOT_SUPPORT_INTENTION",
         GasStationStatus::Unknown => {
             if probe.gas_station_used {
                 "ENABLE_GAS_STATION"
@@ -396,6 +397,14 @@ mod tests {
         assert_eq!(
             recommend_from_probe(&unsigned_with_status("REENABLE_ONLY")),
             "REENABLE_GAS_STATION"
+        );
+    }
+
+    #[test]
+    fn recommend_not_support_intention_passes_through() {
+        assert_eq!(
+            recommend_from_probe(&unsigned_with_status("NOT_SUPPORT_INTENTION")),
+            "NOT_SUPPORT_INTENTION"
         );
     }
 
