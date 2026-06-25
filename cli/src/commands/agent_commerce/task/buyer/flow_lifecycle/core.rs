@@ -605,7 +605,7 @@ pub(crate) fn deliverable_received_cli(
          \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
          \x20\x20Provider: {provider_id}\n\
          \x20\x20Type: {deliverable_type}\n\
-         \x20\x20Saved at: {saved_path}\n\
+         \x20\x20Saved at: [{saved_path}]({saved_path})\n\
          \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\n\
          End turn after notifying.\n"
     )
@@ -789,7 +789,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ▸ deliverableType=file:\n\
      ```\n\
      [Job {short_id}] The ASP has submitted the deliverable (file).\n\
-     File path: <localPath>\n\
+     File path: [<localPath>](<localPath>)\n\
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
      B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
@@ -797,7 +797,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ▸ deliverableType=text:\n\
      ```\n\
      [Job {short_id}] The ASP has submitted the deliverable (text).\n\
-     Saved at: <localPath>\n\
+     Saved at: [<localPath>](<localPath>)\n\
      ---Deliverable---\n\
      <deliverableText from Step 2 — full content, no truncation>\n\
      ---End of deliverable---\n\
@@ -891,8 +891,8 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Compose from two halves (concatenate with two blank lines):\n\
      \x20\x20▸ Deliverable (always; pick template):\n\
-     \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: <localPath>`\n\
-     \x20\x20\x20\x20text (localPath available): `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>` + deliverableText from Step 2\n\
+     \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: [<localPath>](<localPath>)`\n\
+     \x20\x20\x20\x20text (localPath available): `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: [<localPath>](<localPath>)` + deliverableText from Step 2\n\
      \x20\x20\x20\x20text (no localPath): `[Deliverable Received] Job {job_id} — x402, payment settled.` + deliverableText from Step 2 inline\n\
      \x20\x20▸ Rating (include ONLY if feedback-submit succeeded; if it failed or errored, **omit this entire half**):\n\
      \x20\x20\x20\x20{rating_notify}\n\
