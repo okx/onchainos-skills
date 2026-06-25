@@ -866,65 +866,14 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent claim-auto-complete {job_id} --agent-id {agent_id}\n\
              ```\n\
-             CLI internals: POST /claimAutoComplete → uopData → sign uopHash → broadcast. Wait for the on-chain `job_auto_completed` notification.\n\n\
+             CLI internals: POST /claimAutoComplete → uopData → sign uopHash → broadcast. Wait for the on-chain `job_completed` notification.\n\n\
              ⚠️ **After claim-auto-complete, end the turn directly**:\n\
-             - Do NOT send any okx-a2a xmtp-send to the User Agent (filler in between; wait until the job_auto_completed on-chain receipt arrives)\n\
+             - Do NOT send any okx-a2a xmtp-send to the User Agent (filler in between; wait until the job_completed on-chain receipt arrives)\n\
              - Do NOT push to the user with `onchainos agent user-notify`\n\n\
              [Follow-up events]\n\
-             - `job_auto_completed` (status=success) → next-action provides the funds-received script (push to user; conversation retained)\n\
-             - `job_auto_completed` (status=failed)  → retry claim-auto-complete per errorCode\n"
+             - `job_completed` (success) → next-action provides the funds-received script (push to user; conversation retained)\n\
+             - `job_completed` (failed)  → retry claim-auto-complete per errorCode\n"
         ),
-
-        // ─── job_auto_completed: claimAutoComplete tx receipt ────────────────
-        Event::JobAutoCompleted => {
-            let user_notify = super::content::job_auto_completed_user_notify(job_id);
-            let failed_notify = super::content::job_auto_completed_failed_user_notify(job_id);
-            let rating_notify = super::content::rating_submitted_user_notify(job_id);
-            let task_fields = inline_task_fields(&["title", "tokenAmount", "tokenSymbol", "buyerAgentId"]);
-            format!(
-            "[System notification] job_auto_completed (claimAutoComplete tx receipt)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
-             {task_fields}\n\
-             **Step 1 — Check the envelope's `message.code` field:**\n\
-             - `code` non-zero (failed) → run `onchainos agent user-notify`, then end the turn:\n\
-             \x20\x20```bash\n\
-             \x20\x20onchainos agent user-notify --content \"{failed_notify}\"\n\
-             \x20\x20```\n\
-             - `code` = 0 (success) → continue to Step 2.\n\n\
-             **Step 2 — Notify the user of fund arrival via `onchainos agent user-notify`**:\n\n\
-             Field values for the content template come from the **Task fields** block above.\n\
-             🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             ```bash\n\
-             onchainos agent user-notify --content \"<localized content shown below>\"\n\
-             ```\n\
-             content:\n\
-             {user_notify}\n\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` filler to the User Agent — both sides receive the `job_auto_completed` system event.\n\n\
-             🛑 Do NOT end this turn — Step 3 (auto-rate) and Step 3.5 (notify rating) below are MANDATORY.\n\n\
-             **Step 3 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
-             Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
-             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent buyer (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
-             \x20\x20- Comment: one sentence, ≤100 characters, evaluating the buyer's collaboration quality.\n\
-             Then execute:\n\
-             ```bash\n\
-             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-             ```\n\
-             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
-             **Step 3.5 — Notify the user of the submitted rating:**\n\
-             🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
-             - ✅ **Success** (output contains `txHash`):\n\
-             ```bash\n\
-             onchainos agent user-notify --content \"<localized content shown below>\"\n\
-             ```\n\
-             content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 3; fill `<title>` from task context):\n\
-             {rating_notify}\n\
-             - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
-             **Step 4 — Terminal wrap-up (keep the sub session):**\n\
-             {terminal_session_hint}\n\
-             Task fully complete.\n"
-            )
-        }
 
         // ─── Provider's own deadline reminder ─────────────────────────────────────
         Event::SubmitDeadlineWarn => {

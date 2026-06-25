@@ -2,6 +2,116 @@
 
 use super::super::flow::FlowContext;
 
+// ── A2A deliver content parser ──────────────────────────────────────────
+
+/// Parsed deliverable from the A2A message `content` field.
+enum DeliverPayload {
+    File {
+        file_key: String,
+        digest: String,
+        salt: String,
+        nonce: String,
+        secret: String,
+        filename: Option<String>,
+    },
+    Text(String),
+}
+
+/// Parse the `content` field of an `[intent:deliver]` A2A message.
+///
+/// File format:
+/// ```text
+/// jobId: 0x...
+/// deliverableType: file
+/// fileKey: ...
+/// digest: ...
+/// salt: ...
+/// nonce: ...
+/// secret: ...
+/// filename: ...
+/// [intent:deliver]
+/// ```
+///
+/// Text format:
+/// ```text
+/// jobId: 0x...
+/// deliverableType: text
+/// - - -
+/// <content>
+/// - - -
+/// [intent:deliver]
+/// ```
+fn parse_deliver_content(content: &str) -> Option<DeliverPayload> {
+    if !content.contains("[intent:deliver]") {
+        return None;
+    }
+
+    let kv = |key: &str| -> Option<String> {
+        content.lines()
+            .find(|line| {
+                let trimmed = line.trim();
+                trimmed.starts_with(key) && trimmed[key.len()..].starts_with(':')
+            })
+            .map(|line| line.trim()[key.len() + 1..].trim().to_string())
+    };
+
+    let dtype = kv("deliverableType")?;
+
+    match dtype.as_str() {
+        "file" => {
+            let file_key = kv("fileKey").filter(|s| !s.is_empty())?;
+            let digest = kv("digest").filter(|s| !s.is_empty())?;
+            let salt = kv("salt").filter(|s| !s.is_empty())?;
+            let nonce = kv("nonce").filter(|s| !s.is_empty())?;
+            let secret = kv("secret").filter(|s| !s.is_empty())?;
+            let filename = kv("filename").filter(|s| !s.is_empty());
+            Some(DeliverPayload::File { file_key, digest, salt, nonce, secret, filename })
+        }
+        "text" => {
+            let start = content.find("- - -")?;
+            let after = start + 5;
+            let body = if let Some(rel_end) = content[after..].rfind("- - -") {
+                &content[after..after + rel_end]
+            } else {
+                &content[after..]
+            };
+            let trimmed = body.trim();
+            if trimmed.is_empty() { return None; }
+            Some(DeliverPayload::Text(trimmed.to_string()))
+        }
+        _ => None,
+    }
+}
+
+fn is_safe_temp_path(fp: &std::path::Path) -> bool {
+    let tmp_dir = std::env::temp_dir();
+    if fp.starts_with(&tmp_dir) {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        if fp.starts_with("/tmp/") {
+            return true;
+        }
+    }
+    if let (Ok(c_fp), Ok(c_tmp)) = (fp.canonicalize(), tmp_dir.canonicalize()) {
+        return c_fp.starts_with(&c_tmp);
+    }
+    false
+}
+
+/// Read A2A JSON from a temp file and extract the deliver payload from `content`.
+fn parse_a2a_file(path: &str) -> Option<DeliverPayload> {
+    let fp = std::path::Path::new(path);
+    if !is_safe_temp_path(fp) {
+        return None;
+    }
+    let raw = std::fs::read_to_string(fp).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let content = json.get("content").and_then(|v| v.as_str())?;
+    parse_deliver_content(content)
+}
+
 // --- Execution stage ----------------------------------------------------
 
 pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bool, visibility: i64) -> String {
@@ -25,7 +135,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         // ── Over-budget branch: reject the apply, mirror job_provider_reject's playbook ──
         if let Err(e) = super::super::reject_apply::handle_reject_apply(&mut client, job_id, Some(agent_id)).await {
             return format!(
-                "[provider_applied/over_budget] ❌ reject-apply failed in-process: {e}\n\n\
+                "[provider_applied/over_budget] reject-apply failed in-process: {e}\n\n\
                  See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
             );
         }
@@ -46,7 +156,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
         );
 
         return format!(
-        "🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
+        "Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
          {request_block}\n"
         );
     }
@@ -54,7 +164,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
     // ── Within-budget branch: confirm-accept on-chain (escrow funded; status → accepted) ──
     if let Err(e) = super::super::accept::handle_confirm_accept(&mut client, job_id, ctx.prefetched).await {
         return format!(
-            "[provider_applied/confirm_accept] ❌ confirm-accept failed in-process: {e}\n\n\
+            "[provider_applied/confirm_accept] confirm-accept failed in-process: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         );
     }
@@ -108,14 +218,14 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      [Current Status] job_accepted (x402 — funds already paid)\n\n\
      **Step 1 -- Determine replaySuccess from the previous turn's task-402-pay:**\n\
      Look up the task-402-pay output in this sub session context.\n\
-     ⚠️ If not found (e.g. context compaction), **default to replaySuccess=true** —\n\
+     If not found (e.g. context compaction), **default to replaySuccess=true** —\n\
      skipping complete would leave the task stuck in accepted forever.\n\n\
      **Branch 1: replaySuccess=true (or default)**\n\n\
      ```bash\n\
      onchainos agent complete {job_id}\n\
      ```\n\
-     🛑 broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
-     ⚠️ On error → notify user:\n\
+     broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
+     On error → notify user:\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -203,10 +313,13 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
 
 /// CLI-mode fast path: download + save in-process, return a notify-only prompt.
 ///
-/// The sub-session LLM passes deliverable metadata (deliverableType, fileKey, etc.)
-/// in the `--message` JSON. This handler does the file download and deliverable save
-/// entirely in Rust, then returns a minimal playbook that only asks the LLM to
-/// translate and dispatch a user notification.
+/// The sub-session LLM saves the raw A2A JSON to a temp file and passes
+/// `a2aFile` in `--message`. This handler reads the file, parses the
+/// `content` field to determine file vs text, does the download/save
+/// entirely in Rust, then returns a minimal notify-only prompt.
+///
+/// Legacy `--message` fields (deliverableType/fileKey/text/filePath) are
+/// still accepted as fallback for backward compatibility.
 pub(crate) fn deliverable_received_cli(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
@@ -221,18 +334,106 @@ pub(crate) fn deliverable_received_cli(
 
     let base_tags = vec![format!("jobId={job_id}"), format!("agentId={agent_id}")];
 
-    let dtype = message
-        .and_then(|m| m.get("deliverableType"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if dtype.is_empty() {
-        audit::log("cli", "buyer/deliverable_received_no_type", false, Duration::default(),
-            Some(base_tags.clone()), Some("deliverableType missing, fallback to LLM path"));
-        return deliverable_received(ctx);
-    }
+    let msg_str = |key: &str| {
+        message
+            .and_then(|m| m.get(key))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    };
 
+    // ── Resolve DeliverPayload: a2aFile → legacy fields → fallback ──
+    let a2a_file = msg_str("a2aFile");
+    let payload = if !a2a_file.is_empty() {
+        match parse_a2a_file(a2a_file) {
+            Some(p) => {
+                audit::log("cli", "buyer/deliverable_from_a2a_file", true, Duration::default(),
+                    Some([base_tags.clone(), vec![format!("path={a2a_file}")]].concat()), None);
+                p
+            }
+            None => {
+                audit::log("cli", "buyer/deliverable_a2a_file_parse_failed", false, Duration::default(),
+                    Some([base_tags.clone(), vec![format!("path={a2a_file}")]].concat()),
+                    Some("failed to parse A2A file or extract deliver content"));
+                return deliverable_received(ctx);
+            }
+        }
+    } else {
+        // Legacy: LLM passed fields directly in --message JSON
+        let dtype = msg_str("deliverableType");
+        if dtype.is_empty() {
+            audit::log("cli", "buyer/deliverable_received_no_type", false, Duration::default(),
+                Some(base_tags.clone()), Some("no a2aFile and no deliverableType, fallback to LLM path"));
+            return deliverable_received(ctx);
+        }
+        match dtype {
+            "file" => {
+                let file_key = msg_str("fileKey");
+                let digest = msg_str("digest");
+                let salt = msg_str("salt");
+                let nonce = msg_str("nonce");
+                let secret = msg_str("secret");
+                let filename = message.and_then(|m| m.get("filename")).and_then(|v| v.as_str());
+                if file_key.is_empty() || digest.is_empty() || salt.is_empty()
+                    || nonce.is_empty() || secret.is_empty()
+                {
+                    audit::log("cli", "buyer/deliverable_file_missing_metadata", false, Duration::default(),
+                        Some(base_tags.clone()), Some("encryption metadata incomplete, fallback to LLM path"));
+                    return deliverable_received(ctx);
+                }
+                DeliverPayload::File {
+                    file_key: file_key.to_string(),
+                    digest: digest.to_string(),
+                    salt: salt.to_string(),
+                    nonce: nonce.to_string(),
+                    secret: secret.to_string(),
+                    filename: filename.map(|s| s.to_string()),
+                }
+            }
+            "text" => {
+                let inline_text = msg_str("text");
+                let file_path = msg_str("filePath");
+                if !inline_text.is_empty() {
+                    DeliverPayload::Text(inline_text.to_string())
+                } else if !file_path.is_empty() {
+                    let fp = std::path::Path::new(file_path);
+                    if !is_safe_temp_path(fp) {
+                        audit::log("cli", "buyer/deliverable_text_path_rejected", false, Duration::default(),
+                            Some(base_tags.clone()), Some("filePath not under temp dir"));
+                        return deliverable_received(ctx);
+                    }
+                    match std::fs::read_to_string(fp) {
+                        Ok(raw) => {
+                            match parse_deliver_content(&raw) {
+                                Some(DeliverPayload::Text(t)) => DeliverPayload::Text(t),
+                                _ => {
+                                    // File contains raw text without protocol framing
+                                    DeliverPayload::Text(raw.trim().to_string())
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            audit::log("cli", "buyer/deliverable_text_read_failed", false, Duration::default(),
+                                Some(base_tags.clone()), Some(&e.to_string()));
+                            return deliverable_received(ctx);
+                        }
+                    }
+                } else {
+                    audit::log("cli", "buyer/deliverable_text_no_content", false, Duration::default(),
+                        Some(base_tags.clone()), Some("neither a2aFile, text, nor filePath provided"));
+                    return deliverable_received(ctx);
+                }
+            }
+            _ => {
+                audit::log("cli", "buyer/deliverable_received_unknown_type", false, Duration::default(),
+                    Some([base_tags.clone(), vec![format!("type={dtype}")]].concat()), None);
+                return deliverable_received(ctx);
+            }
+        }
+    };
+
+    let dtype_str = match &payload { DeliverPayload::File { .. } => "file", DeliverPayload::Text(_) => "text" };
     audit::log("cli", "buyer/deliverable_received", true, Duration::default(),
-        Some([base_tags.clone(), vec![format!("type={dtype}")]].concat()), None);
+        Some([base_tags.clone(), vec![format!("type={dtype_str}")]].concat()), None);
 
     let (title, sym, amt, provider_id) = match ctx.prefetched {
         Some(p) => (
@@ -244,35 +445,14 @@ pub(crate) fn deliverable_received_cli(
         None => ("<title>", "<tokenSymbol>", "<tokenAmount>", ""),
     };
 
-    let msg_str = |key: &str| {
-        message
-            .and_then(|m| m.get(key))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-    };
-
-    let (saved_path, deliverable_type, text_content) = match dtype {
-        "file" => {
-            let file_key = msg_str("fileKey");
-            let digest = msg_str("digest");
-            let salt = msg_str("salt");
-            let nonce = msg_str("nonce");
-            let secret = msg_str("secret");
-            let filename = message.and_then(|m| m.get("filename")).and_then(|v| v.as_str());
-
-            if file_key.is_empty() || digest.is_empty() || salt.is_empty()
-                || nonce.is_empty() || secret.is_empty()
-            {
-                audit::log("cli", "buyer/deliverable_file_missing_metadata", false, Duration::default(),
-                    Some(base_tags.clone()), Some("encryption metadata incomplete, fallback to LLM path"));
-                return deliverable_received(ctx);
-            }
-
+    // ── Execute: download (file) or write tmp (text) → handle_save ──
+    let (saved_path, deliverable_type, text_content) = match payload {
+        DeliverPayload::File { ref file_key, ref digest, ref salt, ref nonce, ref secret, ref filename } => {
             audit::log("cli", "buyer/deliverable_file_download", true, Duration::default(),
                 Some([base_tags.clone(), vec![format!("fileKey={file_key}")]].concat()), None);
 
             let local_path = match okx_a2a::file_download(
-                file_key, agent_id, digest, salt, nonce, secret, filename,
+                file_key, agent_id, digest, salt, nonce, secret, filename.as_deref(),
             ) {
                 Ok(p) => {
                     audit::log("cli", "buyer/deliverable_file_downloaded", true, Duration::default(),
@@ -315,48 +495,11 @@ pub(crate) fn deliverable_received_cli(
                 }
             }
         }
-        "text" => {
-            let file_path = msg_str("filePath");
-            if file_path.is_empty() {
-                audit::log("cli", "buyer/deliverable_text_no_filepath", false, Duration::default(),
-                    Some(base_tags.clone()), Some("filePath missing, fallback to LLM path"));
-                return deliverable_received(ctx);
-            }
-            let fp = std::path::Path::new(file_path);
-            let tmp_dir = std::env::temp_dir();
-            if !fp.starts_with(&tmp_dir) {
-                audit::log("cli", "buyer/deliverable_text_path_rejected", false, Duration::default(),
-                    Some(base_tags.clone()), Some("filePath not under temp dir"));
-                eprintln!("[deliverable_received_cli] filePath must be under temp dir: {file_path}");
-                return deliverable_received(ctx);
-            }
-            let raw = match std::fs::read_to_string(fp) {
-                Ok(content) => content,
-                Err(e) => {
-                    audit::log("cli", "buyer/deliverable_text_read_failed", false, Duration::default(),
-                        Some(base_tags.clone()), Some(&e.to_string()));
-                    eprintln!("[deliverable_received_cli] read filePath failed: {e}");
-                    return deliverable_received(ctx);
-                }
-            };
-
-            // Extract text between first and last `- - -`. Use rfind for the
-            // closing separator so deliverable text containing `- - -` is preserved.
-            let text = if let Some(start) = raw.find("- - -") {
-                let after = start + 5;
-                let body = if let Some(rel_end) = raw[after..].rfind("- - -") {
-                    &raw[after..after + rel_end]
-                } else {
-                    &raw[after..]
-                };
-                body.trim().to_string()
-            } else {
-                raw.trim().to_string()
-            };
-
+        DeliverPayload::Text(text) => {
             audit::log("cli", "buyer/deliverable_text_parsed", true, Duration::default(),
                 Some([base_tags.clone(), vec![format!("charCount={}", text.chars().count())]].concat()), None);
 
+            let tmp_dir = std::env::temp_dir();
             let tmp_path = tmp_dir.join(format!("deliverable-text-{job_id}.txt"));
             if let Err(e) = std::fs::write(&tmp_path, &text) {
                 audit::log("cli", "buyer/deliverable_text_write_failed", false, Duration::default(),
@@ -392,11 +535,6 @@ pub(crate) fn deliverable_received_cli(
                     return deliverable_received(ctx);
                 }
             }
-        }
-        _ => {
-            audit::log("cli", "buyer/deliverable_received_unknown_type", false, Duration::default(),
-                Some([base_tags.clone(), vec![format!("type={dtype}")]].concat()), Some("unknown deliverableType, fallback to LLM path"));
-            return deliverable_received(ctx);
         }
     };
 
@@ -484,7 +622,7 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
         Some(1) => job_submitted_escrow(ctx),
         Some(3) => job_submitted_x402(ctx),
         _ => format!(
-            "⚠️ paymentMode could not be pre-fetched. Run `onchainos agent status {job}` first to determine paymentMode (1=escrow, 3=x402), then follow the matching branch below.\n\n\
+            "paymentMode could not be pre-fetched. Run `onchainos agent status {job}` first to determine paymentMode (1=escrow, 3=x402), then follow the matching branch below.\n\n\
              ━━━━━━━━━ paymentMode=1 (escrow) ━━━━━━━━━\n\n\
              {escrow}\n\n\
              ━━━━━━━━━ paymentMode=3 (x402) ━━━━━━━━━\n\n\
@@ -511,22 +649,56 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     let p = match ctx.prefetched {
         Some(p) => p,
         None => return format!(
-            "[job_submitted_escrow] ❌ no prefetched task context for job {job_id}; cannot run the review flow.\n\n\
+            "[job_submitted_escrow] no prefetched task context for job {job_id}; cannot run the review flow.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let provider_field: &str = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
-            "[job_submitted_escrow] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot run the review flow.\n\n\
+            "[job_submitted_escrow] prefetched task context has no providerAgentId for job {job_id}; cannot run the review flow.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
-    // Out-of-order handling: if the review marker exists, deliverable_received hasn't
-    // arrived yet (this is the first job_submitted with no deliverable). Return a
-    // lightweight "wait" prompt — deliverable_received_cli will detect the marker and
-    // output the review flow when it arrives.
-    if p.deliverable.is_none() && crate::commands::agent_commerce::task::common::deliverables::has_review_marker(job_id) {
+    // Out-of-order handling: prefetch doesn't include local deliverable info.
+    // Check the local manifest to decide: saved → populate & proceed, else → marker + wait.
+    if p.deliverable.is_none() {
+        use crate::commands::agent_commerce::task::common::deliverables;
+        if let Ok(Some(manifest)) = deliverables::read_manifest("buyer", job_id) {
+            if let Some(entry) = manifest.entries.last() {
+                let saved_path = deliverables::deliverables_dir("buyer", job_id)
+                    .map(|d| d.join(&entry.filename))
+                    .unwrap_or_default();
+                let text_content = if entry.deliverable_type == "text" {
+                    std::fs::read_to_string(&saved_path).ok()
+                } else {
+                    None
+                };
+                let mut patched = p.clone();
+                patched.deliverable = Some(crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
+                    path: saved_path.display().to_string(),
+                    deliverable_type: entry.deliverable_type.clone(),
+                    original_name: entry.original_name.clone(),
+                    text_content,
+                });
+                let patched_ctx = super::super::flow::FlowContext {
+                    job_id: ctx.job_id,
+                    agent_id: ctx.agent_id,
+                    short_id: ctx.short_id,
+                    title_display: ctx.title_display,
+                    title_query_hint: ctx.title_query_hint,
+                    title_in_extract: ctx.title_in_extract,
+                    terminal_session_hint: ctx.terminal_session_hint.clone(),
+                    payment_mode: ctx.payment_mode,
+                    prefetched: Some(&patched),
+                    data: ctx.data,
+                };
+                return job_submitted_escrow(&patched_ctx);
+            }
+        }
+        if !deliverables::has_review_marker(job_id) {
+            let _ = deliverables::write_review_marker(job_id);
+        }
         return format!(
             "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
              The review flow will auto-trigger when the deliverable is received.\n\
@@ -608,12 +780,12 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     );
 
     format!(
-    "🛑 MUST use `pending-decisions-v2 request` — NOT `onchainos agent user-notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\n\
+    "MUST use `pending-decisions-v2 request` — NOT `onchainos agent user-notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\n\
      [Your next actions (strict order)]\n\n\
      {step2}\
      **Step 3 — Compose `--user-content` and push decision card:**\n\n\
      Compose `--user-content` from Step 2's deliverable variables (fill placeholders from runtime values):\n\n\
-     ⚠️ `<localPath>` must be the full absolute path (e.g. /Users/xxx/…). Never abbreviate or shorten.\n\n\
+     `<localPath>` must be the full absolute path (e.g. /Users/xxx/…). Never abbreviate or shorten.\n\n\
      ▸ deliverableType=file:\n\
      ```\n\
      [Job {short_id}] The ASP has submitted the deliverable (file).\n\
@@ -655,14 +827,14 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
     let p = match ctx.prefetched {
         Some(p) => p,
         None => return format!(
-            "[job_submitted_x402] ❌ no prefetched task context for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
+            "[job_submitted_x402] no prefetched task context for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let provider_field: &str = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
-            "[job_submitted_x402] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
+            "[job_submitted_x402] prefetched task context has no providerAgentId for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
@@ -703,7 +875,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
     };
 
     format!(
-    "⚠️ x402: funds already paid; user cannot reject — notify + auto-rate only.\n\n\
+    "x402: funds already paid; user cannot reject — notify + auto-rate only.\n\n\
      [Your next actions (strict order)]\n\n\
      {step2}\
      **Step 3 — Auto-rate ASP, then notify user:**\n\n\
@@ -745,7 +917,7 @@ pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
     match super::super::complete::handle_complete(&mut client, job_id).await {
         Ok(()) => "**End this turn** and wait for the `job_completed` system notification.".to_string(),
         Err(e) => format!(
-            "[approve_review] ❌ `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
+            "[approve_review] `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     }
@@ -773,12 +945,12 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     match super::super::reject::handle_reject(&mut client, job_id, reason).await {
         Ok(()) => format!(
-            "[reject_review] ✅ `onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
-             ⚠️ broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (arbitration) or agree to a refund. The buyer cannot initiate arbitration.\n\
-             ❌ Do NOT send any message to the ASP about the rejection — they learn via on-chain events.\n"
+            "[reject_review] [OK]`onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
+             broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (arbitration) or agree to a refund. The buyer cannot initiate arbitration.\n\
+             Do NOT send any message to the ASP about the rejection — they learn via on-chain events.\n"
         ),
         Err(e) => format!(
-            "[reject_review] ❌ `onchainos agent reject {job_id} --reason \"{reason}\"` failed in-process: {e}\n\n\
+            "[reject_review] `onchainos agent reject {job_id} --reason \"{reason}\"` failed in-process: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     }
@@ -839,4 +1011,139 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, message: Option<&serde_json::
          **Step 3 — Wrap-up:**\n\
          {terminal_session_hint}\n"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_deliver_content ────────────────────────────────────────
+
+    #[test]
+    fn parse_file_deliver() {
+        let content = "\
+jobId: 0x5ea81a18be490d59f88cb2258b4d902d76a1b9848f9e4b452c1266ee40d34721
+deliverableType: file
+fileKey: 0x5ea81a18be490d59f88cb2258b4d902d76a1b9848f9e4b452c1266ee40d34721/0x5ea81a18be490d59f88cb2258b4d902d76a1b9848f9e4b452c1266ee40d34721-54333239-3175-43b5-b455-015eb8aa0ad5
+digest: 93f2c0186b237f10629873167217dfa173c3cbf5eebf4da71715871b16b31e0e
+salt: 4CyqL4avwltYQoBg8rZ/luUpISvDwVq9H2AGs2i5JOQ=
+nonce: 3qEw/DyUDt32EeA1
+secret: 6Y350QXsL+lsk3AyPVMl3UguwaLj+Dc7yAYU8FUpb6k=
+filename: argentina-wc-prediction.md
+[intent:deliver]";
+
+        let payload = parse_deliver_content(content).expect("should parse file deliver");
+        match payload {
+            DeliverPayload::File { file_key, digest, salt, nonce, secret, filename } => {
+                assert!(file_key.starts_with("0x5ea81a18"), "fileKey: {file_key}");
+                assert!(file_key.ends_with("015eb8aa0ad5"), "fileKey: {file_key}");
+                assert_eq!(digest, "93f2c0186b237f10629873167217dfa173c3cbf5eebf4da71715871b16b31e0e");
+                assert_eq!(salt, "4CyqL4avwltYQoBg8rZ/luUpISvDwVq9H2AGs2i5JOQ=");
+                assert_eq!(nonce, "3qEw/DyUDt32EeA1");
+                assert_eq!(secret, "6Y350QXsL+lsk3AyPVMl3UguwaLj+Dc7yAYU8FUpb6k=");
+                assert_eq!(filename.as_deref(), Some("argentina-wc-prediction.md"));
+            }
+            DeliverPayload::Text(_) => panic!("expected File, got Text"),
+        }
+    }
+
+    #[test]
+    fn parse_text_deliver() {
+        let content = "\
+jobId: 0x8bad8245e68c40b0199dd49918e88b79dc21c6cfc68f69f2819570552412e185
+deliverableType: text
+- - -
+onchain-arb 套利扫描报告
+===========================
+扫描时间: 2026-06-24 22:47 GMT+8
+📊 各代币价差全景
+LINK 🎯 | ETH | BTC
+- - -
+[intent:deliver]";
+
+        let payload = parse_deliver_content(content).expect("should parse text deliver");
+        match payload {
+            DeliverPayload::Text(text) => {
+                assert!(text.starts_with("onchain-arb"), "text starts with: {}", &text[..30]);
+                assert!(text.contains("LINK 🎯"), "should preserve emoji");
+                assert!(text.contains("📊"), "should preserve Unicode");
+                assert!(!text.contains("[intent:deliver]"), "should not include suffix");
+                assert!(!text.contains("- - -"), "should not include separators");
+                assert!(!text.contains("deliverableType"), "should not include header");
+            }
+            DeliverPayload::File { .. } => panic!("expected Text, got File"),
+        }
+    }
+
+    #[test]
+    fn parse_a2a_json_file_type() {
+        let a2a_json = r#"{
+  "msgType": "a2a-agent-chat",
+  "content": "jobId: 0x5ea8\ndeliverableType: file\nfileKey: abc123\ndigest: d1g\nsalt: s4lt\nnonce: n0nc\nsecret: s3cr\nfilename: report.md\n[intent:deliver]",
+  "sender": {"agentId": "1891"}
+}"#;
+        let json: serde_json::Value = serde_json::from_str(a2a_json).unwrap();
+        let content = json.get("content").unwrap().as_str().unwrap();
+        let payload = parse_deliver_content(content).expect("should parse from A2A JSON");
+        match payload {
+            DeliverPayload::File { file_key, digest, salt, nonce, secret, filename } => {
+                assert_eq!(file_key, "abc123");
+                assert_eq!(digest, "d1g");
+                assert_eq!(salt, "s4lt");
+                assert_eq!(nonce, "n0nc");
+                assert_eq!(secret, "s3cr");
+                assert_eq!(filename.as_deref(), Some("report.md"));
+            }
+            DeliverPayload::Text(_) => panic!("expected File"),
+        }
+    }
+
+    #[test]
+    fn parse_a2a_json_text_type() {
+        let a2a_json = r#"{
+  "content": "jobId: 0x8bad\ndeliverableType: text\n- - -\nHello World 🌍\nLine 2\n- - -\n[intent:deliver]"
+}"#;
+        let json: serde_json::Value = serde_json::from_str(a2a_json).unwrap();
+        let content = json.get("content").unwrap().as_str().unwrap();
+        let payload = parse_deliver_content(content).expect("should parse text from A2A JSON");
+        match payload {
+            DeliverPayload::Text(text) => {
+                assert_eq!(text, "Hello World 🌍\nLine 2");
+            }
+            DeliverPayload::File { .. } => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn parse_no_intent_deliver_returns_none() {
+        let content = "jobId: 0xabc\ndeliverableType: text\n- - -\nsome text\n- - -\n";
+        assert!(parse_deliver_content(content).is_none());
+    }
+
+    #[test]
+    fn parse_missing_fields_returns_none() {
+        let content = "jobId: 0xabc\ndeliverableType: file\nfileKey: k\n[intent:deliver]";
+        assert!(parse_deliver_content(content).is_none(), "missing digest/salt/nonce/secret");
+    }
+
+    #[test]
+    fn parse_text_with_internal_separator() {
+        let content = "\
+deliverableType: text
+- - -
+Part A
+- - -
+Part B continues
+- - -
+[intent:deliver]";
+        let payload = parse_deliver_content(content).expect("should handle internal separator");
+        match payload {
+            DeliverPayload::Text(text) => {
+                assert!(text.contains("Part A"), "should include Part A");
+                assert!(text.contains("- - -"), "internal separator preserved");
+                assert!(text.contains("Part B"), "should include Part B");
+            }
+            _ => panic!("expected Text"),
+        }
+    }
 }

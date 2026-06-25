@@ -87,6 +87,9 @@ impl CreateTaskParams {
             None => self.description.chars().take(MAX_SUMMARY_CHARS).collect(),
         };
 
+        if self.visibility != 0 && self.visibility != 1 {
+            bail!("--visibility must be 0 (public) or 1 (private), got {}", self.visibility);
+        }
         if self.visibility == 1 && self.provider.is_none() {
             bail!("visibility=1 (private) requires --provider; either set a provider or use --visibility 0 (public)");
         }
@@ -193,12 +196,7 @@ pub async fn handle_create(
         "paymentTokenAmount": params.budget.to_string(),
         "paymentMostTokenAmount": params.max_budget.to_string(),
         "chainId":            XLAYER_CHAIN_ID,
-        "paymentMode":        match params.payment_mode.as_deref() {
-            None => 0,
-            Some("escrow") => PaymentMode::Escrow.as_int(),
-            Some("x402") => PaymentMode::X402.as_int(),
-            Some(other) => bail!("unsupported --payment-mode \"{other}\"; valid values: escrow, x402"),
-        },
+        "paymentMode":        PaymentMode::parse_flag(params.payment_mode.as_deref())?,
         "visibility":         params.visibility
     });
     if let Some(ref provider_id) = params.provider {

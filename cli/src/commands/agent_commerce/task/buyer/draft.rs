@@ -10,7 +10,8 @@ use crate::audit;
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::{
-    self, network::task_api_client::TaskApiClient, DEBUG_LOG,
+    self, network::task_api_client::TaskApiClient,
+    payment_mode::PaymentMode, DEBUG_LOG,
 };
 use crate::commands::agent_commerce::task::signing;
 
@@ -35,7 +36,7 @@ fn draft_publish_path(job_id: &str) -> String {
     format!("/priapi/v1/aieco/task/draft/{job_id}/publish")
 }
 
-// ─── Validation (optional fields: only validate when present) ───────────
+// ─── Validation ─────────────────────────────────────────────────────────
 
 fn validate_title(title: &str) -> Result<()> {
     if title.is_empty() {
@@ -50,15 +51,31 @@ fn validate_title(title: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_description(desc: &str) -> Result<()> {
+    let len = desc.chars().count();
+    if len < MIN_DESCRIPTION_CHARS {
+        bail!("description is too short (minimum {MIN_DESCRIPTION_CHARS} chars, currently {len})");
+    }
+    if len > MAX_DESCRIPTION_CHARS {
+        bail!("description may not exceed {MAX_DESCRIPTION_CHARS} chars (currently {len})");
+    }
+    Ok(())
+}
+
 fn validate_description_opt(desc: Option<&str>) -> Result<()> {
     if let Some(d) = desc {
-        let len = d.chars().count();
-        if len < MIN_DESCRIPTION_CHARS {
-            bail!("description is too short (minimum {MIN_DESCRIPTION_CHARS} chars, currently {len})");
-        }
-        if len > MAX_DESCRIPTION_CHARS {
-            bail!("description may not exceed {MAX_DESCRIPTION_CHARS} chars (currently {len})");
-        }
+        validate_description(d)?;
+    }
+    Ok(())
+}
+
+fn validate_summary(summary: &str) -> Result<()> {
+    if summary.is_empty() {
+        bail!("description-summary must not be empty");
+    }
+    let len = summary.chars().count();
+    if len > MAX_SUMMARY_CHARS {
+        bail!("description-summary may not exceed {MAX_SUMMARY_CHARS} chars (currently {len})");
     }
     Ok(())
 }
@@ -76,10 +93,6 @@ fn validate_currency_opt(currency: Option<&str>) -> Result<Option<String>> {
         Some(c) => Ok(Some(normalize_currency(c)?)),
         None => Ok(None),
     }
-}
-
-fn make_summary(description: Option<&str>) -> Option<String> {
-    description.map(|d| d.chars().take(MAX_SUMMARY_CHARS).collect())
 }
 
 fn validate_draft_for_publish(detail: &serde_json::Value) -> Result<()> {
@@ -235,8 +248,8 @@ pub fn handle_validate_draft(
 pub async fn handle_draft_create(
     client: &mut TaskApiClient,
     title: &str,
-    description: Option<&str>,
-    description_summary: Option<&str>,
+    description: &str,
+    description_summary: &str,
     budget: Option<f64>,
     max_budget: Option<f64>,
     currency: Option<&str>,
@@ -246,9 +259,12 @@ pub async fn handle_draft_create(
     service_params: Option<&str>,
     service_token_address: Option<&str>,
     service_token_amount: Option<&str>,
+    payment_mode: Option<&str>,
+    visibility: i32,
 ) -> Result<()> {
     validate_title(title)?;
-    validate_description_opt(description)?;
+    validate_description(description)?;
+    validate_summary(description_summary)?;
     validate_budget_opt(budget)?;
     if let (Some(b), Some(mb)) = (budget, max_budget) {
         if mb < b {
@@ -257,6 +273,15 @@ pub async fn handle_draft_create(
     }
     validate_budget_opt(max_budget)?;
     let currency_norm = validate_currency_opt(currency)?;
+
+    if visibility != 0 && visibility != 1 {
+        bail!("--visibility must be 0 (public) or 1 (private), got {visibility}");
+    }
+    if visibility == 1 && provider.is_none() {
+        bail!("visibility=1 (private) requires --provider; either set a provider or use --visibility 0 (public)");
+    }
+
+    let payment_mode_int = PaymentMode::parse_flag(payment_mode)?;
 
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
@@ -280,21 +305,15 @@ pub async fn handle_draft_create(
         None
     };
 
-    let summary = description_summary.map(|s| s.to_string()).or_else(|| make_summary(description));
-
     let mut body = serde_json::json!({
         "title": title,
-        "paymentMode": 0,
-        "visibility": 1,
+        "description": description,
+        "descriptionSummary": description_summary,
+        "paymentMode": payment_mode_int,
+        "visibility": visibility,
     });
     let obj = body.as_object_mut().unwrap();
 
-    if let Some(d) = description {
-        obj.insert("description".into(), serde_json::json!(d));
-    }
-    if let Some(s) = &summary {
-        obj.insert("descriptionSummary".into(), serde_json::json!(s));
-    }
     if let Some(ref c) = currency_norm {
         obj.insert("paymentTokenSymbol".into(), serde_json::json!(c.to_uppercase()));
     }
@@ -433,15 +452,22 @@ pub async fn handle_draft_update(
     max_budget: Option<f64>,
     currency: Option<&str>,
     provider: Option<&str>,
+    attachments: Option<&[String]>,
     service_id: Option<&str>,
     service_params: Option<&str>,
     service_token_address: Option<&str>,
     service_token_amount: Option<&str>,
+    endpoint: Option<&str>,
+    payment_mode: Option<&str>,
+    visibility: Option<i32>,
 ) -> Result<()> {
     if let Some(t) = title {
         validate_title(t)?;
     }
     validate_description_opt(description)?;
+    if let Some(ds) = description_summary {
+        validate_summary(ds)?;
+    }
     validate_budget_opt(budget)?;
     if let (Some(b), Some(mb)) = (budget, max_budget) {
         if mb < b {
@@ -450,6 +476,21 @@ pub async fn handle_draft_update(
     }
     validate_budget_opt(max_budget)?;
     let currency_norm = validate_currency_opt(currency)?;
+
+    if let Some(v) = visibility {
+        if v != 0 && v != 1 {
+            bail!("--visibility must be 0 (public) or 1 (private), got {v}");
+        }
+        if v == 1 && provider.is_none() {
+            bail!("visibility=1 (private) requires --provider; either set a provider or use --visibility 0 (public)");
+        }
+    }
+
+    let payment_mode_int = if let Some(pm) = payment_mode {
+        Some(PaymentMode::parse_flag(Some(pm))?)
+    } else {
+        None
+    };
 
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
@@ -498,6 +539,15 @@ pub async fn handle_draft_update(
     if let Some(stm) = service_token_amount {
         body.insert("serviceTokenAmount".into(), serde_json::json!(stm));
     }
+    if let Some(ep) = endpoint {
+        body.insert("endpoint".into(), serde_json::json!(ep));
+    }
+    if let Some(pm) = payment_mode_int {
+        body.insert("paymentMode".into(), serde_json::json!(pm));
+    }
+    if let Some(v) = visibility {
+        body.insert("visibility".into(), serde_json::json!(v));
+    }
 
     if body.is_empty() {
         bail!("no fields specified for update; pass at least one of --title, --description, --budget, etc.");
@@ -505,6 +555,12 @@ pub async fn handle_draft_update(
 
     let body_val = serde_json::Value::Object(body);
     client.post_with_identity(&draft_update_path(job_id), &body_val, &buyer_agent_id).await?;
+
+    if let Some(files) = attachments {
+        if !files.is_empty() {
+            super::attachments::copy_attachments_to_job(job_id, files)?;
+        }
+    }
 
     audit::log(
         "cli",
@@ -813,29 +869,43 @@ mod tests {
         assert!(validate_currency_opt(Some("BTC")).is_err());
     }
 
-    // ── make_summary ────────────────────────────────────────────────
+    // ── validate_description (required) ──────────────────────────
 
     #[test]
-    fn summary_none_returns_none() {
-        assert_eq!(make_summary(None), None);
+    fn description_required_too_short_rejected() {
+        let d: String = "a".repeat(MIN_DESCRIPTION_CHARS - 1);
+        assert!(validate_description(&d).is_err());
     }
 
     #[test]
-    fn summary_short_text_unchanged() {
-        assert_eq!(make_summary(Some("hello world")), Some("hello world".to_string()));
+    fn description_required_exact_min_ok() {
+        let d: String = "a".repeat(MIN_DESCRIPTION_CHARS);
+        assert!(validate_description(&d).is_ok());
     }
 
     #[test]
-    fn summary_truncates_at_max() {
-        let text: String = "a".repeat(MAX_SUMMARY_CHARS + 50);
-        let result = make_summary(Some(&text)).unwrap();
-        assert_eq!(result.chars().count(), MAX_SUMMARY_CHARS);
+    fn description_required_over_max_rejected() {
+        let d: String = "a".repeat(MAX_DESCRIPTION_CHARS + 1);
+        assert!(validate_description(&d).is_err());
+    }
+
+    // ── validate_summary (required) ────────────────────────────────
+
+    #[test]
+    fn summary_within_limit_ok() {
+        assert!(validate_summary("hello world").is_ok());
     }
 
     #[test]
-    fn summary_exact_max_unchanged() {
-        let text: String = "b".repeat(MAX_SUMMARY_CHARS);
-        assert_eq!(make_summary(Some(&text)), Some(text));
+    fn summary_exact_max_ok() {
+        let s: String = "b".repeat(MAX_SUMMARY_CHARS);
+        assert!(validate_summary(&s).is_ok());
+    }
+
+    #[test]
+    fn summary_over_max_rejected() {
+        let s: String = "a".repeat(MAX_SUMMARY_CHARS + 1);
+        assert!(validate_summary(&s).is_err());
     }
 
     // ── cross-validation: both budget values individually valid ────
@@ -951,13 +1021,21 @@ mod tests {
     // ── draft create ────────────────────────────────────────────────
 
     #[test]
-    fn cli_create_title_only() {
-        let cli = TestCli::parse_from(["test", "create", "--title", "my task"]);
+    fn cli_create_required_fields_only() {
+        let cli = TestCli::parse_from([
+            "test", "create",
+            "--title", "my task",
+            "--description", "a valid description here",
+            "--description-summary", "summary",
+        ]);
         match cli.cmd {
-            super::super::DraftCommand::Create { title, description, budget, .. } => {
+            super::super::DraftCommand::Create { title, description, description_summary, budget, visibility, payment_mode, .. } => {
                 assert_eq!(title, "my task");
-                assert!(description.is_none());
+                assert_eq!(description, "a valid description here");
+                assert_eq!(description_summary, "summary");
                 assert!(budget.is_none());
+                assert_eq!(visibility, 1);
+                assert!(payment_mode.is_none());
             }
             _ => panic!("expected Create"),
         }
@@ -969,33 +1047,44 @@ mod tests {
             "test", "create",
             "--title", "full task",
             "--description", "a long description here",
+            "--description-summary", "short summary",
             "--budget", "50.5",
             "--max-budget", "100",
             "--currency", "USDT",
             "--provider", "agent-123",
             "--file", "/tmp/a.pdf",
             "--file", "/tmp/b.png",
+            "--payment-mode", "escrow",
+            "--visibility", "0",
         ]);
         match cli.cmd {
             super::super::DraftCommand::Create {
-                title, description, budget, max_budget,
-                currency, provider, attachments, ..
+                title, description, description_summary, budget, max_budget,
+                currency, provider, attachments, payment_mode, visibility, ..
             } => {
                 assert_eq!(title, "full task");
-                assert_eq!(description.as_deref(), Some("a long description here"));
+                assert_eq!(description, "a long description here");
+                assert_eq!(description_summary, "short summary");
                 assert_eq!(budget, Some(50.5));
                 assert_eq!(max_budget, Some(100.0));
                 assert_eq!(currency.as_deref(), Some("USDT"));
                 assert_eq!(provider.as_deref(), Some("agent-123"));
                 assert_eq!(attachments, Some(vec!["/tmp/a.pdf".to_string(), "/tmp/b.png".to_string()]));
+                assert_eq!(payment_mode.as_deref(), Some("escrow"));
+                assert_eq!(visibility, 0);
             }
             _ => panic!("expected Create"),
         }
     }
 
     #[test]
-    fn cli_create_missing_title_fails() {
+    fn cli_create_missing_required_fails() {
+        // missing --title
         assert!(TestCli::try_parse_from(["test", "create"]).is_err());
+        // missing --description
+        assert!(TestCli::try_parse_from(["test", "create", "--title", "t", "--description-summary", "s"]).is_err());
+        // missing --description-summary
+        assert!(TestCli::try_parse_from(["test", "create", "--title", "t", "--description", "d"]).is_err());
     }
 
     // ── draft list ──────────────────────────────────────────────────
@@ -1192,19 +1281,18 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // make_summary — CJK and edge cases
+    // validate_summary — CJK and edge cases
     // ═══════════════════════════════════════════════════════════════════
 
     #[test]
-    fn summary_cjk_truncates_by_chars() {
+    fn summary_cjk_over_max_rejected() {
         let text: String = "中".repeat(MAX_SUMMARY_CHARS + 10);
-        let result = make_summary(Some(&text)).unwrap();
-        assert_eq!(result.chars().count(), MAX_SUMMARY_CHARS);
+        assert!(validate_summary(&text).is_err());
     }
 
     #[test]
-    fn summary_empty_string_returns_some_empty() {
-        assert_eq!(make_summary(Some("")), Some(String::new()));
+    fn summary_empty_string_rejected() {
+        assert!(validate_summary("").is_err());
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1214,7 +1302,11 @@ mod tests {
     #[test]
     fn cli_create_single_attachment() {
         let cli = TestCli::parse_from([
-            "test", "create", "--title", "t", "--file", "/tmp/a.pdf",
+            "test", "create",
+            "--title", "t",
+            "--description", "desc for test",
+            "--description-summary", "sum",
+            "--file", "/tmp/a.pdf",
         ]);
         match cli.cmd {
             super::super::DraftCommand::Create { attachments, .. } => {
@@ -1226,7 +1318,12 @@ mod tests {
 
     #[test]
     fn cli_create_no_attachments() {
-        let cli = TestCli::parse_from(["test", "create", "--title", "t"]);
+        let cli = TestCli::parse_from([
+            "test", "create",
+            "--title", "t",
+            "--description", "desc for test",
+            "--description-summary", "sum",
+        ]);
         match cli.cmd {
             super::super::DraftCommand::Create { attachments, .. } => {
                 assert!(attachments.is_none());

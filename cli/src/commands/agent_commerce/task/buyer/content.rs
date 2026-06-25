@@ -220,7 +220,7 @@ pub fn job_auto_refunded_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobExpired` — job expired (B-7-1).
 pub fn job_expired_user_notify(job_id: &str) -> String {
     format!(
-        "[Job Expired] Job `{job_id}` has expired (no ASP accepted before the acceptance window expired, or no deliverable submitted before the delivery window expired). The job is now closed."
+        "[Job Expired] Job `{job_id}` has expired (no ASP accepted before the accept deadline, or no deliverable submitted before the submit deadline). The job is now closed."
     )
 }
 
@@ -284,18 +284,30 @@ pub fn set_public_user_notify(job_id: &str) -> String {
 
 /// `Event::SubmitExpired` — ASP missed the submit deadline (B-7-5).
 pub fn submit_expired_user_notify(job_id: &str) -> String {
-    format!(
-        "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund has been requested; funds will return to your wallet."
-    )
+    if is_cli_mode() {
+        format!(
+            "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund is in progress; funds will return to your wallet and a final refund-settled notice will follow shortly."
+        )
+    } else {
+        format!(
+            "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund has been requested; funds will return to your wallet."
+        )
+    }
 }
 
 // ── Event::RejectExpired ───────────────────────────────────────────
 
 /// `Event::RejectExpired` — ASP missed the dispute deadline (B-7-6).
 pub fn reject_expired_user_notify(job_id: &str) -> String {
-    format!(
-        "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund has been requested; funds will return to your wallet."
-    )
+    if is_cli_mode() {
+        format!(
+            "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund is in progress; funds will return to your wallet and a final refund-settled notice will follow shortly."
+        )
+    } else {
+        format!(
+            "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund has been requested; funds will return to your wallet."
+        )
+    }
 }
 
 // ── Event::ReviewDeadlineWarn ──────────────────────────────────────
@@ -308,32 +320,6 @@ pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String 
          Please decide soon:\n\
          A. Approve the deliverable\n\
          B. Reject the deliverable — please state your reason (if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator)"
-    )
-}
-
-// ── Event::ReviewExpired ───────────────────────────────────────────
-
-/// `Event::ReviewExpired` — review window expired (B-7-8).
-pub fn review_expired_user_notify(job_id: &str) -> String {
-    // CLI mode: drop " Waiting for the ASP's action..." — passive turn-end cue.
-    let trailing = if is_cli_mode() {
-        ""
-    } else {
-        " Waiting for the ASP's action..."
-    };
-    format!(
-        "[Review Expired] Job `{job_id}` — the review window has expired; you did not decide before the deadline.\n\
-         The ASP can now claim the funds automatically.{trailing}"
-    )
-}
-
-// ── Event::JobAutoCompleted ────────────────────────────────────────
-
-/// `Event::JobAutoCompleted` — job auto-completed (B-7-9).
-pub fn job_auto_completed_user_notify(job_id: &str, title: &str) -> String {
-    format!(
-        "[Job Auto-Completed] {title} (`{job_id}`) — the review window expired and the ASP has claimed the funds.\n\
-         Status: completed."
     )
 }
 
@@ -365,24 +351,6 @@ pub fn attachment_sent_user_notify() -> &'static str {
     "[Job <short_jobId>] Attachment sent to the ASP."
 }
 
-// ── Attachment (buyer → provider) ──────────────────────────────────
-
-/// File attachment peer message sent from the buyer sub session to the provider sub session.
-pub fn attachment_file_to_seller(job_id: &str) -> String {
-    format!(
-        "jobId: {job_id}\n\
-         attachmentType: file\n\
-         fileKey: <fileKey from `okx-a2a file upload` — FULL value, no truncation>\n\
-         digest: <digest — FULL hex string, no truncation>\n\
-         salt: <salt — FULL base64 string, no truncation>\n\
-         nonce: <nonce — FULL base64 string, no truncation>\n\
-         secret: <secret — FULL base64 string, no truncation (can be 100+ chars)>\n\
-         filename: <filename from `okx-a2a file upload`>\n\
-         description: This is an attachment/reference material for the task. The ASP should download it for task execution.\n\
-         [intent:attachment]"
-    )
-}
-
 // ── Escalation (preamble anomaly escalation) ───────────────────────
 
 /// Preamble escalation hard rule 1) protocol misalignment (B-6-1).
@@ -395,7 +363,7 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
 /// x402 replay success — deliverable received, awaiting on-chain confirmation.
 pub fn x402_replay_success_user_notify(job_id: &str) -> String {
     let trailing = if is_cli_mode() {
-        ""
+        "\n         On-chain confirmation is in progress. The job will auto-complete and a final completion notice will follow shortly."
     } else {
         "\n         Waiting for on-chain confirmation. The job will auto-complete once confirmed."
     };

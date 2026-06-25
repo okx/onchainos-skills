@@ -26,6 +26,14 @@ pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str, explici
         }
     };
 
+    // Step 1: reset ASP fields (asp, serviceId, serviceParams, serviceTokenAddress, serviceTokenAmount)
+    client.post_with_identity(
+        &client.endpoint(job_id, "reset/asp"),
+        &serde_json::json!({}),
+        &agent_id,
+    ).await?;
+
+    // Step 2: set visibility to public
     client.post_with_identity(
         &client.endpoint(job_id, "setVisibility"),
         &serde_json::json!({"visibility": 0}),
