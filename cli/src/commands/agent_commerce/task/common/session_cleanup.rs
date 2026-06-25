@@ -7,11 +7,18 @@ use super::okx_a2a;
 use super::pending_v2;
 use super::DEBUG_LOG;
 
-pub fn handle_session_cleanup(job_id: &str) -> Result<()> {
+/// `print_output = true` writes the human-readable summary to stdout — for
+/// CLI entry handlers whose stdout is consumed directly by a human / shell.
+/// In-process callers inside playbook handlers (e.g. `next-action` event
+/// dispatch) must pass `false`, otherwise the summary would prepend the
+/// playbook returned to the LLM.
+pub fn handle_session_cleanup(job_id: &str, print_output: bool) -> Result<()> {
     let cancelled = pending_v2::cancel_all_for_job(job_id).unwrap_or(0);
     if cancelled > 0 && DEBUG_LOG {
         eprintln!("[session-cleanup] cancelled {cancelled} pending decision(s) for job {job_id}");
     }
+
+    let _ = crate::commands::agent_commerce::task::buyer::negotiate::cleanup(job_id);
 
     let mut out = String::new();
     if super::config::keep_conversation_on_terminal() {
@@ -23,6 +30,8 @@ pub fn handle_session_cleanup(job_id: &str) -> Result<()> {
         }
     }
 
-    print!("{out}");
+    if print_output {
+        print!("{out}");
+    }
     Ok(())
 }
