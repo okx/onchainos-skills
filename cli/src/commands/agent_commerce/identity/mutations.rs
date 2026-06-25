@@ -33,7 +33,8 @@ use super::signing::{
 };
 use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
-    build_precheck, collect_owned_agents, ensure_provider_has_service, identity_ws_url,
+    build_precheck, collect_owned_agents, ensure_provider_has_avatar, ensure_provider_has_service,
+    identity_ws_url,
     normalize_bcp47, normalize_role, normalize_role_code, normalize_singleton_object,
     parse_agent_unsigned, parse_services, parse_stars_arg, reconstruct_post_url_for_log,
     redact_token_for_debug, require_non_empty, trim_or_empty, wallet_client,
@@ -125,6 +126,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         services: parse_services(args.service.as_deref())?,
     };
     ensure_provider_has_service(&card)?;
+    ensure_provider_has_avatar(&card)?;
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
         "fromAddr": from_addr,
