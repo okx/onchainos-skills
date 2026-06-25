@@ -252,6 +252,9 @@ pub enum GasStationStatus {
     InsufficientAll,
     /// A pending Gas Station transaction is blocking this one.
     HasPendingTx,
+    /// This transaction type (e.g. deposit, staking) is not eligible for Gas Station —
+    /// only transfer and swap are. The user must pay the network fee in native SOL.
+    NotSupportIntention,
     /// Enum value is unknown or empty — compatibility fallback for older backends.
     Unknown,
 }
@@ -275,6 +278,7 @@ impl GasStationStatus {
             Self::ReadyToUse => "READY_TO_USE",
             Self::InsufficientAll => "INSUFFICIENT_ALL",
             Self::HasPendingTx => "HAS_PENDING_TX",
+            Self::NotSupportIntention => "NOT_SUPPORT_INTENTION",
             Self::Unknown => "",
         }
     }
@@ -292,6 +296,7 @@ impl std::str::FromStr for GasStationStatus {
             "READY_TO_USE" => Self::ReadyToUse,
             "INSUFFICIENT_ALL" => Self::InsufficientAll,
             "HAS_PENDING_TX" => Self::HasPendingTx,
+            "NOT_SUPPORT_INTENTION" => Self::NotSupportIntention,
             _ => Self::Unknown,
         })
     }
@@ -499,6 +504,17 @@ impl UnsignedInfoResponse {
     /// Parse the backend's `gasStationStatus` string into the enum.
     pub fn gs_status(&self) -> GasStationStatus {
         GasStationStatus::parse(&self.gas_station_status)
+    }
+
+    /// True when the backend returned any signing material the client can act on
+    /// (native or Gas Station). Used to decide whether a terminal status can still proceed.
+    pub fn has_sign_material(&self) -> bool {
+        !self.hash.is_empty()
+            || !self.eip712_message_hash.is_empty()
+            || !self.unsigned_tx_hash.is_empty()
+            || !self.unsigned_tx.is_empty()
+            || !self.auth_hash_for7702.is_empty()
+            || !self.jito_unsigned_tx.is_empty()
     }
 
     /// Find the entry in `gas_station_token_list` whose `fee_token_address` matches
@@ -1994,6 +2010,13 @@ mod tests {
         assert_eq!(GasStationStatus::parse("READY_TO_USE"), GasStationStatus::ReadyToUse);
         assert_eq!(GasStationStatus::parse("INSUFFICIENT_ALL"), GasStationStatus::InsufficientAll);
         assert_eq!(GasStationStatus::parse("HAS_PENDING_TX"), GasStationStatus::HasPendingTx);
+        assert_eq!(GasStationStatus::parse("NOT_SUPPORT_INTENTION"), GasStationStatus::NotSupportIntention);
+        // Round-trip: as_str is the inverse of parse for the new variant.
+        assert_eq!(GasStationStatus::NotSupportIntention.as_str(), "NOT_SUPPORT_INTENTION");
+        assert_eq!(
+            GasStationStatus::parse(GasStationStatus::NotSupportIntention.as_str()),
+            GasStationStatus::NotSupportIntention
+        );
     }
 
     #[test]
@@ -2012,6 +2035,30 @@ mod tests {
 
         let empty: UnsignedInfoResponse = serde_json::from_str("{}").unwrap();
         assert_eq!(empty.gs_status(), GasStationStatus::Unknown);
+    }
+
+    #[test]
+    fn has_sign_material_detects_payload() {
+        let empty: UnsignedInfoResponse = serde_json::from_str("{}").unwrap();
+        assert!(!empty.has_sign_material());
+
+        let with_hash: UnsignedInfoResponse = serde_json::from_str(r#"{"hash": "0xabc"}"#).unwrap();
+        assert!(with_hash.has_sign_material());
+
+        let sol: UnsignedInfoResponse =
+            serde_json::from_str(r#"{"unsignedTxHash": "deadbeef"}"#).unwrap();
+        assert!(sol.has_sign_material());
+
+        // NOT_SUPPORT_INTENTION with a native payload is still signable.
+        let not_support_with_payload: UnsignedInfoResponse = serde_json::from_str(
+            r#"{"gasStationStatus": "NOT_SUPPORT_INTENTION", "unsignedTx": "AQAB"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            not_support_with_payload.gs_status(),
+            GasStationStatus::NotSupportIntention
+        );
+        assert!(not_support_with_payload.has_sign_material());
     }
 
     // ── Gas Station routing: match_default_sufficient_token ────────
