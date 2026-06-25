@@ -4,31 +4,36 @@
 //! backup-session prefetch) so on-chain event playbooks can dispatch
 //! `user-notify` immediately without an LLM translation round-trip.
 //!
-//! File: `~/.onchainos/task/<jobId>/prefilled-notify.json`
+//! File: `~/.onchainos/task/<jobId>/cache/prefilled-notify.json`
+//!
+//! The cache lives in a `cache/` subdirectory (not the per-job state dir root)
+//! so unrelated callers of `buyer::negotiate::cleanup()` — which deletes only
+//! regular files in the root, not subdirectories — cannot accidentally wipe
+//! it before its consumer events (e.g. `job_completed`) read it. Terminal-state
+//! cleanup is the only path that purges this cache, via `clear()` invoked by
+//! `session_cleanup`.
+//!
 //! Shape: `{ "<event_key>": "<translated content>", ... }`
-//! Cleanup: piggy-backs on `buyer::negotiate::cleanup()` (deletes all regular
-//! files under the per-job state dir), which is invoked by the `session-cleanup`
-//! CLI on terminal-state events.
 //!
 //! Keep this module storage-only — no event-specific knowledge. Callers pick
 //! their own `event_key` (e.g. `job_created_designated`).
 
 use anyhow::Result;
 
-fn state_dir(job_id: &str) -> Result<std::path::PathBuf> {
+fn cache_dir(job_id: &str) -> Result<std::path::PathBuf> {
     let home = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
-    Ok(home.join(".onchainos").join("task").join(job_id))
+    Ok(home.join(".onchainos").join("task").join(job_id).join("cache"))
 }
 
 fn cache_path(job_id: &str) -> Result<std::path::PathBuf> {
-    Ok(state_dir(job_id)?.join("prefilled-notify.json"))
+    Ok(cache_dir(job_id)?.join("prefilled-notify.json"))
 }
 
 /// Persist a pre-translated notification under `event_key`.
 /// Existing keys are preserved; the same key is overwritten.
 pub fn save(job_id: &str, event_key: &str, content: &str) -> Result<()> {
-    let dir = state_dir(job_id)?;
+    let dir = cache_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
     let path = cache_path(job_id)?;
     let mut map: serde_json::Map<String, serde_json::Value> = if path.exists() {
@@ -55,4 +60,14 @@ pub fn get(job_id: &str, event_key: &str) -> Result<Option<String>> {
         .and_then(|x| x.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string()))
+}
+
+/// Remove the cache file. Safe to call when the file does not exist.
+/// Invoked by `session_cleanup` on terminal-state events.
+pub fn clear(job_id: &str) -> Result<()> {
+    let path = cache_path(job_id)?;
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(())
 }

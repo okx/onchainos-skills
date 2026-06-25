@@ -5,6 +5,8 @@ use anyhow::Result;
 
 use super::okx_a2a;
 use super::pending_v2;
+use super::prefilled_notify;
+use super::prefilled_rating;
 use super::DEBUG_LOG;
 
 /// `print_output = true` writes the human-readable summary to stdout — for
@@ -18,7 +20,8 @@ pub fn handle_session_cleanup(job_id: &str, print_output: bool) -> Result<()> {
         eprintln!("[session-cleanup] cancelled {cancelled} pending decision(s) for job {job_id}");
     }
 
-    let _ = crate::commands::agent_commerce::task::buyer::negotiate::cleanup(job_id);
+    let _ = prefilled_notify::clear(job_id);
+    let _ = prefilled_rating::clear(job_id);
 
     let mut out = String::new();
     if super::config::keep_conversation_on_terminal() {

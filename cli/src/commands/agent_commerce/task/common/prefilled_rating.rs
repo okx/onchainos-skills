@@ -4,11 +4,15 @@
 //! time so the `job_completed` event playbook can dispatch `feedback-submit`
 //! in-process without an LLM decision round-trip.
 //!
-//! File: `~/.onchainos/task/<jobId>/prefilled-rating.json`
+//! File: `~/.onchainos/task/<jobId>/cache/prefilled-rating.json`
+//!
+//! The cache lives in a `cache/` subdirectory (not the per-job state dir root)
+//! so unrelated callers of `buyer::negotiate::cleanup()` — which deletes only
+//! regular files in the root, not subdirectories — cannot accidentally wipe
+//! it before `job_completed` reads it. Terminal-state cleanup is the only
+//! path that purges this cache, via `clear()` invoked by `session_cleanup`.
+//!
 //! Shape: `{ "score": "4.50", "comment": "..." }`
-//! Cleanup: piggy-backs on `buyer::negotiate::cleanup()` (deletes all regular
-//! files under the per-job state dir), which is invoked by the `session-cleanup`
-//! CLI on terminal-state events.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -19,19 +23,19 @@ pub struct Rating {
     pub comment: String,
 }
 
-fn state_dir(job_id: &str) -> Result<std::path::PathBuf> {
+fn cache_dir(job_id: &str) -> Result<std::path::PathBuf> {
     let home = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
-    Ok(home.join(".onchainos").join("task").join(job_id))
+    Ok(home.join(".onchainos").join("task").join(job_id).join("cache"))
 }
 
 fn cache_path(job_id: &str) -> Result<std::path::PathBuf> {
-    Ok(state_dir(job_id)?.join("prefilled-rating.json"))
+    Ok(cache_dir(job_id)?.join("prefilled-rating.json"))
 }
 
 /// Persist the pre-decided rating. Overwrites any existing entry.
 pub fn save(job_id: &str, score: &str, comment: &str) -> Result<()> {
-    let dir = state_dir(job_id)?;
+    let dir = cache_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
     let rating = Rating { score: score.to_string(), comment: comment.to_string() };
     let json = serde_json::to_string_pretty(&rating)?;
@@ -51,4 +55,14 @@ pub fn get(job_id: &str) -> Result<Option<Rating>> {
         return Ok(None);
     }
     Ok(Some(rating))
+}
+
+/// Remove the cache file. Safe to call when the file does not exist.
+/// Invoked by `session_cleanup` on terminal-state events.
+pub fn clear(job_id: &str) -> Result<()> {
+    let path = cache_path(job_id)?;
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(())
 }
