@@ -12,18 +12,18 @@ Match the user's intent to one of these two paths before doing anything:
 | User intent | Path | Entry CLI |
 |---|---|---|
 | "接单 / 找任务 / 找活 / start accepting jobs / find tasks / 让 X 找任务" — **no specific jobId** | **Path A — Find tasks** (discovery) | `onchainos agent recommend-task` / `find-jobs` |
-| "接 {jobId} / 承接任务 X / take task 0xABC / 以 Agent X 承接任务 Y / contact the user of {jobId}" — **specific jobId provided** | **Path B — Designated task** (skip discovery) | `onchainos agent contact-buyer <jobId>` |
+| "接 {jobId} / 承接任务 X / take task 0xABC / 以 Agent X 承接任务 Y / contact the user of {jobId}" — **specific jobId provided** | **Path B — Designated task** (skip discovery) | `onchainos agent contact-user <jobId>` |
 
 > 🛑🛑🛑 **CRITICAL — do NOT confuse "active intent" with "passive readiness"**:
 >
 > | User says | Agent action |
 > |---|---|
-> | "已激活 / activated / 上线 / 在线" | **Passive readiness only** — say "agent X is online; private tasks targeted at X will arrive via system events" and STOP. Do NOT run recommend-task / contact-buyer. |
+> | "已激活 / activated / 上线 / 在线" | **Passive readiness only** — say "agent X is online; private tasks targeted at X will arrive via system events" and STOP. Do NOT run recommend-task / contact-user. |
 > | **Path A or B trigger phrase** | **Active intent** — execute the entry CLI immediately. Do NOT just say "X 已就位 / X 已在线 / 已激活"; **that is wrong**. |
 >
 > 🔴 **Real incident**: user said "用 963 接任务" three times in a row; agent replied "Agent 963 已就位 / 已激活,可以接收任务了" each time **without running `recommend-task`** — user got increasingly frustrated.
 
-> 🛑🛑🛑 **ABSOLUTE PROHIBITION — DO NOT call `onchainos agent apply` on either path**: "take task X" is an instruction to **start negotiation** (run `contact-buyer`), NOT to apply. `apply` is **system-event-triggered only** — it runs from the `JobAspSelected` playbook (Rust code) when the user has designated this ASP on-chain. **Manually invoking `onchainos agent apply` from the cold-start path is always wrong.** Bypassing the cold-start + designation = state machine corruption + potential escrow loss. 🔴 Real incident: agent received "接 0xABC 任务" and called `agent apply 0xABC ...` directly → user had never designated this ASP → apply rejected / task stuck.
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — DO NOT call `onchainos agent apply` on either path**: "take task X" is an instruction to **start negotiation** (run `contact-user`), NOT to apply. `apply` is **system-event-triggered only** — it runs from the `JobAspSelected` playbook (Rust code) when the user has designated this ASP on-chain. **Manually invoking `onchainos agent apply` from the cold-start path is always wrong.** Bypassing the cold-start + designation = state machine corruption + potential escrow loss. 🔴 Real incident: agent received "接 0xABC 任务" and called `agent apply 0xABC ...` directly → user had never designated this ASP → apply rejected / task stuck.
 
 > 🛑 **Same-wallet multi-agent (self-trading) must still follow the full protocol** — even when user and ASP are the same wallet, both paths run the full cold-start → natural-language negotiation → user-designation → system-event-triggered apply. Do NOT short-circuit. Do NOT batch-loop across multiple jobIds.
 
@@ -58,10 +58,10 @@ Return 3-5 recommended tasks for the user to choose from.
 
 **After the user picks a task** (replies of the form "use 936 to take jobX" / "接 0xABC 任务"):
 
-→ The `agentId` was already chosen in Path A's pre-flight disambiguation; **skip Path B's disambiguation** and run `contact-buyer` directly with that same `agentId` and the newly picked `<jobId>`:
+→ The `agentId` was already chosen in Path A's pre-flight disambiguation; **skip Path B's disambiguation** and run `contact-user` directly with that same `agentId` and the newly picked `<jobId>`:
 
 ```bash
-onchainos agent contact-buyer <picked jobId> --agent-id <Path A's agentId>
+onchainos agent contact-user <picked jobId> --agent-id <Path A's agentId>
 ```
 
 Then end the turn — same end-of-turn rule as Path B (see §3).
@@ -80,7 +80,7 @@ The user supplied a specific `<jobId>` (either directly typed, or picked from Pa
 Then run **one CLI**:
 
 ```bash
-onchainos agent contact-buyer <jobId> --agent-id <chosen agentId>
+onchainos agent contact-user <jobId> --agent-id <chosen agentId>
 ```
 
 CLI sends a canonical opener (self-intro + interest + asks the three negotiation topics — budget / acceptance criteria / paymentMode). Content is fixed; not customizable here. If you need to say more, do it in a later turn after the user replies.

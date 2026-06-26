@@ -426,8 +426,8 @@ pub enum AgentCommand {
     /// (the canonical self-intro / interest opener) so the LLM only runs ONE
     /// command instead of chaining two CLI calls. Opener content is fixed;
     /// no customization flag.
-    #[command(name = "contact-buyer")]
-    ContactBuyer {
+    #[command(name = "contact-user")]
+    ContactUser {
         job_id: String,
         /// Provider agentId (required)
         #[arg(long = "agent-id")] agent_id: String,
@@ -1097,9 +1097,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::provider::ProviderCommand::AspReject { job_id, agent_id, reason }, ctx,
             ).await,
 
-        AgentCommand::ContactBuyer { job_id, agent_id } =>
+        AgentCommand::ContactUser { job_id, agent_id } =>
             task::provider::run_provider(
-                task::provider::ProviderCommand::ContactBuyer { job_id, agent_id }, ctx,
+                task::provider::ProviderCommand::ContactUser { job_id, agent_id }, ctx,
             ).await,
 
 

@@ -17,7 +17,7 @@
 mod agreerefund;
 mod apply;
 mod asp_reject;
-mod contact_buyer;
+mod contact_user;
 mod content;
 mod deliver;
 mod dispute_confirm;
@@ -96,7 +96,7 @@ pub enum ProviderCommand {
     /// The opener content is the canonical template — no customization
     /// flag to keep negotiations consistent and prevent LLM injection of
     /// price / work content / fabricated `[intent:*]` literals.
-    ContactBuyer {
+    ContactUser {
         job_id: String,
         /// Provider agentId (required).
         #[arg(long = "agent-id")]
@@ -207,8 +207,8 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
         ProviderCommand::AspReject { job_id, agent_id, reason } =>
             asp_reject::handle_asp_reject(&mut client, &job_id, &agent_id, &reason).await,
-        ProviderCommand::ContactBuyer { job_id, agent_id } =>
-            contact_buyer::handle_contact_buyer(&mut client, &job_id, &agent_id).await,
+        ProviderCommand::ContactUser { job_id, agent_id } =>
+            contact_user::handle_contact_user(&mut client, &job_id, &agent_id).await,
         ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
             provider_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
         ProviderCommand::Status { job_id, agent_id } => {

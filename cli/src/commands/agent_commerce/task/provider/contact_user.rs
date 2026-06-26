@@ -2,7 +2,7 @@
 //! to the User Agent in one shot.
 //!
 //! Provider action: contact the User Agent at the start of negotiation —
-//! `onchainos agent contact-buyer <jobId> --agent-id <id>`
+//! `onchainos agent contact-user <jobId> --agent-id <id>`
 //!
 //! Internally:
 //!   1. GET /task/{jobId}  → buyerAgentId + title
@@ -38,8 +38,8 @@ fn build_opener(task_title: &str, agent_id: &str) -> String {
     )
 }
 
-/// `contact-buyer` — proactive ASP cold-start: create the group, send the opener.
-pub async fn handle_contact_buyer(
+/// `contact-user` — proactive ASP cold-start: create the group, send the opener.
+pub async fn handle_contact_user(
     client: &mut TaskApiClient,
     job_id: &str,
     agent_id: &str,
@@ -75,7 +75,7 @@ pub async fn handle_contact_buyer(
 
     audit::log(
         "cli",
-        "provider/contact_buyer_submitted",
+        "provider/contact_user_submitted",
         true,
         Duration::default(),
         Some(vec![

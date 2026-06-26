@@ -594,11 +594,11 @@ pub async fn generate_next_action(
 
         // ─── Scene 1: task is on-chain (job_created) — provider takes no proactive
         // action on this raw event. The active discovery paths are `recommend-task` /
-        // `contact-buyer` (user-driven) and `JobAspSelected` (User Agent-designated). ────
+        // `contact-user` (user-driven) and `JobAspSelected` (User Agent-designated). ────
         Event::JobCreated => "[System notification] job_created (task is on-chain; no provider-side action)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              Silently ignore; end this turn.\n\
-             To accept tasks, use `recommend-task` / `contact-buyer`; if the User Agent designates this ASP a `job_asp_selected` event will arrive separately.\n".to_string(),
+             To accept tasks, use `recommend-task` / `contact-user`; if the User Agent designates this ASP a `job_asp_selected` event will arrive separately.\n".to_string(),
 
         // ─── Scene 1.5: User Agent designated this ASP for a private task ──────────
         Event::JobAspSelected => {

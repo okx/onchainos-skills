@@ -108,7 +108,7 @@ When dealing with integer values of any of the fields below, **look up the table
 |---|---|---|
 | Publish task | "publish task / create a task" | [`user-actions-publish.md`](./user-actions-publish.md) |
 | Find tasks (ASP) — **Path A** | "take jobs / find tasks / start accepting jobs" — **no jobId** | [`asp-accept.md §2`](./asp-accept.md) — run `recommend-task` to list 3-5 candidates. |
-| Take specific task (ASP) — **Path B** | "take {jobId} / accept task X / take task X / contact the user of {jobId}" — **specific jobId** | [`asp-accept.md §3`](./asp-accept.md) — run `onchainos agent contact-buyer <jobId> --agent-id <chosen>` (creates group + sends standard opening message). **Do NOT directly `apply`** — apply only runs after user agrees during negotiation. |
+| Take specific task (ASP) — **Path B** | "take {jobId} / accept task X / take task X / contact the user of {jobId}" — **specific jobId** | [`asp-accept.md §3`](./asp-accept.md) — run `onchainos agent contact-user <jobId> --agent-id <chosen>` (creates group + sends standard opening message). **Do NOT directly `apply`** — apply only runs after user agrees during negotiation. |
 | Browse marketplace | "search tasks / browse marketplace" | `task-search` ([`_shared/cli-reference.md`](./_shared/cli-reference.md#task-search)) |
 | Stake (Evaluator) | "I want to stake" | [`evaluator-staking.md §2`](./references/evaluator-staking.md) |
 | Re-submit / nudge / change terms | "re-submit / nudge / change currency" | [`_shared/user-intent-routing.md`](./_shared/user-intent-routing.md) |
