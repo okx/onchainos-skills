@@ -181,7 +181,7 @@ pub async fn handle_create(
             if DEBUG_LOG {
                 eprintln!("[task-create] ⚠ balance warning: {e}");
             }
-            Some(format!("⚠️ {e}"))
+            Some(e.to_string())
         }
         Ok(()) => None,
     };
@@ -275,6 +275,7 @@ pub async fn handle_create(
     println!();
     if let Some(ref warning) = balance_warning {
         println!();
+        println!("Advisory (NOT an error; task is on-chain; do NOT re-run create-task; the ASP may or may not apply — do NOT promise the user it will). Top up so the escrow can lock if the ASP applies:");
         println!("{warning}");
     }
     // In CLI mode (Claude Code / Codex), skip the "Next: wait for ..." hint —
