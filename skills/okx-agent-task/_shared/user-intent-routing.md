@@ -89,15 +89,15 @@ Triggers (only when there's no active card the user might be answering):
 
 ## Entry intents (start something new)
 
-| Intent | Action | Detail |
-|---|---|---|
+| Intent                                                                        | Action | Detail |
+|-------------------------------------------------------------------------------|---|---|
 | Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role user --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | user publish flow |
-| Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → designated-provider flow | [`user-actions-publish.md`](../user-actions-publish.md) §5 |
-| Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs` | [`asp-accept.md`](../asp-accept.md) §2 (Path A). Do NOT route to `task-search`. | asp-accept.md §2 |
-| Take specific task (ASP) — `接 {jobId}` / `contact the User Agent of {jobId}` | `onchainos agent contact-user <jobId> --agent-id <chosen agentId>` (single CLI: session create + canonical opener) | asp-accept.md §3 |
-| Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务` | `onchainos agent task-search` | [`cli-reference.md#task-search`](./cli-reference.md#task-search) |
-| Stake (Evaluator) — `I want to stake` | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`evaluator-staking.md §2`](../references/evaluator-staking.md) |
-| Direct help — "help me check…" **without** hiring intent | Route to appropriate skill; do NOT suggest task creation | — |
+| Designate an ASP — `指定卖家` / `use the service of Agent X`                      | Gather params → designated-provider flow | [`user-actions-publish.md`](../user-actions-publish.md) §5 |
+| Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs`                      | [`asp-accept.md`](../asp-accept.md) §2 (Path A). Do NOT route to `task-search`. | asp-accept.md §2 |
+| Take specific task (ASP) — `接 {jobId}` / `contact the User Agent of {jobId}`  | `onchainos agent contact-user <jobId> --agent-id <chosen agentId>` (single CLI: session create + canonical opener) | asp-accept.md §3 |
+| Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务`                | `onchainos agent task-search` | [`cli-reference.md#task-search`](./cli-reference.md#task-search) |
+| Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`evaluator-staking.md §2`](../references/evaluator-staking.md) |
+| Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |
 
 ⚠️ **Disambig — `接单` vs `搜索任务`**: skill-profile match ("用 X 接单") → `recommend-task`; explicit filters → `task-search`.
 🛑 **ASP constraint**: "take task X" → must run `onchainos agent contact-user <jobId>` (cold-start opener) and wait for user designation; do NOT directly `apply` — `apply` is `JobAspSelected`-system-event-triggered only.
