@@ -16,17 +16,17 @@ Backend `status` int field → local `Status` enum mapping (`state_machine.rs::S
 |---|---|---|---|---|
 | `-1` | `init` | `Status::Init` | Internal initialization state | — |
 | `0` | `created` | `Status::Created` | Task on-chain, awaiting acceptance | `job_created` |
-| `1` | `accepted` | `Status::Accepted` | Buyer confirmed acceptance (funds escrowed) | `job_accepted` |
+| `1` | `accepted` | `Status::Accepted` | User confirmed acceptance (funds escrowed) | `job_accepted` |
 | `2` | `submitted` | `Status::Submitted` | Provider deliverable on-chain | `job_submitted` |
-| `3` | `rejected` | `Status::Rejected` | Buyer rejected deliverable; 24h decision window (dispute / agree-refund) | `job_rejected` |
+| `3` | `rejected` | `Status::Rejected` | User rejected deliverable; 24h decision window (dispute / agree-refund) | `job_rejected` |
 | `4` | `disputed` | `Status::Disputed` | Dispute in progress (evidence period + commit/reveal) | `job_disputed` |
 | `5` | `admin_stopped` | `Status::AdminStopped` | Terminal: admin-stopped by the platform | — |
 | `6` | `completed` | `Status::Completed` | Terminal: task completed (normal acceptance / dispute won by provider / review timeout auto-complete) | `job_completed` or `job_auto_completed` |
-| `7` | `close` | `Status::Close` | Terminal: buyer proactively closed during `created` stage | `job_closed` |
+| `7` | `close` | `Status::Close` | Terminal: user proactively closed during `created` stage | `job_closed` |
 | `8` | `expired` | `Status::Expired` | Terminal: created stage timeout, auto-closed by backend | `job_expired` |
-| `9` | `failed` | `Status::Failed` | Terminal: funds refunded to buyer (agree-refund / dispute won by buyer / submit/reject timeout auto-refund) | `job_refunded` or `job_auto_refunded` |
+| `9` | `failed` | `Status::Failed` | Terminal: funds refunded to user (agree-refund / dispute won by user / submit/reject timeout auto-refund) | `job_refunded` or `job_auto_refunded` |
 
-> ⚠️ **`Status::Failed` (int 9) is the "refunded" terminal state** — backend naming is `FAILED`, and in the task flow it means funds have been returned to the buyer. The Mermaid diagram below uses `refunded` as the friendly name for this state.
+> ⚠️ **`Status::Failed` (int 9) is the "refunded" terminal state** — backend naming is `FAILED`, and in the task flow it means funds have been returned to the user. The Mermaid diagram below uses `refunded` as the friendly name for this state.
 >
 > ⚠️ **There is no `applied` status** — `provider_applied` is an event; when it fires, status is still `created`. Similarly when `dispute_approved` fires, status is still `rejected` (dispute phase 1 approve). Events are just "what just happened" — they don't necessarily change status.
 

@@ -26,7 +26,7 @@ User-session needs to forward free-form user instructions targeting a specific t
      --content '<user verbatim>
 
    ---
-   Reply to the user via `onchainos agent user-notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `buyer-sub-playbook.md` §Communication Contract).'
+   Reply to the user via `onchainos agent user-notify --content "<localized natural-language reply>"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `user-sub-playbook.md` §Communication Contract).'
    ```
 
    Forward verbatim then append reply-path instruction. End turn.
@@ -91,16 +91,16 @@ Triggers (only when there's no active card the user might be answering):
 
 | Intent | Action | Detail |
 |---|---|---|
-| Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role buyer --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | buyer publish flow |
-| Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → designated-provider flow | [`buyer-actions-publish.md`](../buyer-actions-publish.md) §5 |
+| Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role buyer --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | user publish flow |
+| Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → designated-provider flow | [`user-actions-publish.md`](../user-actions-publish.md) §5 |
 | Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs` | [`asp-accept.md`](../asp-accept.md) §2 (Path A). Do NOT route to `task-search`. | asp-accept.md §2 |
-| Take specific task (ASP) — `接 {jobId}` / `contact the buyer of {jobId}` | `onchainos agent contact-buyer <jobId> --agent-id <chosen agentId>` (single CLI: session create + canonical opener) | asp-accept.md §3 |
+| Take specific task (ASP) — `接 {jobId}` / `contact the user of {jobId}` | `onchainos agent contact-buyer <jobId> --agent-id <chosen agentId>` (single CLI: session create + canonical opener) | asp-accept.md §3 |
 | Browse marketplace — `搜索任务` / `browse marketplace` / `按关键字搜任务` | `onchainos agent task-search` | [`cli-reference.md#task-search`](./cli-reference.md#task-search) |
 | Stake (Evaluator) — `I want to stake` | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`evaluator-staking.md §2`](../references/evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent | Route to appropriate skill; do NOT suggest task creation | — |
 
 ⚠️ **Disambig — `接单` vs `搜索任务`**: skill-profile match ("用 X 接单") → `recommend-task`; explicit filters → `task-search`.
-🛑 **ASP constraint**: "take task X" → must run `onchainos agent contact-buyer <jobId>` (cold-start opener) and wait for buyer designation; do NOT directly `apply` — `apply` is `JobAspSelected`-system-event-triggered only.
+🛑 **ASP constraint**: "take task X" → must run `onchainos agent contact-buyer <jobId>` (cold-start opener) and wait for user designation; do NOT directly `apply` — `apply` is `JobAspSelected`-system-event-triggered only.
 
 ---
 
@@ -110,7 +110,7 @@ Triggers (only when there's no active card the user might be answering):
 |---|---|
 | **Chain-state snapshot** — `查询任务 {jobId}` / `what's the status of {jobId}` | `onchainos agent status <jobId>`. User session answers directly. |
 | **Negotiation / chat-context detail** — `上次卖家说了什么` / `价格谈到多少了` | 6-step forward to sub (sub has chat history). |
-| `view deliverables` / `查看交付物` | `task-deliverable-list [--job-id <jobId>] --role <buyer\|provider>` |
+| `view deliverables` / `查看交付物` | `task-deliverable-list [--job-id <jobId>] --role <buyer|provider>` |
 | `upload evidence` / `补证据` | **Friendly-reject** — evidence auto-submitted by CLI on `job_disputed`. |
 
 ---

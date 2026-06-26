@@ -1,6 +1,6 @@
-# Buyer Sub-Session Playbook
+# User Sub-Session Playbook
 
-> Self-contained reference for buyer sub-sessions (task sub and backup sub). User-session flows (publishing, intent routing, decision resolve) are in `buyer-user.md` and are NOT covered here.
+> Self-contained reference for user sub-sessions (task sub and backup sub). User-session flows (publishing, intent routing, decision resolve) are in `user-playbook.md` and are NOT covered here.
 
 > 🌐 **[Localization]** — all `onchainos agent user-notify` / `pending-decisions-v2 request` content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure.
 
@@ -34,7 +34,7 @@ System events (`message.source == "system"`) → follow SKILL.md `## Activation`
 
 ## Peer Message Routing
 
-> Applies to a2a-agent-chat with `sender.role === 2` (you are buyer). Extract: `jobId` / `groupId` / `sender.agentId` (provider's) / `fromXmtpAddress`.
+> Applies to a2a-agent-chat with `sender.role === 2` (you are user). Extract: `jobId` / `groupId` / `sender.agentId` (provider's) / `fromXmtpAddress`.
 
 Match by priority — stop at first hit:
 

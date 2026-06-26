@@ -144,7 +144,7 @@ pub(crate) async fn provider_conversation_pick_cli(
 fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
     let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. \
         This prefetch message itself requires no action — but when the NEXT inbound message arrives \
-        (same turn or later turn), you MUST process it normally via buyer-sub-playbook.md \
+        (same turn or later turn), you MUST process it normally via user-sub-playbook.md \
         §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
 
     format!(

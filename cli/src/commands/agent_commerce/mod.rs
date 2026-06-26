@@ -354,7 +354,7 @@ pub enum AgentCommand {
     /// to current account). Wrapper over `agent get-agents --agent-ids` that flattens
     /// the `list[].agentList[]` nesting and returns the matched agent as a
     /// single flat object. Used for verifying peer / designated provider
-    /// identities (e.g. buyer-sub-playbook.md Provider validation).
+    /// identities (e.g. user-sub-playbook.md Provider validation).
     ///
     /// `ok: false` when not found / agentId malformed; otherwise `data` is
     /// the agent object `{agentId, name, role, status, ownerAddress,

@@ -55,11 +55,11 @@ When the inbound message is a structured envelope (not free-form user text), mat
 
 | Envelope shape | Action |
 |---|---|
-| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** load `skills/okx-agent-task/SKILL.md` → §Activation #2: check `sender.role` → load `buyer-sub-playbook.md` (if role=2) or `provider.md` (if role=1). This is a task lifecycle message, not a chat. |
+| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** load `skills/okx-agent-task/SKILL.md` → §Activation #2: check `sender.role` → load `user-sub-playbook.md` (if role=2) or `provider.md` (if role=1). This is a task lifecycle message, not a chat. |
 | `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** load `skills/okx-agent-task/SKILL.md` → §Activation #1: call `next-action --role auto`. This is a chain event notification. |
 | Contains `"Please send a request to this endpoint."` | Route to `okx-agent-payments-protocol` skill. |
 
-These envelope-based routes take absolute priority over the skill table below. Do NOT handle these envelopes with only XMTP tools — the task protocol (buyer-sub-playbook.md / provider.md / evaluator.md) defines the required behavior.
+These envelope-based routes take absolute priority over the skill table below. Do NOT handle these envelopes with only XMTP tools — the task protocol (user-sub-playbook.md / provider.md / evaluator.md) defines the required behavior.
 
 ## Available Skills
 
@@ -106,7 +106,7 @@ When the user names a third-party DApp/protocol as the destination of an action,
 **Before running ANY `onchainos` CLI command, you MUST first read the corresponding skill's SKILL.md to get the exact command syntax.** Do NOT guess subcommand names — each skill defines its own Command Index with the exact subcommands available. Guessing leads to `unrecognized subcommand` errors.
 
 Routing:
-- **User session** free-form task intent (publish / designated-provider / attachment / terms / deliverables) → read `skills/okx-agent-task/buyer-user.md` ONLY. ❌ Do NOT additionally read `SKILL.md` or `buyer-sub-playbook.md` — those are for sub sessions and will bloat the context
+- **User session** free-form task intent (publish / designated-provider / attachment / terms / deliverables) → read `skills/okx-agent-task/user-playbook.md` ONLY. ❌ Do NOT additionally read `SKILL.md` or `user-sub-playbook.md` — those are for sub sessions and will bloat the context
 - Inbound `a2a-agent-chat` with `jobId` → read `skills/okx-agent-task/SKILL.md` first (see Inbound Message Routing above)
 - User says `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `历史消息` / `历史记录` / `过去消息` / `帮我看看之前的历史消息` / `未读消息` / `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理` / `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching` / `show past messages` / `catch me up on tasks` / `outstanding decisions` / `pending decisions` → read `skills/okx-task-watch/SKILL.md` first (watch drains pending queue first then long-polls for live monitoring; outdated-list batch-renders un-replied decisions on demand)
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first

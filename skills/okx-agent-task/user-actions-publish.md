@@ -1,6 +1,6 @@
-# Buyer — Publishing a Task
+# User — Publishing a Task
 
-> 🛑 **Pre-requisite**: read `buyer-user.md` first. 🌐 All user-facing content must match the user's language.
+> 🛑 **Pre-requisite**: read `user-playbook.md` first. 🌐 All user-facing content must match the user's language.
 > 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually before execution. Multiple changes → split into steps, confirm each.
 
 ---
@@ -25,7 +25,7 @@ Follow the returned script verbatim. The confirmation form format is in **Append
 
 > **Session**: user session
 
-**Draft status**: `status = -1` (off-chain). Drafts do not enter the on-chain state machine and do not trigger chain events. Only after `draft publish` does the task enter the normal `job_created` → buyer flow.
+**Draft status**: `status = -1` (off-chain). Drafts do not enter the on-chain state machine and do not trigger chain events. Only after `draft publish` does the task enter the normal `job_created` → user flow.
 
 **Trigger**: "save as draft" / "draft list" / "update draft" / "delete draft" / "publish draft"
 

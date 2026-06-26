@@ -1,6 +1,6 @@
-# Buyer — User-Session Actions
+# User — User-Session Actions
 
-> 🛑 **Pre-requisite**: read `buyer-user.md` first. 🌐 All user-facing content must match the user's language.
+> 🛑 **Pre-requisite**: read `user-playbook.md` first. 🌐 All user-facing content must match the user's language.
 > 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually before execution. Multiple changes in one sentence → split into steps, confirm each. ❌ Batch-executing = user cannot review.
 
 ---
@@ -90,7 +90,7 @@
 
 ### 3.4 Other non-terms input
 
-User messages unrelated to terms → sync to the Client session as context; do NOT trigger any API.
+User messages unrelated to terms → sync to the user session as context; do NOT trigger any API.
 
 ---
 
@@ -98,7 +98,7 @@ User messages unrelated to terms → sync to the Client session as context; do N
 
 The user wants to see saved deliverables from completed or in-progress tasks.
 
-> This section applies to both buyer and provider roles. Use `--role buyer` or `--role provider` based on the current role.
+> This section applies to both user and provider roles. Use `--role buyer` or `--role provider` based on the current role.
 
 **Trigger**: "view deliverables", "my deliverables", "查看交付物", "交付物列表", "show deliverable for job X"
 

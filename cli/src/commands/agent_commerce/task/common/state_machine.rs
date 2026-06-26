@@ -296,7 +296,7 @@ pub enum Event {
     DeliverableReceived,
 
     // ── Negotiation relay events (buyer-local dispatch, no status change) ─
-    /// Provider's natural-language reply; buyer-sub-playbook.md Route 6 → negotiate_reply.
+    /// Provider's natural-language reply; user-sub-playbook.md Route 6 → negotiate_reply.
     NegotiateReply,
 
     // ── Network / restart recovery events (pass-through, no status change) ─

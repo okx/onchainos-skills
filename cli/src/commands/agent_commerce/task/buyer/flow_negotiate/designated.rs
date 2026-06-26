@@ -83,7 +83,7 @@ pub(crate) fn branch_a2a_cli(
     // B-Step 1.5 — SKILL_PREFETCH: pre-load the buyer playbook into the
     // freshly created sub session so its first inbound message has the
     // correct context. Fire-and-forget (--no-wait baked into helper).
-    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via buyer-sub-playbook.md §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
+    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via user-sub-playbook.md §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
     if let Err(e) = okx_a2a::session_send(job_id, Some(dp_id), prefetch) {
         return Some(format!("[branch_a2a_cli] ERROR: okx-a2a session send (SKILL_PREFETCH) failed: {e}\n"));
     }

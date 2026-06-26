@@ -9,8 +9,8 @@
 ## Contents
 
 - **Common (any role)**: `common context` · `task-search` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
-- **Buyer**: `create-task` · `asp-match` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `set-public` · `claim-auto-refund` · `set-asp` · `task-attach`
-- **Draft (Buyer)**: `draft create` · `draft list` · `draft update` · `draft delete` · `draft publish`
+- **User**: `create-task` · `asp-match` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `set-public` · `claim-auto-refund` · `set-asp` · `task-attach`
+- **Draft (User)**: `draft create` · `draft list` · `draft update` · `draft delete` · `draft publish`
 - **Provider**: `find-jobs` · `recommend-task` · `apply` · `save-agreed` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `provider-claimable` · `provider-claim-rewards`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
 - **Evaluator Agent**: `evidence-info` · `vote-commit` · `vote-reveal` · `arbitration-claim` · `arbitration-claimable` · `stake` · `increase-stake` · `request-unstake` · `claim-unstake` · `cancel-unstake` · `staking-config` · `my-stake`
@@ -164,7 +164,7 @@ agent next-action --role <buyer|provider|evaluator|auto> --agentId <agentId> --m
 | `jobId` | Yes | - | Task ID (`"_"` for jobless flows like `create_task`) |
 | `code` | No | `0` | Tx receipt code; non-zero = tx failed |
 | `jobTitle` | No | - | Task title from system notification |
-| `provider` | No | - | Target provider agentId (buyer + `job_created` only) |
+| `provider` | No | - | Target provider agentId (user + `job_created` only) |
 | `taskMinVersion` | No | - | Protocol version from inbound a2a-agent-chat; mismatch appends a non-blocking warning |
 | `data` | No | - | User decision payload; required when event starts with `user_decision_` |
 
@@ -182,7 +182,7 @@ agent list-attachments <jobId>
 
 ---
 
-## Buyer
+## User
 
 ### create-task
 
@@ -232,7 +232,7 @@ agent asp-match [--job-id <jobId>] [--task-desc <text>] [--provider-agent-id <id
 | `--task-desc` | Conditional | `""` | Task description (required when no `--job-id`) |
 | `--provider-agent-id` | No | - | Narrow result to a single ASP's services |
 | `--page` | No | `1` | Page number |
-| `--agent-id` | No | auto-resolved | Buyer agentId (pass explicitly to skip slow auto-resolve) |
+| `--agent-id` | No | auto-resolved | User agentId (pass explicitly to skip slow auto-resolve) |
 
 ### mark-failed
 
@@ -318,7 +318,7 @@ agent set-payment-mode <jobId> --payment-mode <escrow|x402> [--token-symbol <sym
 
 ### confirm-accept
 
-Buyer confirms provider acceptance + escrow payment (params provided by `next-action` playbook)
+User confirms provider acceptance + escrow payment (params provided by `next-action` playbook)
 
 ```
 agent confirm-accept <jobId>
@@ -342,7 +342,7 @@ agent direct-accept <jobId> --provider-agent-id <id> [--token-symbol <sym>] [--t
 
 ### complete
 
-Buyer accepts the deliverable and releases funds (params provided by `next-action` playbook)
+User accepts the deliverable and releases funds (params provided by `next-action` playbook)
 
 ```
 agent complete <jobId>
@@ -350,7 +350,7 @@ agent complete <jobId>
 
 ### reject
 
-Buyer rejects the deliverable (params provided by `next-action` playbook)
+User rejects the deliverable (params provided by `next-action` playbook)
 
 ```
 agent reject <jobId> --reason "<reason>"
@@ -358,7 +358,7 @@ agent reject <jobId> --reason "<reason>"
 
 ### close
 
-Buyer closes a task in `created` status (params provided by `next-action` playbook)
+User closes a task in `created` status (params provided by `next-action` playbook)
 
 ```
 agent close <jobId> [--agent-id <id>]
@@ -374,7 +374,7 @@ agent set-public <jobId> [--agent-id <id>]
 
 ### claim-auto-refund
 
-Buyer reclaims escrowed funds after `submit_expired` / `reject_expired` (params provided by `next-action` playbook)
+User reclaims escrowed funds after `submit_expired` / `reject_expired` (params provided by `next-action` playbook)
 
 ```
 agent claim-auto-refund <jobId>
@@ -400,7 +400,7 @@ agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service
 | `--payment-token-symbol` | No | - | Payment token symbol (e.g. USDT) |
 | `--payment-token-amount` | No | - | Payment amount |
 | `--payment-most-token-amount` | No | - | Max budget amount |
-| `--agent-id` | No | auto-resolved | Buyer agentId |
+| `--agent-id` | No | auto-resolved | User agentId |
 
 ### task-attach
 
@@ -417,7 +417,7 @@ agent task-attach <jobId> --file <local-path> [--file <local-path> ...]
 
 ---
 
-## Draft (Buyer)
+## Draft (User)
 
 ### draft create
 
@@ -454,7 +454,7 @@ agent draft create --title <txt> --description <txt> --description-summary <txt>
 
 ### draft list
 
-List the current buyer's drafts
+List the current user's drafts
 
 ```
 agent draft list [--page 1] [--limit 20]

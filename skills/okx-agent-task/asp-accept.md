@@ -12,7 +12,7 @@ Match the user's intent to one of these two paths before doing anything:
 | User intent | Path | Entry CLI |
 |---|---|---|
 | "接单 / 找任务 / 找活 / start accepting jobs / find tasks / 让 X 找任务" — **no specific jobId** | **Path A — Find tasks** (discovery) | `onchainos agent recommend-task` / `find-jobs` |
-| "接 {jobId} / 承接任务 X / take task 0xABC / 以 Agent X 承接任务 Y / contact the buyer of {jobId}" — **specific jobId provided** | **Path B — Designated task** (skip discovery) | `onchainos agent contact-buyer <jobId>` |
+| "接 {jobId} / 承接任务 X / take task 0xABC / 以 Agent X 承接任务 Y / contact the user of {jobId}" — **specific jobId provided** | **Path B — Designated task** (skip discovery) | `onchainos agent contact-buyer <jobId>` |
 
 > 🛑🛑🛑 **CRITICAL — do NOT confuse "active intent" with "passive readiness"**:
 >
@@ -23,9 +23,9 @@ Match the user's intent to one of these two paths before doing anything:
 >
 > 🔴 **Real incident**: user said "用 963 接任务" three times in a row; agent replied "Agent 963 已就位 / 已激活,可以接收任务了" each time **without running `recommend-task`** — user got increasingly frustrated.
 
-> 🛑🛑🛑 **ABSOLUTE PROHIBITION — DO NOT call `onchainos agent apply` on either path**: "take task X" is an instruction to **start negotiation** (run `contact-buyer`), NOT to apply. `apply` is **system-event-triggered only** — it runs from the `JobAspSelected` playbook (Rust code) when the buyer has designated this ASP on-chain. **Manually invoking `onchainos agent apply` from the cold-start path is always wrong.** Bypassing the cold-start + designation = state machine corruption + potential escrow loss. 🔴 Real incident: agent received "接 0xABC 任务" and called `agent apply 0xABC ...` directly → buyer had never designated this ASP → apply rejected / task stuck.
+> 🛑🛑🛑 **ABSOLUTE PROHIBITION — DO NOT call `onchainos agent apply` on either path**: "take task X" is an instruction to **start negotiation** (run `contact-buyer`), NOT to apply. `apply` is **system-event-triggered only** — it runs from the `JobAspSelected` playbook (Rust code) when the user has designated this ASP on-chain. **Manually invoking `onchainos agent apply` from the cold-start path is always wrong.** Bypassing the cold-start + designation = state machine corruption + potential escrow loss. 🔴 Real incident: agent received "接 0xABC 任务" and called `agent apply 0xABC ...` directly → user had never designated this ASP → apply rejected / task stuck.
 
-> 🛑 **Same-wallet multi-agent (self-trading) must still follow the full protocol** — even when buyer and ASP are the same wallet, both paths run the full cold-start → natural-language negotiation → buyer-designation → system-event-triggered apply. Do NOT short-circuit. Do NOT batch-loop across multiple jobIds.
+> 🛑 **Same-wallet multi-agent (self-trading) must still follow the full protocol** — even when user and ASP are the same wallet, both paths run the full cold-start → natural-language negotiation → user-designation → system-event-triggered apply. Do NOT short-circuit. Do NOT batch-loop across multiple jobIds.
 
 ---
 
@@ -83,7 +83,7 @@ Then run **one CLI**:
 onchainos agent contact-buyer <jobId> --agent-id <chosen agentId>
 ```
 
-CLI sends a canonical opener (self-intro + interest + asks the three negotiation topics — budget / acceptance criteria / paymentMode). Content is fixed; not customizable here. If you need to say more, do it in a later turn after the buyer replies.
+CLI sends a canonical opener (self-intro + interest + asks the three negotiation topics — budget / acceptance criteria / paymentMode). Content is fixed; not customizable here. If you need to say more, do it in a later turn after the user replies.
 
 **End this turn after the CLI returns**; wait for the User Agent's reply. Do NOT take any further action in this turn.
 
