@@ -85,7 +85,7 @@ pub async fn handle_set_payment_mode(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
-    // Pre-check: only `open` status allows setting the payment mode (reuse `task_resp` to avoid duplicate requests later).
+    // Pre-check: only `created` status allows setting the payment mode (reuse `task_resp` to avoid duplicate requests later).
     let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
     let task_status = common::state_machine::Status::from_int(
         task_resp["status"].as_i64().unwrap_or(-1) as i32,

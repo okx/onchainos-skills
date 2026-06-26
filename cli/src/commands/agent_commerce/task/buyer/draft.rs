@@ -635,7 +635,7 @@ pub async fn handle_draft_publish(
 
     validate_draft_for_publish(&detail)?;
 
-    // ── Balance check (blocking for publish) ─────────────────────
+    // ── Balance check (warning only, non-blocking) ────────────────
     let token_sym = detail["tokenSymbol"].as_str()
         .or_else(|| detail["paymentTokenSymbol"].as_str())
         .unwrap_or("");
@@ -643,9 +643,19 @@ pub async fn handle_draft_publish(
         .or_else(|| detail["paymentTokenAmount"].as_str())
         .unwrap_or("0")
         .parse().unwrap_or(0.0);
-    if !token_sym.is_empty() && token_amount > 0.0 {
-        common::ensure_sufficient_balance(token_amount, token_sym).await?;
-    }
+    let balance_warning = if !token_sym.is_empty() && token_amount > 0.0 {
+        match common::ensure_sufficient_balance(token_amount, token_sym).await {
+            Err(e) => {
+                if DEBUG_LOG {
+                    eprintln!("[draft-publish] ⚠ balance warning: {e}");
+                }
+                Some(format!("⚠️ {e}"))
+            }
+            Ok(()) => None,
+        }
+    } else {
+        None
+    };
 
     // ── Publish API → uopData ────────────────────────────────────
     let resp = client
@@ -708,6 +718,10 @@ pub async fn handle_draft_publish(
     println!("  txHash: {tx_hash}");
     if let Some(pid) = provider_id {
         println!("  Designated provider: {pid}");
+    }
+    if let Some(ref warning) = balance_warning {
+        println!();
+        println!("{warning}");
     }
     println!();
     // See create.rs: skip the "Next: wait ..." hint in CLI mode to avoid the

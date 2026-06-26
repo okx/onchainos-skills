@@ -324,15 +324,15 @@ pub enum AgentCommand {
         #[arg(long)] role: Option<String>,
     },
 
-    /// Pre-flight readiness check: wallet login + agent identity + communication channel.
+    /// Business gate-check: wallet login + agent identity + communication channel.
     /// Pure read-only diagnostic — does not modify any state.
-    #[command(name = "preflight")]
-    Preflight {
+    #[command(name = "gate-check")]
+    GateCheck {
         /// Role to check identity for: buyer | provider | evaluator (also accepts 1/2/3)
         #[arg(long)] role: String,
     },
 
-    /// Prepare-create: validate fields + preflight + designated-route in one call.
+    /// Prepare-create: validate fields + gate-check + designated-route in one call.
     /// Returns structured JSON for the confirmation form. Does NOT create the task.
     #[command(name = "prepare-create")]
     PrepareCreate {
@@ -453,6 +453,38 @@ pub enum AgentCommand {
         #[arg(long)]
         content: String,
     },
+
+    /// Cache a pre-translated notification for a future event playbook so the
+    /// on-chain event can dispatch `user-notify` without an LLM translation
+    /// round-trip. Populated by the buyer sub at prefetch time.
+    #[command(name = "cache-notify", hide = true)]
+    CacheNotify {
+        #[arg(long = "job-id")]
+        job_id: String,
+        /// Event key, e.g. `job_completed_escrow`
+        #[arg(long = "event-key")]
+        event_key: String,
+        /// Translated, ready-to-dispatch notification content
+        #[arg(long)]
+        content: String,
+    },
+
+    /// Cache a pre-decided ASP rating (score + comment) so the `job_completed`
+    /// playbook can dispatch `feedback-submit` in-process without an LLM
+    /// decision round-trip. Populated by the buyer sub at deliverable_received
+    /// time based on the deliverable content vs task description.
+    #[command(name = "cache-rating", hide = true)]
+    CacheRating {
+        #[arg(long = "job-id")]
+        job_id: String,
+        /// Score in `X.XX` form (0.00–5.00)
+        #[arg(long)]
+        score: String,
+        /// Reviewer comment (≤100 chars)
+        #[arg(long)]
+        comment: String,
+    },
+
     /// Attach local file(s) to a task
     #[command(name = "task-attach")]
     TaskAttach {
@@ -788,7 +820,7 @@ pub enum AgentCommand {
         #[arg(long = "amount-max")]
         amount_max: Option<f64>,
 
-        /// Task statuses to include (repeatable / comma-separated). 0=OPEN, 1=ACCEPTED, 2=SUBMITTED, ...
+        /// Task statuses to include (repeatable / comma-separated). 0=CREATED, 1=ACCEPTED, 2=SUBMITTED, ...
         #[arg(long, value_delimiter = ',')]
         status: Vec<i32>,
 
@@ -953,7 +985,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::buyer::run_task(T::RejectApply { job_id, agent_id }, ctx).await,
 
         AgentCommand::UserNotify { content } =>
-            task::common::okx_a2a::user_notify(&content),
+            task::common::okx_a2a::user_notify(&content, true),
+
+        AgentCommand::CacheNotify { job_id, event_key, content } => {
+            task::common::prefilled_notify::save(&job_id, &event_key, &content)?;
+            println!("OK");
+            Ok(())
+        }
+
+        AgentCommand::CacheRating { job_id, score, comment } => {
+            task::common::prefilled_rating::save(&job_id, &score, &comment)?;
+            println!("OK");
+            Ok(())
+        }
 
         AgentCommand::TaskAttach { job_id, file_paths } =>
             task::buyer::run_task(T::TaskAttach { job_id, file_paths }, ctx).await,
@@ -1007,7 +1051,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::MyAgents { role } =>
             task::common::handle_my_agents(role.as_deref()).await,
 
-        AgentCommand::Preflight { role } =>
+        AgentCommand::GateCheck { role } =>
             task::common::handle_preflight(&role).await,
 
         AgentCommand::PrepareCreate {
@@ -1070,7 +1114,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::pending_v2::run(c).await,
 
         AgentCommand::SessionCleanup { job_id } =>
-            task::common::session_cleanup::handle_session_cleanup(&job_id),
+            task::common::session_cleanup::handle_session_cleanup(&job_id, true),
 
         // ── Evaluator Agent flat dispatch ───────────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id, round_num } => {

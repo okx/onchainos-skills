@@ -100,13 +100,23 @@ Rules: summary always in table; description > 200 chars → `See below` + prose 
 
 ## 5. Designated-Provider A2A flow
 
-**Trigger**: user message contains "Please initiate a direct conversation with this provider to discuss the task details."
+**Trigger**: user message contains "Please initiate a direct conversation with this provider to discuss the task details." OR user mentions buying/using a specific Agent/ASP's service (e.g. "购买Agent#1960的服务", "购买ASP#1960的服务", "buy service from ASP #1960", "使用ASP#1960的服务"). "ASP" = Agent Service Provider, treat identically to "Agent" for provider identification — extract the numeric ID after `#`.
 
 > ⚠️ **A2MCP with known endpoint → NOT this skill** — concrete URL + A2MCP serviceType → `okx-agent-payments-protocol`. "Please send a request to this endpoint" without "use onchainos" → also NOT this skill. "Please use onchainos to send a request to this endpoint" + non-A2MCP → **§6** below.
 
 Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `Price` / `symbol` (mutable).
 
-**Flow** (run step 1 and preflight in **parallel** — they are independent):
+### Path A — ServiceTitle is missing (e.g. "购买ASP#1960的服务" without specifying which service) → service discovery:
+1. `onchainos agent service-list --agent-id <agentId>` — list all services the ASP offers. Empty result → provider does not exist or has no services; inform the user and stop.
+2. Display the service list to the user and ask them to pick one.
+3. Fill `ServiceTitle`, `ServiceType`, `Price`, `symbol`, `serviceId`, `endpoint` from the chosen service.
+4. Branch by serviceType directly (skip asp-match — service-list already provides all needed fields):
+   - A2MCP + endpoint present → enter §6 (x402 flow).
+   - Otherwise → A2A: enter step 2 of the Flow below.
+
+### Path B — ServiceTitle is present → go to **Flow** below directly. 🛑 Do NOT call `service-list`.
+
+**Flow** (run step 1 and gate-check in **parallel** — they are independent):
 1. **Provider validation + service-type determination** (single call replaces the old profile + asp-match two-step):
    `onchainos agent asp-match --task-desc "<ServiceTitle>" --provider-agent-id <agentId> --agent-id <buyerAgentId> --format json`
    - Empty `recommendations` → provider does not exist, is not an ASP, is offline, or has no matching services → inform the user; do NOT continue.

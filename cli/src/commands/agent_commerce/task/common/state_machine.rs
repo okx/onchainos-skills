@@ -43,7 +43,7 @@ impl Role {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Init,         // -1
-    Created,      // 0 (backend original is OPEN; renamed to avoid ambiguity with "public" visibility)
+    Created,      // 0
     Accepted,     // 1
     Submitted,    // 2
     Rejected,     // 3
@@ -62,7 +62,7 @@ impl Status {
     pub fn parse(s: &str) -> Self {
         match s {
             "init"                               => Status::Init,
-            "created" | "open"                   => Status::Created,
+            "created"                            => Status::Created,
             "accepted"                           => Status::Accepted,
             "submitted"                          => Status::Submitted,
             "rejected"                           => Status::Rejected,
@@ -562,7 +562,6 @@ mod tests {
     fn parse_status_or_event_handles_both() {
         assert_eq!(parse_status_or_event("provider_applied"), Event::ProviderApplied);
         assert_eq!(parse_status_or_event("created"), Event::JobCreated);
-        assert_eq!(parse_status_or_event("open"), Event::JobCreated); // backend compatibility
         assert_eq!(parse_status_or_event("submitted"), Event::JobSubmitted);
     }
 

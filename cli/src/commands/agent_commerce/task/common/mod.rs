@@ -17,8 +17,11 @@ pub mod dispute_upload;
 pub mod in_progress;
 pub mod network;
 pub mod okx_a2a;
+pub mod onchainos_self;
 pub mod payment_mode;
 pub mod pending_v2;
+pub mod prefilled_notify;
+pub mod prefilled_rating;
 pub mod query;
 pub mod review_gate;
 pub mod search;
@@ -102,7 +105,7 @@ struct TaskDetail {
     payment_mode: Option<i32>,
     /// Backend VisibilityEnum: 0=PUBLIC / 1=PRIVATE
     visibility: Option<i32>,
-    /// 0=open / 1=accepted / 2=submitted / 3=rejected / 4=disputed / 5=complete / 7=close
+    /// 0=created / 1=accepted / 2=submitted / 3=rejected / 4=disputed / 5=complete / 7=close
     status: Option<i32>,
     sensitive_status: Option<i32>,
     category_codes: Option<Vec<String>>,
@@ -1103,7 +1106,7 @@ pub async fn handle_prepare_create(
         return Ok(());
     }
 
-    // ── 2. Preflight (wallet + identity + communication) ─────────
+    // ── 2. Gate-check (wallet + identity + communication) ─────────
     let preflight = preflight_inner("buyer").await?;
     let pf_ok = preflight.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
     if !pf_ok {

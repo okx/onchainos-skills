@@ -137,12 +137,11 @@ pub fn job_rejected_user_notify(job_id: &str, title: &str) -> String {
 // ── Event::JobCompleted ────────────────────────────────────────────
 
 /// `Event::JobCompleted` Branch A (escrow) — user notification (B-4-1).
-pub fn job_completed_escrow_user_notify(job_id: &str, title: &str, token_amount: &str, token_symbol: &str, tx_hash: &str) -> String {
+pub fn job_completed_escrow_user_notify(job_id: &str, title: &str, token_amount: &str, token_symbol: &str) -> String {
     format!(
         "[Job Completed] {title} (`{job_id}`) — approved by the User Agent; funds released to the ASP.\n\
          - Spent: {token_amount} {token_symbol}\n\
-         - Payment: escrow\n\
-         - txHash: {tx_hash}"
+         - Payment: escrow"
     )
 }
 

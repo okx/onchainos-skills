@@ -108,6 +108,21 @@ fn hours_left_text(deadline: i64) -> Option<String> {
     }
 }
 
+/// Terminal-state cleanup hint — appended to the playbook for events that
+/// truly end the per-job evaluator loop (Lost / Missed branches of
+/// dispute_resolved, all branches of round_failed, and reward_claimed which
+/// closes the Won branch's claim loop). Tells the LLM to run session-cleanup
+/// so any daemon-managed evaluator backup session for this jobId is purged.
+fn terminal_session_hint(job_id: &str) -> String {
+    format!(
+        "\n**Terminal wrap-up — run the cleanup command:**\n\
+         ```bash\n\
+         onchainos agent session-cleanup --job-id {job_id}\n\
+         ```\n\
+         Then end this turn.\n"
+    )
+}
+
 /// Returns `None` when the deadline has already passed; otherwise renders
 /// `"<N> minutes remaining"` or `"less than 1 minute remaining"`.
 fn minutes_left_text(deadline: i64) -> Option<String> {
@@ -387,9 +402,11 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                     format!(
                         "[Current Status] dispute_resolved\n\n\
                          {}\n\
-                         Missed-{} branch ends this turn; do not call `arbitration-claim`.\n",
+                         Missed-{} branch ends this turn; do not call `arbitration-claim`.\n\
+                         {}",
                         notify_block_lines(&lines),
-                        phase.to_lowercase()
+                        phase.to_lowercase(),
+                        terminal_session_hint(job_id),
                     )
                 }
                 Branch::Won => {
@@ -434,8 +451,10 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                     format!(
                         "[Current Status] dispute_resolved\n\n\
                          {}\n\
-                         Lost branch ends this turn; do not call `arbitration-claim` (nothing to claim). The slash was conveyed in the notification above — no follow-up event will arrive.\n",
-                        notify_block_lines(&lines)
+                         Lost branch ends this turn; do not call `arbitration-claim` (nothing to claim). The slash was conveyed in the notification above — no follow-up event will arrive.\n\
+                         {}",
+                        notify_block_lines(&lines),
+                        terminal_session_hint(job_id),
                     )
                 }
             }
@@ -489,9 +508,11 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                     format!(
                         "[Current Status] round_failed\n\n\
                          {}\n\
-                         Missed-{} branch ends this turn.\n",
+                         Missed-{} branch ends this turn.\n\
+                         {}",
                         notify_block_lines(&lines),
-                        phase.to_lowercase()
+                        phase.to_lowercase(),
+                        terminal_session_hint(job_id),
                     )
                 }
                 Branch::Invalidated => {
@@ -509,16 +530,18 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                         lines.push(format!("• Split evenly among {r} revealers"));
                     }
                     format!(
-                        "[Current Status] round_failed\n\n{}",
-                        notify_block_lines(&lines)
+                        "[Current Status] round_failed\n\n{}\n{}",
+                        notify_block_lines(&lines),
+                        terminal_session_hint(job_id),
                     )
                 }
             }
         }
 
         "reward_claimed" => format!(
-            "[Current Status] reward_claimed\n\n{}",
-            notify_block("Your arbitration reward has been credited.")
+            "[Current Status] reward_claimed\n\n{}\n{}",
+            notify_block("Your arbitration reward has been credited."),
+            terminal_session_hint(job_id),
         ),
 
         _ => return None,
