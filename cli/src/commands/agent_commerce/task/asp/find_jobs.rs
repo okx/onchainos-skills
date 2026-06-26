@@ -27,7 +27,7 @@ pub async fn handle_find_jobs() -> Result<()> {
     }
 
     // Step 2: filter online ASPs
-    let online_ASPs: Vec<&Value> = agent_list
+    let online_asps: Vec<&Value> = agent_list
         .iter()
         .filter(|a| {
             a["role"].as_i64() == Some(ROLE_ASP)
@@ -35,13 +35,13 @@ pub async fn handle_find_jobs() -> Result<()> {
         })
         .collect();
 
-    if online_ASPs.is_empty() {
+    if online_asps.is_empty() {
         println!("⚠ No online ASP Agents found.");
         println!("  Total {} Agent(s), but status != 1 (online) or role != 2 (ASP)", agent_list.len());
         return Ok(());
     }
 
-    println!("Found {} online ASP Agent(s), matching tasks for each...\n", online_ASPs.len());
+    println!("Found {} online ASP Agent(s), matching tasks for each...\n", online_asps.len());
 
     // Step 3: call recommend-task for each online ASP agent
     let mut task_client = TaskApiClient::new();
@@ -49,7 +49,7 @@ pub async fn handle_find_jobs() -> Result<()> {
     let mut total_tasks = 0usize;
     let mut summary: Vec<(String, String, usize)> = Vec::new();
 
-    for agent in &online_ASPs {
+    for agent in &online_asps {
         let agent_id = agent["agentId"].as_str().unwrap_or("");
         let name = agent["name"].as_str().unwrap_or("(no name)");
         let desc = agent["profileDescription"].as_str().unwrap_or("(no description)");
