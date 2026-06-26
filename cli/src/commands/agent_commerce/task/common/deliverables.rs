@@ -1,4 +1,4 @@
-//! Persistent deliverable storage for both buyer and provider roles.
+//! Persistent deliverable storage for both user and provider roles.
 //!
 //! Layout: `~/.onchainos/deliverables/<role>/<jobId>/`
 //!   - Files are moved (not copied) from the platform download directory.
@@ -144,7 +144,7 @@ pub struct SaveResult {
 pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
     let role = params.role;
     if role != "buyer" && role != "provider" {
-        bail!("--role must be 'buyer' or 'provider', got '{role}'");
+        bail!("--role must be 'user' or 'provider', got '{role}'");
     }
 
     let src = Path::new(params.file_path);
@@ -233,7 +233,7 @@ pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
 // ── Review-awaiting-deliverable marker ───────────────────────────────
 //
 // When `job_submitted` arrives before the XMTP `[intent:deliver]` message,
-// the buyer has no deliverable to review yet. A marker file is written so
+// the user has no deliverable to review yet. A marker file is written so
 // that the later `deliverable_received` event can detect this and directly
 // output the review prompt instead of "wait for job_submitted".
 
@@ -262,7 +262,7 @@ pub fn delete_review_marker(job_id: &str) {
 
 pub fn handle_list(job_id: &str, role: &str) -> Result<()> {
     if role != "buyer" && role != "provider" {
-        bail!("--role must be 'buyer' or 'provider', got '{role}'");
+        bail!("--role must be 'user' or 'provider', got '{role}'");
     }
     let manifest = read_manifest(role, job_id)?;
     match manifest {
@@ -298,7 +298,7 @@ pub fn handle_list(job_id: &str, role: &str) -> Result<()> {
 
 pub fn handle_list_all(role: &str, search: Option<&str>) -> Result<()> {
     if role != "buyer" && role != "provider" {
-        bail!("--role must be 'buyer' or 'provider', got '{role}'");
+        bail!("--role must be 'user' or 'provider', got '{role}'");
     }
     let role_dir = deliverables_root()?.join(role);
     if !role_dir.exists() {

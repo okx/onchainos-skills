@@ -3,7 +3,7 @@
 //! The backend `POST /priapi/v1/aieco/task/claim` is an **account-pull** endpoint:
 //! it pulls every pending reward for the account across all settled disputes / jobs in one shot,
 //! with an empty body, and does not split by jobId / token. The endpoint is role-agnostic
-//! (buyer / provider / evaluator) — any agentId + wallet able to sign can call it.
+//! (user / provider / evaluator) — any agentId + wallet able to sign can call it.
 //!
 //! This module only handles: API call + sign + broadcast / JSON parsing + table output.
 //! Role-specific wallet/agent resolution (different roles use different `signing::resolve_*`)
@@ -11,7 +11,7 @@
 //! the per-role thin wrappers.
 //!
 //! Current callers: `evaluator/claim.rs`, `evaluator/claimable.rs`.
-//! buyer / provider integration only needs to resolve the wallet in its own handler and then
+//! user / provider integration only needs to resolve the wallet in its own handler and then
 //! call the two functions here.
 
 use anyhow::Result;

@@ -4,7 +4,7 @@
 //!
 //! Full pipeline (all handled internally):
 //!   1. Precondition checks (status, payment mode)
-//!   2. file_upload (if file or long text) → xmtp_send to buyer
+//!   2. file_upload (if file or long text) → xmtp_send to User Agent
 //!   3. On-chain submit (POST /submit → sign → broadcast)
 //!   4. Local persistent save
 
@@ -38,7 +38,7 @@ enum Prepared {
 /// deliver — submit deliverable
 ///
 /// 1. Precondition: job must be in accepted state (status=1)
-/// 2. Prepare deliverable + xmtp_send to buyer
+/// 2. Prepare deliverable + xmtp_send to User Agent
 /// 3. POST submit API (with identity headers) → sign uopData → broadcast on-chain
 /// 4. Auto-save deliverable locally
 pub async fn handle_deliver(
@@ -76,8 +76,8 @@ pub async fn handle_deliver(
         );
         bail!(
             "Deliver rejected: current task status = {} ({}), must be accepted (1) before delivery.\n\
-             If you just applied, wait for the buyer to confirm-accept on-chain and receive the `job_accepted` system notification before delivering.\n\
-             Do NOT call `okx-a2a xmtp-send` to rush the buyer — confirm-accept is a user decision driven by the buyer's session.",
+             If you just applied, wait for the User Agent to confirm-accept on-chain and receive the `job_accepted` system notification before delivering.\n\
+             Do NOT call `okx-a2a xmtp-send` to rush the User Agent — confirm-accept is a user decision driven by the User Agent's session.",
             status_int,
             status.as_str(),
         );
@@ -104,14 +104,14 @@ pub async fn handle_deliver(
         );
         bail!(
             "Deliver rejected: paymentMode = {} ({}) — deliver/submit is only supported for escrow (1).\n\
-             x402 tasks skip the submit step; the buyer obtains the deliverable by replaying the provider's endpoint and calls /direct/complete.",
+             x402 tasks skip the submit step; the User Agent obtains the deliverable by replaying the provider's endpoint and calls /direct/complete.",
             pm_int,
             pm.as_str(),
         );
     }
 
     // Extract fields needed by later stages (available from task_resp already fetched above).
-    let buyer_agent_id = task_resp["buyerAgentId"]
+    let user_agent_id = task_resp["buyerAgentId"]
         .as_str()
         .unwrap_or("");
     let title = task_resp["title"].as_str().unwrap_or("(untitled)");
@@ -140,8 +140,8 @@ pub async fn handle_deliver(
             Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key)]].concat()), None);
 
         let msg = super::content::build_file_deliver_message(job_id, &upload);
-        if !buyer_agent_id.is_empty() {
-            match okx_a2a::xmtp_send(job_id, buyer_agent_id, &msg) {
+        if !user_agent_id.is_empty() {
+            match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                 Ok(()) => {
                     audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
                         Some([base_tags.clone(), vec!["type=file".into()]].concat()), None);
@@ -175,8 +175,8 @@ pub async fn handle_deliver(
                     Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key), format!("path={tmp_str}")]].concat()), None);
 
                 let msg = super::content::build_file_deliver_message(job_id, &upload);
-                if !buyer_agent_id.is_empty() {
-                    match okx_a2a::xmtp_send(job_id, buyer_agent_id, &msg) {
+                if !user_agent_id.is_empty() {
+                    match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                         Ok(()) => {
                             audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
                                 Some([base_tags.clone(), vec!["type=file_from_long_text".into()]].concat()), None);
@@ -199,8 +199,8 @@ pub async fn handle_deliver(
                         Some([base_tags.clone(), vec![format!("charCount={text_len}")]].concat()), Some(&e.to_string()));
 
                     let msg = super::content::build_text_deliver_message(job_id, deliverable_text);
-                    if !buyer_agent_id.is_empty() {
-                        match okx_a2a::xmtp_send(job_id, buyer_agent_id, &msg) {
+                    if !user_agent_id.is_empty() {
+                        match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                             Ok(()) => {
                                 audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
                                     Some([base_tags.clone(), vec!["type=text_fallback".into()]].concat()), None);
@@ -225,8 +225,8 @@ pub async fn handle_deliver(
         } else {
             // ▸ Short text → inline text-format xmtp
             let msg = super::content::build_text_deliver_message(job_id, deliverable_text);
-            if !buyer_agent_id.is_empty() {
-                match okx_a2a::xmtp_send(job_id, buyer_agent_id, &msg) {
+            if !user_agent_id.is_empty() {
+                match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                     Ok(()) => {
                         audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
                             Some([base_tags.clone(), vec!["type=text".into()]].concat()), None);
@@ -297,7 +297,7 @@ pub async fn handle_deliver(
                     file_key: Some(file_key),
                     token_symbol,
                     token_amount,
-                    counterparty_agent_id: Some(buyer_agent_id).filter(|s| !s.is_empty()),
+                    counterparty_agent_id: Some(user_agent_id).filter(|s| !s.is_empty()),
                     counterparty_name: None,
                 };
                 match super::super::common::deliverables::handle_save(&params) {
@@ -318,7 +318,7 @@ pub async fn handle_deliver(
                     file_key: None,
                     token_symbol,
                     token_amount,
-                    counterparty_agent_id: Some(buyer_agent_id).filter(|s| !s.is_empty()),
+                    counterparty_agent_id: Some(user_agent_id).filter(|s| !s.is_empty()),
                     counterparty_name: None,
                 };
                 match super::super::common::deliverables::handle_save(&params) {
@@ -332,7 +332,7 @@ pub async fn handle_deliver(
     println!("✓ Deliverable submitted, waiting for on-chain confirmation (job_submitted)");
     println!("  txHash: {tx_hash}");
     println!();
-    println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
+    println!("⚠️  Next steps are driven by system notifications — do not proactively message the User Agent:");
     println!("    - You will receive a `job_submitted` system notification after on-chain confirmation");
     Ok(())
 }

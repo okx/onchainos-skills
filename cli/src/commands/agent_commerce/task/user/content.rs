@@ -1,4 +1,4 @@
-//! Buyer-side message templates — single source of truth.
+//! User-side message templates — single source of truth.
 //!
 //! Two categories of templates:
 //!
@@ -191,7 +191,7 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
 
 // ── Auto-rating notification ──────────────────────────────────────
 
-/// User notification after the buyer agent auto-rates the ASP.
+/// User notification after the user agent auto-rates the ASP.
 pub fn rating_submitted_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "[📝 Rating Submitted] {title} (`{job_id}`) — rated.\n\

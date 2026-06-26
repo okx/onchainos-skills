@@ -26,12 +26,12 @@
 
 /// `Event::JobAspSelected` no-serviceId fallback — user-facing notification
 /// pushed via `onchainos agent user-notify --content <text>`. The playbook does NOT
-/// auto-start negotiation; it ends the turn and waits for the buyer to re-route
+/// auto-start negotiation; it ends the turn and waits for the User Agent to re-route
 /// (designate a specific service / list the task publicly). Localize before sending.
 pub fn job_asp_selected_no_service_notify(job_id: &str) -> String {
     format!(
-        "[Designated Task — Skipped] Job {job_id} — the buyer designated you as the ASP without pinning a specific service.\n\
-         \x20\x20No action taken; waiting for the buyer to re-route with a specific service or list the task publicly."
+        "[Designated Task — Skipped] Job {job_id} — the User Agent designated you as the ASP without pinning a specific service.\n\
+         \x20\x20No action taken; waiting for the User Agent to re-route with a specific service or list the task publicly."
     )
 }
 
@@ -42,18 +42,18 @@ pub fn job_asp_selected_no_service_notify(job_id: &str) -> String {
 /// `"tokenAmount + tokenSymbol"`). Localize before sending.
 pub fn job_asp_selected_missing_terms_notify(job_id: &str, missing_field: &str) -> String {
     format!(
-        "[Designated Task — Skipped] Job {job_id} — the buyer's designation envelope is missing `{missing_field}`; cannot determine the apply terms.\n\
-         \x20\x20No action taken; waiting for the buyer to re-send the designation with complete terms."
+        "[Designated Task — Skipped] Job {job_id} — the User Agent's designation envelope is missing `{missing_field}`; cannot determine the apply terms.\n\
+         \x20\x20No action taken; waiting for the User Agent to re-send the designation with complete terms."
     )
 }
 
 /// `Event::JobUserReject` — user-facing notification pushed via
-/// `onchainos agent user-notify --content <text>` when the buyer refuses to fund /
+/// `onchainos agent user-notify --content <text>` when the User Agent refuses to fund /
 /// confirm-accept after the provider applied. Terminal for this round; the
 /// designation is over. Localize before sending.
 pub fn job_user_reject_notify(job_id: &str) -> String {
     format!(
-        "[Buyer Declined Payment] Job {job_id} — the buyer refused to fund / confirm-accept after your apply.\n\
+        "[User Agent Declined Payment] Job {job_id} — the User Agent refused to fund / confirm-accept after your apply.\n\
          \x20\x20This designation is over; no further action is needed on this side."
     )
 }
@@ -65,7 +65,7 @@ pub fn provider_applied_user_notify(job_id: &str, agent_id: &str) -> String {
     format!(
         "[Apply Submitted] Job {job_id} — your apply has been recorded on-chain.\n\
          \x20\x20- ASP agentId: {agent_id}\n\
-         \x20\x20Awaiting the buyer's confirm-accept to fund escrow."
+         \x20\x20Awaiting the User Agent's confirm-accept to fund escrow."
     )
 }
 
@@ -77,7 +77,7 @@ pub fn job_asp_selected_apply_failed_notify(job_id: &str, error_summary: &str) -
     format!(
         "[Designated Task — Apply Failed] Job {job_id} — the on-chain apply did not go through.\n\
          \x20\x20- Error: {error_summary}\n\
-         \x20\x20The designated assignment was NOT recorded; please retry or contact the buyer."
+         \x20\x20The designated assignment was NOT recorded; please retry or contact the User Agent."
     )
 }
 
@@ -91,7 +91,7 @@ pub fn job_asp_selected_rejected_notify(job_id: &str, reason: &str) -> String {
     format!(
         "[Designated Task Declined] Job {job_id} — the designated assignment was declined.\n\
          \x20\x20- Reason: {reason}\n\
-         \x20\x20The buyer can now re-route to another ASP or list the task publicly."
+         \x20\x20The User Agent can now re-route to another ASP or list the task publicly."
     )
 }
 
@@ -146,13 +146,13 @@ pub fn job_rejected_user_decision_prompt(short_id: &str) -> String {
 }
 
 /// `Event::JobSubmitted` — notify the user (ASP's owner) that the deliverable
-/// is on-chain (deliver tx confirmed) and the buyer's review window has begun.
+/// is on-chain (deliver tx confirmed) and the User Agent's review window has begun.
 /// Provider has no further peer-side action; this is a milestone status update
 /// only. Localize before sending.
 pub fn job_submitted_user_notify(job_id: &str) -> String {
     format!(
         "[Deliverable Submitted] Job {job_id} — your deliverable is on-chain (submit tx confirmed).\n\
-         \x20\x20Waiting for the buyer's review (approve or reject)."
+         \x20\x20Waiting for the User Agent's review (approve or reject)."
     )
 }
 
@@ -251,7 +251,7 @@ pub fn submit_deadline_warn_user_prompt(short_id: &str) -> String {
     )
 }
 
-/// User notification after the provider agent auto-rates the buyer.
+/// User notification after the provider agent auto-rates the User Agent.
 pub fn rating_submitted_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[📝 Rating Submitted] Job <title> (`{job_id}`) — rated.\n\
@@ -281,7 +281,7 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
 /// NOTE: No longer called from flow.rs — deliver.rs now uses `build_text_deliver_message`
 /// with actual values. Kept as protocol format reference.
 #[allow(dead_code)]
-pub fn deliver_text_to_buyer(job_id: &str) -> String {
+pub fn deliver_text_to_user(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
          deliverableType: text\n\
@@ -302,7 +302,7 @@ pub fn deliver_text_to_buyer(job_id: &str) -> String {
 /// NOTE: No longer called from flow.rs — deliver.rs now uses `build_file_deliver_message`
 /// with actual upload metadata. Kept as protocol format reference.
 #[allow(dead_code)]
-pub fn deliver_file_to_buyer(job_id: &str) -> String {
+pub fn deliver_file_to_user(job_id: &str) -> String {
     format!(
         "jobId: {job_id}\n\
          deliverableType: file\n\
@@ -348,8 +348,8 @@ pub fn build_file_deliver_message(
     )
 }
 
-/// Buyer attachment received — notify the provider's user.
+/// User Agent attachment received — notify the provider's user.
 pub fn buyer_attachment_received_user_notify(job_id: &str) -> String {
-    format!("[Job `{job_id}`] The buyer sent an attachment (reference material for this task). File downloaded and saved locally.")
+    format!("[Job `{job_id}`] The User Agent sent an attachment (reference material for this task). File downloaded and saved locally.")
 }
 

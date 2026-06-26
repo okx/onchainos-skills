@@ -1,4 +1,4 @@
-//! Common read-only query commands (shared by buyer / provider).
+//! Common read-only query commands (shared by user / provider).
 //!
 //! status        — query a single task's status
 //! list          — query the "my tasks" list for a single agent + role
@@ -45,7 +45,7 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
     println!("  jobId:    {job_id}");
     println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
     println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
-    println!("  buyer:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
+    println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
     if let Some(pid) = t["providerAgentId"].as_str() {
         println!("  provider: {pid}");
     }
@@ -179,7 +179,7 @@ pub async fn handle_active_tasks(
     if let Some(raw) = role_filter {
         let want = parse_role_arg(raw).ok_or_else(|| {
             anyhow::anyhow!(
-                "unrecognized --role value: {raw:?} (expected buyer / provider / evaluator, or 1 / 2 / 3)"
+                "unrecognized --role value: {raw:?} (expected user / provider / evaluator, or 1 / 2 / 3)"
             )
         })?;
         agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(want));
@@ -210,16 +210,16 @@ pub async fn handle_active_tasks(
                 continue;
             }
 
-            let buyer_id = t.get("buyerAgentId").and_then(|v| v.as_str()).unwrap_or("");
+            let user_id = t.get("buyerAgentId").and_then(|v| v.as_str()).unwrap_or("");
             let provider_id = t.get("providerAgentId").and_then(|v| v.as_str()).unwrap_or("");
 
             // Counterparty inferred from my role:
-            // - I'm buyer (1) → counterparty is provider
-            // - I'm provider (2) → counterparty is buyer
-            // - I'm evaluator (3) → no single counterparty (both buyer + provider are parties)
+            // - I'm user (1) → counterparty is provider
+            // - I'm provider (2) → counterparty is user
+            // - I'm evaluator (3) → no single counterparty (both user + provider are parties)
             let (counterparty_id, counterparty_role) = match role {
                 1 => (provider_id, "provider"),
-                2 => (buyer_id, "buyer"),
+                2 => (user_id, "buyer"),
                 _ => ("", ""),
             };
 

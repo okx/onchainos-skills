@@ -1,4 +1,4 @@
-//! Buyer-side task commands — enum definitions + routing dispatch.
+//! User-side task commands — enum definitions + routing dispatch.
 //!
 //! Files split by user action:
 //! - `create.rs`       — publish task (scene 1)
@@ -98,7 +98,7 @@ pub enum TaskCommand {
         /// Page number
         #[arg(long, default_value = "1")]
         page: usize,
-        /// Buyer agent ID
+        /// User agent ID
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
         /// Output format: "json" for raw JSON (no formatted list)
@@ -237,7 +237,7 @@ pub enum TaskCommand {
         /// x402 provider endpoint URL
         #[arg(long)]
         endpoint: String,
-        /// Buyer agent ID (used to authenticate token-detail lookups).
+        /// User agent ID (used to authenticate token-detail lookups).
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
         /// JSON business body to POST (for endpoints that require business parameters)

@@ -10,7 +10,7 @@ use crate::commands::agent_commerce::task::common::util::short_job_id;
 
 /// x402 / A2MCP next-action playbook for the ASP.
 ///
-/// In the x402 flow the buyer paid the ASP at request time via the A2MCP
+/// In the x402 flow the User Agent paid the ASP at request time via the A2MCP
 /// service endpoint, so every on-chain task event is a pure receipt with no
 /// provider-side business action. `JobAccepted` and `JobCompleted` get a
 /// dedicated note that explains the payment model; every other event gets a
@@ -38,7 +38,7 @@ pub async fn generate_a2mcp_next_action(
             if !p.title.is_empty() { out.push_str(&format!("\x20\x20- title: {}\n", p.title)); any = true; }
             if !p.token_amount.is_empty() { out.push_str(&format!("\x20\x20- tokenAmount: {}\n", p.token_amount)); any = true; }
             if !p.token_symbol.is_empty() && p.token_symbol != "?" { out.push_str(&format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol)); any = true; }
-            if let Some(b) = p.buyer_agent_id.as_deref().filter(|s| !s.is_empty()) {
+            if let Some(b) = p.user_agent_id.as_deref().filter(|s| !s.is_empty()) {
                 out.push_str(&format!("\x20\x20- buyerAgentId: {b}\n"));
                 any = true;
             }
@@ -52,7 +52,7 @@ pub async fn generate_a2mcp_next_action(
         Event::JobAccepted => {
             let user_notify = super::content::job_accepted_user_notify_a2mcp(job_id, agent_id);
             format!(
-                "[Current state] job_accepted (x402 / A2MCP flow — buyer's request received, payment confirmed at the A2MCP endpoint)\n\
+                "[Current state] job_accepted (x402 / A2MCP flow — User Agent's request received, payment confirmed at the A2MCP endpoint)\n\
                  [Role] ASP (Agent Service Provider)\n\n\
                  {task_fields_inline}\n\
                  **Notify the user via `onchainos agent user-notify`** — no on-chain `deliver`, no `okx-a2a xmtp-send` (the deliverable was already returned by the A2MCP service endpoint at request time):\n\n\
@@ -81,9 +81,9 @@ pub async fn generate_a2mcp_next_action(
                  content:\n\
                  {user_notify}\n\n\
                  🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
-                 **Step 2 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
+                 **Step 2 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
                  Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
-                 \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent buyer (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
+                 \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent User Agent (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
                  \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
                  Then execute:\n\
                  ```bash\n\
@@ -168,7 +168,7 @@ pub async fn generate_next_action(
                     "description" if !p.description.is_empty() => Some(format!("\x20\x20- description: {}\n", p.description)),
                     "tokenAmount" if !p.token_amount.is_empty() => Some(format!("\x20\x20- tokenAmount: {}\n", p.token_amount)),
                     "tokenSymbol" if !p.token_symbol.is_empty() && p.token_symbol != "?" => Some(format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol)),
-                    "buyerAgentId" => p.buyer_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
+                    "buyerAgentId" => p.user_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
                     "providerAgentId" => p.provider_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
                     "paymentMode" => p.payment_mode.map(|v| format!("\x20\x20- paymentMode: {v} ({})\n", match v { 1 => "escrow", 3 => "x402", _ => "unknown" })),
                     "visibility" => p.visibility.map(|v| format!("\x20\x20- visibility: {v} ({})\n", match v { 0 => "public", 1 => "private", _ => "unknown" })),
@@ -242,7 +242,7 @@ pub async fn generate_next_action(
             format!(
             "[Current state] provider_applied (apply has been recorded on-chain)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             ❌ Do NOT communicate with the buyer. ❌ Do NOT deliver directly.\n\n\
+             ❌ Do NOT communicate with the User Agent. ❌ Do NOT deliver directly.\n\n\
              **Step 1 — Use `onchainos agent user-notify` to push the apply-submitted notification to the user**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
@@ -296,8 +296,8 @@ pub async fn generate_next_action(
              **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
              🛑 **The next system events for this ASP are `job_completed` OR `job_rejected` — both are action-required, NEITHER is observer-only.** Provider does NOT receive a `job_submitted` envelope after deliver.\n\n\
              [Follow-up events]\n\
-             - `job_completed` (buyer reviewed and accepted) — auto-rate the buyer + notify the user\n\
-             - `job_rejected`  (buyer rejected the deliverable) — push dispute-vs-refund decision to the user\n"
+             - `job_completed` (User Agent reviewed and accepted) — auto-rate the User Agent + notify the user\n\
+             - `job_rejected`  (User Agent rejected the deliverable) — push dispute-vs-refund decision to the user\n"
             )
         }
 
@@ -310,7 +310,7 @@ pub async fn generate_next_action(
             format!(
             "[System notification] job_submitted (deliverable confirmed on-chain; task state is now submitted)\n\
              [Role] ASP (Agent Service Provider)\n\n\
-             ⚠️ **observer-only toward the User Agent (peer)** — the deliverable was already sent in the `job_accepted` script (Step 3); this event **must NOT trigger a second okx-a2a xmtp-send** to the User Agent (duplicating would cause loop). The user-side notify in Step 1 below targets your OWN user (the ASP wallet owner), NOT the buyer-peer.\n\n\
+             ⚠️ **observer-only toward the User Agent (peer)** — the deliverable was already sent in the `job_accepted` script (Step 3); this event **must NOT trigger a second okx-a2a xmtp-send** to the User Agent (duplicating would cause loop). The user-side notify in Step 1 below targets your OWN user (the ASP wallet owner), NOT the User Agent-peer.\n\n\
              **Step 1 — Notify the user of the submit milestone via `onchainos agent user-notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
@@ -319,9 +319,9 @@ pub async fn generate_next_action(
              content:\n\
              {user_notify}\n\n\
              **Step 2 — End this turn.** Wait for `job_completed` / `job_rejected` to drive the next action.\n\n\
-             🛑 **DO NOT extend `observe silently` to the next event.** When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the buyer / push a dispute-vs-refund decision to the user). Treating a subsequent `job_completed` envelope as silent = the user never gets the completion notice + the buyer never gets rated.\n\n\
+             🛑 **DO NOT extend `observe silently` to the next event.** When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the User Agent / push a dispute-vs-refund decision to the user). Treating a subsequent `job_completed` envelope as silent = the user never gets the completion notice + the User Agent never gets rated.\n\n\
              [Follow-up events]\n\
-             - `job_completed` (review passed) — auto-rate the buyer + notify the user\n\
+             - `job_completed` (review passed) — auto-rate the User Agent + notify the user\n\
              - `job_rejected`  (User Agent rejected) — push dispute-vs-refund decision to the user\n"
             )
         },
@@ -330,7 +330,7 @@ pub async fn generate_next_action(
         Event::JobRejected => {
             let user_prompt = super::content::job_rejected_user_decision_prompt(&short_id);
             let to_flag = prefetched
-                .and_then(|p| p.buyer_agent_id.as_deref())
+                .and_then(|p| p.user_agent_id.as_deref())
                 .filter(|s| !s.is_empty())
                 .map(|b| format!(" --to-agent-id {b}"))
                 .unwrap_or_default();
@@ -422,9 +422,9 @@ pub async fn generate_next_action(
              content:\n\
              {user_notify}\n\n\
              🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
-             **Step 2 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
+             **Step 2 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
              Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
-             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent buyer (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
+             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent User Agent (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
              \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
              Then execute:\n\
              ```bash\n\
@@ -487,9 +487,9 @@ pub async fn generate_next_action(
              \x20\x20\x20\x20Nothing to claim:\n\
              {dispute_won_no_claim}\n\n\
              🛑 Do NOT end this turn — A-Step 4 (auto-rate) and A-Step 4.5 (notify rating) below are MANDATORY.\n\n\
-             **A-Step 4 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
+             **A-Step 4 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
              Based on the task description, requirements clarity, communication, and dispute outcome (you won), generate:\n\
-             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: provider won dispute → buyer was likely at fault; 0.00–3.00 depending on severity. If the dispute was a misunderstanding, score higher.\n\
+             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: provider won dispute → User Agent was likely at fault; 0.00–3.00 depending on severity. If the dispute was a misunderstanding, score higher.\n\
              \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
              Then execute:\n\
              ```bash\n\
@@ -517,9 +517,9 @@ pub async fn generate_next_action(
              content:\n\
              {dispute_lost}\n\n\
              🛑 Do NOT end this turn — B-Step 2 (auto-rate) and B-Step 2.5 (notify rating) below are MANDATORY.\n\n\
-             **B-Step 2 — 🛑 Auto-rate the User Agent (buyer) (MANDATORY):**\n\
-             Based on the task description, requirements clarity, and dispute outcome (you lost — buyer's rejection was upheld), generate:\n\
-             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: provider lost dispute → buyer was likely right; 3.00–5.00. Adjust based on whether the dispute felt fair.\n\
+             **B-Step 2 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
+             Based on the task description, requirements clarity, and dispute outcome (you lost — User Agent's rejection was upheld), generate:\n\
+             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: provider lost dispute → User Agent was likely right; 3.00–5.00. Adjust based on whether the dispute felt fair.\n\
              \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
              Then execute:\n\
              ```bash\n\
@@ -594,13 +594,13 @@ pub async fn generate_next_action(
 
         // ─── Scene 1: task is on-chain (job_created) — provider takes no proactive
         // action on this raw event. The active discovery paths are `recommend-task` /
-        // `contact-buyer` (user-driven) and `JobAspSelected` (buyer-designated). ────
+        // `contact-buyer` (user-driven) and `JobAspSelected` (User Agent-designated). ────
         Event::JobCreated => "[System notification] job_created (task is on-chain; no provider-side action)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              Silently ignore; end this turn.\n\
-             To accept tasks, use `recommend-task` / `contact-buyer`; if the buyer designates this ASP a `job_asp_selected` event will arrive separately.\n".to_string(),
+             To accept tasks, use `recommend-task` / `contact-buyer`; if the User Agent designates this ASP a `job_asp_selected` event will arrive separately.\n".to_string(),
 
-        // ─── Scene 1.5: Buyer designated this ASP for a private task ──────────
+        // ─── Scene 1.5: User Agent designated this ASP for a private task ──────────
         Event::JobAspSelected => {
             // CODE-DRIVEN PATH: fetch service-list, match by serviceId, pre-compute price
             // gate, emit deterministic playbook. LLM only does the semantic capability
@@ -618,14 +618,14 @@ pub async fn generate_next_action(
             let service_id = msg_str("serviceId")
                 .or_else(|| p.and_then(|x| x.service_id.as_deref()).filter(|s| !s.is_empty()))
                 .unwrap_or("");
-            // buyer's offered amount: task-level `tokenAmount`. Envelope wins over prefetched.
+            // User Agent's offered amount: task-level `tokenAmount`. Envelope wins over prefetched.
             let offer_amount = msg_str("tokenAmount")
                 .or_else(|| p.map(|x| x.token_amount.as_str()).filter(|s| !s.is_empty()))
                 .unwrap_or("");
-            // buyer's token symbol — task-level; envelope wins. Stays as Option so missing
+            // User Agent's token symbol — task-level; envelope wins. Stays as Option so missing
             // tokenSymbol triggers the incomplete-terms guard (do NOT silent-fallback to USDT
             // — applying with the wrong token would lock the wrong escrow currency).
-            let buyer_token_symbol_opt = msg_str("tokenSymbol")
+            let user_token_symbol_opt = msg_str("tokenSymbol")
                 .or_else(|| p.map(|x| x.token_symbol.as_str()).filter(|s| !s.is_empty() && *s != "?"));
             let task_title = msg_str("jobTitle")
                 .or_else(|| msg_str("title"))
@@ -637,7 +637,7 @@ pub async fn generate_next_action(
 
             // Render-helper for the three early-bailout branches (no service / empty
             // offer / missing token symbol). All share: notify + end turn, no on-chain
-            // action, no asp-reject (buyer is in incomplete state and needs to re-route).
+            // action, no asp-reject (User Agent is in incomplete state and needs to re-route).
             let render_bailout = |header: &str, user_notify: &str| -> String {
                 format!(
                     "[Current state] job_asp_selected — {header}. jobId=`{job_id}` agentId={agent_id}\n\n\
@@ -653,15 +653,15 @@ pub async fn generate_next_action(
 
             if service_id.is_empty() {
                 let user_notify = super::content::job_asp_selected_no_service_notify(job_id);
-                render_bailout("designated by buyer, but no specific `serviceId` was pinned", &user_notify)
+                render_bailout("designated by User Agent, but no specific `serviceId` was pinned", &user_notify)
             } else if offer_amount.is_empty() {
                 let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenAmount");
                 render_bailout("designation envelope missing `tokenAmount`", &user_notify)
-            } else if buyer_token_symbol_opt.is_none() {
+            } else if user_token_symbol_opt.is_none() {
                 let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenSymbol");
                 render_bailout("designation envelope missing `tokenSymbol`", &user_notify)
             } else {
-                let buyer_token_symbol = buyer_token_symbol_opt.unwrap();
+                let user_token_symbol = user_token_symbol_opt.unwrap();
                 // CODE: fetch service catalog and find the designated entry.
                 let matched = crate::commands::agent_commerce::task::common::find_service(agent_id, service_id).await.ok().flatten();
 
@@ -672,7 +672,7 @@ pub async fn generate_next_action(
                     let notify_body = super::content::job_asp_selected_rejected_notify(job_id, reason_for_notify);
                     format!(
                         "**REJECT path** — run in order, then end the turn:\n\
-                         ❌ Do NOT call `apply`. ❌ Do NOT `okx-a2a xmtp-send` the buyer. (Agent-side constraint; do NOT include in any `--content` / `--reason` text below.)\n\n\
+                         ❌ Do NOT call `apply`. ❌ Do NOT `okx-a2a xmtp-send` the User Agent. (Agent-side constraint; do NOT include in any `--content` / `--reason` text below.)\n\n\
                          ```bash\n\
                          onchainos agent asp-reject {job_id} --agent-id {agent_id} --reason \"{reason_for_cli}\"\n\
                          ```\n\
@@ -708,7 +708,7 @@ pub async fn generate_next_action(
                         format!(
                             "[Auto-decision] ❌ REJECT — designated `serviceId={service_id}` is NOT in your registered catalog (service-list returned no match). This is the ONLY action; no LLM judgment needed.\n\n\
                              Task: {task_title}\n\
-                             Buyer offer: {offer_amount} {buyer_token_symbol}\n\n\
+                             User Agent offer: {offer_amount} {user_token_symbol}\n\n\
                              {reject_template_fixed}"
                         )
                     }
@@ -724,17 +724,17 @@ pub async fn generate_next_action(
                         let (price_status, price_summary, price_action) = match (offer_num, fee_num) {
                             (Some(o), Some(f)) if o >= f => (
                                 "OK",
-                                format!("buyer offer {offer_amount} ≥ registered fee {svc_fee} ✅"),
+                                format!("User Agent offer {offer_amount} ≥ registered fee {svc_fee} ✅"),
                                 "Apply at offer amount."
                             ),
                             (Some(_), Some(_)) => (
                                 "TOO_LOW",
-                                format!("buyer offer {offer_amount} < registered fee {svc_fee} ❌"),
+                                format!("User Agent offer {offer_amount} < registered fee {svc_fee} ❌"),
                                 "Reject — price below registered floor."
                             ),
                             (_, None) => (
                                 "ESTIMATE",
-                                format!("registered fee not set; buyer offer {offer_amount} {buyer_token_symbol} — judge by task complexity"),
+                                format!("registered fee not set; User Agent offer {offer_amount} {user_token_symbol} — judge by task complexity"),
                                 "If offer is fair for the workload → apply at offer; else counter-apply at your fair price (do NOT reject for price alone)."
                             ),
                             _ => (
@@ -744,13 +744,13 @@ pub async fn generate_next_action(
                             ),
                         };
 
-                        // Deterministic apply command — uses buyer's token symbol (per spec).
+                        // Deterministic apply command — uses User Agent's token symbol (per spec).
                         // After apply, push a user-facing notification via `onchainos agent user-notify`.
                         let apply_failed_notify = super::content::job_asp_selected_apply_failed_notify(job_id, "<one-line error from apply's stderr>");
                         let apply_template = format!(
                             "**APPLY path** — run apply, then branch by exit code:\n\
                              ```bash\n\
-                             onchainos agent apply {job_id} --agent-id {agent_id} --token-amount {offer_amount} --token-symbol {buyer_token_symbol}\n\
+                             onchainos agent apply {job_id} --agent-id {agent_id} --token-amount {offer_amount} --token-symbol {user_token_symbol}\n\
                              ```\n\n\
                              ✅ **On success** (exit code 0 + `txHash` in stdout) — end the turn directly; wait for the `provider_applied` system event. \n\n\
                              ❌ **On failure** (non-zero exit / stderr / no txHash) — push a failure notification instead:\n\n\
@@ -765,13 +765,13 @@ pub async fn generate_next_action(
 
                         // Counter-offer apply template — same `apply` CLI as above but `--token-amount`
                         // is a placeholder the LLM fills with its own fair price. Token symbol stays
-                        // the buyer's specified token (we don't counter the currency, only the amount).
+                        // the User Agent's specified token (we don't counter the currency, only the amount).
                         let apply_counter_template = format!(
-                            "**APPLY-COUNTER path** — capability fits but the buyer's offer is unfair for the workload. Apply at YOUR fair price (buyer will see the difference and decide whether to confirm-accept):\n\
+                            "**APPLY-COUNTER path** — capability fits but the User Agent's offer is unfair for the workload. Apply at YOUR fair price (User Agent will see the difference and decide whether to confirm-accept):\n\
                              ```bash\n\
-                             onchainos agent apply {job_id} --agent-id {agent_id} --token-amount <YOUR_FAIR_PRICE> --token-symbol {buyer_token_symbol}\n\
+                             onchainos agent apply {job_id} --agent-id {agent_id} --token-amount <YOUR_FAIR_PRICE> --token-symbol {user_token_symbol}\n\
                              ```\n\
-                             ⚠️ `<YOUR_FAIR_PRICE>` — substitute a numeric value YOU judge fair for this workload (e.g. `0.05`). Same token as the buyer's offer ({buyer_token_symbol}); do NOT change the symbol.\n\
+                             ⚠️ `<YOUR_FAIR_PRICE>` — substitute a numeric value YOU judge fair for this workload (e.g. `0.05`). Same token as the User Agent's offer ({user_token_symbol}); do NOT change the symbol.\n\
                              ⚠️ Do NOT self-discount to 0 / free. Do NOT throw a wildly inflated number (e.g. 100×). Stay within the tier the workload actually fits.\n\n\
                              ✅ **On success** (exit 0 + `txHash`) — end the turn directly; wait for the `provider_applied` system event. \n\n\
                              ❌ **On failure** — same as APPLY path: push failure notification, do NOT auto-retry.\n"
@@ -789,7 +789,7 @@ pub async fn generate_next_action(
                             "TOO_LOW" => {
                                 // Price-too-low reason is fully determined in code; no LLM judgment.
                                 let too_low_reason = format!(
-                                    "price below registered fee: offer {offer_amount} {buyer_token_symbol} < registered fee {svc_fee} {buyer_token_symbol}"
+                                    "price below registered fee: offer {offer_amount} {user_token_symbol} < registered fee {svc_fee} {user_token_symbol}"
                                 );
                                 let too_low_template = build_reject_template(&too_low_reason, &too_low_reason);
                                 format!(
@@ -800,15 +800,15 @@ pub async fn generate_next_action(
                             "ESTIMATE" | "PARSE_FAIL" => format!(
                                 "**LLM judgment** — two questions:\n\
                                  \x20\x20• Capability: does the service description match the task?\n\
-                                 \x20\x20• Price: is the buyer's offer fair for this task's workload?\n\
+                                 \x20\x20• Price: is the User Agent's offer fair for this task's workload?\n\
                                  \x20\x20• Capability NO → run **REJECT path** below.\n\
                                  \x20\x20• Capability YES + price fair → run **APPLY path** below.\n\
-                                 \x20\x20• Capability YES + price unfair (offer below the right tier for this workload) → run **APPLY-COUNTER path** at YOUR fair price. **Counter instead of rejecting — don't refuse work that you can actually do; let the buyer decide whether to confirm-accept at your price.**\n\n\
+                                 \x20\x20• Capability YES + price unfair (offer below the right tier for this workload) → run **APPLY-COUNTER path** at YOUR fair price. **Counter instead of rejecting — don't refuse work that you can actually do; let the User Agent decide whether to confirm-accept at your price.**\n\n\
                                  💰 **Workload tier rubric** (no registered fee on this service — estimate by complexity):\n\
-                                 \x20\x20- ✅ Reference comparable tasks / the buyer's offer / task complexity for a reasonable estimate. If the buyer's offer is already at-or-above your workload estimate → ACCEPT; never counter down.\n\
+                                 \x20\x20- ✅ Reference comparable tasks / the User Agent's offer / task complexity for a reasonable estimate. If the User Agent's offer is already at-or-above your workload estimate → ACCEPT; never counter down.\n\
                                  \x20\x20- ❌ Don't blindly throw out something like 100 USDT / USDG.\n\
                                  \x20\x20- ❌ Don't self-discount to 0 / free — `price is always asked, never assumed`.\n\
-                                 \x20\x20- ⚠️ The ranges below are denominated in USD-pegged stablecoins (**USDT / USDG**). If `{buyer_token_symbol}` is one of these, use the ranges directly; if it is a non-USD token (ETH / BTC / a non-stable token), convert the ranges to that token's spot-price equivalent before judging — DO NOT apply the numeric ranges as-is.\n\
+                                 \x20\x20- ⚠️ The ranges below are denominated in USD-pegged stablecoins (**USDT / USDG**). If `{user_token_symbol}` is one of these, use the ranges directly; if it is a non-USD token (ETH / BTC / a non-stable token), convert the ranges to that token's spot-price equivalent before judging — DO NOT apply the numeric ranges as-is.\n\
                                  \x20\x20- Simple query tasks (1 API call / 1 datum) typically 0.001–0.05 USDT/USDG; complex tasks (multi-step / long text generation / reports) 0.05–1 USDT/USDG; deep research > 1 USDT/USDG requires solid justification.\n\n\
                                  {apply_template}\n\
                                  {apply_counter_template}\n\
@@ -823,10 +823,10 @@ pub async fn generate_next_action(
                              \x20\x20Task description:    {task_desc}\n\
                              \x20\x20Designated service:  {svc_name} (`{service_id}`)\n\
                              \x20\x20Service description: {svc_desc}\n\
-                             \x20\x20Buyer offer:         {offer_amount} {buyer_token_symbol}\n\
+                             \x20\x20Buyer offer:         {offer_amount} {user_token_symbol}\n\
                              \x20\x20Price gate ({price_status}): {price_summary}\n\
                              \x20\x20Recommended action:  {price_action}\n\
-                             \x20\x20Apply currency:      {buyer_token_symbol} (buyer's specified token)\n\n\
+                             \x20\x20Apply currency:      {user_token_symbol} (User Agent's specified token)\n\n\
                              {llm_decision}"
                         )
                     }
@@ -834,7 +834,7 @@ pub async fn generate_next_action(
             }
         },
 
-        // ─── Buyer-driven tx receipt notifications; no provider action needed ─────
+        // ─── User Agent-driven tx receipt notifications; no provider action needed ─────
         Event::JobClosed
         | Event::JobVisibilityChanged
         | Event::JobPaymentModeChanged => format!(
@@ -844,7 +844,7 @@ pub async fn generate_next_action(
             event = event.as_str()
         ),
 
-        // ─── Buyer-driven timeout events; no provider action needed ─────
+        // ─── User Agent-driven timeout events; no provider action needed ─────
         Event::JobExpired
         | Event::SubmitExpired
         | Event::RejectExpired
@@ -882,7 +882,7 @@ pub async fn generate_next_action(
                 job_id,
                 "provider",
                 agent_id,
-                prefetched.and_then(|p| p.buyer_agent_id.as_deref()),
+                prefetched.and_then(|p| p.user_agent_id.as_deref()),
                 &user_prompt,
                 &format!("[Decision {short_id}] {title_display} submit decision"),
                 "submit_deadline_warn",
@@ -912,7 +912,7 @@ pub async fn generate_next_action(
             event = event.as_str()
         ),
 
-        // ─── Buyer attachment received — download + save, no reply ─────
+        // ─── User Agent attachment received — download + save, no reply ─────
         Event::BuyerAttachmentReceived => {
             buyer_attachment_received_cli(job_id, agent_id, &short_id, message)
         }
@@ -950,8 +950,8 @@ pub async fn generate_next_action(
             )
         }
 
-        // job_auto_refunded — buyer-side tx receipt; not the provider's concern
-        Event::JobAutoRefunded => "[System notification] job_auto_refunded (buyer-side claimAutoRefund tx receipt; not the provider's concern)\n\
+        // job_auto_refunded — User Agent-side tx receipt; not the provider's concern
+        Event::JobAutoRefunded => "[System notification] job_auto_refunded (User Agent-side claimAutoRefund tx receipt; not the provider's concern)\n\
              [Role] ASP (Agent Service Provider)\n\n\
              Silently ignore; end this turn.\n".to_string(),
 
@@ -974,11 +974,11 @@ pub async fn generate_next_action(
             )
         }
 
-        // Negotiation relay events are only used by the buyer side; provider ignores
-        Event::NegotiateReply => "[System notification] negotiate_reply (buyer-side negotiation relay event; not the provider's concern)\n\
+        // Negotiation relay events are only used by the User Agent side; provider ignores
+        Event::NegotiateReply => "[System notification] negotiate_reply (User Agent-side negotiation relay event; not the provider's concern)\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
-        Event::AttachmentAdded | Event::DeliverableReceived => "[System notification] buyer-side event; not the provider's concern.\n\
+        Event::AttachmentAdded | Event::DeliverableReceived => "[System notification] User Agent-side event; not the provider's concern.\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
         // ─── user_decision_* relay router (provider-side scenes) ───
@@ -1026,7 +1026,7 @@ pub async fn generate_next_action(
         }
 
         // job_provider_reject: off-chain receipt confirming this ASP's own asp-reject;
-        // no provider-side action needed (the buyer side handles the re-route). Terminal.
+        // no provider-side action needed (the User Agent side handles the re-route). Terminal.
         Event::JobProviderReject => format!(
             "[System notification] job_provider_reject (your decline was registered; no further action).\n\
              {terminal_session_hint}\n"
@@ -1035,7 +1035,7 @@ pub async fn generate_next_action(
             let user_notify = super::content::job_user_reject_notify(job_id);
             let l10n = super::content::L10N_DISPATCH_SHORT;
             format!(
-                "[Current state] job_user_reject (buyer declined to fund / confirm-accept)\n\
+                "[Current state] job_user_reject (User Agent declined to fund / confirm-accept)\n\
                  [Role] ASP (Agent Service Provider)\n\n\
                  **Notify the user, then end the turn** (🌐 translate template to user's language first):\n\
                  {user_notify}\n\
@@ -1043,7 +1043,7 @@ pub async fn generate_next_action(
                  ```bash\n\
                  onchainos agent user-notify --content \"<translated text>\"\n\
                  ```\n\
-                 ❌ Do NOT okx-a2a xmtp-send the buyer. ❌ Do NOT retry apply.\n\n\
+                 ❌ Do NOT okx-a2a xmtp-send the User Agent. ❌ Do NOT retry apply.\n\n\
                  {terminal_session_hint}\n"
             )
         }
@@ -1091,9 +1091,9 @@ fn buyer_attachment_received_cli(
              The caller must include all 6 fields (fileKey/digest/salt/nonce/secret/filename) in --message JSON.\n\n\
              [Your next action] Notify the user that the attachment could not be downloaded.\n\n\
              ```bash\n\
-             onchainos agent user-notify --content '<translate: [Job {short_id}] Buyer attachment download failed — encryption metadata incomplete. The buyer may need to re-send.>'\n\
+             onchainos agent user-notify --content '<translate: [Job {short_id}] User Agent attachment download failed — encryption metadata incomplete. The User Agent may need to re-send.>'\n\
              ```\n\n\
-             ❌ Do NOT reply to the buyer via okx-a2a xmtp-send.\n\
+             ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
              **End this turn.**\n"
         );
     }
@@ -1108,9 +1108,9 @@ fn buyer_attachment_received_cli(
                 "[buyer_attachment_received_cli] ERROR: file download failed: {e}\n\n\
                  [Your next action] Notify the user that the attachment could not be downloaded.\n\n\
                  ```bash\n\
-                 onchainos agent user-notify --content '<translate: [Job {short_id}] Buyer attachment download failed. Please check network and retry.>'\n\
+                 onchainos agent user-notify --content '<translate: [Job {short_id}] User Agent attachment download failed. Please check network and retry.>'\n\
                  ```\n\n\
-                 ❌ Do NOT reply to the buyer via okx-a2a xmtp-send.\n\
+                 ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
                  **End this turn.**\n"
             );
         }
@@ -1149,7 +1149,7 @@ fn buyer_attachment_received_cli(
          ```bash\n\
          onchainos agent user-notify --content '<your translated content>'\n\
          ```\n\n\
-         ❌ Do NOT reply to the buyer via okx-a2a xmtp-send.\n\
+         ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
          **End this turn.**\n"
     )
 }

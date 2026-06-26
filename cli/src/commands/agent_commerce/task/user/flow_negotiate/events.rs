@@ -23,7 +23,7 @@ pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>, visibility: i64) -> 
     };
     format!(
     "[Current state] job_visibility_changed (public/private toggle is on-chain)\n\
-     [Role] User (User Agent)\n\n\
+     [Role] User Agent\n\n\
      🛑 **This is not an auxiliary event; you MUST notify the user.**\n\n\
      [Your next action — call ONE command only, then END TURN]\n\n\
      {title_query_hint}\
@@ -47,7 +47,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
 
     let mut out = format!(
     "[Current state] job_payment_mode_changed (payment-mode switch is on-chain)\n\
-     [Role] User (User Agent)\n\n\
+     [Role] User Agent\n\n\
      🛑 **You MUST notify the user of the payment-mode change.**\n\
      ❌ Do NOT call set-payment-mode again / apply / confirm-accept.\n\n\
      [Your next actions]\n\n\
@@ -116,7 +116,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
 
 /// Negotiation reply handler — natural-language exchange, max 2 rounds.
 ///
-/// Round counting: the LLM checks how many buyer replies have already been
+/// Round counting: the LLM checks how many user replies have already been
 /// sent in this sub session. If this would be the 3rd reply, the negotiation
 /// has exceeded the 2-round limit → mark-failed + push decision card to user.
 pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
@@ -194,8 +194,8 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     format!(
         "{task_block}\
          [Negotiation] negotiate_reply (ASP sent a natural-language message)\n\
-         [Role] User (Buyer)\n\n\
-         **2-round limit**: count how many buyer replies (your `okx-a2a xmtp-send` calls) have already been sent in this sub session's conversation history.\n\
+         [Role] User (User)\n\n\
+         **2-round limit**: count how many user replies (your `okx-a2a xmtp-send` calls) have already been sent in this sub session's conversation history.\n\
          - Rounds sent < 2 → reply normally (see below).\n\
          - Rounds sent ≥ 2 → negotiation exceeded the 2-round limit. **Do NOT reply.** Jump to **[Over-limit]** below.\n\n\
          **Reply about**: scope, requirements, deliverable format, timeline, clarifying questions{public_price_note}.\n\n\
@@ -232,7 +232,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
 }
 
 /// `Event::JobProviderReject` — ASP declined via `asp/reject` API (status remains `created`).
-/// Buyer-side reaction:
+/// User-side reaction:
 ///   Step 0 (in-process): POST `/priapi/v1/aieco/task/{jobId}/reset/asp` to clear the rejected
 ///                        ASP binding on the task record (no request body).
 ///   Step 1 (LLM playbook): the agent must localize the `--user-content` payload into the

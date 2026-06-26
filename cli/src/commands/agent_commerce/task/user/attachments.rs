@@ -1,4 +1,4 @@
-//! Local attachment management for buyer tasks.
+//! Local attachment management for user tasks.
 //!
 //! Storage: `~/.onchainos/task/<jobId>/attachments/`
 
@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::query::{self as common_query, status_name};
-use crate::commands::agent_commerce::task::common::{AGENT_ROLE_BUYER, DEBUG_LOG};
+use crate::commands::agent_commerce::task::common::{AGENT_ROLE_USER, DEBUG_LOG};
 
 const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
 
@@ -44,7 +44,7 @@ pub(crate) fn dedup_dest(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
 }
 
 pub async fn handle_task_attach(client: &mut TaskApiClient, job_id: &str, file_path: &str) -> Result<()> {
-    let agent_id = common_query::resolve_agent_id("", AGENT_ROLE_BUYER).await;
+    let agent_id = common_query::resolve_agent_id("", AGENT_ROLE_USER).await;
     let resp = client.get_with_agent_id(&client.task_path(job_id), &agent_id).await?;
     let status = resp["status"].as_i64().unwrap_or(-1);
     if status >= 2 {

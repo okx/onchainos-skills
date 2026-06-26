@@ -75,7 +75,7 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
     );
     format!(
     "[System Notification] review_deadline_warn (review deadline approaching)\n\
-     [Role] User (User Agent)\n\n\
+     [Role] User Agent\n\n\
      **CRITICAL — this event MUST push the review decision to the user via `pending-decisions-v2 request` (NOT a plain text reply, NOT just `onchainos agent user-notify`).**\n\
      Review deadline = user funds safety red line — if the user is not notified, funds auto-release to the ASP on timeout, irreversibly.\n\
      Do not substitute a plain text reply for the `pending-decisions-v2 request` call.\n\
@@ -151,7 +151,7 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
     let wakeup_resume = super::super::content::wakeup_resume_user_notify(job_id);
     format!(
     "[System Notification] wakeup_notify (task wake-up after network / machine restart)\n\
-     [Role] User (User Agent)\n\n\
+     [Role] User Agent\n\n\
      This is a wake-up heartbeat event, **not** a business-driven event. The real business status lives in envelope.message.jobStatus.\n\
      You should not run a playbook with `wakeup_notify` as --event -- this playbook is only a guide.\n\n\
      [Your next actions (strict order)]\n\n\

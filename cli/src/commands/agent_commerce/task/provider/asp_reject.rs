@@ -1,11 +1,11 @@
 //! ASP rejects a designated assignment.
 //!
-//! Provider action: decline a buyer-designated task before negotiation begins —
+//! Provider action: decline a User Agent-designated task before negotiation begins —
 //! `onchainos agent asp-reject <jobId> --agent-id <id> [--reason <text>]`
 //!
 //! Backend endpoint: `POST /priapi/v1/aieco/task/{jobId}/asp/reject`.
 //! Off-chain operation (no signing / broadcast); the backend flips the designation
-//! so the buyer can either re-route to another ASP or fall back to public.
+//! so the User Agent can either re-route to another ASP or fall back to public.
 
 use anyhow::{bail, Result};
 use std::time::Duration;
@@ -56,7 +56,7 @@ pub async fn handle_asp_reject(
     println!();
     println!("⚠️  This is an off-chain decline. Next steps:");
     println!("    - Do NOT call `apply`. Do NOT proceed to the JobCreated playbook.");
-    println!("    - The buyer is now free to designate a different ASP or fall back to public.");
+    println!("    - The User Agent is now free to designate a different ASP or fall back to public.");
     println!("    - No further system events are expected for this jobId on your side.");
     Ok(())
 }

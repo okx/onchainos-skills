@@ -3,7 +3,7 @@
 //! - `asp-match`   — search matching ASPs (pre-publish or post-publish)
 //! - `set-asp`     — set/replace ASP + service on an existing task
 //! - `reset-asp`   — clear ASP + service fields
-//! - `user-reject` — buyer rejects current ASP
+//! - `user-reject` — user rejects current ASP
 
 use anyhow::{bail, Result};
 use std::time::Duration;
@@ -38,7 +38,7 @@ pub async fn handle_asp_match(
     let agent_id = match explicit_agent_id {
         Some(id) => id.to_string(),
         None => signing::resolve_agent_id_by_role(
-            crate::commands::agent_commerce::task::common::AGENT_ROLE_BUYER,
+            crate::commands::agent_commerce::task::common::AGENT_ROLE_USER,
         )
         .await?,
     };
@@ -539,12 +539,12 @@ mod tests {
     #[test]
     fn cli_user_reject_with_agent_id() {
         let cli = TestCli::parse_from([
-            "test", "user-reject", "job-rej", "--agent-id", "buyer-42",
+            "test", "user-reject", "job-rej", "--agent-id", "user-42",
         ]);
         match cli.cmd {
             super::super::TaskCommand::UserReject { job_id, agent_id } => {
                 assert_eq!(job_id, "job-rej");
-                assert_eq!(agent_id.as_deref(), Some("buyer-42"));
+                assert_eq!(agent_id.as_deref(), Some("user-42"));
             }
             _ => panic!("expected UserReject"),
         }

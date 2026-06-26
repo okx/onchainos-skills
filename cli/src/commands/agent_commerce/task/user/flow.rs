@@ -1,7 +1,7 @@
-//! User Agent (buyer) side task flow driver
+//! User Agent (user) side task flow driver
 //!
 //! Based on the current event from system notifications, outputs the next-action prompt.
-//! Buyer counterpart of provider/flow.rs — lets the agent simply run
+//! User counterpart of provider/flow.rs — lets the agent simply run
 //! `exec onchainos agent next-action --role buyer ...` to fetch a prompt and execute directly.
 //!
 //! The actual prompt generation logic is split by responsibility into:
@@ -83,7 +83,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Then send SKILL_PREFETCH:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content '[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context.'\n\
+                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content '[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load user role context.'\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x207. **Upload pending attachments (if any):**\n\
                      \x20\x20\x20\x20```bash\n\
@@ -140,7 +140,7 @@ pub(super) fn notify_and_end_terminal(canonical_content: &str, terminal_hint: &s
     )
 }
 
-/// List of CLI commands the buyer can execute under a given status (used in the menu at the tail of `agent common context` output).
+/// List of CLI commands the user can execute under a given status (used in the menu at the tail of `agent common context` output).
 ///
 /// Each status lists the primary action + one index line pointing back to the full `next-action` playbook (
 /// the `generate_next_action` function in this same file, routed by the entry event corresponding to the status).
@@ -193,7 +193,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_refunded"),
             "(terminal) Task is FAILED — **funds refunded to user**".to_string(),
             "  ▸ Provider agreed to refund (agree-refund) / auto-refund → funds returned along the original path".to_string(),
-            "  ▸ Arbitration buyer wins (dispute_resolved buyer-wins) → refund".to_string(),
+            "  ▸ Arbitration user wins (dispute_resolved user-wins) → refund".to_string(),
             "Keep the sub session (do not close), for later reference.".to_string(),
         ],
         Status::Close => vec![
@@ -210,7 +210,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "Task is initializing (waiting for on-chain confirmation) → waiting for job_created event".to_string(),
         ],
         Status::Other(s) => vec![
-            format!("Current task status=`{s}` is not in the set of statuses the buyer cares about (created / accepted / submitted / rejected / disputed / completed / failed / close / expired / admin_stopped)"),
+            format!("Current task status=`{s}` is not in the set of statuses the user cares about (created / accepted / submitted / rejected / disputed / completed / failed / close / expired / admin_stopped)"),
             "→ No task-level action required for this role, wait for the next relevant chain event / user decision before handling".to_string(),
             "→ **Do NOT** repeatedly run `agent status` / `agent common context` (the result will be the same), end this turn".to_string(),
         ],
@@ -219,7 +219,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 
 
 
-/// Generate the structured next-action prompt for the client/buyer based on event.
+/// Generate the structured next-action prompt for the client/user based on event.
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
 /// and status names (created / submitted / ...), uniformly parsed by state_machine.
@@ -295,10 +295,10 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     let event = parse_status_or_event(event_str);
     if DEBUG_LOG {
         eprintln!(
-            "[buyer-flow] generate_next_action called: job_id={job_id}, event={event_str}, agent_id={agent_id}"
+            "[user-flow] generate_next_action called: job_id={job_id}, event={event_str}, agent_id={agent_id}"
         );
         eprintln!(
-            "[buyer-flow] parsed event: {:?} | okx-a2a commands involved: {}",
+            "[user-flow] parsed event: {:?} | okx-a2a commands involved: {}",
             event,
             match &event {
                 Event::JobCreated => "okx-a2a session create (create group) → okx-a2a xmtp-send (send negotiation message)",
@@ -421,7 +421,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::AttachmentAdded => {
             super::flow_lifecycle::attachment_added_cli(&ctx, message)
         }
-        // ─── Events the buyer never receives + unknown fallback ──────────────────────────
+        // ─── Events the user never receives + unknown fallback ──────────────────────────
         Event::Staked
         | Event::UnstakeRequested
         | Event::UnstakeClaimed
@@ -429,7 +429,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         | Event::StakeStopped
         | Event::CooldownEntered => super::flow_lifecycle::staked_and_unknown(event.as_str(), job_id),
 
-        // ─── user_decision_* relay router (buyer-side scenes) ───
+        // ─── user_decision_* relay router (user-side scenes) ───
         // User-decision relays arrive as system-shaped envelopes with
         // `event = "user_decision_<source_event>"` and `message.data = <user's verbatim reply>`.
         // CLI returns a routing playbook that lists the candidate pseudo-events with
@@ -844,7 +844,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      Then send SKILL_PREFETCH:\n\
                      ```bash\n\
-                     okx-a2a session send --session-key <sessionKey from above> --content '[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context.'\n\
+                     okx-a2a session send --session-key <sessionKey from above> --content '[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load user role context.'\n\
                      ```\n\
                      5. **Upload pending attachments (if any):**\n\
                      ```bash\n\
@@ -867,7 +867,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             format!("{ud_guard}{ud_body}")
         }
 
-        // Catch-all: any variant the buyer doesn't have a dedicated arm for
+        // Catch-all: any variant the user doesn't have a dedicated arm for
         // (e.g. provider-side events like `JobAspSelected`, plus all future
         // additions to the Event enum) falls through to the staking/unknown
         // diagnostic. Using `_` instead of `Event::Other(_)` so the compiler
@@ -903,7 +903,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     if DEBUG_LOG {
         let preview: String = result.chars().take(200).collect();
         eprintln!(
-            "[buyer-flow] output length: {} chars | first 200: {}",
+            "[user-flow] output length: {} chars | first 200: {}",
             result.len(),
             preview
         );

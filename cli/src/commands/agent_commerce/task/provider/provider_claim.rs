@@ -2,7 +2,7 @@
 //!
 //! Provider action: timeout claim — onchainos agent claim-auto-complete
 //!
-//! Trigger: buyer fails to review within the completedWindow (neither completes nor rejects)
+//! Trigger: User Agent fails to review within the completedWindow (neither completes nor rejects)
 //! → backend keeper pushes a system notification to the provider
 //! → provider calls this endpoint (permissionless on-chain claim)
 //! → AP.complete → status becomes complete, funds optimistically settle to the provider.

@@ -27,7 +27,7 @@ fn job_created_non_designated_provider(ctx: &FlowContext<'_>) -> String {
 
     format!(
         "[Trigger] job_created (on-chain, public task — no designated provider)\n\
-         [Role] User (Buyer)\n\n\
+         [Role] User (User)\n\n\
          🛑 Execute the 1 action below, then end the turn. The task is public; ASPs will discover it and reach out via `provider_conversation`.\n\n\
          **Action 1 — Notify the user that the job is on-chain.** Translate the canonical English notification below to the user's chat language (per [Localization] rules), then dispatch it:\n\
          Canonical content (`<title>` and `<short_jobId>` already filled in):\n\
@@ -142,14 +142,14 @@ pub(crate) async fn provider_conversation_pick_cli(
 /// set-asp succeeds (avoids orphan sessions when asp-match finds no services
 /// or set-asp fails).
 fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
-    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. \
+    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load user role context. \
         This prefetch message itself requires no action — but when the NEXT inbound message arrives \
         (same turn or later turn), you MUST process it normally via user-sub-playbook.md \
         §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
 
     format!(
         "[Provider picked: A2A] Provider {dp_id}\n\
-         [Role] User (Buyer)\n\n\
+         [Role] User (User)\n\n\
          **Step 1 — fetch the ASP's service info:**\n\
          ```bash\n\
          onchainos agent asp-match --job-id {job_id} --provider-agent-id {dp_id} --format json\n\
@@ -306,7 +306,7 @@ pub(crate) fn provider_conversation_cli_inner(
 
     format!(
         "[Trigger] ASP pending contact — showing first of {} ASP(s)\n\
-         [Role] User (Buyer)\n\n\
+         [Role] User (User)\n\n\
          🛑 Push the accept/reject decision card via `pending-decisions-v2 request`, then end turn.\n\n\
          ASP context (LLM-only; do NOT expose groupId to user):\n\
          \x20\x20agentId: {asp_agent_id} | groupId: {group_id} | name: {name} | remaining after this: {remaining}\n\n\
@@ -317,7 +317,7 @@ pub(crate) fn provider_conversation_cli_inner(
          {card_content}\n\n\
          `--llm-content` block (keep English verbatim — consumed by user-session agent for routing):\n\
          ```\n\
-         [USER_DECISION_REQUEST][source: provider_pending][job: {job_id}][role: buyer][agentId: {agent_id}]\n\
+         [USER_DECISION_REQUEST][source: provider_pending][job: {job_id}][role: user][agentId: {agent_id}]\n\
          [asp: {asp_agent_id}][groupId: {group_id}][remaining: {remaining}]\n\n\
          Step 1 — Card delivered. **END THE TURN NOW.**\n\
          Step 2 — When the user replies, route by choice:\n\

@@ -16,7 +16,7 @@ use crate::commands::agent_commerce::task::common::{
 use crate::commands::agent_commerce::task::signing;
 
 use super::create::{
-    normalize_currency, resolve_buyer_agent, validate_budget,
+    normalize_currency, resolve_user_agent, validate_budget,
     validate_budget_decimals,
     MAX_DESCRIPTION_CHARS, MAX_SUMMARY_CHARS, MAX_TITLE_CHARS, MIN_DESCRIPTION_CHARS,
 };
@@ -286,9 +286,9 @@ pub async fn handle_draft_create(
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
-    let (buyer_agent_id, _) = resolve_buyer_agent().await?;
+    let (user_agent_id, _) = resolve_user_agent().await?;
     if DEBUG_LOG {
-        eprintln!("[draft-create] buyer identity check passed (agentId: {buyer_agent_id})");
+        eprintln!("[draft-create] user identity check passed (agentId: {user_agent_id})");
     }
 
     let balance_warning = if let (Some(b), Some(ref c)) = (budget, &currency_norm) {
@@ -339,7 +339,7 @@ pub async fn handle_draft_create(
         obj.insert("serviceTokenAmount".into(), serde_json::json!(stm));
     }
 
-    let resp = client.post_with_identity(DRAFT_CREATE, &body, &buyer_agent_id).await?;
+    let resp = client.post_with_identity(DRAFT_CREATE, &body, &user_agent_id).await?;
     let job_id = resp["jobId"].as_str().unwrap_or("?").to_string();
 
     if let Some(files) = attachments {
@@ -355,7 +355,7 @@ pub async fn handle_draft_create(
         Duration::default(),
         Some(vec![
             format!("jobId={job_id}"),
-            format!("agentId={buyer_agent_id}"),
+            format!("agentId={user_agent_id}"),
         ]),
         None,
     );
@@ -378,10 +378,10 @@ pub async fn handle_draft_list(
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
-    let buyer_agent_id = match resolve_buyer_agent().await {
+    let user_agent_id = match resolve_user_agent().await {
         Ok((id, _)) => id,
         Err(e) => {
-            bail!("buyer identity required for listing drafts: {e}");
+            bail!("user identity required for listing drafts: {e}");
         }
     };
 
@@ -390,7 +390,7 @@ pub async fn handle_draft_list(
         "pageSize": limit,
     });
 
-    let resp = client.post_with_identity(DRAFT_LIST, &body, &buyer_agent_id).await?;
+    let resp = client.post_with_identity(DRAFT_LIST, &body, &user_agent_id).await?;
 
     let list = resp["list"].as_array();
     let total = resp["total"].as_u64().unwrap_or(0);
@@ -429,7 +429,7 @@ pub async fn handle_draft_list(
         true,
         Duration::default(),
         Some(vec![
-            format!("agentId={buyer_agent_id}"),
+            format!("agentId={user_agent_id}"),
             format!("page={page}"),
             format!("total={total}"),
         ]),
@@ -495,9 +495,9 @@ pub async fn handle_draft_update(
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
-    let (buyer_agent_id, _) = resolve_buyer_agent().await?;
+    let (user_agent_id, _) = resolve_user_agent().await?;
     if DEBUG_LOG {
-        eprintln!("[draft-update] buyer identity check passed (agentId: {buyer_agent_id})");
+        eprintln!("[draft-update] user identity check passed (agentId: {user_agent_id})");
     }
 
     let mut body = serde_json::Map::new();
@@ -554,7 +554,7 @@ pub async fn handle_draft_update(
     }
 
     let body_val = serde_json::Value::Object(body);
-    client.post_with_identity(&draft_update_path(job_id), &body_val, &buyer_agent_id).await?;
+    client.post_with_identity(&draft_update_path(job_id), &body_val, &user_agent_id).await?;
 
     if let Some(files) = attachments {
         if !files.is_empty() {
@@ -569,7 +569,7 @@ pub async fn handle_draft_update(
         Duration::default(),
         Some(vec![
             format!("jobId={job_id}"),
-            format!("agentId={buyer_agent_id}"),
+            format!("agentId={user_agent_id}"),
         ]),
         None,
     );
@@ -587,15 +587,15 @@ pub async fn handle_draft_delete(
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
-    let buyer_agent_id = match resolve_buyer_agent().await {
+    let user_agent_id = match resolve_user_agent().await {
         Ok((id, _)) => id,
         Err(e) => {
-            bail!("buyer identity required for deleting draft: {e}");
+            bail!("user identity required for deleting draft: {e}");
         }
     };
 
     let body = serde_json::json!({});
-    client.post_with_identity(&draft_delete_path(job_id), &body, &buyer_agent_id).await?;
+    client.post_with_identity(&draft_delete_path(job_id), &body, &user_agent_id).await?;
 
     audit::log(
         "cli",
@@ -604,7 +604,7 @@ pub async fn handle_draft_delete(
         Duration::default(),
         Some(vec![
             format!("jobId={job_id}"),
-            format!("agentId={buyer_agent_id}"),
+            format!("agentId={user_agent_id}"),
         ]),
         None,
     );
@@ -622,14 +622,14 @@ pub async fn handle_draft_publish(
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
-    let (buyer_agent_id, _) = resolve_buyer_agent().await?;
+    let (user_agent_id, _) = resolve_user_agent().await?;
     if DEBUG_LOG {
-        eprintln!("[draft-publish] buyer identity check passed (agentId: {buyer_agent_id})");
+        eprintln!("[draft-publish] user identity check passed (agentId: {user_agent_id})");
     }
 
     // ── Fetch draft detail for pre-publish validation ────────────
     let detail = client
-        .get_with_identity(&client.task_path(job_id), &buyer_agent_id)
+        .get_with_identity(&client.task_path(job_id), &user_agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("failed to fetch draft detail: {e}"))?;
 
@@ -659,7 +659,7 @@ pub async fn handle_draft_publish(
 
     // ── Publish API → uopData ────────────────────────────────────
     let resp = client
-        .post_with_identity(&draft_publish_path(job_id), &serde_json::json!({}), &buyer_agent_id)
+        .post_with_identity(&draft_publish_path(job_id), &serde_json::json!({}), &user_agent_id)
         .await?;
 
     let returned_job_id = resp["jobId"].as_str().unwrap_or(job_id);
@@ -674,7 +674,7 @@ pub async fn handle_draft_publish(
     let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(returned_job_id).await;
 
     // ── Sign + Broadcast ─────────────────────────────────────────
-    let (account_id, address) = signing::resolve_wallet_by_agent_id(&buyer_agent_id).await?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
     let tx_hash = match signing::sign_uop_and_broadcast(
         client,
@@ -683,7 +683,7 @@ pub async fn handle_draft_publish(
         &address,
         returned_job_id,
         1,
-        &buyer_agent_id,
+        &user_agent_id,
         None,
     )
     .await
@@ -704,7 +704,7 @@ pub async fn handle_draft_publish(
         Duration::default(),
         Some(vec![
             format!("jobId={returned_job_id}"),
-            format!("agentId={buyer_agent_id}"),
+            format!("agentId={user_agent_id}"),
             format!("currency={token_sym}"),
             format!("budget={token_amount}"),
             format!("designatedProvider={}", provider_id.unwrap_or("")),

@@ -50,7 +50,7 @@ pub async fn handle_agree_refund(
     println!("✓ Agreed to refund, waiting for on-chain confirmation (job_refunded)");
     println!("  txHash: {tx_hash}");
     println!();
-    println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
+    println!("⚠️  Next steps are driven by system notifications — do not proactively message the User Agent:");
     println!("    - You will receive a `job_refunded` system notification after on-chain confirmation");
     Ok(())
 }

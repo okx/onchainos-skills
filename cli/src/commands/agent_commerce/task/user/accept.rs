@@ -236,12 +236,12 @@ pub async fn handle_confirm_accept(
 ) -> Result<()> {
     let (account_id, address, agent_id, provider, token_symbol, token_amount, payment_mode, token_address) =
         if let Some(p) = prefetched {
-            let buyer_addr = p.buyer_agent_address.as_deref()
+            let user_addr = p.user_agent_address.as_deref()
                 .ok_or_else(|| anyhow::anyhow!("prefetched missing buyerAgentAddress"))?;
-            let agent_id = p.buyer_agent_id.as_deref()
+            let agent_id = p.user_agent_id.as_deref()
                 .ok_or_else(|| anyhow::anyhow!("prefetched missing buyerAgentId"))?
                 .to_string();
-            let (acct, addr) = signing::resolve_wallet(None, Some(buyer_addr))?;
+            let (acct, addr) = signing::resolve_wallet(None, Some(user_addr))?;
             let prov = p.provider_agent_id.as_deref()
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow::anyhow!("task {job_id} has no providerAgentId; cannot confirm-accept"))?
@@ -871,7 +871,7 @@ pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str, agent
 
     let aid = match agent_id {
         Some(id) if !id.is_empty() => id.to_string(),
-        _ => super::create::resolve_buyer_agent()
+        _ => super::create::resolve_user_agent()
             .await
             .map(|(id, _)| id)
             .unwrap_or_default(),

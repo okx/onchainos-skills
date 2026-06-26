@@ -5,7 +5,7 @@
 pub(crate) fn create_task() -> String {
     "\
 [Current Operation] Publish task (create_task)
-[Role] User (User Agent)
+[Role] User Agent
 [Session Type] user session (talking directly to the user)
 
 Collect all fields → show confirmation form → wait for explicit user confirmation → call CLI. Default: `create-task` (Step 6). If user says \"save as draft\" / \"草稿\" → jump to Step 6-D.
@@ -180,7 +180,7 @@ Error → relay, do NOT auto-modify. After success → \"{draft_saved}\" Localiz
 pub(crate) fn draft_publish(job_id: &str) -> String {
     format!("\
 [Current Operation] Publish draft (draft_publish)
-[Role] User (User Agent)
+[Role] User Agent
 [Session Type] user session (talking directly to the user)
 
 ================================================

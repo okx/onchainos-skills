@@ -41,7 +41,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
 
     format!(
     "[Current Status] job_disputed (arbitration opened; CLI auto-submits evidence on this event)\n\
-     [Role] User (User Agent)\n\n\
+     [Role] User Agent\n\n\
      **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
      The agent does NOT ask the user for evidence; it formats the chat history, calls `dispute upload`\n\
      (which also auto-attaches every saved deliverable from `~/.onchainos/deliverables/buyer/{job_id}/`),\n\
@@ -128,7 +128,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
 
     format!(
     "[Current Status] dispute_resolved (arbitration ruling issued)\n\
-     [Role] User (User Agent)\n\n\
+     [Role] User Agent\n\n\
      **You MUST notify the user of the arbitration result + auto-rating in ONE consolidated message** — auto-rate FIRST, then send a single `onchainos agent user-notify` combining both pieces.\n\n\
      {winner_line}\
      **Step 1 — Task fields (pre-fetched; do NOT call `common context`):**\n\

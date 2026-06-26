@@ -283,7 +283,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
 
     format!(
     "[Current action] deliverable_received — download → save → notify\n\
-     [Role] Buyer\n\n\
+     [Role] User\n\n\
      Determine `deliverableType` from the ASP's message, then execute all steps in one turn.\n\n\
      **Step 1 — Download / extract**\n\
      • **file** (message has fileKey/digest/salt/nonce/secret): `okx-a2a file download --file-key <fileKey> --agent-id {agent_id} --digest <digest> --salt <salt> --nonce <nonce> --secret <secret> [--filename <filename>]` → record localPath.\n\
@@ -626,7 +626,7 @@ pub(crate) fn deliverable_received_cli(
                 payment_mode: ctx.payment_mode,
                 max_budget: None,
                 provider_agent_id: if provider_id.is_empty() { None } else { Some(provider_id.to_string()) },
-                buyer_agent_id: None,
+                user_agent_id: None,
                 visibility: None,
                 status: None,
                 deliverable: None,
@@ -634,7 +634,7 @@ pub(crate) fn deliverable_received_cli(
                 service_token_address: None,
                 service_token_amount: None,
                 service_params: None,
-                buyer_agent_address: None,
+                user_agent_address: None,
                 token_address: None,
             }
         });
@@ -953,7 +953,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent feedback-submit --agent-id {provider_field} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
      ```\n\
-     `--agent-id` = ASP being rated; `--creator-id` = buyer's agent id.\n\n\
+     `--agent-id` = ASP being rated; `--creator-id` = user's agent id.\n\n\
      **3b — Notify user (deliverable + rating in one message):**\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
@@ -1015,7 +1015,7 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
     match super::super::reject::handle_reject(&mut client, job_id, reason).await {
         Ok(()) => format!(
             "[reject_review] [OK]`onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
-             broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (arbitration) or agree to a refund. The buyer cannot initiate arbitration.\n\
+             broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (arbitration) or agree to a refund. The user cannot initiate arbitration.\n\
              Do NOT send any message to the ASP about the rejection — they learn via on-chain events.\n"
         ),
         Err(e) => format!(

@@ -1,4 +1,4 @@
-//! Upload dispute evidence (off-chain only, multipart) — shared by buyer and seller.
+//! Upload dispute evidence (off-chain only, multipart) — shared by user and seller.
 //!
 //! Maps to backend `POST /priapi/v1/aieco/task/{jobId}/evidence/upload`,
 //! Content-Type: multipart/form-data, fields `text` and/or `files[]`.
@@ -6,7 +6,7 @@
 //!
 //! In addition to the explicit `--text` / `--file` inputs, the CLI auto-attaches every
 //! entry recorded in `~/.onchainos/deliverables/<role>/<jobId>/manifest.json`
-//! (buyer side: the downloaded deliverable + any later attachments; provider side:
+//! (user side: the downloaded deliverable + any later attachments; provider side:
 //! the submitted deliverable copy). This guarantees the arbitrator always sees the
 //! actual deliverable artefacts even if the user only writes a textual summary.
 //!
@@ -36,7 +36,7 @@ const MAX_TEXT_BYTES: usize = 16 * 1024;
 /// uploads would risk OOM on agent hosts.
 const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
 
-/// Upload off-chain evidence (shared entrypoint for buyer and seller).
+/// Upload off-chain evidence (shared entrypoint for user and seller).
 ///
 /// `role` selects which local deliverables manifest to auto-attach
 /// (`buyer` → `~/.onchainos/deliverables/buyer/<jobId>/`,
@@ -50,7 +50,7 @@ pub async fn handle_upload_evidence(
     explicit_file_paths: &[String],
 ) -> Result<()> {
     if role != "buyer" && role != "provider" {
-        bail!("--role must be 'buyer' or 'provider', got '{role}'");
+        bail!("--role must be 'user' or 'provider', got '{role}'");
     }
 
     // Align with backend `StringUtils.isBlank`: trim then check empty.

@@ -99,7 +99,7 @@ pub enum AgentCommand {
         #[arg(long = "service-token-amount")] service_token_amount: Option<String>,
         /// Task visibility: 1 = private (requires --provider), 0 = public
         #[arg(long, default_value = "1")] visibility: i32,
-        /// Accepted for compatibility but ignored — buyer identity is auto-resolved.
+        /// Accepted for compatibility but ignored — user identity is auto-resolved.
         #[arg(long = "agentId", alias = "agent-id", hide = true)]
         _agent_id: Option<String>,
     },
@@ -115,7 +115,7 @@ pub enum AgentCommand {
         #[arg(long = "provider-agent-id")] provider_agent_id: Option<String>,
         /// Page number
         #[arg(long, default_value = "1")] page: usize,
-        /// Buyer agent ID
+        /// User agent ID
         #[arg(long = "agent-id")] agent_id: Option<String>,
         /// Output format: "json" for raw JSON (no formatted list)
         #[arg(long, default_value = "")] format: String,
@@ -181,7 +181,7 @@ pub enum AgentCommand {
     /// / 4 disputed by default; pass `--include-terminal` to also list 5-9.
     #[command(name = "active-tasks")]
     ActiveTasks {
-        /// Optional role filter: buyer | provider | evaluator (also accepts 1/2/3)
+        /// Optional role filter: user | provider | evaluator (also accepts 1/2/3)
         #[arg(long)] role: Option<String>,
         /// Include terminal statuses (complete / close / expired / rejected / admin_stopped)
         #[arg(long = "include-terminal")] include_terminal: bool,
@@ -238,7 +238,7 @@ pub enum AgentCommand {
     X402Check {
         /// x402 provider endpoint URL
         #[arg(long)] endpoint: String,
-        /// Buyer agent ID (used for auth on token detail queries)
+        /// User agent ID (used for auth on token detail queries)
         #[arg(long = "agent-id")] agent_id: Option<String>,
         /// JSON business body to POST (for endpoints that require business parameters to return 402)
         #[arg(long)] body: Option<String>,
@@ -258,7 +258,7 @@ pub enum AgentCommand {
     X402Validate {
         /// x402 provider endpoint URL
         #[arg(long)] endpoint: String,
-        /// Buyer agent ID
+        /// User agent ID
         #[arg(long = "agent-id")] agent_id: String,
         /// Job ID (for budget lookup)
         #[arg(long = "job-id")] job_id: String,
@@ -320,7 +320,7 @@ pub enum AgentCommand {
     /// already scoped to the current account's XLayer ownerAddress.
     #[command(name = "my-agents")]
     MyAgents {
-        /// Optional role filter: buyer | provider | evaluator (also accepts 1/2/3)
+        /// Optional role filter: user | provider | evaluator (also accepts 1/2/3)
         #[arg(long)] role: Option<String>,
     },
 
@@ -328,7 +328,7 @@ pub enum AgentCommand {
     /// Pure read-only diagnostic — does not modify any state.
     #[command(name = "gate-check")]
     GateCheck {
-        /// Role to check identity for: buyer | provider | evaluator (also accepts 1/2/3)
+        /// Role to check identity for: user | provider | evaluator (also accepts 1/2/3)
         #[arg(long)] role: String,
     },
 
@@ -410,7 +410,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: String,
     },
 
-    /// Provider declines a buyer-designated task (off-chain backend call, no signing).
+    /// Provider declines a user-designated task (off-chain backend call, no signing).
     /// Used by the `job_asp_selected` flow when capability / price gate fails.
     #[command(name = "asp-reject")]
     AspReject {
@@ -421,7 +421,7 @@ pub enum AgentCommand {
         #[arg(long, default_value = "")] reason: String,
     },
 
-    /// Provider cold-start: contact the buyer in one shot.
+    /// Provider cold-start: contact the user in one shot.
     /// Combines `okx-a2a session create` (group + session create) + `okx-a2a xmtp-send`
     /// (the canonical self-intro / interest opener) so the LLM only runs ONE
     /// command instead of chaining two CLI calls. Opener content is fixed;
@@ -456,7 +456,7 @@ pub enum AgentCommand {
 
     /// Cache a pre-translated notification for a future event playbook so the
     /// on-chain event can dispatch `user-notify` without an LLM translation
-    /// round-trip. Populated by the buyer sub at prefetch time.
+    /// round-trip. Populated by the user sub at prefetch time.
     #[command(name = "cache-notify", hide = true)]
     CacheNotify {
         #[arg(long = "job-id")]
@@ -471,7 +471,7 @@ pub enum AgentCommand {
 
     /// Cache a pre-decided ASP rating (score + comment) so the `job_completed`
     /// playbook can dispatch `feedback-submit` in-process without an LLM
-    /// decision round-trip. Populated by the buyer sub at deliverable_received
+    /// decision round-trip. Populated by the user sub at deliverable_received
     /// time based on the deliverable content vs task description.
     #[command(name = "cache-rating", hide = true)]
     CacheRating {
@@ -525,7 +525,7 @@ pub enum AgentCommand {
         #[arg(long)] search: Option<String>,
     },
 
-    /// Provider claims auto-complete after buyer review timeout (review_expired)
+    /// Provider claims auto-complete after user review timeout (review_expired)
     #[command(name = "claim-auto-complete")]
     ClaimAutoComplete {
         job_id: String,
@@ -551,7 +551,7 @@ pub enum AgentCommand {
 
     // ── Task system (Evaluator Agent) ────────────────────────────────────────
     // Historically wrapped as `Evaluator(EvaluatorCommand)`; flattened to the top level in 2026-05
-    // to align with the buyer/provider style. The `agent evaluator <sub>` form is no longer supported;
+    // to align with the user/provider style. The `agent evaluator <sub>` form is no longer supported;
     // see the file header comment in `evaluator/mod.rs` for per-command correspondence.
 
     /// Fetch dispute evidence: each side's `reason` (provider = dispute-raise reason; client =
@@ -615,7 +615,7 @@ pub enum AgentCommand {
     },
     /// Claim arbitration reward after task/dispute resolved. Account-level pull — one call drains
     /// every pending reward across all settled disputes (POST /task/claim, no jobId).
-    /// Distinct from buyer's `claim` (which pulls per-job refund/reward).
+    /// Distinct from user's `claim` (which pulls per-job refund/reward).
     #[command(name = "arbitration-claim")]
     ArbitrationClaim {
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
@@ -895,7 +895,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::XmtpSign(args) => identity::xmtp_sign(args, ctx).await,
         AgentCommand::ValidateListing(args) => identity::validate_listing(args, ctx).await,
 
-        // ── Client (buyer) task commands ────────────────────────────
+        // ── Client (user) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
             title, provider, endpoint, attachments, payment_mode,
@@ -926,12 +926,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::Status { job_id, agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
-            task::common::query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_BUYER).await
+            task::common::query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_USER).await
         }
 
         AgentCommand::Tasks { status, page, limit, agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
-            task::common::query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_BUYER).await
+            task::common::query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_USER).await
         }
 
         AgentCommand::ActiveTasks { role, include_terminal } => {
@@ -1326,13 +1326,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             } else {
                 role.clone()
             };
-            // Event-level role override: some events are always buyer-side
+            // Event-level role override: some events are always user-side
             // regardless of the agent's registered role (e.g. a provider-role
-            // agent that also publishes tasks as a buyer).
+            // agent that also publishes tasks as a user).
             let resolved_role = match event.as_str() {
                 "provider_conversation" | "provider_conversation_pick" | "provider_conversation_reject" => {
                     if resolved_role != "buyer" && DEBUG_LOG {
-                        eprintln!("[next-action] event-level override: {event} forces role buyer (was {resolved_role})");
+                        eprintln!("[next-action] event-level override: {event} forces role user (was {resolved_role})");
                     }
                     "buyer".to_string()
                 }
@@ -1366,7 +1366,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
             }
 
-            // ── review gate: auto-mark buyer's review gate ──────────────────────
+            // ── review gate: auto-mark user's review gate ──────────────────────
             // Must run AFTER role resolution so --role auto is correctly resolved.
             if matches!(resolved_role.as_str(), "buyer" | "client") {
                 if event == "job_submitted" {
@@ -1409,7 +1409,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    // x402 (paymentMode=3): the buyer paid the ASP at request time via
+                    // x402 (paymentMode=3): the user paid the ASP at request time via
                     // the A2MCP service endpoint, so the on-chain events are pure
                     // receipts — provider has no business action for any of them.
                     // Route every x402 event to the observer-only a2mcp playbook.
@@ -1452,7 +1452,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     );
                     task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id, parsed_message.as_ref()).await
                 }
-                other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
+                other => anyhow::bail!("--role 必须是 provider/user/client/evaluator，当前: {other}"),
             };
             if let Some(notice) = &version_notice {
                 print!("{notice}");

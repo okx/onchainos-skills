@@ -3,7 +3,7 @@
 //! User action: publish a task — `onchainos agent create-task`.
 //!
 //! Identity check: invokes the identity-module CLI (`onchainos agent get-my-agents`) to verify
-//! that the current user has a buyer identity (role=1) before running the publish flow.
+//! that the current user has a user identity (role=1) before running the publish flow.
 
 use anyhow::{bail, Result};
 use std::time::Duration;
@@ -14,7 +14,7 @@ use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::{
     self, fetch_my_agents_by_role, network::task_api_client::TaskApiClient,
     payment_mode::PaymentMode,
-    AGENT_ROLE_BUYER, XLAYER_CHAIN_ID, DEBUG_LOG,
+    AGENT_ROLE_USER, XLAYER_CHAIN_ID, DEBUG_LOG,
 };
 use crate::commands::agent_commerce::task::signing;
 
@@ -146,17 +146,17 @@ pub fn validate_budget_decimals(budget: f64) -> Result<()> {
 
 // ─── Identity check ─────────────────────────────────────────────────────
 
-pub(crate) async fn resolve_buyer_agent() -> Result<(String, String)> {
+pub(crate) async fn resolve_user_agent() -> Result<(String, String)> {
     let agents = fetch_my_agents_by_role("buyer").await;
 
-    let buyer = agents.iter()
-        .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))
-        .ok_or_else(|| anyhow::anyhow!("the current account has no buyer (requestor) identity; run `onchainos agent create --role requestor` first"))?;
+    let user = agents.iter()
+        .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_USER))
+        .ok_or_else(|| anyhow::anyhow!("the current account has no user (requestor) identity; run `onchainos agent create --role requestor` first"))?;
 
-    let agent_id = buyer["agentId"].as_str()
+    let agent_id = user["agentId"].as_str()
         .ok_or_else(|| anyhow::anyhow!("agent is missing the agentId field"))?
         .to_string();
-    let owner_address = buyer["ownerAddress"].as_str().unwrap_or("").to_string();
+    let owner_address = user["ownerAddress"].as_str().unwrap_or("").to_string();
     Ok((agent_id, owner_address))
 }
 
@@ -171,9 +171,9 @@ pub async fn handle_create(
     ensure_tokens_refreshed().await
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
-    let (buyer_agent_id, _) = resolve_buyer_agent().await?;
+    let (user_agent_id, _) = resolve_user_agent().await?;
     if DEBUG_LOG {
-        eprintln!("[task-create] buyer identity check passed (agentId: {buyer_agent_id})");
+        eprintln!("[task-create] user identity check passed (agentId: {user_agent_id})");
     }
 
     let balance_warning = match common::ensure_sufficient_balance(params.budget, &validated.currency).await {
@@ -186,7 +186,7 @@ pub async fn handle_create(
         Ok(()) => None,
     };
 
-    let (account_id, address) = signing::resolve_wallet_by_agent_id(&buyer_agent_id).await?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
     let mut body = serde_json::json!({
         "title":              validated.title,
@@ -215,7 +215,7 @@ pub async fn handle_create(
         body["serviceTokenAmount"] = serde_json::json!(stm);
     }
 
-    let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
+    let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &user_agent_id).await?;
     let job_id = resp["jobId"].as_str().unwrap_or("?").to_string();
 
     if let Some(ref files) = params.attachments {
@@ -236,7 +236,7 @@ pub async fn handle_create(
 
     let tx_hash = match signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        &job_id, 1, &buyer_agent_id,
+        &job_id, 1, &user_agent_id,
         None,
     ).await {
         Ok(tx_hash) => tx_hash,
@@ -255,7 +255,7 @@ pub async fn handle_create(
         Duration::default(),
         Some(vec![
             format!("jobId={job_id}"),
-            format!("agentId={buyer_agent_id}"),
+            format!("agentId={user_agent_id}"),
             format!("currency={}", validated.currency),
             format!("budget={}", params.budget),
             format!("maxBudget={}", params.max_budget),

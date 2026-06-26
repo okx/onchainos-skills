@@ -78,19 +78,19 @@ pub enum ProviderCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Provider declines a buyer-designated assignment (off-chain) — POST asp/reject API.
+    /// Provider declines a User Agent-designated assignment (off-chain) — POST asp/reject API.
     /// Used before negotiation begins (`job_asp_selected` scene) when capability /
-    /// price gate fails. No on-chain action; the buyer is then free to re-route.
+    /// price gate fails. No on-chain action; the User Agent is then free to re-route.
     AspReject {
         job_id: String,
         /// Provider agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Optional decline reason surfaced to the buyer's backend record.
+        /// Optional decline reason surfaced to the User Agent's backend record.
         #[arg(long, default_value = "")]
         reason: String,
     },
-    /// Provider cold-start: create the group with the buyer + send the
+    /// Provider cold-start: create the group with the User Agent + send the
     /// self-intro/interest opener in one shot. Replaces the old two-step
     /// (`okx-a2a session create` + `okx-a2a xmtp-send` opener) CLI playbook.
     /// The opener content is the canonical template — no customization
@@ -164,18 +164,18 @@ pub enum DisputeCommand {
     },
     /// [Internal] Upload offchain evidence (multipart, 1h preparation window only) — shared by both sides.
     ///
-    /// ⚠️ **Not user-facing**: this command is invoked automatically by the buyer / provider sub
+    /// ⚠️ **Not user-facing**: this command is invoked automatically by the User Agent / provider sub
     /// session on the `job_disputed` event (via the next-action playbook). Users must NOT call it
     /// manually — the agent owns the timing, role injection, and chat-history assembly.
     ///
     /// In addition to the explicit `--text` / `--file` inputs, the CLI auto-attaches every
     /// entry recorded in `~/.onchainos/deliverables/<role>/<jobId>/manifest.json` as evidence
-    /// (buyer side = the downloaded deliverable + any later attachments; provider side = the
+    /// (User Agent side = the downloaded deliverable + any later attachments; provider side = the
     /// submitted deliverable copy). The next-action script must inject `--role buyer|provider`
     /// so the CLI knows which manifest to read.
     Upload {
         job_id: String,
-        /// Caller's own agentId (buyer or provider). Injected by the next-action script so the
+        /// Caller's own agentId (User Agent or provider). Injected by the next-action script so the
         /// client doesn't have to do wallet-to-role mapping (a single wallet may have multiple registered agentIds).
         #[arg(long = "agent-id")]
         agent_id: String,

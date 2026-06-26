@@ -80,10 +80,10 @@ pub(crate) fn branch_a2a_cli(
         Err(e) => return Some(format!("[branch_a2a_cli] ERROR: okx-a2a session create failed: {e}\n")),
     };
 
-    // B-Step 1.5 — SKILL_PREFETCH: pre-load the buyer playbook into the
+    // B-Step 1.5 — SKILL_PREFETCH: pre-load the user playbook into the
     // freshly created sub session so its first inbound message has the
     // correct context. Fire-and-forget (--no-wait baked into helper).
-    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via user-sub-playbook.md §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
+    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load user role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via user-sub-playbook.md §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
     if let Err(e) = okx_a2a::session_send(job_id, Some(dp_id), prefetch) {
         return Some(format!("[branch_a2a_cli] ERROR: okx-a2a session send (SKILL_PREFETCH) failed: {e}\n"));
     }
@@ -95,7 +95,7 @@ pub(crate) fn branch_a2a_cli(
 
     // Sub session created + SKILL_PREFETCH sent. The ASP receives
     // `job_asp_selected` from the backend and independently decides to
-    // apply on-chain. The buyer does NOTHING until `provider_applied`.
+    // apply on-chain. The user does NOTHING until `provider_applied`.
     None
 }
 /// Phase 2b: x402 branch — endpoint validation + set-payment-mode.
@@ -130,7 +130,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
 
     format!("\
          [Designated ASP route: x402] Provider {dp_id} has an x402 endpoint.\n\
-         [Role] User (Buyer)\n\n\
+         [Role] User (User)\n\n\
          🌐 **Localize first** — every `pending-decisions-v2 request` invocation below: translate the `--user-content` body (and the human portion of `--list-label`) to the user's language before running. Keep bash structure, flags, and `--source-event` tokens unchanged.\n\n\
          **DX-Step 1 — validate endpoint + price + budget (single CLI call):**\n\
          ```bash\n\
@@ -250,7 +250,7 @@ pub(crate) fn branch_error(job_id: &str, agent_id: &str, short_id: &str, dp_id: 
 
     format!("\
          [Designated ASP route: error] Provider {dp_id} encountered a routing error.\n\
-         [Role] User (Buyer)\n\n\
+         [Role] User (User)\n\n\
          **Branch by `errorType` from the `designated-route` response above (earlier in this turn):**\n\n\
          - **`errorType == \"endpoint_not_found\"`** -> the persisted endpoint no longer exists in the ASP's service list.\n\
          \x20\x20{block_endpoint}\n\

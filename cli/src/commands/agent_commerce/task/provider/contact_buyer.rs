@@ -1,13 +1,13 @@
 //! ASP cold-start: create the group and send a "self-intro + interest" opener
 //! to the User Agent in one shot.
 //!
-//! Provider action: contact the buyer at the start of negotiation —
+//! Provider action: contact the User Agent at the start of negotiation —
 //! `onchainos agent contact-buyer <jobId> --agent-id <id>`
 //!
 //! Internally:
 //!   1. GET /task/{jobId}  → buyerAgentId + title
 //!   2. okx-a2a session create   (creates the group + records the sessionKey)
-//!   3. okx-a2a xmtp-send        (the first message to the buyer — peer-to-peer
+//!   3. okx-a2a xmtp-send        (the first message to the User Agent — peer-to-peer
 //!                                business message, NOT system-relay `session send`)
 //!
 //! Replaces the old two-step playbook (`okx-a2a session create` + `okx-a2a xmtp-send`)
@@ -56,21 +56,21 @@ pub async fn handle_contact_buyer(
         .get_with_identity(&client.task_path(job_id), agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("failed to fetch task {job_id}: {e}"))?;
-    let buyer_agent_id = task["buyerAgentId"].as_str().unwrap_or("");
+    let user_agent_id = task["buyerAgentId"].as_str().unwrap_or("");
     let task_title = task["title"].as_str().unwrap_or("");
-    if buyer_agent_id.is_empty() {
-        bail!("task {job_id} has no buyerAgentId — cannot contact the buyer");
+    if user_agent_id.is_empty() {
+        bail!("task {job_id} has no buyerAgentId — cannot contact the User Agent");
     }
 
     let opener = build_opener(task_title, agent_id);
 
     // Step 2: create the session (idempotent in okx-a2a's SessionStore).
-    let session_key = okx_a2a::session_create(job_id, agent_id, buyer_agent_id)
+    let session_key = okx_a2a::session_create(job_id, agent_id, user_agent_id)
         .map_err(|e| anyhow::anyhow!("session create failed: {e}"))?;
 
-    // Step 3: send the opener to the buyer (peer-to-peer XMTP — `xmtp-send`, not
+    // Step 3: send the opener to the User Agent (peer-to-peer XMTP — `xmtp-send`, not
     // system-relay `session send`).
-    okx_a2a::xmtp_send(job_id, buyer_agent_id, &opener)
+    okx_a2a::xmtp_send(job_id, user_agent_id, &opener)
         .map_err(|e| anyhow::anyhow!("xmtp-send failed: {e}"))?;
 
     audit::log(
@@ -81,15 +81,15 @@ pub async fn handle_contact_buyer(
         Some(vec![
             format!("jobId={job_id}"),
             format!("agentId={agent_id}"),
-            format!("buyerAgentId={buyer_agent_id}"),
+            format!("buyerAgentId={user_agent_id}"),
             format!("openerLen={}", opener.chars().count()),
         ]),
         None,
     );
 
-    println!("✓ Cold-start opener sent to buyer.");
+    println!("✓ Cold-start opener sent to User Agent.");
     println!("  jobId:         {job_id}");
-    println!("  buyerAgentId:  {buyer_agent_id}");
+    println!("  buyerAgentId:  {user_agent_id}");
     println!("  taskTitle:     {task_title}");
     println!("  sessionKey:    {session_key}");
     println!();

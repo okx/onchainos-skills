@@ -80,7 +80,7 @@ pub async fn handle_apply(
     println!("  Quote: {token_amount} {token_symbol}");
     println!("  txHash: {tx_hash}");
     println!();
-    println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer:");
+    println!("⚠️  Next steps are driven by system notifications — do not proactively message the User Agent:");
     println!("    - You will receive a `provider_applied` system notification after on-chain confirmation");
     Ok(())
 }

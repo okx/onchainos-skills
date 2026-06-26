@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::commands::agent_commerce::task::common::{fetch_my_agents, network::task_api_client::TaskApiClient};
 use crate::commands::agent_commerce::task::signing;
 
-/// Provider role value (backend convention: 1=buyer, 2=provider, 3=evaluator).
+/// Provider role value (backend convention: 1=User Agent, 2=provider, 3=evaluator).
 const ROLE_PROVIDER: i64 = 2;
 /// Online status value.
 const STATUS_ONLINE: i64 = 1;
