@@ -235,7 +235,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
 pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
     let label = match role_code {
         1 => "user",
-        2 => "provider",
+        2 => "asp",
         3 => "evaluator",
         _ => "unknown",
     };

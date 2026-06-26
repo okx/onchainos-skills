@@ -701,7 +701,7 @@ pub enum AgentCommand {
     /// Get next-step instruction prompt for current job state.
     ///
     /// Invocation contract — exactly **three** flags:
-    ///   `--role <user|provider|evaluator|auto>` — playbook routing role
+    ///   `--role <user|asp|evaluator|auto>` — playbook routing role
     ///   `--agentId <agentId>`                    — receiving agent
     ///   `--message <envelope JSON>`              — the full `message` object
     ///                                              from the inbound notification
@@ -1312,7 +1312,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 match task::common::query_agent_by_id_direct(&agent_id).await {
                     Ok(agent) => match agent["role"].as_i64() {
                         Some(1) => "user".to_string(),
-                        Some(2) => "provider".to_string(),
+                        Some(2) => "asp".to_string(),
                         Some(3) => "evaluator".to_string(),
                         other => anyhow::bail!(
                             "agentId={agent_id} has unsupported role={:?}; pass --role explicitly",
@@ -1394,7 +1394,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let payment_mode = prefetched.as_ref().and_then(|p| p.payment_mode);
             let title_ref = job_title.as_deref();
             let prompt = match resolved_role.as_str() {
-                "provider" | "seller" => {
+                "asp" => {
                     crate::audit::log(
                         "cli",
                         "provider/next_action_received",
@@ -1452,7 +1452,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     );
                     task::evaluator::flow::generate_next_action(&job_id, &event, &agent_id, parsed_message.as_ref()).await
                 }
-                other => anyhow::bail!("--role 必须是 provider/user/client/evaluator，当前: {other}"),
+                other => anyhow::bail!("--role 必须是 asp/user/evaluator，当前: {other}"),
             };
             if let Some(notice) = &version_notice {
                 print!("{notice}");

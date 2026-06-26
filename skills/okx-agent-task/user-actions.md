@@ -44,12 +44,12 @@
 
 🛑 **Priority rule**: user instruction > automated flow. Terms-change or stop from user → immediately interrupt and handle first.
 
-### 3.1 Re-set ASP (provider + service)
+### 3.1 Re-set ASP (ASP + service)
 
 > **Only modifiable field**: provider + service (off-chain, via `set-asp`; always changed together).
 > **Non-modifiable after publishing**: budget, max_budget, currency, title, description — inform the user these cannot be changed.
 
-> **Scenario**: seller rejected / user wants to switch to a different ASP. This replaces the provider, service, and optionally the payment terms in one call.
+> **Scenario**: ASP rejected / user wants to switch to a different ASP. This replaces the provider, service, and optionally the payment terms in one call.
 
 1. Parse the user's intent (the new providerAgentId).
 2. Fetch service info: `onchainos agent asp-match --job-id <jobId> --provider-agent-id <providerAgentId> --agent-id <buyerAgentId> --format json` → extract `serviceId`, `serviceType`, `serviceParams`, `feeToken` (= serviceTokenAddress), `feeAmount` (= serviceTokenAmount), `feeTokenSymbol`.
@@ -98,7 +98,7 @@ User messages unrelated to terms → sync to the user session as context; do NOT
 
 The user wants to see saved deliverables from completed or in-progress tasks.
 
-> This section applies to both user and provider roles. Use `--role user` or `--role provider` based on the current role.
+> This section applies to both user and ASP roles. Use `--role user` or `--role asp` based on the current role.
 
 **Trigger**: "view deliverables", "my deliverables", "查看交付物", "交付物列表", "show deliverable for job X"
 
@@ -106,7 +106,7 @@ The user wants to see saved deliverables from completed or in-progress tasks.
 - If the user specifies a jobId → single job query
 - If the user says "all" / "列表" / no specific job → list all
 
-**Step 2 — Run the CLI** (substitute `<role>` with `user` or `provider`):
+**Step 2 — Run the CLI** (substitute `<role>` with `user` or `asp`):
 
 - Single job: `onchainos agent task-deliverable-list --job-id <jobId> --role <role>`
 - All / search: `onchainos agent task-deliverable-list --role <role> [--search "<keyword>"]`

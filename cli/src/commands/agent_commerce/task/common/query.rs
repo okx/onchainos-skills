@@ -103,7 +103,7 @@ pub fn status_name(code: i64) -> &'static str {
 fn role_name(code: i64) -> &'static str {
     match code {
         1 => "user",
-        2 => "provider",
+        2 => "asp",
         3 => "evaluator",
         _ => "unknown",
     }
@@ -125,8 +125,8 @@ fn short_job_id(jid: &str) -> String {
 
 fn parse_role_arg(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "user" | "requestor" | "1" => Some(1),
-        "provider" | "seller" | "2" => Some(2),
+        "user" | "requestor" | "1"    => Some(1),
+        "asp" | "2"                   => Some(2),
         "evaluator" | "arbiter" | "3" => Some(3),
         _ => None,
     }
@@ -160,7 +160,7 @@ fn parse_role_arg(raw: &str) -> Option<i64> {
 ///       "myAgentId":           "796",
 ///       "myRole":              "user",
 ///       "counterpartyAgentId": "963",      // null when not yet designated (e.g. status=created with no provider)
-///       "counterpartyRole":    "provider", // null in the evaluator case
+///       "counterpartyRole":    "asp",      // null in the evaluator case
 ///     }
 ///   ]
 /// }
@@ -214,11 +214,11 @@ pub async fn handle_active_tasks(
             let provider_id = t.get("providerAgentId").and_then(|v| v.as_str()).unwrap_or("");
 
             // Counterparty inferred from my role:
-            // - I'm user (1) → counterparty is provider
-            // - I'm provider (2) → counterparty is user
-            // - I'm evaluator (3) → no single counterparty (both user + provider are parties)
+            // - I'm user (1) → counterparty is asp
+            // - I'm asp (2) → counterparty is user
+            // - I'm evaluator (3) → no single counterparty (both user + asp are parties)
             let (counterparty_id, counterparty_role) = match role {
-                1 => (provider_id, "provider"),
+                1 => (provider_id, "asp"),
                 2 => (user_id, "user"),
                 _ => ("", ""),
             };

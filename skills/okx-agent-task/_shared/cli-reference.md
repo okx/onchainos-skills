@@ -11,7 +11,7 @@
 - **Common (any role)**: `common context` · `task-search` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
 - **User**: `create-task` · `asp-match` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `direct-accept` · `complete` · `reject` · `close` · `set-public` · `claim-auto-refund` · `set-asp` · `task-attach`
 - **Draft (User)**: `draft create` · `draft list` · `draft update` · `draft delete` · `draft publish`
-- **Provider**: `find-jobs` · `recommend-task` · `apply` · `save-agreed` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `provider-claimable` · `provider-claim-rewards`
+- **ASP**: `find-jobs` · `recommend-task` · `apply` · `save-agreed` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `provider-claimable` · `provider-claim-rewards`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
 - **Evaluator Agent**: `evidence-info` · `vote-commit` · `vote-reveal` · `arbitration-claim` · `arbitration-claimable` · `stake` · `increase-stake` · `request-unstake` · `claim-unstake` · `cancel-unstake` · `staking-config` · `my-stake`
 - **Misc**: `feedback-submit` · `file-upload`/`file-download` · `sensitive-words`/`message-eligible`/`system-config` · `heartbeat`
@@ -25,13 +25,13 @@
 Fetch task detail + render structured natural-language context for a fresh sub session
 
 ```
-agent common context <jobId> --role <user|provider|evaluator> --agent-id <agentId> [--address <wallet>]
+agent common context <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--address <wallet>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `<jobId>` | Yes | - | Task ID (positional) |
-| `--role` | Yes | - | `user` / `provider` / `evaluator` |
+| `--role` | Yes | - | `user` / `asp` / `evaluator` |
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--address` | No | auto-resolved | Caller's wallet address |
 
@@ -87,13 +87,13 @@ Pending-decisions queue with four subcommands. Same `(jobId, role, agentId, toAg
 Push a decision to the user
 
 ```
-agent pending-decisions-v2 request --job-id <jobId> --role <user|provider|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --user-content "<text>" --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>]
+agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --user-content "<text>" --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--job-id` | Yes | - | Task ID |
-| `--role` | Yes | - | `user` / `provider` / `evaluator` |
+| `--role` | Yes | - | `user` / `asp` / `evaluator` |
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--to-agent-id` | No | - | Peer agentId (omit for backup sub) |
 | `--user-content` | Yes | - | Full content shown to user verbatim |
@@ -106,14 +106,14 @@ agent pending-decisions-v2 request --job-id <jobId> --role <user|provider|evalua
 Relay the user's reply back to the sub session
 
 ```
-agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|provider|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event>
+agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event>
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--user-reply` | Yes | - | Verbatim user wording (no interpretation) |
 | `--job-id` | Yes | - | Task ID |
-| `--role` | Yes | - | `user` / `provider` / `evaluator` |
+| `--role` | Yes | - | `user` / `asp` / `evaluator` |
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--to-agent-id` | No | - | Must match the original request |
 | `--source-event` | Yes | - | Chain event name from the original request |
@@ -147,26 +147,26 @@ agent pending-decisions-v2 list --format markdown
 Output the script the agent should execute based on `(event, role)`
 
 ```
-agent next-action --role <user|provider|evaluator|auto> --agentId <agentId> --message '<JSON>'
+agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message '<JSON>'
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--role` | Yes | - | `user` / `provider` / `evaluator` / `auto` |
+| `--role` | Yes | - | `user` / `asp` / `evaluator` / `auto` |
 | `--agentId` | Yes | - | Receiving agent's id |
 | `--message` | Yes | - | Entire `message` object from envelope as JSON string |
 
 #### Fields CLI reads from `--message`
 
-| Field | Required | Default | Description |
-|---|---|---|---|
+| Field | Required | Default | Description                                                                             |
+|---|---|---|-----------------------------------------------------------------------------------------|
 | `event` | Yes | - | Event name (e.g. `provider_applied`, `job_completed`, pseudo events like `create_task`) |
-| `jobId` | Yes | - | Task ID (`"_"` for jobless flows like `create_task`) |
-| `code` | No | `0` | Tx receipt code; non-zero = tx failed |
-| `jobTitle` | No | - | Task title from system notification |
-| `provider` | No | - | Target provider agentId (user + `job_created` only) |
-| `taskMinVersion` | No | - | Protocol version from inbound a2a-agent-chat; mismatch appends a non-blocking warning |
-| `data` | No | - | User decision payload; required when event starts with `user_decision_` |
+| `jobId` | Yes | - | Task ID (`"_"` for jobless flows like `create_task`)                                    |
+| `code` | No | `0` | Tx receipt code; non-zero = tx failed                                                   |
+| `jobTitle` | No | - | Task title from system notification                                                     |
+| `provider` | No | - | Target provider agentId (user + `job_created` only)                                          |
+| `taskMinVersion` | No | - | Protocol version from inbound a2a-agent-chat; mismatch appends a non-blocking warning   |
+| `data` | No | - | User decision payload; required when event starts with `user_decision_`                 |
 
 ### list-attachments
 
@@ -197,23 +197,23 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
   [--endpoint <url>] [--file <path>] [--payment-mode <escrow|x402>]
 ```
 
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `--description` | Yes | - | Task description (20–2000 chars) |
-| `--budget` | Yes | - | Budget amount (>0, max 10M, ≤5 decimals) |
-| `--max-budget` | Yes | - | Max budget (≥ budget) |
-| `--currency` | Yes | - | `USDT` or `USDG` |
-| `--title` | Yes | - | Task title (max 30 chars) |
-| `--description-summary` | Yes | - | Summary (max 200 chars) |
-| `--visibility` | No | `1` | `0` = public, `1` = private |
+| Param | Required | Default | Description                                 |
+|---|---|---|---------------------------------------------|
+| `--description` | Yes | - | Task description (20–2000 chars)            |
+| `--budget` | Yes | - | Budget amount (>0, max 10M, ≤5 decimals)    |
+| `--max-budget` | Yes | - | Max budget (≥ budget)                       |
+| `--currency` | Yes | - | `USDT` or `USDG`                            |
+| `--title` | Yes | - | Task title (max 30 chars)                   |
+| `--description-summary` | Yes | - | Summary (max 200 chars)                     |
+| `--visibility` | No | `1` | `0` = public, `1` = private                 |
 | `--provider` | Conditional | - | Provider agentId; **required when visibility=1** |
-| `--service-id` | No | - | Service ID from `asp-match` response |
+| `--service-id` | No | - | Service ID from `asp-match` response        |
 | `--service-params` | No | - | Service input parameters (natural language) |
-| `--service-token-address` | No | - | Service token contract address |
-| `--service-token-amount` | No | - | Service price (from `asp-match` feeAmount) |
-| `--endpoint` | No | - | Designated service endpoint URL |
-| `--file` | No | - | Local file paths to attach (repeatable) |
-| `--payment-mode` | No | unset | `escrow` or `x402` |
+| `--service-token-address` | No | - | Service token contract address              |
+| `--service-token-amount` | No | - | Service price (from `asp-match` feeAmount)  |
+| `--endpoint` | No | - | Designated service endpoint URL             |
+| `--file` | No | - | Local file paths to attach (repeatable)     |
+| `--payment-mode` | No | unset | `escrow` or `x402`                          |
 
 > - `visibility=1` (private, default) requires `--provider`; omitting provider with private visibility will error.
 > - `visibility=0` (public) does not require `--provider`; if `--provider` is set on a public task, it is treated as a designated-provider task.
@@ -280,7 +280,7 @@ agent active-tasks [--role <r>] [--include-terminal]
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--role` | No | all | `user` / `provider` / `evaluator` (also accepts `1` / `2` / `3`) |
+| `--role` | No | all | `user` / `asp` / `evaluator` (also accepts `1` / `2` / `3`) |
 | `--include-terminal` | No | `false` | Include terminal-state tasks (statuses 5-9) |
 
 **Return fields**:
@@ -301,7 +301,7 @@ agent active-tasks [--role <r>] [--include-terminal]
       "myAgentId": "796",
       "myRole": "user",
       "counterpartyAgentId": "963",
-      "counterpartyRole": "provider",
+      "counterpartyRole": "asp",
       "updateTime": "..."
     }
   ]
@@ -318,7 +318,7 @@ agent set-payment-mode <jobId> --payment-mode <escrow|x402> [--token-symbol <sym
 
 ### confirm-accept
 
-User Agent confirms provider acceptance + escrow payment (params provided by `next-action` playbook)
+User Agent confirms ASP acceptance + escrow payment (params provided by `next-action` playbook)
 
 ```
 agent confirm-accept <jobId>
@@ -334,7 +334,7 @@ agent task-402-pay <jobId> --provider-agent-id <id> --accepts <json> --endpoint 
 
 ### direct-accept
 
-Accept provider on-chain after x402 payment (params provided by `next-action` playbook)
+Accept ASP on-chain after x402 payment (params provided by `next-action` playbook)
 
 ```
 agent direct-accept <jobId> --provider-agent-id <id> [--token-symbol <sym>] [--token-amount <amt>]
@@ -529,36 +529,36 @@ agent draft publish <jobId>
 
 ---
 
-## Provider
+## ASP
 
 ### find-jobs
 
-Match public tasks for all online provider agents under the current account
+Match public tasks for all online ASP agents under the current account
 
 ```
 agent find-jobs
 ```
 
-No parameters. Internally calls `recommend-task` for each active provider agent and aggregates results.
+No parameters. Internally calls `recommend-task` for each active ASP agent and aggregates results.
 
 ### recommend-task
 
-Match tasks for a specific provider agent
+Match tasks for a specific ASP agent
 
 ```
-agent recommend-task --agent-id <providerAgentId>
+agent recommend-task --agent-id <aspAgentId>
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--agent-id` | Yes | - | Provider agentId |
+| `--agent-id` | Yes | - | ASP agentId |
 
 ### apply
 
-Provider applies for a task on-chain — escrow path only (params provided by `next-action` playbook)
+ASP applies for a task on-chain — escrow path only (params provided by `next-action` playbook)
 
 ```
-agent apply <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id <providerAgentId>
+agent apply <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id <aspAgentId>
 ```
 
 > System-event-triggered only; never invoke manually
@@ -576,7 +576,7 @@ agent save-agreed <jobId> --provider <providerAgentId> --token-symbol <s> --toke
 Submit the deliverable on-chain (only allowed when status=accepted)
 
 ```
-agent deliver <jobId> [--file <path>] [--message "<txt>"] --agent-id <providerAgentId>
+agent deliver <jobId> [--file <path>] [--message "<txt>"] --agent-id <aspAgentId>
 ```
 
 | Param | Required | Default | Description |
@@ -584,20 +584,20 @@ agent deliver <jobId> [--file <path>] [--message "<txt>"] --agent-id <providerAg
 | `<jobId>` | Yes | - | Task ID (positional) |
 | `--file` | No | `""` | Local file path for delivery (message-only if omitted) |
 | `--message` | No | `Task completed, please review` | Delivery message |
-| `--agent-id` | Yes | - | Provider agentId |
+| `--agent-id` | Yes | - | ASP agentId |
 
 ### task-deliverable-list
 
 List locally saved deliverables
 
 ```
-agent task-deliverable-list [--job-id <jobId>] [--role <user|provider>] [--search <keyword>]
+agent task-deliverable-list [--job-id <jobId>] [--role <user|asp>] [--search <keyword>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--job-id` | No | - | Filter by task ID; omit to list all |
-| `--role` | No | `user` | `user` or `provider` |
+| `--role` | No | `user` | `user` or `asp` |
 | `--search` | No | - | Filter by task title (substring match; only when `--job-id` omitted) |
 
 **Return fields**: `deliverables[]` (single job) or `results[]` (all jobs), each with `path`, `originalName`, `deliverableType` (file/text), `sizeBytes`, `savedAt`.
@@ -607,7 +607,7 @@ agent task-deliverable-list [--job-id <jobId>] [--role <user|provider>] [--searc
 Move a deliverable file to persistent local storage (called internally by `next-action` playbook)
 
 ```
-agent task-deliverable-save --job-id <jobId> --role <user|provider> --file <path> [--deliverable-type <file|text>] --title <title> --short-id <shortId> [--file-key <key>] [--token-symbol <sym>] [--token-amount <amt>] [--counterparty-agent-id <id>] [--counterparty-name <name>]
+agent task-deliverable-save --job-id <jobId> --role <user|asp> --file <path> [--deliverable-type <file|text>] --title <title> --short-id <shortId> [--file-key <key>] [--token-symbol <sym>] [--token-amount <amt>] [--counterparty-agent-id <id>] [--counterparty-name <name>]
 ```
 
 ### agree-refund
@@ -620,10 +620,10 @@ agent agree-refund <jobId> --agent-id <providerAgentId>
 
 ### claim-auto-complete
 
-Provider withdraws escrowed funds after `review_expired` (params provided by `next-action` playbook)
+ASP withdraws escrowed funds after `review_expired` (params provided by `next-action` playbook)
 
 ```
-agent claim-auto-complete <jobId> --agent-id <providerAgentId>
+agent claim-auto-complete <jobId> --agent-id <aspAgentId>
 ```
 
 ### provider-claimable

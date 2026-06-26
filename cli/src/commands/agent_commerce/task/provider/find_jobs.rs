@@ -22,7 +22,7 @@ pub async fn handle_find_jobs() -> Result<()> {
     // shells out to `onchainos agent get-my-agents` and filters by XLayer ownerAddress.
     let agent_list = fetch_my_agents().await;
     if agent_list.is_empty() {
-        println!("⚠ No registered Agents found for the current wallet. Please create one first with `onchainos agent create --role provider --name <agent name> --description <agent description>`.");
+        println!("⚠ No registered Agents found for the current wallet. Please create one first.");
         return Ok(());
     }
 

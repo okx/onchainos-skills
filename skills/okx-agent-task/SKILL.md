@@ -26,7 +26,7 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 | Role | Role code | CLI value | Sub-session playbook |
 |---|---|---|---|
 | **User Agent** | `1` | `--role user` | [`user-sub-playbook.md`](./user-sub-playbook.md) |
-| **ASP** | `2` | `--role provider` | [`asp.md`](./asp.md) |
+| **ASP** | `2` | `--role asp` | [`asp.md`](./asp.md) |
 | **Evaluator** | `3` | `--role evaluator` | [`evaluator.md`](./evaluator.md) |
 
 #### Multi-account agentId lookup
@@ -73,7 +73,7 @@ Follow [`./_shared/preflight.md`](./_shared/preflight.md) to ensure the onchaino
 ### Step 2 — Business gate-check
 
 ```bash
-onchainos agent gate-check --role <user|provider|evaluator>
+onchainos agent gate-check --role <user|asp|evaluator>
 ```
 
 Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proceed. Otherwise fix the failing gate:

@@ -49,8 +49,8 @@ pub async fn handle_upload_evidence(
     text: Option<&str>,
     explicit_file_paths: &[String],
 ) -> Result<()> {
-    if role != "user" && role != "provider" {
-        bail!("--role must be 'user' or 'provider', got '{role}'");
+    if role != "user" && role != "asp" {
+        bail!("--role must be 'user' or 'asp', got '{role}'");
     }
 
     // Align with backend `StringUtils.isBlank`: trim then check empty.

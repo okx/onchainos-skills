@@ -1344,7 +1344,7 @@ pub fn request_command_block(
 fn role_short_label(role: &str) -> &str {
     match role {
         "user" => "User",
-        "provider" => "ASP",
+        "asp" | "provider" => "ASP",
         "evaluator" => "Evaluator",
         other => other,
     }

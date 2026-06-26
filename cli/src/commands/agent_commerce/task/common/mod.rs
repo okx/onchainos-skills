@@ -67,7 +67,7 @@ pub enum CommonCommand {
     ///
     /// Examples:
     ///   onchainos agent context task-001 --role user --agent-id 426
-    ///   onchainos agent context task-001 --role provider --agent-id 558
+    ///   onchainos agent context task-001 --role asp --agent-id 558
     Context {
         /// Task ID (jobId), e.g. task-001 or 0x1a2b...
         job_id: String,
@@ -462,7 +462,7 @@ pub async fn fetch_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
 fn parse_role_filter(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
         "user" | "requestor" | "1" => Some(AGENT_ROLE_USER),
-        "provider" | "seller" | "2" => Some(AGENT_ROLE_PROVIDER),
+        "asp" | "2" => Some(AGENT_ROLE_PROVIDER),
         "evaluator" | "arbiter" | "3" => Some(AGENT_ROLE_EVALUATOR),
         _ => None,
     }
@@ -908,7 +908,7 @@ pub async fn handle_my_agents(role: Option<&str>) -> Result<()> {
         Some(raw) => match parse_role_filter(raw) {
             Some(n) => Some(n),
             None => bail!(
-                "unrecognized --role value: {raw:?} (expected user / provider / evaluator, or 1 / 2 / 3)"
+                "unrecognized --role value: {raw:?} (expected user / asp / evaluator, or 1 / 2 / 3)"
             ),
         },
         None => None,
@@ -929,12 +929,12 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
     let role_num = match parse_role_filter(role_raw) {
         Some(n) => n,
         None => bail!(
-            "unrecognized --role value: {role_raw:?} (expected user / provider / evaluator, or 1 / 2 / 3)"
+            "unrecognized --role value: {role_raw:?} (expected user / asp / evaluator, or 1 / 2 / 3)"
         ),
     };
     let role_label = match role_num {
         AGENT_ROLE_USER => "user",
-        AGENT_ROLE_PROVIDER => "provider",
+        AGENT_ROLE_PROVIDER => "asp",
         AGENT_ROLE_EVALUATOR => "evaluator",
         _ => "unknown",
     };
@@ -1259,8 +1259,8 @@ async fn run_context(
         bail!("{msg}");
     }
     // Validate role.
-    if !["user", "provider", "evaluator"].contains(&role) {
-        bail!("--role must be user / provider / evaluator");
+    if !["user", "asp", "evaluator"].contains(&role) {
+        bail!("--role must be user / asp / evaluator");
     }
     if agent_id.is_empty() {
         bail!("--agent-id is required (beta backend requires non-empty agenticId header)");
@@ -1418,8 +1418,8 @@ async fn build_context(
 
     // ── Role guide that must be loaded ───────────────────────────────────
     let skill_file = match role {
-        "user"     => "client.md",
-        "provider"    => "asp.md",
+        "user"      => "client.md",
+        "asp"       => "asp.md",
         "evaluator" => "evaluator.md",
         _           => "",
     };

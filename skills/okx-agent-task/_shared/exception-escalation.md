@@ -1,4 +1,4 @@
-# Exception Escalation Rules (shared by user / provider)
+# Exception Escalation Rules (shared by user / asp)
 
 Each agent turn is stateless, with **no built-in loop protection**. The 4 rules below cover all a2a / CLI scenarios. `user-sub-playbook.md` / `asp.md` stack role-specific exceptions on top (each writing their own §6).
 
@@ -39,7 +39,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
    The user-facing card looks like:
    ```
    [⚠️ Operation Failed] Task <jobId>
-   - Action: <e.g. submit deliverable / recommend providers>
+   - Action: <e.g. submit deliverable / recommend ASPs>
    - Error: <one-sentence summary>
    - Current status: <status>
 
@@ -51,7 +51,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 4. Follow the playbook the CLI returns verbatim, then end the turn
 5. When the user-session relays the reply back as a system envelope (`event:"user_decision_cli_failed"`, `message.data:<user verbatim>`) in a later turn, call:
    ```bash
-   onchainos agent next-action --role <user|provider> --agentId <your agentId> --message '{"event":"user_decision_cli_failed","jobId":"<jobId>","data":"<message.data verbatim>"}'
+   onchainos agent next-action --role <user|asp> --agentId <your agentId> --message '{"event":"user_decision_cli_failed","jobId":"<jobId>","data":"<message.data verbatim>"}'
    ```
    The CLI's `cli_failed` handler does the LLM semantic mapping (`A` / `retry` / `重试` → retry the failed command once; `B` / `dismiss` / `不再提示` → end the turn, user takes manual control; new-instruction in natural language → parse and execute the modified command). Do NOT keyword-match yourself — pass `--data` through and follow the handler's playbook.
 
@@ -60,7 +60,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 
 **Network timeout / connection error does NOT qualify as an exception** — go through the pending-decisions-v2 flow above and let the user decide. Blindly retrying network flakes = pushing repeatedly inside the same turn, which overlaps with the §4 anti-pattern.
 
-**Role-specific exception (evaluator)**: `vote-commit` / `vote-reveal` / `arbitration-claim` are penalized at 0.3% stake the moment the commit / reveal window closes, so the sub is allowed up to 3 internal retries — this is a hard constraint forced by the dispute economic model; see `references/evaluator-decision-rubric.md` §6 for details. User Agent / provider have no such exception.
+**Role-specific exception (evaluator)**: `vote-commit` / `vote-reveal` / `arbitration-claim` are penalized at 0.3% stake the moment the commit / reveal window closes, so the sub is allowed up to 3 internal retries — this is a hard constraint forced by the dispute economic model; see `references/evaluator-decision-rubric.md` §6 for details. Other evaluator commands (`stake` / `unstake-*` / `info` / `download` etc.) still follow the §2 standard flow. User Agent / ASP have no such exception.
 
 ## 3. ❌ Absolute prohibition: broadcasting technical errors to the counterpart
 

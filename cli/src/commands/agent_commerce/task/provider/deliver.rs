@@ -289,7 +289,7 @@ pub async fn handle_deliver(
             if std::path::Path::new(local_path).exists() {
                 let params = super::super::common::deliverables::SaveParams {
                     job_id,
-                    role: "provider",
+                    role: "asp",
                     file_path: local_path,
                     deliverable_type: "file",
                     title,
@@ -310,7 +310,7 @@ pub async fn handle_deliver(
             if std::path::Path::new(tmp_path).exists() {
                 let params = super::super::common::deliverables::SaveParams {
                     job_id,
-                    role: "provider",
+                    role: "asp",
                     file_path: tmp_path,
                     deliverable_type: "text",
                     title,

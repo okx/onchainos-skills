@@ -103,7 +103,7 @@ pub async fn generate_a2mcp_next_action(
                  **Step 3 — Terminal wrap-up (keep the sub session):**\n\
                  ℹ️ Task is in terminal state — run the cleanup command:\n\
                  ```bash\n\
-                 onchainos agent session-cleanup --job-id {job_id} --role provider\n\
+                 onchainos agent session-cleanup --job-id {job_id}\n\
                  ```\n\
                  Task fully complete.\n"
             )
@@ -187,7 +187,7 @@ pub async fn generate_next_action(
             None => format!(
                 "**Load task context first**:\n\
                  ```bash\n\
-                 onchainos agent common context {job_id} --role provider --agent-id {agent_id}\n\
+                 onchainos agent common context {job_id} --role asp --agent-id {agent_id}\n\
                  ```\n\
                  Extract {} (needed below).\n",
                 fields.join(" + "),
@@ -344,7 +344,7 @@ pub async fn generate_next_action(
              🌐 **Localize first** — translate the source template below to the user's language before passing to `--user-content`. Keep `[Job <shortId>]`, the `A.` / `B.` letters, the shortId hex.\n\
              ```bash\n\
              onchainos agent pending-decisions-v2 request-prompt \\\n\
-             \x20\x20--job-id {job_id} --role provider --agent-id {agent_id}{to_flag} \\\n\
+             \x20\x20--job-id {job_id} --role asp --agent-id {agent_id}{to_flag} \\\n\
              \x20\x20--user-content \"<localized content shown below>\" \\\n\
              \x20\x20--list-label \"[Decision {short_id}] {title_display} dispute decision\" \\\n\
              \x20\x20--source-event job_rejected\n\
@@ -579,7 +579,7 @@ pub async fn generate_next_action(
              If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
              **Step 3 — Upload (off-chain multipart):**\n\
              ```bash\n\
-             onchainos agent dispute upload {job_id} --role provider --agent-id {agent_id} --text \"<chat history block>\"\n\
+             onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --text \"<chat history block>\"\n\
              ```\n\
              The CLI auto-attaches every entry under `~/.onchainos/deliverables/provider/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copy saved at `deliver` time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
              **Step 4 — Notify the user (after upload returns):**\n\n\
@@ -880,7 +880,7 @@ pub async fn generate_next_action(
             let user_prompt = super::content::submit_deadline_warn_user_prompt(&short_id);
             let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
                 job_id,
-                "provider",
+                "asp",
                 agent_id,
                 prefetched.and_then(|p| p.user_agent_id.as_deref()),
                 &user_prompt,
@@ -966,7 +966,7 @@ pub async fn generate_next_action(
              From the wakeup_notify envelope that triggered this turn, read the `message.jobStatus` field (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed`, etc. — the real status string).\n\n\
              **Step 2 — Use the real status to call next-action and fetch the current script**:\n\
              ```bash\n\
-             onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"<value of the message.jobStatus field>\",\"jobId\":\"{job_id}\"}}'\n\
+             onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<value of the message.jobStatus field>\",\"jobId\":\"{job_id}\"}}'\n\
              ```\n\
              Follow the returned script for what to do in the current status.\n\n\
              ⚠️ **Do NOT** okx-a2a xmtp-send the User Agent something like `I'm back online` — the peer does not care about your connection status.\n\
@@ -999,14 +999,14 @@ pub async fn generate_next_action(
                      \x20\x20• **`agree_refund`** — user accepts the refund and walks away (typical intents: B / 同意退款 / agree refund / 退款 / 算了 / 不争了 / OK refund / let it go).\n\n\
                      If the user's reply clearly maps to one of these → call:\n\
                      ```bash\n\
-                     onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"<dispute_raise|agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
+                     onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<dispute_raise|agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
                      ```\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=file dispute  B=accept refund\".\n"
                 ),
                 "submit_deadline_warn" => format!(
                     "[User decision relay] source_event=`submit_deadline_warn`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means:\n\n\
-                     \x20\x20• **Submit now** — user wants to deliver immediately (typical intents: 立即提交 / 我提交 / submit now / I'll deliver / ready / 现在交). Route: call `onchainos agent next-action --role provider --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'` and run its Step 2-3 (skip Step 1 apply-accepted notification — user already knows).\n\
+                     \x20\x20• **Submit now** — user wants to deliver immediately (typical intents: 立即提交 / 我提交 / submit now / I'll deliver / ready / 现在交). Route: call `onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'` and run its Step 2-3 (skip Step 1 apply-accepted notification — user already knows).\n\
                      \x20\x20• **Let it timeout** — user lets the deadline pass (typical intents: silence / 算了 / 不交了 / let it timeout / skip / 放弃). Route: end the turn; the chain will fire `submit_expired` and the User Agent auto-refunds.\n\n\
                      If ambiguous: re-ask via `pending-decisions-v2 request` (`--source-event submit_deadline_warn`).\n"
                 ),

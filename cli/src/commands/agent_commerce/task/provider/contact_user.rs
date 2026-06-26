@@ -95,7 +95,7 @@ pub async fn handle_contact_user(
     println!();
     println!("⚠️  End this turn now. Wait for the User Agent's reply.");
     println!("    On the next inbound a2a-agent-chat, call:");
-    println!("    onchainos agent next-action --role provider --agentId {agent_id} \\");
+    println!("    onchainos agent next-action --role asp --agentId {agent_id} \\");
     println!("      --message '{{\"event\":\"job_created\",\"jobId\":\"{job_id}\"}}'");
     Ok(())
 }
