@@ -179,7 +179,7 @@ pub async fn handle_active_tasks(
     if let Some(raw) = role_filter {
         let want = parse_role_arg(raw).ok_or_else(|| {
             anyhow::anyhow!(
-                "unrecognized --role value: {raw:?} (expected user / provider / evaluator, or 1 / 2 / 3)"
+                "unrecognized --role value: {raw:?} (expected user / asp / evaluator, or 1 / 2 / 3)"
             )
         })?;
         agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(want));
