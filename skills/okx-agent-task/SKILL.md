@@ -62,6 +62,8 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 
 ## Pre-flight
 
+> 🛑 **Buyer sub/backup skip** — if this session was triggered by Activation #1 (system event) or #2 (a2a-agent-chat) AND the resolved role is **buyer** (`sender.role == 2` or system event routed to buyer agent), skip Pre-flight entirely. The user session already verified the environment; CLI commands will surface runtime errors if anything changed.
+
 Before any task flow starts, execute **both steps in order**.
 
 ### Step 1 — Environment check
