@@ -399,6 +399,18 @@ pub(super) fn ensure_provider_has_service(card: &AgentCard) -> Result<()> {
     Ok(())
 }
 
+/// Providers MUST carry an uploaded avatar — there is no default fallback (see
+/// references/register.md §5). requester / evaluator may keep the default
+/// (empty `--picture` → on-chain default image), so the check is provider-only.
+/// The skill uploads the image first (`agent upload`) and passes the returned
+/// CDN URL as `--picture`; this gate is the CLI backstop if it doesn't.
+pub(super) fn ensure_provider_has_avatar(card: &AgentCard) -> Result<()> {
+    if card.role == "provider" && card.profile_picture.trim().is_empty() {
+        bail!("provider agents require an avatar; upload an image and provide --picture");
+    }
+    Ok(())
+}
+
 pub(super) fn parse_u32_arg(
     value: Option<&str>,
     flag: &str,

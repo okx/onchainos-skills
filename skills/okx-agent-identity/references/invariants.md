@@ -13,7 +13,7 @@ Load this file when: rendering a card / diff / detail view, resolving `#<id>`, t
 
 ## Card skeleton (every confirmation / diff / detail card uses THIS)
 
-Two-column pipe table `| Field | Value |`, one row per field. Role row uses localized label (never enum); photo row = uploaded CDN URL or `default` — never a user-pasted link (rejected; see register §5).
+Two-column pipe table `| Field | Value |`, one row per field. Role row uses localized label (never enum); photo row = uploaded CDN URL or `default` (providers require a URL; `default` only for requester/evaluator — see register §5) — never a user-pasted link (rejected).
 
 - **Confirmation variant** (create only): ends with `> Reply **1** to confirm and run.` (localized). No bash shown.
 - **Diff variant** (update only): 3 columns `| Field | Current | New |`; unchanged fields → `(unchanged)`; changed New cell **bold**. Show real before→after values.
@@ -46,17 +46,18 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
 
 **Confirmation requirement for any reformat/draft (non-overridable):** reformatting or drafting is a *draft*, never an authorization to commit silently. Whenever you reshape the user's words into the 2-part description, you MUST (1) flag every affected row on the confirmation card / diff card with an explicit marker — e.g. ` ✏️ drafted from your words — please review` — so the user can tell Claude-rewritten content from their own verbatim input, and (2) wait for the normal card confirm (Reply **1**) before the write. Never let reformatted/drafted content reach the chain presented as the user's literal input. If the user flags any drafted row as wrong, re-collect that field from their own words and redraw — do not argue or keep your draft.
 
-## Commands (10 `onchainos agent` subcommands — you invoke them, never show them)
+## Commands (12 `onchainos agent` subcommands — you invoke them, never show them)
 
-`create · pre-check · update · get · activate · deactivate · upload · search · service-list · feedback-submit · feedback-list`.
+`create · pre-check · update · get-my-agents · get-agents · activate · deactivate · upload · search · service-list · feedback-submit · feedback-list`.
+(`get` is a hidden dual-mode read alias — prefer `get-my-agents` for list and `get-agents --agent-ids` for detail.)
 
 - `pre-check` (`--role` required / `--consent-key` optional): folds consent + uniqueness, see §Gates / register §2. Auto/internal — never shown; outputs (`canCreate` etc.) rendered inline.
-- `validate-listing` (QA — register §4, called internally by activate): auto/internal.
+- `validate-listing` (QA — runs only at register §4 / update §4; `activate` does NOT run it): auto/internal.
 - `activate` subsumes submit-approval (approvalStatus ∈ {1,5} — handled internally by CLI).
 - `consent` has no public subcommand — driven by `pre-check`.
 - Never suggest `xmtp-sign`; no `--address` (signs with current wallet).
 
-Array fields: create/update/get/search → `list`; feedback-list → `items` or `list` (backend inconsistent; CLI normalizes both); service-list → nested `services`.
+Array fields: create/update/get-agents/get-my-agents/search → `list`; feedback-list → `items` or `list` (backend inconsistent; CLI normalizes both); service-list → nested `services`.
 
 ## Input contract — `--service` JSON + flag gotchas (single source of truth)
 

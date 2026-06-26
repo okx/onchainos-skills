@@ -1,6 +1,7 @@
 //! Pure-local (no HTTP, no network) validator that checks an agent listing's
-//! fields against mechanical marketplace rules. Used during registration QA
-//! (skill calls it explicitly) and by `activate` internally.
+//! fields against mechanical marketplace rules. Invoked explicitly by the skill
+//! as a single-pass QA gate during registration and update (provider only);
+//! `activate` does NOT re-run it.
 //!
 //! Scope (deliberately narrow): only MECHANICAL rules — length / format /
 //! forbidden-marker / structural checks decidable without semantic judgment.

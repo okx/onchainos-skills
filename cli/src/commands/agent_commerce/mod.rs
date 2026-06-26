@@ -39,7 +39,7 @@ pub enum AgentCommand {
     #[command(name = "get-by-address", hide = true)]
     GetByAddress(identity::GetByAddressArgs),
 
-    /// Activate an Agent (runs validate-listing + agent-status + submit-approval)
+    /// Activate an Agent (agent-status + submit-approval; QA runs at register/update, not here)
     Activate(identity::ActivateArgs),
 
     /// Deactivate an Agent

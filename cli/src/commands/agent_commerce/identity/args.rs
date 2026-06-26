@@ -143,10 +143,6 @@ pub struct ActivateArgs {
     /// e.g. `zh-CN`, `en-US`). Normalized to canonical BCP-47.
     #[arg(long = "preferred-language", required = true)]
     pub preferred_language: Option<String>,
-    /// Skip validate-listing and submit for approval regardless of QA findings.
-    /// Use after the user explicitly acknowledges a blockType:2 warning.
-    #[arg(long, default_value_t = false)]
-    pub force: bool,
 }
 
 #[derive(Args, Clone, Debug)]

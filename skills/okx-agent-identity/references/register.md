@@ -33,7 +33,7 @@ Run `agent pre-check --role <role>` (internal — never shown). It fetches the w
 - **Step 1 · Identity** — Present all three as a **single numbered list in one message** (do NOT split into separate turns):
   1. **Name** — brand name (CN 2–12 chars / EN 3–25 chars; ❌ test markers / celebrity names)
   2. **Description** — one-sentence summary of what the Agent does (required, ≤500 chars)
-  3. **Avatar** — inline sub-choices inside item 3 (see §5 for wording); skip → keep default
+  3. **Avatar — required**: send an image file (§5).
 - **Step 2 · Service** — Service name (5–30 noun phrase; ❌ same as agent name / price in name) · Description (**2 parts on separate lines**: ① core-capability summary — what it does + who it's for; ② what the user must provide — e.g. "1. wallet address 2. amount 3. chain". Each part ≤200 CJK chars, total ≤400 CJK chars; **no example prompts, no GitHub/wallet links, no tech-stack details, no disclaimers**) · Type (API service → pass `A2MCP` / agent-to-agent → pass `A2A`) · Fee — a **plain number sent as a string** (e.g. `"10"` — quoted in the JSON, never a bare number). **The currency is always USDT — tell the user (localized) that the amount is digits only, USDT is the default, and no unit/symbol is needed, and do NOT include any currency** (no `USDT`/`USDG`/`元`/symbol); API service required, A2A optional (may be left empty); ≤6 decimals; reject `10 USDT` / `approx 10` / `5元` → re-ask. Displayed back to the user as `N USDT`. · Endpoint (API service only — §6).
 - **After EACH service (⛔ BLOCKING — incl. the first; see SKILL §Gates Service-collection)** — ask once (localized) **1. Add another service / 2. Done**; on **1** repeat Step 2 and append to the service array, then ask again; on **2** (or other) → §4 with the complete array. **A batched message that fills name + description + type + fee in one go is NOT a Done signal** — having all fields for one service does not mean the user is finished; you still MUST ask and wait for the explicit Done choice. Never auto-advance on the assumption one is enough; all services ship in one `agent create` (post-create "add a service" via update is a fallback, not a reason to skip this).
 - **Do NOT run `validate-listing` inside this loop.** QA is a single batch pass that happens in §4 *after* the array is complete — never validate per service, never validate while still collecting.
@@ -55,12 +55,17 @@ Validate is a **single batch gate**, NOT a per-service step. Collect the **compl
 ## 5. Avatar (inline — image links are rejected)
 
 - **Image links are not accepted.** If the user supplies a URL, reject it — do NOT pass it to `--picture`, do NOT download-and-reupload, do NOT claim it was set:
-  > "Avatar links aren't supported — send an image file directly, or keep the default."
-- **Avatar appears as item 3 in the Step 1 numbered list** — render as a single optional line (no sub-choices):
-  > 3. Avatar — 📷 Optional. Send an image file to set a custom avatar; skip to keep the default.
+  > "Avatar links aren't supported — send an image file directly (providers must; requester/evaluator may keep the default)."
+- **Provider — required** (item 3 of the Step 1 list; no sub-choices):
+  > 3. Avatar — 📷 Required. Send an image file to set your avatar (1:1 square recommended).
 
-  User sends an image file → upload it; no image / skips → keep default. Never ask the user to pick 1/2.
-- **On opt-in:** Claude Code → save the inbound image attachment to a temp path → run the `upload` subcommand (`agent upload --file <temp>`) → use the returned URL as `--picture` (this temp write is the one allowed by SKILL §Gates One-call rule); >1 MB → stop and ask for a smaller one; render the URL verbatim in the Profile photo row. No image supplied → keep the default. 1:1 square is the tip.
+  Must send an image → upload it. No image → no default fallback: re-ask and do NOT advance to Step 2 / render the identity card until one is uploaded. (The CLI is the authoritative gate — `create` rejects a provider with no `--picture` — but the upload must happen here so the user never hits that error.)
+- **requester / evaluator — optional** (no sub-choices):
+  > Profile photo — 📷 Optional. Send an image file to set a custom avatar; skip to keep the default.
+
+  Image → upload; skip → keep default.
+- Never ask the user to pick 1/2.
+- **On opt-in:** Claude Code → save the inbound image attachment to a temp path → run the `upload` subcommand (`agent upload --file <temp>`) → use the returned URL as `--picture` (this temp write is the one allowed by SKILL §Gates One-call rule); >1 MB → stop and ask for a smaller one; render the URL verbatim in the Profile photo row. No image → keep default (requester/evaluator only). 1:1 square is the tip.
 - **Upload as-is — never resize/crop/convert.** >1 MB → ask for a smaller file; non-1:1 → accept and upload (square is advisory); non-PNG/JPEG/WebP → ask to convert and resend.
 
 ## 6. Endpoint anti-pattern (provider API service)
@@ -73,7 +78,7 @@ Require `https://`, publicly reachable, and really deployed. **Reject** `http://
 
 requester / evaluator render ONE card. **Providers render TWO** cards in order:
 
-1. **Identity card** (closes Step 1) — Role / Name / [Description] / Profile photo rows, with the avatar CTA at its close. This card closes with **`> Reply **1** to continue.`** (NOT the confirm-run footer). Confirming it (**1**) **advances to Step 2 and does NOT call the CLI** — no `agent create` runs at Step 1.
+1. **Identity card** (closes Step 1) — Role / Name / [Description] / Profile photo rows, with the avatar CTA at its close. **Provider avatar is mandatory (§5): the Profile photo row is an uploaded CDN URL, never `default` — if none yet, re-ask before rendering this card.** This card closes with **`> Reply **1** to continue.`** (NOT the confirm-run footer). Confirming it (**1**) **advances to Step 2 and does NOT call the CLI** — no `agent create` runs at Step 1.
 2. **Service card** (closes Step 2) — render ONE block of `Service [N] Name / Description / Type / Fee / Endpoint` rows **per collected service** (`Service [1]`, `Service [2]`, … — never assume a single service); gloss service types once (wording per SKILL §Invariants Lexicon). This is the FINAL card → it carries the confirm-run footer; **1** runs the single `agent create` (carrying the identity plus ALL collected services).
 
 The FINAL card ends with `> Reply **1** to confirm and run.` (localized) + the gate echo: `I won't run anything until you reply **1**.` NL field questions only; no `Q1:` labels, no bash shown.
