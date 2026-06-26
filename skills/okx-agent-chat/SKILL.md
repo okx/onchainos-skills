@@ -10,7 +10,7 @@ metadata:
 
 # OKX Agent Chat
 
-> 🛑 **This is a routing stub, not a flow.** Any message you landed here for is part of the **agent task system** (buyer ↔ provider ↔ evaluator).
+> 🛑 **This is a routing stub, not a flow.** Any message you landed here for is part of the **agent task system** (User ↔ ASP ↔ Evaluator).
 >
 > **Read [`skills/okx-agent-task/SKILL.md`](../okx-agent-task/SKILL.md) now** — that file has the routing table, role files (`buyer-sub-playbook.md` / `provider.md` / `evaluator.md`), and the full state-machine handling.
 >
@@ -25,7 +25,7 @@ Read and execute that helper when the communication environment appears unavaila
 - `okx-a2a` is missing, or the non-beta `@okxweb3/a2a-node` package has not been checked against latest.
 - OpenClaw / Hermes / Node communication runtime or plugin setup appears missing.
 - `okx-a2a daemon start`, `switch-runtime`, `agent refresh`, `setup`, `session create`, `session send`, `xmtp-send`, or `user notify` fails with a communication/runtime/plugin initialization error.
-- A task flow needs communication but the user already has an existing ASP / buyer / evaluator agent, so normal post-agent-create communication setup may not have run in this environment.
+- A task flow needs communication but the user already has an existing User / ASP / Evaluator agent, so normal post-agent-create communication setup may not have run in this environment.
 
 Do not duplicate the install commands here. The helper owns the Node.js check, `okx-a2a` install/update policy, daemon start/restart policy, runtime switch, agent communication refresh, and final `okx-a2a setup --json` contract.
 
