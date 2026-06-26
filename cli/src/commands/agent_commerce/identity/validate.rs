@@ -1,6 +1,6 @@
 //! Pure-local (no HTTP, no network) validator that checks an agent listing's
 //! fields against mechanical marketplace rules. Invoked explicitly by the skill
-//! as a single-pass QA gate during registration and update (provider only);
+//! as a single-pass QA gate during registration and update (ASP only);
 //! `activate` does NOT re-run it.
 //!
 //! Scope (deliberately narrow): only MECHANICAL rules — length / format /
@@ -22,7 +22,7 @@ pub async fn validate_listing(args: ValidateListingArgs, _ctx: &Context) -> Resu
         .role
         .as_deref()
         .and_then(|r| normalize_role(r).ok())
-        .unwrap_or_else(|| "provider".to_string());
+        .unwrap_or_else(|| "asp".to_string());
 
     let result = run_validation(
         &role,
@@ -102,12 +102,12 @@ pub(crate) fn run_validation(
 
     // ── Description checks ────────────────────────────────────────────────
     // Universal U1/U2/U3 apply to a supplied non-empty description for every
-    // role. The 3-part structure (D1/D3/D4/D5) is provider-service-only and is
+    // role. The 3-part structure (D1/D3/D4/D5) is asp-service-only and is
     // NEVER applied to the agent-level description. Agent-level description for
-    // providers additionally gets D6/D7 (and U2/U3 already above).
+    // ASPs additionally gets D6/D7 (and U2/U3 already above).
     if !description.is_empty() {
         check_universal_text("description", description, &mut findings);
-        if role == "provider" {
+        if role == "asp" {
             check_description_url_and_addr("description", description, &mut findings);
             if description.chars().count() > 500 {
                 findings.push(Finding::block(
@@ -120,8 +120,8 @@ pub(crate) fn run_validation(
         }
     }
 
-    // ── Service checks (provider only) ───────────────────────────────────
-    if role == "provider" {
+    // ── Service checks (ASP only) ───────────────────────────────────
+    if role == "asp" {
         if let Some(raw) = service {
             let raw = raw.trim();
             if !raw.is_empty() {
@@ -141,7 +141,7 @@ pub(crate) fn run_validation(
             }
         }
     }
-    // For requester / evaluator: --service is ignored silently (no findings).
+    // For user / evaluator: --service is ignored silently (no findings).
 
     let pass = !findings.iter().any(|f| f.severity == "block");
     ValidationResult { pass, findings }

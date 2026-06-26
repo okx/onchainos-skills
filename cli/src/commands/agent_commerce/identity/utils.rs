@@ -286,12 +286,37 @@ pub(super) fn display_width(s: &str) -> usize {
         .sum()
 }
 
+/// Parse a `--role` CLI INPUT into its canonical token. STRICT: accepts only
+/// the three canonical values `user` / `asp` / `evaluator` (case-insensitive,
+/// trimmed). Legacy / foreign aliases (`buyer` / `provider` / `requester` /
+/// `requestor`) and numeric codes are NOT accepted — the skill resolves any
+/// synonym the user typed to one of these three before calling. Errors on
+/// anything else.
+///
+/// For PARSING backend RESPONSES (which still carry integer codes / legacy
+/// enums) use [`role_token_from_value`], never this function.
 pub(super) fn normalize_role(role: &str) -> Result<String> {
     match role.trim().to_ascii_lowercase().as_str() {
-        "1" | "buyer" | "requestor" | "requester" => Ok("requester".to_string()),
-        "2" | "provider" => Ok("provider".to_string()),
-        "3" | "evaluator" => Ok("evaluator".to_string()),
-        other => bail!("invalid value for --role: {other}"),
+        "user" => Ok("user".to_string()),
+        "asp" => Ok("asp".to_string()),
+        "evaluator" => Ok("evaluator".to_string()),
+        other => bail!("invalid value for --role: {other} (expected: user, asp, or evaluator)"),
+    }
+}
+
+/// Canonical role token (`user` / `asp` / `evaluator`) from a backend `role`
+/// VALUE. The live `agent-list` / `batch-list` endpoints return `role` as the
+/// integer code `1` / `2` / `3` (1=user, 2=asp, 3=evaluator), so this parser
+/// reads that integer form only. Unknown / non-integer → `None`. This is the
+/// single inbound role parser; the strict [`normalize_role`] is for CLI input.
+/// (Outbound is separate: `create` still sends the role STRING via
+/// [`role_to_wire`].)
+pub(super) fn role_token_from_value(role: &Value) -> Option<&'static str> {
+    match role.as_u64()? {
+        1 => Some("user"),
+        2 => Some("asp"),
+        3 => Some("evaluator"),
+        _ => None,
     }
 }
 
@@ -301,9 +326,24 @@ pub(super) fn normalize_role(role: &str) -> Result<String> {
 /// validation path. Errors on any unrecognized value.
 pub(super) fn normalize_role_code(role: &str) -> Result<String> {
     match normalize_role(role)?.as_str() {
-        "requester" => Ok("1".to_string()),
-        "provider" => Ok("2".to_string()),
+        "user" => Ok("1".to_string()),
+        "asp" => Ok("2".to_string()),
         _ => Ok("3".to_string()),
+    }
+}
+
+/// Map the canonical internal token (`user` / `asp` / `evaluator`) to the role
+/// STRING the backend's `create` contract expects in `cardJson.role` and
+/// `erc8004Msg.role`. The CLI-side rename (requester→user, provider→asp) is
+/// internal + display only; the **backend-accepted enum is unchanged**, so on
+/// the wire we still emit the original `requester` / `provider` / `evaluator`
+/// strings. (The list/filter path is separate — it sends the integer code via
+/// [`normalize_role_code`].)
+pub(super) fn role_to_wire(role: &str) -> &'static str {
+    match role {
+        "user" => "requester",
+        "asp" => "provider",
+        _ => "evaluator",
     }
 }
 
@@ -392,21 +432,21 @@ pub(super) fn trim_or_empty(value: Option<&str>) -> String {
     value.unwrap_or("").trim().to_string()
 }
 
-pub(super) fn ensure_provider_has_service(card: &AgentCard) -> Result<()> {
-    if card.role == "provider" && card.services.is_empty() {
-        bail!("provider agents require at least one service; provide --service");
+pub(super) fn ensure_asp_has_service(card: &AgentCard) -> Result<()> {
+    if card.role == "asp" && card.services.is_empty() {
+        bail!("ASP agents require at least one service; provide --service");
     }
     Ok(())
 }
 
-/// Providers MUST carry an uploaded avatar — there is no default fallback (see
-/// references/register.md §5). requester / evaluator may keep the default
-/// (empty `--picture` → on-chain default image), so the check is provider-only.
+/// ASPs MUST carry an uploaded avatar — there is no default fallback (see
+/// references/register.md §5). user / evaluator may keep the default
+/// (empty `--picture` → on-chain default image), so the check is ASP-only.
 /// The skill uploads the image first (`agent upload`) and passes the returned
 /// CDN URL as `--picture`; this gate is the CLI backstop if it doesn't.
-pub(super) fn ensure_provider_has_avatar(card: &AgentCard) -> Result<()> {
-    if card.role == "provider" && card.profile_picture.trim().is_empty() {
-        bail!("provider agents require an avatar; upload an image and provide --picture");
+pub(super) fn ensure_asp_has_avatar(card: &AgentCard) -> Result<()> {
+    if card.role == "asp" && card.profile_picture.trim().is_empty() {
+        bail!("ASP agents require an avatar; upload an image and provide --picture");
     }
     Ok(())
 }
@@ -470,43 +510,35 @@ pub(super) use rating::score_to_stars;
 // `if !contains_key` guard would wrongly preserve a stale/partial value over
 // the freshly-computed one.
 
-/// Map the raw `role` enum to its canonical English label.
-/// Unknown → `None` (omit; do not guess).
+/// Map the canonical `role` token to its English display label (`user` → "User",
+/// `asp` → "ASP", `evaluator` → "Evaluator"). The skill localizes these (User →
+/// 用户, ASP → 服务提供商). Callers only ever pass a canonical token (computed by
+/// [`role_token_from_value`]). Unknown → `None` (omit; do not guess).
 fn role_label(role: &str) -> Option<&'static str> {
     match role.trim() {
-        "requester" => Some("User Agent"),
-        "provider" => Some("Agent Service Provider (ASP)"),
-        "evaluator" => Some("Evaluator Agent"),
+        "user" => Some("User"),
+        "asp" => Some("ASP"),
+        "evaluator" => Some("Evaluator"),
         _ => None,
     }
 }
 
-/// Map a raw `role` value to its canonical English label, accepting BOTH the
-/// string enum (`"provider"`) AND the backend integer the live `/agent-list`
-/// endpoint actually returns (`1` requester / `2` provider / `3` evaluator —
-/// same aliasing as `create`'s `--role`). Unknown → `None`.
+/// Map a raw backend `role` value to its English display label, via the single
+/// inbound parser [`role_token_from_value`] (reads the backend integer code
+/// 1/2/3). Unknown → `None`.
 fn role_label_from_value(role: &Value) -> Option<&'static str> {
-    match role {
-        Value::String(s) => role_label(s),
-        Value::Number(n) => match n.as_u64()? {
-            1 => Some("User Agent"),
-            2 => Some("Agent Service Provider (ASP)"),
-            3 => Some("Evaluator Agent"),
-            _ => None,
-        },
-        _ => None,
-    }
+    role_token_from_value(role).map(|token| match token {
+        "user" => "User",
+        "asp" => "ASP",
+        _ => "Evaluator",
+    })
 }
 
-/// True when the row's `role` is the provider role, accepting both the string
-/// enum (`"provider"`) and the backend integer (`2`). Gates the provider-only
-/// service rows in `build_agent_card`.
-fn role_is_provider(role: Option<&Value>) -> bool {
-    match role {
-        Some(Value::String(s)) => s.trim() == "provider",
-        Some(Value::Number(n)) => n.as_u64() == Some(2),
-        _ => false,
-    }
+/// True when the row's `role` is the ASP role. Routes through the single inbound
+/// parser [`role_token_from_value`] (the backend integer code `2`).
+/// Gates the ASP-only service rows in `build_agent_card`.
+fn role_is_asp(role: Option<&Value>) -> bool {
+    role.and_then(role_token_from_value) == Some("asp")
 }
 
 /// Apply `f` to every agent-row object in an `agent get` (`/agent-list`)
@@ -663,8 +695,8 @@ fn enrich_agent_row(row: &mut Value) {
 // `references/discover.md §detail` exactly:
 // one ordered `{ "label": <canonical-English>, "value": <string> }` row per
 // visible field, omitting a row when its value is unavailable (same omit
-// rules the skill uses today). Service rows are PROVIDER-ONLY — the
-// provider-vs-requester/evaluator filtering lives here so the skill never has
+// rules the skill uses today). Service rows are ASP-ONLY — the
+// asp-vs-user/evaluator filtering lives here so the skill never has
 // to guard it. Labels are canonical English; the skill localizes them.
 
 /// Build one `{ label, value }` card row.
@@ -704,7 +736,7 @@ fn first_fee(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<Stri
     })
 }
 
-/// Format a single provider service into its card value string, mirroring
+/// Format a single ASP service into its card value string, mirroring
 /// references/discover.md §detail's `<ServiceName> — <Type>, <Fee or free>[, <Endpoint>]`.
 /// `Type` maps `A2MCP`→"API service" / `A2A`→"agent-to-agent" (verbatim
 /// otherwise); A2A omits the endpoint from the value string. Returns `None`
@@ -818,8 +850,8 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
         picture.map(str::to_string).unwrap_or_else(|| "default".to_string()),
     ));
 
-    // 9. Service rows — PROVIDER ROLE ONLY (omit entirely otherwise).
-    if role_is_provider(map.get("role")) {
+    // 9. Service rows — ASP ROLE ONLY (omit entirely otherwise).
+    if role_is_asp(map.get("role")) {
         if let Some(services) = map.get("services").and_then(Value::as_array) {
             let mut index = 0usize;
             for service in services {

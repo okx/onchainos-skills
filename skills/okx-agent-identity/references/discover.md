@@ -86,8 +86,8 @@ role/status integers, no raw 0–100 score).
 
 The response is a flat array of agents (one per id), each carrying a ready `card[]` of `{label,value}` with `roleLabel`/`statusLabel`/`approvalLabel`
 resolved — **identity rows only**. Render the `card` rows **verbatim** (SKILL §Invariants Verbatim-render
-contract). The agent-list card does **not** inline services or rating. **Provider (ASP) → chain exactly ONE
-`agent service-list --agent-id N`** and render the §service-list table beneath the card; requester / evaluator
+contract). The agent-list card does **not** inline services or rating. **ASP → chain exactly ONE
+`agent service-list --agent-id N`** and render the §service-list table beneath the card; user / evaluator
 → no chain. Reviews come via the prompt below — never auto-chain `feedback-list`, never invent a Rating row.
 
 ```

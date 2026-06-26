@@ -25,9 +25,9 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | `missing required field in --service: fee`/`: endpoint` | API service needs a fee (a plain number, USDT implied, ≤6 dp) / a public https endpoint → re-ask. Gloss type once (SKILL §Invariants Lexicon); never echo `A2MCP`. |
 | `invalid fee in --service` | "The fee must be a plain number (USDT is the default — don't add a currency)." → re-ask the fee as a bare number, e.g. `10`. |
 | `invalid serviceType` | "Type must be API service or agent to agent." → re-render numbered type prompt. Never echo `A2MCP`/`A2A`. |
-| `invalid value for --role` | "Role must be User Agent / ASP / Evaluator Agent." → re-render numbered role prompt. Never echo the enum. |
-| `provider agents require at least one service` | "An ASP needs at least one service." → return to service Q&A. No raw `provider`. |
-| `provider agents require an avatar` | "An ASP must set an avatar." → return to Step 1 §5: ask for an image file (no default option), upload it, then re-render the identity card. No raw `provider`/`--picture`. |
+| `invalid value for --role` | "Role must be User / ASP / Evaluator." → re-render numbered role prompt. Never echo the enum. |
+| `ASP agents require at least one service` | "An ASP needs at least one service." → return to service Q&A. No raw enum. |
+| `ASP agents require an avatar` | "An ASP must set an avatar." → return to Step 1 §5: ask for an image file (no default option), upload it, then re-render the identity card. No raw enum/`--picture`. |
 | `failed to read file` | "Can't read that file." → recheck path; offer send-image / keep-default. |
 | `upload response missing url` | "Upload succeeded but no URL came back." → retry once; if persists, surface and ask. |
 

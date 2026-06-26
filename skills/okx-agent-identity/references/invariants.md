@@ -6,14 +6,14 @@ Load this file when: rendering a card / diff / detail view, resolving `#<id>`, t
 
 ## Lexicon (prose / Q&A / post-success rows when CLI label is absent)
 
-- **Roles:** requester → **User Agent** / 用户 · provider → **Agent Service Provider (ASP)** / 服务提供商 · evaluator → **Evaluator Agent** / 仲裁者. Never raw enum, never legacy nouns (buyer/seller), never bilingual parenthetical.
+- **Roles:** `user` → **User** / 用户 · `asp` → **ASP** / 服务提供商 · `evaluator` → **Evaluator** / 仲裁者. Never show the raw enum token, never legacy nouns (buyer/seller), never a bilingual parenthetical.
 - **Service type:** A2MCP → **API service** · A2A → **agent to agent**. Gloss once per table: "API service = pay-per-call, fixed price; agent to agent = negotiated / off-chain pricing." Never raw A2MCP/A2A.
 - **Stars:** render `★ <value>` from CLI's `ratingStars` / `feedbackRate` / `average` **directly** — never divide by 20, never show raw 0–100. Null/0 context-split: **search** rows → `null`=`—`, `0`=`No rating yet`; **list / detail / feedback** → no rating = `No rating yet` (never `—`).
 - **Fee:** stored/sent as a plain numeric string (`"10"`); **displayed** as `N USDT` (USDT is implicit — the renderer appends it). Both API service (A2MCP) and agent to agent (A2A) support a `0` fee → an explicit `0` displays as `0 USDT` (a free service), **not** `negotiable`. `negotiable` is reserved for A2A with **no fee set at all** (empty/unset); A2MCP with no fee → `free`. **Address:** lowercase `0x…1234`. **Reviewer** slot = "reviewer", never "creator".
 
 ## Card skeleton (every confirmation / diff / detail card uses THIS)
 
-Two-column pipe table `| Field | Value |`, one row per field. Role row uses localized label (never enum); photo row = uploaded CDN URL or `default` (providers require a URL; `default` only for requester/evaluator — see register §5) — never a user-pasted link (rejected).
+Two-column pipe table `| Field | Value |`, one row per field. Role row uses localized label (never enum); photo row = uploaded CDN URL or `default` (ASPs require a URL; `default` only for user/evaluator — see register §5) — never a user-pasted link (rejected).
 
 - **Confirmation variant** (create only): ends with `> Reply **1** to confirm and run.` (localized). No bash shown.
 - **Diff variant** (update only): 3 columns `| Field | Current | New |`; unchanged fields → `(unchanged)`; changed New cell **bold**. Show real before→after values.
