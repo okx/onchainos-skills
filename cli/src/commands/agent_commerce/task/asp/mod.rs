@@ -5,7 +5,7 @@
 //! - `deliver.rs`           — submit deliverable
 //! - `agreerefund.rs`       — agree to refund
 //! - `dispute_raise.rs`     — raise dispute (on-chain)
-//! - `provider_claim.rs`    — claim after submit→complete timeout (claimAutoComplete)
+//! - `asp_claim.rs`    — claim after submit→complete timeout (claimAutoComplete)
 //!
 //! account-pull arbitration rewards (`claim-rewards` / `claimable`): called inline in
 //! the dispatch arm via `common::claim`; wallet resolution uses
@@ -24,7 +24,7 @@ mod dispute_confirm;
 mod dispute_raise;
 pub mod find_jobs;
 pub mod flow;
-mod provider_claim;
+mod asp_claim;
 pub mod recommend_task;
 
 use anyhow::Result;
@@ -210,7 +210,7 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
         ProviderCommand::ContactUser { job_id, agent_id } =>
             contact_user::handle_contact_user(&mut client, &job_id, &agent_id).await,
         ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
-            provider_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
+            asp_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
         ProviderCommand::Status { job_id, agent_id } => {
             use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_PROVIDER};
             common_query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_PROVIDER).await
@@ -241,7 +241,7 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
                 None,
             );
             if has_nonzero {
-                println!("\nnext: Claimable rewards available — run `onchainos agent provider-claim-rewards --agent-id {agent_id}` to withdraw all at once.");
+                println!("\nnext: Claimable rewards available — run `onchainos agent asp-claim-rewards --agent-id {agent_id}` to withdraw all at once.");
             } else {
                 println!("\n(No pending rewards at this time)");
             }

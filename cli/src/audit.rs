@@ -383,8 +383,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::TaskAttach { .. } => "task-attach".into(),
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
-        AgentCommand::ProviderClaimable { .. } => "provider-claimable".into(),
-        AgentCommand::ProviderClaimRewards { .. } => "provider-claim-rewards".into(),
+        AgentCommand::AspClaimable { .. } => "asp-claimable".into(),
+        AgentCommand::AspClaimRewards { .. } => "asp-claim-rewards".into(),
 
         // Task (provider)
         AgentCommand::RecommendTask { .. } => "recommend-task".into(),

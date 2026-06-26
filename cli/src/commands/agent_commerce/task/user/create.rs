@@ -155,7 +155,7 @@ pub(crate) async fn resolve_user_agent() -> Result<(String, String)> {
 
     let user = agents.iter()
         .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_USER))
-        .ok_or_else(|| anyhow::anyhow!("the current account has no user (requestor) identity; run `onchainos agent create --role requestor` first"))?;
+        .ok_or_else(|| anyhow::anyhow!("the current account has no user (requestor) identity; run `onchainos agent create --role user` first"))?;
 
     let agent_id = user["agentId"].as_str()
         .ok_or_else(|| anyhow::anyhow!("agent is missing the agentId field"))?

@@ -466,12 +466,12 @@ pub async fn generate_next_action(
              ━━━━━━━━━━━━━ Branch A: jobStatus=complete (ASP won) ━━━━━━━━━━━━━\n\n\
              **A-Step 1 — Check claimable rewards (account-pull)**:\n\
              ```bash\n\
-             onchainos agent provider-claimable --agent-id {agent_id}\n\
+             onchainos agent asp-claimable --agent-id {agent_id}\n\
              ```\n\
              Lines with a `•` marker in stdout indicate a non-zero claimable amount for that token.\n\n\
              **A-Step 2 — Claim everything in one shot when amounts are non-zero** (skip if claimable output is all zero):\n\
              ```bash\n\
-             onchainos agent provider-claim-rewards --agent-id {agent_id}\n\
+             onchainos agent asp-claim-rewards --agent-id {agent_id}\n\
              ```\n\
              Record stdout's txHash + the actual amount / token claimed (used to notify the user in the next step).\n\n\
              **A-Step 3 — Notify the user of the win + claim result via `onchainos agent user-notify`**:\n\n\

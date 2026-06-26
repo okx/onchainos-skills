@@ -301,14 +301,14 @@ pub enum AgentCommand {
     },
 
     /// Provider account-pull: query pending claimable rewards
-    #[command(name = "provider-claimable")]
-    ProviderClaimable {
+    #[command(name = "asp-claimable")]
+    AspClaimable {
         #[arg(long = "agent-id")] agent_id: String,
     },
 
     /// Provider account-pull: claim all pending rewards in one call
-    #[command(name = "provider-claim-rewards")]
-    ProviderClaimRewards {
+    #[command(name = "asp-claim-rewards")]
+    AspClaimRewards {
         #[arg(long = "agent-id")] agent_id: String,
     },
 
@@ -541,7 +541,7 @@ pub enum AgentCommand {
 
     /// Dispute actions (provider): raise, evidence, info, upload
     #[command(subcommand)]
-    Dispute(task::provider::DisputeCommand),
+    Dispute(task::asp::DisputeCommand),
 
     /// Pending-decisions v2 — single-active queue with sessionKey primary key
     /// and LLM-playbook output. Design doc:
@@ -1034,18 +1034,18 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         }
 
         AgentCommand::ClaimAutoComplete { job_id, agent_id } =>
-            task::provider::run_provider(
-                task::provider::ProviderCommand::ClaimAutoComplete { job_id, agent_id }, ctx,
+            task::asp::run_provider(
+                task::asp::ProviderCommand::ClaimAutoComplete { job_id, agent_id }, ctx,
             ).await,
 
-        AgentCommand::ProviderClaimable { agent_id } =>
-            task::provider::run_provider(
-                task::provider::ProviderCommand::Claimable { agent_id }, ctx,
+        AgentCommand::AspClaimable { agent_id } =>
+            task::asp::run_provider(
+                task::asp::ProviderCommand::Claimable { agent_id }, ctx,
             ).await,
 
-        AgentCommand::ProviderClaimRewards { agent_id } =>
-            task::provider::run_provider(
-                task::provider::ProviderCommand::ClaimRewards { agent_id }, ctx,
+        AgentCommand::AspClaimRewards { agent_id } =>
+            task::asp::run_provider(
+                task::asp::ProviderCommand::ClaimRewards { agent_id }, ctx,
             ).await,
 
         AgentCommand::MyAgents { role } =>
@@ -1070,36 +1070,36 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Provider task commands ──────────────────────────────────
         AgentCommand::RecommendTask { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::provider::recommend_task::handle_recommend_task(&mut c, &agent_id).await
+            task::asp::recommend_task::handle_recommend_task(&mut c, &agent_id).await
         }
 
         AgentCommand::FindJobs =>
-            task::provider::find_jobs::handle_find_jobs().await,
+            task::asp::find_jobs::handle_find_jobs().await,
 
         AgentCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
-            task::provider::run_provider(
-                task::provider::ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id },
+            task::asp::run_provider(
+                task::asp::ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id },
                 ctx,
             ).await,
 
         AgentCommand::Deliver { job_id, file, message, deliverable_text, agent_id } =>
-            task::provider::run_provider(
-                task::provider::ProviderCommand::Deliver { job_id, file, message, deliverable_text, agent_id }, ctx,
+            task::asp::run_provider(
+                task::asp::ProviderCommand::Deliver { job_id, file, message, deliverable_text, agent_id }, ctx,
             ).await,
 
         AgentCommand::AgreeRefund { job_id, agent_id } =>
-            task::provider::run_provider(
-                task::provider::ProviderCommand::AgreeRefund { job_id, agent_id }, ctx,
+            task::asp::run_provider(
+                task::asp::ProviderCommand::AgreeRefund { job_id, agent_id }, ctx,
             ).await,
 
         AgentCommand::AspReject { job_id, agent_id, reason } =>
-            task::provider::run_provider(
-                task::provider::ProviderCommand::AspReject { job_id, agent_id, reason }, ctx,
+            task::asp::run_provider(
+                task::asp::ProviderCommand::AspReject { job_id, agent_id, reason }, ctx,
             ).await,
 
         AgentCommand::ContactUser { job_id, agent_id } =>
-            task::provider::run_provider(
-                task::provider::ProviderCommand::ContactUser { job_id, agent_id }, ctx,
+            task::asp::run_provider(
+                task::asp::ProviderCommand::ContactUser { job_id, agent_id }, ctx,
             ).await,
 
 
@@ -1108,7 +1108,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_draft(c, ctx).await,
 
         AgentCommand::Dispute(c) =>
-            task::provider::run_dispute(c, ctx).await,
+            task::asp::run_dispute(c, ctx).await,
 
         AgentCommand::PendingDecisionsV2(c) =>
             task::common::pending_v2::run(c).await,
@@ -1415,9 +1415,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     // Route every x402 event to the observer-only a2mcp playbook.
                     let use_a2mcp = matches!(payment_mode, Some(3));
                     if use_a2mcp {
-                        task::provider::flow::generate_a2mcp_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
+                        task::asp::flow::generate_a2mcp_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
                     } else {
-                        task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
+                        task::asp::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
                     }
                 }
                 "user" | "client" => {
