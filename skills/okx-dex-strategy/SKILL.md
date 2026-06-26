@@ -4,7 +4,7 @@ description: "Limit-order strategy trading on OKX Agentic Wallet. Use this skill
 license: MIT
 metadata:
   author: okx
-  version: "3.21.4-beta"
+  version: "3.21.5-beta"
   homepage: "https://web3.okx.com"
 ---
 
