@@ -1,6 +1,6 @@
 # User Sub-Session Playbook
 
-> Self-contained reference for user sub-sessions (task sub and backup sub). User-session flows (publishing, intent routing, decision resolve) are in `user-playbook.md` and are NOT covered here.
+> Self-contained reference for the user's sub-sessions (task sub and backup sub). The user's user-session flows (publishing, intent routing, decision resolve) are in `user-playbook.md` and are NOT covered here.
 
 > 🌐 **[Localization]** — all `onchainos agent user-notify` / `pending-decisions-v2 request` content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure.
 

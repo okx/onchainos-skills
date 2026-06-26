@@ -1,4 +1,4 @@
-# User — User Session Playbook
+# User's User Session Playbook
 
 > 🌐 **[Localization]** — all user-facing content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure.
 

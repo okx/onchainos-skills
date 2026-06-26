@@ -18,7 +18,7 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 > This skill is now loaded. No action for the prefetch itself. When the next inbound message arrives, use the Activation rules below to route it.
 
 > **User session** (sessionKey does NOT contain `:group:`):
-> Read [`user-playbook.md`](./user-playbook.md) directly — it is self-contained for user-session user flows.
+> Read [`user-playbook.md`](./user-playbook.md) directly — it is self-contained for the user's user-session flows.
 > Skip the rest of this file.
 
 ## Roles

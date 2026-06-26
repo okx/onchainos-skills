@@ -1,4 +1,4 @@
-# User — User-Session Actions
+# User's User-Session Actions
 
 > 🛑 **Pre-requisite**: read `user-playbook.md` first. 🌐 All user-facing content must match the user's language.
 > 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually before execution. Multiple changes in one sentence → split into steps, confirm each. ❌ Batch-executing = user cannot review.
