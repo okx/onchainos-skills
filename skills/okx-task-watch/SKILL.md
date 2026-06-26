@@ -4,7 +4,7 @@ description: "监听任务进展 / 帮我盯着任务 / 任务有动静告诉我
 license: Apache-2.0
 metadata:
   author: okx
-  version: "3.21.5-beta"
+  version: "3.21.6-beta"
   homepage: "https://web3.okx.com"
 ---
 
