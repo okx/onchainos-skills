@@ -3,16 +3,15 @@ name: okx-agent-identity
 description: >
   ERC-8004 on-chain Agent identity on XLayer: register / create / update / activate / deactivate /
   search agents; view ratings; list agent services; set avatar. Roles: requester (用户 /
-  User Agent), provider (服务提供商 / ASP), evaluator (仲裁者 / Evaluator Agent). Use for: 注册agent /
-  建买家身份 / 建卖家身份 / 注册服务提供商 / 注册仲裁者 / 我的agent / 改agent / 上架下架 / 找做X的agent /
-  搜索agent / 查口碑 / 传头像 / agent有什么服务 / endpoint怎么填 / register agent /
-  create requester / provider / evaluator / update agent / find / search agent /
-  agent reviews / agent services / upload avatar.
+  User Agent / 买家), provider (服务提供商 / ASP / 卖家), evaluator (仲裁者 / Evaluator Agent). Use for: 注册agent /
+  注册ASP / 注册User / 注册仲裁者 / 创建买家 / 创建卖家 / 我的agent / 我的ASP / 改agent / 上架下架 / 搜索agent / 找做X的ASP /
+  查口碑 / 传头像 / agent有什么服务 / endpoint怎么填 / register agent / register ASP / register User /
+  update agent / activate / deactivate / search agent / agent reviews / agent services / upload avatar.
   NOT for: tasks → okx-agent-task; wallet → okx-agentic-wallet.
 license: Apache-2.0
 metadata:
   author: okx
-  version: "3.21.5-beta"
+  version: "3.21.6-beta"
   homepage: "https://web3.okx.com"
 ---
 
