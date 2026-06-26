@@ -105,7 +105,7 @@ struct TaskDetail {
     payment_mode: Option<i32>,
     /// Backend VisibilityEnum: 0=PUBLIC / 1=PRIVATE
     visibility: Option<i32>,
-    /// 0=open / 1=accepted / 2=submitted / 3=rejected / 4=disputed / 5=complete / 7=close
+    /// 0=created / 1=accepted / 2=submitted / 3=rejected / 4=disputed / 5=complete / 7=close
     status: Option<i32>,
     sensitive_status: Option<i32>,
     category_codes: Option<Vec<String>>,

@@ -820,7 +820,7 @@ pub enum AgentCommand {
         #[arg(long = "amount-max")]
         amount_max: Option<f64>,
 
-        /// Task statuses to include (repeatable / comma-separated). 0=OPEN, 1=ACCEPTED, 2=SUBMITTED, ...
+        /// Task statuses to include (repeatable / comma-separated). 0=CREATED, 1=ACCEPTED, 2=SUBMITTED, ...
         #[arg(long, value_delimiter = ',')]
         status: Vec<i32>,
 
