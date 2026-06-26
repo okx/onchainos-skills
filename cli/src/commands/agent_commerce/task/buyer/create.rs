@@ -121,8 +121,8 @@ pub fn normalize_currency(currency: &str) -> Result<String> {
 }
 
 pub fn validate_budget(budget: f64) -> Result<()> {
-    if budget <= 0.0 {
-        bail!("budget must be greater than 0");
+    if budget < 0.0 {
+        bail!("budget must not be negative");
     }
     if budget > MAX_BUDGET {
         bail!("per-task budget may not exceed {} USDT/USDG", MAX_BUDGET as u64);
