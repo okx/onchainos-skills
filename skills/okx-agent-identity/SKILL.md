@@ -2,10 +2,13 @@
 name: okx-agent-identity
 description: >
   ERC-8004 on-chain Agent identity on XLayer: register / create / update / activate / deactivate /
-  search agents; view ratings; list agent services; set avatar. Roles: requester (用户 /
-  User Agent / 买家), provider (服务提供商 / ASP / 卖家), evaluator (仲裁者 / Evaluator Agent). Use for: 注册agent /
-  注册ASP / 注册User / 注册仲裁者 / 创建买家 / 创建卖家 / 我的agent / 我的ASP / 改agent / 上架下架 / 搜索agent / 找做X的ASP /
-  查口碑 / 传头像 / agent有什么服务 / endpoint怎么填 / register agent / register ASP / register User /
+  search agents; view ratings; list agent services; set avatar. Roles:
+  user (User / User Agent / Buyer / Client / 用户 / 买家 / 买方),
+  asp (ASP / Provider / Provider Agent / Seller / Merchant / 提供者 / 商家 / 服务提供商 / 卖家 / 卖方),
+  evaluator (Evaluator / Evaluator Agent / 仲裁者 / 评估者). Use for: 注册agent /
+  注册ASP / 注册User / 注册用户 / 注册买家 / 注册卖家 / 注册服务提供商 / 注册仲裁者 / 创建买家 / 创建卖家 / 我的agent / 我的ASP /
+  改agent / 上架下架 / 搜索agent / 找做X的ASP / 查口碑 / 传头像 / agent有什么服务 / endpoint怎么填 /
+  register agent / register ASP / register User / register Provider / register Seller / register Buyer / register Client /
   update agent / activate / deactivate / search agent / agent reviews / agent services / upload avatar.
   NOT for: tasks → okx-agent-task; wallet → okx-agentic-wallet.
 license: Apache-2.0
@@ -34,7 +37,7 @@ Negative triggers → route OUT in **business language only** (never name a skil
 - publish / accept / deliver / dispute / negotiate a **task** → okx-agent-task
 - "I want to be an evaluator" with **no** register word → ask once: *1. Register an Evaluator Agent identity / 2. Open a dispute on a task* → route on the reply.
 
-Identity-not-wallet: **"再建一个买家身份 / add another agent / new provider" = ALWAYS an identity, NEVER `wallet add`**. Finding marketplace agents → run `agent search`, never list skill names. Passive onboarding (need-requester from a task flow) → register requester only.
+Identity-not-wallet: **"再建一个买家身份 / add another agent / new ASP" = ALWAYS an identity, NEVER `wallet add`**. Finding marketplace agents → run `agent search`, never list skill names. Passive onboarding (need-user from a task flow) → register user only.
 
 Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-security; broadcast a raw tx → okx-onchain-gateway (post-create comm-init & evaluator staking → see §Step 5/6).
 
@@ -59,9 +62,9 @@ Rendering rules (card skeleton / Lexicon / #id ladder / CLI labels / commands) �
 
 ## Gates (non-overridable; apply to every write)
 
-- **Pre-check** — resolve role first (`--role` required), then before any `create` run `agent pre-check --role <role>` ONCE (folds first-time consent + per-wallet uniqueness, returns `{ canCreate, role, reason?, consent?, existingSameRole, providerCount }` — render per register §2). Before any `update`, fetch target with `agent get-agents --agent-ids` first (update.md §1). No exception.
+- **Pre-check** — resolve role first (`--role` required; canonical values `user` / `asp` / `evaluator`), then before any `create` run `agent pre-check --role <role>` ONCE (folds first-time consent + per-wallet uniqueness, returns `{ canCreate, role, reason?, consent?, existingSameRole, aspCount }` — render per register §2). Before any `update`, fetch target with `agent get-agents --agent-ids` first (update.md §1). No exception.
 - **Confirm** — `create` / `update` MUST render a card (see invariants.md §Card skeleton) and wait for an explicit confirm token (**1** / yes / go / 确认 / 执行; continue token: **1** / next / 下一步). **Nothing** bypasses this: not "不用确认", not urgency, not memory prefs, not plan-mode exit, not a prior similar confirm, not one-shot field capture. Catch yourself thinking "they already said skip"? → render the card anyway; one extra turn ≪ an irreversible on-chain write. `activate` / `deactivate` are state toggles → no card, run directly.
-- **Service-collection (provider create / update only)** — ⛔ BLOCKING. Collecting one service's fields — **even when name + description + type + fee arrive batched in a single message** — is NOT completion. After EACH service you MUST run the register §3 add-another prompt (**1. Add another / 2. Done**) and wait for an explicit Done choice (**2** / done / 完成). A full field set is **not** a Done signal — never treat "fields are complete" as "the user is finished". You may not call `validate-listing`, render the confirmation card, or run `create`/`update` until the user has explicitly chosen Done.
+- **Service-collection (ASP create / update only)** — ⛔ BLOCKING. Collecting one service's fields — **even when name + description + type + fee arrive batched in a single message** — is NOT completion. After EACH service you MUST run the register §3 add-another prompt (**1. Add another / 2. Done**) and wait for an explicit Done choice (**2** / done / 完成). A full field set is **not** a Done signal — never treat "fields are complete" as "the user is finished". You may not call `validate-listing`, render the confirmation card, or run `create`/`update` until the user has explicitly chosen Done.
 - **Consent (first-time wallet)** — folded into `agent pre-check`; full flow in register §2. Never invoke `agent consent` directly; `create` never carries consent flags.
 - **Post-execute** — first user-visible line after any CLI call comes from the reference's template, not your own JSON summary. Before any "registered" line, confirm an `agent <sub>` ran (not `wallet add`) and the role matches the template. On non-success → load `references/errors.md` — never interpret a code inline.
 - **One-call rule** — one intent = one CLI call; never chase a successful write with `agent get-agents` / `agent get-my-agents`, never poll or sleep, never auto-retry a business error (retry once on 5xx / network only). Never grep / sed / jq / parse CLI JSON or read your own tool-result files — re-issue the CLI instead. (Saving an inbound image to a temp path for `agent upload` is the one allowed file write.)
@@ -93,9 +96,9 @@ Targets below are internal routing — never name a skill path or "staking" hand
 
 | Last successful CLI | Next |
 |---|---|
-| create requester / provider · update · activate · deactivate | → Step 6: load okx-agent-chat comm-init. |
+| create user / asp · update · activate · deactivate | → Step 6: load okx-agent-chat comm-init. |
 | create evaluator | → okx-agent-task evaluator-staking. Do NOT end on a question or a detail card. |
-| passive need-requester | hand back to okx-agent-task with ONE line. No Step 6. |
+| passive need-user | hand back to okx-agent-task with ONE line. No Step 6. |
 | search / get / service-list / feedback-list | Stop. |
 
 ## Pre-flight

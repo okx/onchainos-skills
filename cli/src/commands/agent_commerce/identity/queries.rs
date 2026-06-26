@@ -146,9 +146,9 @@ async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Val
 
     // Product spec: agent-list identifies the user via JWT; `from` is never needed.
     let mut query = vec![("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string())];
-    // Optional listing filters. `role` accepts requester/provider/evaluator
-    // (aliases 1/2/3) and is sent to the backend as its integer code (1/2/3),
-    // matching the on-chain role enum. `ownerAddress` filters to a single owner.
+    // Optional listing filters. `role` accepts the canonical values
+    // user/asp/evaluator only (strict — no aliases) and is sent to the backend
+    // as its integer code (1/2/3). `ownerAddress` filters to a single owner.
     if let Some(role_raw) = args.role.as_deref().filter(|r| !r.trim().is_empty()) {
         query.push(("role".to_string(), normalize_role_code(role_raw)?));
     }
