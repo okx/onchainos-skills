@@ -23,7 +23,7 @@ pub enum Role {
 impl Role {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "buyer" | "client"            => Some(Role::User),
+            "user" | "client"            => Some(Role::User),
             "provider" | "seller"         => Some(Role::Provider),
             "evaluator" | "arbitrator"    => Some(Role::Evaluator),
             _                             => None,
@@ -288,7 +288,7 @@ pub enum Event {
     AttachmentAdded,
     /// Provider receives `[intent:attachment]` from the user; downloads + saves the file locally.
     /// Can fire in Created (negotiation phase) or Accepted (mid-task) — multi-status.
-    BuyerAttachmentReceived,
+    UserAttachmentReceived,
 
     // ── Deliverable relay event (user-local dispatch, no status change) ─
     /// User receives provider's `[intent:deliver]` P2P message; downloads + saves the deliverable
@@ -365,7 +365,7 @@ impl Event {
             "cooldown_entered"          => Event::CooldownEntered,
             // Attachment relay (local dispatch)
             "attachment_added"          => Event::AttachmentAdded,
-            "buyer_attachment_received" => Event::BuyerAttachmentReceived,
+            "user_attachment_received" => Event::UserAttachmentReceived,
             // Deliverable relay (user-local dispatch)
             "deliverable_received"      => Event::DeliverableReceived,
             // Negotiation relay (user-local dispatch)
@@ -416,7 +416,7 @@ impl Event {
             Event::StakeStopped           => "stake_stopped",
             Event::CooldownEntered        => "cooldown_entered",
             Event::AttachmentAdded        => "attachment_added",
-            Event::BuyerAttachmentReceived => "buyer_attachment_received",
+            Event::UserAttachmentReceived => "user_attachment_received",
             Event::DeliverableReceived    => "deliverable_received",
             Event::NegotiateReply         => "negotiate_reply",
             Event::WakeupNotify           => "wakeup_notify",
@@ -496,9 +496,9 @@ pub fn status_when_event(e: &Event) -> Status {
         // attachment_added is dispatched by the user session; can fire at Created or Accepted —
         // multi-status, so freshness check is skipped via PSEUDO_EVENTS; placeholder here.
         Event::AttachmentAdded                                                  => Status::Other("attachment".to_string()),
-        // buyer_attachment_received fires on the provider when it receives [intent:attachment];
+        // user_attachment_received fires on the provider when it receives [intent:attachment];
         // can occur in Created (negotiation) or Accepted (mid-task) — multi-status placeholder.
-        Event::BuyerAttachmentReceived                                          => Status::Other("attachment".to_string()),
+        Event::UserAttachmentReceived                                          => Status::Other("attachment".to_string()),
         // wake-up is a pass-through event; the real status lives in envelope.message.jobStatus.
         // Return a placeholder status here — agents must not drive next-action with wakeup_notify.
         Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),

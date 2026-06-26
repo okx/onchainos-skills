@@ -913,8 +913,8 @@ pub async fn generate_next_action(
         ),
 
         // ─── User Agent attachment received — download + save, no reply ─────
-        Event::BuyerAttachmentReceived => {
-            buyer_attachment_received_cli(job_id, agent_id, &short_id, message)
+        Event::UserAttachmentReceived => {
+            user_attachment_received_cli(job_id, agent_id, &short_id, message)
         }
 
         // ─── Staking / reward / slash lifecycle tx receipts — irrelevant when provider is not an evaluator ─────
@@ -1051,9 +1051,9 @@ pub async fn generate_next_action(
     }
 }
 
-// ── buyer_attachment_received helpers ────────────────────────────────
+// ── user_attachment_received helpers ────────────────────────────────
 
-fn buyer_attachment_received_cli(
+fn user_attachment_received_cli(
     job_id: &str,
     agent_id: &str,
     short_id: &str,
@@ -1087,7 +1087,7 @@ fn buyer_attachment_received_cli(
         if secret.is_empty() { missing.push("secret"); }
         let fields = missing.join(", ");
         return format!(
-            "[buyer_attachment_received_cli] ERROR: encryption metadata incomplete — missing: {fields}. \
+            "[user_attachment_received_cli] ERROR: encryption metadata incomplete — missing: {fields}. \
              The caller must include all 6 fields (fileKey/digest/salt/nonce/secret/filename) in --message JSON.\n\n\
              [Your next action] Notify the user that the attachment could not be downloaded.\n\n\
              ```bash\n\
@@ -1103,9 +1103,9 @@ fn buyer_attachment_received_cli(
     ) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[buyer_attachment_received_cli] download failed: {e}");
+            eprintln!("[user_attachment_received_cli] download failed: {e}");
             return format!(
-                "[buyer_attachment_received_cli] ERROR: file download failed: {e}\n\n\
+                "[user_attachment_received_cli] ERROR: file download failed: {e}\n\n\
                  [Your next action] Notify the user that the attachment could not be downloaded.\n\n\
                  ```bash\n\
                  onchainos agent user-notify --content '<translate: [Job {short_id}] User Agent attachment download failed. Please check network and retry.>'\n\
@@ -1134,15 +1134,15 @@ fn buyer_attachment_received_cli(
     })() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[buyer_attachment_received_cli] save-to-job-dir failed: {e}");
+            eprintln!("[user_attachment_received_cli] save-to-job-dir failed: {e}");
             local_path
         }
     };
 
-    let att_notify = super::content::buyer_attachment_received_user_notify(job_id);
+    let att_notify = super::content::user_attachment_received_user_notify(job_id);
     let _ = short_id;
     format!(
-        "[buyer_attachment_received_cli] ✓ Attachment downloaded and saved: {save_path}\n\n\
+        "[user_attachment_received_cli] ✓ Attachment downloaded and saved: {save_path}\n\n\
          [Your next action] Translate the notification below to the user's language, then dispatch it. End the turn after notifying.\n\n\
          Canonical content:\n\
          \x20\x20{att_notify}\n\n\

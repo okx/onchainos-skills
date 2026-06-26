@@ -30,7 +30,7 @@ pub async fn handle_close(client: &mut TaskApiClient, job_id: &str, explicit_age
 
     audit::log(
         "cli",
-        "buyer/close_submitted",
+        "user/close_submitted",
         true,
         Duration::default(),
         Some(vec![

@@ -161,7 +161,7 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          **Step 2 — collect serviceParams if needed:**\n\
          If `serviceDescription` is non-empty, ask the user for serviceParams — enqueue:\n\
          ```bash\n\
-         onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} \
+         onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} \
          --source-event set_asp_params \
          --user-content \"<compose from template below>\" \
          --list-label \"[SetASP {short_id}] provide service params\"\n\
@@ -228,7 +228,7 @@ pub(crate) fn provider_conversation_cli_inner(
     let is_after_reject = prefetched_items.is_some();
 
     if !is_after_reject {
-        if pending_v2::has_pending_for_job(job_id, "buyer") {
+        if pending_v2::has_pending_for_job(job_id, "user") {
             return format!(
                 "[provider_conversation] Duplicate event — pending decision already exists for job {short_id}. End turn.\n"
             );
@@ -258,7 +258,7 @@ pub(crate) fn provider_conversation_cli_inner(
                  C. Close the job — cancel and refund"
             );
             let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-                job_id, "buyer", agent_id, None,
+                job_id, "user", agent_id, None,
                 &user_content,
                 &format!("[No ASP {short_id}] {title} next-step decision"),
                 "no_asp_found",
@@ -302,7 +302,7 @@ pub(crate) fn provider_conversation_cli_inner(
         short_id, title, asp_agent_id, name,
     );
 
-    let cmd = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[ASP {short_id}] Accept provider?\" --source-event provider_pending");
+    let cmd = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[ASP {short_id}] Accept provider?\" --source-event provider_pending");
 
     format!(
         "[Trigger] ASP pending contact — showing first of {} ASP(s)\n\
@@ -323,11 +323,11 @@ pub(crate) fn provider_conversation_cli_inner(
          Step 2 — When the user replies, route by choice:\n\
          \x20\x20• 1 / \"accept\" / \"接受\" / \"yes\" / \"好\"  → run:\n\
          \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"{asp_agent_id}\"}}'\n\
+         \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"{asp_agent_id}\"}}'\n\
          \x20\x20\x20\x20```\n\
          \x20\x20• 2 / \"reject\" / \"拒绝\" / \"no\" / \"不\" / \"换一个\" / \"next\"  → run:\n\
          \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"{group_id}\"}}'\n\
+         \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"{group_id}\"}}'\n\
          \x20\x20\x20\x20```\n\
          ```\n",
         items.len(),

@@ -25,7 +25,7 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 
 | Role | Role code | CLI value | Sub-session playbook |
 |---|---|---|---|
-| **User Agent** | `1` | `--role buyer` | [`user-sub-playbook.md`](./user-sub-playbook.md) |
+| **User Agent** | `1` | `--role user` | [`user-sub-playbook.md`](./user-sub-playbook.md) |
 | **ASP** | `2` | `--role provider` | [`asp.md`](./asp.md) |
 | **Evaluator** | `3` | `--role evaluator` | [`evaluator.md`](./evaluator.md) |
 
@@ -62,7 +62,7 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 
 ## Pre-flight
 
-> 🛑 **User sub/backup skip** — if this session was triggered by Activation #1 (system event) or #2 (a2a-agent-chat) AND the resolved role is **buyer** (`sender.role == 2` or system event routed to user agent), skip Pre-flight entirely. The user session already verified the environment; CLI commands will surface runtime errors if anything changed.
+> 🛑 **User sub/backup skip** — if this session was triggered by Activation #1 (system event) or #2 (a2a-agent-chat) AND the resolved role is **user** (`sender.role == 2` or system event routed to user agent), skip Pre-flight entirely. The user session already verified the environment; CLI commands will surface runtime errors if anything changed.
 
 Before any task flow starts, execute **both steps in order**.
 
@@ -73,7 +73,7 @@ Follow [`./_shared/preflight.md`](./_shared/preflight.md) to ensure the onchaino
 ### Step 2 — Business gate-check
 
 ```bash
-onchainos agent gate-check --role <buyer|provider|evaluator>
+onchainos agent gate-check --role <user|provider|evaluator>
 ```
 
 Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proceed. Otherwise fix the failing gate:

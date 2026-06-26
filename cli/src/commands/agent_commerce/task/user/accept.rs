@@ -156,7 +156,7 @@ pub async fn handle_set_payment_mode(
 
         audit::log(
             "cli",
-            "buyer/payment_mode_set",
+            "user/payment_mode_set",
             true,
             Duration::default(),
             Some(vec![
@@ -170,7 +170,7 @@ pub async fn handle_set_payment_mode(
     } else {
         audit::log(
             "cli",
-            "buyer/payment_mode_already_set",
+            "user/payment_mode_already_set",
             true,
             Duration::default(),
             Some(vec![
@@ -448,7 +448,7 @@ async fn confirm_accept_escrow(
     ).await?;
     audit::log(
         "cli",
-        "buyer/confirm_accept_completed",
+        "user/confirm_accept_completed",
         true,
         Duration::default(),
         Some(vec![
@@ -497,7 +497,7 @@ pub async fn handle_direct_accept(
     ).await?;
     audit::log(
         "cli",
-        "buyer/direct_accept_submitted",
+        "user/direct_accept_submitted",
         true,
         Duration::default(),
         Some(vec![
@@ -750,7 +750,7 @@ pub async fn handle_task_402_pay(
     // Step 5: emit the complete result.
     audit::log(
         "cli",
-        if replay_success { "buyer/task_402_pay_completed" } else { "buyer/task_402_pay_replay_failed" },
+        if replay_success { "user/task_402_pay_completed" } else { "user/task_402_pay_replay_failed" },
         replay_success,
         Duration::default(),
         Some(vec![
@@ -822,7 +822,7 @@ async fn auto_save_x402_deliverable(
 
     let params = deliverables::SaveParams {
         job_id,
-        role: "buyer",
+        role: "user",
         file_path: tmp_path.to_str().unwrap_or_default(),
         deliverable_type: "text",
         title: &title,

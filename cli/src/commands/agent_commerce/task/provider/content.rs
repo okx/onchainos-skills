@@ -349,7 +349,7 @@ pub fn build_file_deliver_message(
 }
 
 /// User Agent attachment received — notify the provider's user.
-pub fn buyer_attachment_received_user_notify(job_id: &str) -> String {
+pub fn user_attachment_received_user_notify(job_id: &str) -> String {
     format!("[Job `{job_id}`] The User Agent sent an attachment (reference material for this task). File downloaded and saved locally.")
 }
 

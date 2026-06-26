@@ -350,7 +350,7 @@ pub async fn handle_draft_create(
 
     audit::log(
         "cli",
-        "buyer/draft_created",
+        "user/draft_created",
         true,
         Duration::default(),
         Some(vec![
@@ -425,7 +425,7 @@ pub async fn handle_draft_list(
 
     audit::log(
         "cli",
-        "buyer/draft_listed",
+        "user/draft_listed",
         true,
         Duration::default(),
         Some(vec![
@@ -564,7 +564,7 @@ pub async fn handle_draft_update(
 
     audit::log(
         "cli",
-        "buyer/draft_updated",
+        "user/draft_updated",
         true,
         Duration::default(),
         Some(vec![
@@ -599,7 +599,7 @@ pub async fn handle_draft_delete(
 
     audit::log(
         "cli",
-        "buyer/draft_deleted",
+        "user/draft_deleted",
         true,
         Duration::default(),
         Some(vec![
@@ -699,7 +699,7 @@ pub async fn handle_draft_publish(
 
     audit::log(
         "cli",
-        "buyer/draft_published",
+        "user/draft_published",
         true,
         Duration::default(),
         Some(vec![

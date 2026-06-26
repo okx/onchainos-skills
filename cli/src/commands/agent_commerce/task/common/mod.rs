@@ -66,14 +66,14 @@ pub enum CommonCommand {
     /// Query task context and print a structured natural-language description for the LLM.
     ///
     /// Examples:
-    ///   onchainos agent context task-001 --role buyer --agent-id 426
+    ///   onchainos agent context task-001 --role user --agent-id 426
     ///   onchainos agent context task-001 --role provider --agent-id 558
     Context {
         /// Task ID (jobId), e.g. task-001 or 0x1a2b...
         job_id: String,
 
         /// Caller role: user | provider | evaluator.
-        #[arg(long, default_value = "buyer")]
+        #[arg(long, default_value = "user")]
         role: String,
 
         /// Caller AgentID (**required**). The beta backend requires a non-empty agenticId header;
@@ -461,7 +461,7 @@ pub async fn fetch_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
 /// and raw integers ("1" / "2" / "3"). Returns `None` for unrecognized input.
 fn parse_role_filter(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "buyer" | "requestor" | "1" => Some(AGENT_ROLE_USER),
+        "user" | "requestor" | "1" => Some(AGENT_ROLE_USER),
         "provider" | "seller" | "2" => Some(AGENT_ROLE_PROVIDER),
         "evaluator" | "arbiter" | "3" => Some(AGENT_ROLE_EVALUATOR),
         _ => None,
@@ -933,7 +933,7 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
         ),
     };
     let role_label = match role_num {
-        AGENT_ROLE_USER => "buyer",
+        AGENT_ROLE_USER => "user",
         AGENT_ROLE_PROVIDER => "provider",
         AGENT_ROLE_EVALUATOR => "evaluator",
         _ => "unknown",
@@ -1107,7 +1107,7 @@ pub async fn handle_prepare_create(
     }
 
     // ── 2. Gate-check (wallet + identity + communication) ─────────
-    let preflight = preflight_inner("buyer").await?;
+    let preflight = preflight_inner("user").await?;
     let pf_ok = preflight.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
     if !pf_ok {
         crate::output::success(serde_json::json!({
@@ -1259,7 +1259,7 @@ async fn run_context(
         bail!("{msg}");
     }
     // Validate role.
-    if !["buyer", "provider", "evaluator"].contains(&role) {
+    if !["user", "provider", "evaluator"].contains(&role) {
         bail!("--role must be user / provider / evaluator");
     }
     if agent_id.is_empty() {
@@ -1418,7 +1418,7 @@ async fn build_context(
 
     // ── Role guide that must be loaded ───────────────────────────────────
     let skill_file = match role {
-        "buyer"     => "client.md",
+        "user"     => "client.md",
         "provider"    => "asp.md",
         "evaluator" => "evaluator.md",
         _           => "",

@@ -229,7 +229,7 @@ pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
     std::fs::write(state_path(job_id)?, json)?;
     audit::log(
         "cli",
-        "buyer/provider_marked_failed",
+        "user/provider_marked_failed",
         true,
         Duration::default(),
         Some(vec![

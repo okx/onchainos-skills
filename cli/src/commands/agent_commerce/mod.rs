@@ -520,7 +520,7 @@ pub enum AgentCommand {
     TaskDeliverableList {
         /// If provided, list deliverables for this job only
         #[arg(long)] job_id: Option<String>,
-        #[arg(long, default_value = "buyer")] role: String,
+        #[arg(long, default_value = "user")] role: String,
         /// Substring search across all jobs (only used when --job-id is omitted)
         #[arg(long)] search: Option<String>,
     },
@@ -701,7 +701,7 @@ pub enum AgentCommand {
     /// Get next-step instruction prompt for current job state.
     ///
     /// Invocation contract — exactly **three** flags:
-    ///   `--role <buyer|provider|evaluator|auto>` — playbook routing role
+    ///   `--role <user|provider|evaluator|auto>` — playbook routing role
     ///   `--agentId <agentId>`                    — receiving agent
     ///   `--message <envelope JSON>`              — the full `message` object
     ///                                              from the inbound notification
@@ -714,7 +714,7 @@ pub enum AgentCommand {
     NextAction {
         /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab).
         #[arg(long = "agentId", alias = "agent-id")] agent_id: String,
-        /// Role: `buyer` / `provider` / `evaluator`, or `auto` to let the CLI
+        /// Role: `user` / `provider` / `evaluator`, or `auto` to let the CLI
         /// resolve the role from `--agentId` (saves a separate `agent profile` round-trip).
         #[arg(long)] role: String,
         /// Full system event envelope as a JSON string — the entire `message` object.
@@ -1311,7 +1311,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let resolved_role: String = if role == "auto" {
                 match task::common::query_agent_by_id_direct(&agent_id).await {
                     Ok(agent) => match agent["role"].as_i64() {
-                        Some(1) => "buyer".to_string(),
+                        Some(1) => "user".to_string(),
                         Some(2) => "provider".to_string(),
                         Some(3) => "evaluator".to_string(),
                         other => anyhow::bail!(
@@ -1331,10 +1331,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             // agent that also publishes tasks as a user).
             let resolved_role = match event.as_str() {
                 "provider_conversation" | "provider_conversation_pick" | "provider_conversation_reject" => {
-                    if resolved_role != "buyer" && DEBUG_LOG {
+                    if resolved_role != "user" && DEBUG_LOG {
                         eprintln!("[next-action] event-level override: {event} forces role user (was {resolved_role})");
                     }
-                    "buyer".to_string()
+                    "user".to_string()
                 }
                 _ => resolved_role,
             };
@@ -1347,7 +1347,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             // query the task detail API for providerAgentId and persist it.
             // Must run AFTER role resolution so --role auto is correctly resolved.
             if provider.is_none()
-                && matches!(resolved_role.as_str(), "buyer" | "client")
+                && matches!(resolved_role.as_str(), "user" | "client")
                 && event == "job_created"
                 && !task::user::negotiate::has_designated_provider(&job_id)
             {
@@ -1368,7 +1368,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // ── review gate: auto-mark user's review gate ──────────────────────
             // Must run AFTER role resolution so --role auto is correctly resolved.
-            if matches!(resolved_role.as_str(), "buyer" | "client") {
+            if matches!(resolved_role.as_str(), "user" | "client") {
                 if event == "job_submitted" {
                     if let Err(e) = task::common::review_gate::mark_pending(&job_id) {
                         if DEBUG_LOG {
@@ -1420,10 +1420,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         task::provider::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
                     }
                 }
-                "buyer" | "client" => {
+                "user" | "client" => {
                     crate::audit::log(
                         "cli",
-                        "buyer/next_action_received",
+                        "user/next_action_received",
                         true,
                         std::time::Duration::default(),
                         Some(vec![
@@ -1646,7 +1646,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     // Events that skip both freshness validation AND pre-fetching (no jobId yet, or irrelevant).
     const SKIP_ALL_EVENTS: &[&str] = &[
         "create_task",
-        "approve_review", "reject_review", "buyer_attachment_received", "close", "set_public", "job_user_reject",
+        "approve_review", "reject_review", "user_attachment_received", "close", "set_public", "job_user_reject",
         "dispute_raise", "agree_refund",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
         "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "vote_commit_deadline_warn", "vote_reveal_deadline_warn", "cooldown_entered", "round_failed",
@@ -1684,9 +1684,9 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     //   manifest empty + no marker → write marker (first job_submitted, deliverable not yet received)
     //   manifest empty + marker    → delete marker, leave ctx.deliverable=None (retry: fall through to Step 2b chat history)
     if job_status_or_event == "job_submitted" {
-        if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("buyer", job_id) {
+        if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("user", job_id) {
             if let Some(entry) = manifest.entries.first() {
-                let dir = task::common::deliverables::deliverables_dir("buyer", job_id)
+                let dir = task::common::deliverables::deliverables_dir("user", job_id)
                     .map(|d| d.join(&entry.filename).display().to_string())
                     .unwrap_or_default();
                 let text_content = if entry.deliverable_type == "text" {

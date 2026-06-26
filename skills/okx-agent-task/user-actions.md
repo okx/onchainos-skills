@@ -98,7 +98,7 @@ User messages unrelated to terms → sync to the user session as context; do NOT
 
 The user wants to see saved deliverables from completed or in-progress tasks.
 
-> This section applies to both user and provider roles. Use `--role buyer` or `--role provider` based on the current role.
+> This section applies to both user and provider roles. Use `--role user` or `--role provider` based on the current role.
 
 **Trigger**: "view deliverables", "my deliverables", "查看交付物", "交付物列表", "show deliverable for job X"
 
@@ -106,7 +106,7 @@ The user wants to see saved deliverables from completed or in-progress tasks.
 - If the user specifies a jobId → single job query
 - If the user says "all" / "列表" / no specific job → list all
 
-**Step 2 — Run the CLI** (substitute `<role>` with `buyer` or `provider`):
+**Step 2 — Run the CLI** (substitute `<role>` with `user` or `provider`):
 
 - Single job: `onchainos agent task-deliverable-list --job-id <jobId> --role <role>`
 - All / search: `onchainos agent task-deliverable-list --role <role> [--search "<keyword>"]`

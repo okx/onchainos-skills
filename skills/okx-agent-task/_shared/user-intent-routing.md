@@ -91,7 +91,7 @@ Triggers (only when there's no active card the user might be answering):
 
 | Intent | Action | Detail |
 |---|---|---|
-| Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role buyer --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | user publish flow |
+| Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role user --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | user publish flow |
 | Designate a seller — `指定卖家` / `use the service of Agent X` | Gather params → designated-provider flow | [`user-actions-publish.md`](../user-actions-publish.md) §5 |
 | Find tasks (ASP) — `接单` / `找任务` / `start accepting jobs` | [`asp-accept.md`](../asp-accept.md) §2 (Path A). Do NOT route to `task-search`. | asp-accept.md §2 |
 | Take specific task (ASP) — `接 {jobId}` / `contact the user of {jobId}` | `onchainos agent contact-user <jobId> --agent-id <chosen agentId>` (single CLI: session create + canonical opener) | asp-accept.md §3 |
@@ -110,7 +110,7 @@ Triggers (only when there's no active card the user might be answering):
 |---|---|
 | **Chain-state snapshot** — `查询任务 {jobId}` / `what's the status of {jobId}` | `onchainos agent status <jobId>`. User session answers directly. |
 | **Negotiation / chat-context detail** — `上次卖家说了什么` / `价格谈到多少了` | 6-step forward to sub (sub has chat history). |
-| `view deliverables` / `查看交付物` | `task-deliverable-list [--job-id <jobId>] --role <buyer|provider>` |
+| `view deliverables` / `查看交付物` | `task-deliverable-list [--job-id <jobId>] --role <user|provider>` |
 | `upload evidence` / `补证据` | **Friendly-reject** — evidence auto-submitted by CLI on `job_disputed`. |
 
 ---

@@ -149,7 +149,7 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
              {option_public_line}{close_label}. Close the task"
         );
         let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-            job_id, "buyer", agent_id, None,
+            job_id, "user", agent_id, None,
             &user_content,
             &format!("[Over budget {short_id}] next-step decision"),
             "apply_over_budget",
@@ -272,12 +272,12 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
         format!(
             "**Step 4 — Re-trigger review** (job_submitted already arrived before this deliverable):\n\
              ```bash\n\
-             onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'\n\
+             onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'\n\
              ```\n"
         )
     } else {
         format!(
-            "**Step 4 — End turn**. Wait for `job_submitted` → `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
+            "**Step 4 — End turn**. Wait for `job_submitted` → `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`.\n"
         )
     };
 
@@ -290,7 +290,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      • **text** (content between `- - -` separators): extract full text, write to a temp .txt file → record localPath.\n\n\
      **Step 2 — Save**\n\
      ```bash\n\
-     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
+     onchainos agent task-deliverable-save --job-id {job_id} --role user \\\n\
        --file \"<localPath>\" --deliverable-type <file|text> --title \"{title_field}\" \\\n\
        --short-id {short_id} \\\n\
        --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
@@ -346,12 +346,12 @@ pub(crate) fn deliverable_received_cli(
     let payload = if !a2a_file.is_empty() {
         match parse_a2a_file(a2a_file) {
             Some(p) => {
-                audit::log("cli", "buyer/deliverable_from_a2a_file", true, Duration::default(),
+                audit::log("cli", "user/deliverable_from_a2a_file", true, Duration::default(),
                     Some([base_tags.clone(), vec![format!("path={a2a_file}")]].concat()), None);
                 p
             }
             None => {
-                audit::log("cli", "buyer/deliverable_a2a_file_parse_failed", false, Duration::default(),
+                audit::log("cli", "user/deliverable_a2a_file_parse_failed", false, Duration::default(),
                     Some([base_tags.clone(), vec![format!("path={a2a_file}")]].concat()),
                     Some("failed to parse A2A file or extract deliver content"));
                 return deliverable_received(ctx);
@@ -361,7 +361,7 @@ pub(crate) fn deliverable_received_cli(
         // Legacy: LLM passed fields directly in --message JSON
         let dtype = msg_str("deliverableType");
         if dtype.is_empty() {
-            audit::log("cli", "buyer/deliverable_received_no_type", false, Duration::default(),
+            audit::log("cli", "user/deliverable_received_no_type", false, Duration::default(),
                 Some(base_tags.clone()), Some("no a2aFile and no deliverableType, fallback to LLM path"));
             return deliverable_received(ctx);
         }
@@ -376,7 +376,7 @@ pub(crate) fn deliverable_received_cli(
                 if file_key.is_empty() || digest.is_empty() || salt.is_empty()
                     || nonce.is_empty() || secret.is_empty()
                 {
-                    audit::log("cli", "buyer/deliverable_file_missing_metadata", false, Duration::default(),
+                    audit::log("cli", "user/deliverable_file_missing_metadata", false, Duration::default(),
                         Some(base_tags.clone()), Some("encryption metadata incomplete, fallback to LLM path"));
                     return deliverable_received(ctx);
                 }
@@ -397,7 +397,7 @@ pub(crate) fn deliverable_received_cli(
                 } else if !file_path.is_empty() {
                     let fp = std::path::Path::new(file_path);
                     if !is_safe_temp_path(fp) {
-                        audit::log("cli", "buyer/deliverable_text_path_rejected", false, Duration::default(),
+                        audit::log("cli", "user/deliverable_text_path_rejected", false, Duration::default(),
                             Some(base_tags.clone()), Some("filePath not under temp dir"));
                         return deliverable_received(ctx);
                     }
@@ -412,19 +412,19 @@ pub(crate) fn deliverable_received_cli(
                             }
                         }
                         Err(e) => {
-                            audit::log("cli", "buyer/deliverable_text_read_failed", false, Duration::default(),
+                            audit::log("cli", "user/deliverable_text_read_failed", false, Duration::default(),
                                 Some(base_tags.clone()), Some(&e.to_string()));
                             return deliverable_received(ctx);
                         }
                     }
                 } else {
-                    audit::log("cli", "buyer/deliverable_text_no_content", false, Duration::default(),
+                    audit::log("cli", "user/deliverable_text_no_content", false, Duration::default(),
                         Some(base_tags.clone()), Some("neither a2aFile, text, nor filePath provided"));
                     return deliverable_received(ctx);
                 }
             }
             _ => {
-                audit::log("cli", "buyer/deliverable_received_unknown_type", false, Duration::default(),
+                audit::log("cli", "user/deliverable_received_unknown_type", false, Duration::default(),
                     Some([base_tags.clone(), vec![format!("type={dtype}")]].concat()), None);
                 return deliverable_received(ctx);
             }
@@ -432,7 +432,7 @@ pub(crate) fn deliverable_received_cli(
     };
 
     let dtype_str = match &payload { DeliverPayload::File { .. } => "file", DeliverPayload::Text(_) => "text" };
-    audit::log("cli", "buyer/deliverable_received", true, Duration::default(),
+    audit::log("cli", "user/deliverable_received", true, Duration::default(),
         Some([base_tags.clone(), vec![format!("type={dtype_str}")]].concat()), None);
 
     let (title, sym, amt, provider_id) = match ctx.prefetched {
@@ -448,19 +448,19 @@ pub(crate) fn deliverable_received_cli(
     // ── Execute: download (file) or write tmp (text) → handle_save ──
     let (saved_path, deliverable_type, text_content) = match payload {
         DeliverPayload::File { ref file_key, ref digest, ref salt, ref nonce, ref secret, ref filename } => {
-            audit::log("cli", "buyer/deliverable_file_download", true, Duration::default(),
+            audit::log("cli", "user/deliverable_file_download", true, Duration::default(),
                 Some([base_tags.clone(), vec![format!("fileKey={file_key}")]].concat()), None);
 
             let local_path = match okx_a2a::file_download(
                 file_key, agent_id, digest, salt, nonce, secret, filename.as_deref(),
             ) {
                 Ok(p) => {
-                    audit::log("cli", "buyer/deliverable_file_downloaded", true, Duration::default(),
+                    audit::log("cli", "user/deliverable_file_downloaded", true, Duration::default(),
                         Some([base_tags.clone(), vec![format!("localPath={p}")]].concat()), None);
                     p
                 }
                 Err(e) => {
-                    audit::log("cli", "buyer/deliverable_file_download_failed", false, Duration::default(),
+                    audit::log("cli", "user/deliverable_file_download_failed", false, Duration::default(),
                         Some([base_tags.clone(), vec![format!("fileKey={file_key}")]].concat()), Some(&e.to_string()));
                     eprintln!("[deliverable_received_cli] file download failed: {e}");
                     return deliverable_received(ctx);
@@ -469,7 +469,7 @@ pub(crate) fn deliverable_received_cli(
 
             let save_result = deliverables::handle_save(&deliverables::SaveParams {
                 job_id,
-                role: "buyer",
+                role: "user",
                 file_path: &local_path,
                 deliverable_type: "file",
                 title,
@@ -483,12 +483,12 @@ pub(crate) fn deliverable_received_cli(
 
             match save_result {
                 Ok(r) => {
-                    audit::log("cli", "buyer/deliverable_saved", true, Duration::default(),
+                    audit::log("cli", "user/deliverable_saved", true, Duration::default(),
                         Some([base_tags.clone(), vec!["type=file".into(), format!("path={}", r.path)]].concat()), None);
                     (r.path, "file".to_string(), None)
                 }
                 Err(e) => {
-                    audit::log("cli", "buyer/deliverable_save_failed", false, Duration::default(),
+                    audit::log("cli", "user/deliverable_save_failed", false, Duration::default(),
                         Some([base_tags.clone(), vec!["type=file".into()]].concat()), Some(&e.to_string()));
                     eprintln!("[deliverable_received_cli] save failed: {e}");
                     return deliverable_received(ctx);
@@ -496,13 +496,13 @@ pub(crate) fn deliverable_received_cli(
             }
         }
         DeliverPayload::Text(text) => {
-            audit::log("cli", "buyer/deliverable_text_parsed", true, Duration::default(),
+            audit::log("cli", "user/deliverable_text_parsed", true, Duration::default(),
                 Some([base_tags.clone(), vec![format!("charCount={}", text.chars().count())]].concat()), None);
 
             let tmp_dir = std::env::temp_dir();
             let tmp_path = tmp_dir.join(format!("deliverable-text-{job_id}.txt"));
             if let Err(e) = std::fs::write(&tmp_path, &text) {
-                audit::log("cli", "buyer/deliverable_text_write_failed", false, Duration::default(),
+                audit::log("cli", "user/deliverable_text_write_failed", false, Duration::default(),
                     Some(base_tags.clone()), Some(&e.to_string()));
                 eprintln!("[deliverable_received_cli] write temp file failed: {e}");
                 return deliverable_received(ctx);
@@ -510,7 +510,7 @@ pub(crate) fn deliverable_received_cli(
 
             let save_result = deliverables::handle_save(&deliverables::SaveParams {
                 job_id,
-                role: "buyer",
+                role: "user",
                 file_path: &tmp_path.display().to_string(),
                 deliverable_type: "text",
                 title,
@@ -524,12 +524,12 @@ pub(crate) fn deliverable_received_cli(
 
             match save_result {
                 Ok(r) => {
-                    audit::log("cli", "buyer/deliverable_saved", true, Duration::default(),
+                    audit::log("cli", "user/deliverable_saved", true, Duration::default(),
                         Some([base_tags.clone(), vec!["type=text".into(), format!("path={}", r.path)]].concat()), None);
                     (r.path, "text".to_string(), Some(text))
                 }
                 Err(e) => {
-                    audit::log("cli", "buyer/deliverable_save_failed", false, Duration::default(),
+                    audit::log("cli", "user/deliverable_save_failed", false, Duration::default(),
                         Some([base_tags.clone(), vec!["type=text".into()]].concat()), Some(&e.to_string()));
                     eprintln!("[deliverable_received_cli] save failed: {e}");
                     return deliverable_received(ctx);
@@ -612,7 +612,7 @@ pub(crate) fn deliverable_received_cli(
     // sub doesn't wait for a job_submitted that already came.
     if deliverables::has_review_marker(job_id) {
         deliverables::delete_review_marker(job_id);
-        audit::log("cli", "buyer/deliverable_received_marker_found", true, Duration::default(),
+        audit::log("cli", "user/deliverable_received_marker_found", true, Duration::default(),
             Some(base_tags.clone()), Some("job_submitted arrived first; merging into review flow"));
 
         // Reconstruct prefetched with the just-saved deliverable so job_submitted_escrow
@@ -733,9 +733,9 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     // Check the local manifest to decide: saved → populate & proceed, else → marker + wait.
     if p.deliverable.is_none() {
         use crate::commands::agent_commerce::task::common::deliverables;
-        if let Ok(Some(manifest)) = deliverables::read_manifest("buyer", job_id) {
+        if let Ok(Some(manifest)) = deliverables::read_manifest("user", job_id) {
             if let Some(entry) = manifest.entries.last() {
-                let saved_path = deliverables::deliverables_dir("buyer", job_id)
+                let saved_path = deliverables::deliverables_dir("user", job_id)
                     .map(|d| d.join(&entry.filename))
                     .unwrap_or_default();
                 let text_content = if entry.deliverable_type == "text" {
@@ -805,7 +805,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         format!("\
      **Step 2a — Check saved deliverable:**\n\
      ```bash\n\
-     onchainos agent task-deliverable-list --job-id {job_id} --role buyer\n\
+     onchainos agent task-deliverable-list --job-id {job_id} --role user\n\
      ```\n\
      Non-empty `deliverables` → use first entry's `path` as localPath, `deliverableType`; skip Step 2b.\n\
      Empty → fall through to Step 2b.\n\n\
@@ -820,7 +820,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ```\n\
      stdout = localPath (must be full absolute path). Then persist:\n\
      ```bash\n\
-     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
+     onchainos agent task-deliverable-save --job-id {job_id} --role user \\\n\
        --file \"<localPath>\" --deliverable-type file --title \"{title}\" \\\n\
        --short-id {short_id} --file-key \"<fileKey>\" \\\n\
        --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
@@ -829,7 +829,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ▸ Case B (text — body between `- - -` separators):\n\
      Extract full text → write to temp .txt → persist:\n\
      ```bash\n\
-     onchainos agent task-deliverable-save --job-id {job_id} --role buyer \\\n\
+     onchainos agent task-deliverable-save --job-id {job_id} --role user \\\n\
        --file \"<temp .txt path>\" --deliverable-type text --title \"{title}\" \\\n\
        --short-id {short_id} --counterparty-agent-id \"{provider_field}\" \\\n\
        --counterparty-name \"<providerName>\" --token-symbol \"{token_symbol}\" --token-amount \"{token_amount}\"\n\
@@ -840,7 +840,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     // Step 3 — compose review card user_content + push via pending-decisions-v2.
     let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
         job_id,
-        "buyer",
+        "user",
         agent_id,
         ctx.prefetched.and_then(|p| p.provider_agent_id.as_deref()),
         "<composed in Step 3a from the deliverableType template above — paste the localized result here verbatim, including the A. and B. option lines>",
@@ -933,7 +933,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
         format!("\
      **Step 2a — Check saved deliverable:**\n\
      ```bash\n\
-     onchainos agent task-deliverable-list --job-id {job_id} --role buyer\n\
+     onchainos agent task-deliverable-list --job-id {job_id} --role user\n\
      ```\n\
      Non-empty `deliverables` → use first entry's `path`/`deliverableType`; skip Step 2b.\n\
      Empty → fall through to Step 2b.\n\n\

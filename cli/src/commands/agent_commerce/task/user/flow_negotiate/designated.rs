@@ -37,7 +37,7 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
              | `error` | `endpoint_not_found` | `designated_error` |\n\n\
              Execute:\n\
              ```bash\n\
-             onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"<from table above>\",\"jobId\":\"{job_id}\",\"provider\":\"{dp_id}\"}}'\n\
+             onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"<from table above>\",\"jobId\":\"{job_id}\",\"provider\":\"{dp_id}\"}}'\n\
              ```\n\
              🛑 **Do NOT execute any D-Step / B-Step / DX-Step in this turn** — the next-action call above returns the matching branch playbook. Follow it verbatim.\n\
              🛑 Do NOT create groups, send messages, or call set-payment-mode before getting the branch playbook.\n\n\
@@ -105,10 +105,10 @@ pub(crate) fn branch_a2a_cli(
 /// `Some`, values are filled directly into the playbook so the LLM does not
 /// need to "recall" them from a prior designated-route response.
 pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str, route_data: Option<&serde_json::Value>) -> String {
-    let cmd_x402_invalid = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 invalid {short_id}] next-step decision\" --source-event x402_invalid");
-    let cmd_input_required = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 input {short_id}] field confirmation\" --source-event x402_input_required");
-    let cmd_x402_price = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 price {short_id}] price decision\" --source-event x402_price_mismatch");
-    let cmd_over_budget = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Over budget {short_id}] budget decision\" --source-event over_budget");
+    let cmd_x402_invalid = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 invalid {short_id}] next-step decision\" --source-event x402_invalid");
+    let cmd_input_required = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 input {short_id}] field confirmation\" --source-event x402_input_required");
+    let cmd_x402_price = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 price {short_id}] price decision\" --source-event x402_price_mismatch");
+    let cmd_over_budget = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[Over budget {short_id}] budget decision\" --source-event over_budget");
 
     // Extract x402 fields from pre-fetched route data; fall back to placeholders.
     let (ep, fa, ft) = route_data.map(|rd| (
@@ -206,7 +206,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          Check `paymentMode` from the `[Pre-fetched task context]` block above.\n\n\
          ▸ **If paymentMode is already `3` (x402)** → skip `set-payment-mode` and call `next-action` immediately:\n\
          ```bash\n\
-         onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
+         onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
          ```\n\n\
          ▸ **Otherwise** → push payment mode on-chain:\n\
          ```bash\n\
@@ -214,7 +214,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          ```\n\
          ⚠️ Use the **actual values returned by x402-validate** for `tokenSymbol` and `tokenAmount` (NOT the original budget used at job creation).\n\n\
          **A-Step 3 result branch (🛑 MANDATORY — getting this wrong = the flow stalls):**\n\
-         - `\"alreadySet\": true` -> call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
+         - `\"alreadySet\": true` -> call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
          - `\"confirming\": true` -> **end this turn** and wait for `job_payment_mode_changed`.\n")
 }
 
@@ -230,19 +230,19 @@ pub(crate) fn branch_error(job_id: &str, agent_id: &str, short_id: &str, dp_id: 
          C. Close the job"
     );
     let block_endpoint = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-        job_id, "buyer", agent_id, Some(dp_id),
+        job_id, "user", agent_id, Some(dp_id),
         &endpoint_not_found_content,
         &format!("[Endpoint gone {short_id}] next-step decision"),
         "endpoint_not_found",
     );
     let block_not_provider = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-        job_id, "buyer", agent_id, Some(dp_id),
+        job_id, "user", agent_id, Some(dp_id),
         &not_provider,
         &format!("[Not ASP {short_id}] next-step decision"),
         "not_provider",
     );
     let block_offline = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-        job_id, "buyer", agent_id, Some(dp_id),
+        job_id, "user", agent_id, Some(dp_id),
         &provider_offline,
         &format!("[Offline {short_id}] next-step decision"),
         "provider_offline",

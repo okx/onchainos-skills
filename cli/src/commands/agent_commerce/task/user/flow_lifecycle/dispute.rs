@@ -44,7 +44,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      [Role] User Agent\n\n\
      **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
      The agent does NOT ask the user for evidence; it formats the chat history, calls `dispute upload`\n\
-     (which also auto-attaches every saved deliverable from `~/.onchainos/deliverables/buyer/{job_id}/`),\n\
+     (which also auto-attaches every saved deliverable from `~/.onchainos/deliverables/user/{job_id}/`),\n\
      and then notifies the user via `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request`\n\
      for this event. **Do NOT** send any message to the ASP — both sides see the arbitration via on-chain events.\n\n\
      [Your next actions (strict order)]\n\n\
@@ -58,9 +58,9 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      Keep ONLY the key checkpoints — task-detail discussion / deliverable messages + both sides' key dispute points. Prepend `(key checkpoints extracted)` so the arbiter knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
      **Step 3 — Upload (off-chain multipart):**\n\
      ```bash\n\
-     onchainos agent dispute upload {job_id} --role buyer --agent-id {agent_id} --text \"<chat history block from Step 2>\"\n\
+     onchainos agent dispute upload {job_id} --role user --agent-id {agent_id} --text \"<chat history block from Step 2>\"\n\
      ```\n\
-     The CLI auto-attaches every entry under `~/.onchainos/deliverables/buyer/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
+     The CLI auto-attaches every entry under `~/.onchainos/deliverables/user/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
      **Step 4 — Notify the user via `onchainos agent user-notify` (after upload returns):**\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\

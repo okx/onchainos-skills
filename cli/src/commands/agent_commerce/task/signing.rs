@@ -98,7 +98,7 @@ pub async fn resolve_wallet_and_agent_for_task(
     let local_agent_id = if let Some(id) = explicit_agent_id {
         id.to_string()
     } else {
-        resolve_agent_by_role(AGENT_ROLE_USER, "buyer", None)
+        resolve_agent_by_role(AGENT_ROLE_USER, "user", None)
             .await
             .map(|(id, _)| id)
             .unwrap_or_default()
@@ -234,7 +234,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
 /// On failure returns Ok(String::new()) without blocking the caller.
 pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
     let label = match role_code {
-        1 => "buyer",
+        1 => "user",
         2 => "provider",
         3 => "evaluator",
         _ => "unknown",

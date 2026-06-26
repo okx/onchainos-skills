@@ -39,7 +39,7 @@ const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
 /// Upload off-chain evidence (shared entrypoint for user and seller).
 ///
 /// `role` selects which local deliverables manifest to auto-attach
-/// (`buyer` → `~/.onchainos/deliverables/buyer/<jobId>/`,
+/// (`user` → `~/.onchainos/deliverables/user/<jobId>/`,
 /// `provider` → `~/.onchainos/deliverables/provider/<jobId>/`).
 pub async fn handle_upload_evidence(
     client: &mut TaskApiClient,
@@ -49,7 +49,7 @@ pub async fn handle_upload_evidence(
     text: Option<&str>,
     explicit_file_paths: &[String],
 ) -> Result<()> {
-    if role != "buyer" && role != "provider" {
+    if role != "user" && role != "provider" {
         bail!("--role must be 'user' or 'provider', got '{role}'");
     }
 

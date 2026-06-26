@@ -70,12 +70,12 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     if pm != Some(1) {
         let x402_paying = super::super::content::x402_paying_user_notify(job_id, title_display);
         let x402_replay_ok = super::super::content::x402_replay_success_user_notify(job_id);
-        let cmd_replay_input = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 replay input {short_id}] field input\" --source-event x402_replay_input");
+        let cmd_replay_input = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 replay input {short_id}] field input\" --source-event x402_replay_input");
 
         out.push_str(&format!("\
      ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\
      Extract endpoint, acceptsJson, feeTokenSymbol, feeAmount, providerAgentId from the previous turn.\n\
-     ⚠️ **If any parameter is missing** (context compaction): run `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` for providerAgentId, then `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json` for endpoint, then `onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}` for acceptsJson/feeTokenSymbol/feeAmount.\n\n\
+     ⚠️ **If any parameter is missing** (context compaction): run `onchainos agent common context {job_id} --role user --agent-id {agent_id}` for providerAgentId, then `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json` for endpoint, then `onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}` for acceptsJson/feeTokenSymbol/feeAmount.\n\n\
      **Step 2 — notify payment in progress**:\n\
      \x20\x20```bash\n\
      \x20\x20onchainos agent user-notify --content '<translated>'\n\
@@ -93,7 +93,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ▸ replaySuccess=true:\n\
      {x402_replay_ok}\n\
      -> **end this turn** and wait for `job_accepted`.\n\
-     🛑 When `job_accepted` arrives, call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'`.\n\
+     🛑 When `job_accepted` arrives, call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'`.\n\
      ❌ Do NOT re-run this turn's commands (double payment) or skip next-action (job stuck).\n\n\
      ▸ replaySuccess=false:\n\
      Check `replayBody` for `requiredArgs` / `fields` / `status: \"input_required\"`.\n\n\
@@ -189,7 +189,7 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         title = p.title,
     );
 
-    let cmd_no_asp = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP] negotiate timeout — next-step decision\" --source-event no_asp_found");
+    let cmd_no_asp = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP] negotiate timeout — next-step decision\" --source-event no_asp_found");
 
     format!(
         "{task_block}\
@@ -277,7 +277,7 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
          {option_public_line}{close_label}. Close the task"
     );
     let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-        job_id, "buyer", agent_id, None,
+        job_id, "user", agent_id, None,
         &user_content,
         &format!("[Reject {short_id}] next-step decision"),
         "job_provider_reject",

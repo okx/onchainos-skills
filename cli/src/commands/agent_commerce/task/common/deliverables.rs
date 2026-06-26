@@ -143,7 +143,7 @@ pub struct SaveResult {
 
 pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
     let role = params.role;
-    if role != "buyer" && role != "provider" {
+    if role != "user" && role != "provider" {
         bail!("--role must be 'user' or 'provider', got '{role}'");
     }
 
@@ -238,7 +238,7 @@ pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
 // output the review prompt instead of "wait for job_submitted".
 
 fn review_marker_path(job_id: &str) -> Result<PathBuf> {
-    Ok(deliverables_dir("buyer", job_id)?.join("review_awaiting_deliverable"))
+    Ok(deliverables_dir("user", job_id)?.join("review_awaiting_deliverable"))
 }
 
 pub fn write_review_marker(job_id: &str) -> Result<()> {
@@ -261,7 +261,7 @@ pub fn delete_review_marker(job_id: &str) {
 // ── List (single job) ────────────────────────────────────────────────
 
 pub fn handle_list(job_id: &str, role: &str) -> Result<()> {
-    if role != "buyer" && role != "provider" {
+    if role != "user" && role != "provider" {
         bail!("--role must be 'user' or 'provider', got '{role}'");
     }
     let manifest = read_manifest(role, job_id)?;
@@ -297,7 +297,7 @@ pub fn handle_list(job_id: &str, role: &str) -> Result<()> {
 // ── List all (with optional search) ──────────────────────────────────
 
 pub fn handle_list_all(role: &str, search: Option<&str>) -> Result<()> {
-    if role != "buyer" && role != "provider" {
+    if role != "user" && role != "provider" {
         bail!("--role must be 'user' or 'provider', got '{role}'");
     }
     let role_dir = deliverables_root()?.join(role);

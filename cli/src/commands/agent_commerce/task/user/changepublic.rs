@@ -42,7 +42,7 @@ pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str, explici
 
     audit::log(
         "cli",
-        "buyer/set_public_submitted",
+        "user/set_public_submitted",
         true,
         Duration::default(),
         Some(vec![

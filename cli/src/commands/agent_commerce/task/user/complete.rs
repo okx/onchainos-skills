@@ -41,7 +41,7 @@ pub async fn handle_complete(
 
         audit::log(
             "cli",
-            "buyer/complete_submitted",
+            "user/complete_submitted",
             true,
             Duration::default(),
             Some(vec![
@@ -54,7 +54,7 @@ pub async fn handle_complete(
         );
     } else {
         // ── x402: deliverable gate — block complete if replay never delivered. ────
-        let has_deliverable = crate::commands::agent_commerce::task::common::deliverables::read_manifest("buyer", job_id)
+        let has_deliverable = crate::commands::agent_commerce::task::common::deliverables::read_manifest("user", job_id)
             .ok()
             .flatten()
             .map(|m| !m.entries.is_empty())
@@ -84,7 +84,7 @@ pub async fn handle_complete(
 
         audit::log(
             "cli",
-            "buyer/complete_submitted",
+            "user/complete_submitted",
             true,
             Duration::default(),
             Some(vec![

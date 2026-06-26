@@ -102,7 +102,7 @@ pub fn status_name(code: i64) -> &'static str {
 
 fn role_name(code: i64) -> &'static str {
     match code {
-        1 => "buyer",
+        1 => "user",
         2 => "provider",
         3 => "evaluator",
         _ => "unknown",
@@ -125,7 +125,7 @@ fn short_job_id(jid: &str) -> String {
 
 fn parse_role_arg(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "buyer" | "requestor" | "1" => Some(1),
+        "user" | "requestor" | "1" => Some(1),
         "provider" | "seller" | "2" => Some(2),
         "evaluator" | "arbiter" | "3" => Some(3),
         _ => None,
@@ -158,7 +158,7 @@ fn parse_role_arg(raw: &str) -> Option<i64> {
 ///       "tokenAmount":         "1",
 ///       "tokenSymbol":         "USDT",
 ///       "myAgentId":           "796",
-///       "myRole":              "buyer",
+///       "myRole":              "user",
 ///       "counterpartyAgentId": "963",      // null when not yet designated (e.g. status=created with no provider)
 ///       "counterpartyRole":    "provider", // null in the evaluator case
 ///     }
@@ -219,7 +219,7 @@ pub async fn handle_active_tasks(
             // - I'm evaluator (3) → no single counterparty (both user + provider are parties)
             let (counterparty_id, counterparty_role) = match role {
                 1 => (provider_id, "provider"),
-                2 => (user_id, "buyer"),
+                2 => (user_id, "user"),
                 _ => ("", ""),
             };
 

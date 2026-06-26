@@ -70,7 +70,7 @@ pub async fn handle_asp_match(
 
     audit::log(
         "cli",
-        "buyer/asp_match",
+        "user/asp_match",
         true,
         Duration::default(),
         Some(vec![
@@ -199,7 +199,7 @@ pub async fn handle_set_asp(
         ).await?;
         audit::log(
             "cli",
-            "buyer/set_asp_payment_mode_sync",
+            "user/set_asp_payment_mode_sync",
             true,
             Duration::default(),
             Some(vec![
@@ -261,7 +261,7 @@ pub async fn handle_set_asp(
 
     audit::log(
         "cli",
-        "buyer/set_asp",
+        "user/set_asp",
         true,
         Duration::default(),
         Some(vec![
@@ -310,7 +310,7 @@ pub async fn handle_reset_asp(
 
     audit::log(
         "cli",
-        "buyer/reset_asp",
+        "user/reset_asp",
         true,
         Duration::default(),
         Some(vec![
@@ -344,7 +344,7 @@ pub async fn handle_user_reject(
 
     audit::log(
         "cli",
-        "buyer/user_reject",
+        "user/user_reject",
         true,
         Duration::default(),
         Some(vec![

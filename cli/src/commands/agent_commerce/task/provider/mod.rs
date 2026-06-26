@@ -171,7 +171,7 @@ pub enum DisputeCommand {
     /// In addition to the explicit `--text` / `--file` inputs, the CLI auto-attaches every
     /// entry recorded in `~/.onchainos/deliverables/<role>/<jobId>/manifest.json` as evidence
     /// (User Agent side = the downloaded deliverable + any later attachments; provider side = the
-    /// submitted deliverable copy). The next-action script must inject `--role buyer|provider`
+    /// submitted deliverable copy). The next-action script must inject `--role user|provider`
     /// so the CLI knows which manifest to read.
     Upload {
         job_id: String,
@@ -179,7 +179,7 @@ pub enum DisputeCommand {
         /// client doesn't have to do wallet-to-role mapping (a single wallet may have multiple registered agentIds).
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Caller's role for locating the local deliverables manifest. Required: `buyer` or `provider`.
+        /// Caller's role for locating the local deliverables manifest. Required: `user` or `provider`.
         #[arg(long)]
         role: String,
         /// Text evidence (optional). At least one source is required: `--text`, an explicit `--file`,

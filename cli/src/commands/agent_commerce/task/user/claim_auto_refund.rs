@@ -32,7 +32,7 @@ pub async fn handle_claim_auto_refund(client: &mut TaskApiClient, job_id: &str) 
 
     audit::log(
         "cli",
-        "buyer/auto_refund_claimed",
+        "user/auto_refund_claimed",
         true,
         Duration::default(),
         Some(vec![

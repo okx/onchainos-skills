@@ -2,7 +2,7 @@
 //!
 //! Based on the current event from system notifications, outputs the next-action prompt.
 //! User counterpart of provider/flow.rs — lets the agent simply run
-//! `exec onchainos agent next-action --role buyer ...` to fetch a prompt and execute directly.
+//! `exec onchainos agent next-action --role user ...` to fetch a prompt and execute directly.
 //!
 //! The actual prompt generation logic is split by responsibility into:
 //! - `flow_negotiate.rs` — negotiation / matching phase
@@ -41,7 +41,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event {source_event}`.\n\
-                     \x20\x20\x20\x204. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not available):\n\
+                     \x20\x20\x20\x204. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role user --agent-id {agent_id}` if not available):\n\
                      \x20\x20\x20\x20- Read `serviceDescription` semantically: identify what specific input the user must provide — action verbs directed at user (specify/provide/input/enter/describe/tell), conditional phrases (\"after receiving [X]\"), templates with placeholders, examples, or compound input. If the service only describes output/capabilities with no user input needed → serviceParams is empty.\n\
                      \x20\x20\x20\x20- For each required input, check if the task description provides it. Provided → extract value. Not provided → mark `<to be provided>` with a hint from serviceDescription.\n\
                      \x20\x20\x20\x20- Format as natural-language `key：value` pairs (separated by `；` or `\\n`). No JSON.\n\
@@ -53,7 +53,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      {success_line}\
                      \x20\x20\x20\x20- **Some fields filled, some marked `<to be provided>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (canonical English; localize per user's language):\n\
                      \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
@@ -67,7 +67,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount> inferredParams=<inferred serviceParams>]\n\
                      \x20\x20\x20\x20- **Nothing extractable** (serviceDescription is vague, task description has no matching values) → ask user to provide — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (canonical English; localize per user's language):\n\
                      \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
@@ -146,7 +146,7 @@ pub(super) fn notify_and_end_terminal(canonical_content: &str, terminal_hint: &s
 /// the `generate_next_action` function in this same file, routed by the entry event corresponding to the status).
 pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     let next_action = |evt: &str| {
-        format!("**Next required step** → `onchainos agent next-action --role buyer --agentId <agentId> --message '{{\"event\":\"{evt}\",\"jobId\":\"{job_id}\"}}'` (fetch the full playbook for the current status, **follow the playbook**, do not bypass next-action and call the CLI below directly)")
+        format!("**Next required step** → `onchainos agent next-action --role user --agentId <agentId> --message '{{\"event\":\"{evt}\",\"jobId\":\"{job_id}\"}}'` (fetch the full playbook for the current status, **follow the playbook**, do not bypass next-action and call the CLI below directly)")
     };
     let ref_header = "(reference - related CLI used inside the playbook; do not call directly, call next-action first to get the playbook)".to_string();
     match status {
@@ -169,8 +169,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Submitted => vec![
             next_action("job_submitted"),
             "complete/reject are NOT in the job_submitted playbook — after receiving the user's review decision, call next-action with the corresponding pseudo-event playbook:".to_string(),
-            format!("  onchainos agent next-action --role buyer --agentId <agentId> --message '{{\"event\":\"approve_review\",\"jobId\":\"{job_id}\"}}'  # After user approves review"),
-            format!("  onchainos agent next-action --role buyer --agentId <agentId> --message '{{\"event\":\"reject_review\",\"jobId\":\"{job_id}\"}}'  # After user rejects review"),
+            format!("  onchainos agent next-action --role user --agentId <agentId> --message '{{\"event\":\"approve_review\",\"jobId\":\"{job_id}\"}}'  # After user approves review"),
+            format!("  onchainos agent next-action --role user --agentId <agentId> --message '{{\"event\":\"reject_review\",\"jobId\":\"{job_id}\"}}'  # After user rejects review"),
             format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <score> --task-id {job_id}  # Auto-rate provider (agent generates score based on task details + deliverable)"),
         ],
         Status::Rejected => vec![
@@ -179,7 +179,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Disputed => vec![
             next_action("job_disputed"),
-            "(passive) Evidence is auto-submitted by the CLI on `job_disputed` (chat history + saved deliverables under ~/.onchainos/deliverables/buyer/<jobId>/); manual `dispute upload` is not supported.".to_string(),
+            "(passive) Evidence is auto-submitted by the CLI on `job_disputed` (chat history + saved deliverables under ~/.onchainos/deliverables/user/<jobId>/); manual `dispute upload` is not supported.".to_string(),
         ],
         Status::Completed => vec![
             next_action("job_completed"),
@@ -242,7 +242,7 @@ pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str,
     } else {
         format!(
             "When notifying the user, use the `<title> ({job_id})` format. \
-             Fetch the title from context; if you don't remember it, first run `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` to query.\n\n"
+             Fetch the title from context; if you don't remember it, first run `onchainos agent common context {job_id} --role user --agent-id {agent_id}` to query.\n\n"
         )
     };
     // Group B events still need to call the API for fields like tokenAmount — whether the "extract" list includes title depends on the input parameter.
@@ -335,7 +335,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 .unwrap_or("");
             if gid.is_empty() {
                 format!("[Error] provider_conversation_reject requires `groupId` in --message. Call:\n\
-                         onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId>\"}}'\n")
+                         onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId>\"}}'\n")
             } else {
                 super::flow_negotiate::provider_conversation_reject_cli(&ctx, gid)
             }
@@ -347,7 +347,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 .unwrap_or("");
             if dp_id.is_empty() {
                 format!("[Error] provider_conversation_pick requires `provider` in --message. Call:\n\
-                         onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<ASP agentId>\"}}'\n")
+                         onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<ASP agentId>\"}}'\n")
             } else {
                 let _ = super::negotiate::save_designated_provider(job_id, dp_id);
                 super::flow_negotiate::provider_conversation_pick_cli(job_id, agent_id, &short_id, dp_id, title_display, prefetched).await
@@ -356,7 +356,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::Other(ref s) if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" => {
             let dp_id = super::negotiate::get_designated_provider(job_id).ok().flatten().unwrap_or_default();
             if dp_id.is_empty() {
-                format!("[Error] designated_* pseudo-event requires `provider` field. Call: onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"{s}\",\"jobId\":\"{job_id}\",\"provider\":\"<ASP agentId>\"}}'\n")
+                format!("[Error] designated_* pseudo-event requires `provider` field. Call: onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"{s}\",\"jobId\":\"{job_id}\",\"provider\":\"<ASP agentId>\"}}'\n")
             } else {
                 match s.as_str() {
                     "designated_a2a" => super::flow_negotiate::designated::branch_a2a_cli(job_id, agent_id, &dp_id)
@@ -449,9 +449,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      If the user's reply clearly maps to one of these → call:\n\
                      ```bash\n\
                      # For approve_review (no extra args needed):\n\
-                     onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"approve_review\",\"jobId\":\"{job_id}\"}}'\n\
+                     onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"approve_review\",\"jobId\":\"{job_id}\"}}'\n\
                      # For reject_review — pass the extracted rejection reason via message.data (empty string if user gave no reason; the handler falls back to a default):\n\
-                     onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"reject_review\",\"jobId\":\"{job_id}\",\"data\":\"<extracted reason from user's reply, or empty>\"}}'\n\
+                     onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"reject_review\",\"jobId\":\"{job_id}\",\"data\":\"<extracted reason from user's reply, or empty>\"}}'\n\
                      ```\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
                 ),
@@ -477,7 +477,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      The push was the ASP-match list. **Semantic mapping** — decide what the user means:\n\n\
                      \x20\x20• **Pick an ASP** — user gave an index (1/2/3/...) or a 3-digit agentId (e.g. `864`). Map index → agentId from the asp-match list shown in the source-scene; the user picked agentId=`<X>`. Action (set-asp flow):\n\
                      \x20\x20\x20\x201. From the asp-match list, extract the picked ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`.\n\
-                     \x20\x20\x20\x202. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not available):\n\
+                     \x20\x20\x20\x202. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role user --agent-id {agent_id}` if not available):\n\
                      \x20\x20\x20\x20- Read `serviceDescription` semantically: identify what specific input the user must provide — action verbs directed at user (specify/provide/input/enter/describe/tell), conditional phrases (\"after receiving [X]\"), templates with placeholders, examples, or compound input. If the service only describes output/capabilities with no user input needed → serviceParams is empty.\n\
                      \x20\x20\x20\x20- For each required input, check if the task description provides it. Provided → extract value. Not provided → mark `<to be provided>` with a hint from serviceDescription.\n\
                      \x20\x20\x20\x20- Format as natural-language `key：value` pairs (separated by `；` or `\\n`). No JSON.\n\
@@ -489,7 +489,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      {success_line}\
                      \x20\x20\x20\x20- **Some fields filled, some marked `<to be provided>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (localize):\n\
                      \x20\x20\x20\x20You selected Agent <X> — <serviceName>.\n\
@@ -503,7 +503,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<X> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount> inferredParams=<inferred serviceParams>]\n\
                      \x20\x20\x20\x20- **Nothing extractable** (serviceDescription is vague, task description has no matching values) → ask user — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (localize):\n\
                      \x20\x20\x20\x20You selected Agent <X> — <serviceName>.\n\
@@ -515,7 +515,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
                      \x20\x20• **Next page** — typical intents: `next page` / `下一页` / `more` / `更多` / `看更多`. Action: run `onchainos agent asp-match --job-id {job_id} --page <next_page>`. If results → re-push the asp_match_pick decision with the new list (`pending-decisions-v2 request --source-event asp_match_pick`; --list-label `[ASP <shortJobId>] <task title> ASP-pick decision`). **`--list-label` and all footer keywords must be localized** (e.g. Chinese: 回复\"更多\", NOT 回复\"more\"). If empty → enqueue the no-ASP next-step decision:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] <task title> next-step decision\" --source-event no_asp_found\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP <shortJobId>] <task title> next-step decision\" --source-event no_asp_found\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (canonical English; localize per user's language):\n\
                      \x20\x20\x20\x20[Job <shortJobId> — you are the User Agent] All matched ASPs have been tried; no match found. Choose next step:\n\
@@ -532,12 +532,12 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      The push was a single-ASP accept/reject card. Extract `[asp: <agentId>]` and `[groupId: <gid>]` from the `--llm-content` block above. **Semantic mapping** — decide:\n\n\
                      \x20\x20• **Accept** — typical intents: 1 / `accept` / `接受` / `yes` / `好` / `可以`. Run:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<asp agentId from llm-content>\"}}'\n\
+                     \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<asp agentId from llm-content>\"}}'\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Follow the returned playbook verbatim.\n\
                      \x20\x20• **Reject** — typical intents: 2 / `reject` / `拒绝` / `no` / `不` / `换一个` / `next`. Run:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId from llm-content>\"}}'\n\
+                     \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId from llm-content>\"}}'\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Follow the returned playbook (shows next ASP or close options if none remain).\n\n\
                      If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"Please reply 1 (accept) or 2 (reject).\"\n"
@@ -563,7 +563,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services for this ASP, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event {source}`.\n\
-                     \x20\x20\x20\x204. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not available):\n\
+                     \x20\x20\x20\x204. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role user --agent-id {agent_id}` if not available):\n\
                      \x20\x20\x20\x20- Read `serviceDescription` semantically: identify what specific input the user must provide — action verbs directed at user (specify/provide/input/enter/describe/tell), conditional phrases (\"after receiving [X]\"), templates with placeholders, examples, or compound input. If the service only describes output/capabilities with no user input needed → serviceParams is empty.\n\
                      \x20\x20\x20\x20- For each required input, check if the task description provides it. Provided → extract value. Not provided → mark `<to be provided>` with a hint from serviceDescription.\n\
                      \x20\x20\x20\x20- Format as natural-language `key：value` pairs (separated by `；` or `\\n`). No JSON.\n\
@@ -575,7 +575,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      {success_line}\
                      \x20\x20\x20\x20- **Some fields filled, some marked `<to be provided>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (localize):\n\
                      \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
@@ -589,7 +589,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount> inferredParams=<inferred serviceParams>]\n\
                      \x20\x20\x20\x20- **Nothing extractable** (serviceDescription is vague, task description has no matching values) → ask user — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (localize):\n\
                      \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
@@ -627,7 +627,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20onchainos agent asp-match --job-id {job_id} --provider-agent-id <agentId> --format json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x203. From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`. If `asp-match` returns no services, inform the user and re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`.\n\
-                     \x20\x20\x20\x204. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if not available):\n\
+                     \x20\x20\x20\x204. **Infer serviceParams** from `serviceDescription` + task `description` (from conversation context, or fetch via `onchainos agent common context {job_id} --role user --agent-id {agent_id}` if not available):\n\
                      \x20\x20\x20\x20- Read `serviceDescription` semantically: identify what specific input the user must provide — action verbs directed at user (specify/provide/input/enter/describe/tell), conditional phrases (\"after receiving [X]\"), templates with placeholders, examples, or compound input. If the service only describes output/capabilities with no user input needed → serviceParams is empty.\n\
                      \x20\x20\x20\x20- For each required input, check if the task description provides it. Provided → extract value. Not provided → mark `<to be provided>` with a hint from serviceDescription.\n\
                      \x20\x20\x20\x20- Format as natural-language `key：value` pairs (separated by `；` or `\\n`). No JSON.\n\
@@ -639,7 +639,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      {success_line}\
                      \x20\x20\x20\x20- **Some fields filled, some marked `<to be provided>`** → pre-fill and ask user to confirm/modify — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] confirm service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (localize):\n\
                      \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
@@ -653,7 +653,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount> inferredParams=<inferred serviceParams>]\n\
                      \x20\x20\x20\x20- **Nothing extractable** (serviceDescription is vague, task description has no matching values) → ask user — enqueue:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event set_asp_params --user-content \"<compose from template below>\" --list-label \"[SetASP <shortJobId>] provide service params\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (localize):\n\
                      \x20\x20\x20\x20You selected Agent <agentId> — <serviceName>.\n\
@@ -694,14 +694,14 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20Check `paymentMode` from the `[Pre-fetched task context]` or from context.\n\
                      \x20\x20\x20\x20▸ **If paymentMode is already `3`** → skip `set-payment-mode`:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
+                     \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20▸ **Otherwise** → push payment mode on-chain:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol> --token-amount <amountHuman> --endpoint <endpoint>\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20**Result branch:**\n\
-                     \x20\x20\x20\x20\x20\x20- `\"alreadySet\": true` → call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
+                     \x20\x20\x20\x20\x20\x20- `\"alreadySet\": true` → call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
                      \x20\x20\x20\x20\x20\x20- `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
                      \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`.\n\
                      \x20\x20\x20\x20Action: `onchainos agent mark-failed {job_id} --provider <designated agentId from context>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → compose as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick` (**localize all footer keywords**); if empty → push via `--source-event no_asp_found`.\n\n\
@@ -729,7 +729,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x201. **Over-budget**: Read `maxBudget` from the `[Pre-fetched task context]`. If `maxBudget` > 0 AND `amountHuman` > `maxBudget`:\n\
                      \x20\x20\x20\x20Push an `over_budget` decision card:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event over_budget --list-label \"[Over budget <shortJobId>] budget decision\" --user-content \"<compose from template below>\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event over_budget --list-label \"[Over budget <shortJobId>] budget decision\" --user-content \"<compose from template below>\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (translate to user's language):\n\
                      \x20\x20\x20\x20The x402 endpoint's actual price is <amountHuman> <tokenSymbol>, which exceeds your max budget (<maxBudget>). Choose next step:\n\
@@ -740,7 +740,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x202. **Price-mismatch**: Read `feeAmount` from the `[IR_CONTEXT]` block. If both values > 0 AND `|amountHuman - feeAmount| / feeAmount > 0.01` (delta > 1%):\n\
                      \x20\x20\x20\x20Push a `x402_ir_price_confirm` decision card:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --source-event x402_ir_price_confirm --list-label \"[x402 price <shortJobId>] price confirmation\" --user-content \"<compose from template below>\"\n\
+                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event x402_ir_price_confirm --list-label \"[x402 price <shortJobId>] price confirmation\" --user-content \"<compose from template below>\"\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20`--user-content` template (translate):\n\
                      \x20\x20\x20\x20[Job <shortJobId>] The x402 endpoint's actual price is <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
@@ -756,14 +756,14 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      Check the current task's `paymentMode` from the `[Pre-fetched task context]` or from context.\n\n\
                      \x20\x20▸ **If paymentMode is already `3` (x402)** → skip `set-payment-mode` and call `next-action` immediately:\n\
                      \x20\x20```bash\n\
-                     \x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
+                     \x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
                      \x20\x20```\n\n\
                      \x20\x20▸ **Otherwise** → push payment mode on-chain:\n\
                      \x20\x20```bash\n\
                      \x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from Step 2> --token-amount <amountHuman from Step 2> --endpoint <endpoint>\n\
                      \x20\x20```\n\
                      \x20\x20**Result branch:**\n\
-                     \x20\x20\x20\x20- Output contains `\"alreadySet\": true` → call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}' ` immediately.\n\
+                     \x20\x20\x20\x20- Output contains `\"alreadySet\": true` → call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}' ` immediately.\n\
                      \x20\x20\x20\x20- Output contains `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
                      **Remember the assembled `--body` JSON** — you must pass it to `task-402-pay` in the `job_payment_mode_changed` turn.\n"
                 ),
@@ -776,14 +776,14 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20Check `paymentMode` from the `[Pre-fetched task context]` or from context.\n\
                      \x20\x20\x20\x20▸ **If paymentMode is already `3`** → skip `set-payment-mode`:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
+                     \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20▸ **Otherwise** → push payment mode on-chain:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol> --token-amount <amountHuman> --endpoint <endpoint>\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20**Result branch:**\n\
-                     \x20\x20\x20\x20\x20\x20- `\"alreadySet\": true` → call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
+                     \x20\x20\x20\x20\x20\x20- `\"alreadySet\": true` → call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
                      \x20\x20\x20\x20\x20\x20- `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
                      \x20\x20\x20\x20**Remember the `body` from PRICE_CONTEXT** — pass it to `task-402-pay --body` in the `job_payment_mode_changed` turn.\n\n\
                      \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`.\n\
@@ -861,7 +861,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 },
                 _ => format!(
                     "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n\n\
-                     **Manual routing required** — inspect the scene context (call `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` if needed) and decide semantically which pseudo-event the user's reply maps to. Then call `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"<chosen-pseudo-event>\",\"jobId\":\"{job_id}\"}}'`.\n"
+                     **Manual routing required** — inspect the scene context (call `onchainos agent common context {job_id} --role user --agent-id {agent_id}` if needed) and decide semantically which pseudo-event the user's reply maps to. Then call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"<chosen-pseudo-event>\",\"jobId\":\"{job_id}\"}}'`.\n"
                 ),
             };
             format!("{ud_guard}{ud_body}")

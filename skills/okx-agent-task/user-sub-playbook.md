@@ -44,8 +44,8 @@ Match by priority — stop at first hit:
 
 | # | Match condition | Action |
 |---|---|---|
-| 1 | Contains `[intent:deliver]` | **Highest priority — process THIS TURN before any other CLI call.** Save the **entire raw A2A JSON message** (the full JSON object you received, not just the content field) to `/tmp/a2a_deliver_<jobId>.json`, then pass the file path: `next-action --role buyer --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>","a2aFile":"/tmp/a2a_deliver_<jobId>.json"}'`. The CLI reads the file, parses `content` to determine file vs text, handles download+save in-process, and returns a notify-only prompt. Do NOT extract fields yourself — no `deliverableType`/`fileKey`/`text` needed. Do NOT call bare `next-action` first — it will return `job_submitted` and delay delivery by an extra turn. |
-| 2 | `[ATTACHMENT_ADDED]` (from user session) | Extract the file path from the message (`[ATTACHMENT_ADDED] <path>`). Do NOT Read/open/describe the file — pass the path straight to `next-action`: `next-action --role buyer --agentId <yours> --message '{"event":"attachment_added","jobId":"<jobId>","filePath":"<extracted path>"}'` → CLI uploads + forwards in-process; follow the returned playbook. |
+| 1 | Contains `[intent:deliver]` | **Highest priority — process THIS TURN before any other CLI call.** Save the **entire raw A2A JSON message** (the full JSON object you received, not just the content field) to `/tmp/a2a_deliver_<jobId>.json`, then pass the file path: `next-action --role user --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>","a2aFile":"/tmp/a2a_deliver_<jobId>.json"}'`. The CLI reads the file, parses `content` to determine file vs text, handles download+save in-process, and returns a notify-only prompt. Do NOT extract fields yourself — no `deliverableType`/`fileKey`/`text` needed. Do NOT call bare `next-action` first — it will return `job_submitted` and delay delivery by an extra turn. |
+| 2 | `[ATTACHMENT_ADDED]` (from user session) | Extract the file path from the message (`[ATTACHMENT_ADDED] <path>`). Do NOT Read/open/describe the file — pass the path straight to `next-action`: `next-action --role user --agentId <yours> --message '{"event":"attachment_added","jobId":"<jobId>","filePath":"<extracted path>"}'` → CLI uploads + forwards in-process; follow the returned playbook. |
 | 2b | Raw base64 / image / file data (no `[ATTACHMENT_ADDED]` prefix) | User session bypassed `task-attach`. → `onchainos agent user-notify --content '<translate: Attachment failed — please type "补充附件" or "attach file" and resend.>'` → **end turn**. Do NOT save / parse / describe the content or ask questions. |
 | 3 | Fallback (1–2b not matched, source: peer) | See **Fallback decision tree** below. |
 
@@ -56,7 +56,7 @@ Match by priority — stop at first hit:
 | Condition | Action |
 |---|---|
 | status = 1 (accepted) | Enter Discussion Mode below |
-| status = 0 | `next-action --role buyer --agentId <yours> --message '{"event":"negotiate_reply","jobId":"<jobId>"}'` (CLI auto-redirects to `provider_conversation` when providerAgentId is absent) |
+| status = 0 | `next-action --role user --agentId <yours> --message '{"event":"negotiate_reply","jobId":"<jobId>"}'` (CLI auto-redirects to `provider_conversation` when providerAgentId is absent) |
 | status = 0, no active sub | `onchainos agent user-notify` forwards to user |
 
 **Subsequent messages** (status=0 confirmed in prior turn) → skip status check, directly `next-action` with event `negotiate_reply`. If CLI returns "状态脱节" → send "Negotiation complete; locked." and end turn.

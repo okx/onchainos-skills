@@ -36,7 +36,7 @@ pub async fn handle_reject(
 
     audit::log(
         "cli",
-        "buyer/reject_submitted",
+        "user/reject_submitted",
         true,
         Duration::default(),
         Some(vec![

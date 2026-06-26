@@ -66,7 +66,7 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
     let review_deadline_prompt = super::super::content::review_deadline_warn_user_prompt(job_id, short_id);
     let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
         job_id,
-        "buyer",
+        "user",
         agent_id,
         ctx.prefetched.and_then(|p| p.provider_agent_id.as_deref()),
         &review_deadline_prompt,
@@ -159,7 +159,7 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
      From the wakeup_notify envelope that triggered this turn, read `message.jobStatus` (e.g. `accepted` / `submitted` / `rejected` / `disputed` / `completed` / `failed` and other real status strings).\n\n\
      **Step 2 — Re-call next-action with the real status to fetch the current playbook**:\n\
      ```bash\n\
-     onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"<value of message.jobStatus>\",\"jobId\":\"{job_id}\"}}'\n\
+     onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"<value of message.jobStatus>\",\"jobId\":\"{job_id}\"}}'\n\
      ```\n\
      Follow the returned playbook for what to do at the current status.\n\n\
      **Step 3 — Idempotency self-check (avoid re-prompting the user)**:\n\
@@ -180,7 +180,7 @@ pub(crate) fn staked_and_unknown(event_str: &str, job_id: &str) -> String {
     format!(
     "[Unknown Status] {event_str}\n\
      [Advice]\n\
-     1. Call `onchainos agent common context {job_id} --role buyer` to view full context\n\
+     1. Call `onchainos agent common context {job_id} --role user` to view full context\n\
      2. If this status is not part of the expected flow, wait for user instructions\n\
      3. Do not predict / assume other notifications\n"
     )

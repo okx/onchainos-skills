@@ -16,7 +16,7 @@
 Run the CLI to get the complete publishing playbook (field collection, validation, ASP matching, confirmation form, `create-task` command):
 
 ```bash
-onchainos agent next-action --role buyer --agentId <agentId> --message '{"event":"create_task","jobId":"_"}'
+onchainos agent next-action --role user --agentId <agentId> --message '{"event":"create_task","jobId":"_"}'
 ```
 
 Follow the returned script verbatim. The confirmation form format is in **Appendix A** below.
