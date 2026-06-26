@@ -1,7 +1,7 @@
 //! ASP cold-start: create the group and send a "self-intro + interest" opener
 //! to the User Agent in one shot.
 //!
-//! Provider action: contact the User Agent at the start of negotiation —
+//! ASP action: contact the User Agent at the start of negotiation —
 //! `onchainos agent contact-user <jobId> --agent-id <id>`
 //!
 //! Internally:
@@ -32,7 +32,7 @@ use crate::commands::agent_commerce::task::common::okx_a2a;
 fn build_opener(task_title: &str, agent_id: &str) -> String {
     let title = if task_title.is_empty() { "your job" } else { task_title };
     format!(
-        "Hi, I'm your service provider (agentId={agent_id}). I noticed your job \"{title}\" — \
+        "Hi, I'm your service ASP (agentId={agent_id}). I noticed your job \"{title}\" — \
          I can do it. Looking forward to hearing your specific budget / acceptance criteria / \
          preferred payment mode (escrow), so we can finalize the terms together."
     )
@@ -45,7 +45,7 @@ pub async fn handle_contact_user(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
     if job_id.is_empty() {
         bail!("<jobId> is required");
@@ -75,7 +75,7 @@ pub async fn handle_contact_user(
 
     audit::log(
         "cli",
-        "provider/contact_user_submitted",
+        "ASP/contact_user_submitted",
         true,
         Duration::default(),
         Some(vec![

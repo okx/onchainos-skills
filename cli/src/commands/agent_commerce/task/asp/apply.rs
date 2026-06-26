@@ -1,6 +1,6 @@
-//! Provider applies for a job.
+//! ASP applies for a job.
 //!
-//! Provider action: apply for a job — onchainos agent apply
+//! ASP action: apply for a job — onchainos agent apply
 
 use anyhow::Result;
 use std::time::Duration;
@@ -9,7 +9,7 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// apply — provider applies for a job
+/// apply — ASP applies for a job
 ///
 /// 1. POST apply API (with identity headers) → fetch uopData
 /// 2. Sign uopData + broadcast on-chain
@@ -21,7 +21,7 @@ pub async fn handle_apply(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        anyhow::bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+        anyhow::bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
 
     // Guardrail: token_amount must be a positive number. Empty / "0" / non-parseable / non-positive
@@ -63,7 +63,7 @@ pub async fn handle_apply(
 
     audit::log(
         "cli",
-        "provider/apply_submitted",
+        "ASP/apply_submitted",
         true,
         Duration::default(),
         Some(vec![

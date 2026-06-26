@@ -1,11 +1,11 @@
-//! Provider claims after the submit→complete timeout (claimAutoComplete).
+//! ASP claims after the submit→complete timeout (claimAutoComplete).
 //!
-//! Provider action: timeout claim — onchainos agent claim-auto-complete
+//! ASP action: timeout claim — onchainos agent claim-auto-complete
 //!
 //! Trigger: User Agent fails to review within the completedWindow (neither completes nor rejects)
-//! → backend keeper pushes a system notification to the provider
-//! → provider calls this endpoint (permissionless on-chain claim)
-//! → AP.complete → status becomes complete, funds optimistically settle to the provider.
+//! → backend keeper pushes a system notification to the ASP
+//! → ASP calls this endpoint (permissionless on-chain claim)
+//! → AP.complete → status becomes complete, funds optimistically settle to the ASP.
 
 use anyhow::{bail, Result};
 use std::time::Duration;
@@ -41,7 +41,7 @@ pub async fn handle_claim_auto_complete(
 
     audit::log(
         "cli",
-        "provider/claim_auto_complete_submitted",
+        "ASP/claim_auto_complete_submitted",
         true,
         Duration::default(),
         Some(vec![

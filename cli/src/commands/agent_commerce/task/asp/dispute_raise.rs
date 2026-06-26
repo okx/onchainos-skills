@@ -1,4 +1,4 @@
-//! Raise dispute (provider) step 1 — onchainos agent dispute raise <jobId> --reason "..."
+//! Raise dispute (ASP) step 1 — onchainos agent dispute raise <jobId> --reason "..."
 //!
 //! Dispute is a two-stage on-chain flow; each stage has its own tx and its own chain event:
 //!   Stage 1 (this command): POST /aieco/task/{jobId}/dispute/approve → ERC-20 token approve to the dispute contract
@@ -26,7 +26,7 @@ pub async fn handle_dispute_raise(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
     if reason.chars().count() > MAX_REASON_CHARS {
         bail!("Dispute reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
@@ -71,7 +71,7 @@ pub async fn handle_dispute_raise(
 
     audit::log(
         "cli",
-        "provider/dispute_approve_submitted",
+        "ASP/dispute_approve_submitted",
         true,
         Duration::default(),
         Some(vec![

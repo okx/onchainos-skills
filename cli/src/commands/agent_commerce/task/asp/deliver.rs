@@ -1,6 +1,6 @@
-//! Provider submits deliverable.
+//! ASP submits deliverable.
 //!
-//! Provider action: deliver — onchainos agent deliver
+//! ASP action: deliver — onchainos agent deliver
 //!
 //! Full pipeline (all handled internally):
 //!   1. Precondition checks (status, payment mode)
@@ -49,7 +49,7 @@ pub async fn handle_deliver(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
 
     // ── 1. Precondition checks ──────────────────────────────────────────
@@ -63,7 +63,7 @@ pub async fn handle_deliver(
     if status != Status::Accepted {
         audit::log(
             "cli",
-            "provider/deliver_blocked_wrong_status",
+            "ASP/deliver_blocked_wrong_status",
             false,
             Duration::default(),
             Some(vec![
@@ -91,7 +91,7 @@ pub async fn handle_deliver(
     if pm != PaymentMode::Escrow {
         audit::log(
             "cli",
-            "provider/deliver_blocked_wrong_payment_mode",
+            "ASP/deliver_blocked_wrong_payment_mode",
             false,
             Duration::default(),
             Some(vec![
@@ -104,7 +104,7 @@ pub async fn handle_deliver(
         );
         bail!(
             "Deliver rejected: paymentMode = {} ({}) — deliver/submit is only supported for escrow (1).\n\
-             x402 tasks skip the submit step; the User Agent obtains the deliverable by replaying the provider's endpoint and calls /direct/complete.",
+             x402 tasks skip the submit step; the User Agent obtains the deliverable by replaying the ASP's endpoint and calls /direct/complete.",
             pm_int,
             pm.as_str(),
         );
@@ -133,21 +133,21 @@ pub async fn handle_deliver(
         if !src.exists() {
             bail!("file not found: {file}");
         }
-        audit::log("cli", "provider/deliver_file_upload", true, Duration::default(),
+        audit::log("cli", "ASP/deliver_file_upload", true, Duration::default(),
             Some([base_tags.clone(), vec![format!("path={file}")]].concat()), None);
         let upload = okx_a2a::file_upload(file, agent_id, job_id, None, None)?;
-        audit::log("cli", "provider/deliver_file_uploaded", true, Duration::default(),
+        audit::log("cli", "ASP/deliver_file_uploaded", true, Duration::default(),
             Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key)]].concat()), None);
 
         let msg = super::content::build_file_deliver_message(job_id, &upload);
         if !user_agent_id.is_empty() {
             match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                 Ok(()) => {
-                    audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
+                    audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
                         Some([base_tags.clone(), vec!["type=file".into()]].concat()), None);
                 }
                 Err(e) => {
-                    audit::log("cli", "provider/deliver_xmtp_failed", false, Duration::default(),
+                    audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
                         Some([base_tags.clone(), vec!["type=file".into()]].concat()), Some(&e.to_string()));
                 }
             }
@@ -159,7 +159,7 @@ pub async fn handle_deliver(
     } else if !deliverable_text.is_empty() {
         let text_len = deliverable_text.chars().count();
         let is_long = text_len > LONG_TEXT_THRESHOLD;
-        audit::log("cli", "provider/deliver_text_prepare", true, Duration::default(),
+        audit::log("cli", "ASP/deliver_text_prepare", true, Duration::default(),
             Some([base_tags.clone(), vec![format!("charCount={text_len}"), format!("isLong={is_long}")]].concat()), None);
 
         if is_long {
@@ -171,18 +171,18 @@ pub async fn handle_deliver(
                 std::fs::write(&tmp_path, deliverable_text)?;
                 let tmp_str = tmp_path.display().to_string();
                 let upload = okx_a2a::file_upload(&tmp_str, agent_id, job_id, None, None)?;
-                audit::log("cli", "provider/deliver_long_text_uploaded", true, Duration::default(),
+                audit::log("cli", "ASP/deliver_long_text_uploaded", true, Duration::default(),
                     Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key), format!("path={tmp_str}")]].concat()), None);
 
                 let msg = super::content::build_file_deliver_message(job_id, &upload);
                 if !user_agent_id.is_empty() {
                     match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                         Ok(()) => {
-                            audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
+                            audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
                                 Some([base_tags.clone(), vec!["type=file_from_long_text".into()]].concat()), None);
                         }
                         Err(e) => {
-                            audit::log("cli", "provider/deliver_xmtp_failed", false, Duration::default(),
+                            audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
                                 Some([base_tags.clone(), vec!["type=file_from_long_text".into()]].concat()), Some(&e.to_string()));
                         }
                     }
@@ -195,18 +195,18 @@ pub async fn handle_deliver(
             match file_result {
                 Ok(p) => p,
                 Err(e) => {
-                    audit::log("cli", "provider/deliver_long_text_fallback", false, Duration::default(),
+                    audit::log("cli", "ASP/deliver_long_text_fallback", false, Duration::default(),
                         Some([base_tags.clone(), vec![format!("charCount={text_len}")]].concat()), Some(&e.to_string()));
 
                     let msg = super::content::build_text_deliver_message(job_id, deliverable_text);
                     if !user_agent_id.is_empty() {
                         match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                             Ok(()) => {
-                                audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
+                                audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
                                     Some([base_tags.clone(), vec!["type=text_fallback".into()]].concat()), None);
                             }
                             Err(e) => {
-                                audit::log("cli", "provider/deliver_xmtp_failed", false, Duration::default(),
+                                audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
                                     Some([base_tags.clone(), vec!["type=text_fallback".into()]].concat()), Some(&e.to_string()));
                             }
                         }
@@ -228,11 +228,11 @@ pub async fn handle_deliver(
             if !user_agent_id.is_empty() {
                 match okx_a2a::xmtp_send(job_id, user_agent_id, &msg) {
                     Ok(()) => {
-                        audit::log("cli", "provider/deliver_xmtp_sent", true, Duration::default(),
+                        audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
                             Some([base_tags.clone(), vec!["type=text".into()]].concat()), None);
                     }
                     Err(e) => {
-                        audit::log("cli", "provider/deliver_xmtp_failed", false, Duration::default(),
+                        audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
                             Some([base_tags.clone(), vec!["type=text".into()]].concat()), Some(&e.to_string()));
                     }
                 }
@@ -271,7 +271,7 @@ pub async fn handle_deliver(
 
     audit::log(
         "cli",
-        "provider/deliver_submitted",
+        "ASP/deliver_submitted",
         true,
         Duration::default(),
         Some(vec![

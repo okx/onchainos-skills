@@ -49,7 +49,7 @@ pub fn job_asp_selected_missing_terms_notify(job_id: &str, missing_field: &str) 
 
 /// `Event::JobUserReject` — user-facing notification pushed via
 /// `onchainos agent user-notify --content <text>` when the User Agent refuses to fund /
-/// confirm-accept after the provider applied. Terminal for this round; the
+/// confirm-accept after the ASP applied. Terminal for this round; the
 /// designation is over. Localize before sending.
 pub fn job_user_reject_notify(job_id: &str) -> String {
     format!(
@@ -147,7 +147,7 @@ pub fn job_rejected_user_decision_prompt(short_id: &str) -> String {
 
 /// `Event::JobSubmitted` — notify the user (ASP's owner) that the deliverable
 /// is on-chain (deliver tx confirmed) and the User Agent's review window has begun.
-/// Provider has no further peer-side action; this is a milestone status update
+/// ASP has no further peer-side action; this is a milestone status update
 /// only. Localize before sending.
 pub fn job_submitted_user_notify(job_id: &str) -> String {
     format!(
@@ -169,7 +169,7 @@ pub fn job_completed_user_notify(job_id: &str) -> String {
 
 /// Per-arbiter verdict rationales block shared by all three `DisputeResolved` outcomes.
 /// Source field: `message.voteReportSummaries[*].voterReportSummary` from the system envelope.
-/// Indentation matches the provider's 6-space bullet style (header at 6 spaces, entries at 10).
+/// Indentation matches the ASP's 6-space bullet style (header at 6 spaces, entries at 10).
 const ARBITRATION_REASONS_BLOCK: &str = "\x20\x20\x20\x20\x20\x20- Arbitration reasons:\n\
 \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20Arbiter 1: <voterReportSummary from message.voteReportSummaries[0]>\n\
 \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20Arbiter 2: <voterReportSummary from message.voteReportSummaries[1]>\n\
@@ -180,7 +180,7 @@ const ARBITRATION_REASONS_BLOCK: &str = "\x20\x20\x20\x20\x20\x20- Arbitration r
 pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[⚖️💰 Dispute Won] Job {job_id} (<title>) — dispute resolved; ASP wins.\n\
-         \x20\x20\x20\x20  - Outcome: ProviderWins\n\
+         \x20\x20\x20\x20  - Outcome: ASPWins\n\
          \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Auto-claimed account reward: <claimed amount> <symbol> (txHash=<hash>)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
@@ -195,7 +195,7 @@ pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
 pub fn dispute_won_no_claim_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[⚖️💰 Dispute Won] Job {job_id} (<title>) — dispute resolved; ASP wins.\n\
-         \x20\x20\x20\x20  - Outcome: ProviderWins\n\
+         \x20\x20\x20\x20  - Outcome: ASPWins\n\
          \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Account-level pending reward: none (checked)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
@@ -251,7 +251,7 @@ pub fn submit_deadline_warn_user_prompt(short_id: &str) -> String {
     )
 }
 
-/// User notification after the provider agent auto-rates the User Agent.
+/// User notification after the ASP agent auto-rates the User Agent.
 pub fn rating_submitted_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[📝 Rating Submitted] Job <title> (`{job_id}`) — rated.\n\
@@ -348,7 +348,7 @@ pub fn build_file_deliver_message(
     )
 }
 
-/// User Agent attachment received — notify the provider's user.
+/// User Agent attachment received — notify the ASP's user.
 pub fn user_attachment_received_user_notify(job_id: &str) -> String {
     format!("[Job `{job_id}`] The User Agent sent an attachment (reference material for this task). File downloaded and saved locally.")
 }

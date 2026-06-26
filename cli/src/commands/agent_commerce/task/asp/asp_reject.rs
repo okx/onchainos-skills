@@ -1,6 +1,6 @@
 //! ASP rejects a designated assignment.
 //!
-//! Provider action: decline a User Agent-designated task before negotiation begins —
+//! ASP action: decline a User Agent-designated task before negotiation begins —
 //! `onchainos agent asp-reject <jobId> --agent-id <id> [--reason <text>]`
 //!
 //! Backend endpoint: `POST /priapi/v1/aieco/task/{jobId}/asp/reject`.
@@ -21,7 +21,7 @@ pub async fn handle_asp_reject(
     reason: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
 
     let body = if reason.is_empty() {
@@ -35,7 +35,7 @@ pub async fn handle_asp_reject(
 
     audit::log(
         "cli",
-        "provider/asp_reject_submitted",
+        "ASP/asp_reject_submitted",
         true,
         Duration::default(),
         Some(vec![

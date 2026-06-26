@@ -1,6 +1,6 @@
-//! Provider-side task commands — enum definitions + routing dispatch.
+//! ASP-side task commands — enum definitions + routing dispatch.
 //!
-//! Files split by provider action:
+//! Files split by ASP action:
 //! - `apply.rs`             — apply for a job
 //! - `deliver.rs`           — submit deliverable
 //! - `agreerefund.rs`       — agree to refund
@@ -40,11 +40,11 @@ use crate::commands::agent_commerce::task::common::{
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::Context;
 
-// ─── provider subcommands ─────────────────────────────────────────────────
+// ─── ASP subcommands ─────────────────────────────────────────────────
 
 #[derive(Subcommand)]
 pub enum ProviderCommand {
-    /// Provider applies for a task (apply API → calldata → sign → broadcast)
+    /// ASP applies for a task (apply API → calldata → sign → broadcast)
     Apply {
         job_id: String,
         #[arg(long = "token-amount", default_value = "0")]
@@ -55,7 +55,7 @@ pub enum ProviderCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Provider submits deliverable (submit API → sign → broadcast)
+    /// ASP submits deliverable (submit API → sign → broadcast)
     Deliver {
         job_id: String,
         #[arg(long, default_value = "")]
@@ -66,31 +66,31 @@ pub enum ProviderCommand {
         /// the CLI writes this to a temp file and persists it as a text deliverable.
         #[arg(long = "deliverable-text", default_value = "")]
         deliverable_text: String,
-        /// Provider agentId (required). Beta backend rejects an empty agenticId header → 3001 auth fail;
+        /// ASP agentId (required). Beta backend rejects an empty agenticId header → 3001 auth fail;
         /// the providerAgentId field in job detail may be null, so reverse lookup is unreliable.
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Provider agrees to refund (agreeRefund API → sign → broadcast)
+    /// ASP agrees to refund (agreeRefund API → sign → broadcast)
     AgreeRefund {
         job_id: String,
-        /// Provider agentId (required).
+        /// ASP agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Provider declines a User Agent-designated assignment (off-chain) — POST asp/reject API.
+    /// ASP declines a User Agent-designated assignment (off-chain) — POST asp/reject API.
     /// Used before negotiation begins (`job_asp_selected` scene) when capability /
     /// price gate fails. No on-chain action; the User Agent is then free to re-route.
     AspReject {
         job_id: String,
-        /// Provider agentId (required).
+        /// ASP agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
         /// Optional decline reason surfaced to the User Agent's backend record.
         #[arg(long, default_value = "")]
         reason: String,
     },
-    /// Provider cold-start: create the group with the User Agent + send the
+    /// ASP cold-start: create the group with the User Agent + send the
     /// self-intro/interest opener in one shot. Replaces the old two-step
     /// (`okx-a2a session create` + `okx-a2a xmtp-send` opener) CLI playbook.
     /// The opener content is the canonical template — no customization
@@ -98,24 +98,24 @@ pub enum ProviderCommand {
     /// price / work content / fabricated `[intent:*]` literals.
     ContactUser {
         job_id: String,
-        /// Provider agentId (required).
+        /// ASP agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Provider claims after submit→complete timeout (claimAutoComplete API → sign → broadcast)
+    /// ASP claims after submit→complete timeout (claimAutoComplete API → sign → broadcast)
     ClaimAutoComplete {
         job_id: String,
-        /// Provider agentId (required).
+        /// ASP agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Get current task status (provider view)
+    /// Get current task status (ASP view)
     Status {
         job_id: String,
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// List my tasks (provider view)
+    /// List my tasks (ASP view)
     List {
         #[arg(long)]
         status: Option<String>,
@@ -148,7 +148,7 @@ pub enum DisputeCommand {
         job_id: String,
         #[arg(long)]
         reason: String,
-        /// Provider agentId (required).
+        /// ASP agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
@@ -158,28 +158,28 @@ pub enum DisputeCommand {
         job_id: String,
         #[arg(long)]
         reason: String,
-        /// Provider agentId (required).
+        /// ASP agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
     /// [Internal] Upload offchain evidence (multipart, 1h preparation window only) — shared by both sides.
     ///
-    /// ⚠️ **Not user-facing**: this command is invoked automatically by the User Agent / provider sub
+    /// ⚠️ **Not user-facing**: this command is invoked automatically by the User Agent / ASP sub
     /// session on the `job_disputed` event (via the next-action playbook). Users must NOT call it
     /// manually — the agent owns the timing, role injection, and chat-history assembly.
     ///
     /// In addition to the explicit `--text` / `--file` inputs, the CLI auto-attaches every
     /// entry recorded in `~/.onchainos/deliverables/<role>/<jobId>/manifest.json` as evidence
-    /// (User Agent side = the downloaded deliverable + any later attachments; provider side = the
-    /// submitted deliverable copy). The next-action script must inject `--role user|provider`
+    /// (User Agent side = the downloaded deliverable + any later attachments; ASP side = the
+    /// submitted deliverable copy). The next-action script must inject `--role user|ASP`
     /// so the CLI knows which manifest to read.
     Upload {
         job_id: String,
-        /// Caller's own agentId (User Agent or provider). Injected by the next-action script so the
+        /// Caller's own agentId (User Agent or ASP). Injected by the next-action script so the
         /// client doesn't have to do wallet-to-role mapping (a single wallet may have multiple registered agentIds).
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Caller's role for locating the local deliverables manifest. Required: `user` or `provider`.
+        /// Caller's role for locating the local deliverables manifest. Required: `user` or `ASP`.
         #[arg(long)]
         role: String,
         /// Text evidence (optional). At least one source is required: `--text`, an explicit `--file`,
@@ -212,26 +212,26 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
         ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
             asp_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
         ProviderCommand::Status { job_id, agent_id } => {
-            use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_PROVIDER};
-            common_query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_PROVIDER).await
+            use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_ASP};
+            common_query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_ASP).await
         }
         ProviderCommand::List { status, page, limit, agent_id } => {
-            use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_PROVIDER};
-            common_query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_PROVIDER).await
+            use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_ASP};
+            common_query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_ASP).await
         }
 
         // account-pull claim calls common::claim inline:
-        // provider has no role-specific wallet/agent resolution (unlike evaluator),
+        // ASP has no role-specific wallet/agent resolution (unlike evaluator),
         // so a dedicated wrapper file is unnecessary.
         ProviderCommand::Claimable { agent_id } => {
             if agent_id.is_empty() {
-                bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+                bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
             }
             let has_nonzero =
                 common_claim::fetch_and_print_claimable(&mut client, &agent_id).await?;
             audit::log(
                 "cli",
-                "provider/arbitration_claimable_checked",
+                "ASP/arbitration_claimable_checked",
                 true,
                 Duration::default(),
                 Some(vec![
@@ -249,14 +249,14 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
         }
         ProviderCommand::ClaimRewards { agent_id } => {
             if agent_id.is_empty() {
-                bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+                bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
             }
             let (account_id, address) = signing::resolve_wallet_by_agent_id(&agent_id).await?;
             let tx_hash =
                 common_claim::submit_claim_and_broadcast(&mut client, &account_id, &address, &agent_id).await?;
             audit::log(
                 "cli",
-                "provider/arbitration_claimed",
+                "ASP/arbitration_claimed",
                 true,
                 Duration::default(),
                 Some(vec![

@@ -1,8 +1,8 @@
-//! Fetch recommended tasks (provider-initiated discovery of Public tasks).
+//! Fetch recommended tasks (ASP-initiated discovery of Public tasks).
 //!
 //! Maps to backend `POST /priapi/v1/aieco/task/job/match`.
 //! Identity is taken from the X-Agent-Id / X-Wallet-Address headers; no request body.
-//! Backend matches a list of relevant Public tasks against the provider's skill description.
+//! Backend matches a list of relevant Public tasks against the ASP's skill description.
 
 use anyhow::{bail, Result};
 
@@ -11,7 +11,7 @@ use crate::commands::agent_commerce::task::signing;
 
 pub async fn handle_recommend_task(client: &mut TaskApiClient, agent_id: &str) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
     let _ = signing::resolve_wallet(None, None)?;
 

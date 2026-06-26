@@ -1,8 +1,8 @@
-//! Start finding jobs — auto-discover available jobs (loop-match for every online Provider Agent).
+//! Start finding jobs — auto-discover available jobs (loop-match for every online ASP Agent).
 //!
 //! Flow:
 //! 1. Call `onchainos agent get-my-agents` (subprocess) → fetch all of the user's Agents.
-//! 2. Filter by status=1 (online) + role=2 (provider).
+//! 2. Filter by status=1 (online) + role=2 (ASP).
 //! 3. For each Agent, call `recommend-task` (POST /priapi/v1/aieco/task/job/match).
 //! 4. Print matched results grouped by agent.
 
@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::commands::agent_commerce::task::common::{fetch_my_agents, network::task_api_client::TaskApiClient};
 use crate::commands::agent_commerce::task::signing;
 
-/// Provider role value (backend convention: 1=User Agent, 2=provider, 3=evaluator).
+/// ASP role value (backend convention: 1=User Agent, 2=ASP, 3=evaluator).
 const ROLE_PROVIDER: i64 = 2;
 /// Online status value.
 const STATUS_ONLINE: i64 = 1;
@@ -26,8 +26,8 @@ pub async fn handle_find_jobs() -> Result<()> {
         return Ok(());
     }
 
-    // Step 2: filter online providers
-    let online_providers: Vec<&Value> = agent_list
+    // Step 2: filter online ASPs
+    let online_ASPs: Vec<&Value> = agent_list
         .iter()
         .filter(|a| {
             a["role"].as_i64() == Some(ROLE_PROVIDER)
@@ -35,21 +35,21 @@ pub async fn handle_find_jobs() -> Result<()> {
         })
         .collect();
 
-    if online_providers.is_empty() {
-        println!("⚠ No online Provider Agents found.");
-        println!("  Total {} Agent(s), but status != 1 (online) or role != 2 (provider)", agent_list.len());
+    if online_ASPs.is_empty() {
+        println!("⚠ No online ASP Agents found.");
+        println!("  Total {} Agent(s), but status != 1 (online) or role != 2 (ASP)", agent_list.len());
         return Ok(());
     }
 
-    println!("Found {} online Provider Agent(s), matching tasks for each...\n", online_providers.len());
+    println!("Found {} online ASP Agent(s), matching tasks for each...\n", online_ASPs.len());
 
-    // Step 3: call recommend-task for each online provider agent
+    // Step 3: call recommend-task for each online ASP agent
     let mut task_client = TaskApiClient::new();
     let _ = signing::resolve_wallet(None, None)?;
     let mut total_tasks = 0usize;
     let mut summary: Vec<(String, String, usize)> = Vec::new();
 
-    for agent in &online_providers {
+    for agent in &online_ASPs {
         let agent_id = agent["agentId"].as_str().unwrap_or("");
         let name = agent["name"].as_str().unwrap_or("(no name)");
         let desc = agent["profileDescription"].as_str().unwrap_or("(no description)");
@@ -79,7 +79,7 @@ pub async fn handle_find_jobs() -> Result<()> {
     println!("  Total: {total_tasks} task(s)");
     println!();
     println!("⚠️  Hard rules for the LLM agent (must read):");
-    println!("    1. **Present results grouped by agent in full** — each `━━━ Agent X (...) ━━━` section above corresponds to one provider agent; show all of them to the user, do not cherry-pick one agent to summarize");
+    println!("    1. **Present results grouped by agent in full** — each `━━━ Agent X (...) ━━━` section above corresponds to one ASP agent; show all of them to the user, do not cherry-pick one agent to summarize");
     println!("    2. **List agents with 0 tasks too** — this is typically a signal of backend matching anomalies and the user needs to know (e.g., \"Agent 410 (WeatherHelper3): 0 task(s)\" should be kept)");
     println!("    3. **Do NOT pick a \"best recommendation\"** — do not sort or filter based on agent description/task content on your own; present the raw per-agent grouped results to the user");
     println!("    4. **Let the user decide**: after presenting, wait for the user to say \"use <agentId> to accept <jobId>\" before starting the accept flow — do not choose for the user");

@@ -48,7 +48,7 @@ pub const XLAYER_CHAIN_NAME: &str = "okb";
 /// User / requestor.
 pub const AGENT_ROLE_USER: i64 = 1;
 /// Seller / provider.
-pub const AGENT_ROLE_PROVIDER: i64 = 2;
+pub const AGENT_ROLE_ASP: i64 = 2;
 /// Evaluator (arbiter).
 pub const AGENT_ROLE_EVALUATOR: i64 = 3;
 
@@ -462,7 +462,7 @@ pub async fn fetch_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
 fn parse_role_filter(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
         "user" | "requestor" | "1" => Some(AGENT_ROLE_USER),
-        "asp" | "2" => Some(AGENT_ROLE_PROVIDER),
+        "asp" | "2" => Some(AGENT_ROLE_ASP),
         "evaluator" | "arbiter" | "3" => Some(AGENT_ROLE_EVALUATOR),
         _ => None,
     }
@@ -934,7 +934,7 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
     };
     let role_label = match role_num {
         AGENT_ROLE_USER => "user",
-        AGENT_ROLE_PROVIDER => "asp",
+        AGENT_ROLE_ASP => "asp",
         AGENT_ROLE_EVALUATOR => "evaluator",
         _ => "unknown",
     };
@@ -1301,7 +1301,7 @@ async fn build_context(
     let role_enum = state_machine::Role::parse(role);
     let role_cn = match role_enum {
         Some(state_machine::Role::User)     => "User Agent",
-        Some(state_machine::Role::Provider)  => "Agent Service Provider (ASP)",
+        Some(state_machine::Role::Asp)  => "Agent Service Provider (ASP)",
         Some(state_machine::Role::Evaluator) => "Evaluator Agent",
         None                                 => role,
     };

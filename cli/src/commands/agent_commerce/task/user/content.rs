@@ -183,7 +183,7 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
     format!(
         "[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
          - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
-         - Outcome: ProviderWins\n\
+         - Outcome: ASPWins\n\
          {ARBITRATION_REASONS_BLOCK}\n\
          This job is complete."
     )
@@ -467,7 +467,7 @@ pub fn pending_list_empty_user_notify() -> String {
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
     format!(
         "[⚠️ Operation Failed] Job `{job_id}`\n\
-         - Action: <e.g. match providers / submit review / pay via x402>\n\
+         - Action: <e.g. match ASPs / submit review / pay via x402>\n\
          - Error: <one-sentence summary of stderr / error field>\n\
          - Current status: <describe in plain language, e.g. waiting for provider / under review / payment pending>\n\
          \n\

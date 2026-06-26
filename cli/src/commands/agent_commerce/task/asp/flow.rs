@@ -1,4 +1,4 @@
-//! Provider-side task flow driver.
+//! ASP-side task flow driver.
 //!
 //! Based on the current system notification type received (event), outputs the prompt
 //! for the next action to take. The goal: consolidate the Scene steps scattered across
@@ -12,7 +12,7 @@ use crate::commands::agent_commerce::task::common::util::short_job_id;
 ///
 /// In the x402 flow the User Agent paid the ASP at request time via the A2MCP
 /// service endpoint, so every on-chain task event is a pure receipt with no
-/// provider-side business action. `JobAccepted` and `JobCompleted` get a
+/// ASP-side business action. `JobAccepted` and `JobCompleted` get a
 /// dedicated note that explains the payment model; every other event gets a
 /// shorter generic "ignore and end the turn" message.
 pub async fn generate_a2mcp_next_action(
@@ -53,7 +53,7 @@ pub async fn generate_a2mcp_next_action(
             let user_notify = super::content::job_accepted_user_notify_a2mcp(job_id, agent_id);
             format!(
                 "[Current state] job_accepted (x402 / A2MCP flow — User Agent's request received, payment confirmed at the A2MCP endpoint)\n\
-                 [Role] ASP (Agent Service Provider)\n\n\
+                 [Role] ASP (Agent Service ASP)\n\n\
                  {task_fields_inline}\n\
                  **Notify the user via `onchainos agent user-notify`** — no on-chain `deliver`, no `okx-a2a xmtp-send` (the deliverable was already returned by the A2MCP service endpoint at request time):\n\n\
                  🌐 **Localize first** — rewrite the content below in the user's language before sending. Fill `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` from the **Task fields** block above. Do NOT pass the English template verbatim to a non-English user.\n\
@@ -70,7 +70,7 @@ pub async fn generate_a2mcp_next_action(
             let rating_notify = super::content::rating_submitted_user_notify(job_id);
             format!(
                 "[Current state] job_completed (x402 / A2MCP flow — terminal receipt; funds were already received at request time)\n\
-                 [Role] ASP (Agent Service Provider)\n\n\
+                 [Role] ASP (Agent Service ASP)\n\n\
                  ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
                  {task_fields_inline}\n\
                  **Step 1 — Notify the user of task completion via `onchainos agent user-notify`**:\n\n\
@@ -89,7 +89,7 @@ pub async fn generate_a2mcp_next_action(
                  ```bash\n\
                  onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
                  ```\n\
-                 ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block above); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
+                 ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block above); `--creator-id` is the ASP's own agent id ({agent_id}).\n\n\
                  **Step 2.5 — Notify the user of the submitted rating**:\n\
                  🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
                  After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
@@ -109,8 +109,8 @@ pub async fn generate_a2mcp_next_action(
             )
         },
         other => format!(
-            "[System notification] {other} (x402 / A2MCP flow — no provider-side action)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+            "[System notification] {other} (x402 / A2MCP flow — no ASP-side action)\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              Ignore this event; take no action.\n\
              jobId={job_id}\n",
             other = other.as_str()
@@ -241,7 +241,7 @@ pub async fn generate_next_action(
             let user_notify = super::content::provider_applied_user_notify(job_id, agent_id);
             format!(
             "[Current state] provider_applied (apply has been recorded on-chain)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              ❌ Do NOT communicate with the User Agent. ❌ Do NOT deliver directly.\n\n\
              **Step 1 — Use `onchainos agent user-notify` to push the apply-submitted notification to the user**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
@@ -263,7 +263,7 @@ pub async fn generate_next_action(
             let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol", "serviceParams", "buyerAgentId"]);
             format!(
             "[Current state] job_accepted (User Agent has confirmed the apply)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
              {task_fields}\n\
              **Step 1 — Notify the user (apply accepted) via `onchainos agent user-notify`**:\n\n\
@@ -294,7 +294,7 @@ pub async fn generate_next_action(
              )\"\n\
              ```\n\n\
              **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
-             🛑 **The next system events for this ASP are `job_completed` OR `job_rejected` — both are action-required, NEITHER is observer-only.** Provider does NOT receive a `job_submitted` envelope after deliver.\n\n\
+             🛑 **The next system events for this ASP are `job_completed` OR `job_rejected` — both are action-required, NEITHER is observer-only.** ASP does NOT receive a `job_submitted` envelope after deliver.\n\n\
              [Follow-up events]\n\
              - `job_completed` (User Agent reviewed and accepted) — auto-rate the User Agent + notify the user\n\
              - `job_rejected`  (User Agent rejected the deliverable) — push dispute-vs-refund decision to the user\n"
@@ -309,7 +309,7 @@ pub async fn generate_next_action(
             let user_notify = super::content::job_submitted_user_notify(job_id);
             format!(
             "[System notification] job_submitted (deliverable confirmed on-chain; task state is now submitted)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              ⚠️ **observer-only toward the User Agent (peer)** — the deliverable was already sent in the `job_accepted` script (Step 3); this event **must NOT trigger a second okx-a2a xmtp-send** to the User Agent (duplicating would cause loop). The user-side notify in Step 1 below targets your OWN user (the ASP wallet owner), NOT the User Agent-peer.\n\n\
              **Step 1 — Notify the user of the submit milestone via `onchainos agent user-notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
@@ -336,7 +336,7 @@ pub async fn generate_next_action(
                 .unwrap_or_default();
             format!(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              🛑 **MUST push the dispute/refund decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = 24h timeout → auto-refund.\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\
              ⚠️ **24h hard deadline** — if the user does not decide within 24h, funds are auto-refunded to the User Agent. (Agent-side context; do NOT include in `--user-content` unless the localized template already mentions it.)\n\n\
@@ -410,7 +410,7 @@ pub async fn generate_next_action(
             let task_fields = inline_task_fields(&["title", "tokenAmount", "tokenSymbol", "buyerAgentId"]);
             format!(
             "[Current state] job_completed (task completed; funds received)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              [Your next action]\n\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
              {task_fields}\n\
@@ -430,7 +430,7 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
-             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
+             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the ASP's own agent id ({agent_id}).\n\n\
              **Step 2.5 — Notify the user of the submitted rating**:\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
@@ -456,10 +456,10 @@ pub async fn generate_next_action(
             let task_fields = inline_task_fields(&["title", "tokenAmount", "tokenSymbol", "buyerAgentId"]);
             format!(
             "[Current state] dispute_resolved (arbitration ruling delivered)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              ⚠️ **Determining win/loss**: read `message.jobStatus` from the system notification envelope you just received:\n\
-             - `jobStatus = \"complete\"` → **you (provider) won**; funds released to you\n\
-             - `jobStatus = \"failed\"` → **you (provider) lost**; funds refunded to the User Agent\n\
+             - `jobStatus = \"complete\"` → **you (ASP) won**; funds released to you\n\
+             - `jobStatus = \"failed\"` → **you (ASP) lost**; funds refunded to the User Agent\n\
              [Your next action (branch by win/loss)]\n\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` `ruling supports party X` filler to the User Agent — both sides receive the `dispute_resolved` system event.\n\n\
              {task_fields}\n\
@@ -489,13 +489,13 @@ pub async fn generate_next_action(
              🛑 Do NOT end this turn — A-Step 4 (auto-rate) and A-Step 4.5 (notify rating) below are MANDATORY.\n\n\
              **A-Step 4 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
              Based on the task description, requirements clarity, communication, and dispute outcome (you won), generate:\n\
-             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: provider won dispute → User Agent was likely at fault; 0.00–3.00 depending on severity. If the dispute was a misunderstanding, score higher.\n\
+             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: ASP won dispute → User Agent was likely at fault; 0.00–3.00 depending on severity. If the dispute was a misunderstanding, score higher.\n\
              \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
              Then execute:\n\
              ```bash\n\
              onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
-             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
+             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the ASP's own agent id ({agent_id}).\n\n\
              **A-Step 4.5 — Notify the user of the submitted rating**:\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
@@ -519,13 +519,13 @@ pub async fn generate_next_action(
              🛑 Do NOT end this turn — B-Step 2 (auto-rate) and B-Step 2.5 (notify rating) below are MANDATORY.\n\n\
              **B-Step 2 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
              Based on the task description, requirements clarity, and dispute outcome (you lost — User Agent's rejection was upheld), generate:\n\
-             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: provider lost dispute → User Agent was likely right; 3.00–5.00. Adjust based on whether the dispute felt fair.\n\
+             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: ASP lost dispute → User Agent was likely right; 3.00–5.00. Adjust based on whether the dispute felt fair.\n\
              \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
              Then execute:\n\
              ```bash\n\
              onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
              ```\n\
-             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the provider's own agent id ({agent_id}).\n\n\
+             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the ASP's own agent id ({agent_id}).\n\n\
              **B-Step 2.5 — Notify the user of the submitted rating**:\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
@@ -544,7 +544,7 @@ pub async fn generate_next_action(
         // ─── Scene 6.5b: ASP agreed to refund / dispute refund on-chain ─────────────────
         Event::JobRefunded => format!(
             "[Current state] job_refunded (funds refunded to the User Agent)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              [Your next action]\n\n\
              ⚠️ Do NOT send `okx-a2a xmtp-send` `refund on-chain` filler to the User Agent — both sides already receive the `job_refunded` system event.\n\
              {terminal_session_hint}\n\n\
@@ -556,11 +556,11 @@ pub async fn generate_next_action(
             let task_fields = inline_task_fields(&["buyerAgentId"]);
             format!(
             "[Current state] job_disputed (arbitration is on-chain; CLI auto-submits evidence on this event)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
              The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
              session, calls `dispute upload` (which also auto-attaches the deliverable copy saved under\n\
-             `~/.onchainos/deliverables/provider/{job_id}/`), and then notifies the user via\n\
+             `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
              `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
              **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the arbitration via on-chain events.\n\n\
              {task_fields}\n\
@@ -573,7 +573,7 @@ pub async fn generate_next_action(
              ==== Negotiation / delivery chat history (from okx-a2a session history) ====\n\
              [time] User Agent(<agentId>): ...\n\
              [time] ASP(<agentId>): ...\n\
-             ... (chronological; key checkpoints: provider's cold-start opener / task scope clarifications / provider's capability confirmation / your deliver message / each side's key contention points)\n\
+             ... (chronological; key checkpoints: ASP's cold-start opener / task scope clarifications / ASP's capability confirmation / your deliver message / each side's key contention points)\n\
              ```\n\n\
              ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints (opener / scope clarifications / capability confirmation / deliverable / each side's key contention points) and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
              If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
@@ -581,7 +581,7 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --text \"<chat history block>\"\n\
              ```\n\
-             The CLI auto-attaches every entry under `~/.onchainos/deliverables/provider/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copy saved at `deliver` time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
+             The CLI auto-attaches every entry under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copy saved at `deliver` time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
              **Step 4 — Notify the user (after upload returns):**\n\n\
              content:\n\
              \x20\x20\x20\x20[Arbitration opened] Arbitration for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverable). Awaiting the arbiter's verdict.\n\n\
@@ -592,11 +592,11 @@ pub async fn generate_next_action(
             )
         }
 
-        // ─── Scene 1: task is on-chain (job_created) — provider takes no proactive
+        // ─── Scene 1: task is on-chain (job_created) — ASP takes no proactive
         // action on this raw event. The active discovery paths are `recommend-task` /
         // `contact-user` (user-driven) and `JobAspSelected` (User Agent-designated). ────
-        Event::JobCreated => "[System notification] job_created (task is on-chain; no provider-side action)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+        Event::JobCreated => "[System notification] job_created (task is on-chain; no ASP-side action)\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n\
              To accept tasks, use `recommend-task` / `contact-user`; if the User Agent designates this ASP a `job_asp_selected` event will arrive separately.\n".to_string(),
 
@@ -834,23 +834,23 @@ pub async fn generate_next_action(
             }
         },
 
-        // ─── User Agent-driven tx receipt notifications; no provider action needed ─────
+        // ─── User Agent-driven tx receipt notifications; no ASP action needed ─────
         Event::JobClosed
         | Event::JobVisibilityChanged
         | Event::JobPaymentModeChanged => format!(
-            "[System notification] {event} (User Agent-side tx receipt; not the provider's concern)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+            "[System notification] {event} (User Agent-side tx receipt; not the ASP's concern)\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn. \n",
             event = event.as_str()
         ),
 
-        // ─── User Agent-driven timeout events; no provider action needed ─────
+        // ─── User Agent-driven timeout events; no ASP action needed ─────
         Event::JobExpired
         | Event::SubmitExpired
         | Event::RejectExpired
         | Event::ReviewDeadlineWarn => format!(
-            "[System notification] {event} (User Agent-side timeout event; not the provider's concern)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+            "[System notification] {event} (User Agent-side timeout event; not the ASP's concern)\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n",
             event = event.as_str()
         ),
@@ -858,7 +858,7 @@ pub async fn generate_next_action(
         // ─── review_expired: review window timed out; ASP actively claims the payment ─────────────
         Event::ReviewExpired => format!(
             "[System notification] review_expired (review window expired; the User Agent did not accept in time)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              ⚠️ **review_expired is just a window-timeout event; the task state is still submitted; funds are NOT auto-released**.\n\
              You need to actively call claimAutoComplete to pull the funds out of the escrow contract; only after on-chain confirmation does the state become completed.\n\n\
              [Your next action (strict order)]\n\n\
@@ -875,7 +875,7 @@ pub async fn generate_next_action(
              - `job_completed` (failed)  → retry claim-auto-complete per errorCode\n"
         ),
 
-        // ─── Provider's own deadline reminder ─────────────────────────────────────
+        // ─── ASP's own deadline reminder ─────────────────────────────────────
         Event::SubmitDeadlineWarn => {
             let user_prompt = super::content::submit_deadline_warn_user_prompt(&short_id);
             let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
@@ -889,7 +889,7 @@ pub async fn generate_next_action(
             );
             format!(
             "[System notification] submit_deadline_warn (deadline for submitting the deliverable is approaching)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              🛑 **MUST push the submit-now/let-timeout decision via `pending-decisions-v2 request`** — `onchainos agent user-notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = the deadline silently expires → auto-refund to the User Agent.\n\
              ❌ Do NOT `okx-a2a xmtp-send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
              **Push the decision to the user (3-substep protocol; read ALL 3 before running any command)**:\n\n\
@@ -898,7 +898,7 @@ pub async fn generate_next_action(
             )
         }
 
-        // ─── Arbitration sub-state-machine events — provider cares about dispute_resolved (already has a dedicated arm); other evaluator-internal events are observed silently ─────
+        // ─── Arbitration sub-state-machine events — ASP cares about dispute_resolved (already has a dedicated arm); other evaluator-internal events are observed silently ─────
         Event::EvaluatorSelected
         | Event::RevealStarted
         | Event::VoteCommitted
@@ -907,7 +907,7 @@ pub async fn generate_next_action(
         | Event::VoteCommitDeadlineWarn
         | Event::VoteRevealDeadlineWarn => format!(
             "[System notification] {event} (arbitration-internal event; handled by the evaluator)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              [Recommendation] Observe silently. After the `dispute_resolved` notification arrives, call next-action to wrap up.\n",
             event = event.as_str()
         ),
@@ -917,26 +917,26 @@ pub async fn generate_next_action(
             user_attachment_received_cli(job_id, agent_id, &short_id, message)
         }
 
-        // ─── Staking / reward / slash lifecycle tx receipts — irrelevant when provider is not an evaluator ─────
+        // ─── Staking / reward / slash lifecycle tx receipts — irrelevant when ASP is not an evaluator ─────
         Event::Staked
         | Event::UnstakeRequested
         | Event::UnstakeClaimed
         | Event::UnstakeCancelled
         | Event::StakeStopped
         | Event::CooldownEntered => format!(
-            "[System notification] {event} (evaluator staking lifecycle tx receipt; not the provider's concern)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+            "[System notification] {event} (evaluator staking lifecycle tx receipt; not the ASP's concern)\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n",
             event = event.as_str()
         ),
 
-        // reward_claimed — own claim tx receipt (provider may also claim arbitration rewards)
+        // reward_claimed — own claim tx receipt (ASP may also claim arbitration rewards)
         Event::RewardClaimed => {
             let failed_notify = super::content::reward_claim_failed_user_notify(job_id);
             let claimed_notify = super::content::reward_claimed_user_notify(job_id);
             format!(
             "[System notification] reward_claimed (claimRewards tx receipt)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              **Step 1 — Check the envelope's `message.code` field:**\n\
              - `code` non-zero (failed) → run `onchainos agent user-notify` to notify the user, then end the turn:\n\
              \x20\x20```bash\n\
@@ -950,15 +950,15 @@ pub async fn generate_next_action(
             )
         }
 
-        // job_auto_refunded — User Agent-side tx receipt; not the provider's concern
-        Event::JobAutoRefunded => "[System notification] job_auto_refunded (User Agent-side claimAutoRefund tx receipt; not the provider's concern)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+        // job_auto_refunded — User Agent-side tx receipt; not the ASP's concern
+        Event::JobAutoRefunded => "[System notification] job_auto_refunded (User Agent-side claimAutoRefund tx receipt; not the ASP's concern)\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n".to_string(),
 
         Event::WakeupNotify => {
             format!(
             "[System notification] wakeup_notify (task wake-up after network / machine reboot)\n\
-             [Role] ASP (Agent Service Provider)\n\n\
+             [Role] ASP (Agent Service ASP)\n\n\
              ⚠️ This is a wake-up heartbeat event, **NOT** a business-driving event. The real business state is in the envelope.message.jobStatus field.\n\
              You should NOT use `wakeup_notify` as --event to run the script — this script is just for guidance.\n\n\
              [Your next action (strict order)]\n\n\
@@ -974,14 +974,14 @@ pub async fn generate_next_action(
             )
         }
 
-        // Negotiation relay events are only used by the User Agent side; provider ignores
-        Event::NegotiateReply => "[System notification] negotiate_reply (User Agent-side negotiation relay event; not the provider's concern)\n\
+        // Negotiation relay events are only used by the User Agent side; ASP ignores
+        Event::NegotiateReply => "[System notification] negotiate_reply (User Agent-side negotiation relay event; not the ASP's concern)\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
-        Event::AttachmentAdded | Event::DeliverableReceived => "[System notification] User Agent-side event; not the provider's concern.\n\
+        Event::AttachmentAdded | Event::DeliverableReceived => "[System notification] User Agent-side event; not the ASP's concern.\n\
              [Recommendation] Ignore; no action needed.\n".to_string(),
 
-        // ─── user_decision_* relay router (provider-side scenes) ───
+        // ─── user_decision_* relay router (ASP-side scenes) ───
         // User-decision relays arrive as system-shaped envelopes with
         // `event = "user_decision_<source_event>"` and `message.data = <user's verbatim reply>`.
         // CLI returns a routing playbook that lists the candidate pseudo-events with
@@ -1026,7 +1026,7 @@ pub async fn generate_next_action(
         }
 
         // job_provider_reject: off-chain receipt confirming this ASP's own asp-reject;
-        // no provider-side action needed (the User Agent side handles the re-route). Terminal.
+        // no ASP-side action needed (the User Agent side handles the re-route). Terminal.
         Event::JobProviderReject => format!(
             "[System notification] job_provider_reject (your decline was registered; no further action).\n\
              {terminal_session_hint}\n"
@@ -1036,7 +1036,7 @@ pub async fn generate_next_action(
             let l10n = super::content::L10N_DISPATCH_SHORT;
             format!(
                 "[Current state] job_user_reject (User Agent declined to fund / confirm-accept)\n\
-                 [Role] ASP (Agent Service Provider)\n\n\
+                 [Role] ASP (Agent Service ASP)\n\n\
                  **Notify the user, then end the turn** (🌐 translate template to user's language first):\n\
                  {user_notify}\n\
                  {l10n}\n\n\

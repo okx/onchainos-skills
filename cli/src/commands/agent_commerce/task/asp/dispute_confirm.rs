@@ -1,4 +1,4 @@
-//! Raise dispute (provider) step 2 — onchainos agent dispute confirm <jobId>
+//! Raise dispute (ASP) step 2 — onchainos agent dispute confirm <jobId>
 //!
 //! Step 2 of the two-stage on-chain dispute flow. Preconditions:
 //!   1. `dispute raise` has been run (stage 1 approve on-chain)
@@ -23,7 +23,7 @@ pub async fn handle_dispute_confirm(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
     if reason.chars().count() > MAX_REASON_CHARS {
         bail!("Dispute reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
@@ -46,7 +46,7 @@ pub async fn handle_dispute_confirm(
 
     audit::log(
         "cli",
-        "provider/dispute_confirm_submitted",
+        "ASP/dispute_confirm_submitted",
         true,
         Duration::default(),
         Some(vec![

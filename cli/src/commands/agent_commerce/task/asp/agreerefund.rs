@@ -1,6 +1,6 @@
-//! Provider agrees to refund.
+//! ASP agrees to refund.
 //!
-//! Provider action: agree to refund — onchainos agent agree-refund
+//! ASP action: agree to refund — onchainos agent agree-refund
 
 use anyhow::{bail, Result};
 use std::time::Duration;
@@ -19,7 +19,7 @@ pub async fn handle_agree_refund(
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the provider's own agentId; beta backend rejects empty agenticId header)");
+        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     let body = serde_json::json!({});
@@ -36,7 +36,7 @@ pub async fn handle_agree_refund(
 
     audit::log(
         "cli",
-        "provider/agree_refund_submitted",
+        "ASP/agree_refund_submitted",
         true,
         Duration::default(),
         Some(vec![
