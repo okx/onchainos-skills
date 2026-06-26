@@ -1090,7 +1090,7 @@ pub async fn handle_prepare_create(
     currency: Option<&str>,
     provider: Option<&str>,
 ) -> Result<()> {
-    use super::buyer::draft::validate_draft_fields;
+    use super::user::draft::validate_draft_fields;
 
     // ── 1. Validate fields (local, instant) ──────────────────────
     let validation = validate_draft_fields(

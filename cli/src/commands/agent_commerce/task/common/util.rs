@@ -155,7 +155,7 @@ pub async fn resolve_x402_params(
 
     // Tier 2: negotiate cache.
     let mut cached_provider_agent_id = String::new();
-    match crate::commands::agent_commerce::task::buyer::negotiate::current(job_id) {
+    match crate::commands::agent_commerce::task::user::negotiate::current(job_id) {
         Ok(Some(pi)) => {
             cached_provider_agent_id = pi.provider_agent_id.clone();
             if let Some(svc) = pi.services.first() {

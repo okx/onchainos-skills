@@ -1060,7 +1060,7 @@ fn buyer_attachment_received_cli(
     message: Option<&serde_json::Value>,
 ) -> String {
     use crate::commands::agent_commerce::task::common::okx_a2a;
-    use crate::commands::agent_commerce::task::buyer::attachments::{attachments_dir, dedup_dest};
+    use crate::commands::agent_commerce::task::user::attachments::{attachments_dir, dedup_dest};
 
     let msg_str = |key: &str| {
         message

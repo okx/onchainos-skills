@@ -537,7 +537,7 @@ pub enum AgentCommand {
     // ── Task system (sub-groups) ────────────────────────────────────────────
     /// Draft task commands: create, list, update, delete, publish
     #[command(subcommand)]
-    Draft(task::buyer::DraftCommand),
+    Draft(task::user::DraftCommand),
 
     /// Dispute actions (provider): raise, evidence, info, upload
     #[command(subcommand)]
@@ -874,7 +874,7 @@ pub enum AgentCommand {
 }
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
-    use task::buyer::TaskCommand as T;
+    use task::user::TaskCommand as T;
 
     match cmd {
         // ── Identity ────────────────────────────────────────────────
@@ -901,7 +901,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             title, provider, endpoint, attachments, payment_mode,
             service_id, service_params, service_token_address, service_token_amount, visibility,
             _agent_id: _,
-        } => task::buyer::run_task(
+        } => task::user::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
                 title, provider, endpoint, attachments, payment_mode,
@@ -910,19 +910,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         ).await,
 
         AgentCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format } =>
-            task::buyer::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format }, ctx).await,
+            task::user::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format }, ctx).await,
 
         AgentCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
-            task::buyer::run_task(T::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id }, ctx).await,
+            task::user::run_task(T::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id }, ctx).await,
 
         AgentCommand::ResetAsp { job_id, agent_id } =>
-            task::buyer::run_task(T::ResetAsp { job_id, agent_id }, ctx).await,
+            task::user::run_task(T::ResetAsp { job_id, agent_id }, ctx).await,
 
         AgentCommand::UserReject { job_id, agent_id } =>
-            task::buyer::run_task(T::UserReject { job_id, agent_id }, ctx).await,
+            task::user::run_task(T::UserReject { job_id, agent_id }, ctx).await,
 
         AgentCommand::MarkFailed { job_id, provider_agent_id } =>
-            task::buyer::run_task(T::MarkFailed { job_id, provider_agent_id }, ctx).await,
+            task::user::run_task(T::MarkFailed { job_id, provider_agent_id }, ctx).await,
 
         AgentCommand::Status { job_id, agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
@@ -941,20 +941,20 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
 
         AgentCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
-            task::buyer::run_task(T::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
+            task::user::run_task(T::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
 
 
         AgentCommand::ConfirmAccept { job_id } =>
-            task::buyer::run_task(T::ConfirmAccept { job_id }, ctx).await,
+            task::user::run_task(T::ConfirmAccept { job_id }, ctx).await,
 
         AgentCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
-            task::buyer::run_task(T::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
+            task::user::run_task(T::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
 
         AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body } =>
-            task::buyer::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body }, ctx).await,
+            task::user::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body }, ctx).await,
 
         AgentCommand::X402Check { endpoint, agent_id, body } =>
-            task::buyer::run_task(T::X402Check { endpoint, agent_id, body }, ctx).await,
+            task::user::run_task(T::X402Check { endpoint, agent_id, body }, ctx).await,
 
         AgentCommand::DesignatedRoute { provider, endpoint } =>
             task::common::handle_designated_route(&provider, endpoint.as_deref()).await,
@@ -963,26 +963,26 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::handle_x402_validate(&endpoint, &agent_id, &job_id, &fee_amount, &fee_token).await,
 
         AgentCommand::Complete { job_id } =>
-            task::buyer::run_task(T::Complete { job_id }, ctx).await,
+            task::user::run_task(T::Complete { job_id }, ctx).await,
 
         AgentCommand::Reject { job_id, reason } =>
-            task::buyer::run_task(T::Reject { job_id, reason }, ctx).await,
+            task::user::run_task(T::Reject { job_id, reason }, ctx).await,
 
         AgentCommand::Close { job_id, agent_id } =>
-            task::buyer::run_task(T::Close { job_id, agent_id }, ctx).await,
+            task::user::run_task(T::Close { job_id, agent_id }, ctx).await,
 
         AgentCommand::SetPublic { job_id, agent_id } =>
-            task::buyer::run_task(T::SetPublic { job_id, agent_id }, ctx).await,
+            task::user::run_task(T::SetPublic { job_id, agent_id }, ctx).await,
 
         AgentCommand::Payment { job_id, agent_id } =>
-            task::buyer::run_task(T::Payment { job_id, agent_id }, ctx).await,
+            task::user::run_task(T::Payment { job_id, agent_id }, ctx).await,
 
 
         AgentCommand::ClaimAutoRefund { job_id } =>
-            task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
+            task::user::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
 
         AgentCommand::RejectApply { job_id, agent_id } =>
-            task::buyer::run_task(T::RejectApply { job_id, agent_id }, ctx).await,
+            task::user::run_task(T::RejectApply { job_id, agent_id }, ctx).await,
 
         AgentCommand::UserNotify { content } =>
             task::common::okx_a2a::user_notify(&content, true),
@@ -1000,9 +1000,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         }
 
         AgentCommand::TaskAttach { job_id, file_paths } =>
-            task::buyer::run_task(T::TaskAttach { job_id, file_paths }, ctx).await,
+            task::user::run_task(T::TaskAttach { job_id, file_paths }, ctx).await,
         AgentCommand::ListAttachments { job_id } =>
-            task::buyer::run_task(T::ListAttachments { job_id }, ctx).await,
+            task::user::run_task(T::ListAttachments { job_id }, ctx).await,
 
         AgentCommand::TaskDeliverableSave {
             job_id, role, file, deliverable_type, title, short_id,
@@ -1105,7 +1105,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         // ── Sub-groups ──────────────────────────────────────────────
         AgentCommand::Draft(c) =>
-            task::buyer::run_draft(c, ctx).await,
+            task::user::run_draft(c, ctx).await,
 
         AgentCommand::Dispute(c) =>
             task::provider::run_dispute(c, ctx).await,
@@ -1279,7 +1279,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // When --provider is passed, write the designated-provider file so generate_next_action takes the specified-provider path
             if let Some(ref pid) = provider {
-                if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
+                if let Err(e) = task::user::negotiate::save_designated_provider(&job_id, pid) {
                     if DEBUG_LOG {
                         eprintln!("[next-action] save_designated_provider failed: {e}");
                     }
@@ -1349,7 +1349,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             if provider.is_none()
                 && matches!(resolved_role.as_str(), "buyer" | "client")
                 && event == "job_created"
-                && !task::buyer::negotiate::has_designated_provider(&job_id)
+                && !task::user::negotiate::has_designated_provider(&job_id)
             {
                 let mut fb_client = task::common::network::task_api_client::TaskApiClient::new();
                 if let Ok(resp) = fb_client.get_with_identity(&fb_client.task_path(&job_id), &agent_id).await {
@@ -1357,7 +1357,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         if DEBUG_LOG {
                             eprintln!("[next-action] job_created fallback: API providerAgentId={pid}, persisting");
                         }
-                        if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
+                        if let Err(e) = task::user::negotiate::save_designated_provider(&job_id, pid) {
                             if DEBUG_LOG {
                                 eprintln!("[next-action] save_designated_provider (fallback) failed: {e}");
                             }
@@ -1434,7 +1434,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    task::buyer::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode, prefetched.as_ref(), parsed_message.as_ref()).await
+                    task::user::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), payment_mode, prefetched.as_ref(), parsed_message.as_ref()).await
                 }
                 "evaluator" => {
                     crate::audit::log(
